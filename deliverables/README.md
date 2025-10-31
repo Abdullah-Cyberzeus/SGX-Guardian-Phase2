@@ -1,36 +1,56 @@
 # Cervais New  Guardian Deliverable Tracking
 
+## Project Timeline & Milestones
+
+**Project Start Date**: October 27, 2025
+
+**Monthly Rate**: $5,667 USD
+
+**Project Duration**: 8 weeks (1.8 months)
+
+**Total Project Value**: $11,222 USD
+
+### Milestone Payment Schedule
+
+| Milestone | Sprint | Payment Amount | Due Date | Description |
+|-----------|--------|----------------|----------|-------------|
+| **Milestone 1** | Sprint 1 (Week 1-2) | $2,834 USD | November 9, 2025 | Foundation & Bootstrap - API specs, CI/CD pipeline, security tools, test framework |
+| **Milestone 2** | Sprint 2 (Week 3-4) | $2,834 USD | November 23, 2025 | Identity & Discovery - P2P discovery, key management, attestation, Demo 1 |
+| **Milestone 3** | Sprint 3 (Week 5-6) | $2,777 USD | December 7, 2025 | Secure Channels & Policy Sync - mTLS/gRPC, policy signing, policy manager, Demo 2 |
+| **Milestone 4** | Sprint 4 (Week 7-8) | $2,777 USD | December 21, 2025 | Enforcement & Handoff - Enforcement engine, telemetry, audit, packages, final demo |
+| **Total** | | **$11,222 USD** | | |
+
 ## Deliverables
 
 | Scope | Deliverable | Descriptions | Milestone payment | Est Delivery | Target Date | Status | Notes | Client Depends | Billed | Paid | Original SOW | Invoice |
 |-------|-------------|--------------|-------------------|--------------|-------------|--------|-------|----------------|--------|------|--------------|---------|
-| Project Management | GitHub Project Setup | Backlog, epics and features describing the product vision with prioritized features for the new guardian application across the Alpha, Beta, and V1 releases | Sprint 1 | Week 1 | | | Include sprint ceremonies setup | Yes | | | Section 3 | |
-| Project Management | Decision Log Documentation | Track all architectural, tactical, and procedural decisions including programming language, communication protocols, cryptographic algorithms, data storage, security model, system decomposition, service boundaries, integration patterns, and feature deferrals | Sprint 1 | Week 2 | | | Client requested in follow-up | Yes | | | Follow-up email | |
-| DevOps/CI-CD | CI/CD Pipeline Setup | Setup CI/CD pipeline with automated build stages (compilation, dependency caching, multi-arch builds), test stages (unit tests with coverage thresholds, integration tests, security tests), quality gates, and deployment stages (artifact publishing, package signing) | Sprint 1 | Week 1-2 | | | Include GitHub Actions | Yes | | | Section 3, Sprint 1 | |
-| DevOps/CI-CD | CI/CD Pipeline Documentation | Pipeline architecture diagram, quality gate definitions, workflow procedures, and troubleshooting guide | Sprint 1 | Week 2 | | | Client requested in follow-up | Yes | | | Follow-up email | |
-| DevOps/CI-CD | 3-Node Test LAN Environment | Setup 3-node test LAN environment for integration testing and demos | Sprint 1 | Week 1-2 | | | Required for all demos | No | | | Section 3, Sprint 1 | |
-| Code Quality | Security Scanning Tools | Implement cargo clippy (linting), cargo fmt (formatting checks), cargo audit (dependency vulnerabilities), cargo deny (license/security policy enforcement), and SAST tools (Semgrep, CodeQL) | Sprint 1 | Week 2 | | | Client requested in follow-up | Yes | | | Follow-up email | |
-| Architecture | API Specification v1.0 | Complete Protobuf API schemas and sequence diagrams for all gRPC services | Sprint 1 | Week 2 | | | Foundation for all dev | No | | | Section 3, Sprint 1 | |
-| Architecture | UEP Policy Schema v1.0 | Design minimal UEP Policy Schema v1 (L3/L4 rules) in YAML/JSON structure | Sprint 1 | Week 2 | | | Core policy format | No | | | Section 3, Sprint 1 | |
-| Core Development | sgx-pa-cli Tool Skeleton | Build skeleton for Policy Authority CLI tool for key pair generation and policy signing | Sprint 1 | Week 2 | | | Admin tool foundation | No | | | Section 3, Sprint 1 | |
-| Core Development | P2P Discovery Service (mDNS) | Implement mDNS for zero-configuration peer discovery with service type broadcast and nonce exchange | Sprint 2 | Week 3-4 | | | Foundation for Circle of Trust | No | | | Section 3, Sprint 2 | |
-| Core Development | Key Manager (ECDSA P-256) | Implement persistent key manager for ECDSA P-256 identity key pairs | Sprint 2 | Week 3-4 | | | Device identity foundation | No | | | Section 3, Sprint 2 | |
-| Core Development | Software Attestation Service | Implement mutual software-based attestation service with cryptographic signature over nonces and policy digest | Sprint 2 | Week 3-4 | | | Trust verification | No | | | Section 3, Sprint 2 | |
-| Core Development | Milestone Demo 1 | Demonstrate 3 nodes boot, discover each other, and successfully complete mutual attestation handshake | Sprint 2 | Week 4 | | | First major milestone | Yes | | | Section 3, Sprint 2 | |
-| Core Development | mTLS over gRPC Implementation | Implement secure gRPC channels with mutual TLS for encrypted P2P communication | Sprint 3 | Week 5-6 | | | Secure communication | No | | | Section 3, Sprint 3 | |
-| Core Development | Policy Signing Capability | Complete sgx-pa-cli policy signing capability for administrators | Sprint 3 | Week 5-6 | | | Policy distribution prereq | No | | | Section 3, Sprint 3 | |
-| Core Development | Policy Manager | Implement policy manager for signature verification and atomic policy loading/rollback | Sprint 3 | Week 5-6 | | | Policy sync foundation | No | | | Section 3, Sprint 3 | |
-| Core Development | Milestone Demo 2 | Demonstrate admin signing a policy that is securely distributed and verified by all peers in the cohort | Sprint 3 | Week 6 | | | Second major milestone | Yes | | | Section 3, Sprint 3 | |
-| Core Development | Enforcement Engine | Implement enforcement engine to translate UEP v1 policy rules into concrete nftables commands for L3/L4 security control | Sprint 4 | Week 7-8 | | | Core security enforcement | No | | | Section 3, Sprint 4 | |
-| Core Development | Telemetry Service | Implement telemetry service to collect and expose Prometheus-style system metrics | Sprint 4 | Week 7-8 | | | Operational visibility | No | | | Section 3, Sprint 4 | |
-| Core Development | Audit Logger | Implement structured, tamper-evident audit log for all critical security events | Sprint 4 | Week 7-8 | | | Security compliance | No | | | Section 3, Sprint 4 | |
-| Core Development | Cloud Uplink Mock | Implement secure, outbound-only cloud uplink mock to validate integration path for future cloud management | Sprint 4 | Week 7-8 | | | Future cloud readiness | No | | | Section 3, Sprint 4 | |
-| Deployment | .deb/.rpm Packages | Create .deb and .rpm installation packages with systemd configuration and hardening | Sprint 4 | Week 7-8 | | | Production deployment | No | | | Section 3, Sprint 4 | |
-| Artifact Management | Package Storage & Versioning | Define where .deb/.rpm packages are stored, how they are versioned and signed, container registry strategy, and binary reproducibility requirements | Sprint 1-4 | Week 8 | | | Client requested in follow-up | Yes | | | Follow-up email | |
-| Deployment | Deployment Automation | Automated deployment to test environment, deployment verification tests, and rollback procedures | Sprint 4 | Week 7-8 | | | Client requested in follow-up | Yes | | | Follow-up email | |
-| Testing | Test Framework Setup | Establish test framework (cargo test) and testing infrastructure including unit tests and integration tests | Sprint 1 | Week 2 | | | Client requested in follow-up | Yes | | | Follow-up email | |
-| Testing | Automated Test Execution | Implement automated test execution in CI/CD pipeline with coverage thresholds (80% target) | Sprint 2-4 | Week 4 | | | Client requested in follow-up | Yes | | | Follow-up email | |
-| Testing | Test Report | Summary of all unit and integration test results across all sprints | Sprint 4 | Week 8 | | | Final deliverable | Yes | | | Section 5 | |
-| Documentation | Administrator Guide v0.5 | Installation, configuration, key management, and operational procedures for system administrators | Sprint 4 | Week 8 | | | Final deliverable | Yes | | | Section 5 | |
-| Documentation | Source Code & Documentation | Complete, modular, and documented Rust codebase for sgx-guardian daemon and sgx-pa-cli tool | Sprint 4 | Week 8 | | | Final deliverable | No | | | Section 5 | |
-| Demonstration | Final E2E Demo | Full end-to-end scripted demo on 3-node cohort proving trust formation, policy sync, and active L3/L4 enforcement with CLI status visibility | Sprint 4 | Week 8 | | | Phase 1 completion | Yes | | | Section 3, Sprint 4 | |
+| Project Management | GitHub Project Setup | Backlog, epics and features describing the product vision with prioritized features for the new guardian application across the Alpha, Beta, and V1 releases | Milestone 1: $2,834 | 2025-11-03 | 2025-11-03 | | Include sprint ceremonies setup | Yes | | | Section 3 | |
+| Project Management | Decision Log Documentation | Track all architectural, tactical, and procedural decisions including programming language, communication protocols, cryptographic algorithms, data storage, security model, system decomposition, service boundaries, integration patterns, and feature deferrals | Milestone 1: $2,834 | 2025-11-09 | 2025-11-09 | | Client requested in follow-up | Yes | | | Follow-up email | |
+| DevOps/CI-CD | CI/CD Pipeline Setup | Setup CI/CD pipeline with automated build stages (compilation, dependency caching, multi-arch builds), test stages (unit tests with coverage thresholds, integration tests, security tests), quality gates, and deployment stages (artifact publishing, package signing) | Milestone 1: $2,834 | 2025-11-09 | 2025-11-09 | | Include GitHub Actions | Yes | | | Section 3, Sprint 1 | |
+| DevOps/CI-CD | CI/CD Pipeline Documentation | Pipeline architecture diagram, quality gate definitions, workflow procedures, and troubleshooting guide | Milestone 1: $2,834 | 2025-11-09 | 2025-11-09 | | Client requested in follow-up | Yes | | | Follow-up email | |
+| DevOps/CI-CD | 3-Node Test LAN Environment | Setup 3-node test LAN environment for integration testing and demos | Milestone 1: $2,834 | 2025-11-09 | 2025-11-09 | | Required for all demos | No | | | Section 3, Sprint 1 | |
+| Code Quality | Security Scanning Tools | Implement cargo clippy (linting), cargo fmt (formatting checks), cargo audit (dependency vulnerabilities), cargo deny (license/security policy enforcement), and SAST tools (Semgrep, CodeQL) | Milestone 1: $2,834 | 2025-11-09 | 2025-11-09 | | Client requested in follow-up | Yes | | | Follow-up email | |
+| Architecture | API Specification v1.0 | Complete Protobuf API schemas and sequence diagrams for all gRPC services | Milestone 1: $2,834 | 2025-11-09 | 2025-11-09 | | Foundation for all dev | No | | | Section 3, Sprint 1 | |
+| Architecture | UEP Policy Schema v1.0 | Design minimal UEP Policy Schema v1 (L3/L4 rules) in YAML/JSON structure | Milestone 1: $2,834 | 2025-11-09 | 2025-11-09 | | Core policy format | No | | | Section 3, Sprint 1 | |
+| Core Development | sgx-pa-cli Tool Skeleton | Build skeleton for Policy Authority CLI tool for key pair generation and policy signing | Milestone 1: $2,834 | 2025-11-09 | 2025-11-09 | | Admin tool foundation | No | | | Section 3, Sprint 1 | |
+| Core Development | P2P Discovery Service (mDNS) | Implement mDNS for zero-configuration peer discovery with service type broadcast and nonce exchange | Milestone 2: $2,834 | 2025-11-23 | 2025-11-23 | | Foundation for Circle of Trust | No | | | Section 3, Sprint 2 | |
+| Core Development | Key Manager (ECDSA P-256) | Implement persistent key manager for ECDSA P-256 identity key pairs | Milestone 2: $2,834 | 2025-11-23 | 2025-11-23 | | Device identity foundation | No | | | Section 3, Sprint 2 | |
+| Core Development | Software Attestation Service | Implement mutual software-based attestation service with cryptographic signature over nonces and policy digest | Milestone 2: $2,834 | 2025-11-23 | 2025-11-23 | | Trust verification | No | | | Section 3, Sprint 2 | |
+| Core Development | Milestone Demo 1 | Demonstrate 3 nodes boot, discover each other, and successfully complete mutual attestation handshake | Milestone 2: $2,834 | 2025-11-23 | 2025-11-23 | | First major milestone | Yes | | | Section 3, Sprint 2 | |
+| Core Development | mTLS over gRPC Implementation | Implement secure gRPC channels with mutual TLS for encrypted P2P communication | Milestone 3: $2,777 | 2025-12-07 | 2025-12-07 | | Secure communication | No | | | Section 3, Sprint 3 | |
+| Core Development | Policy Signing Capability | Complete sgx-pa-cli policy signing capability for administrators | Milestone 3: $2,777 | 2025-12-07 | 2025-12-07 | | Policy distribution prereq | No | | | Section 3, Sprint 3 | |
+| Core Development | Policy Manager | Implement policy manager for signature verification and atomic policy loading/rollback | Milestone 3: $2,777 | 2025-12-07 | 2025-12-07 | | Policy sync foundation | No | | | Section 3, Sprint 3 | |
+| Core Development | Milestone Demo 2 | Demonstrate admin signing a policy that is securely distributed and verified by all peers in the cohort | Milestone 3: $2,777 | 2025-12-07 | 2025-12-07 | | Second major milestone | Yes | | | Section 3, Sprint 3 | |
+| Core Development | Enforcement Engine | Implement enforcement engine to translate UEP v1 policy rules into concrete nftables commands for L3/L4 security control | Milestone 4: $2,777 | 2025-12-21 | 2025-12-21 | | Core security enforcement | No | | | Section 3, Sprint 4 | |
+| Core Development | Telemetry Service | Implement telemetry service to collect and expose Prometheus-style system metrics | Milestone 4: $2,777 | 2025-12-21 | 2025-12-21 | | Operational visibility | No | | | Section 3, Sprint 4 | |
+| Core Development | Audit Logger | Implement structured, tamper-evident audit log for all critical security events | Milestone 4: $2,777 | 2025-12-21 | 2025-12-21 | | Security compliance | No | | | Section 3, Sprint 4 | |
+| Core Development | Cloud Uplink Mock | Implement secure, outbound-only cloud uplink mock to validate integration path for future cloud management | Milestone 4: $2,777 | 2025-12-21 | 2025-12-21 | | Future cloud readiness | No | | | Section 3, Sprint 4 | |
+| Deployment | .deb/.rpm Packages | Create .deb and .rpm installation packages with systemd configuration and hardening | Milestone 4: $2,777 | 2025-12-21 | 2025-12-21 | | Production deployment | No | | | Section 3, Sprint 4 | |
+| Artifact Management | Package Storage & Versioning | Define where .deb/.rpm packages are stored, how they are versioned and signed, container registry strategy, and binary reproducibility requirements | Milestone 4: $2,777 | 2025-12-21 | 2025-12-21 | | Client requested in follow-up | Yes | | | Follow-up email | |
+| Deployment | Deployment Automation | Automated deployment to test environment, deployment verification tests, and rollback procedures | Milestone 4: $2,777 | 2025-12-21 | 2025-12-21 | | Client requested in follow-up | Yes | | | Follow-up email | |
+| Testing | Test Framework Setup | Establish test framework (cargo test) and testing infrastructure including unit tests and integration tests | Milestone 1: $2,834 | 2025-11-09 | 2025-11-09 | | Client requested in follow-up | Yes | | | Follow-up email | |
+| Testing | Automated Test Execution | Implement automated test execution in CI/CD pipeline with coverage thresholds (80% target) | Milestone 2: $2,834 | 2025-11-23 | 2025-11-23 | | Client requested in follow-up | Yes | | | Follow-up email | |
+| Testing | Test Report | Summary of all unit and integration test results across all sprints | Milestone 4: $2,777 | 2025-12-21 | 2025-12-21 | | Final deliverable | Yes | | | Section 5 | |
+| Documentation | Administrator Guide v0.5 | Installation, configuration, key management, and operational procedures for system administrators | Milestone 4: $2,777 | 2025-12-21 | 2025-12-21 | | Final deliverable | Yes | | | Section 5 | |
+| Documentation | Source Code & Documentation | Complete, modular, and documented Rust codebase for sgx-guardian daemon and sgx-pa-cli tool | Milestone 4: $2,777 | 2025-12-21 | 2025-12-21 | | Final deliverable | No | | | Section 5 | |
+| Demonstration | Final E2E Demo | Full end-to-end scripted demo on 3-node cohort proving trust formation, policy sync, and active L3/L4 enforcement with CLI status visibility | Milestone 4: $2,777 | 2025-12-21 | 2025-12-21 | | Phase 1 completion | Yes | | | Section 3, Sprint 4 | |
