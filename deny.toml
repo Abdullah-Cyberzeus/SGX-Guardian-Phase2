@@ -1,0 +1,33 @@
+[licenses]
+allow = ["Apache-2.0", "MIT", "BSD-3-Clause", "Unicode-3.0", "Unicode-DFS-2016","ISC"]
+unused-allowed-license = "allow"
+
+[licenses.private]
+ignore = true
+
+
+[advisories]
+ignore = []
+
+[bans]
+multiple-versions = "warn"      
+wildcards = "deny"             
+
+#  Explicitly ignore only harmless known system-level duplicates
+skip = [
+    { name = "getrandom" },
+    { name = "hashbrown" },
+    { name = "indexmap" },
+    { name = "socket2" },
+    { name = "bitflags" },
+    { name = "windows-sys" },
+    { name = "windows-targets" },
+    { name = "windows_aarch64_gnullvm" },
+    { name = "windows_aarch64_msvc" },
+    { name = "windows_i686_gnu" },
+    { name = "windows_i686_gnullvm" },
+    { name = "windows_i686_msvc" },
+    { name = "windows_x86_64_gnu" },
+    { name = "windows_x86_64_gnullvm" },
+    { name = "windows_x86_64_msvc" }
+]

@@ -1,0 +1,15 @@
+use serde::Deserialize;
+use std::fs;
+
+#[derive(Debug, Deserialize)]
+struct NodeConfig {
+    node_id: String,
+    hostname: String,
+    ip: String,
+    port: u16,
+    public_key: String,
+}
+fn load_config(path: &str) -> NodeConfig {
+    let data = fs::read_to_string(path).expect("Failed to read config");
+    serde_yaml::from_str::<NodeConfig>(&data).expect("Invalid YAML")
+}

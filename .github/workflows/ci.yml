@@ -1,0 +1,121 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-test-audit:
+    name: Build, Test & Security Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout repository
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # Step 2: Install Rust (stable)
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+          override: true
+
+      # Step 2.5: Install Protocol Buffers Compiler (required for prost-build)
+      - name: Install Protocol Buffers Compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          protoc --version
+
+      # Step 3: Cache Cargo dependencies
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      # Step 4: Format check
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      # Step 5: Lint with Clippy
+      - name: Run Clippy (linting)
+        run: cargo clippy -- -D warnings
+
+      # Step 6: Run unit tests
+      - name: Run unit tests
+        run: cargo test --verbose
+
+      # Step 7: Generate code coverage
+      - name: Install Tarpaulin
+        run: cargo install cargo-tarpaulin --force
+      - name: Run coverage
+        run: cargo tarpaulin --out Xml
+
+      # Step 7.5 – Semgrep Static Analysis (SAST)
+      - name: Run Semgrep scan
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: auto
+
+      # Step 8: Security audit
+      - name: Security audit with cargo-audit
+        run: cargo install cargo-audit --force && cargo audit
+
+      # Step 9: License & security policy enforcement
+      - name: Run cargo-deny checks
+        run: |
+          # Pin cargo-deny to a known working version for stability
+          cargo install cargo-deny --version 0.18.5 --force
+          cargo deny check
+
+      # Step 10: Artifact packaging (if applicable)
+      - name: Build release artifacts
+        run: cargo build --release
+
+      # Step 11: Import GPG key for package signing
+      - name: Import GPG private key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.gnupg && chmod 700 ~/.gnupg
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --yes --import
+          echo "GPG key import complete"
+          gpg --list-secret-keys --keyid-format LONG
+
+      # Step 12: Sign release packages (.deb/.rpm)
+      - name: Sign Packages
+        shell: bash
+        run: |
+          mkdir -p signed_artifacts
+          for pkg in $(ls target/debian/*.deb 2>/dev/null || true) $(ls target/generate-rpm/*.rpm 2>/dev/null || true); do
+            if [ -f "$pkg" ]; then
+              echo "Signing $pkg ..."
+              sha256sum "$pkg" > "$pkg.sha256"
+              gpg --batch --yes --pinentry-mode loopback \
+                  --passphrase "${{ secrets.GPG_PASSPHRASE }}" \
+                  --detach-sign --armor "$pkg"
+               mv "$pkg" signed_artifacts/
+              mv "$pkg.sha256" signed_artifacts/
+              mv "$pkg.asc" signed_artifacts/ 2>/dev/null || true
+            fi
+          done
+
+      # Step 13: Upload build artifacts (for verification / deployment)
+      - name: Upload Build Artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sgx-guardian-client-${{ github.run_number }}
+          path: |
+            target/release/sgx_guardian_client
+            signed_artifacts/*
+            cobertura.xml

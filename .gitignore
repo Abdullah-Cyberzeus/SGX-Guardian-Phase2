@@ -1,0 +1,10 @@
+/target
+.vscode/
+logs/
+sgx-agent/
+sgx-pa-cli/guardian_private.key
+private_key.asc
+*.key
+*.pem
+*.asc
+nul

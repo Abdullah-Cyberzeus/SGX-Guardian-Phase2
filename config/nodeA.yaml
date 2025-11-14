@@ -1,0 +1,5 @@
+node_id: "nodeA"
+hostname: "guardian-node-A"
+ip: "127.0.0.1"
+port: 50051
+public_key: "placeholder-key-A"

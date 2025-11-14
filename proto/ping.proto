@@ -1,0 +1,16 @@
+syntax = "proto3";
+package sgx;
+
+// Message definitions first
+message PingRequest {
+  string from = 1;
+}
+
+message PingResponse {
+  string message = 1;
+}
+
+// Service defined last
+service PingService {
+  rpc Ping (PingRequest) returns (PingResponse);
+}
