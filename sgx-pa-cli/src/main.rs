@@ -16,8 +16,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// View node status information
-    Status,
+    /// Show status information for a specific SGX Guardian node
+    Status(commands::status::StatusArgs),
     /// Show recent logs for a specific node
     Logs(LogsArgs),
     /// Generate a new ECDSA-P256 keypair
@@ -32,7 +32,7 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Status => commands::status::run(),
+        Commands::Status(args) => commands::status::run(args),
         Commands::Logs(args) => commands::logs::run(args),
         Commands::Keygen => commands::keygen::execute(),
         Commands::Sign(args) => commands::sign::execute(args),

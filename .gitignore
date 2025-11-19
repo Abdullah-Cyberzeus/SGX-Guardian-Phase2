@@ -8,3 +8,10 @@ private_key.asc
 *.pem
 *.asc
 nul
+
+# Coverage reports
+cobertura.xml
+*.profraw
+*.profdata
+tarpaulin-report.html
+coverage/

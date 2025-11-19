@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 
 #[derive(Args)]
+#[command(about = "Sign a policy file using the local guardian private key")]
 pub struct SignArgs {
     /// Path to the policy YAML or JSON file to be signed
     pub file: String,

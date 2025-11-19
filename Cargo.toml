@@ -18,7 +18,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 windows-sys = { version = "0.52", features = ["Win32_System_Console"] }
 anyhow = "1"
-ring = "0.17"
+ring = "0.17.14"
 base64 = "0.21"
 libmdns = "0.7"
 serde_json = "1"

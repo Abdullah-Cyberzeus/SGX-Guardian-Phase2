@@ -1,5 +1,14 @@
 #!/bin/bash
 echo "Starting 3 SGX Guardian nodes..."
+# --- Determine platform (Windows vs Linux) ---
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*|Windows_NT)
+    EXT=".exe"
+    ;;
+  *)
+    EXT=""
+    ;;
+esac
 echo "🧪 Cleaning old logs before multi-node test..."
 # ensure logs directory exists
 mkdir -p logs
@@ -18,25 +27,35 @@ rm -f logs/trusted_peers_*.json 2>/dev/null
 
 # Build once to avoid multiple cargo locks
 cargo build >/dev/null 2>&1
+if [ $? -ne 0 ]; then
+  echo "❌ Build failed — check compilation errors."
+  exit 1
+fi
 
 # Run compiled binaries directly (avoids cargo exit noise)
-./target/debug/sgx_guardian_client.exe nodeA 50051 > logs/nodeA.log 2>&1 &
+./target/debug/sgx_guardian_client${EXT} nodeA 50051 > logs/nodeA.log 2>&1 &
 pidA=$!
-./target/debug/sgx_guardian_client.exe nodeB 50052 > logs/nodeB.log 2>&1 &
+./target/debug/sgx_guardian_client${EXT} nodeB 50052 > logs/nodeB.log 2>&1 &
 pidB=$!
-./target/debug/sgx_guardian_client.exe nodeC 50053 > logs/nodeC.log 2>&1 &
+./target/debug/sgx_guardian_client${EXT} nodeC 50053 > logs/nodeC.log 2>&1 &
 pidC=$!
 cleanup() {
   echo "🛑 Cleaning up nodes..."
-  taskkill //PID $pidA //F > /dev/null 2>&1 || kill "$pidA" 2>/dev/null || true
-  taskkill //PID $pidB //F > /dev/null 2>&1 || kill "$pidB" 2>/dev/null || true
-  taskkill //PID $pidC //F > /dev/null 2>&1 || kill "$pidC" 2>/dev/null || true
+if [[ "$EXT" == ".exe" ]]; then
+  # Windows cleanup
+  taskkill //PID $pidA //F > /dev/null 2>&1 || true
+  taskkill //PID $pidB //F > /dev/null 2>&1 || true
+  taskkill //PID $pidC //F > /dev/null 2>&1 || true
+else
+  # Linux/macOS cleanup
+  kill -TERM "$pidA" "$pidB" "$pidC" 2>/dev/null || true
+fi
 }
 trap cleanup EXIT
 echo "✅ Nodes started: A=$pidA, B=$pidB, C=$pidC"
 
 # --- Smart wait: up to 120 s or until we see at least 3 per-node peer files ---
-echo "🕒 Waiting up to 120s for per-node peer files (trusted_peers_<pid>.json)..."
+echo "🕒 Waiting up to 120s for per-node peer files (trusted_peers.json)..."
 max_iter=24
 found=0
 for i in $(seq 1 $max_iter); do
@@ -109,7 +128,14 @@ if [ -f logs/trusted_peers.json ]; then
   echo ""
   echo "--------------------"
   echo "🔍 Verifying Circle of Trust..."
-  peer_count=$(powershell -Command "(Get-Content 'logs/trusted_peers.json' | Select-String -Pattern 'peer_id').Count")
+if [[ "$EXT" == ".exe" ]]; then
+peer_count=$(
+  powershell -NoProfile -Command "(Get-Content -Raw 'logs/trusted_peers.json' | ConvertFrom-Json).Count" |
+  tr -d '\r' | tr -d '\n' | tr -d ' '
+)
+else
+  peer_count=$(jq '. | length' logs/trusted_peers.json)
+fi
   if [ "$peer_count" -eq 3 ]; then
     echo "✅ Circle of Trust formed successfully — 3 peers verified."
   elif [ "$peer_count" -gt 3 ]; then

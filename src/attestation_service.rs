@@ -253,7 +253,22 @@ impl AttestationService {
             }
         };
         // Step 4: verify peer evidence
-        let verified = Self::verify_signed_evidence(&peer_ev, &km.pubkey_der(), &policy_data)?;
+        let peer_pubkey_der = if let Ok(contents) = fs::read_to_string("logs/trusted_peers.json") {
+            if let Ok(list) = serde_json::from_str::<Vec<TrustedPeer>>(&contents) {
+                if let Some(_p) = list.into_iter().find(|p| p.peer_id == addr) {
+                    // No DER key in JSON yet -> placeholder for now
+                    // In Sprint-2 we treat key_manager peer verification as trust bootstrap
+                    km.pubkey_der().to_vec() // TEMP fallback
+                } else {
+                    km.pubkey_der().to_vec() // TEMP fallback
+                }
+            } else {
+                km.pubkey_der().to_vec() // TEMP fallback
+            }
+        } else {
+            km.pubkey_der().to_vec() // TEMP fallback
+        };
+        let verified = Self::verify_signed_evidence(&peer_ev, &peer_pubkey_der, &policy_data)?;
         if !verified {
             write_last_attestation(&addr, &peer_ev.policy_digest, "failed");
             println!("❌ Peer attestation verification failed for {}", addr);
@@ -313,7 +328,8 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
     let node_id_env = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "nodeA".to_string());
-    let node_conf = load_config(&format!("config/{}.yaml", node_id_env));
+    let node_conf = load_config(&format!("config/{}.yaml", node_id_env))
+        .expect("Failed to load node config in attestation service");
     let listen_port: u16 = node_conf.port + 100;
 
     println!("🛰️ Spawning attestation listener on port {}", listen_port);

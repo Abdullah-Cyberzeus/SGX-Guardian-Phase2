@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 
 #[derive(Args)]
+#[command(about = "View recent log entries for a specific node")]
 pub struct LogsArgs {
     /// Number of log lines to show from the end of file
     #[arg(long, default_value = "20")]

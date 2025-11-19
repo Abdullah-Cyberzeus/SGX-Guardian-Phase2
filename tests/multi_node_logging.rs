@@ -67,9 +67,22 @@ fn multi_node_logging() {
 
     // Validate JSON structure
     let node_a_logs = fs::read_to_string(&node_a_log).expect("Failed to read nodeA log");
+
+    // Parse each line as JSON and verify at least one INFO-level event exists
+    let mut found_info = false;
+
+    for line in node_a_logs.lines() {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+            if json.get("level") == Some(&serde_json::Value::String("INFO".to_string())) {
+                found_info = true;
+                break;
+            }
+        }
+    }
+
     assert!(
-        node_a_logs.contains("\"level\":\"INFO\""),
-        "nodeA log missing expected JSON structure"
+        found_info,
+        "nodeA logs do not contain any valid JSON INFO level entry"
     );
     println!("✅ Multi-node logging test passed successfully!");
 }

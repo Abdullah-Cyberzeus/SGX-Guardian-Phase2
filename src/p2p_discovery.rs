@@ -19,7 +19,7 @@ impl P2PDiscovery {
         node_id: String,
         _logger: Arc<Mutex<String>>,
     ) -> Result<()> {
-        println!("Starting mDNS Discovery for node: {}", node_id);
+        log_event(&node_id, "Starting mDNS discovery");
 
         let responder = Responder::new()?;
         let _svc = responder.register(
@@ -42,21 +42,27 @@ impl P2PDiscovery {
             for port in 5353..5360 {
                 match UdpSocket::bind(format!("0.0.0.0:{}", port)).await {
                     Ok(s) => {
-                        println!("Peer discovery listener bound on UDP {}", port);
+                        log_event(&node_id_clone, &format!("Bound UDP port {}", port));
                         socket_opt = Some(s);
                         break;
                     }
                     Err(_) => continue,
                 }
             }
-            let socket = socket_opt.expect("❌ No free UDP port available for mDNS listener");
+            let Some(socket) = socket_opt else {
+                eprintln!("❌ No free UDP port available for mDNS listener");
+                return;
+            };
             println!("Peer discovery listener active (UDP mDNS)");
             let mut buf = [0u8; 1024];
             loop {
                 if let Ok((len, addr)) = socket.recv_from(&mut buf).await {
                     let msg = String::from_utf8_lossy(&buf[..len]);
                     if msg.contains("_sgx-guardian._tcp") && !msg.contains(&node_id_clone) {
-                        println!(" Discovered peer via mDNS: {}", addr);
+                        log_event(
+                            &node_id_clone,
+                            &format!("Discovered peer via mDNS: {}", addr),
+                        );
                         log_event(&node_id_clone, &format!("Discovered peer: {}", addr));
 
                         // ✅ Use clone dedicated to background task
@@ -72,16 +78,19 @@ impl P2PDiscovery {
         println!("💡 [Simulation Mode] Using static peer list for discovery testing.");
 
         let configs = vec![
-            load_config("config/nodeA.yaml"),
-            load_config("config/nodeB.yaml"),
-            load_config("config/nodeC.yaml"),
+            load_config("config/nodeA.yaml").expect("Failed to load nodeA config"),
+            load_config("config/nodeB.yaml").expect("Failed to load nodeB config"),
+            load_config("config/nodeC.yaml").expect("Failed to load nodeC config"),
         ];
 
         for conf in configs {
             if conf.node_id != node_id {
                 let peer_ip = conf.ip.clone();
                 let peer_port = conf.port;
-                println!("🔍 Simulated discovery event: {}:{}", peer_ip, peer_port);
+                log_event(
+                    &node_id,
+                    &format!("Simulated discovery event: {}:{}", peer_ip, peer_port),
+                );
                 tx_clone_sim
                     .send(format!("{}:{}", peer_ip, peer_port))
                     .await

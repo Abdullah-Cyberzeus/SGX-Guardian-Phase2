@@ -76,9 +76,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("❌ Local attestation verification failed!");
     }
     println!("\n Loading node configurations...");
-    let node_a = load_config("config/nodeA.yaml");
-    let node_b = load_config("config/nodeB.yaml");
-    let node_c = load_config("config/nodeC.yaml");
+    let node_a = load_config("config/nodeA.yaml").expect("Failed to load nodeA config");
+    let node_b = load_config("config/nodeB.yaml").expect("Failed to load nodeB config");
+    let node_c = load_config("config/nodeC.yaml").expect("Failed to load nodeC config");
 
     println!(
         "✅ Loaded Node A: {} ({}) at {}:{} | key: {}",
