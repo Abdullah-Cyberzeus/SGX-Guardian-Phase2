@@ -1,5 +1,7 @@
 #!/bin/bash
+echo "======================================"
 echo "Starting 3 SGX Guardian nodes..."
+echo "======================================"
 # --- Determine platform (Windows vs Linux) ---
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*|Windows_NT)
@@ -9,7 +11,7 @@ case "$(uname -s)" in
     EXT=""
     ;;
 esac
-echo "🧪 Cleaning old logs before multi-node test..."
+echo "Cleaning old logs before multi-node test..."
 # ensure logs directory exists
 mkdir -p logs
 
@@ -55,7 +57,9 @@ trap cleanup EXIT
 echo "✅ Nodes started: A=$pidA, B=$pidB, C=$pidC"
 
 # --- Smart wait: up to 120 s or until we see at least 3 per-node peer files ---
+echo "======================================="
 echo "🕒 Waiting up to 120s for per-node peer files (trusted_peers.json)..."
+echo "======================================="
 max_iter=24
 found=0
 for i in $(seq 1 $max_iter); do
@@ -85,7 +89,7 @@ if [ "$found" -lt 3 ]; then
 fi
 # --- Summaries ----------------------------------------------------
 echo ""
-echo "🧠 Checking results..."
+echo "→ Checking results..."
 echo "--------------------"
 echo "Node A log summary:"
 grep -E "Peer|Attesting|Verified|trusted|Policy|Circle" logs/nodeA.log | tail -15 || echo "No attestation logs."
@@ -97,7 +101,9 @@ echo "Node C log summary:"
 grep -E "Peer|Attesting|Verified|trusted|Policy|Circle" logs/nodeC.log | tail -15 || echo "No attestation logs."
 echo "--------------------"
 # --- Merge per-node peer files before inspection ------------------
-echo "🧩 Merging peer files from all nodes..."
+echo "======================================"
+echo "→ Merging peer files from all nodes..."
+echo "======================================"
 valid_files=()
 for f in logs/trusted_peers_*.json; do
   # skip literal pattern if no matches (nullglob handles this) and skip single merged file
@@ -127,7 +133,7 @@ if [ -f logs/trusted_peers.json ]; then
   cat logs/trusted_peers.json || echo "⚠️ Could not display file contents."
   echo ""
   echo "--------------------"
-  echo "🔍 Verifying Circle of Trust..."
+  echo "→ Verifying Circle of Trust..."
 if [[ "$EXT" == ".exe" ]]; then
 peer_count=$(
   powershell -NoProfile -Command "(Get-Content -Raw 'logs/trusted_peers.json' | ConvertFrom-Json).Count" |

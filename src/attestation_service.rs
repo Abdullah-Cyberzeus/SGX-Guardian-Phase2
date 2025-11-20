@@ -302,7 +302,7 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
         let parsed: Result<Vec<TrustedPeer>, serde_json::Error> = serde_json::from_str(&contents);
         if let Ok(peers_list) = parsed {
             for peer in peers_list {
-                println!("🧠 Verifying persisted peer {} on startup...", peer.peer_id);
+                println!("Verifying persisted peer {} on startup...", peer.peer_id);
                 match KeyManager::load_or_generate(None) {
                     Ok(km) => {
                         let parts: Vec<&str> = peer.peer_id.split(':').collect();
@@ -402,7 +402,7 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
         }
     }
 
-    println!("🧩 Attestation Service receiver loop exiting.");
+    println!("Attestation Service receiver loop exiting.");
     Ok(())
 }
 
