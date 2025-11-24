@@ -233,7 +233,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use tokio::select;
     select! {
         _ = signal::ctrl_c() => {
-            println!("\n Ctrl+C detected — shutting down gracefully...");
+            println!("\n shutting down gracefully...");
             log_event(&node_id, "Ctrl+C detected — graceful shutdown initiated");
         },
         res = server_task => {

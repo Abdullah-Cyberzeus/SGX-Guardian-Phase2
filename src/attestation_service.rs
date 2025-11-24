@@ -63,8 +63,11 @@ fn write_trusted_peer(peer_id: &str, ip: &str) {
     }
 
     // Save back to per-node file
-    let json = serde_json::to_string_pretty(&data).unwrap();
-    fs::write(&node_file, json).unwrap();
+    if let Ok(json) = serde_json::to_string_pretty(&data) {
+        let _ = fs::write(&node_file, json);
+    } else {
+        eprintln!("⚠️ Failed to serialize trusted peer list for {}", node_file);
+    }
     merge_parent_peer_file();
 }
 
@@ -76,8 +79,11 @@ fn write_last_attestation(peer_id: &str, policy_digest: &str, result: &str) {
         timestamp: Utc::now().to_rfc3339(),
     };
 
-    let json = serde_json::to_string_pretty(&record).unwrap();
-    fs::write("logs/last_attestation.json", json).unwrap();
+    if let Ok(json) = serde_json::to_string_pretty(&record) {
+        let _ = fs::write("logs/last_attestation.json", json);
+    } else {
+        eprintln!("⚠️ Failed to write last_attestation.json");
+    }
 }
 
 fn merge_parent_peer_file() {
@@ -87,7 +93,14 @@ fn merge_parent_peer_file() {
     let mut merged: Vec<Value> = vec![];
 
     // Read all per-node files
-    for entry in std::fs::read_dir("logs").unwrap().flatten() {
+    let entries = match std::fs::read_dir("logs") {
+        Ok(e) => e,
+        Err(_) => {
+            eprintln!("⚠️ logs/ directory missing — skipping merge");
+            return;
+        }
+    };
+    for entry in entries.flatten() {
         let path = entry.path();
 
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
@@ -118,11 +131,11 @@ fn merge_parent_peer_file() {
     });
 
     // write parent file
-    fs::write(
-        "logs/trusted_peers.json",
-        serde_json::to_string_pretty(&merged).unwrap(),
-    )
-    .unwrap();
+    if let Ok(json) = serde_json::to_string_pretty(&merged) {
+        let _ = fs::write("logs/trusted_peers.json", json);
+    } else {
+        eprintln!("⚠️ Failed to merge trusted peer JSON");
+    }
 }
 pub struct AttestationService;
 #[derive(Debug, Clone, Serialize, Deserialize)]

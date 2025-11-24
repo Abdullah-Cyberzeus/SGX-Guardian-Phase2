@@ -129,7 +129,7 @@ impl P2PDiscovery {
         loop {
             let adv = json!({
                 "event": "ADVERTISE",
-                "node": node_id,
+                "node": node_id_sim.clone(),
                 "service": "_sgx-guardian._tcp"
             });
             log_event(&node_id_sim, &adv.to_string());

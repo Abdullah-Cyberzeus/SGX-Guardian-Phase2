@@ -1,7 +1,5 @@
 #!/bin/bash
-echo "======================================"
 echo "Starting 3 SGX Guardian nodes..."
-echo "======================================"
 # --- Determine platform (Windows vs Linux) ---
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*|Windows_NT)
@@ -11,7 +9,7 @@ case "$(uname -s)" in
     EXT=""
     ;;
 esac
-echo "Cleaning old logs before multi-node test..."
+echo "→ Cleaning old logs before multi-node test..."
 # ensure logs directory exists
 mkdir -p logs
 
@@ -41,25 +39,26 @@ pidA=$!
 pidB=$!
 ./target/debug/sgx_guardian_client${EXT} nodeC 50053 > logs/nodeC.log 2>&1 &
 pidC=$!
+# Keep script alive so CTRL+C can be caught and cleanup can execute
+
 cleanup() {
   echo "🛑 Cleaning up nodes..."
-if [[ "$EXT" == ".exe" ]]; then
-  # Windows cleanup
-  taskkill //PID $pidA //F > /dev/null 2>&1 || true
-  taskkill //PID $pidB //F > /dev/null 2>&1 || true
-  taskkill //PID $pidC //F > /dev/null 2>&1 || true
-else
-  # Linux/macOS cleanup
-  kill -TERM "$pidA" "$pidB" "$pidC" 2>/dev/null || true
-fi
+
+  if [[ "$EXT" == ".exe" ]]; then
+      # Windows: kill ALL guardian nodes no matter HOW they were started
+      taskkill /IM sgx_guardian_client.exe /F /T > /dev/null 2>&1 || true
+  else
+      # Linux/macOS
+      pkill -9 sgx_guardian_client >/dev/null 2>&1 || true
+  fi
+
+  echo "✅ Cleanup finished."
 }
-trap cleanup EXIT
+trap cleanup SIGINT
 echo "✅ Nodes started: A=$pidA, B=$pidB, C=$pidC"
 
 # --- Smart wait: up to 120 s or until we see at least 3 per-node peer files ---
-echo "======================================="
 echo "🕒 Waiting up to 120s for per-node peer files (trusted_peers.json)..."
-echo "======================================="
 max_iter=24
 found=0
 for i in $(seq 1 $max_iter); do
@@ -89,7 +88,7 @@ if [ "$found" -lt 3 ]; then
 fi
 # --- Summaries ----------------------------------------------------
 echo ""
-echo "→ Checking results..."
+echo "Checking results..."
 echo "--------------------"
 echo "Node A log summary:"
 grep -E "Peer|Attesting|Verified|trusted|Policy|Circle" logs/nodeA.log | tail -15 || echo "No attestation logs."
@@ -101,9 +100,7 @@ echo "Node C log summary:"
 grep -E "Peer|Attesting|Verified|trusted|Policy|Circle" logs/nodeC.log | tail -15 || echo "No attestation logs."
 echo "--------------------"
 # --- Merge per-node peer files before inspection ------------------
-echo "======================================"
 echo "→ Merging peer files from all nodes..."
-echo "======================================"
 valid_files=()
 for f in logs/trusted_peers_*.json; do
   # skip literal pattern if no matches (nullglob handles this) and skip single merged file
@@ -166,3 +163,4 @@ else
   echo "❌ DEMO FAILED — No trusted peers file found."
 fi
 echo "==============================="
+wait 
