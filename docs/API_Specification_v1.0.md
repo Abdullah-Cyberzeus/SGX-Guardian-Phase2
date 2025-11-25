@@ -36,7 +36,27 @@ All `.proto` files use **syntax = "proto3"** and are compiled during the build s
 
 Below is the complete API sequence for the **Circle of Trust Formation and Policy Synchronization**.
 
-![API Sequence Diagram](./images/grpc_sequence_flow_v1.png)
+```mermaid
+
+    participant A as Node A
+    participant B as Node B
+    participant PA as Policy Authority
+
+    1. mDNS Discovery
+    A->>B: mDNS Discovery Broadcast
+
+    2. mTLS + Attestation
+    B-->>A: mTLS Handshake<br/>+ AttestationEvidence
+
+    3. Policy Digest Request
+    A->>PA: PolicyDigest Request
+
+    4. Signed Policy Package Response
+    PA-->>A: Signed Policy Package
+
+    5. Policy Sync (gRPC)
+    A-->>B: Policy Sync Broadcast (gRPC)
+```
 
 **Sequence Description:**
 1. **Node A → Node B:** Broadcast mDNS service advertisement.  

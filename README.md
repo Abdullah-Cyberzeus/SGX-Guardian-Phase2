@@ -1,6 +1,3 @@
-[![Build Status](https://img.shields.io/github/actions/workflow/status/AsadAli11704/sgx-guardian-test/ci.yml?branch=main&label=CI%20Build&logo=github)](https://github.com/AsadAli11704/sgx-guardian-test/actions)
-![Coverage](https://img.shields.io/badge/Coverage-100%25-brightgreen?logo=rust)
-
 # SG-X Guardian - Circle of Trust & Policy Automation
 
 **Project**: SG-X Guardian Client (On-Premise Core)

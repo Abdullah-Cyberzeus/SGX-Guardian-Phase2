@@ -198,7 +198,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let this_addr = format!("{}:{}", this_node.ip, this_node.port);
     log_event(&node_id, &format!("Starting server at {}", this_addr));
     let server_task = task::spawn(async move {
-        start_server(this_addr.clone()).await.unwrap();
+        if let Err(e) = start_server(this_addr.clone()).await {
+            eprintln!("Server failed at {}: {:?}", this_addr, e);
+        }
     });
 
     // Wait for servers to initialize

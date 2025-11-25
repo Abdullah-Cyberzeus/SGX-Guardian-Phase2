@@ -14,9 +14,73 @@ The CI/CD workflow is implemented using **GitHub Actions** and is automatically 
 The SG-X Guardian Client CI/CD pipeline follows a linear, gated flow where each stage must pass before the next begins.  
 Below is the architecture diagram illustrating the build, test, and deployment flow.
 
-![SG-X Guardian CI/CD Pipeline](./images/ci_pipeline_diagram.png)
-
----
+```
+                                            ┌──────────────────────────────────────────┐
+                                            │        Code Push or PR to main           │
+                                            └───────────────┬──────────────────────────┘
+                                                            │
+                                                            ▼
+                                            ┌──────────────────────────────────────────┐
+                                            │     Checkout and Toolchain Setup         │
+                                            └───────────────┬──────────────────────────┘
+                                                            │
+                                                            ▼
+                                            ┌──────────────────────────────────────────┐
+                                            │        Format Check - cargo fmt          │
+                                            └───────────────┬──────────────────────────┘
+                                                            │
+                                                            ▼
+                                            ┌──────────────────────────────────────────┐
+                                            │          Linting - cargo clippy          │
+                                            └───────────────┬──────────────────────────┘
+                                                            │
+                                                            ▼
+                                            ┌──────────────────────────────────────────┐
+                                            │ Unit & Integration Tests - cargo test    │
+                                            └───────────────┬──────────────────────────┘
+                                                            │
+                                                            ▼
+                                            ┌──────────────────────────────────────────┐
+                                            │ Coverage Analysis - cargo tarpaulin      │
+                                            │          (target ≥ 80%)                  │
+                                            └───────────────┬──────────────────────────┘
+                                                            │
+                                                            ▼
+                                            ┌──────────────────────────────────────────┐
+                                            │ Static Analysis (SAST) - Semgrep scan    │
+                                            └───────────────┬──────────────────────────┘
+                                                            │
+                                                            ▼
+                                            ┌──────────────────────────────────────────┐
+                                            │        Security Audit - cargo audit      │
+                                            └───────────────┬──────────────────────────┘
+                                                            │
+                                                            ▼
+                                            ┌──────────────────────────────────────────┐
+                                            │ License & Policy Enforcement - cargo deny│
+                                            └───────────────┬──────────────────────────┘
+                                                            │
+                                                            ▼
+                                            ┌──────────────────────────────────────────┐
+                                            │ Build Release Artifacts (Multi-Arch)     │
+                                            │      cargo build --release               │
+                                            └───────────────┬──────────────────────────┘
+                                                            │
+                                                            ▼
+                                            ┌──────────────────────────────────────────┐
+                                            │            GPG Package Signing           │
+                                            └───────────────┬──────────────────────────┘
+                                                            │
+                                                            ▼
+                                            ┌──────────────────────────────────────────┐
+                                            │   Artifact Publishing to GitHub Actions  │
+                                            └───────────────┬──────────────────────────┘
+                                                            │
+                                                            ▼
+                                            ┌──────────────────────────────────────────┐
+                                            │         Status - Merge Allowed           │
+                                            └──────────────────────────────────────────┘
+```
 
 ## Pipeline Location
 
