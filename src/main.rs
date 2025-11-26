@@ -1,3 +1,6 @@
+//! SG-X Guardian Client entrypoint.
+//! Initializes node identity, loads configuration, starts discovery,
+//! attestation, metrics tracking, and the gRPC server runtime.
 mod config_loader;
 mod policy;
 pub mod proto {
@@ -34,7 +37,10 @@ use tokio::{signal, task};
 
 #[cfg(windows)]
 use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
-
+/// Entry point for the SG-X Guardian Client.
+/// Initializes identity keys, loads node configurations, starts P2P discovery,
+/// attestation services, metrics tracking, structured logging, and the gRPC server.
+/// This function orchestrates the full runtime lifecycle for each SG-X node.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(" SGX Guardian Client Starting...");
@@ -140,7 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut m = metrics.lock().await;
         m.record_connection();
     }
-    // === SGX Sprint 2: Integrate Discovery + Attestation Services ===
+    // === Integrate Discovery + Attestation Services ===
     println!("🛰️ Initializing P2P Discovery and Attestation Services...");
 
     // Create async channel between discovery ↔ attestation

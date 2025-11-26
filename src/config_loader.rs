@@ -2,6 +2,8 @@ use serde::Deserialize;
 use std::error::Error;
 use std::fs;
 
+/// Represents the per-node configuration loaded from YAML,
+/// including identity, networking, and public key parameters.
 #[derive(Debug, Deserialize, Clone)]
 pub struct NodeConfig {
     pub node_id: String,
@@ -11,6 +13,8 @@ pub struct NodeConfig {
     pub public_key: String,
 }
 impl NodeConfig {
+    /// Validates the node configuration fields, ensuring correct ID,
+    /// hostname, IP format, port range, and non-empty public key.
     pub fn validate(&self) -> Result<(), String> {
         // Node ID must not be empty
         if self.node_id.trim().is_empty() {
@@ -40,6 +44,8 @@ impl NodeConfig {
     }
 }
 
+/// Loads a node configuration file from YAML, parses it into `NodeConfig`,
+/// and performs validation to ensure correctness before returning it.
 pub fn load_config(path: &str) -> Result<NodeConfig, Box<dyn Error>> {
     let data = fs::read_to_string(path)
         .map_err(|e| format!("Failed to read config file {}: {}", path, e))?;

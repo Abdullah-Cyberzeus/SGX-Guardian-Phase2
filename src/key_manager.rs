@@ -9,13 +9,17 @@ use tracing::{info, warn};
 /// Default key path
 const DEFAULT_KEY_PATH: &str = "sgx-agent/device.key";
 
-/// KeyManager handles generation, persistence, and usage of node identity keypair.
+/// Manages the SG-X node identity keypair including generation,
+/// secure persistence, loading from disk, and providing signing/public
+/// key access for attestation workflows.
 pub struct KeyManager {
     keypair: EcdsaKeyPair,
     key_path: String,
 }
 impl KeyManager {
-    /// Load existing keypair or generate a new one if missing.
+    /// Loads the identity keypair from disk if it exists, otherwise generates
+    /// a new ECDSA P-256 keypair and saves it to the configured path.
+    /// Returns a fully initialized `KeyManager` instance.
     pub fn load_or_generate(custom_path: Option<&str>) -> Result<Self> {
         let rng = SystemRandom::new();
         let key_path_str = custom_path.unwrap_or(DEFAULT_KEY_PATH);
@@ -51,8 +55,8 @@ impl KeyManager {
             key_path: key_path_str.to_string(),
         })
     }
-
-    /// Sign arbitrary data using the node's private key.
+    /// Signs the provided message bytes using the node’s private ECDSA key.
+    /// Returns the raw signature bytes, used in attestation messages.
     pub fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
         let rng = SystemRandom::new();
         let sig = self
@@ -62,12 +66,14 @@ impl KeyManager {
         Ok(sig.as_ref().to_vec())
     }
 
-    /// Return the DER-encoded public key bytes.
+    /// Returns the node’s public key encoded in DER format,
+    /// used by peers during attestation verification.
     pub fn pubkey_der(&self) -> Vec<u8> {
         self.keypair.public_key().as_ref().to_vec()
     }
 
-    /// Return current key path for debugging/logs.
+    /// Returns the filesystem path where the private key is stored.
+    /// Useful for debugging and operational visibility.
     pub fn key_path(&self) -> &str {
         &self.key_path
     }
@@ -76,6 +82,8 @@ impl KeyManager {
 mod tests {
     use super::*;
     use base64::{engine::general_purpose, Engine as _};
+    /// Ensures that identity keys persist across reloads and that signing works.
+    /// This verifies the correctness of keypair storage + signature generation.
     #[test]
     fn test_key_persistence_and_sign() {
         let test_path = "/tmp/test_device.key";

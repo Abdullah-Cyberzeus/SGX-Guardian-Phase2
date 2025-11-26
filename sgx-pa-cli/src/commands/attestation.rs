@@ -2,6 +2,8 @@ use anyhow::Result;
 use serde::Deserialize;
 use std::fs;
 
+/// Represents the most recent attestation record written by an SG-X node,
+/// including peer identity, policy digest, result status, and timestamp.
 #[derive(Deserialize)]
 struct LastAttestation {
     peer_id: String,
@@ -10,6 +12,8 @@ struct LastAttestation {
     timestamp: String,
 }
 
+/// Reads the last attestation result from the logs directory and prints it
+/// in a human-readable format. Handles missing or malformed data gracefully.
 pub fn run() -> Result<()> {
     let data = fs::read_to_string("../logs/last_attestation.json")
         .or_else(|_| fs::read_to_string("logs/last_attestation.json"))

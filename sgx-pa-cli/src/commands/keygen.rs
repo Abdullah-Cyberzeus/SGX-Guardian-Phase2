@@ -7,7 +7,10 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-/// Generate a new ECDSA-P256 keypair and store it locally
+/// Generates a new ECDSA-P256 keypair for the SGX Policy Authority.
+/// Writes the private key to `guardian_private.key` and the public key to
+/// `guardian_public.key`, with overwrite protection and secure file
+/// permissions on Unix-based systems.
 pub fn execute() {
     let signing_key = SigningKey::random(&mut OsRng);
     let verify_key = VerifyingKey::from(&signing_key);

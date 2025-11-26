@@ -11,7 +11,8 @@ use tokio::time::Duration;
 // Trusted Peer JSON Logging Helpers ===
 use chrono::Utc;
 use std::fs;
-
+/// Represents a peer that successfully passed attestation
+/// and is stored in the per-node trusted peers file.
 #[derive(Serialize, Deserialize)]
 struct TrustedPeer {
     peer_id: String,
@@ -19,7 +20,8 @@ struct TrustedPeer {
     status: String,
     timestamp: String,
 }
-
+/// Stores the most recent attestation result for a peer,
+/// including digest, result (success/fail), and timestamp.
 #[derive(Serialize, Deserialize)]
 struct LastAttestation {
     peer_id: String,
@@ -27,7 +29,8 @@ struct LastAttestation {
     result: String,
     timestamp: String,
 }
-
+/// Writes or updates trusted peer info into the per-node JSON file
+/// and then merges all peer files into a global combined view.
 fn write_trusted_peer(peer_id: &str, ip: &str) {
     // Identify node name (nodeA / nodeB / nodeC)
     let node = std::env::args().nth(1).unwrap_or("nodeX".into());
@@ -70,7 +73,8 @@ fn write_trusted_peer(peer_id: &str, ip: &str) {
     }
     merge_parent_peer_file();
 }
-
+/// Saves the latest attestation result for a peer into
+/// `logs/last_attestation.json` for debugging & audit visibility.
 fn write_last_attestation(peer_id: &str, policy_digest: &str, result: &str) {
     let record = LastAttestation {
         peer_id: peer_id.to_string(),
@@ -85,7 +89,8 @@ fn write_last_attestation(peer_id: &str, policy_digest: &str, result: &str) {
         eprintln!("⚠️ Failed to write last_attestation.json");
     }
 }
-
+/// Merges all `trusted_peers_nodeX.json` files into a single
+/// `trusted_peers.json` by removing duplicates and combining entries.
 fn merge_parent_peer_file() {
     use serde_json::Value;
     use std::fs;
@@ -137,7 +142,11 @@ fn merge_parent_peer_file() {
         eprintln!("⚠️ Failed to merge trusted peer JSON");
     }
 }
+/// Main service responsible for generating, verifying,
+/// and coordinating SG-X attestation workflows.
 pub struct AttestationService;
+/// Contains the nonce, policy digest, and cryptographic signature
+/// exchanged during the attestation handshake.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttestationEvidence {
     pub nonce: String,
@@ -145,6 +154,8 @@ pub struct AttestationEvidence {
     pub signature: String,
 }
 impl AttestationService {
+    /// Creates signed attestation evidence by hashing the policy file,
+    /// generating a random nonce, and signing the combined message.
     pub fn create_signed_evidence(
         km: &KeyManager,
         policy_yaml: &str,
@@ -168,6 +179,9 @@ impl AttestationService {
             signature: signature_b64,
         })
     }
+    /// Verifies incoming attestation evidence by recomputing the policy digest,
+    /// reconstructing the signed message, and validating the signature using
+    /// the peer’s public key.
     pub fn verify_signed_evidence(
         ev: &AttestationEvidence,
         pubkey_der: &[u8],
@@ -211,7 +225,9 @@ impl AttestationService {
             }
         }
     }
-    /// Perform mutual attestation handshake between two nodes.
+    /// Performs the full mutual attestation handshake: connects to peer,
+    /// exchanges signed evidence, verifies policy digest & signature,
+    /// and updates trusted peer state on success.
     pub async fn mutual_attest(peer_ip: String, peer_port: u16, km: &KeyManager) -> Result<bool> {
         use std::fs;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -306,10 +322,11 @@ impl AttestationService {
         Ok(true)
     }
 }
-
+/// Background task that processes discovered peers, re-attests persisted peers,
+/// spawns the attestation listener, and runs periodic re-attestation every 60 seconds.
 pub async fn run(mut rx: Receiver<String>) -> Result<()> {
     println!("🛰️ Attestation Service background task started (listening for new peers)");
-    // === Sprint 2 Day 9 – Auto Re-Attest on Startup ===
+    // === Auto Re-Attest on Startup ===
     if let Ok(contents) = fs::read_to_string("logs/trusted_peers.json") {
         // Parse JSON safely
         let parsed: Result<Vec<TrustedPeer>, serde_json::Error> = serde_json::from_str(&contents);
@@ -418,8 +435,8 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
     println!("Attestation Service receiver loop exiting.");
     Ok(())
 }
-
-// TCP Attestation Listener (responds to peer evidence) ===
+/// Starts a TCP listener to receive attestation evidence from peers,
+/// verify it, and respond with locally signed evidence.
 pub async fn start_attestation_listener(listen_port: u16) -> Result<()> {
     use std::fs;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -496,6 +513,8 @@ pub async fn start_attestation_listener(listen_port: u16) -> Result<()> {
 mod tests {
     use super::*;
     use crate::key_manager::KeyManager;
+    /// Ensures that generated attestation evidence can be verified using
+    /// the node’s own public key (sanity test).
     #[test]
     fn test_attestation_create_and_verify() {
         let km = KeyManager::load_or_generate(None).unwrap();

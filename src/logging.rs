@@ -4,11 +4,11 @@ use tracing_appender::rolling;
 use tracing_subscriber::fmt::time::ChronoLocal;
 use tracing_subscriber::{fmt, EnvFilter};
 
-/// Initialize global JSON logger with daily file rotation.
-/// Each node writes to its own log file inside `/logs/` folder.
+/// Initializes the global structured JSON logger for SG-X nodes.
+/// Creates a daily rotating log file under `/logs/<node>.log`, ensures
+/// non-blocking async writes, and formats all events using ISO-8601 timestamps.
 ///
-/// Example:
-/// logs/nodeA.log, logs/nodeB.log, etc.
+/// Example: logs/nodeA.log, logs/nodeB.log
 pub fn init_logger(node_id: &str) {
     // Create a daily rotating file appender
     let file_appender = rolling::daily("logs", format!("{}.log", node_id));
@@ -32,8 +32,8 @@ pub fn init_logger(node_id: &str) {
         .init();
     info!(node = %node_id, time = %Local::now().to_rfc3339(), "Logger initialized successfully");
 }
-
-/// Log general information events with timestamp and node context.
+/// Logs a normal information-level event for the given node,
+/// automatically attaching timestamp and structured JSON fields.
 pub fn log_event(node_id: &str, event: &str) {
     info!(
         node = %node_id,
@@ -41,6 +41,8 @@ pub fn log_event(node_id: &str, event: &str) {
         event = %event
     );
 }
+/// Logs an error-level event for the given node, including timestamp and
+/// structured JSON fields. Used for reporting failures or critical warnings.
 pub fn log_error(node_id: &str, err: &str) {
     error!(
         node = %node_id,

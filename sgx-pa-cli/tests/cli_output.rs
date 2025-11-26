@@ -1,3 +1,5 @@
+/// Tests the `peers` CLI command by creating a temporary trusted_peers.json file,
+/// running the command, and verifying that it executes successfully without errors.
 #[test]
 fn test_peers_table_format() {
     use std::fs;

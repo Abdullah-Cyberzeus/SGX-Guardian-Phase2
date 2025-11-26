@@ -2,6 +2,8 @@ use crate::config::NodeConfig;
 use clap::Args;
 use std::path::PathBuf;
 
+/// Command-line arguments for the `status` command, allowing selection
+/// of a target SGX Guardian node whose configuration will be displayed.
 #[derive(Args)]
 #[command(about = "Show status information for a specific SGX Guardian node")]
 pub struct StatusArgs {
@@ -10,6 +12,9 @@ pub struct StatusArgs {
     pub node: String,
 }
 
+/// Loads the configuration file for the specified SGX Guardian node and
+/// prints a summary of its identity, hostname, IP, port, and public key.
+/// Performs validation of input node names and resolves config paths safely.
 pub fn run(args: StatusArgs) {
     // 1) Validate node name
     if !args

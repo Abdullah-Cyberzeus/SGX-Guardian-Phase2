@@ -6,12 +6,17 @@ use p256::SecretKey;
 use sha2::{Digest, Sha256};
 use std::fs;
 
+/// Command-line arguments for the `sign` operation, which signs a policy file
+/// using the guardian's locally stored ECDSA-P256 private key.
 #[derive(Args)]
 #[command(about = "Sign a policy file using the local guardian private key")]
 pub struct SignArgs {
     /// Path to the policy YAML or JSON file to be signed
     pub file: String,
 }
+/// Loads the guardian private key, computes a SHA-256 digest of the policy file,
+/// signs it using ECDSA-P256, and writes the Base64-encoded signature to
+/// `policy.sig`. Handles missing files, invalid keys, and bad formats safely.
 pub fn execute(args: SignArgs) {
     let policy_path = &args.file;
     println!("Signing policy file: {}", policy_path);

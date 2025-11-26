@@ -1,8 +1,13 @@
+//! SGX Guardian Policy Authority CLI tool.
+//! Provides commands for viewing logs, signing policies, generating keys,
+//! checking node status, and inspecting attested peers.
 mod commands;
 mod config;
 use clap::{Parser, Subcommand};
 use commands::{logs::LogsArgs, sign::SignArgs};
-
+/// Top-level CLI definition for the SGX Policy Authority tool.
+/// Parses subcommands for key generation, policy signing, logs,
+/// peer inspection, and attestation status.
 #[derive(Parser)]
 #[command(
     name = "sgx-pa-cli",
@@ -13,7 +18,8 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 }
-
+/// Defines all supported sgx-pa-cli subcommands, including policy signing,
+/// key generation, node status inspection, log viewing, and peer discovery output.
 #[derive(Subcommand)]
 enum Commands {
     /// Show status information for a specific SGX Guardian node
@@ -29,6 +35,9 @@ enum Commands {
     /// Show the last attestation result
     Attestation,
 }
+/// Entry point for the SGX Policy Authority CLI.
+/// Dispatches the selected subcommand and routes execution
+/// to the corresponding handler in the `commands` module.
 fn main() {
     let cli = Cli::parse();
     match cli.command {

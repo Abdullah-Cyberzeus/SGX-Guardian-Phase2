@@ -4,6 +4,9 @@ use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, Table};
 use serde::Deserialize;
 use std::fs;
 
+/// Represents a trusted peer entry recorded by SG-X nodes,
+/// including peer identity, IP address, verification status,
+/// and the last attestation timestamp in RFC3339 format.
 #[derive(Deserialize)]
 struct TrustedPeer {
     peer_id: String,
@@ -12,6 +15,9 @@ struct TrustedPeer {
     timestamp: String,
 }
 
+/// Reads the trusted peers list from the logs directory and displays it
+/// in a formatted table. Converts timestamps to human-readable form and
+/// gracefully handles missing or corrupted data.
 pub fn run() -> Result<()> {
     let data = fs::read_to_string("../logs/trusted_peers.json")
         .or_else(|_| fs::read_to_string("logs/trusted_peers.json"))

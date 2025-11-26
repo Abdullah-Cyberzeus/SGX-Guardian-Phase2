@@ -2,6 +2,8 @@ use clap::Args;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
+/// Command-line arguments for viewing SG-X node logs, including
+/// selecting the node ID and the number of recent log lines to display.
 #[derive(Args)]
 #[command(about = "View recent log entries for a specific node")]
 pub struct LogsArgs {
@@ -13,6 +15,9 @@ pub struct LogsArgs {
     #[arg(long, default_value = "nodeA")]
     pub node: String,
 }
+/// Reads and displays the latest JSON log file for the specified SG-X node.
+/// Automatically selects the newest log file matching the node name and prints
+/// the last N entries based on the `--tail` argument.
 pub fn run(args: LogsArgs) {
     use std::fs;
     use std::path::PathBuf;

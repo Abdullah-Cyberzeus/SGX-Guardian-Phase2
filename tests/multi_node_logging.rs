@@ -3,6 +3,10 @@ use std::fs;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
+
+/// Integration test that launches multiple SG-X nodes, verifies that each node
+/// generates its own JSON log file, and checks that at least one INFO-level
+/// event exists in the logs. Ensures multi-node logging works end-to-end.
 #[test]
 fn multi_node_logging() {
     let current_dir = env::current_dir().unwrap();

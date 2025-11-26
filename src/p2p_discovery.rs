@@ -11,9 +11,15 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
+/// Provides peer discovery for SGX nodes using mDNS broadcasting,
+/// UDP-based listener scanning, and simulated fallback discovery for testing.
 pub struct P2PDiscovery;
 
 impl P2PDiscovery {
+    /// Starts the P2P discovery workflow for an SG-X node.  
+    /// Registers an mDNS service, listens for incoming peer advertisements,
+    /// emits discovered peers to the attestation channel, and performs
+    /// simulated discovery for local multi-node testing.
     pub async fn run(
         tx: Sender<String>,
         node_id: String,

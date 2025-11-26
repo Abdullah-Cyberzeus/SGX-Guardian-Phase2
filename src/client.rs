@@ -2,6 +2,8 @@ use crate::logging::log_event;
 use crate::proto::sgx::ping_service_client::PingServiceClient;
 use crate::proto::sgx::PingRequest;
 
+/// Sends a gRPC ping request to a remote SG-X node and logs the response.
+/// Used for basic liveness checks between peers in the Guardian network.
 pub async fn send_ping(addr: String, from_id: String) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = PingServiceClient::connect(format!("http://{}", addr)).await?;
     let request = tonic::Request::new(PingRequest {
