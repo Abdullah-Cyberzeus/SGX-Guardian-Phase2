@@ -1,3 +1,4 @@
+//! Implements the `status` subcommand for inspecting node metadata.
 use crate::config::NodeConfig;
 use clap::Args;
 use std::path::PathBuf;

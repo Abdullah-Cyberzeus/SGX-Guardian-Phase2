@@ -1,3 +1,5 @@
+//! Core attestation orchestration logic for exchanging and verifying
+//! evidence between SGX Guardian nodes.
 use crate::key_manager::KeyManager;
 use anyhow::Result;
 use base64::{engine::general_purpose, Engine as _};

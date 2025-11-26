@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader};
 /// Command-line arguments for viewing SG-X node logs, including
 /// selecting the node ID and the number of recent log lines to display.
 #[derive(Args)]
-#[command(about = "View recent log entries for a specific node")]
+#[command(about = "Inspect recent JSON log activity for a selected SGX Guardian node")]
 pub struct LogsArgs {
     /// Number of log lines to show from the end of file
     #[arg(long, default_value = "20")]

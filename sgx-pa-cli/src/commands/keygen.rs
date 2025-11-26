@@ -1,3 +1,5 @@
+//! Key generation utilities for the SGX Guardian Policy Authority CLI.
+//! Ensures deterministic ECDSA-P256 keypair creation with secure handling.
 use base64::engine::general_purpose;
 use base64::Engine as _;
 use p256::ecdsa::{SigningKey, VerifyingKey};

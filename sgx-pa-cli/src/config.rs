@@ -12,7 +12,7 @@ pub struct NodeConfig {
 }
 impl NodeConfig {
     /// Loads a YAML configuration file from the given path and deserializes it
-    /// into a `NodeConfig`. Returns an error if the file is unreadable or invalid.
+    /// into a `NodeConfig`. Return error if the file is unreadable or invalid.
     pub fn load(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let data = fs::read_to_string(path)?;
         let cfg = serde_yaml::from_str::<NodeConfig>(&data)?;
