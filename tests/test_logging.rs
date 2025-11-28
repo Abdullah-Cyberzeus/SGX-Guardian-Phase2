@@ -20,7 +20,7 @@ fn test_log_error_runs_without_panic() {
     log_error("node-test", "This is a test error");
 }
 
-/// Optional extra: test that log_event accepts various inputs
+///test that log_event accepts various inputs
 #[test]
 fn test_log_event_multiple_inputs() {
     log_event("node1", "Event A");
@@ -29,7 +29,7 @@ fn test_log_event_multiple_inputs() {
     log_event("", "Blank node");
 }
 
-/// Optional: test that log_error handles different strings
+/// test that log_error handles different strings
 #[test]
 fn test_log_error_multiple_inputs() {
     log_error("node1", "Error A");

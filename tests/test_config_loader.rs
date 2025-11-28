@@ -1,4 +1,3 @@
-//! Tests for config_loader.rs
 //! Covers: valid config, invalid YAML, missing fields, invalid IP, port=0,
 //! empty public_key, and file read errors.
 

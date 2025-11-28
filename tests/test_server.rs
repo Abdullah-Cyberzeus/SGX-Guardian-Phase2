@@ -1,6 +1,6 @@
 use sgx_guardian_client::proto::sgx::ping_service_server::PingService;
 use sgx_guardian_client::proto::sgx::PingRequest;
-use sgx_guardian_client::server::MyPingService; // REQUIRED TRAIT
+use sgx_guardian_client::server::MyPingService;
 
 use tonic::Request;
 
@@ -14,7 +14,7 @@ async fn test_ping_handler_success() {
         from: "clientA".into(),
     });
 
-    // Call handler (trait must be imported!)
+    // Call handler
     let response = service.ping(req).await.expect("Ping should succeed");
 
     let reply = response.into_inner();

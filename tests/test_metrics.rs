@@ -1,4 +1,3 @@
-// tests/test_metrics.rs
 use sgx_guardian_client::metrics::Metrics;
 use std::time::Duration;
 

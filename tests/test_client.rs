@@ -1,5 +1,3 @@
-// tests/test_client.rs
-
 use sgx_guardian_client::client::send_ping;
 use sgx_guardian_client::proto::sgx::ping_service_server::PingServiceServer;
 use sgx_guardian_client::server::MyPingService;
