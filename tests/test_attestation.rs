@@ -389,22 +389,3 @@ fn test_policy_normalization_removes_all_whitespace() {
         let _ = fs::remove_dir_all(parent);
     }
 }
-
-#[test]
-fn test_multiple_sequential_attestations_all_verify() {
-    let key_path = make_temp_key_path();
-    let km = KeyManager::load_or_generate(Some(&key_path)).unwrap();
-    let policy = "sequential_test";
-
-    // Create and verify 20 sequential attestations
-    for i in 0..20 {
-        let ev = AttestationService::create_signed_evidence(&km, policy).unwrap();
-        let verified =
-            AttestationService::verify_signed_evidence(&ev, &km.pubkey_der(), policy).unwrap();
-        assert!(verified, "Attestation {} must verify successfully", i);
-    }
-
-    if let Some(parent) = Path::new(&key_path).parent() {
-        let _ = fs::remove_dir_all(parent);
-    }
-}

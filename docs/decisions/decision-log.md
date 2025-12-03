@@ -55,6 +55,9 @@ It ensures traceability, justification, and long-term maintainability of core de
 | D034 | Autonomous Circle-of-Trust Demo | Architecture – Distributed System | Accepted | Sprint 2 |
 | D035 | Multi-Node Automation Script | Process – Testing Automation | Accepted | Sprint 2 |
 | D036 | Peer Log Merging – jq Consolidation | Architecture – Observability | Accepted | Sprint 2 |
+| D037 | TLS Module – mTLS Foundation | Architecture – Security | Accepted | Sprint 3 |
+| D038 | Certificate Lifecycle – Persistent Identity | Architecture – Identity | Accepted | Sprint 3 |
+| D039 | Secure gRPC mTLS Channel Integration | Architecture – Communication Security | Accepted | Sprint 3 |
 
 ---
 
@@ -62,7 +65,7 @@ It ensures traceability, justification, and long-term maintainability of core de
 
 | Category | Count | Decisions |
 |---------|--------|----------|
-| **Architecture** | 20 | D001, D002, D003, D004, D005, D008, D009, D012, D014, D016, D017, D018, D019, D020, D027, D028, D029, D030, D031, D034 |
+| **Architecture** | 20 | D001, D002, D003, D004, D005, D008, D009, D012, D014, D016, D017, D018, D019, D020, D027, D028, D029, D030, D031, D034, D037, D038, D039 |
 | **Implementation** | 6 | D006, D007, D021, D024, D032 |
 | **DevOps** | 2 | D010, D011 |
 | **Quality** | 5 | D013, D015, D025, D026, D033 |
@@ -1119,6 +1122,82 @@ Custom merger → requires more code.
 **Implications:**  
 - Enables centralized trust visualization  
 - Requires consistent JSON schemas  
+
+---
+
+### D037: TLS Module – mTLS Foundation
+
+**Date:** Sprint 3  
+**Status:** Accepted  
+**Category:** Architecture – Security  
+
+**Context:**  
+System required a transport-security layer for encrypted gRPC communication.  
+No centralized TLS module existed in Sprint 1–2.
+
+**Decision:**  
+Create `src/tls.rs` implementing:  
+- Rustls server/client builders  
+- Certificate + key loaders  
+- Mutual-auth enforcement  
+- TLS configuration tests using rcgen  
+
+**Rationale:**  
+Centralizing TLS prevents duplication and ensures consistent Zero-Trust defaults.
+
+**Implications:**  
+All gRPC layers now depend on this TLS foundation.
+
+---
+
+### D038: Certificate Lifecycle – Persistent Node Identity
+
+**Date:** Sprint 3  
+**Status:** Accepted  
+**Category:** Architecture – Identity  
+
+**Context:**  
+Nodes had persistent keys but no certificates for mTLS.  
+Tonic required PEM, but project assets were DER formatted.
+
+**Decision:**  
+Implement certificate lifecycle:  
+- Generate or load `sgx-agent/device_cert.der`  
+- Bind certificate to device.key  
+- Convert DER → PEM at runtime  
+- Include SAN hostname + 127.0.0.1  
+- Expose `ensure_node_certificate_or_generate()`  
+
+**Rationale:**  
+Node must have a stable, durable identity for secure channels.
+
+**Implications:**  
+Same identity persists across restarts and forms basis for authentication.
+
+---
+
+### D039: Secure gRPC mTLS Channel Integration
+
+**Date:** Sprint 3  
+**Status:** Accepted  
+**Category:** Architecture – Communication Security  
+
+**Context:**    
+Next step was to fully secure server.rs & client.rs with mTLS.
+
+**Decision:**  
+Integrate mTLS into gRPC transport layer:  
+- Use ServerTlsConfig + ClientTlsConfig  
+- DER → PEM conversion for Identity  
+- TLS server starts before attestation  
+- Secure Ping/Pong RPC implemented  
+- Add audit-proof logs  
+
+**Rationale:**  
+Meets Sprint-3 deliverable: secure communication between nodes.
+
+**Implications:**  
+All cross-node communication is now encrypted & authenticated.
 
 ---
 

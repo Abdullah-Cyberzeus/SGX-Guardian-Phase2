@@ -10,6 +10,7 @@ pub mod metrics;
 pub mod p2p_discovery;
 pub mod policy;
 pub mod server;
+pub mod tls;
 
 // gRPC proto (auto-generated)
 pub mod proto {
@@ -17,8 +18,6 @@ pub mod proto {
         include!(concat!(env!("OUT_DIR"), "/sgx.rs"));
     }
 }
-
-// (Optional) If you still need this from previous file:
 pub fn add_numbers(a: i32, b: i32) -> i32 {
     a + b
 }

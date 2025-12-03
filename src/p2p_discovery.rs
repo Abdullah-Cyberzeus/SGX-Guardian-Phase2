@@ -71,8 +71,10 @@ impl P2PDiscovery {
                         );
                         log_event(&node_id_clone, &format!("Discovered peer: {}", addr));
 
-                        // ✅ Use clone dedicated to background task
-                        if let Err(e) = tx_clone_bg.send(addr.ip().to_string()).await {
+                        // FIXED: send full address instead of only IP
+                        let full_addr = format!("{}:{}", addr.ip(), 50051); // default base port
+
+                        if let Err(e) = tx_clone_bg.send(full_addr).await {
                             eprintln!("⚠️ Failed to send discovered peer to channel: {:?}", e);
                         }
                     }
@@ -97,11 +99,10 @@ impl P2PDiscovery {
                     &node_id,
                     &format!("Simulated discovery event: {}:{}", peer_ip, peer_port),
                 );
-                tx_clone_sim
-                    .send(format!("{}:{}", peer_ip, peer_port))
-                    .await
-                    .ok();
-
+                tokio::time::sleep(Duration::from_secs(1)).await; // prevent race
+                let full_addr = format!("{}:{}", peer_ip, peer_port);
+                tx_clone_sim.send(full_addr.clone()).await.ok();
+                println!("🔐 Attesting discovered peer (sim-mode): {}", full_addr);
                 let km_ref = Arc::new(KeyManager::load_or_generate(None)?);
                 println!("🔐 Attesting discovered peer: {}:{}", peer_ip, peer_port);
 

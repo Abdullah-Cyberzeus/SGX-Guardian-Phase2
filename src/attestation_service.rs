@@ -235,6 +235,10 @@ impl AttestationService {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::TcpStream;
         let addr = format!("{}:{}", peer_ip, peer_port);
+        println!(
+            "DEBUG: mutual_attest called with peer_ip={} peer_port={}",
+            peer_ip, peer_port
+        );
         println!("Attempting mutual attestation with {}", addr);
         // Step 1: try connect with small retry loop
         let mut attempt = 0;
@@ -385,6 +389,10 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
                         match KeyManager::load_or_generate(None) {
                             Ok(km) => {
                                 let addr_parts: Vec<&str> = peer.peer_id.split(':').collect();
+                                println!(
+                                    "DEBUG: re-attesting peer_id={} parsed parts={:?}",
+                                    peer.peer_id, addr_parts
+                                );
                                 if addr_parts.len() == 2 {
                                     let ip = addr_parts[0].to_string();
                                     let port = addr_parts[1].parse::<u16>().unwrap_or(50151);

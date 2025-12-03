@@ -203,28 +203,72 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let this_addr = format!("{}:{}", this_node.ip, this_node.port);
     log_event(&node_id, &format!("Starting server at {}", this_addr));
-    let server_task = task::spawn(async move {
-        if let Err(e) = start_server(this_addr.clone()).await {
-            eprintln!("Server failed at {}: {:?}", this_addr, e);
+    // TLS Certificate Setup
+    use sgx_guardian_client::tls;
+    let key_path = "sgx-agent/device.key";
+    let cert_path = "sgx-agent/device_cert.der";
+    // SAN = hostname and IP of node
+    let san = [this_node.hostname.as_str(), "127.0.0.1"];
+    // Ensure certificate exists
+    match tls::ensure_node_certificate_or_generate(key_path, cert_path, &san) {
+        Ok(_) => {
+            println!("🔐 TLS certificate ready at {}", cert_path);
+            log_event(
+                &node_id,
+                &format!("TLS certificate loaded/generated at {}", cert_path),
+            );
+        }
+        Err(err) => {
+            eprintln!("❌ Failed to prepare TLS certificate: {:?}", err);
+            log_error(&node_id, &format!("TLS certificate error: {:?}", err));
+            std::process::exit(1);
+        }
+    }
+    // === DER → PEM conversion (required by tonic TLS) ===
+    use sgx_guardian_client::tls::der_to_pem;
+    use tonic::transport::{Certificate as TonicCertificate, Identity};
+    // load DER cert
+    let cert_der = std::fs::read(cert_path).expect("read cert der");
+    let cert_pem = der_to_pem(&cert_der);
+    // load DER private key and wrap as PEM
+    let key_der = std::fs::read(key_path).expect("read key der");
+    let key_pem = {
+        let pem = pem::Pem {
+            tag: "PRIVATE KEY".into(),
+            contents: key_der,
+        };
+        pem::encode(&pem)
+    };
+    // Build tonic Identity + CA root
+    let identity = Identity::from_pem(cert_pem.clone(), key_pem.clone());
+    let ca_cert = TonicCertificate::from_pem(cert_pem.clone());
+    // spawn gRPC server using tonic Identity + CA (mTLS)
+    let server_task = task::spawn({
+        let identity = identity.clone();
+        let ca_cert = ca_cert.clone();
+        let this_addr = this_addr.clone();
+        async move {
+            if let Err(e) = start_server(this_addr.clone(), identity, ca_cert).await {
+                eprintln!("Server failed at {}: {:?}", this_addr, e);
+            }
         }
     });
-
     // Wait for servers to initialize
-    tokio::time::sleep(Duration::from_secs(2)).await;
-
+    tokio::time::sleep(Duration::from_secs(20)).await;
     // Only nodeA sends pings to others
     if node_id == "nodeA" {
         for peer in peers {
             let target = format!("{}:{}", peer.ip, peer.port);
             log_event(&node_id, &format!("Sending ping to {}", target));
-            if let Err(e) = send_ping(target, node_id.clone()).await {
+            if let Err(e) =
+                send_ping(target, node_id.clone(), identity.clone(), ca_cert.clone()).await
+            {
                 log_error(&node_id, &format!("Ping failed: {}", e));
                 let mut m = metrics.lock().await;
                 m.record_error();
             }
         }
     }
-
     // background uptime tracker
     let node_id_clone = node_id.clone();
     let metrics_clone = metrics.clone();
