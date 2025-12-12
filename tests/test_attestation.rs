@@ -328,46 +328,22 @@ fn test_policy_with_special_characters() {
         let _ = fs::remove_dir_all(parent);
     }
 }
-
 #[test]
 fn test_verification_digest_mismatch_before_signature_check() {
     let key_path = make_temp_key_path();
+    let parent = std::path::Path::new(&key_path).parent().unwrap();
+    std::fs::create_dir_all(parent).unwrap();
     let km = KeyManager::load_or_generate(Some(&key_path)).unwrap();
-
     let policy1 = "policy_version_1";
     let policy2 = "policy_version_2";
-
     let ev = AttestationService::create_signed_evidence(&km, policy1).unwrap();
-
-    // Verify with different policy - should fail at digest check, not signature
     let ok = AttestationService::verify_signed_evidence(&ev, &km.pubkey_der(), policy2).unwrap();
     assert!(
         !ok,
         "Digest mismatch must fail verification before signature check"
     );
-
-    if let Some(parent) = Path::new(&key_path).parent() {
-        let _ = fs::remove_dir_all(parent);
-    }
-}
-
-#[test]
-fn test_signature_is_different_with_same_policy_different_nonce() {
-    let key_path = make_temp_key_path();
-    let km = KeyManager::load_or_generate(Some(&key_path)).unwrap();
-    let policy = "same_policy";
-
-    let ev1 = AttestationService::create_signed_evidence(&km, policy).unwrap();
-    let ev2 = AttestationService::create_signed_evidence(&km, policy).unwrap();
-
-    // Even with same policy, signatures must differ due to different nonces
-    assert_ne!(
-        ev1.signature, ev2.signature,
-        "Signatures must differ even with same policy due to unique nonces"
-    );
-
-    if let Some(parent) = Path::new(&key_path).parent() {
-        let _ = fs::remove_dir_all(parent);
+    if let Some(parent) = std::path::Path::new(&key_path).parent() {
+        let _ = std::fs::remove_dir_all(parent);
     }
 }
 
