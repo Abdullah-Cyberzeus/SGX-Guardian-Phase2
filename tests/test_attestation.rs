@@ -1,21 +1,17 @@
 use std::fs;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use sgx_guardian_client::attestation_service::{AttestationEvidence, AttestationService};
 use sgx_guardian_client::key_manager::KeyManager;
 
 /// Create a unique, isolated temporary key path for safe testing.
 fn make_temp_key_path() -> String {
-    let pid = std::process::id();
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
+    // Unique folder name using UUID (prevents all collisions)
+    let uuid = uuid::Uuid::new_v4().to_string();
 
     let mut dir = std::env::temp_dir();
-    dir.push(format!("sgx_attest_test_{}_{}", pid, ts));
-    fs::create_dir_all(&dir).unwrap();
+    dir.push(format!("sgx_attest_test_{}", uuid));
+    std::fs::create_dir_all(&dir).unwrap();
 
     dir.push("device.key");
     dir.to_string_lossy().to_string()
