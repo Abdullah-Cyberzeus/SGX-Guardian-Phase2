@@ -3,6 +3,7 @@ use base64::Engine as _;
 use clap::Args;
 use p256::ecdsa::{signature::Signer, Signature, SigningKey};
 use p256::SecretKey;
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::fs;
 
@@ -65,15 +66,36 @@ pub fn execute(args: SignArgs) {
 
     // 6 Sign the digest
     let signature: Signature = signing_key.sign(&digest);
+    // === New JSON envelope support (Day-2 Sprint-3) ===
+
+    // 6b. Compute hex digest (existing digest already computed)
+    let digest_hex = hex::encode(digest);
+
+    // 6c. Base64-encode raw YAML for envelope
+    let policy_b64 = general_purpose::STANDARD.encode(data.as_bytes());
+
+    // 6d. Extract public key (DER encoded)
+    let pubkey_der = signing_key.verifying_key().to_encoded_point(false);
+    let pubkey_bytes = pubkey_der.as_bytes();
+    let pubkey_b64 = general_purpose::STANDARD.encode(pubkey_bytes);
+
+    // 6e. Final JSON envelope
+    let envelope = json!({
+        "version": 1,
+        "policy_b64": policy_b64,
+        "digest_hex": digest_hex,
+        "signature_b64": general_purpose::STANDARD.encode(signature.to_der().as_bytes()),
+        "signing_pubkey_b64": pubkey_b64
+    });
 
     // 7 Save Base64-encoded signature (old logic kept as-is)
+    // === Replace old write with JSON envelope output ===
     if let Err(e) = fs::write(
         "policy.sig",
-        general_purpose::STANDARD.encode(signature.to_der().as_bytes()),
+        serde_json::to_string_pretty(&envelope).unwrap(),
     ) {
-        eprintln!("❌ Unable to write signature file: {}", e);
+        eprintln!("❌ Unable to write signed policy file: {}", e);
         return;
     }
-
     println!("✅ Policy signed successfully → policy.sig");
 }

@@ -8,3 +8,4 @@ pub mod logs;
 pub mod peers;
 pub mod sign;
 pub mod status;
+pub mod verify;

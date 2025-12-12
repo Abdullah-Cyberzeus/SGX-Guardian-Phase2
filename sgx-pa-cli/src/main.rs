@@ -34,6 +34,8 @@ enum Commands {
     Peers,
     /// Show the last attestation result
     Attestation,
+    /// Verify a signed policy.sig file
+    Verify(commands::verify::VerifyArgs),
 }
 /// Entry point for the SGX Policy Authority CLI.
 /// Dispatches the selected subcommand and routes execution
@@ -45,6 +47,11 @@ fn main() {
         Commands::Logs(args) => commands::logs::run(args),
         Commands::Keygen => commands::keygen::execute(),
         Commands::Sign(args) => commands::sign::execute(args),
+        Commands::Verify(args) => {
+            if let Err(e) = commands::verify::run(&args) {
+                eprintln!("Error: {}", e);
+            }
+        }
         Commands::Peers => {
             if let Err(e) = commands::peers::run() {
                 eprintln!("Error: {}", e);
