@@ -203,6 +203,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let this_addr = format!("{}:{}", this_node.ip, this_node.port);
     log_event(&node_id, &format!("Starting server at {}", this_addr));
+    use sgx_guardian_client::policy::load_policy_runtime;
+    use sgx_guardian_client::policy_manager::load_and_activate_policy;
+
+    let signed_policy_path = "policies/policy.sig";
+
+    if std::path::Path::new(signed_policy_path).exists() {
+        match load_and_activate_policy(signed_policy_path) {
+            Ok(verified) => {
+                println!("📜 Verified policy loaded (digest={})", verified.digest_hex);
+
+                if let Err(e) = load_policy_runtime(&verified.policy_yaml) {
+                    eprintln!("❌ Policy runtime load failed: {}", e);
+                    log_error(&node_id, &format!("Policy runtime load failed: {}", e));
+                    std::process::exit(1);
+                }
+
+                println!("✅ Policy is now ACTIVE at runtime");
+                log_event(&node_id, "Runtime policy activated successfully");
+            }
+            Err(e) => {
+                eprintln!("❌ Signed policy rejected: {}", e);
+                log_error(&node_id, &format!("Signed policy rejected: {}", e));
+                std::process::exit(1);
+            }
+        }
+    } else {
+        println!("⚠️ No signed policy found — running with last active policy");
+        log_event(&node_id, "No signed policy found at startup");
+    }
     // TLS Certificate Setup
     use sgx_guardian_client::tls;
     let key_path = "sgx-agent/device.key";

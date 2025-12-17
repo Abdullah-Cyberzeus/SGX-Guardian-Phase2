@@ -9,6 +9,8 @@ pub mod logging;
 pub mod metrics;
 pub mod p2p_discovery;
 pub mod policy;
+pub mod policy_manager;
+pub mod policy_state;
 pub mod server;
 pub mod tls;
 
