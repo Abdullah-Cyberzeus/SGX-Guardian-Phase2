@@ -61,7 +61,13 @@ pub fn execute(args: SignArgs) {
     };
 
     // 5 Convert to SecretKey (same logic as before)
-    let secret_key = SecretKey::from_bytes((&priv_array).into()).expect("Invalid key format");
+    let secret_key = match SecretKey::from_bytes((&priv_array).into()) {
+        Ok(sk) => sk,
+        Err(_) => {
+            eprintln!("❌ Invalid private key format");
+            return;
+        }
+    };
     let signing_key = SigningKey::from(secret_key);
 
     // 6 Sign the digest
