@@ -354,8 +354,9 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
 
     println!("🛰️ Spawning attestation listener on port {}", listen_port);
 
+    let bind_ip = node_conf.ip.clone();
     tokio::spawn(async move {
-        if let Err(e) = start_attestation_listener(listen_port).await {
+        if let Err(e) = start_attestation_listener(bind_ip, listen_port).await {
             eprintln!("⚠️ Attestation listener error: {:?}", e);
         }
     });
@@ -427,12 +428,12 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
 }
 /// Starts a TCP listener to receive attestation evidence from peers,
 /// verify it, and respond with locally signed evidence.
-pub async fn start_attestation_listener(listen_port: u16) -> Result<()> {
+pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Result<()> {
     use std::fs;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
-    let addr = format!("127.0.0.1:{}", listen_port);
+    let addr = format!("{}:{}", bind_ip, listen_port);
     let listener = TcpListener::bind(&addr).await?;
     println!("🔒 Attestation listener started on {}", addr);
 
