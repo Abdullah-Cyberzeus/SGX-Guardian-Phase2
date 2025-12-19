@@ -306,18 +306,6 @@ impl AttestationService {
             return Ok(false);
         }
         // Step 5: on success → add to trusted_peers.json
-        let mut peers: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string("schemas/trusted_peers.json").unwrap_or("{\"trusted\":[]}".into()),
-        )?;
-        if let Some(arr) = peers["trusted"].as_array_mut() {
-            if !arr.iter().any(|v| v.as_str() == Some(&peer_ip)) {
-                arr.push(serde_json::json!(peer_ip));
-            }
-        }
-        fs::write(
-            "schemas/trusted_peers.json",
-            serde_json::to_string_pretty(&peers)?,
-        )?;
         println!("Peer {} successfully attested and trusted", addr);
         write_trusted_peer(&addr, &addr);
         write_last_attestation(&addr, &peer_ev.policy_digest, "success");
