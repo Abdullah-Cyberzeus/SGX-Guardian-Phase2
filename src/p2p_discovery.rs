@@ -85,11 +85,22 @@ impl P2PDiscovery {
         // ✅ Use tx_clone_sim safely for simulation peers later
         println!("💡 [Simulation Mode] Using static peer list for discovery testing.");
 
-        let configs = vec![
-            load_config("config/nodeA.yaml").expect("Failed to load nodeA config"),
-            load_config("config/nodeB.yaml").expect("Failed to load nodeB config"),
-            load_config("config/nodeC.yaml").expect("Failed to load nodeC config"),
+        let config_paths = [
+            "config/nodeA.yaml",
+            "config/nodeB.yaml",
+            "config/nodeC.yaml",
         ];
+
+        let mut configs = Vec::new();
+
+        for path in config_paths {
+            match load_config(path) {
+                Ok(cfg) => configs.push(cfg),
+                Err(e) => {
+                    log_event(&node_id, &format!("⚠️ Failed to load {}: {}", path, e));
+                }
+            }
+        }
 
         for conf in configs {
             if conf.node_id != node_id {
