@@ -114,7 +114,7 @@ impl P2PDiscovery {
                 let full_addr = format!("{}:{}", peer_ip, peer_port);
                 tx_clone_sim.send(full_addr.clone()).await.ok();
                 println!("🔐 Attesting discovered peer (sim-mode): {}", full_addr);
-                let km_ref = Arc::new(KeyManager::load_or_generate(None)?);
+                let km_ref = km.clone();
                 println!("🔐 Attesting discovered peer: {}:{}", peer_ip, peer_port);
 
                 // 👇 use peer_port + 100 for attestation listener (5015x range)
