@@ -74,7 +74,7 @@ jobs:
       - name: Run cargo-deny checks
         run: |
           # Pin cargo-deny to a known working version for stability
-          cargo install cargo-deny --version 0.18.5 --force
+          cargo install cargo-deny --version 0.19.0 --force
           cargo deny check
 
       # Step 10: Artifact packaging (if applicable)
