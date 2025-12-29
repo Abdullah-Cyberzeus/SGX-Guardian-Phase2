@@ -4,6 +4,7 @@
 pub mod attestation_service;
 pub mod client;
 pub mod config_loader;
+pub mod enforcement;
 pub mod key_manager;
 pub mod logging;
 pub mod metrics;

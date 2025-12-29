@@ -11,4 +11,4 @@ rules:
     action: "DENY"
     src: "0.0.0.0/0"
     dst: "10.0.0.10"
-    protocol: "ALL"
+    protocol: "UDP"

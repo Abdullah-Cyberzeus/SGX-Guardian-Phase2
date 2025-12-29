@@ -100,32 +100,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Read the UEP policy YAML file
-    let yaml_content =
+    let _yaml_content =
         fs::read_to_string("schemas/uep_policy_v1.yaml").expect("Cannot read policy file");
-
     // Validate and parse the YAML policy
-    match policy::validate_policy(&yaml_content) {
-        Ok(parsed) => {
-            println!(
-                "Policy Loaded: ID = {}, Version = {}",
-                parsed.policy_id, parsed.version
-            );
-            for rule in parsed.rules {
+    fn print_policy_from_yaml(yaml: &str, label: &str) {
+        match policy::validate_policy(yaml) {
+            Ok(parsed) => {
                 println!(
-                    " - Rule {}: {} {} -> {} (protocol: {}{})",
-                    rule.id,
-                    rule.action,
-                    rule.src,
-                    rule.dst,
-                    rule.protocol,
-                    rule.port
-                        .map(|p| format!(", port: {}", p))
-                        .unwrap_or_else(|| "".to_string())
+                    "Policy Loaded ({}): ID = {}, Version = {}",
+                    label, parsed.policy_id, parsed.version
                 );
+                for rule in parsed.rules {
+                    println!(
+                        " - Rule {}: {} {} -> {} (protocol: {}{})",
+                        rule.id,
+                        rule.action,
+                        rule.src,
+                        rule.dst,
+                        rule.protocol,
+                        rule.port
+                            .map(|p| format!(", port: {}", p))
+                            .unwrap_or_else(|| "".to_string())
+                    );
+                }
             }
-        }
-        Err(e) => {
-            eprintln!("❌ Failed to parse policy: {}", e);
+            Err(e) => {
+                eprintln!("❌ Failed to parse {} policy: {}", label, e);
+            }
         }
     }
     println!("\n Starting inter-node mock communication...");
@@ -212,7 +213,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match load_and_activate_policy(signed_policy_path) {
             Ok(verified) => {
                 println!("📜 Verified policy loaded (digest={})", verified.digest_hex);
-
+                print_policy_from_yaml(&verified.policy_yaml, "NEW");
                 if let Err(e) = load_policy_runtime(&verified.policy_yaml) {
                     eprintln!("❌ Policy runtime load failed: {}", e);
                     log_error(&node_id, &format!("Policy runtime load failed: {}", e));
@@ -223,9 +224,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 log_event(&node_id, "Runtime policy activated successfully");
             }
             Err(e) => {
-                eprintln!("❌ Signed policy rejected: {}", e);
-                log_error(&node_id, &format!("Signed policy rejected: {}", e));
-                std::process::exit(1);
+                eprintln!(
+                    "❌ Signed policy rejected: {} — continuing with last active policy",
+                    e
+                );
+                log_error(
+                    &node_id,
+                    &format!(
+                        "Signed policy rejected, continuing with last active policy: {}",
+                        e
+                    ),
+                );
+                // 🔁 PRINT BACKUP / LAST-ACTIVE POLICY (SAME FORMAT AS ACTIVE)
+                if let Ok(backup_yaml) = fs::read_to_string("policies/backup_policy.yaml") {
+                    print_policy_from_yaml(&backup_yaml, "BACKUP / LAST-ACTIVE");
+                } else {
+                    eprintln!("⚠️ No backup_policy.yaml found to display");
+                }
+                // IMPORTANT: do NOT exit — continue runtime
             }
         }
     } else {
@@ -284,6 +300,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     // Wait for servers to initialize
     tokio::time::sleep(Duration::from_secs(20)).await;
+
+    // === APPLY POLICY ENFORCEMENT AFTER NODE IS STEADY ===
+    use sgx_guardian_client::enforcement;
+    use sgx_guardian_client::policy::get_active_policy;
+
+    if let Some(active_policy) = get_active_policy() {
+        let node_id_clone = node_id.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = enforcement::enforce_policy(&active_policy) {
+                eprintln!(
+                    "Deferred policy enforcement failed on {}: {:?}",
+                    node_id_clone, e
+                );
+            }
+        });
+    }
+    // === END POLICY ENFORCEMENT ===
+
     // Only nodeA sends pings to others
     if node_id == "nodeA" {
         for peer in peers {

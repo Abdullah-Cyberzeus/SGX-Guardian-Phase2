@@ -1,4 +1,6 @@
 // src/policy_manager.rs
+use crate::enforcement::enforce_policy;
+use crate::policy;
 use anyhow::{Context, Result};
 use base64::engine::general_purpose;
 use base64::Engine as _;
@@ -86,12 +88,19 @@ use crate::policy_state;
 
 /// Verify + atomically activate a signed policy
 pub fn load_and_activate_policy(path: &str) -> Result<VerifiedPolicy> {
-    // Verify cryptography
+    // 1. Verify cryptographic envelope
     let verified = verify_signed_policy(path)?;
 
-    // Try activating policy atomically
+    // 2. Parse + validate policy semantics (NO side effects)
+    let parsed_policy =
+        policy::validate_policy(&verified.policy_yaml).context("Policy YAML parsing failed")?;
+
+    // 3. Enforcement validation (gatekeeper)
+    // If this fails → policy MUST NOT become active
+    enforce_policy(&parsed_policy).context("Policy enforcement validation failed")?;
+
+    // 4. ONLY after successful enforcement → activate policy
     if let Err(e) = policy_state::activate_policy(&verified.policy_yaml) {
-        // rollback on failure
         let _ = policy_state::rollback_policy();
         return Err(e.context("Policy activation failed, rollback executed"));
     }
