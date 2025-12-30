@@ -1,13 +1,17 @@
+use sgx_guardian_client::metrics::Metrics;
 use sgx_guardian_client::proto::sgx::ping_service_server::PingService;
 use sgx_guardian_client::proto::sgx::PingRequest;
 use sgx_guardian_client::server::MyPingService;
-
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tonic::Request;
 
 #[tokio::test]
 async fn test_ping_handler_success() {
     // Create service instance
-    let service = MyPingService;
+    let service = MyPingService {
+        metrics: Arc::new(Mutex::new(Metrics::default())),
+    };
 
     // Build a request
     let req = Request::new(PingRequest {
