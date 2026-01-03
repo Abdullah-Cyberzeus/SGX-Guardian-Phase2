@@ -11,6 +11,7 @@ pub mod proto {
 }
 mod attestation_service;
 mod client;
+mod cloud;
 mod key_manager;
 mod logging;
 mod metrics;
@@ -21,6 +22,7 @@ mod server;
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::{init_audit_logger, log_audit};
 use crate::audit::verifier::AuditVerifier;
+use crate::config_loader::CloudConfig;
 use base64::{engine::general_purpose, Engine as _};
 use client::send_ping;
 use config_loader::load_config;
@@ -194,6 +196,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Node identity key loaded or generated",
     );
 
+    // === OPTIONAL: Run local mock cloud server (DEV ONLY) ===
+    if std::env::var("SGX_RUN_MOCK_CLOUD")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false)
+    {
+        tokio::spawn(async {
+            cloud::mock_server::run_mock_cloud(([127, 0, 0, 1], 9443)).await;
+        });
+
+        log_audit(
+            &node_id,
+            AuditCategory::Cloud,
+            AuditSeverity::Info,
+            AuditAction::Started,
+            "Local mock cloud server started (DEV mode)",
+        );
+    }
+
     let metrics = Arc::new(Mutex::new(Metrics::default()));
     // === Metrics server enable/disable
     let metrics_enabled = std::env::var("SGX_METRICS_ENABLED")
@@ -224,6 +244,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Metrics server disabled"
         },
     );
+    // === Cloud uplink (outbound-only mock) ===
+    let cloud_cfg = CloudConfig::from_env();
+
+    if cloud_cfg.enabled {
+        let node_id_clone = node_id.clone();
+        let endpoint = cloud_cfg.endpoint.clone();
+
+        log_audit(
+            &node_id,
+            AuditCategory::Cloud,
+            AuditSeverity::Info,
+            AuditAction::Started,
+            "Cloud uplink enabled (mock)",
+        );
+
+        tokio::spawn(async move {
+            if let Err(e) = cloud::client::send_heartbeat(&node_id_clone, &endpoint).await {
+                log_error(
+                    &node_id_clone,
+                    &format!("Cloud uplink heartbeat failed: {}", e),
+                );
+            }
+        });
+    }
 
     {
         let mut m = metrics.lock().await;

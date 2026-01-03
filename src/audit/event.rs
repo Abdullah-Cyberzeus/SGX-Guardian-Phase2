@@ -16,6 +16,7 @@ pub enum AuditCategory {
     Network,
     Tls,
     Cryptography,
+    Cloud,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
