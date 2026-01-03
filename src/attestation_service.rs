@@ -1,5 +1,7 @@
 //! Core attestation orchestration logic for exchanging and verifying
 //! evidence between SGX Guardian nodes.
+use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use crate::audit::logger::log_audit;
 use crate::key_manager::KeyManager;
 use anyhow::Result;
 use base64::{engine::general_purpose, Engine as _};
@@ -236,6 +238,15 @@ impl AttestationService {
         use tokio::net::TcpStream;
         let addr = format!("{}:{}", peer_ip, peer_port);
         println!("Attempting mutual attestation with {}", addr);
+        let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
+
+        log_audit(
+            &node_id,
+            AuditCategory::Attestation,
+            AuditSeverity::Info,
+            AuditAction::Started,
+            &format!("Started mutual attestation with {}", addr),
+        );
         // Step 1: try connect with small retry loop
         let mut attempt = 0;
         let mut stream_opt = None;
@@ -257,9 +268,20 @@ impl AttestationService {
         let mut stream = match stream_opt {
             Some(s) => s,
             None => {
-                eprintln!("⚠️ [NetworkError] Failed to connect to peer {} – will retry on next timer cycle", addr);
-                // Optional structured log (if `log_event` is imported)
-                // log_event("global", &format!("⚠️ ConnectError: {}", addr));
+                let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
+
+                log_audit(
+                    &node_id,
+                    AuditCategory::Attestation,
+                    AuditSeverity::Warning,
+                    AuditAction::Failed,
+                    &format!("Failed to connect to peer {}", addr),
+                );
+
+                eprintln!(
+        "⚠️ [NetworkError] Failed to connect to peer {} – will retry on next timer cycle",
+        addr
+    );
                 return Ok(false);
             }
         };
@@ -301,11 +323,32 @@ impl AttestationService {
         };
         let verified = Self::verify_signed_evidence(&peer_ev, &peer_pubkey_der, &policy_data)?;
         if !verified {
+            let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
+
+            log_audit(
+                &node_id,
+                AuditCategory::Attestation,
+                AuditSeverity::Critical,
+                AuditAction::Rejected,
+                &format!("Attestation verification failed for peer {}", addr),
+            );
+
             write_last_attestation(&addr, &peer_ev.policy_digest, "failed");
             println!("❌ Peer attestation verification failed for {}", addr);
             return Ok(false);
         }
+
         // Step 5: on success → add to trusted_peers.json
+        let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
+
+        log_audit(
+            &node_id,
+            AuditCategory::Attestation,
+            AuditSeverity::Info,
+            AuditAction::Succeeded,
+            &format!("Peer {} successfully attested and trusted", addr),
+        );
+
         println!("Peer {} successfully attested and trusted", addr);
         write_trusted_peer(&addr, &addr);
         write_last_attestation(&addr, &peer_ev.policy_digest, "success");
@@ -441,6 +484,15 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
         match listener.accept().await {
             Ok((mut socket, remote)) => {
                 println!("📩 Received attestation request from {}", remote);
+                let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
+
+                log_audit(
+                    &node_id,
+                    AuditCategory::Attestation,
+                    AuditSeverity::Info,
+                    AuditAction::Started,
+                    &format!("Received attestation request from {}", remote),
+                );
                 let mut buffer = vec![0u8; 4096];
                 match socket.read(&mut buffer).await {
                     Ok(n) if n > 0 => {
@@ -465,6 +517,16 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
 
                         if verified {
                             println!("✅ Verified attestation from {}", remote);
+                            let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
+
+                            log_audit(
+                                &node_id,
+                                AuditCategory::Attestation,
+                                AuditSeverity::Info,
+                                AuditAction::Succeeded,
+                                &format!("Incoming attestation verified from {}", remote),
+                            );
+
                             // Send our own evidence back
                             let reply = AttestationService::create_signed_evidence(&km, &policy)?;
                             let payload = serde_json::to_vec(&reply)?;
@@ -478,6 +540,15 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
                             }
                         } else {
                             eprintln!("❌ Attestation verification failed for {}", remote);
+                            let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
+
+                            log_audit(
+                                &node_id,
+                                AuditCategory::Attestation,
+                                AuditSeverity::Critical,
+                                AuditAction::Rejected,
+                                &format!("Incoming attestation rejected from {}", remote),
+                            );
                         }
                     }
                     Ok(_) => {

@@ -1,3 +1,5 @@
+use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use crate::audit::logger::log_audit;
 use crate::logging::log_event;
 use crate::metrics::Metrics;
 use crate::proto::sgx::ping_service_server::{PingService, PingServiceServer};
@@ -6,6 +8,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tonic::transport::ServerTlsConfig;
 use tonic::{transport::Server, Request, Response, Status};
+
 /// Basic gRPC Ping service used for inter-node liveness checks.
 /// Implements the `PingService` trait generated from the SG-X protobuf schema.
 pub struct MyPingService {
@@ -19,6 +22,14 @@ impl PingService for MyPingService {
         let from = request.get_ref().from.clone();
         println!("📡gRPC Ping request RECEIVED from {}", from);
         log_event(&from, &format!("Received ping from: {}", from));
+
+        log_audit(
+            &from,
+            AuditCategory::Network,
+            AuditSeverity::Info,
+            AuditAction::Succeeded,
+            "Secure gRPC ping received",
+        );
         {
             let mut m = self.metrics.lock().await;
             m.record_connection();
@@ -52,12 +63,42 @@ pub async fn start_server(
         .identity(identity.clone())
         .client_ca_root(ca_cert.clone());
     println!("🔐 TLS Identity + CA loaded successfully. Starting secure gRPC server...");
+    let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
+
     Server::builder()
-        .tls_config(tls)?
+        .tls_config(tls)
+        .inspect_err(|_e| {
+            log_audit(
+                &node_id,
+                AuditCategory::Network,
+                AuditSeverity::Critical,
+                AuditAction::Failed,
+                "Failed to configure TLS for gRPC server",
+            );
+        })?
         .add_service(PingServiceServer::new(service))
         .serve(addr.parse()?)
-        .await?;
+        .await
+        .inspect_err(|_e| {
+            log_audit(
+                &node_id,
+                AuditCategory::Network,
+                AuditSeverity::Critical,
+                AuditAction::Failed,
+                "Secure gRPC server failed to start",
+            );
+        })?;
     println!("🚀gRPC TLS Server is now LIVE at {}", addr);
     log_event("server", &format!("Server listening on {}", addr));
+
+    let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
+
+    log_audit(
+        &node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Succeeded,
+        "Secure gRPC server started with mTLS",
+    );
     Ok(())
 }
