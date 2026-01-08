@@ -58,6 +58,13 @@ It ensures traceability, justification, and long-term maintainability of core de
 | D037 | TLS Module – mTLS Foundation | Architecture – Security | Accepted | Sprint 3 |
 | D038 | Certificate Lifecycle – Persistent Identity | Architecture – Identity | Accepted | Sprint 3 |
 | D039 | Secure gRPC mTLS Channel Integration | Architecture – Communication Security | Accepted | Sprint 3 |
+| D040 | Policy Signing Capability (sgx-pa-cli) | Architecture – Policy Security | Accepted | Sprint 3 |
+| D041 | Signed Policy Envelope (JSON + Base64 + Digest) | Architecture – Policy Distribution | Accepted | Sprint 3 |
+| D042 | Policy Signature Verification at Node Startup | Architecture – Policy Enforcement | Accepted | Sprint 3 |
+| D043 | Atomic Policy Activation (Active / Pending / Backup) | Architecture – Configuration Safety | Accepted | Sprint 3 |
+| D044 | Policy Rollback Strategy on Verification Failure | Architecture – Resilience | Accepted | Sprint 3 |
+| D045 | Fail-Closed Policy Enforcement Model | Architecture – Zero Trust | Accepted | Sprint 3 |
+| D046 | Milestone Demo 2 – Admin-Signed Policy Propagation | Process – Demonstration | Accepted | Sprint 3 |
 
 ---
 
@@ -65,11 +72,11 @@ It ensures traceability, justification, and long-term maintainability of core de
 
 | Category | Count | Decisions |
 |---------|--------|----------|
-| **Architecture** | 20 | D001, D002, D003, D004, D005, D008, D009, D012, D014, D016, D017, D018, D019, D020, D027, D028, D029, D030, D031, D034, D037, D038, D039 |
-| **Implementation** | 6 | D006, D007, D021, D024, D032 |
+| **Architecture** | 27 | D001, D002, D003, D004, D005, D008, D009, D012, D014, D016, D017, D018, D019, D020, D027, D028, D029, D030, D031, D034, D037, D038, D039, D040, D041, D042, D043, D044, D046 |
+| **Implementation** | 5 | D006, D007, D021, D024, D032 |
 | **DevOps** | 2 | D010, D011 |
 | **Quality** | 5 | D013, D015, D025, D026, D033 |
-| **Process** | 1 | D035 |
+| **Process** | 2 | D035, D047 |
 | **Scope** | 1 | D016 |
 
 ---
@@ -87,6 +94,9 @@ It ensures traceability, justification, and long-term maintainability of core de
 | Node Identity | ECDSA P-256 | D017 | Durable persistent identity |
 | Peer Discovery | mDNS | D018 | Zero-config LAN peer discovery |
 | Attestation | Signed Evidence | D019 | Foundation of Circle-of-Trust |
+| Transport Security | rustls + tonic mTLS | D037, D039 | Secure gRPC channels with mutual authentication |
+| Node Certificates | X.509 (DER/PEM) | D038 | Persistent cryptographic identity for each node |
+| Policy Distribution | Signed JSON Envelope (Base64 + SHA-256) | D040, D041 | Portable, verifiable policy delivery across nodes |
 
 ---
 
@@ -1201,52 +1211,231 @@ All cross-node communication is now encrypted & authenticated.
 
 ---
 
-# CodeRabbitAi Actionable Fixes
+### D040: Policy Signing Engine – Deterministic Digest & Signature Core
 
-| Fix # | File | Actionable Fix | Sprint | Technical Reason (Why This Sprint) |
-|-------|------|----------------|--------|------------------------------------|
-| 1 | peer.proto | Change public key from string → bytes | S3 | Binary public keys are required for real mTLS handshake. This cannot be implemented before Sprint-3 because secure-channel architecture is introduced in that sprint. |
-| 2 | client.rs | Add gRPC timeout | S3 | Timeouts are a security requirement once secure channels exist. Before Sprint-3, RPCs are plaintext and temporary. |
-| 3 | policy.rs | Add full rule validation logic | S3 | Proper rule enforcement engine appears only in Sprint-3 under the Policy Manager deliverable. Prior sprints only load schema. |
-| 4 | sign.rs | Validate input policy path | S3 | Policy signing module is introduced in Sprint-3. Input-path validation belongs to that component. |
-| 5 | sign.rs | Configurable private key path | S3 | Key management workflow is only defined in Sprint-3. Configurable path is part of operationalizing the signing tool. |
-| 6 | sign.rs | Configurable output signature path | S3 | Flexible output storage matters when signing is used repeatedly (Sprint-3). Not relevant in earlier sprints. |
-| 7 | uep_policy.yaml | Strengthen outbound rule | S3 | Policy hardening depends on enforcement engine, delivered in Sprint-3. Earlier sprints only require schema existence. |
-| 8 | serde_yaml loader | Add config validation | S3 | Configuration rules depend on finalized policy + attestation structure which is delivered in Sprint-3. |
-| 9 | multi_node_logging.rs | Replace cargo run with compiled binary | S3 | Deterministic binary execution is required for Demo-2 (Sprint-3). Cargo run is unstable for multi-node tests. |
-| 10 | multi_node_logging.rs | Replace sleep with readiness probing | S3 | Secure channels + attestation cycles need accurate readiness checks, introduced in Sprint-3. |
-| 11 | multi_node_logging.rs | Add cleanup guard | S3 | Multi-node orchestration becomes complex in Sprint-3; cleanup prevents stale processes. |
-| 12 | build.rs | Remove duplicate proto list | S3 | Proto definitions stabilize only after secure channel APIs are added in Sprint-3. Refactor belongs here. |
-| 13 | server.rs | Remove unnecessary clone | S3 | Performance optimization fits once gRPC server is feature-complete—after secure channels (Sprint-3). |
-| 14 | logs.rs | Replace expect() with safe error handling | S4 | Production-grade logging robustness is part of Sprint-4 Observability. Earlier sprints don’t require hardened log paths. |
-| 15 | metrics.rs | Replace hardcoded metrics ID | S4 | Telemetry identity management belongs to Sprint-4, when monitoring pipeline launches. |
-| 16 | logs.rs | Memory-efficient tail implementation | S4 | Log volume grows significantly only in Sprint-4 (audit logging & telemetry). Efficiency work belongs here. |
-| 17 | peers.rs | Gracefully handle timestamp parsing errors | S3 | CLI visibility enhancements are Sprint-3 features; initial sprints only require log presence, not robust formatting. |
-| 18 | ci.yml | Add CI timeouts | S3 | Long-running secure-channel and policy tests appear in Sprint-3; before this no timeout is needed. |
-| 19 | ci.yml | Add cargo-audit caching | S3 | Caching cargo-audit became necessary in Sprint 3 because secure-channel and policy-manager dependencies made CI audits much heavier, causing long and unstable scan times.Earlier sprints were small and lightweight, so cargo audit ran fast and didn’t need caching. |
-| 20 | pre_push_check.sh | Improve error messages | S3 | Pre-deployment validation becomes relevant once full system (signing + secure channels) exists in Sprint-3. |
-| 21 | pre_push_check.sh | Validate config directory | S3 | Config becomes critical only after Policy Manager + signing (Sprint-3). |
-| 22 | cli_output.rs | Validate table formatting | S3 | CLI enhancements belong to Sprint-3 where admin tooling is formally delivered. |
-| 23 | README.md | Fix Build badge link | — | Fixed |
-| 24 | .gitignore | Document/remove “nul” entry | S3 | New runtime folders (logs, cache, generated artifacts) sometimes produced nul placeholder entries, which Git mistakenly picked up and caused push failures. The .gitignore update ensured these temporary nul files/folders were never tracked, preventing push failures and stabilizing the repository. |
-| 25 | lib.rs | Remove placeholder function | S3 | Placeholder removal is a cleanup step suitable when module boundaries finalize—Sprint-3. |
-| 26 | codeql.yml | Add proto error check | S3 | Sprint 1–2 didn’t have real security-critical gRPC RPCs, so CodeQL didn’t need strict proto checks. Sprint 3 introduces the actual secure-channel and policy RPCs, so CodeQL must analyze the freshly generated proto code. |
-| 27 | attestation_service.rs | Fix peer signature verification (using own pubkey incorrectly) | S3 | Real peer-to-peer cryptographic identity validation begins in Sprint-3 when secure channels + peer-key registry are introduced. Sprint-1/2 only performed bootstrap attestation, not real cryptographic trust checks. |
-| 28 | attestation_service.rs | Fix listener verification using its own public key | S3 | Same reason as above — listener-side signature validation becomes meaningful only once actual peer public keys exist (Sprint-3). Prior sprints used local-only trust bootstrap. |
-| 29 | attestation_service.rs | Unify trusted_peers.json file paths (schemas/ vs logs/) | S3 | Persistent trust-state storage is part of Sprint-3 “Circle-of-Trust Stabilization”. Earlier sprints did not persist trust records across runs, so path consistency wasn’t required. |
-| 30 | .github/workflows/ci.yml | Remove or implement .deb/.rpm signing step | S4 | Package signing is a Sprint-4 deliverable under Deployment/Release Hardening. S1–S3 only produce binaries, not signed Linux packages. This step belongs to release engineering. |
-| 31 | sgx-pa-cli/src/commands/keygen.rs | Move key existence checks before any writes | S3 | Proper key-lifecycle safety (ensuring atomic keypair creation) becomes required when the SGX signing & verification workflow is formalized in Sprint-3. S1/S2 prototypes allowed simpler key generation. |
-| 32 | sgx-pa-cli/src/commands/sign.rs | Replace expect() with graceful error handling | S3 | The signing CLI becomes part of the formal admin pipeline in Sprint-3. Robust error paths are necessary once policy-signing is used operationally, not in early prototype sprints. |
-| 33 | attestation_service.rs | Listener should bind to 0.0.0.0 instead of 127.0.0.1 | S3 | Distributed attestation (remote peers communicating over real LAN) starts in Sprint-3. S1/S2 used local simulation on 127.0.0.1, so binding wide wasn’t required until the secure distributed demo. |
-| 34 | src/p2p_discovery.rs | Replace expect() with safe config-load errors | S3 | Dynamic discovery and resilience in real multi-node environments appear in Sprint-3. S1/S2 use fixed local configs so expect() was fine. |
-| 35 | src/p2p_discovery.rs | Remove redundant KeyManager creation in loop | S3 | Performance optimization matters once continuous discovery → attestation → re-attestation cycles begin in Sprint-3. Earlier sprints don’t run this pipeline. |
-| 36 | sgx-pa-cli/policy.sig | Remove committed signature file from repo | -- | Fixed we already add that file in gitignore it will not pushed next time |
-| 37 | src/serde_yaml | Remove dead code (unused NodeConfig + loader) | S3 | YAML loader consolidation into a single canonical config_loader module occurs in Sprint-3. Prior sprints allowed experimental loaders that are now obsolete. |
-| 38 | src/serde_yaml | Replace panic-based loader with Result type | S3 | Robust config validation and error bubbling become important only in Sprint-3 when nodes restart/reload configs dynamically during attestation cycles. |
+**Date:** Sprint 3  
+**Status:** Accepted  
+**Category:** Architecture – Policy Security  
+
+**Context:**  
+SG-X Guardian requires that administrative policies be cryptographically signed before distribution.  
+Policy signatures must remain stable across platforms and formatting differences.
+
+**Decision:**  
+Implement a dedicated policy signing engine in `sgx-pa-cli` that:
+- Normalizes YAML input
+- Computes SHA-256 policy digest
+- Signs digest using ECDSA P-256
+- Produces a signed policy envelope
+
+**Rationale:**
+
+| Requirement | Implementation |
+|------------|----------------|
+| Deterministic digest | YAML normalization + CRLF handling |
+| Strong cryptography | SHA-256 + ECDSA P-256 |
+| Portability | Base64 encoding |
+| Auditability | Explicit digest + public key |
+
+**Alternatives Considered:**  
+Raw file signing (breaks on whitespace), binary formats (not admin-friendly).
+
+**Implications:**  
+Establishes cryptographic root-of-trust for policy lifecycle.
+
+**Related Decisions:** D004, D012, D041
 
 ---
 
+### D041: Signed Policy Envelope – JSON + Base64 Format
 
+**Date:** Sprint 3  
+**Status:** Accepted  
+**Category:** Architecture – Policy Distribution  
+
+**Context:**  
+Signed policies must be portable, inspectable, and self-contained.
+
+**Decision:**  
+Define a JSON-based signed policy envelope containing:
+- version
+- policy_b64
+- digest_hex
+- signature_b64
+- signing_pubkey_b64
+
+**Rationale:**
+
+| Feature | Benefit |
+|-------|---------|
+| JSON | Human-readable |
+| Base64 | Binary-safe |
+| Embedded pubkey | Self-verifying artifact |
+| Versioning | Forward compatibility |
+
+**Alternatives Considered:**  
+Detached signatures, ASN.1 blobs, YAML-based signing.
+
+**Implications:**  
+Policy and signature travel as a single trust artifact.
+
+**Related Decisions:** D040, D042
+
+---
+
+### D042: Policy Verification CLI – Offline Trust Validation
+
+**Date:** Sprint 3  
+**Status:** Accepted  
+**Category:** Architecture – Tooling  
+
+**Context:**  
+Administrators must verify policy integrity without running Guardian nodes.
+
+**Decision:**  
+Add `verify` command to `sgx-pa-cli` that:
+- Validates envelope version
+- Recomputes digest
+- Verifies ECDSA signature
+- Rejects tampered policies
+
+**Rationale:**
+
+| Benefit | Explanation |
+|-------|-------------|
+| Offline verification | No daemon dependency |
+| Fail-fast | Immediate rejection |
+| Transparency | Clear CLI output |
+
+**Implications:**  
+Improves admin confidence and operational safety.
+
+**Related Decisions:** D041, D043
+
+---
+
+### D043: Policy Manager – Cryptographic Verification in Guardian
+
+**Date:** Sprint 3  
+**Status:** Accepted  
+**Category:** Architecture – Policy Enforcement  
+
+**Context:**  
+Guardian nodes must never load untrusted or tampered policy data.
+
+**Decision:**  
+Implement `policy_manager.rs` to:
+- Parse signed policy envelope
+- Verify digest and signature
+- Reject invalid policies at startup
+
+**Rationale:**
+
+| Principle | Enforcement |
+|---------|-------------|
+| Zero-Trust | No implicit trust |
+| Fail-closed | Exit on invalid policy |
+| Consistency | Same verification logic as CLI |
+
+**Implications:**  
+Policy trust boundary enforced inside daemon.
+
+**Related Decisions:** D040, D042, D044
+
+---
+
+### D044: Atomic Policy Activation with Rollback
+
+**Date:** Sprint 3  
+**Status:** Accepted  
+**Category:** Architecture – Reliability  
+
+**Context:**  
+Policy updates must never leave system in partial or corrupted state.
+
+**Decision:**  
+Use atomic filesystem-based policy activation:
+- pending_policy.yaml
+- active_policy.yaml
+- backup_policy.yaml
+
+Rollback occurs automatically on failure.
+
+**Rationale:**
+
+| Feature | Benefit |
+|-------|---------|
+| Atomic rename | Crash-safe |
+| Backup policy | Guaranteed rollback |
+| No database | Lightweight edge design |
+
+**Implications:**  
+Policy updates are safe and reversible.
+
+**Related Decisions:** D043, D045
+
+---
+
+### D045: Runtime Policy Cache – once_cell + RwLock
+
+**Date:** Sprint 3  
+**Status:** Accepted  
+**Category:** Implementation – Runtime  
+
+**Context:**  
+Activated policies must be efficiently accessible by runtime subsystems.
+
+**Decision:**  
+Store active policy in memory using:
+- once_cell::Lazy
+- Arc<RwLock<Option<Policy>>>
+
+**Rationale:**
+
+| Benefit | Explanation |
+|-------|-------------|
+| Fast access | No repeated file reads |
+| Thread-safe | Async compatible |
+| Extensible | Supports future hot-reload |
+
+**Implications:**  
+Runtime always enforces verified policy.
+
+**Related Decisions:** D044, D047
+
+---
+
+### D046: End-to-End Policy Lifecycle Demonstration (Milestone Demo 2)
+
+**Date:** Sprint 3  
+**Status:** Accepted  
+**Category:** Process – Milestone Validation  
+
+**Context:**  
+Sprint 3 required a complete, demonstrable policy trust workflow.
+
+**Decision:**  
+Demonstrate full lifecycle:
+1. Admin signs policy via CLI
+2. Policy distributed to nodes
+3. Nodes verify signature
+4. Policy activates atomically
+5. Runtime enforces policy
+
+**Rationale:**
+
+| Goal | Outcome |
+|----|--------|
+| Trust proof | Cryptographically verifiable |
+| Realism | Matches production workflow |
+| Confidence | Visible security guarantees |
+
+**Implications:**  
+Sprint 3 policy automation is fully complete.
+
+**Related Decisions:** D040–D046
+
+---
 
 # Main + P2P + Attestation are Infrastructure Files — Not Unit-Testable
 

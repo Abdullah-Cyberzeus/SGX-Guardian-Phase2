@@ -13,6 +13,7 @@ mod client;
 mod key_manager;
 mod logging;
 mod metrics;
+mod metrics_server;
 mod p2p_discovery;
 mod server;
 
@@ -143,6 +144,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     log_event(&node_id, "Node configuration loading complete");
 
     let metrics = Arc::new(Mutex::new(Metrics::default()));
+    // === Metrics server enable/disable
+    let metrics_enabled = std::env::var("SGX_METRICS_ENABLED")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(true);
+
+    if metrics_enabled {
+        let metrics_clone = metrics.clone();
+        tokio::spawn(async move {
+            let metrics_port: u16 = std::env::var("SGX_METRICS_PORT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(9100);
+
+            metrics_server::start_metrics_server(metrics_clone, ([127, 0, 0, 1], metrics_port))
+                .await;
+        });
+    }
     {
         let mut m = metrics.lock().await;
         m.record_connection();
@@ -222,6 +240,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 println!("✅ Policy is now ACTIVE at runtime");
                 log_event(&node_id, "Runtime policy activated successfully");
+                {
+                    let mut m = metrics.lock().await;
+                    m.set_policy_active(true);
+                }
             }
             Err(e) => {
                 eprintln!(
@@ -235,7 +257,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         e
                     ),
                 );
-                // 🔁 PRINT BACKUP / LAST-ACTIVE POLICY (SAME FORMAT AS ACTIVE)
+                {
+                    let mut m = metrics.lock().await;
+                    m.set_policy_active(false);
+                    m.record_error();
+                }
+                // 🔁 PRINT BACKUP / LAST-ACTIVE POLICY
                 if let Ok(backup_yaml) = fs::read_to_string("policies/backup_policy.yaml") {
                     print_policy_from_yaml(&backup_yaml, "BACKUP / LAST-ACTIVE");
                 } else {
@@ -307,12 +334,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(active_policy) = get_active_policy() {
         let node_id_clone = node_id.clone();
-        std::thread::spawn(move || {
+        let metrics_clone = metrics.clone();
+        tokio::spawn(async move {
             if let Err(e) = enforcement::enforce_policy(&active_policy) {
                 eprintln!(
                     "Deferred policy enforcement failed on {}: {:?}",
                     node_id_clone, e
                 );
+
+                let mut m = metrics_clone.lock().await;
+                m.record_enforcement_failure();
             }
         });
     }
