@@ -57,3 +57,23 @@ pub fn load_config(path: &str) -> Result<NodeConfig, Box<dyn Error>> {
         .map_err(|e| format!("Config validation failed: {}", e))?;
     Ok(config)
 }
+// ================================
+// Cloud uplink runtime configuration
+// ================================
+
+#[derive(Debug, Clone)]
+pub struct CloudConfig {
+    pub enabled: bool,
+    pub endpoint: String,
+}
+
+impl CloudConfig {
+    pub fn from_env() -> Self {
+        Self {
+            enabled: std::env::var("SGX_CLOUD_UPLINK_ENABLED").unwrap_or_else(|_| "false".into())
+                == "true",
+
+            endpoint: std::env::var("SGX_CLOUD_ENDPOINT").unwrap_or_else(|_| "".into()),
+        }
+    }
+}
