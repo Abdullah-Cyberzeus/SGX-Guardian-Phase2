@@ -1,8 +1,11 @@
+use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use crate::audit::logger::log_audit;
 use anyhow::{Context, Result};
 use rustls::server::AllowAnyAuthenticatedClient;
 use rustls::{Certificate, ClientConfig, PrivateKey, RootCertStore, ServerConfig};
 use std::fs;
 use std::sync::Arc;
+
 pub struct TlsConfig {
     pub server: ServerConfig,
     pub client: ClientConfig,
@@ -78,6 +81,17 @@ pub fn ensure_node_certificate_or_generate(
     if std::path::Path::new(cert_path).exists() {
         let der = fs::read(cert_path)
             .with_context(|| format!("Failed to read existing certificate: {}", cert_path))?;
+
+        let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
+
+        log_audit(
+            &node_id,
+            AuditCategory::Tls,
+            AuditSeverity::Info,
+            AuditAction::Succeeded,
+            "TLS certificate loaded from disk",
+        );
+
         return Ok(der);
     }
     // Load private key as raw DER
@@ -116,14 +130,36 @@ pub fn ensure_node_certificate_or_generate(
     params.distinguished_name = dn;
     params.key_pair = Some(kp);
     // Create certificate
-    let cert = RcgenCert::from_params(params)
-        .map_err(|e| anyhow::anyhow!("Failed to create rcgen certificate: {:?}", e))?;
+    let cert = RcgenCert::from_params(params).map_err(|e| {
+        let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
+
+        log_audit(
+            &node_id,
+            AuditCategory::Tls,
+            AuditSeverity::Critical,
+            AuditAction::Failed,
+            "TLS certificate generation failed",
+        );
+
+        anyhow::anyhow!("Failed to create rcgen certificate: {:?}", e)
+    })?;
     // Convert to DER and persist
     let der = cert
         .serialize_der()
         .map_err(|e| anyhow::anyhow!("Failed to serialize DER: {:?}", e))?;
     fs::write(cert_path, &der)
         .with_context(|| format!("Failed to write certificate file {}", cert_path))?;
+
+    let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
+
+    log_audit(
+        &node_id,
+        AuditCategory::Tls,
+        AuditSeverity::Warning,
+        AuditAction::Applied,
+        "TLS certificate generated and written to disk",
+    );
+
     Ok(der)
 }
 /// Convert DER bytes → PEM string for tonic TLS

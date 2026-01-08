@@ -1,4 +1,6 @@
 // src/policy_manager.rs
+use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use crate::audit::logger::log_audit;
 use crate::enforcement::enforce_policy;
 use crate::policy;
 use anyhow::{Context, Result};
@@ -29,6 +31,15 @@ struct SignedPolicyEnvelope {
 
 /// Verify a signed policy file cryptographically
 pub fn verify_signed_policy(path: &str) -> Result<VerifiedPolicy> {
+    let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
+
+    log_audit(
+        &node_id,
+        AuditCategory::Policy,
+        AuditSeverity::Info,
+        AuditAction::Started,
+        &format!("Started signed policy verification: {}", path),
+    );
     // 1. Load signed policy file
     let content = fs::read_to_string(path)
         .with_context(|| format!("Failed to read signed policy file: {}", path))?;
@@ -38,6 +49,14 @@ pub fn verify_signed_policy(path: &str) -> Result<VerifiedPolicy> {
 
     // 2. Check version
     if envelope.version != 1 {
+        log_audit(
+            &node_id,
+            AuditCategory::Policy,
+            AuditSeverity::Critical,
+            AuditAction::Rejected,
+            &format!("Unsupported policy version: {}", envelope.version),
+        );
+
         anyhow::bail!("Unsupported policy version: {}", envelope.version);
     }
 
@@ -55,6 +74,14 @@ pub fn verify_signed_policy(path: &str) -> Result<VerifiedPolicy> {
     let digest_hex = hex::encode(digest);
 
     if digest_hex != envelope.digest_hex {
+        log_audit(
+            &node_id,
+            AuditCategory::Policy,
+            AuditSeverity::Critical,
+            AuditAction::Rejected,
+            "Policy digest mismatch detected",
+        );
+
         anyhow::bail!("Policy digest mismatch");
     }
 
@@ -88,6 +115,15 @@ use crate::policy_state;
 
 /// Verify + atomically activate a signed policy
 pub fn load_and_activate_policy(path: &str) -> Result<VerifiedPolicy> {
+    let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
+
+    log_audit(
+        &node_id,
+        AuditCategory::Policy,
+        AuditSeverity::Info,
+        AuditAction::Started,
+        "Policy activation workflow started",
+    );
     // 1. Verify cryptographic envelope
     let verified = verify_signed_policy(path)?;
 
@@ -97,13 +133,37 @@ pub fn load_and_activate_policy(path: &str) -> Result<VerifiedPolicy> {
 
     // 3. Enforcement validation (gatekeeper)
     // If this fails → policy MUST NOT become active
-    enforce_policy(&parsed_policy).context("Policy enforcement validation failed")?;
+    if let Err(e) = enforce_policy(&parsed_policy) {
+        log_audit(
+            &node_id,
+            AuditCategory::Policy,
+            AuditSeverity::Critical,
+            AuditAction::Rejected,
+            "Policy enforcement validation failed",
+        );
+        return Err(e.context("Policy enforcement validation failed"));
+    }
 
     // 4. ONLY after successful enforcement → activate policy
     if let Err(e) = policy_state::activate_policy(&verified.policy_yaml) {
         let _ = policy_state::rollback_policy();
+
+        log_audit(
+            &node_id,
+            AuditCategory::Policy,
+            AuditSeverity::Critical,
+            AuditAction::Rollback,
+            "Policy activation failed — rollback executed",
+        );
+
         return Err(e.context("Policy activation failed, rollback executed"));
     }
-
+    log_audit(
+        &node_id,
+        AuditCategory::Policy,
+        AuditSeverity::Info,
+        AuditAction::Applied,
+        "Policy successfully activated",
+    );
     Ok(verified)
 }

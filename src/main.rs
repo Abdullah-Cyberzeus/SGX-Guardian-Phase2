@@ -1,6 +1,7 @@
 //! SG-X Guardian Client entrypoint.
 //! Initializes node identity, loads configuration, starts discovery,
 //! attestation, metrics tracking, and the gRPC server runtime.
+mod audit;
 mod config_loader;
 mod policy;
 pub mod proto {
@@ -17,6 +18,9 @@ mod metrics_server;
 mod p2p_discovery;
 mod server;
 
+use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use crate::audit::logger::{init_audit_logger, log_audit};
+use crate::audit::verifier::AuditVerifier;
 use base64::{engine::general_purpose, Engine as _};
 use client::send_ping;
 use config_loader::load_config;
@@ -27,6 +31,7 @@ use metrics::Metrics;
 use server::start_server;
 use std::env;
 use std::fs;
+use std::path::PathBuf;
 #[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
 #[allow(unused_imports)]
@@ -57,9 +62,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             SetConsoleCtrlHandler(Some(ctrl_handler), 1);
         }
     }
-
+    // Parse command-line arguments for node ID
+    let args: Vec<String> = env::args().collect();
+    if args.len() < 2 {
+        eprintln!("Usage: cargo run -- <node_id>");
+        std::process::exit(1);
+    }
+    let node_id = args[1].clone();
     // Initialize or load persistent identity keypair
     let km = KeyManager::load_or_generate(None)?;
+
     let pubkey_b64 = general_purpose::STANDARD.encode(km.pubkey_der());
     println!(
         "Node Identity Initialized | Public Key Prefix: {}...",
@@ -79,8 +91,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         AttestationService::verify_signed_evidence(&evidence, &km.pubkey_der(), &sample_policy)?;
     if verified {
         println!("✅ Local attestation evidence verified successfully.");
+        log_audit(
+            &node_id,
+            AuditCategory::Attestation,
+            AuditSeverity::Info,
+            AuditAction::Succeeded,
+            "Local attestation evidence verified",
+        );
     } else {
         eprintln!("❌ Local attestation verification failed!");
+        log_audit(
+            &node_id,
+            AuditCategory::Attestation,
+            AuditSeverity::Critical,
+            AuditAction::Failed,
+            "Local attestation evidence verification failed",
+        );
     }
     println!("\n Loading node configurations...");
     let node_a = load_config("config/nodeA.yaml").expect("Failed to load nodeA config");
@@ -131,17 +157,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     println!("\n Starting inter-node mock communication...");
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: cargo run -- <node_id>");
-        std::process::exit(1);
-    }
-    let node_id = args[1].clone();
 
     // Initialize structured JSON logger
     init_logger(&node_id);
     log_event(&node_id, "Logger initialized for node");
     log_event(&node_id, "Node configuration loading complete");
+    // === Ensure audit log directory exists ===
+    std::fs::create_dir_all("logs").ok();
+    // === VERIFY EXISTING AUDIT LOG (tamper detection) ===
+    let audit_log_path = "logs/audit.log";
+    if std::path::Path::new(audit_log_path).exists() {
+        if let Err(e) = AuditVerifier::verify(audit_log_path) {
+            log_error(
+                &node_id,
+                &format!("Audit log integrity warning (non-fatal): {}", e),
+            );
+        }
+    }
+    // === Initialize Audit Logger (tamper-evident) ===
+    let audit_path = PathBuf::from(format!("logs/audit-{}.log", node_id));
+
+    init_audit_logger(audit_path);
+
+    log_audit(
+        &node_id,
+        AuditCategory::Node,
+        AuditSeverity::Info,
+        AuditAction::Started,
+        "Node started successfully",
+    );
+    log_audit(
+        &node_id,
+        AuditCategory::Identity,
+        AuditSeverity::Info,
+        AuditAction::Succeeded,
+        "Node identity key loaded or generated",
+    );
 
     let metrics = Arc::new(Mutex::new(Metrics::default()));
     // === Metrics server enable/disable
@@ -161,6 +212,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await;
         });
     }
+
+    log_audit(
+        &node_id,
+        AuditCategory::Node,
+        AuditSeverity::Info,
+        AuditAction::Applied,
+        if metrics_enabled {
+            "Metrics server enabled"
+        } else {
+            "Metrics server disabled"
+        },
+    );
+
     {
         let mut m = metrics.lock().await;
         m.record_connection();
@@ -240,6 +304,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 println!("✅ Policy is now ACTIVE at runtime");
                 log_event(&node_id, "Runtime policy activated successfully");
+                log_audit(
+                    &node_id,
+                    AuditCategory::Policy,
+                    AuditSeverity::Info,
+                    AuditAction::Applied,
+                    "Signed policy verified and activated",
+                );
                 {
                     let mut m = metrics.lock().await;
                     m.set_policy_active(true);
@@ -256,6 +327,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         "Signed policy rejected, continuing with last active policy: {}",
                         e
                     ),
+                );
+                log_audit(
+                    &node_id,
+                    AuditCategory::Policy,
+                    AuditSeverity::Critical,
+                    AuditAction::Rejected,
+                    "Signed policy rejected during verification",
                 );
                 {
                     let mut m = metrics.lock().await;
@@ -341,7 +419,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "Deferred policy enforcement failed on {}: {:?}",
                     node_id_clone, e
                 );
-
+                log_audit(
+                    &node_id_clone,
+                    AuditCategory::Enforcement,
+                    AuditSeverity::Critical,
+                    AuditAction::Failed,
+                    "Policy enforcement failed",
+                );
                 let mut m = metrics_clone.lock().await;
                 m.record_enforcement_failure();
             }
@@ -390,6 +474,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("🛑 Node {} shutting down gracefully.", node_id);
     log_event(&node_id, "Node shutting down gracefully");
+    log_audit(
+        &node_id,
+        AuditCategory::Node,
+        AuditSeverity::Info,
+        AuditAction::Succeeded,
+        "Node shutting down gracefully",
+    );
     if cfg!(windows) {
         std::process::exit(0);
     } else {

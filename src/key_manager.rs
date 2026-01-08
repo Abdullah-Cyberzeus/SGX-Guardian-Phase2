@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use crate::audit::logger::log_audit;
 use anyhow::{anyhow, Result};
 use ring::rand::SystemRandom;
 use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
@@ -28,9 +30,24 @@ impl KeyManager {
         // Read existing or generate new keypair
         let pkcs8_bytes = if key_path.exists() {
             info!("Loading existing identity key: {}", key_path.display());
+            log_audit(
+                "system",
+                AuditCategory::Identity,
+                AuditSeverity::Info,
+                AuditAction::Loaded,
+                "Existing node identity key loaded from disk",
+            );
             fs::read(key_path)?
         } else {
             warn!("⚠️ Identity key not found, generating new one...");
+
+            log_audit(
+                "system",
+                AuditCategory::Identity,
+                AuditSeverity::Critical,
+                AuditAction::Created,
+                "New node identity key generated",
+            );
             let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
                 .map_err(|_| anyhow!("Failed to generate keypair"))?;
             fs::create_dir_all(
@@ -48,6 +65,13 @@ impl KeyManager {
                 .map_err(|_| anyhow!("Failed to load keypair from pkcs8"))?;
         // === Save public key as DER file (optional export for CLI/testing) ===
         let pub_der_path = "sgx-agent/device_public.der";
+        log_audit(
+            "system",
+            AuditCategory::Identity,
+            AuditSeverity::Info,
+            AuditAction::Exported,
+            "Node public key exported in DER format",
+        );
         let pub_der = keypair.public_key().as_ref();
         fs::write(pub_der_path, pub_der).ok();
         Ok(Self {
@@ -63,6 +87,14 @@ impl KeyManager {
             .keypair
             .sign(&rng, data)
             .map_err(|_| anyhow!("Failed to sign data"))?;
+
+        log_audit(
+            "system",
+            AuditCategory::Cryptography,
+            AuditSeverity::Info,
+            AuditAction::Used,
+            "Node identity key used to sign data",
+        );
         Ok(sig.as_ref().to_vec())
     }
 

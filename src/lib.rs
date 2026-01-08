@@ -2,6 +2,7 @@
 
 // Core modules
 pub mod attestation_service;
+pub mod audit;
 pub mod client;
 pub mod config_loader;
 pub mod enforcement;
