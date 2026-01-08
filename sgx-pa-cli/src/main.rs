@@ -1,0 +1,66 @@
+//! SGX Guardian Policy Authority CLI tool.
+//! Provides commands for viewing logs, signing policies, generating keys,
+//! checking node status, and inspecting attested peers.
+mod commands;
+mod config;
+use clap::{Parser, Subcommand};
+use commands::{logs::LogsArgs, sign::SignArgs};
+/// Top-level CLI definition for the SGX Policy Authority tool.
+/// Parses subcommands for key generation, policy signing, logs,
+/// peer inspection, and attestation status.
+#[derive(Parser)]
+#[command(
+    name = "sgx-pa-cli",
+    about = "SGX Guardian Policy Authority CLI",
+    version
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+/// Defines all supported sgx-pa-cli subcommands, including policy signing,
+/// key generation, node status inspection, log viewing, and peer discovery output.
+#[derive(Subcommand)]
+enum Commands {
+    /// Show status information for a specific SGX Guardian node
+    Status(commands::status::StatusArgs),
+    /// Show recent logs for a specific node
+    Logs(LogsArgs),
+    /// Generate a new ECDSA-P256 keypair
+    Keygen,
+    /// Sign a UEP policy file (YAML or JSON)
+    Sign(SignArgs),
+    /// List all discovered and attested peers
+    Peers,
+    /// Show the last attestation result
+    Attestation,
+    /// Verify a signed policy.sig file
+    Verify(commands::verify::VerifyArgs),
+}
+/// Entry point for the SGX Policy Authority CLI.
+/// Dispatches the selected subcommand and routes execution
+/// to the corresponding handler in the `commands` module.
+fn main() {
+    let cli = Cli::parse();
+    match cli.command {
+        Commands::Status(args) => commands::status::run(args),
+        Commands::Logs(args) => commands::logs::run(args),
+        Commands::Keygen => commands::keygen::execute(),
+        Commands::Sign(args) => commands::sign::execute(args),
+        Commands::Verify(args) => {
+            if let Err(e) = commands::verify::run(&args) {
+                eprintln!("Error: {}", e);
+            }
+        }
+        Commands::Peers => {
+            if let Err(e) = commands::peers::run() {
+                eprintln!("Error: {}", e);
+            }
+        }
+        Commands::Attestation => {
+            if let Err(e) = commands::attestation::run() {
+                eprintln!("Error: {}", e);
+            }
+        }
+    }
+}

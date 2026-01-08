@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package sgx;
+
+message PolicyInfo {
+  string policy_id = 1;            // Unique policy identifier (e.g., UUID)
+  string version = 2;              // Semantic versioning e.g., "1.0.0"
+  string signed_by = 3;            // Authority that signed this policy
+  string signature = 4;            // Base64-encoded signature of policy digest
+  bytes policy_payload = 5;        // Serialized policy content (YAML or JSON)
+}

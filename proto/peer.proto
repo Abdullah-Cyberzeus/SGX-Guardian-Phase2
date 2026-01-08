@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package sgx;
+
+message PeerInfo {
+  string node_id = 1;            // Unique ID for the node (derived from public key)
+  string hostname = 2;           // Hostname or device name
+  string ip_address = 3;         // Node IP for P2P communication
+  string public_key = 4;         // ECDSA P-256 public key
+  string software_version = 5;   // Version of running sgx-guardian daemon
+  string status = 6;             // "online", "offline", "attesting", etc.
+}

@@ -1,9 +1,19 @@
-node_modules/
-*.log
-.DS_Store
-.env
-dist/
-build/
-coverage/
+/target
 .vscode/
-.idea/
+logs/
+sgx-agent/
+sgx-pa-cli/guardian_private.key
+private_key.asc
+*.key
+*.pem
+*.asc
+nul
+*.sig
+
+# Coverage reports
+cobertura.xml
+*.profraw
+*.profdata
+tarpaulin-report.html
+coverage/
+

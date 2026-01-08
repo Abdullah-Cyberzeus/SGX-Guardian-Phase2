@@ -1,0 +1,51 @@
+//! Key generation utilities for the SGX Guardian Policy Authority CLI.
+//! Ensures deterministic ECDSA-P256 keypair creation with secure handling.
+use base64::engine::general_purpose;
+use base64::Engine as _;
+use p256::ecdsa::{SigningKey, VerifyingKey};
+use rand_core::OsRng;
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
+
+/// Generates a new ECDSA-P256 keypair for the SGX Policy Authority.
+/// Writes the private key to `guardian_private.key` and the public key to
+/// `guardian_public.key`, with overwrite protection and secure file
+/// permissions on Unix-based systems.
+pub fn execute() {
+    // 🔒 Check BOTH keys before doing anything
+    if Path::new("guardian_private.key").exists() {
+        eprintln!("❌ guardian_private.key already exists; refusing to overwrite.");
+        return;
+    }
+    if Path::new("guardian_public.key").exists() {
+        eprintln!("❌ guardian_public.key already exists; refusing to overwrite.");
+        return;
+    }
+
+    let signing_key = SigningKey::random(&mut OsRng);
+    let verify_key = VerifyingKey::from(&signing_key);
+    let priv_bytes = signing_key.to_bytes();
+    let pub_bytes = verify_key.to_encoded_point(false);
+    // Write private key (unsafe default perms)
+    fs::write(
+        "guardian_private.key",
+        general_purpose::STANDARD.encode(priv_bytes),
+    )
+    .expect("Failed to write private key file");
+
+    // Set restrictive permissions (Unix only)
+    #[cfg(unix)]
+    {
+        let perms = fs::Permissions::from_mode(0o600);
+        fs::set_permissions("guardian_private.key", perms)
+            .expect("Failed to set private key permissions");
+    }
+    fs::write(
+        "guardian_public.key",
+        general_purpose::STANDARD.encode(pub_bytes.as_bytes()),
+    )
+    .expect("Failed to write public key file");
+    println!("✅ ECDSA-P256 keypair generated and saved locally.");
+}
