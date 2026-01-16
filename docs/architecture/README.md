@@ -38,7 +38,7 @@ The SG-X Guardian system is a distributed, peer-to-peer security platform design
 ### Key Architectural Characteristics
 
 | Characteristic | Description |
-|----------------|-------------|
+| -------------- | ----------- |
 | **Zero-Trust Security** | Continuous mutual attestation between peers; no implicit trust |
 | **Decentralized** | No central authority required for peer discovery or trust establishment |
 | **Deterministic Enforcement** | Atomic policy updates with guaranteed rollback capabilities |
@@ -61,6 +61,7 @@ The SG-X Guardian system is a distributed, peer-to-peer security platform design
 ### Problem Statement
 
 Modern edge computing environments require:
+
 - Autonomous security policy enforcement without central coordination
 - Cryptographic verification of peer identity and policy integrity
 - Real-time policy synchronization across distributed devices
@@ -70,6 +71,7 @@ Modern edge computing environments require:
 ### Solution Architecture
 
 The SG-X Guardian implements a distributed trust fabric where:
+
 1. Devices autonomously discover peers on local networks via mDNS
 2. Mutual attestation establishes cryptographic proof of identity and policy state
 3. Secure channels (gRPC over mTLS) enable policy distribution
@@ -78,19 +80,19 @@ The SG-X Guardian implements a distributed trust fabric where:
 
 ### System Context Diagram
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    SG-X Guardian Cohort                         │
-│                                                                   │
+```sh
+┌────────────────────────────────────────────────────────────────┐
+│                    SG-X Guardian Cohort                        │
+│                                                                │
 │  ┌──────────┐         ┌──────────┐         ┌──────────┐        │
 │  │  Node A  │◄───────►│  Node B  │◄───────►│  Node C  │        │
 │  │ Guardian │  mTLS   │ Guardian │  mTLS   │ Guardian │        │
 │  └──────────┘         └──────────┘         └──────────┘        │
-│       ▲                     ▲                     ▲             │
-│       │ mDNS Discovery      │                     │             │
-│       └─────────────────────┴─────────────────────┘             │
-│                                                                   │
-└─────────────────────────────────────────────────────────────────┘
+│       ▲                     ▲                     ▲            │
+│       │ mDNS Discovery      │                     │            │
+│       └─────────────────────┴─────────────────────┘            │
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
          │                          │                      │
          ▼                          ▼                      ▼
    ┌─────────┐              ┌─────────────┐         ┌─────────┐
@@ -149,17 +151,17 @@ The following principles guide all architectural decisions:
 
 ### Logical Architecture
 
-```
+```sh
 ┌────────────────────────────────────────────────────────────────┐
 │                    sgx-guardian Daemon                         │
-│                                                                  │
+│                                                                │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │                  Control Plane                           │  │
 │  │                                                          │  │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │  │
-│  │  │ P2P Discovery│  │  Attestation │  │    Policy    │  │  │
-│  │  │   (mDNS)     │  │   Service    │  │   Manager    │  │  │
-│  │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  │  │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │  │
+│  │  │ P2P Discovery│  │  Attestation │  │    Policy    │    │  │
+│  │  │   (mDNS)     │  │   Service    │  │   Manager    │    │  │
+│  │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘    │  │
 │  │         │                  │                  │          │  │
 │  │         └──────────────────┼──────────────────┘          │  │
 │  │                            │                             │  │
@@ -168,17 +170,17 @@ The following principles guide all architectural decisions:
 │  │                    │  (ECDSA P-256) │                    │  │
 │  │                    └────────────────┘                    │  │
 │  └──────────────────────────────────────────────────────────┘  │
-│                                                                  │
+│                                                                │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │                    Data Plane                            │  │
 │  │                                                          │  │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │  │
-│  │  │ Enforcement  │  │  Telemetry   │  │    Audit     │  │  │
-│  │  │   Engine     │  │   Service    │  │    Logger    │  │  │
-│  │  │  (nftables)  │  │ (Prometheus) │  │ (Hash Chain) │  │  │
-│  │  └──────────────┘  └──────────────┘  └──────────────┘  │  │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │  │
+│  │  │ Enforcement  │  │  Telemetry   │  │    Audit     │    │  │
+│  │  │   Engine     │  │   Service    │  │    Logger    │    │  │
+│  │  │  (nftables)  │  │ (Prometheus) │  │ (Hash Chain) │    │  │
+│  │  └──────────────┘  └──────────────┘  └──────────────┘    │  │
 │  └──────────────────────────────────────────────────────────┘  │
-│                                                                  │
+│                                                                │
 └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -187,7 +189,7 @@ The following principles guide all architectural decisions:
 The SG-X Guardian implements a **monolithic daemon architecture** with the following logical services:
 
 | Service | Responsibility | Key Technology |
-|---------|---------------|----------------|
+| ------- | -------------- | -------------- |
 | **p2p_discovery** | Zero-configuration peer discovery using mDNS with nonce exchange | `mdns-sd` crate |
 | **key_manager** | Persistent ECDSA P-256 key pair management and secure storage | `p256`, `ring` crates |
 | **attestation_service** | Mutual software-based attestation with signature verification | ECDSA P-256 signing |
@@ -197,6 +199,7 @@ The SG-X Guardian implements a **monolithic daemon architecture** with the follo
 | **audit_logger** | Structured, tamper-evident security event logging with hash chain | `tracing`, JSON Lines |
 
 **Rationale for Monolithic Architecture** (See [D008](../decision-log/README.md#d008-service-architecture---monolithic-daemon)):
+
 - Operational simplicity: Single binary deployment and management
 - Resource efficiency: No IPC overhead, shared memory space
 - Atomic updates: Version-matched components guaranteed
@@ -208,7 +211,7 @@ The SG-X Guardian implements a **monolithic daemon architecture** with the follo
 
 ### Component Interaction Diagram
 
-```
+```sh
 ┌─────────────────────────────────────────────────────────────────────┐
 │                      sgx-guardian Startup Flow                      │
 └─────────────────────────────────────────────────────────────────────┘
@@ -331,13 +334,15 @@ The SG-X Guardian implements a **monolithic daemon architecture** with the follo
 ### Key Manager Component
 
 **Responsibilities**:
+
 - Generate ECDSA P-256 key pairs on first boot
 - Securely store private keys with filesystem ACLs (future: TPM)
 - Provide signing interface for attestation service
 - Support key rotation (future phase)
 
 **Data Flow**:
-```
+
+```sh
 ┌─────────────┐
 │  First Boot │
 └──────┬──────┘
@@ -367,6 +372,7 @@ The SG-X Guardian implements a **monolithic daemon architecture** with the follo
 ```
 
 **Security Considerations**:
+
 - Private key never leaves process memory (Phase 1) or TPM (Phase 2)
 - Key file permissions enforced by systemd hardening
 - Audit log entry on key generation or loading
@@ -375,6 +381,7 @@ The SG-X Guardian implements a **monolithic daemon architecture** with the follo
 ### Attestation Service Component
 
 **Responsibilities**:
+
 - Generate random nonces for freshness
 - Create attestation evidence (signature over nonces + policy digest)
 - Verify peer attestation evidence
@@ -383,7 +390,7 @@ The SG-X Guardian implements a **monolithic daemon architecture** with the follo
 
 **Attestation Protocol**:
 
-```
+```sh
 Node A                                          Node B
   │                                               │
   │─────────── mDNS Discovery ──────────────────►│
@@ -426,6 +433,7 @@ Node A                                          Node B
 ```
 
 **VirtualID Derivation**:
+
 ```rust
 VirtualID = SHA256(
     public_key ||
@@ -436,6 +444,7 @@ VirtualID = SHA256(
 ```
 
 **Attestation Triggers**:
+
 1. New peer discovered via mDNS
 2. Policy update applied (forces new policy_digest)
 3. Periodic re-attestation timer (configurable, default: 5 minutes)
@@ -444,6 +453,7 @@ VirtualID = SHA256(
 ### Policy Manager Component
 
 **Responsibilities**:
+
 - Receive policies via gRPC from peers
 - Verify Policy Authority digital signature
 - Validate UEP schema compliance
@@ -452,7 +462,7 @@ VirtualID = SHA256(
 
 **Policy Lifecycle**:
 
-```
+```sh
 ┌──────────────────────────────────────────────────────────────┐
 │                    Policy Update Flow                        │
 └──────────────────────────────────────────────────────────────┘
@@ -522,7 +532,8 @@ VirtualID = SHA256(
 ```
 
 **Policy Storage Structure**:
-```
+
+```sh
 /var/lib/sgx-guardian/policy/
 ├── current.yaml              # Active policy
 ├── current.yaml.sig          # Detached signature
@@ -537,6 +548,7 @@ VirtualID = SHA256(
 ### Enforcement Engine Component
 
 **Responsibilities**:
+
 - Translate UEP policy to nftables rules
 - Apply rules atomically to kernel
 - Perform connectivity validation
@@ -561,6 +573,7 @@ rules:
 ```
 
 **Translated nftables Ruleset**:
+
 ```nft
 table inet sgx_guardian {
     chain input {
@@ -575,6 +588,7 @@ table inet sgx_guardian {
 ```
 
 **Atomic Application Process**:
+
 1. Generate complete nftables ruleset in memory
 2. Write to temporary file: `/tmp/sgx-guardian-policy-XXXX.nft`
 3. Execute: `nft -c -f /tmp/sgx-guardian-policy-XXXX.nft` (check syntax)
@@ -585,6 +599,7 @@ table inet sgx_guardian {
 8. Cleanup temporary files
 
 **Connectivity Validation**:
+
 - Ensure localhost loopback functional
 - Verify gRPC port accessible (default: 50051)
 - Validate Prometheus metrics endpoint (default: 9090)
@@ -599,7 +614,7 @@ table inet sgx_guardian {
 The SG-X Guardian system defends against the following threats in Phase 1:
 
 | Threat | Mitigation |
-|--------|------------|
+| ------ | ---------- |
 | **Network MITM** | All P2P communication over mTLS with mutual authentication |
 | **Policy Tampering** | Digital signatures (ECDSA P-256) on all policies; verification before application |
 | **Unauthorized Policy Distribution** | Only Policy Authority's public key trusted; signature verification enforced |
@@ -614,61 +629,62 @@ The SG-X Guardian system defends against the following threats in Phase 1:
 ### Cryptographic Architecture
 
 **Key Hierarchy**:
-```
-┌─────────────────────────────────────────────────────────────┐
-│               Policy Authority (PA)                         │
-│                                                              │
+
+```sh
+┌────────────────────────────────────────────────────────────┐
+│               Policy Authority (PA)                        │
+│                                                            │
 │  ┌────────────────────────────────────────────────────┐    │
 │  │ PA Identity Key Pair (ECDSA P-256)                 │    │
 │  │ - Private Key: Offline storage (HSM recommended)   │    │
 │  │ - Public Key: Distributed to all guardian nodes    │    │
 │  └────────────────────────────────────────────────────┘    │
-│                          │                                   │
-│                          │ Signs                             │
-│                          ▼                                   │
+│                          │                                 │
+│                          │ Signs                           │
+│                          ▼                                 │
 │  ┌────────────────────────────────────────────────────┐    │
 │  │ UEP Policy Documents                               │    │
 │  │ - Signed with PA private key                       │    │
 │  │ - Verified by nodes with PA public key             │    │
 │  └────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────────────┘
                           │
                           │ Distributed via
                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  Guardian Nodes                             │
-│                                                              │
-│  Each Node Has:                                             │
+┌────────────────────────────────────────────────────────────┐
+│                  Guardian Nodes                            │
+│                                                            │
+│  Each Node Has:                                            │
 │  ┌────────────────────────────────────────────────────┐    │
 │  │ Node Identity Key Pair (ECDSA P-256)               │    │
 │  │ - Private Key: /var/lib/sgx-guardian/identity.key  │    │
 │  │ - Public Key: /var/lib/sgx-guardian/identity.pub   │    │
 │  │ - Permissions: 0600 (private), 0644 (public)       │    │
 │  └────────────────────────────────────────────────────┘    │
-│                          │                                   │
-│                          │ Used for                          │
-│                          ▼                                   │
+│                          │                                 │
+│                          │ Used for                        │
+│                          ▼                                 │
 │  ┌────────────────────────────────────────────────────┐    │
 │  │ mTLS Certificates (Self-Signed)                    │    │
 │  │ - Generated from node identity key                 │    │
 │  │ - Used for gRPC channel encryption                 │    │
 │  └────────────────────────────────────────────────────┘    │
-│                          │                                   │
-│                          │ And                               │
-│                          ▼                                   │
+│                          │                                 │
+│                          │ And                             │
+│                          ▼                                 │
 │  ┌────────────────────────────────────────────────────┐    │
 │  │ Attestation Evidence                               │    │
 │  │ - Signature over: nonce_a + nonce_b + policy_hash  │    │
 │  │ - Proves possession of private key                 │    │
 │  │ - Binds identity to current policy state           │    │
 │  └────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────────────┘
 ```
 
 **Cryptographic Operations**:
 
 | Operation | Algorithm | Key Size | Purpose |
-|-----------|-----------|----------|---------|
+| --------- | --------- | -------- | ------- |
 | **Policy Signing** | ECDSA with P-256 curve | 256 bits | Policy Authority signs policies |
 | **Policy Verification** | ECDSA with P-256 curve | 256 bits | Nodes verify policy signatures |
 | **Attestation Signing** | ECDSA with P-256 curve | 256 bits | Nodes prove identity and state |
@@ -679,6 +695,7 @@ The SG-X Guardian system defends against the following threats in Phase 1:
 | **Nonce Generation** | CSPRNG (ChaCha20) | 256 bits | Replay prevention |
 
 **Signature Format** (Policy):
+
 ```yaml
 signature:
   algorithm: "ECDSA-P256-SHA256"
@@ -687,6 +704,7 @@ signature:
 ```
 
 **Certificate Management**:
+
 - Phase 1: Self-signed certificates derived from node identity keys
 - Phase 2: PKI integration with certificate rotation
 - Phase 3: TPM-backed certificates with hardware root of trust
@@ -695,7 +713,7 @@ signature:
 
 **Circle of Trust Formation**:
 
-```
+```sh
 Initial State: 3 isolated nodes
 ┌──────┐  ┌──────┐  ┌──────┐
 │Node A│  │Node B│  │Node C│
@@ -736,6 +754,7 @@ Step 3: Circle of Trust Established
 ```
 
 **Trust Verification Conditions**:
+
 1. Valid ECDSA signature on attestation evidence
 2. Nonces match expected values (freshness)
 3. Policy digest matches known good policy OR is newer version
@@ -743,6 +762,7 @@ Step 3: Circle of Trust Established
 5. mTLS certificate matches public key in attestation
 
 **Trust Revocation**:
+
 - Attestation failure triggers peer removal from trust list
 - Policy digest mismatch triggers re-synchronization attempt
 - Repeated failures trigger administrator alert
@@ -795,7 +815,7 @@ TasksMax=128
 
 ### Data Storage Layout
 
-```
+```sh
 /etc/sgx-guardian/
 ├── config.toml                    # Daemon configuration
 ├── policy-authority.pub           # Trusted PA public key
@@ -827,7 +847,7 @@ TasksMax=128
 
 ### Data Flow Diagram
 
-```
+```sh
 ┌─────────────────────────────────────────────────────────────────┐
 │                         Data Flows                              │
 └─────────────────────────────────────────────────────────────────┘
@@ -919,6 +939,7 @@ rules:
 ```
 
 **Schema Validation Rules**:
+
 - `version` must be "1.0"
 - `policy_id` must be valid UUID v4
 - `sequence` must be greater than previous policy
@@ -940,6 +961,7 @@ rules:
 ```
 
 **Hash Chain Verification**:
+
 ```rust
 // Each entry includes hash of previous entry
 current_entry.prev_hash == SHA256(previous_entry_json)
@@ -951,6 +973,7 @@ current_entry.hash == SHA256(
 ```
 
 **Audit Events**:
+
 - `daemon_started`, `daemon_stopped`
 - `peer_discovered`, `peer_lost`
 - `attestation_success`, `attestation_failure`
@@ -966,24 +989,24 @@ current_entry.hash == SHA256(
 
 ### Network Topology
 
-```
+```sh
 ┌────────────────────────────────────────────────────────────────┐
 │                  Local Network Segment                         │
 │                    (192.168.1.0/24)                            │
-│                                                                  │
-│  ┌───────────────┐      ┌───────────────┐      ┌─────────────┐│
-│  │   Node A      │      │   Node B      │      │   Node C    ││
-│  │ 192.168.1.100 │      │ 192.168.1.101 │      │192.168.1.102││
-│  └───────┬───────┘      └───────┬───────┘      └──────┬──────┘│
+│                                                                │
+│  ┌───────────────┐      ┌───────────────┐      ┌─────────────┐ │
+│  │   Node A      │      │   Node B      │      │   Node C    │ │
+│  │ 192.168.1.100 │      │ 192.168.1.101 │      │192.168.1.102│ │
+│  └───────┬───────┘      └───────┬───────┘      └──────┬──────┘ │
 │          │                      │                     │        │
 │          └──────────────────────┼─────────────────────┘        │
-│                                 │                               │
+│                                 │                              │
 │                     ┌───────────▼──────────┐                   │
 │                     │  Network Switch      │                   │
 │                     │  (mDNS multicast)    │                   │
 │                     └───────────┬──────────┘                   │
-│                                 │                               │
-└─────────────────────────────────┼───────────────────────────────┘
+│                                 │                              │
+└─────────────────────────────────┼──────────────────────────────┘
                                   │
                     ┌─────────────▼──────────────┐
                     │  Management Workstation    │
@@ -994,7 +1017,7 @@ current_entry.hash == SHA256(
 
 ### Protocol Stack
 
-```
+```sh
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Protocol Stack                               │
 └─────────────────────────────────────────────────────────────────┘
@@ -1031,12 +1054,13 @@ Data Link Layer
 ### Port Assignments
 
 | Port | Protocol | Service | Direction | Purpose |
-|------|----------|---------|-----------|---------|
+| ---- | -------- | ------- | --------- | ------- |
 | **5353** | UDP | mDNS | Multicast | Peer discovery (224.0.0.251) |
 | **50051** | TCP/TLS | gRPC | Bidirectional | P2P secure communication |
 | **9090** | HTTP | Prometheus | Inbound (localhost) | Metrics endpoint |
 
 **Firewall Requirements**:
+
 ```bash
 # mDNS discovery (all nodes)
 nft add rule inet filter input udp dport 5353 ip daddr 224.0.0.251 accept
@@ -1053,14 +1077,16 @@ nft add rule inet filter input tcp dport 9090 ip saddr 10.0.1.0/24 accept
 **Service Type**: `_sgx-guardian._tcp.local`
 
 **TXT Record Format**:
-```
+
+```sh
 version=1.0
 nonce=a1b2c3d4e5f6...
 pubkey_fingerprint=sha256:7f8g9h0i...
 ```
 
 **DNS-SD Advertisement**:
-```
+
+```sh
 _sgx-guardian._tcp.local. PTR node-a._sgx-guardian._tcp.local.
 node-a._sgx-guardian._tcp.local. SRV 0 0 50051 node-a.local.
 node-a._sgx-guardian._tcp.local. TXT "version=1.0" "nonce=..."
@@ -1069,7 +1095,7 @@ node-a.local. A 192.168.1.100
 
 ### Network Security Zones
 
-```
+```sh
 ┌────────────────────────────────────────────────────────────────┐
 │                     Security Zones                             │
 └────────────────────────────────────────────────────────────────┘
@@ -1112,12 +1138,14 @@ Zone 4: Localhost Only
 ### Deployment Model
 
 **Target Platforms**:
+
 - Debian 10+ (Buster and later)
 - Ubuntu 20.04 LTS and later
 - RHEL 8+ / Rocky Linux 8+
 - Fedora 34+
 
 **Minimum System Requirements**:
+
 - CPU: x86_64 or ARM64 (2 cores recommended)
 - RAM: 256 MB minimum, 512 MB recommended
 - Disk: 100 MB for binaries, 1 GB for logs/state
@@ -1127,7 +1155,8 @@ Zone 4: Localhost Only
 ### Package Structure
 
 **Debian/Ubuntu (.deb)**:
-```
+
+```sh
 sgx-guardian_1.0.0_amd64.deb
 ├── DEBIAN/
 │   ├── control                    # Package metadata
@@ -1156,6 +1185,7 @@ sgx-guardian_1.0.0_amd64.deb
 **Installation Hooks**:
 
 **postinst**:
+
 ```bash
 #!/bin/bash
 # Create system user and group
@@ -1188,6 +1218,7 @@ systemctl start sgx-guardian.service
 ### Configuration Management
 
 **config.toml**:
+
 ```toml
 [daemon]
 log_level = "info"              # trace, debug, info, warn, error
@@ -1235,6 +1266,7 @@ heartbeat_interval_sec = 60
 ### systemd Service Unit
 
 **sgx-guardian.service**:
+
 ```ini
 [Unit]
 Description=SG-X Guardian - Circle of Trust Daemon
@@ -1288,7 +1320,7 @@ WantedBy=multi-user.target
 
 ### Deployment Workflow
 
-```
+```sh
 ┌────────────────────────────────────────────────────────────────┐
 │                  Deployment Workflow                           │
 └────────────────────────────────────────────────────────────────┘
@@ -1391,7 +1423,7 @@ WantedBy=multi-user.target
 ### Core Technologies
 
 | Layer | Technology | Version | Purpose |
-|-------|-----------|---------|---------|
+| ----- | --------- | ------- | ------- |
 | **Programming Language** | Rust | 1.70+ | Memory-safe systems programming |
 | **RPC Framework** | gRPC (tonic) | 0.11+ | Strongly-typed P2P communication |
 | **Serialization** | Protocol Buffers | proto3 | Efficient binary serialization |
@@ -1406,6 +1438,7 @@ WantedBy=multi-user.target
 ### Rust Crate Dependencies
 
 **Critical Path (Security-Audited)**:
+
 ```toml
 [dependencies]
 # Core async runtime
@@ -1448,6 +1481,7 @@ config = "0.14"
 ```
 
 **Development Dependencies**:
+
 ```toml
 [dev-dependencies]
 mockall = "0.12"       # Mocking for unit tests
@@ -1458,7 +1492,7 @@ proptest = "1.4"       # Property-based testing
 ### External System Dependencies
 
 | Dependency | Minimum Version | Purpose |
-|------------|----------------|---------|
+| ---------- | -------------- | ------- |
 | **Linux Kernel** | 5.4+ | nftables support, modern netfilter |
 | **nftables** | 0.9.0+ | Policy enforcement |
 | **systemd** | 230+ | Service management, journald |
@@ -1483,7 +1517,7 @@ cargo-tarpaulin     # Code coverage
 ### CI/CD Tooling
 
 | Tool | Purpose |
-|------|---------|
+| ---- | ------- |
 | **GitHub Actions** | Primary CI/CD platform |
 | **Semgrep** | SAST (Static Application Security Testing) |
 | **CodeQL** | Advanced security analysis |
@@ -1499,7 +1533,7 @@ cargo-tarpaulin     # Code coverage
 
 ### External System Integrations
 
-```
+```sh
 ┌───────────────────���────────────────────────────────────────────┐
 │                   Integration Points                           │
 └────────────────────────────────────────────────────────────────┘
@@ -1628,7 +1662,7 @@ message StatusResponse {
 
 **Exported Metrics**:
 
-```
+```sh
 # System Health
 sgx_guardian_up{version="1.0.0"} 1
 sgx_guardian_uptime_seconds 3600
@@ -1673,9 +1707,9 @@ sgx_guardian_goroutines 12
 
 ### Operational Workflows
 
-**1. Day 0: Initial Deployment**
+#### 1. Day 0: Initial Deployment
 
-```
+```sh
 Administrator Actions:
 1. Generate Policy Authority key pair (offline, secure workstation)
    $ sgx-pa-cli keygen --output pa-keypair.pem
@@ -1700,9 +1734,9 @@ Administrator Actions:
    $ sgx-pa-cli push-policy --policy initial-policy.yaml.sig --target node-a:50051
 ```
 
-**2. Day 1: Policy Updates**
+#### 2. Day 1: Policy Updates
 
-```
+```sh
 Administrator Actions:
 1. Edit policy file (add/remove rules)
    $ vim production-policy.yaml
@@ -1720,9 +1754,9 @@ Administrator Actions:
    Node C: Policy v43 applied (3s ago)
 ```
 
-**3. Day 2: Incident Response**
+#### 3. Day 2: Incident Response
 
-```
+```sh
 Scenario: Attestation failure detected
 
 1. Alert triggered (Prometheus alerting rule)
@@ -1746,9 +1780,9 @@ Scenario: Attestation failure detected
    Circle of Trust: 3 peers attested ✓
 ```
 
-**4. Monitoring & Observability**
+#### 4. Monitoring & Observability
 
-```
+```sh
 Key Operational Dashboards (Grafana):
 
 1. Circle of Trust Health
@@ -1779,6 +1813,7 @@ Key Operational Dashboards (Grafana):
 ### Backup and Recovery
 
 **Critical Data to Backup**:
+
 1. Node identity keys: `/var/lib/sgx-guardian/identity.key`
 2. Active policy: `/var/lib/sgx-guardian/policy/current.yaml`
 3. Configuration: `/etc/sgx-guardian/config.toml`
@@ -1786,7 +1821,7 @@ Key Operational Dashboards (Grafana):
 
 **Recovery Procedures**:
 
-```
+```sh
 Scenario 1: Node Failure (Hardware)
 1. Deploy new hardware
 2. Install sgx-guardian package
@@ -1813,12 +1848,14 @@ Scenario 3: Complete Circle Failure (All Nodes Down)
 ### Maintenance Windows
 
 **Planned Maintenance**:
+
 1. Guardian software updates: Rolling update (one node at a time)
 2. Policy updates: Zero downtime (atomic replacement)
 3. Key rotation (future): Planned downtime or rolling rotation
 4. Log rotation: Automatic, no downtime required
 
 **Update Procedure (Rolling Update)**:
+
 ```bash
 # Update one node at a time
 for node in node-a node-b node-c; do
@@ -1834,23 +1871,23 @@ done
 
 ### Phase 2 Enhancements
 
-**1. Hardware TPM Attestation**
+#### 1. Hardware TPM Attestation
 
-```
+```sh
 Current (Phase 1):              Future (Phase 2):
-┌──────────────┐               ┌──────────────┐
-│ Software     │               │ TPM 2.0      │
-│ Attestation  │               │ - PCR binding│
-│ - Filesystem │   ────────►   │ - Sealed keys│
-│   key storage│               │ - Quote API  │
-│ - Signature  │               │ - Hardware RoT│
-│   verification│               └──────────────┘
-└──────────────┘
+┌───────────────┐               ┌───────────────┐
+│ Software      │               │ TPM 2.0       │
+│ Attestation   │               │ - PCR binding │
+│ - Filesystem  │   ────────►   │ - Sealed keys │
+│   key storage │               │ - Quote API   │
+│ - Signature   │               │ - Hardware RoT│
+│   verification│               └───────────────┘
+└───────────────┘
 ```
 
-**2. Bi-directional Cloud Integration**
+#### 2. Bi-directional Cloud Integration
 
-```
+```sh
 Current (Phase 1):              Future (Phase 2):
 ┌──────────────┐               ┌──────────────┐
 │ Outbound-Only│               │ Bi-directional│
@@ -1860,9 +1897,9 @@ Current (Phase 1):              Future (Phase 2):
 └──────────────┘               └──────────────┘
 ```
 
-**3. L7 Protocol Connectors**
+#### 3. L7 Protocol Connectors
 
-```
+```sh
 Current (Phase 1):              Future (Phase 2):
 ┌──────────────┐               ┌──────────────┐
 │ L3/L4 Only   │               │ L7 Inspection│
@@ -1873,9 +1910,9 @@ Current (Phase 1):              Future (Phase 2):
 └──────────────┘               └──────────────┘
 ```
 
-**4. Certificate Revocation List (CRL) Gossip**
+#### 4. Certificate Revocation List (CRL) Gossip
 
-```
+```sh
 Current (Phase 1):              Future (Phase 2):
 ┌──────────────┐               ┌──────────────┐
 │ No Revocation│               │ CRL Gossip   │
@@ -1887,9 +1924,9 @@ Current (Phase 1):              Future (Phase 2):
 
 ### Phase 3+ Vision
 
-**1. Virtual Shift (AI/ML Anomaly Detection)**
+#### 1. Virtual Shift (AI/ML Anomaly Detection)
 
-```
+```sh
 ┌────────────────────────────────────────────────────────────────┐
 │                  Virtual Shift Architecture                    │
 └────────────────────────────────────────────────────────────────┘
@@ -1909,13 +1946,13 @@ Current (Phase 1):              Future (Phase 2):
                            └──────────────┘
 ```
 
-**2. Scalability Enhancements**
+#### 2. Scalability Enhancements
 
 - Support for cohorts >100 nodes (gossip protocol optimization)
 - Hierarchical trust domains (multi-cohort federation)
 - Edge-to-cloud policy pipeline (bidirectional sync)
 
-**3. Compliance & Audit**
+#### 3. Compliance & Audit
 
 - FIPS 140-3 certification
 - Common Criteria EAL4+ evaluation
@@ -1926,7 +1963,7 @@ Current (Phase 1):              Future (Phase 2):
 The architecture provides extension points for future capabilities:
 
 | Extension Point | Interface | Future Use Case |
-|----------------|-----------|-----------------|
+| -------------- | --------- | --------------- |
 | **Attestation Provider** | Trait `AttestationProvider` | TPM, SGX, SEV attestation backends |
 | **Policy Schema** | Versioned YAML schema | L7 rules, advanced filtering, dynamic policies |
 | **Enforcement Backend** | Trait `EnforcementEngine` | eBPF/XDP, DPDK, hardware offload |
@@ -1942,7 +1979,7 @@ This architecture document is supported by detailed decision records. All 20 arc
 ### Key Decisions Reference
 
 | Decision | Title | Impact |
-|----------|-------|--------|
+| -------- | ----- | ------ |
 | [D001](../decision-log/README.md#d001-core-programming-language---rust) | Core Programming Language - Rust | Foundation: Memory safety, performance |
 | [D002](../decision-log/README.md#d002-inter-service-communication-protocol---grpc-over-mtls) | gRPC over mTLS | P2P communication protocol |
 | [D003](../decision-log/README.md#d003-cryptographic-algorithm---ecdsa-p-256) | ECDSA P-256 Cryptography | All signing and encryption |
@@ -1973,10 +2010,12 @@ This architecture document is supported by detailed decision records. All 20 arc
 **Review Cycle**: Updated at each sprint boundary and milestone
 
 **Versioning**:
+
 - Version 1.0: Initial architecture (November 12, 2025)
 - Future versions will be tracked in git history
 
 **Related Documents**:
+
 - [Project README](../README.md) - Overview and getting started
 - [Decision Log](../decision-log/README.md) - Detailed architectural decisions
 - [Deliverables Tracking](../deliverables/README.md) - Sprint and milestone tracking

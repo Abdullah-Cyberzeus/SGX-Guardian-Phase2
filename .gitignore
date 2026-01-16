@@ -17,3 +17,7 @@ cobertura.xml
 tarpaulin-report.html
 coverage/
 
+#AI
+.claude/
+.intraview/
+.introview-tour.md
