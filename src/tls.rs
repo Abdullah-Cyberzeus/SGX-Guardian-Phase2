@@ -10,27 +10,42 @@ pub struct TlsConfig {
     pub server: ServerConfig,
     pub client: ClientConfig,
 }
-/// Load PEM private key
+/// Load PEM private key (safe, rustls-pemfile removed)
 pub fn load_private_key(path: &str) -> Result<PrivateKey> {
-    let key_bytes =
-        fs::read(path).with_context(|| format!("Failed to read private key: {}", path))?;
+    let pem_data = fs::read_to_string(path)
+        .with_context(|| format!("Failed to read private key: {}", path))?;
 
-    let key = rustls_pemfile::pkcs8_private_keys(&mut key_bytes.as_slice())
-        .unwrap()
-        .remove(0);
+    let blocks =
+        pem::parse_many(&pem_data).map_err(|e| anyhow::anyhow!("Failed to parse PEM: {}", e))?;
 
-    Ok(PrivateKey(key))
+    for block in blocks {
+        match block.tag() {
+            "PRIVATE KEY" | "RSA PRIVATE KEY" | "EC PRIVATE KEY" => {
+                return Ok(PrivateKey(block.contents().to_vec()));
+            }
+            _ => continue,
+        }
+    }
+
+    Err(anyhow::anyhow!("No valid private key found in PEM file"))
 }
-/// Load PEM certificate
+/// Load PEM certificates (safe, rustls-pemfile removed)
 pub fn load_certificate(path: &str) -> Result<Vec<Certificate>> {
-    let cert_bytes =
-        fs::read(path).with_context(|| format!("Failed to read certificate: {}", path))?;
+    let pem_data = fs::read_to_string(path)
+        .with_context(|| format!("Failed to read certificate: {}", path))?;
 
-    let certs = rustls_pemfile::certs(&mut cert_bytes.as_slice())
-        .unwrap()
+    let blocks = pem::parse_many(&pem_data)
+        .map_err(|e| anyhow::anyhow!("Failed to parse PEM certificates: {}", e))?;
+
+    let certs: Vec<Certificate> = blocks
         .into_iter()
-        .map(Certificate)
+        .filter(|b| b.tag() == "CERTIFICATE")
+        .map(|b| Certificate(b.contents().to_vec()))
         .collect();
+
+    if certs.is_empty() {
+        return Err(anyhow::anyhow!("No certificates found in PEM file"));
+    }
 
     Ok(certs)
 }
@@ -110,8 +125,8 @@ pub fn ensure_node_certificate_or_generate(
     // ----- AUTO SAN + CN FIX FOR EACH NODE -----
     // Determine node ID from CLI args (nodeA / nodeB / nodeC)
     let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
-    // Load config for this node
-    let conf_path = format!("config/{}.yaml", node_id);
+    // Load config for this node (PACKAGED PATH)
+    let conf_path = format!("/etc/sgx-guardian/{}.yaml", node_id);
     let node_conf = crate::config_loader::load_config(&conf_path)
         .expect("Failed to load node config inside TLS generator");
     // Extract hostname + IP for SAN fields
@@ -164,9 +179,6 @@ pub fn ensure_node_certificate_or_generate(
 }
 /// Convert DER bytes → PEM string for tonic TLS
 pub fn der_to_pem(der: &[u8]) -> String {
-    let pem = pem::Pem {
-        tag: "CERTIFICATE".to_string(),
-        contents: der.to_vec(),
-    };
+    let pem = pem::Pem::new("CERTIFICATE", der.to_vec());
     pem::encode(&pem)
 }

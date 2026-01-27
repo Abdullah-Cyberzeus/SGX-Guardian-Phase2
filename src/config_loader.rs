@@ -4,6 +4,13 @@ use std::fs;
 
 /// Represents the per-node configuration loaded from YAML,
 /// including identity, networking, and public key parameters.
+/// Configuration for the metrics server (optional, per-node)
+#[derive(Debug, Deserialize, Clone)]
+pub struct MetricsConfig {
+    pub enabled: bool,
+    pub bind: String,
+    pub port: u16,
+}
 #[derive(Debug, Deserialize, Clone)]
 pub struct NodeConfig {
     pub node_id: String,
@@ -11,6 +18,7 @@ pub struct NodeConfig {
     pub ip: String,
     pub port: u16,
     pub public_key: String,
+    pub metrics: Option<MetricsConfig>,
 }
 impl NodeConfig {
     /// Validates the node configuration fields, ensuring correct ID,
@@ -39,7 +47,15 @@ impl NodeConfig {
         if self.public_key.trim().is_empty() {
             return Err("public_key cannot be empty".into());
         }
+        if let Some(metrics) = &self.metrics {
+            if metrics.bind.parse::<std::net::IpAddr>().is_err() {
+                return Err(format!("Invalid metrics.bind IP: {}", metrics.bind));
+            }
 
+            if metrics.port == 0 {
+                return Err("metrics.port cannot be 0".into());
+            }
+        }
         Ok(())
     }
 }

@@ -35,7 +35,9 @@ impl P2PDiscovery {
             &["node=sgx-guardian"],
         );
         println!("✅ mDNS service registered for {}", node_id);
-        let km = Arc::new(KeyManager::load_or_generate(None)?);
+        let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
+        let key_path = format!("sgx-agent/device_{}.key", node_id);
+        let km = Arc::new(KeyManager::load_or_generate(&key_path)?);
         let _km_clone = km.clone();
         let node_id_clone = node_id.clone();
         let node_id_sim = node_id.clone();

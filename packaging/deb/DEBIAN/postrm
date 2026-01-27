@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+echo "SGX Guardian post-remove started..."
+
+if command -v systemctl >/dev/null; then
+    systemctl daemon-reload
+fi
+
+echo "SGX Guardian post-remove completed."
+exit 0

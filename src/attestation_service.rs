@@ -38,8 +38,12 @@ struct LastAttestation {
 fn write_trusted_peer(peer_id: &str, ip: &str) {
     // Identify node name (nodeA / nodeB / nodeC)
     let node = std::env::args().nth(1).unwrap_or("nodeX".into());
-    let node_file = format!("logs/trusted_peers_{}.json", node);
-
+    let prod_file = format!("/var/log/sgx-guardian/trusted_peers_{}.json", node);
+    let dev_file = format!(
+        "{}/logs/trusted_peers_{}.json",
+        std::env::var("SGX_GUARDIAN_HOME").unwrap_or_else(|_| "/var/lib/sgx-guardian".into()),
+        node
+    );
     let entry = TrustedPeer {
         peer_id: peer_id.to_string(),
         ip: ip.to_string(),
@@ -49,7 +53,9 @@ fn write_trusted_peer(peer_id: &str, ip: &str) {
 
     // Load existing per-node file (NOT global file)
     let mut data = Vec::<TrustedPeer>::new();
-    if let Ok(existing) = fs::read_to_string(&node_file) {
+    let existing = fs::read_to_string(&prod_file).or_else(|_| fs::read_to_string(&dev_file));
+
+    if let Ok(existing) = existing {
         if let Ok(parsed) = serde_json::from_str::<Vec<TrustedPeer>>(&existing) {
             data = parsed;
         }
@@ -71,14 +77,19 @@ fn write_trusted_peer(peer_id: &str, ip: &str) {
 
     // Save back to per-node file
     if let Ok(json) = serde_json::to_string_pretty(&data) {
-        let _ = fs::write(&node_file, json);
+        let _ = fs::write(&prod_file, &json);
+        let _ = fs::create_dir_all("logs");
+        let _ = fs::write(&dev_file, &json);
     } else {
-        eprintln!("⚠️ Failed to serialize trusted peer list for {}", node_file);
+        eprintln!(
+            "⚠️ Failed to serialize trusted peer list for trusted_peers_{}.json",
+            node
+        );
     }
     merge_parent_peer_file();
 }
 /// Saves the latest attestation result for a peer into
-/// `logs/last_attestation.json` for debugging & audit visibility.
+/// `/var/log/sgx-guardian/last_attestation.json` for debugging & audit visibility.
 fn write_last_attestation(peer_id: &str, policy_digest: &str, result: &str) {
     let record = LastAttestation {
         peer_id: peer_id.to_string(),
@@ -88,7 +99,9 @@ fn write_last_attestation(peer_id: &str, policy_digest: &str, result: &str) {
     };
 
     if let Ok(json) = serde_json::to_string_pretty(&record) {
-        let _ = fs::write("logs/last_attestation.json", json);
+        let _ = fs::write("/var/log/sgx-guardian/last_attestation.json", &json);
+        let _ = fs::create_dir_all("logs");
+        let _ = fs::write("logs/last_attestation.json", &json);
     } else {
         eprintln!("⚠️ Failed to write last_attestation.json");
     }
@@ -102,12 +115,11 @@ fn merge_parent_peer_file() {
     let mut merged: Vec<Value> = vec![];
 
     // Read all per-node files
-    let entries = match std::fs::read_dir("logs") {
+    let entries = std::fs::read_dir("/var/log/sgx-guardian").or_else(|_| std::fs::read_dir("logs"));
+
+    let entries = match entries {
         Ok(e) => e,
-        Err(_) => {
-            eprintln!("⚠️ logs/ directory missing — skipping merge");
-            return;
-        }
+        Err(_) => return,
     };
     for entry in entries.flatten() {
         let path = entry.path();
@@ -141,7 +153,9 @@ fn merge_parent_peer_file() {
 
     // write parent file
     if let Ok(json) = serde_json::to_string_pretty(&merged) {
-        let _ = fs::write("logs/trusted_peers.json", json);
+        let _ = fs::write("/var/log/sgx-guardian/trusted_peers.json", &json);
+        let _ = fs::create_dir_all("logs");
+        let _ = fs::write("logs/trusted_peers.json", &json);
     } else {
         eprintln!("⚠️ Failed to merge trusted peer JSON");
     }
@@ -156,6 +170,7 @@ pub struct AttestationEvidence {
     pub nonce: String,
     pub policy_digest: String,
     pub signature: String,
+    pub pubkey_der_b64: String,
 }
 impl AttestationService {
     /// Creates signed attestation evidence by hashing the policy file,
@@ -177,20 +192,18 @@ impl AttestationService {
         let msg = format!("{}{}", nonce, policy_digest);
         let sig_bytes = km.sign(msg.as_bytes())?;
         let signature_b64 = general_purpose::STANDARD.encode(sig_bytes);
+        let pubkey_b64 = base64::engine::general_purpose::STANDARD.encode(km.pubkey_der());
         Ok(AttestationEvidence {
             nonce,
             policy_digest,
             signature: signature_b64,
+            pubkey_der_b64: pubkey_b64,
         })
     }
     /// Verifies incoming attestation evidence by recomputing the policy digest,
     /// reconstructing the signed message, and validating the signature using
     /// the peer’s public key.
-    pub fn verify_signed_evidence(
-        ev: &AttestationEvidence,
-        pubkey_der: &[u8],
-        policy_yaml: &str,
-    ) -> Result<bool> {
+    pub fn verify_signed_evidence(ev: &AttestationEvidence, policy_yaml: &str) -> Result<bool> {
         // Step 1: Normalize policy content
         let clean_policy = policy_yaml
             .replace("\r", "")
@@ -215,8 +228,10 @@ impl AttestationService {
             Err(_) => return Ok(false),
         };
         // Step 6: Prepare verification key
+        let peer_pubkey = base64::engine::general_purpose::STANDARD.decode(&ev.pubkey_der_b64)?;
+
         let peer_key =
-            signature::UnparsedPublicKey::new(&signature::ECDSA_P256_SHA256_FIXED, pubkey_der);
+            signature::UnparsedPublicKey::new(&signature::ECDSA_P256_SHA256_FIXED, &peer_pubkey);
         // Step 7: Verify signature
         match peer_key.verify(&msg, &sig_bytes) {
             Ok(_) => {
@@ -287,7 +302,7 @@ impl AttestationService {
         };
 
         // Step 2: send our attestation evidence
-        let policy_data = fs::read_to_string("schemas/uep_policy_v1.yaml")?;
+        let policy_data = fs::read_to_string("/etc/sgx-guardian/schemas/uep_policy_v1.yaml")?;
         let evidence = Self::create_signed_evidence(km, &policy_data)?;
         let payload = serde_json::to_vec(&evidence)?;
         stream.write_all(&payload).await?;
@@ -305,23 +320,8 @@ impl AttestationService {
                 return Ok(false);
             }
         };
-        // Step 4: verify peer evidence
-        let peer_pubkey_der = if let Ok(contents) = fs::read_to_string("logs/trusted_peers.json") {
-            if let Ok(list) = serde_json::from_str::<Vec<TrustedPeer>>(&contents) {
-                if let Some(_p) = list.into_iter().find(|p| p.peer_id == addr) {
-                    // No DER key in JSON yet -> placeholder for now
-                    // In Sprint-2 we treat key_manager peer verification as trust bootstrap
-                    km.pubkey_der().to_vec() // TEMP fallback
-                } else {
-                    km.pubkey_der().to_vec() // TEMP fallback
-                }
-            } else {
-                km.pubkey_der().to_vec() // TEMP fallback
-            }
-        } else {
-            km.pubkey_der().to_vec() // TEMP fallback
-        };
-        let verified = Self::verify_signed_evidence(&peer_ev, &peer_pubkey_der, &policy_data)?;
+        // Step 4: verify peer evidence (using peer's embedded public key)
+        let verified = Self::verify_signed_evidence(&peer_ev, &policy_data)?;
         if !verified {
             let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
 
@@ -360,13 +360,18 @@ impl AttestationService {
 pub async fn run(mut rx: Receiver<String>) -> Result<()> {
     println!("🛰️ Attestation Service background task started (listening for new peers)");
     // === Auto Re-Attest on Startup ===
-    if let Ok(contents) = fs::read_to_string("logs/trusted_peers.json") {
+    let contents = fs::read_to_string("/var/log/sgx-guardian/trusted_peers.json")
+        .or_else(|_| fs::read_to_string("logs/trusted_peers.json"));
+
+    if let Ok(contents) = contents {
         // Parse JSON safely
         let parsed: Result<Vec<TrustedPeer>, serde_json::Error> = serde_json::from_str(&contents);
         if let Ok(peers_list) = parsed {
             for peer in peers_list {
                 println!("Verifying persisted peer {} on startup...", peer.peer_id);
-                match KeyManager::load_or_generate(None) {
+                let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
+                let key_path = format!("sgx-agent/device_{}.key", node_id);
+                match KeyManager::load_or_generate(&key_path) {
                     Ok(km) => {
                         let parts: Vec<&str> = peer.peer_id.split(':').collect();
                         if parts.len() == 2 {
@@ -391,7 +396,7 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
     let node_id_env = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "nodeA".to_string());
-    let node_conf = load_config(&format!("config/{}.yaml", node_id_env))
+    let node_conf = load_config(&format!("/etc/sgx-guardian/{}.yaml", node_id_env))
         .expect("Failed to load node config in attestation service");
     let listen_port: u16 = node_conf.port + 100;
 
@@ -408,13 +413,18 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
     tokio::spawn(async {
         loop {
             tokio::time::sleep(Duration::from_secs(60)).await;
-            if let Ok(contents) = fs::read_to_string("logs/trusted_peers.json") {
+            let contents = fs::read_to_string("/var/log/sgx-guardian/trusted_peers.json")
+                .or_else(|_| fs::read_to_string("logs/trusted_peers.json"));
+
+            if let Ok(contents) = contents {
                 let parsed: Result<Vec<TrustedPeer>, serde_json::Error> =
                     serde_json::from_str(&contents);
                 if let Ok(peers_list) = parsed {
                     for peer in peers_list {
                         println!("🔁 Re-attesting trusted peer: {}", peer.peer_id);
-                        match KeyManager::load_or_generate(None) {
+                        let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
+                        let key_path = format!("sgx-agent/device_{}.key", node_id);
+                        match KeyManager::load_or_generate(&key_path) {
                             Ok(km) => {
                                 let addr_parts: Vec<&str> = peer.peer_id.split(':').collect();
                                 if addr_parts.len() == 2 {
@@ -453,8 +463,9 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
 
         // Derive attestation port (+100 offset)
         let attest_port = base_port + 100;
-
-        match crate::key_manager::KeyManager::load_or_generate(None) {
+        let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
+        let key_path = format!("sgx-agent/device_{}.key", node_id);
+        match crate::key_manager::KeyManager::load_or_generate(&key_path) {
             Ok(km) => {
                 match AttestationService::mutual_attest(peer_ip.clone(), attest_port, &km).await {
                     Ok(true) => println!("✅ Peer {} attested successfully.", peer_ip),
@@ -507,13 +518,14 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
                             };
 
                         // Verify peer evidence
-                        let km = KeyManager::load_or_generate(None)?;
-                        let policy = fs::read_to_string("schemas/uep_policy_v1.yaml")?;
-                        let verified = AttestationService::verify_signed_evidence(
-                            &incoming,
-                            &km.pubkey_der(),
-                            &policy,
-                        )?;
+                        let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
+                        let key_path =
+                            format!("/var/lib/sgx-guardian/sgx-agent/device_{}.key", node_id);
+                        let km = KeyManager::load_or_generate(&key_path)?;
+                        let policy =
+                            fs::read_to_string("/etc/sgx-guardian/schemas/uep_policy_v1.yaml")?;
+                        let verified =
+                            AttestationService::verify_signed_evidence(&incoming, &policy)?;
 
                         if verified {
                             println!("✅ Verified attestation from {}", remote);
@@ -579,9 +591,9 @@ mod tests {
     /// the node’s own public key (sanity test).
     #[test]
     fn test_attestation_create_and_verify() {
-        let km = KeyManager::load_or_generate(None).unwrap();
+        let km = KeyManager::load_or_generate("/tmp/test_attestation.key").unwrap();
         let policy = "allow: all";
         let ev = AttestationService::create_signed_evidence(&km, policy).unwrap();
-        assert!(AttestationService::verify_signed_evidence(&ev, &km.pubkey_der(), policy).unwrap());
+        assert!(AttestationService::verify_signed_evidence(&ev, policy).unwrap());
     }
 }
