@@ -12,6 +12,9 @@ use sha2::{Digest, Sha256};
 use tokio::sync::mpsc::Receiver;
 use tokio::time::Duration;
 
+// ---- Attestation identity key base path (single source of truth) ----
+const ATTESTATION_KEY_DIR: &str = "/var/lib/sgx-guardian/sgx-agent";
+
 // Trusted Peer JSON Logging Helpers ===
 use chrono::Utc;
 use std::fs;
@@ -370,7 +373,7 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
             for peer in peers_list {
                 println!("Verifying persisted peer {} on startup...", peer.peer_id);
                 let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
-                let key_path = format!("sgx-agent/device_{}.key", node_id);
+                let key_path = format!("{}/device_{}.key", ATTESTATION_KEY_DIR, node_id);
                 match KeyManager::load_or_generate(&key_path) {
                     Ok(km) => {
                         let parts: Vec<&str> = peer.peer_id.split(':').collect();
@@ -423,7 +426,7 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
                     for peer in peers_list {
                         println!("🔁 Re-attesting trusted peer: {}", peer.peer_id);
                         let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
-                        let key_path = format!("sgx-agent/device_{}.key", node_id);
+                        let key_path = format!("{}/device_{}.key", ATTESTATION_KEY_DIR, node_id);
                         match KeyManager::load_or_generate(&key_path) {
                             Ok(km) => {
                                 let addr_parts: Vec<&str> = peer.peer_id.split(':').collect();
@@ -464,7 +467,7 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
         // Derive attestation port (+100 offset)
         let attest_port = base_port + 100;
         let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
-        let key_path = format!("sgx-agent/device_{}.key", node_id);
+        let key_path = format!("{}/device_{}.key", ATTESTATION_KEY_DIR, node_id);
         match crate::key_manager::KeyManager::load_or_generate(&key_path) {
             Ok(km) => {
                 match AttestationService::mutual_attest(peer_ip.clone(), attest_port, &km).await {
@@ -519,8 +522,7 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
 
                         // Verify peer evidence
                         let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
-                        let key_path =
-                            format!("/var/lib/sgx-guardian/sgx-agent/device_{}.key", node_id);
+                        let key_path = format!("{}/device_{}.key", ATTESTATION_KEY_DIR, node_id);
                         let km = KeyManager::load_or_generate(&key_path)?;
                         let policy =
                             fs::read_to_string("/etc/sgx-guardian/schemas/uep_policy_v1.yaml")?;
