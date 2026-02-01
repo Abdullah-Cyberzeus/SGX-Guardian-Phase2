@@ -20,8 +20,13 @@ pub fn load_private_key(path: &str) -> Result<PrivateKey> {
 
     for block in blocks {
         match block.tag() {
-            "PRIVATE KEY" | "RSA PRIVATE KEY" | "EC PRIVATE KEY" => {
+            "PRIVATE KEY" | "RSA PRIVATE KEY" => {
                 return Ok(PrivateKey(block.contents().to_vec()));
+            }
+            "EC PRIVATE KEY" => {
+                return Err(anyhow::anyhow!(
+                    "EC PRIVATE KEY (SEC1) not supported; provide PKCS#8"
+                ));
             }
             _ => continue,
         }

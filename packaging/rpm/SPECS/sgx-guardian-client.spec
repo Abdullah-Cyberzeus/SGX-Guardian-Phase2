@@ -82,9 +82,9 @@ exit 0
 %files
 /usr/bin/sgx-guardian
 /lib/systemd/system/sgx-guardian.service
-/etc/sgx-guardian
-/var/lib/sgx-guardian
-/var/log/sgx-guardian
+%dir %attr(0755,root,root) /etc/sgx-guardian
+%dir %attr(0750,sgxguardian,sgxguardian) /var/lib/sgx-guardian
+%dir %attr(0750,sgxguardian,sgxguardian) /var/log/sgx-guardian
 
 %changelog
 * Sun Jan 18 2026 CyberZeus Security <security@cyberzeus.io> - 1.0.0-1
