@@ -35,7 +35,7 @@ pub fn execute(args: SignArgs) {
     let digest = Sha256::digest(data.as_bytes());
 
     // 3 Load private key (Base64 encoded) — safe version
-    let key_content = match fs::read_to_string("guardian_private.key") {
+    let key_content = match fs::read_to_string("/etc/sgx-guardian/guardian_private.key") {
         Ok(c) => c,
         Err(e) => {
             eprintln!("❌ Missing guardian_private.key: {}", e);

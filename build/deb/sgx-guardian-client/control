@@ -1,0 +1,14 @@
+Package: sgx-guardian-client
+Version: 1.0.0
+Section: security
+Priority: optional
+Architecture: amd64
+Maintainer: CyberZeus Security <security@cyberzeus.io>
+Depends: libc6 (>= 2.31), systemd, ca-certificates
+Description: SGX Guardian Client - Zero-Trust Edge Security Agent
+ SGX Guardian Client is a zero-trust edge security agent designed
+ to operate autonomously on distributed nodes. It enforces signed
+ security policies locally, establishes mutually attested mTLS
+ communication with trusted peers, and maintains tamper-evident
+ audit logs. The agent continues to operate securely even when
+ disconnected from central infrastructure.

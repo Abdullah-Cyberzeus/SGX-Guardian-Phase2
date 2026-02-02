@@ -3,7 +3,10 @@
 //! Applies firewall rules atomically using nftables.
 //! Fail-closed on any error.
 
+use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use crate::audit::logger::log_audit;
 use crate::enforcement::model::{Action, EnforcementRule, Protocol};
+use crate::logging::log_event;
 use anyhow::{anyhow, Result};
 use std::fs::{remove_file, File};
 use std::io::Write;
@@ -12,6 +15,19 @@ use std::process::Command;
 
 /// Apply enforcement rules atomically via nftables.
 pub fn apply_rules(rules: &[EnforcementRule]) -> Result<()> {
+    let node_id = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "unknown-node".to_string());
+
+    log_event(&node_id, "Policy enforcement started (nftables apply)");
+
+    log_audit(
+        &node_id,
+        AuditCategory::Enforcement,
+        AuditSeverity::Info,
+        AuditAction::Started,
+        "Policy enforcement started (nftables apply)",
+    );
     let ruleset = build_nft_ruleset(rules)?;
 
     let mut path = std::env::temp_dir();
@@ -29,9 +45,30 @@ pub fn apply_rules(rules: &[EnforcementRule]) -> Result<()> {
     let _ = remove_file(&path);
 
     if !status.success() {
+        log_event(&node_id, "Policy enforcement FAILED (nftables error)");
+
+        log_audit(
+            &node_id,
+            AuditCategory::Enforcement,
+            AuditSeverity::Critical,
+            AuditAction::Failed,
+            "Policy enforcement failed (nftables error)",
+        );
+
         return Err(anyhow!("nftables rule application failed"));
     }
+    log_event(
+        &node_id,
+        "Policy enforcement successfully applied (nftables)",
+    );
 
+    log_audit(
+        &node_id,
+        AuditCategory::Enforcement,
+        AuditSeverity::Info,
+        AuditAction::Applied,
+        "Policy enforcement successfully applied (nftables)",
+    );
     Ok(())
 }
 

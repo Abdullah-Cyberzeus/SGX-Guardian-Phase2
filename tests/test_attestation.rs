@@ -20,7 +20,7 @@ fn make_temp_key_path() -> String {
 #[test]
 fn test_create_and_verify_evidence_success() {
     let key_path = make_temp_key_path();
-    let km = KeyManager::load_or_generate(Some(&key_path)).unwrap();
+    let km = KeyManager::load_or_generate(&key_path).unwrap();
     let policy = "allow: all";
 
     let ev = AttestationService::create_signed_evidence(&km, policy).unwrap();
@@ -28,8 +28,7 @@ fn test_create_and_verify_evidence_success() {
     assert!(!ev.policy_digest.is_empty());
     assert!(!ev.signature.is_empty());
 
-    let verified =
-        AttestationService::verify_signed_evidence(&ev, &km.pubkey_der(), policy).unwrap();
+    let verified = AttestationService::verify_signed_evidence(&ev, policy).unwrap();
     assert!(verified);
 
     if let Some(parent) = Path::new(&key_path).parent() {
@@ -40,13 +39,13 @@ fn test_create_and_verify_evidence_success() {
 #[test]
 fn test_verification_fails_with_tampered_signature() {
     let key_path = make_temp_key_path();
-    let km = KeyManager::load_or_generate(Some(&key_path)).unwrap();
+    let km = KeyManager::load_or_generate(&key_path).unwrap();
     let policy = "allow: all";
 
     let mut ev = AttestationService::create_signed_evidence(&km, policy).unwrap();
     ev.signature = "INVALID_SIGNATURE_BASE64".into();
 
-    let ok = AttestationService::verify_signed_evidence(&ev, &km.pubkey_der(), policy).unwrap();
+    let ok = AttestationService::verify_signed_evidence(&ev, policy).unwrap();
     assert!(!ok);
 
     if let Some(parent) = Path::new(&key_path).parent() {
@@ -57,14 +56,13 @@ fn test_verification_fails_with_tampered_signature() {
 #[test]
 fn test_verification_fails_with_modified_policy() {
     let key_path = make_temp_key_path();
-    let km = KeyManager::load_or_generate(Some(&key_path)).unwrap();
+    let km = KeyManager::load_or_generate(&key_path).unwrap();
 
     let original_policy = "policy: allow_all";
     let ev = AttestationService::create_signed_evidence(&km, original_policy).unwrap();
 
     let wrong_policy = "policy: deny_all";
-    let ok =
-        AttestationService::verify_signed_evidence(&ev, &km.pubkey_der(), wrong_policy).unwrap();
+    let ok = AttestationService::verify_signed_evidence(&ev, wrong_policy).unwrap();
     assert!(!ok);
 
     if let Some(parent) = Path::new(&key_path).parent() {
@@ -73,38 +71,9 @@ fn test_verification_fails_with_modified_policy() {
 }
 
 #[test]
-fn test_verification_fails_with_wrong_public_key() {
-    let mut dir1 = std::env::temp_dir();
-    dir1.push(format!("km_test_dir1_{}", std::process::id()));
-    fs::create_dir_all(&dir1).unwrap();
-
-    let mut dir2 = std::env::temp_dir();
-    dir2.push(format!("km_test_dir2_{}", std::process::id()));
-    fs::create_dir_all(&dir2).unwrap();
-
-    let mut key1_path = dir1.clone();
-    key1_path.push("device.key");
-
-    let mut key2_path = dir2.clone();
-    key2_path.push("device.key");
-
-    let km1 = KeyManager::load_or_generate(Some(key1_path.to_str().unwrap())).unwrap();
-    let km2 = KeyManager::load_or_generate(Some(key2_path.to_str().unwrap())).unwrap();
-
-    let policy = "allow: all";
-    let ev = AttestationService::create_signed_evidence(&km1, policy).unwrap();
-
-    let ok = AttestationService::verify_signed_evidence(&ev, &km2.pubkey_der(), policy).unwrap();
-    assert!(!ok);
-
-    let _ = fs::remove_dir_all(dir1);
-    let _ = fs::remove_dir_all(dir2);
-}
-
-#[test]
 fn test_nonce_is_always_32_hex_characters() {
     let key_path = make_temp_key_path();
-    let km = KeyManager::load_or_generate(Some(&key_path)).unwrap();
+    let km = KeyManager::load_or_generate(&key_path).unwrap();
     let policy = "test_policy";
 
     // Test nonce generation across multiple evidence creations
@@ -129,7 +98,7 @@ fn test_nonce_is_always_32_hex_characters() {
 #[test]
 fn test_nonce_uniqueness_across_multiple_evidences() {
     let key_path = make_temp_key_path();
-    let km = KeyManager::load_or_generate(Some(&key_path)).unwrap();
+    let km = KeyManager::load_or_generate(&key_path).unwrap();
     let policy = "test_policy";
 
     let ev1 = AttestationService::create_signed_evidence(&km, policy).unwrap();
@@ -158,7 +127,7 @@ fn test_nonce_uniqueness_across_multiple_evidences() {
 #[test]
 fn test_policy_digest_is_deterministic() {
     let key_path = make_temp_key_path();
-    let km = KeyManager::load_or_generate(Some(&key_path)).unwrap();
+    let km = KeyManager::load_or_generate(&key_path).unwrap();
     let policy = "deterministic_test_policy";
 
     let ev1 = AttestationService::create_signed_evidence(&km, policy).unwrap();
@@ -178,7 +147,7 @@ fn test_policy_digest_is_deterministic() {
 #[test]
 fn test_policy_digest_is_64_hex_characters_sha256() {
     let key_path = make_temp_key_path();
-    let km = KeyManager::load_or_generate(Some(&key_path)).unwrap();
+    let km = KeyManager::load_or_generate(&key_path).unwrap();
     let policy = "test";
 
     let ev = AttestationService::create_signed_evidence(&km, policy).unwrap();
@@ -201,7 +170,7 @@ fn test_policy_digest_is_64_hex_characters_sha256() {
 #[test]
 fn test_signature_is_valid_base64() {
     let key_path = make_temp_key_path();
-    let km = KeyManager::load_or_generate(Some(&key_path)).unwrap();
+    let km = KeyManager::load_or_generate(&key_path).unwrap();
     let policy = "test_policy";
 
     let ev = AttestationService::create_signed_evidence(&km, policy).unwrap();
@@ -223,7 +192,7 @@ fn test_signature_is_valid_base64() {
 #[test]
 fn test_attestation_evidence_serialization_roundtrip() {
     let key_path = make_temp_key_path();
-    let km = KeyManager::load_or_generate(Some(&key_path)).unwrap();
+    let km = KeyManager::load_or_generate(&key_path).unwrap();
     let policy = "serialization_test";
 
     let original = AttestationService::create_signed_evidence(&km, policy).unwrap();
@@ -247,7 +216,7 @@ fn test_attestation_evidence_serialization_roundtrip() {
 #[test]
 fn test_very_long_policy_creates_valid_evidence() {
     let key_path = make_temp_key_path();
-    let km = KeyManager::load_or_generate(Some(&key_path)).unwrap();
+    let km = KeyManager::load_or_generate(&key_path).unwrap();
 
     // Create a very long policy (10KB+)
     let long_policy = "rule: allow\n".repeat(1000);
@@ -258,8 +227,7 @@ fn test_very_long_policy_creates_valid_evidence() {
     assert!(!ev.signature.is_empty());
 
     // Verify it
-    let verified =
-        AttestationService::verify_signed_evidence(&ev, &km.pubkey_der(), &long_policy).unwrap();
+    let verified = AttestationService::verify_signed_evidence(&ev, &long_policy).unwrap();
     assert!(verified, "Long policy attestation must verify successfully");
 
     if let Some(parent) = Path::new(&key_path).parent() {
@@ -270,7 +238,7 @@ fn test_very_long_policy_creates_valid_evidence() {
 #[test]
 fn test_empty_policy_string_creates_valid_evidence() {
     let key_path = make_temp_key_path();
-    let km = KeyManager::load_or_generate(Some(&key_path)).unwrap();
+    let km = KeyManager::load_or_generate(&key_path).unwrap();
 
     let empty_policy = "";
 
@@ -279,8 +247,7 @@ fn test_empty_policy_string_creates_valid_evidence() {
     assert!(!ev.policy_digest.is_empty());
     assert!(!ev.signature.is_empty());
 
-    let verified =
-        AttestationService::verify_signed_evidence(&ev, &km.pubkey_der(), empty_policy).unwrap();
+    let verified = AttestationService::verify_signed_evidence(&ev, empty_policy).unwrap();
     assert!(verified, "Empty policy must still create valid attestation");
 
     if let Some(parent) = Path::new(&key_path).parent() {
@@ -291,13 +258,12 @@ fn test_empty_policy_string_creates_valid_evidence() {
 #[test]
 fn test_policy_with_unicode_characters() {
     let key_path = make_temp_key_path();
-    let km = KeyManager::load_or_generate(Some(&key_path)).unwrap();
+    let km = KeyManager::load_or_generate(&key_path).unwrap();
 
     let unicode_policy = "policy: 允许所有 🔒 ñ é ü";
 
     let ev = AttestationService::create_signed_evidence(&km, unicode_policy).unwrap();
-    let verified =
-        AttestationService::verify_signed_evidence(&ev, &km.pubkey_der(), unicode_policy).unwrap();
+    let verified = AttestationService::verify_signed_evidence(&ev, unicode_policy).unwrap();
     assert!(verified, "Unicode policy must be handled correctly");
 
     if let Some(parent) = Path::new(&key_path).parent() {
@@ -308,13 +274,12 @@ fn test_policy_with_unicode_characters() {
 #[test]
 fn test_policy_with_special_characters() {
     let key_path = make_temp_key_path();
-    let km = KeyManager::load_or_generate(Some(&key_path)).unwrap();
+    let km = KeyManager::load_or_generate(&key_path).unwrap();
 
     let special_policy = r#"policy: "allow" & 'deny' | (test) $ % ^ * [] {}"#;
 
     let ev = AttestationService::create_signed_evidence(&km, special_policy).unwrap();
-    let verified =
-        AttestationService::verify_signed_evidence(&ev, &km.pubkey_der(), special_policy).unwrap();
+    let verified = AttestationService::verify_signed_evidence(&ev, special_policy).unwrap();
     assert!(
         verified,
         "Special characters in policy must be handled correctly"
@@ -329,11 +294,11 @@ fn test_verification_digest_mismatch_before_signature_check() {
     let key_path = make_temp_key_path();
     let parent = std::path::Path::new(&key_path).parent().unwrap();
     std::fs::create_dir_all(parent).unwrap();
-    let km = KeyManager::load_or_generate(Some(&key_path)).unwrap();
+    let km = KeyManager::load_or_generate(&key_path).unwrap();
     let policy1 = "policy_version_1";
     let policy2 = "policy_version_2";
     let ev = AttestationService::create_signed_evidence(&km, policy1).unwrap();
-    let ok = AttestationService::verify_signed_evidence(&ev, &km.pubkey_der(), policy2).unwrap();
+    let ok = AttestationService::verify_signed_evidence(&ev, policy2).unwrap();
     assert!(
         !ok,
         "Digest mismatch must fail verification before signature check"
@@ -346,15 +311,14 @@ fn test_verification_digest_mismatch_before_signature_check() {
 #[test]
 fn test_policy_normalization_removes_all_whitespace() {
     let key_path = make_temp_key_path();
-    let km = KeyManager::load_or_generate(Some(&key_path)).unwrap();
+    let km = KeyManager::load_or_generate(&key_path).unwrap();
 
     let policy_with_spaces = "  allow:   all  \n  version: 1  ";
 
     let ev = AttestationService::create_signed_evidence(&km, policy_with_spaces).unwrap();
 
     // Both should verify because normalization strips whitespace
-    let ok = AttestationService::verify_signed_evidence(&ev, &km.pubkey_der(), policy_with_spaces)
-        .unwrap();
+    let ok = AttestationService::verify_signed_evidence(&ev, policy_with_spaces).unwrap();
     assert!(ok, "Original policy with spaces must verify");
 
     if let Some(parent) = Path::new(&key_path).parent() {

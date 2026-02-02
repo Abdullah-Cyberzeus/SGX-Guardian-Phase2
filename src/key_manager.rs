@@ -8,9 +8,6 @@ use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 use std::{fs, path::Path};
 use tracing::{info, warn};
 
-/// Default key path
-const DEFAULT_KEY_PATH: &str = "sgx-agent/device.key";
-
 /// Manages the SG-X node identity keypair including generation,
 /// secure persistence, loading from disk, and providing signing/public
 /// key access for attestation workflows.
@@ -22,9 +19,9 @@ impl KeyManager {
     /// Loads the identity keypair from disk if it exists, otherwise generates
     /// a new ECDSA P-256 keypair and saves it to the configured path.
     /// Returns a fully initialized `KeyManager` instance.
-    pub fn load_or_generate(custom_path: Option<&str>) -> Result<Self> {
+    pub fn load_or_generate(key_path: &str) -> Result<Self> {
         let rng = SystemRandom::new();
-        let key_path_str = custom_path.unwrap_or(DEFAULT_KEY_PATH);
+        let key_path_str = key_path;
         let key_path = Path::new(key_path_str);
         fs::create_dir_all("sgx-agent").ok();
         // Read existing or generate new keypair
@@ -119,8 +116,8 @@ mod tests {
     #[test]
     fn test_key_persistence_and_sign() {
         let test_path = "/tmp/test_device.key";
-        let km1 = KeyManager::load_or_generate(Some(test_path)).unwrap();
-        let km2 = KeyManager::load_or_generate(Some(test_path)).unwrap();
+        let km1 = KeyManager::load_or_generate(test_path).unwrap();
+        let km2 = KeyManager::load_or_generate(test_path).unwrap();
 
         // Public keys must match across reloads (persistent identity)
         assert_eq!(

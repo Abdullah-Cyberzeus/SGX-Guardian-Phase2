@@ -71,8 +71,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
     let node_id = args[1].clone();
+    // Generate node-specific identity key path
+    let node_key_path = format!("/var/lib/sgx-guardian/sgx-agent/device_{}.key", node_id);
     // Initialize or load persistent identity keypair
-    let km = KeyManager::load_or_generate(None)?;
+    let km = KeyManager::load_or_generate(&node_key_path)?;
 
     let pubkey_b64 = general_purpose::STANDARD.encode(km.pubkey_der());
     println!(
@@ -82,15 +84,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Generate and log attestation evidence for this node
     use crate::attestation_service::AttestationService;
-    let sample_policy = fs::read_to_string("schemas/uep_policy_v1.yaml")
-        .expect("Failed to read policy file for attestation test");
+
+    let sample_policy_path = "/etc/sgx-guardian/schemas/uep_policy_v1.yaml";
+
+    let sample_policy = fs::read_to_string(sample_policy_path).expect(
+        "Failed to read policy file for attestation test (check /etc/sgx-guardian/schemas)",
+    );
+
     let evidence = AttestationService::create_signed_evidence(&km, &sample_policy)?;
     println!(
         "Created local attestation evidence (nonce={}..)",
         &evidence.nonce[..8]
     );
-    let verified =
-        AttestationService::verify_signed_evidence(&evidence, &km.pubkey_der(), &sample_policy)?;
+    let verified = AttestationService::verify_signed_evidence(&evidence, &sample_policy)?;
     if verified {
         println!("✅ Local attestation evidence verified successfully.");
         log_audit(
@@ -111,9 +117,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     println!("\n Loading node configurations...");
-    let node_a = load_config("config/nodeA.yaml").expect("Failed to load nodeA config");
-    let node_b = load_config("config/nodeB.yaml").expect("Failed to load nodeB config");
-    let node_c = load_config("config/nodeC.yaml").expect("Failed to load nodeC config");
+    let node_a = load_config("/etc/sgx-guardian/nodeA.yaml").expect("Failed to load nodeA config");
+
+    let node_b = load_config("/etc/sgx-guardian/nodeB.yaml").expect("Failed to load nodeB config");
+
+    let node_c = load_config("/etc/sgx-guardian/nodeC.yaml").expect("Failed to load nodeC config");
 
     println!(
         "✅ Loaded Node A: {} ({}) at {}:{} | key: {}",
@@ -129,8 +137,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Read the UEP policy YAML file
-    let _yaml_content =
-        fs::read_to_string("schemas/uep_policy_v1.yaml").expect("Cannot read policy file");
+    let _yaml_content = fs::read_to_string("/etc/sgx-guardian/schemas/uep_policy_v1.yaml")
+        .expect("Cannot read policy file (/etc/sgx-guardian/schemas)");
     // Validate and parse the YAML policy
     fn print_policy_from_yaml(yaml: &str, label: &str) {
         match policy::validate_policy(yaml) {
@@ -164,23 +172,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_logger(&node_id);
     log_event(&node_id, "Logger initialized for node");
     log_event(&node_id, "Node configuration loading complete");
-    // === Ensure audit log directory exists ===
-    std::fs::create_dir_all("logs").ok();
     // === VERIFY EXISTING AUDIT LOG (tamper detection) ===
-    let audit_log_path = "logs/audit.log";
-    if std::path::Path::new(audit_log_path).exists() {
-        if let Err(e) = AuditVerifier::verify(audit_log_path) {
+    let prod_log_dir = "/var/log/sgx-guardian";
+    let dev_log_dir = "logs";
+
+    std::fs::create_dir_all(prod_log_dir).ok();
+    std::fs::create_dir_all(dev_log_dir).ok();
+
+    let audit_log_path_prod = format!("{}/audit.log", prod_log_dir);
+    let audit_log_path_dev = "logs/audit.log";
+    let audit_check_path = if std::path::Path::new(&audit_log_path_prod).exists() {
+        &audit_log_path_prod
+    } else {
+        audit_log_path_dev
+    };
+
+    if std::path::Path::new(audit_check_path).exists() {
+        if let Err(e) = AuditVerifier::verify(audit_check_path) {
             log_error(
                 &node_id,
                 &format!("Audit log integrity warning (non-fatal): {}", e),
             );
         }
     }
+
     // === Initialize Audit Logger (tamper-evident) ===
-    let audit_path = PathBuf::from(format!("logs/audit-{}.log", node_id));
+    let audit_path_prod = PathBuf::from(format!("{}/audit-{}.log", prod_log_dir, node_id));
 
-    init_audit_logger(audit_path);
-
+    // Initialize PROD logger first
+    init_audit_logger(audit_path_prod);
     log_audit(
         &node_id,
         AuditCategory::Node,
@@ -215,35 +235,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let metrics = Arc::new(Mutex::new(Metrics::default()));
-    // === Metrics server enable/disable
-    let metrics_enabled = std::env::var("SGX_METRICS_ENABLED")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(true);
 
-    if metrics_enabled {
-        let metrics_clone = metrics.clone();
-        tokio::spawn(async move {
-            let metrics_port: u16 = std::env::var("SGX_METRICS_PORT")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(9100);
-
-            metrics_server::start_metrics_server(metrics_clone, ([127, 0, 0, 1], metrics_port))
-                .await;
-        });
-    }
-
-    log_audit(
-        &node_id,
-        AuditCategory::Node,
-        AuditSeverity::Info,
-        AuditAction::Applied,
-        if metrics_enabled {
-            "Metrics server enabled"
-        } else {
-            "Metrics server disabled"
-        },
-    );
     // === Cloud uplink (outbound-only mock) ===
     let cloud_cfg = CloudConfig::from_env();
 
@@ -328,12 +320,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }
     };
+    // === Metrics server enable/disable (node-specific, YAML-driven)
+    if let Some(metrics_cfg) = &this_node.metrics {
+        if metrics_cfg.enabled {
+            let metrics_clone = metrics.clone();
+
+            let bind_ip: [u8; 4] = metrics_cfg
+                .bind
+                .parse::<std::net::Ipv4Addr>()
+                .expect("Invalid metrics.bind IP")
+                .octets();
+
+            let port = metrics_cfg.port;
+
+            tokio::spawn(async move {
+                metrics_server::start_metrics_server(metrics_clone, (bind_ip, port)).await;
+            });
+        }
+    }
+
+    log_audit(
+        &node_id,
+        AuditCategory::Node,
+        AuditSeverity::Info,
+        AuditAction::Applied,
+        match this_node.metrics.as_ref() {
+            Some(cfg) if cfg.enabled => "Metrics server enabled (YAML)",
+            _ => "Metrics server disabled (YAML)",
+        },
+    );
+
     let this_addr = format!("{}:{}", this_node.ip, this_node.port);
     log_event(&node_id, &format!("Starting server at {}", this_addr));
     use sgx_guardian_client::policy::load_policy_runtime;
     use sgx_guardian_client::policy_manager::load_and_activate_policy;
 
-    let signed_policy_path = "policies/policy.sig";
+    let signed_policy_path = "/etc/sgx-guardian/policies/policy.sig";
 
     if std::path::Path::new(signed_policy_path).exists() {
         match load_and_activate_policy(signed_policy_path) {
@@ -385,7 +407,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     m.record_error();
                 }
                 // 🔁 PRINT BACKUP / LAST-ACTIVE POLICY
-                if let Ok(backup_yaml) = fs::read_to_string("policies/backup_policy.yaml") {
+                if let Ok(backup_yaml) =
+                    fs::read_to_string("/etc/sgx-guardian/policies/backup_policy.yaml")
+                {
                     print_policy_from_yaml(&backup_yaml, "BACKUP / LAST-ACTIVE");
                 } else {
                     eprintln!("⚠️ No backup_policy.yaml found to display");
@@ -399,12 +423,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     // TLS Certificate Setup
     use sgx_guardian_client::tls;
-    let key_path = "sgx-agent/device.key";
-    let cert_path = "sgx-agent/device_cert.der";
+    let key_path = format!("/var/lib/sgx-guardian/sgx-agent/device_{}.key", node_id);
+    let cert_path = format!(
+        "/var/lib/sgx-guardian/sgx-agent/device_{}_cert.der",
+        node_id
+    );
     // SAN = hostname and IP of node
     let san = [this_node.hostname.as_str(), "127.0.0.1"];
     // Ensure certificate exists
-    match tls::ensure_node_certificate_or_generate(key_path, cert_path, &san) {
+    match tls::ensure_node_certificate_or_generate(&key_path, &cert_path, &san) {
         Ok(_) => {
             println!("🔐 TLS certificate ready at {}", cert_path);
             log_event(
@@ -424,13 +451,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // load DER cert
     let cert_der = std::fs::read(cert_path).expect("read cert der");
     let cert_pem = der_to_pem(&cert_der);
-    // load DER private key and wrap as PEM
+    // load DER private key and wrap as PEM (pem 3.x compatible)
     let key_der = std::fs::read(key_path).expect("read key der");
     let key_pem = {
-        let pem = pem::Pem {
-            tag: "PRIVATE KEY".into(),
-            contents: key_der,
-        };
+        let pem = pem::Pem::new("PRIVATE KEY", key_der);
         pem::encode(&pem)
     };
     // Build tonic Identity + CA root
@@ -455,25 +479,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use sgx_guardian_client::policy::get_active_policy;
 
     if let Some(active_policy) = get_active_policy() {
-        let node_id_clone = node_id.clone();
-        let metrics_clone = metrics.clone();
-        tokio::spawn(async move {
-            if let Err(e) = enforcement::enforce_policy(&active_policy) {
-                eprintln!(
-                    "Deferred policy enforcement failed on {}: {:?}",
-                    node_id_clone, e
-                );
+        println!("🛡️ Applying policy enforcement (nftables)");
+
+        log_audit(
+            &node_id,
+            AuditCategory::Enforcement,
+            AuditSeverity::Info,
+            AuditAction::Started,
+            "Policy enforcement started",
+        );
+
+        match enforcement::enforce_policy(&active_policy) {
+            Ok(_) => {
+                println!("✅ Policy enforcement applied successfully");
+
                 log_audit(
-                    &node_id_clone,
+                    &node_id,
+                    AuditCategory::Enforcement,
+                    AuditSeverity::Info,
+                    AuditAction::Applied,
+                    "Policy enforcement applied successfully",
+                );
+            }
+            Err(e) => {
+                eprintln!("❌ Policy enforcement failed: {:?}", e);
+
+                log_audit(
+                    &node_id,
                     AuditCategory::Enforcement,
                     AuditSeverity::Critical,
                     AuditAction::Failed,
                     "Policy enforcement failed",
                 );
-                let mut m = metrics_clone.lock().await;
+
+                let mut m = metrics.lock().await;
                 m.record_enforcement_failure();
             }
-        });
+        }
     }
     // === END POLICY ENFORCEMENT ===
 
