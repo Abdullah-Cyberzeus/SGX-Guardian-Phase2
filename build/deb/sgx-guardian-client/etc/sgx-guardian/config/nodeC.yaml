@@ -1,6 +1,0 @@
----
-node_id: "nodeC"
-hostname: "guardian-node-C"
-ip: "127.0.0.1"
-port: 50053
-public_key: "placeholder-key-C"

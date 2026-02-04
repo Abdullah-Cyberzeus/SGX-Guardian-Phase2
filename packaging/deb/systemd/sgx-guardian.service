@@ -13,6 +13,7 @@ Group=sgxguardian
 
 # ---- Binary ----
 ExecStart=/usr/bin/sgx-guardian nodeA
+WorkingDirectory=/var/lib/sgx-guardian
 
 # ---- Restart Policy ----
 Restart=on-failure
