@@ -3,7 +3,9 @@
 //! attestation, metrics tracking, and the gRPC server runtime.
 mod audit;
 mod config_loader;
+mod nebula;
 mod policy;
+
 pub mod proto {
     pub mod sgx {
         include!(concat!(env!("OUT_DIR"), "/sgx.rs"));
@@ -27,6 +29,8 @@ use base64::{engine::general_purpose, Engine as _};
 use client::send_ping;
 use config_loader::load_config;
 use key_manager::KeyManager;
+use nebula::install::NebulaInstall;
+
 #[allow(unused_imports)]
 use logging::{init_logger, log_error, log_event};
 use metrics::Metrics;
@@ -265,6 +269,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut m = metrics.lock().await;
         m.record_connection();
     }
+    // === Nebula Installation Verification (Deliverable 1) ===
+    println!("\n🔎 Verifying Nebula Installation...");
+
+    match NebulaInstall::check_binary() {
+        Ok(_) => println!("✅ Nebula binary found"),
+        Err(e) => {
+            eprintln!("❌ Nebula binary missing: {}", e);
+            log_error(&node_id, &format!("Nebula binary missing: {}", e));
+            std::process::exit(1);
+        }
+    }
+
+    match NebulaInstall::check_version() {
+        Ok(v) => println!("✅ Nebula version: {}", v.trim()),
+        Err(e) => {
+            eprintln!("❌ Nebula version check failed: {}", e);
+            log_error(&node_id, &format!("Nebula version check failed: {}", e));
+            std::process::exit(1);
+        }
+    }
+
+    match NebulaInstall::test_daemon_start() {
+        Ok(_) => println!("✅ Nebula daemon responding"),
+        Err(e) => {
+            eprintln!("❌ Nebula daemon test failed: {}", e);
+            log_error(&node_id, &format!("Nebula daemon test failed: {}", e));
+            std::process::exit(1);
+        }
+    }
+
+    println!("🚀 Nebula Installation Verified Successfully\n");
+
     // === Integrate Discovery + Attestation Services ===
     println!("🛰️ Initializing P2P Discovery and Attestation Services...");
 
