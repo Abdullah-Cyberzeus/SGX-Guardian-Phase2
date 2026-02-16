@@ -5,7 +5,6 @@ mod audit;
 mod config_loader;
 mod nebula;
 mod policy;
-
 pub mod proto {
     pub mod sgx {
         include!(concat!(env!("OUT_DIR"), "/sgx.rs"));
@@ -29,11 +28,11 @@ use base64::{engine::general_purpose, Engine as _};
 use client::send_ping;
 use config_loader::load_config;
 use key_manager::KeyManager;
-use nebula::install::NebulaInstall;
-
 #[allow(unused_imports)]
 use logging::{init_logger, log_error, log_event};
 use metrics::Metrics;
+use nebula::install::NebulaInstall;
+
 use server::start_server;
 use std::env;
 use std::fs;
@@ -269,8 +268,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut m = metrics.lock().await;
         m.record_connection();
     }
+
     // === Nebula Installation Verification (Deliverable 1) ===
     println!("\n🔎 Verifying Nebula Installation...");
+
+    // === Generate CA + Node Certificates for Nebula (if not exist) ===
+    use nebula::ca::NebulaCA;
+    use nebula::models::CircleMembership;
+    use nebula::daemon::NebulaDaemon;
+
+    let ca_directory = format!("{}/config/nebula/ca", env!("CARGO_MANIFEST_DIR"));
+
+    // Generate CA if not exists
+    if let Err(e) = NebulaCA::generate_ca(&ca_directory) {
+        eprintln!("❌ Failed to generate CA: {:?}", e);
+        std::process::exit(1);
+    }
+
+    // Issue cert for this node
+    let nebula_ip = match node_id.as_str() {
+        "nodeA" => "192.168.100.1/24",
+        "nodeB" => "192.168.100.2/24",
+        "nodeC" => "192.168.100.3/24",
+        _ => {
+            eprintln!("❌ Unknown node ID for Nebula IP mapping");
+            std::process::exit(1);
+        }
+    };
+
+    let membership = CircleMembership {
+        node_name: node_id.clone(),
+        circle_id: "guardian-circle-alpha".to_string(),
+        vc_hash: "mock-vc-proof-123".to_string(),
+        is_valid: true,
+    };
+
+    if let Err(e) = NebulaCA::issue_node_cert(&ca_directory, &membership, nebula_ip) {
+        eprintln!("❌ Failed to issue node certificate: {:?}", e);
+        std::process::exit(1);
+    }
+    //configuration directory for nebula
+    use nebula::config::NebulaConfig;
+
+    let config_directory = format!("{}/config/nebula", env!("CARGO_MANIFEST_DIR"));
+
+    let is_lighthouse = node_id == "nodeA";
+
+    if let Err(e) =
+        NebulaConfig::generate_config(&node_id, nebula_ip, is_lighthouse, &config_directory)
+    {
+        eprintln!("❌ Failed to generate Nebula config: {:?}", e);
+        std::process::exit(1);
+    }
 
     match NebulaInstall::check_binary() {
         Ok(_) => println!("✅ Nebula binary found"),
@@ -300,6 +349,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("🚀 Nebula Installation Verified Successfully\n");
+
+    let nebula_config_path = format!("{}/nebula.yaml", config_directory);
+
+if let Err(e) = NebulaDaemon::start(&nebula_config_path) {
+    eprintln!("❌ Failed to start Nebula daemon: {:?}", e);
+    std::process::exit(1);
+}
 
     // === Integrate Discovery + Attestation Services ===
     println!("🛰️ Initializing P2P Discovery and Attestation Services...");
