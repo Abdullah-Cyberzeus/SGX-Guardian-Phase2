@@ -12,10 +12,15 @@ wget https://github.com/slackhq/nebula/releases/download/v${NEBULA_VERSION}/nebu
 echo "[*] Extracting..."
 tar -xzf nebula-${ARCH}.tar.gz
 
-echo "[*] Moving binary to /usr/local/bin"
+echo "[*] Moving binaries to /usr/local/bin"
 sudo mv nebula /usr/local/bin/
+sudo mv nebula-cert /usr/local/bin/
+
+echo "[*] Setting executable permissions"
+sudo chmod +x /usr/local/bin/nebula
+sudo chmod +x /usr/local/bin/nebula-cert
 
 echo "[*] Cleaning up..."
 rm nebula-${ARCH}.tar.gz
 
-echo "[✓] Nebula Installed Successfully"
+echo "[✓] Nebula & Nebula-Cert Installed Successfully"
