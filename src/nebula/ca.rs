@@ -62,9 +62,23 @@ pub fn issue_node_cert(
 let cert_path = format!("{}/{}.crt", nodes_dir, membership.node_name);
 let key_path = format!("{}/{}.key", nodes_dir, membership.node_name);
 
-if Path::new(&cert_path).exists() && Path::new(&key_path).exists() {
+let cert_exists = Path::new(&cert_path).exists();
+let key_exists = Path::new(&key_path).exists();
+
+if cert_exists && key_exists {
     println!("ℹ️ Certificate and key already exist for {}", membership.node_name);
     return Ok(());
+}
+
+// Detect partial state (corruption / incomplete issuance)
+if cert_exists != key_exists {
+    return Err(Error::new(
+        std::io::ErrorKind::Other,
+        format!(
+            "Partial certificate state detected for {} (cert: {}, key: {}). Manual intervention required.",
+            membership.node_name, cert_exists, key_exists
+        ),
+    ));
 }
 
     let output = Command::new("nebula-cert")
@@ -74,7 +88,7 @@ if Path::new(&cert_path).exists() && Path::new(&key_path).exists() {
         .arg("-ip")
         .arg(ip)
         .arg("-duration")
-        .arg("8000h")
+        .arg("7000h")
         .arg("-groups")
         .arg("guardian,member")
         .arg("-ca-crt")

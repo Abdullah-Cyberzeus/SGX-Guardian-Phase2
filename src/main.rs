@@ -357,6 +357,17 @@ if let Err(e) = NebulaDaemon::start(&nebula_config_path) {
 }
 println!("🌐 Nebula mesh daemon started successfully.");
 
+    // === Nebula Health Check ===
+    use nebula::health::NebulaHealth;
+
+    println!("🩺 Performing Nebula health check...");
+
+    let health_report = NebulaHealth::check(&nebula_base_dir, &node_id);
+
+    println!("--- Nebula Health Report ---");
+    println!("{}", health_report.summary());
+    println!("-----------------------------");
+
     // === Integrate Discovery + Attestation Services ===
     println!("🛰️ Initializing P2P Discovery and Attestation Services...");
 
