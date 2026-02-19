@@ -87,33 +87,30 @@ impl NebulaHealth {
     }
 
     fn get_cert_days_remaining(cert_path: &str) -> Option<i64> {
-    let output = Command::new("nebula-cert")
-        .arg("print")
-        .arg("-path")
-        .arg(cert_path)
-        .output()
-        .ok()?;
+        let output = Command::new("nebula-cert")
+            .arg("print")
+            .arg("-path")
+            .arg(cert_path)
+            .output()
+            .ok()?;
 
-    if !output.status.success() {
-        return None;
+        if !output.status.success() {
+            return None;
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        let json: serde_json::Value = serde_json::from_str(&stdout).ok()?;
+
+        let not_after = json.get("details")?.get("notAfter")?.as_str()?;
+
+        let parsed = chrono::DateTime::parse_from_rfc3339(not_after).ok()?;
+
+        let expiry = parsed.timestamp();
+        let now = chrono::Utc::now().timestamp();
+
+        let seconds_remaining = expiry - now;
+
+        Some(seconds_remaining / 86400)
     }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    let json: serde_json::Value = serde_json::from_str(&stdout).ok()?;
-
-    let not_after = json
-        .get("details")?
-        .get("notAfter")?
-        .as_str()?;
-
-    let parsed = chrono::DateTime::parse_from_rfc3339(not_after).ok()?;
-
-    let expiry = parsed.timestamp();
-    let now = chrono::Utc::now().timestamp();
-
-    let seconds_remaining = expiry - now;
-
-    Some(seconds_remaining / 86400)
-}
 }

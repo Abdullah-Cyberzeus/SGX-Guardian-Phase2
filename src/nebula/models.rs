@@ -1,5 +1,5 @@
 #[derive(Debug, Clone)]
- #[allow(dead_code)]
+#[allow(dead_code)]
 pub struct CircleMembership {
     pub node_name: String,
     pub circle_id: String,

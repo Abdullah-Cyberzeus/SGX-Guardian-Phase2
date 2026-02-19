@@ -274,13 +274,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // === Generate CA + Node Certificates for Nebula (if not exist) ===
     use nebula::ca::NebulaCA;
-    use nebula::models::CircleMembership;
     use nebula::daemon::NebulaDaemon;
+    use nebula::models::CircleMembership;
 
-    let nebula_base_dir = std::env::var("SGX_NEBULA_DIR")
-    .unwrap_or("/var/lib/sgx-guardian/nebula".to_string());
+    let nebula_base_dir =
+        std::env::var("SGX_NEBULA_DIR").unwrap_or("/var/lib/sgx-guardian/nebula".to_string());
 
-        match NebulaInstall::check_binary() {
+    match NebulaInstall::check_binary() {
         Ok(_) => println!("✅ Nebula binary found"),
         Err(e) => {
             eprintln!("❌ Nebula binary missing: {}", e);
@@ -313,6 +313,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
+    log_audit(
+        &node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Created,
+        "Nebula CA verified or generated",
+    );
+
     // Issue cert for this node
     let nebula_ip = match node_id.as_str() {
         "nodeA" => "192.168.100.1/24",
@@ -335,6 +343,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("❌ Failed to issue node certificate: {:?}", e);
         std::process::exit(1);
     }
+    log_audit(
+        &node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Created,
+        &format!("Nebula certificate verified or issued for {}", node_id),
+    );
     //configuration directory for nebula
     use nebula::config::NebulaConfig;
     let config_directory = nebula_base_dir.clone();
@@ -349,13 +364,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("🚀 Nebula Installation Verified Successfully\n");
 
-// === Start Nebula ===
-let nebula_config_path = format!("{}/nebula.yaml", nebula_base_dir);
-if let Err(e) = NebulaDaemon::start(&nebula_config_path) {
-    eprintln!("❌ Failed to start Nebula daemon: {:?}", e);
-    std::process::exit(1);
-}
-println!("🌐 Nebula mesh daemon started successfully.");
+    // === Start Nebula ===
+    let nebula_config_path = format!("{}/nebula.yaml", nebula_base_dir);
+    if let Err(e) = NebulaDaemon::start(&nebula_config_path) {
+        eprintln!("❌ Failed to start Nebula daemon: {:?}", e);
+        std::process::exit(1);
+    }
+    println!("🌐 Nebula mesh daemon started successfully.");
+
+    log_audit(
+        &node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Started,
+        "Nebula mesh daemon started successfully",
+    );
 
     // === Nebula Health Check ===
     use nebula::health::NebulaHealth;
@@ -367,6 +390,10 @@ println!("🌐 Nebula mesh daemon started successfully.");
     println!("--- Nebula Health Report ---");
     println!("{}", health_report.summary());
     println!("-----------------------------");
+
+    // === Start Expiry Monitor ===
+    use nebula::cert_lifecycle::ExpiryMonitor;
+    ExpiryMonitor::start(nebula_base_dir.clone(), node_id.clone());
 
     // === Integrate Discovery + Attestation Services ===
     println!("🛰️ Initializing P2P Discovery and Attestation Services...");

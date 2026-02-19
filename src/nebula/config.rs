@@ -11,7 +11,6 @@ impl NebulaConfig {
         is_lighthouse: bool,
         config_dir: &str,
     ) -> Result<(), std::io::Error> {
-
         let config_path = format!("{}/nebula.yaml", config_dir);
 
         if Path::new(&config_path).exists() {
@@ -42,7 +41,7 @@ lighthouse:
         };
 
         let config_content = format!(
-r#"
+            r#"
 pki:
   ca: "{}/ca/ca.crt"
   cert: "{}/nodes/{}.crt"
@@ -70,12 +69,7 @@ tun:
 {}
 
 "#,
-            config_dir,
-            config_dir,
-            node_name,
-            config_dir,
-            node_name,
-            lighthouse_config
+            config_dir, config_dir, node_name, config_dir, node_name, lighthouse_config
         );
 
         let mut file = fs::File::create(config_path)?;

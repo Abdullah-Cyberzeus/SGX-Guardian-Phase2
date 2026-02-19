@@ -31,21 +31,19 @@ impl NebulaDaemon {
     }
 
     /// Check if Nebula process is running
-pub fn is_running() -> bool {
-    Command::new("pgrep")
-        .arg("-f")
-        .arg("nebula -config")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-}
+    pub fn is_running() -> bool {
+        Command::new("pgrep")
+            .arg("-f")
+            .arg("nebula -config")
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
 
     /// Stop Nebula daemon
     #[allow(dead_code)]
     pub fn stop() -> Result<(), Error> {
-        Command::new("pkill")
-            .arg("nebula")
-            .output()?;
+        Command::new("pkill").arg("nebula").output()?;
 
         println!("🛑 Nebula daemon stopped.");
         Ok(())
