@@ -1,0 +1,23 @@
+syntax = "proto3";
+package sgx;
+
+// Member Certificate Request with Manual YAML Approval
+// Uses NebulaCA for signing. All paths under /var/lib/sgx-guardian/nebula/
+
+message CertSignRequest {
+  string node_id = 1;              // e.g. "nodeB"
+  string public_key_pem = 2;       // requesting node public key PEM
+  string overlay_ip = 3;           // e.g. "192.168.100.2/24"
+}
+
+message CertSignResponse {
+  string status = 1;               // "approved", "pending", "rejected"
+  string signed_cert_pem = 2;      // Nebula signed certificate content
+  string node_key_pem = 3;         // Nebula node private key content
+  string ca_cert_pem = 4;          // CA public certificate content
+  string message = 5;              // Human-readable status message
+}
+
+service CertService {
+  rpc RequestCertificate (CertSignRequest) returns (CertSignResponse);
+}

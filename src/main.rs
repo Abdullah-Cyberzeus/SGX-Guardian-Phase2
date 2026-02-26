@@ -11,6 +11,8 @@ pub mod proto {
     }
 }
 mod attestation_service;
+mod cert_client;
+mod cert_service;
 mod client;
 mod cloud;
 mod key_manager;
@@ -339,17 +341,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         is_valid: true,
     };
 
-    if let Err(e) = NebulaCA::issue_node_cert(&nebula_base_dir, &membership, nebula_ip) {
-        eprintln!("❌ Failed to issue node certificate: {:?}", e);
-        std::process::exit(1);
+    if node_id == "nodeA" {
+        // CA node: auto-issue its own certificate (self-bootstrap)
+        if let Err(e) = NebulaCA::issue_node_cert(&nebula_base_dir, &membership, nebula_ip) {
+            eprintln!("❌ Failed to issue CA node certificate: {:?}", e);
+            std::process::exit(1);
+        }
+        log_audit(
+            &node_id,
+            AuditCategory::Network,
+            AuditSeverity::Info,
+            AuditAction::Created,
+            "Nebula CA certificate verified or issued for nodeA",
+        );
+    } else {
+        // Member node: check if cert already exists
+        let member_cert_path = format!("{}/nodes/{}.crt", nebula_base_dir, node_id);
+        let member_key_path = format!("{}/nodes/{}.key", nebula_base_dir, node_id);
+
+        if std::path::Path::new(&member_cert_path).exists()
+            && std::path::Path::new(&member_key_path).exists()
+        {
+            println!("✅ Nebula certificate already exists for {}", node_id);
+            log_audit(
+                &node_id,
+                AuditCategory::Network,
+                AuditSeverity::Info,
+                AuditAction::Succeeded,
+                &format!("Existing Nebula certificate found for {}", node_id),
+            );
+        } else {
+            println!(
+                "🔐 No Nebula certificate for {} — requesting from CA immediately",
+                node_id
+            );
+
+            let cert_node_id = node_id.clone();
+            let cert_overlay_ip = nebula_ip.to_string();
+            let cert_pubkey = pubkey_b64.clone();
+            let ca_address = "127.0.0.1:50061".to_string();
+            log_event(&node_id, "Nebula certificate missing, will request from CA");
+            // BLOCKING REQUEST — DO NOT SPAWN
+            cert_client::request_certificate_from_ca(
+                cert_node_id,
+                ca_address,
+                cert_overlay_ip,
+                cert_pubkey,
+            )
+            .await;
+
+            println!("✅ Certificate bootstrap completed for {}", node_id);
+        }
     }
-    log_audit(
-        &node_id,
-        AuditCategory::Network,
-        AuditSeverity::Info,
-        AuditAction::Created,
-        &format!("Nebula certificate verified or issued for {}", node_id),
-    );
     //configuration directory for nebula
     use nebula::config::NebulaConfig;
     let config_directory = nebula_base_dir.clone();
@@ -601,9 +644,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-    // Wait for servers to initialize
-    tokio::time::sleep(Duration::from_secs(20)).await;
-
+    // === CERT BOOTSTRAP SERVER (nodeA only, plaintext port 50061) ===
+    if node_id == "nodeA" {
+        tokio::spawn(async move {
+            if let Err(e) = server::start_cert_bootstrap_server("0.0.0.0:50061".to_string()).await {
+                eprintln!("Cert bootstrap server failed: {:?}", e);
+            }
+        });
+    }
+    // // Wait for servers to initialize
+    // tokio::time::sleep(Duration::from_secs(20)).await;
+    // // === MEMBER CERTIFICATE REQUEST (nodeB / nodeC only) ===
+    // // Connects to plaintext bootstrap port 50061 (no TLS needed)
+    // if node_id != "nodeA" {
+    //     let cert_node_id = node_id.clone();
+    //     let cert_overlay_ip = nebula_ip.to_string();
+    //     let cert_pubkey = cert_pem.clone();
+    //     let ca_address = "127.0.0.1:50061".to_string();
+    //     tokio::spawn(async move {
+    //         cert_client::request_certificate_from_ca(
+    //             cert_node_id,
+    //             ca_address,
+    //             cert_overlay_ip,
+    //             cert_pubkey,
+    //         )
+    //         .await;
+    //     });
+    // }
     // === APPLY POLICY ENFORCEMENT AFTER NODE IS STEADY ===
     use sgx_guardian_client::enforcement;
     use sgx_guardian_client::policy::get_active_policy;
