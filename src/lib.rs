@@ -7,6 +7,7 @@ pub mod cert_client;
 pub mod cert_service;
 pub mod client;
 pub mod config_loader;
+pub mod cot;
 pub mod enforcement;
 pub mod key_manager;
 pub mod logging;

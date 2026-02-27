@@ -47,8 +47,7 @@ impl ExpiryMonitor {
                             &node_name,
                             "Expired Nebula certificate deleted for regeneration",
                         );
-                    }
-                    else if days <= 7 {
+                    } else if days <= 7 {
                         let msg =
                             format!("🚨 CRITICAL: Nebula certificate expires in {} days", days);
                         println!("{}", msg);
