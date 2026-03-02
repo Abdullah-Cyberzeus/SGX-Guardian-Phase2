@@ -1,6 +1,7 @@
 pub mod identity;
 pub mod interface_detector;
 pub mod membership;
+pub mod router;
 pub mod session_manager;
 pub mod transport_registry;
 pub mod transport_trait;

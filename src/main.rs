@@ -21,7 +21,6 @@ mod metrics;
 mod metrics_server;
 mod p2p_discovery;
 mod server;
-
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::{init_audit_logger, log_audit};
 use crate::audit::verifier::AuditVerifier;
@@ -437,6 +436,137 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // === Start Expiry Monitor ===
     use nebula::cert_lifecycle::ExpiryMonitor;
     ExpiryMonitor::start(nebula_base_dir.clone(), node_id.clone());
+
+    // === CoT Deliverable Integration Start ===
+    println!("🔗 Initializing Circle of Trust (CoT) transport-agnostic layer...");
+
+    use sgx_guardian_client::cot::identity::DeviceIdentity;
+    use sgx_guardian_client::cot::interface_detector::InterfaceDetector;
+    use sgx_guardian_client::cot::membership::CircleMembership as CotCircleMembership;
+    use sgx_guardian_client::cot::router::CotRouter;
+    use sgx_guardian_client::cot::session_manager::SessionManager;
+    use sgx_guardian_client::cot::transport_registry::TransportRegistry;
+    use sgx_guardian_client::cot::transports;
+    use sgx_guardian_client::cot::trust_engine::TrustEngine;
+
+    // Step 1: Create device identity from existing KeyManager public key
+    let cot_identity = DeviceIdentity::from_public_key_with_name(&km.pubkey_der(), &node_id)
+        .expect("Failed to create CoT device identity");
+    println!(
+        "🔑 CoT Identity: {} ({})",
+        cot_identity,
+        cot_identity.device_id()
+    );
+
+    log_audit(
+        &node_id,
+        AuditCategory::Identity,
+        AuditSeverity::Info,
+        AuditAction::Succeeded,
+        &format!("CoT identity established: {}", cot_identity.short_id()),
+    );
+
+    // Step 2: Detect available network interfaces
+    let detected_interfaces = InterfaceDetector::detect_all().unwrap_or_else(|e| {
+        eprintln!("⚠️ Interface detection failed: {}", e);
+        Vec::new()
+    });
+
+    println!(
+        "📡 Detected {} network interfaces:",
+        detected_interfaces.len()
+    );
+    for iface in &detected_interfaces {
+        println!(
+            "   {} → {} [{}] {:?}",
+            iface.name,
+            iface.transport_type,
+            iface.status,
+            iface
+                .ip_addr
+                .map(|ip| ip.to_string())
+                .unwrap_or("no-ip".into())
+        );
+    }
+
+    // Step 3: Create and populate transport registry
+    let cot_registry = std::sync::Arc::new(TransportRegistry::new());
+    {
+        let usable = transports::auto_create_transports().unwrap_or_else(|_| Vec::new());
+        for transport in usable {
+            cot_registry.register(transport).await;
+        }
+    }
+    println!("🚛 Transport Registry: {}", cot_registry.summary().await);
+
+    // Step 4: Create session manager
+    let cot_sessions = std::sync::Arc::new(SessionManager::new());
+
+    // Step 5: Create circle membership
+    let cot_circle = std::sync::Arc::new(CotCircleMembership::new(
+        "guardian-circle-alpha".into(),
+        cot_identity.device_id().to_string(),
+        km.pubkey_der().to_vec(),
+    ));
+
+    // Step 6: Create trust engine
+    let cot_trust = std::sync::Arc::new(TrustEngine::new(cot_identity.clone(), cot_circle.clone()));
+
+    // Step 7: Create router
+    let cot_router = std::sync::Arc::new(CotRouter::new(
+        cot_identity.clone(),
+        cot_registry.clone(),
+        cot_sessions.clone(),
+        cot_circle.clone(),
+        cot_trust.clone(),
+    ));
+    println!("✅ CoT layer initialized successfully.");
+    println!("{}", cot_router.status_summary().await);
+
+    log_audit(
+        &node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Succeeded,
+        "CoT transport-agnostic layer initialized",
+    );
+
+    // Step 8: Periodic interface refresh (every 30s)
+    {
+        let reg = cot_registry.clone();
+        let nid = node_id.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                if let Ok(new) = transports::auto_create_transports() {
+                    for t in new {
+                        reg.register(t).await;
+                    }
+                }
+                let health = reg.health_check_all().await;
+                for (tt, h) in &health {
+                    if !h.is_healthy {
+                        log_error(&nid, &format!("CoT {} unhealthy: {}", tt, h.status_message));
+                    }
+                }
+            }
+        });
+    }
+
+    // Step 9: Periodic session cleanup (every 60s)
+    {
+        let sess = cot_sessions.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                let cleaned = sess.cleanup_expired().await;
+                if cleaned > 0 {
+                    println!("🧹 Cleaned {} expired CoT sessions", cleaned);
+                }
+            }
+        });
+    }
+    // === CoT Deliverable Integration End ===
 
     // === Integrate Discovery + Attestation Services ===
     println!("🛰️ Initializing P2P Discovery and Attestation Services...");
