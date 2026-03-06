@@ -46,6 +46,10 @@ rcgen = "0.12"
 tempfile = "3.8"
 uuid = { version = "1", features = ["v4"] }
 
+[features]
+default = []
+secure-element = []
+
 [workspace]
 members = ["sgx-pa-cli"]
 

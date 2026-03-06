@@ -2,6 +2,8 @@
 
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
+#[cfg(feature = "secure-element")]
+use crate::secure_element::sign::SeSigner;
 use anyhow::{anyhow, Result};
 use ring::rand::SystemRandom;
 use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
@@ -11,9 +13,18 @@ use tracing::{info, warn};
 /// Manages the SG-X node identity keypair including generation,
 /// secure persistence, loading from disk, and providing signing/public
 /// key access for attestation workflows.
+/// Signing backend — software (ring) or hardware (SE050)
+pub enum SigningBackend {
+    /// Software ECDSA via ring crate (Phase 1 default)
+    Software,
+    /// Hardware ECDSA via NXP SE050 secure element
+    #[cfg(feature = "secure-element")]
+    Hardware { signer: SeSigner, key_id: u32 },
+}
 pub struct KeyManager {
     keypair: EcdsaKeyPair,
     key_path: String,
+    backend: SigningBackend,
 }
 impl KeyManager {
     /// Loads the identity keypair from disk if it exists, otherwise generates
@@ -74,25 +85,44 @@ impl KeyManager {
         Ok(Self {
             keypair,
             key_path: key_path_str.to_string(),
+            backend: SigningBackend::Software,
         })
     }
     /// Signs the provided message bytes using the node’s private ECDSA key.
     /// Returns the raw signature bytes, used in attestation messages.
     pub fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let rng = SystemRandom::new();
-        let sig = self
-            .keypair
-            .sign(&rng, data)
-            .map_err(|_| anyhow!("Failed to sign data"))?;
-
-        log_audit(
-            "system",
-            AuditCategory::Cryptography,
-            AuditSeverity::Info,
-            AuditAction::Used,
-            "Node identity key used to sign data",
-        );
-        Ok(sig.as_ref().to_vec())
+        match &self.backend {
+            SigningBackend::Software => {
+                let rng = SystemRandom::new();
+                let sig = self
+                    .keypair
+                    .sign(&rng, data)
+                    .map_err(|_| anyhow!("Failed to sign data"))?;
+                log_audit(
+                    "system",
+                    AuditCategory::Cryptography,
+                    AuditSeverity::Info,
+                    AuditAction::Used,
+                    "Key used to sign data (software)",
+                );
+                Ok(sig.as_ref().to_vec())
+            }
+            #[cfg(feature = "secure-element")]
+            SigningBackend::Hardware { signer, key_id } => {
+                crate::secure_element::safe_mode::guard_crypto_operation("sign")?;
+                let sig = signer
+                    .sign(*key_id, data)
+                    .map_err(|e| anyhow!("SE050 sign failed: {}", e))?;
+                log_audit(
+                    "system",
+                    AuditCategory::Cryptography,
+                    AuditSeverity::Info,
+                    AuditAction::Used,
+                    "Key used to sign data (SE050 hardware)",
+                );
+                Ok(sig)
+            }
+        }
     }
 
     /// Returns the node’s public key encoded in DER format,

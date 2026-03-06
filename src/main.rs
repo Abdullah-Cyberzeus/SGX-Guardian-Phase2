@@ -1,40 +1,92 @@
 //! SG-X Guardian Client entrypoint.
 //! Initializes node identity, loads configuration, starts discovery,
 //! attestation, metrics tracking, and the gRPC server runtime.
-mod audit;
-mod config_loader;
-mod nebula;
-mod policy;
-pub mod proto {
-    pub mod sgx {
-        include!(concat!(env!("OUT_DIR"), "/sgx.rs"));
-    }
-}
-mod attestation_service;
-mod cert_client;
-mod cert_service;
-mod client;
-mod cloud;
-mod key_manager;
-mod logging;
-mod metrics;
-mod metrics_server;
-mod p2p_discovery;
-mod server;
-use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
-use crate::audit::logger::{init_audit_logger, log_audit};
-use crate::audit::verifier::AuditVerifier;
-use crate::config_loader::CloudConfig;
-use base64::{engine::general_purpose, Engine as _};
-use client::send_ping;
-use config_loader::load_config;
-use key_manager::KeyManager;
-#[allow(unused_imports)]
-use logging::{init_logger, log_error, log_event};
-use metrics::Metrics;
-use nebula::install::NebulaInstall;
 
-use server::start_server;
+// mod audit;
+// mod config_loader;
+// mod nebula;
+// mod policy;
+// mod secure_element;
+// pub mod proto {
+//     pub mod sgx {
+//         include!(concat!(env!("OUT_DIR"), "/sgx.rs"));
+//     }
+// }
+// mod attestation_service;
+// mod cert_client;
+// mod cert_service;
+// mod client;
+// mod cloud;
+// mod key_manager;
+// mod logging;
+// mod metrics;
+// mod metrics_server;
+// mod p2p_discovery;
+// mod server;
+
+// use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+// use crate::audit::logger::{init_audit_logger, log_audit};
+// use crate::audit::verifier::AuditVerifier;
+// use crate::config_loader::CloudConfig;
+// use base64::{engine::general_purpose, Engine as _};
+// use client::send_ping;
+// use config_loader::load_config;
+// use key_manager::KeyManager;
+// #[allow(unused_imports)]
+// use logging::{init_logger, log_error, log_event};
+// use metrics::Metrics;
+// use nebula::install::NebulaInstall;
+
+// use server::start_server;
+// use std::env;
+// use std::fs;
+// use std::path::PathBuf;
+// #[cfg(windows)]
+// use std::sync::atomic::{AtomicBool, Ordering};
+// #[allow(unused_imports)]
+// use std::sync::Arc;
+// use std::time::Duration;
+// use tokio::sync::mpsc;
+// use tokio::sync::Mutex;
+// use tokio::{signal, task};
+
+// #[cfg(windows)]
+// use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
+// /// Entry point for the SG-X Guardian Client.
+// /// Initializes identity keys, loads node configurations, starts P2P discovery,
+// /// attestation services, metrics tracking, structured logging, and the gRPC server.
+// /// This function orchestrates the full runtime lifecycle for each SG-X node.
+
+//! SG-X Guardian Client entrypoint.
+//! Initializes node identity, loads configuration, starts discovery,
+//! attestation, metrics tracking, and the gRPC server runtime.
+
+// ============================================================
+// ALL modules live in lib.rs (the library crate).
+// main.rs imports from sgx_guardian_client:: — NEVER uses mod.
+// This prevents dual-compilation and crate:: resolution issues.
+// ============================================================
+
+use sgx_guardian_client::attestation_service;
+use sgx_guardian_client::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use sgx_guardian_client::audit::logger::{init_audit_logger, log_audit};
+use sgx_guardian_client::audit::verifier::AuditVerifier;
+use sgx_guardian_client::client::send_ping;
+use sgx_guardian_client::config_loader::{load_config, CloudConfig};
+use sgx_guardian_client::key_manager::KeyManager;
+#[cfg(feature = "secure-element")]
+use sgx_guardian_client::secure_element;
+
+#[allow(unused_imports)]
+use sgx_guardian_client::logging::{init_logger, log_error, log_event};
+use sgx_guardian_client::metrics::Metrics;
+use sgx_guardian_client::nebula::install::NebulaInstall;
+use sgx_guardian_client::p2p_discovery::P2PDiscovery;
+use sgx_guardian_client::policy;
+use sgx_guardian_client::server;
+use sgx_guardian_client::server::start_server;
+
+use base64::{engine::general_purpose, Engine as _};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -49,10 +101,6 @@ use tokio::{signal, task};
 
 #[cfg(windows)]
 use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
-/// Entry point for the SG-X Guardian Client.
-/// Initializes identity keys, loads node configurations, starts P2P discovery,
-/// attestation services, metrics tracking, structured logging, and the gRPC server.
-/// This function orchestrates the full runtime lifecycle for each SG-X node.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(" SGX Guardian Client Starting...");
@@ -79,6 +127,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let node_key_path = format!("/var/lib/sgx-guardian/sgx-agent/device_{}.key", node_id);
     // Initialize or load persistent identity keypair
     let km = KeyManager::load_or_generate(&node_key_path)?;
+    // === Secure Element Initialization (Phase 2) ===
+    #[cfg(feature = "secure-element")]
+    {
+        let se_config = secure_element::SeConfig::default();
+        match secure_element::Se050::init(&se_config) {
+            Ok(se) => {
+                println!("SE050: {}", se.status_string());
+                println!("SE050 UID: {}", se.uid.as_deref().unwrap_or("N/A"));
+                log_audit(
+                    &node_id,
+                    AuditCategory::Identity,
+                    AuditSeverity::Info,
+                    AuditAction::Loaded,
+                    &format!("SE050 initialized: {}", se.uid.as_deref().unwrap_or("N/A")),
+                );
+            }
+            Err(e) => {
+                eprintln!("SE050 init failed: {} — using software crypto", e);
+            }
+        }
+    }
 
     let pubkey_b64 = general_purpose::STANDARD.encode(km.pubkey_der());
     println!(
@@ -87,7 +156,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Generate and log attestation evidence for this node
-    use crate::attestation_service::AttestationService;
+    use sgx_guardian_client::attestation_service::AttestationService;
 
     let sample_policy_path = "/etc/sgx-guardian/schemas/uep_policy_v1.yaml";
 
@@ -226,7 +295,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(false)
     {
         tokio::spawn(async {
-            cloud::mock_server::run_mock_cloud(([127, 0, 0, 1], 9443)).await;
+            sgx_guardian_client::cloud::mock_server::run_mock_cloud(([127, 0, 0, 1], 9443)).await;
         });
 
         log_audit(
@@ -256,7 +325,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
 
         tokio::spawn(async move {
-            if let Err(e) = cloud::client::send_heartbeat(&node_id_clone, &endpoint).await {
+            if let Err(e) =
+                sgx_guardian_client::cloud::client::send_heartbeat(&node_id_clone, &endpoint).await
+            {
                 log_error(
                     &node_id_clone,
                     &format!("Cloud uplink heartbeat failed: {}", e),
@@ -274,9 +345,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n🔎 Verifying Nebula Installation...");
 
     // === Generate CA + Node Certificates for Nebula (if not exist) ===
-    use nebula::ca::NebulaCA;
-    use nebula::daemon::NebulaDaemon;
-    use nebula::models::CircleMembership;
+    use sgx_guardian_client::nebula::ca::NebulaCA;
+    use sgx_guardian_client::nebula::daemon::NebulaDaemon;
+    use sgx_guardian_client::nebula::models::CircleMembership;
 
     let nebula_base_dir =
         std::env::var("SGX_NEBULA_DIR").unwrap_or("/var/lib/sgx-guardian/nebula".to_string());
@@ -381,7 +452,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let ca_address = "127.0.0.1:50061".to_string();
             log_event(&node_id, "Nebula certificate missing, will request from CA");
             // BLOCKING REQUEST — DO NOT SPAWN
-            cert_client::request_certificate_from_ca(
+            sgx_guardian_client::cert_client::request_certificate_from_ca(
                 cert_node_id,
                 ca_address,
                 cert_overlay_ip,
@@ -393,7 +464,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     //configuration directory for nebula
-    use nebula::config::NebulaConfig;
+    use sgx_guardian_client::nebula::config::NebulaConfig;
     let config_directory = nebula_base_dir.clone();
     let is_lighthouse = node_id == "nodeA";
 
@@ -423,7 +494,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // === Nebula Health Check ===
-    use nebula::health::NebulaHealth;
+    use sgx_guardian_client::nebula::health::NebulaHealth;
 
     println!("🩺 Performing Nebula health check...");
 
@@ -434,7 +505,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("-----------------------------");
 
     // === Start Expiry Monitor ===
-    use nebula::cert_lifecycle::ExpiryMonitor;
+    use sgx_guardian_client::nebula::cert_lifecycle::ExpiryMonitor;
     ExpiryMonitor::start(nebula_base_dir.clone(), node_id.clone());
 
     // === CoT Deliverable Integration Start ===
@@ -584,12 +655,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let node_id_clone = node_id.clone();
         let auditor_arc_clone = auditor_arc.clone();
         async move {
-            if let Err(e) = p2p_discovery::P2PDiscovery::run(
-                tx,
-                node_id_clone.clone(),
-                auditor_arc_clone.clone(),
-            )
-            .await
+            if let Err(e) =
+                P2PDiscovery::run(tx, node_id_clone.clone(), auditor_arc_clone.clone()).await
             {
                 eprintln!("Discovery service error: {:?}", e);
                 log_error(&node_id_clone, &format!("Discovery service error: {:?}", e));
@@ -637,7 +704,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let port = metrics_cfg.port;
 
             tokio::spawn(async move {
-                metrics_server::start_metrics_server(metrics_clone, (bind_ip, port)).await;
+                sgx_guardian_client::metrics_server::start_metrics_server(
+                    metrics_clone,
+                    (bind_ip, port),
+                )
+                .await;
             });
         }
     }
@@ -792,7 +863,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     let cert_pubkey = cert_pem.clone();
     //     let ca_address = "127.0.0.1:50061".to_string();
     //     tokio::spawn(async move {
-    //         cert_client::request_certificate_from_ca(
+    //         sgx_guardian_client::sgx_guardian_client::sgx_guardian_client::sgx_guardian_client::cert_client::request_certificate_from_ca(
     //             cert_node_id,
     //             ca_address,
     //             cert_overlay_ip,
