@@ -88,6 +88,83 @@ impl KeyManager {
             backend: SigningBackend::Software,
         })
     }
+    /// Initialize KeyManager with SE050 hardware backend.
+    /// DKP is generated/loaded inside the secure element.
+    /// Private key NEVER leaves the chip.
+    #[cfg(feature = "secure-element")]
+    pub fn init_with_se050(
+        se_config: &crate::secure_element::config::SeConfig,
+        base_path: &str,
+        fallback_key_path: &str,
+    ) -> Result<Self> {
+        use crate::secure_element::dkp::DkpManager;
+
+        info!("Initializing KeyManager with SE050 hardware backend...");
+
+        // Try hardware path first
+        match DkpManager::init(se_config, base_path) {
+            Ok(dkp) => {
+                let key_id = dkp.active_key_id();
+                let signer = dkp
+                    .create_signer()
+                    .map_err(|e| anyhow!("Create SE050 signer: {}", e))?;
+
+                // We still need a software keypair for pubkey_der()
+                // Load or generate a software key as reference
+                let rng = SystemRandom::new();
+                let pkcs8_bytes = if Path::new(fallback_key_path).exists() {
+                    fs::read(fallback_key_path)?
+                } else {
+                    let pkcs8 =
+                        EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
+                            .map_err(|_| anyhow!("Generate fallback keypair"))?;
+                    fs::create_dir_all(
+                        Path::new(fallback_key_path)
+                            .parent()
+                            .ok_or_else(|| anyhow!("Invalid path"))?,
+                    )?;
+                    fs::write(fallback_key_path, pkcs8.as_ref())?;
+                    pkcs8.as_ref().to_vec()
+                };
+
+                let keypair =
+                    EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &pkcs8_bytes, &rng)
+                        .map_err(|_| anyhow!("Load fallback keypair"))?;
+
+                // If SE050 public key is available, use it instead
+                let pub_der_path = format!("{}/keys/dkp_pub.der", base_path);
+                if Path::new(&pub_der_path).exists() {
+                    info!("DKP public key available at {}", pub_der_path);
+                }
+
+                log_audit(
+                    "system",
+                    AuditCategory::Identity,
+                    AuditSeverity::Info,
+                    AuditAction::Loaded,
+                    &format!(
+                        "DKP initialized via SE050 hardware (key={})",
+                        dkp.active_key.key_id
+                    ),
+                );
+
+                info!(
+                    "KeyManager initialized with SE050 backend (key_id=0x{:08X})",
+                    key_id
+                );
+
+                Ok(Self {
+                    keypair,
+                    key_path: fallback_key_path.to_string(),
+                    backend: SigningBackend::Hardware { signer, key_id },
+                })
+            }
+            Err(e) => {
+                warn!("SE050 DKP init failed: {} — falling back to software", e);
+                Self::load_or_generate(fallback_key_path)
+            }
+        }
+    }
     /// Signs the provided message bytes using the node’s private ECDSA key.
     /// Returns the raw signature bytes, used in attestation messages.
     pub fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {

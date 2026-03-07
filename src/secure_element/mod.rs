@@ -7,7 +7,9 @@
 
 pub mod config;
 pub mod crypto;
+pub mod dkp;
 pub mod error;
+pub mod key_meta;
 pub mod key_storage;
 pub mod safe_mode;
 pub mod se050;

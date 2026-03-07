@@ -2,71 +2,6 @@
 //! Initializes node identity, loads configuration, starts discovery,
 //! attestation, metrics tracking, and the gRPC server runtime.
 
-// mod audit;
-// mod config_loader;
-// mod nebula;
-// mod policy;
-// mod secure_element;
-// pub mod proto {
-//     pub mod sgx {
-//         include!(concat!(env!("OUT_DIR"), "/sgx.rs"));
-//     }
-// }
-// mod attestation_service;
-// mod cert_client;
-// mod cert_service;
-// mod client;
-// mod cloud;
-// mod key_manager;
-// mod logging;
-// mod metrics;
-// mod metrics_server;
-// mod p2p_discovery;
-// mod server;
-
-// use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
-// use crate::audit::logger::{init_audit_logger, log_audit};
-// use crate::audit::verifier::AuditVerifier;
-// use crate::config_loader::CloudConfig;
-// use base64::{engine::general_purpose, Engine as _};
-// use client::send_ping;
-// use config_loader::load_config;
-// use key_manager::KeyManager;
-// #[allow(unused_imports)]
-// use logging::{init_logger, log_error, log_event};
-// use metrics::Metrics;
-// use nebula::install::NebulaInstall;
-
-// use server::start_server;
-// use std::env;
-// use std::fs;
-// use std::path::PathBuf;
-// #[cfg(windows)]
-// use std::sync::atomic::{AtomicBool, Ordering};
-// #[allow(unused_imports)]
-// use std::sync::Arc;
-// use std::time::Duration;
-// use tokio::sync::mpsc;
-// use tokio::sync::Mutex;
-// use tokio::{signal, task};
-
-// #[cfg(windows)]
-// use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
-// /// Entry point for the SG-X Guardian Client.
-// /// Initializes identity keys, loads node configurations, starts P2P discovery,
-// /// attestation services, metrics tracking, structured logging, and the gRPC server.
-// /// This function orchestrates the full runtime lifecycle for each SG-X node.
-
-//! SG-X Guardian Client entrypoint.
-//! Initializes node identity, loads configuration, starts discovery,
-//! attestation, metrics tracking, and the gRPC server runtime.
-
-// ============================================================
-// ALL modules live in lib.rs (the library crate).
-// main.rs imports from sgx_guardian_client:: — NEVER uses mod.
-// This prevents dual-compilation and crate:: resolution issues.
-// ============================================================
-
 use sgx_guardian_client::attestation_service;
 use sgx_guardian_client::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use sgx_guardian_client::audit::logger::{init_audit_logger, log_audit};
@@ -125,29 +60,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let node_id = args[1].clone();
     // Generate node-specific identity key path
     let node_key_path = format!("/var/lib/sgx-guardian/sgx-agent/device_{}.key", node_id);
-    // Initialize or load persistent identity keypair
-    let km = KeyManager::load_or_generate(&node_key_path)?;
-    // === Secure Element Initialization (Phase 2) ===
+    // === Hardware Key Manager Initialization (Phase 2 — HKM) ===
     #[cfg(feature = "secure-element")]
-    {
+    let km = {
+        let se_base_path = "/var/lib/sgx-guardian";
         let se_config = secure_element::SeConfig::default();
-        match secure_element::Se050::init(&se_config) {
-            Ok(se) => {
-                println!("SE050: {}", se.status_string());
-                println!("SE050 UID: {}", se.uid.as_deref().unwrap_or("N/A"));
+
+        match KeyManager::init_with_se050(&se_config, se_base_path, &node_key_path) {
+            Ok(hw_km) => {
+                println!("DKP initialized via SE050 hardware");
                 log_audit(
                     &node_id,
                     AuditCategory::Identity,
                     AuditSeverity::Info,
                     AuditAction::Loaded,
-                    &format!("SE050 initialized: {}", se.uid.as_deref().unwrap_or("N/A")),
+                    "Hardware Key Manager: DKP active via SE050",
                 );
+                hw_km
             }
             Err(e) => {
-                eprintln!("SE050 init failed: {} — using software crypto", e);
+                eprintln!("SE050 HKM failed: {} — using software keys", e);
+                KeyManager::load_or_generate(&node_key_path)?
             }
         }
-    }
+    };
+
+    #[cfg(not(feature = "secure-element"))]
+    let km = KeyManager::load_or_generate(&node_key_path)?;
 
     let pubkey_b64 = general_purpose::STANDARD.encode(km.pubkey_der());
     println!(
