@@ -87,6 +87,9 @@ pub fn clear_tamper() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static TAMPER_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_tamper_status_display_strings() {
@@ -97,21 +100,28 @@ mod tests {
 
     #[test]
     fn test_tamper_flag_starts_false() {
-        TAMPER_DETECTED.store(false, Ordering::SeqCst);
+        let _guard = TAMPER_TEST_LOCK.lock().unwrap();
+        clear_tamper();
         assert!(!is_tampered());
+        clear_tamper();
     }
 
     #[test]
     fn test_tamper_flag_can_be_set() {
-        TAMPER_DETECTED.store(true, Ordering::SeqCst);
+        let _guard = TAMPER_TEST_LOCK.lock().unwrap();
+        clear_tamper();
+        set_tamper("unit test");
         assert!(is_tampered());
-        TAMPER_DETECTED.store(false, Ordering::SeqCst);
+        clear_tamper();
     }
 
     #[test]
     fn test_clear_tamper_resets_flag() {
-        TAMPER_DETECTED.store(true, Ordering::SeqCst);
+        let _guard = TAMPER_TEST_LOCK.lock().unwrap();
+        clear_tamper();
+        set_tamper("unit test");
         clear_tamper();
         assert!(!is_tampered());
+        clear_tamper();
     }
 }
