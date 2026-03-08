@@ -21,23 +21,21 @@ impl NebulaConfig {
         fs::create_dir_all(config_dir)?;
 
         let lighthouse_config = if is_lighthouse {
-            format!(
-                r#"
+            r#"
 lighthouse:
   am_lighthouse: true
   interval: 60
 "#
-            )
+            .to_string()
         } else {
-            format!(
-                r#"
+            r#"
 lighthouse:
   am_lighthouse: false
   interval: 60
   hosts:
     - "192.168.100.1"
 "#
-            )
+            .to_string()
         };
 
         let config_content = format!(

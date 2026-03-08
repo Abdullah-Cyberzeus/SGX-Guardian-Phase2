@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn test_key_id_version_offset() {
         // v1 = base, v2 = base+1, v3 = base+2...
-        assert_eq!(DKP_BASE_KEY_ID + 0, 0x20000010); // v1
+        assert_eq!(DKP_BASE_KEY_ID, 0x20000010); // v1
         assert_eq!(DKP_BASE_KEY_ID + 1, 0x20000011); // v2
         assert_eq!(DKP_BASE_KEY_ID + 2, 0x20000012); // v3
     }

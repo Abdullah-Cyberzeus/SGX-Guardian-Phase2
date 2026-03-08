@@ -23,10 +23,7 @@ impl NebulaDaemon {
             println!("✅ Nebula daemon started successfully.");
             Ok(())
         } else {
-            Err(Error::new(
-                std::io::ErrorKind::Other,
-                "Nebula daemon failed to start",
-            ))
+            Err(Error::other("Nebula daemon failed to start"))
         }
     }
 

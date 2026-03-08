@@ -39,7 +39,7 @@ impl SeCrypto {
     /// For more bytes, we call multiple times and concatenate.
     pub fn random(&self, length: usize) -> Result<Vec<u8>, SeError> {
         let mut result = Vec::with_capacity(length);
-        let calls_needed = (length + 9) / 10;
+        let calls_needed = length.div_ceil(10);
 
         for _ in 0..calls_needed {
             let output = self.cli.get_rng()?;
@@ -70,8 +70,8 @@ impl SeCrypto {
         for line in output.lines() {
             let trimmed = line.trim();
             // Primary: "Random number: 495b0ade5249153dbcac"
-            if trimmed.starts_with("Random number:") {
-                return Some(trimmed["Random number:".len()..].trim().to_string());
+            if let Some(stripped) = trimmed.strip_prefix("Random number:") {
+                return Some(stripped.trim().to_string());
             }
             // Fallback: "INFO:sss.se05x:495b0ade5249153dbcac"
             if trimmed.contains("INFO:sss.se05x:") {

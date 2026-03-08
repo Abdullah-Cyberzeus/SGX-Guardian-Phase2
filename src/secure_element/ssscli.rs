@@ -161,8 +161,8 @@ impl SssCli {
     pub(crate) fn parse_value(output: &str, prefix: &str) -> Option<String> {
         for line in output.lines() {
             let trimmed = line.trim();
-            if trimmed.starts_with(prefix) {
-                return Some(trimmed[prefix.len()..].trim().to_string());
+            if let Some(stripped) = trimmed.strip_prefix(prefix) {
+                return Some(stripped.trim().to_string());
             }
             if trimmed.contains("INFO:sss.se05x:") {
                 if let Some(val) = trimmed.split("INFO:sss.se05x:").nth(1) {

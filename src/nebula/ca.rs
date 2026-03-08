@@ -26,13 +26,10 @@ impl NebulaCA {
             .output()?;
 
         if !output.status.success() {
-            return Err(Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "CA generation failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                ),
-            ));
+            return Err(Error::other(format!(
+                "CA generation failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
         }
 
         println!("✅ Nebula CA generated successfully.");
@@ -46,10 +43,7 @@ impl NebulaCA {
         ip: &str,
     ) -> Result<(), Error> {
         if !validate_circle_membership(membership) {
-            return Err(Error::new(
-                std::io::ErrorKind::Other,
-                "Circle membership validation failed",
-            ));
+            return Err(Error::other("Circle membership validation failed"));
         }
 
         let ca_dir = format!("{}/ca", base_dir);
@@ -73,9 +67,8 @@ impl NebulaCA {
 
         // Detect partial state (corruption / incomplete issuance)
         if cert_exists != key_exists {
-            return Err(Error::new(
-        std::io::ErrorKind::Other,
-        format!(
+            return Err(Error::other(
+    format!(
             "Partial certificate state detected for {} (cert: {}, key: {}). Manual intervention required.",
             membership.node_name, cert_exists, key_exists
         ),
@@ -103,13 +96,10 @@ impl NebulaCA {
             .output()?;
 
         if !output.status.success() {
-            return Err(Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "Certificate signing failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                ),
-            ));
+            return Err(Error::other(format!(
+                "Certificate signing failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
         }
 
         println!("✅ Certificate issued for {}", membership.node_name);

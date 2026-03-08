@@ -17,6 +17,11 @@ struct RegistryEntry {
 pub struct TransportRegistry {
     entries: Arc<RwLock<HashMap<TransportType, RegistryEntry>>>,
 }
+impl Default for TransportRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl TransportRegistry {
     pub fn new() -> Self {
