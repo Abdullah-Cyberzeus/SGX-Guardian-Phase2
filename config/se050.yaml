@@ -1,0 +1,10 @@
+---
+# NXP SE050 Secure Element Configuration
+# Chip: SE050F2HQ1Z018HZ | Board: imx8mp-var-dart (Guardian)
+
+secure_element:
+  enabled: true
+  scp_key_path: "~/se05x_mw_v04.05.01/simw-top/scripts/se050F_scp_keys.txt"
+  interface: "t1oi2c"
+  auth_type: "PlatformSCP"
+  connection_type: "se05x"

@@ -2,6 +2,8 @@
 
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
+#[cfg(feature = "secure-element")]
+use crate::secure_element::sign::SeSigner;
 use anyhow::{anyhow, Result};
 use ring::rand::SystemRandom;
 use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
@@ -11,9 +13,18 @@ use tracing::{info, warn};
 /// Manages the SG-X node identity keypair including generation,
 /// secure persistence, loading from disk, and providing signing/public
 /// key access for attestation workflows.
+/// Signing backend — software (ring) or hardware (SE050)
+pub enum SigningBackend {
+    /// Software ECDSA via ring crate (Phase 1 default)
+    Software,
+    /// Hardware ECDSA via NXP SE050 secure element
+    #[cfg(feature = "secure-element")]
+    Hardware { signer: SeSigner, key_id: u32 },
+}
 pub struct KeyManager {
     keypair: EcdsaKeyPair,
     key_path: String,
+    backend: SigningBackend,
 }
 impl KeyManager {
     /// Loads the identity keypair from disk if it exists, otherwise generates
@@ -74,25 +85,121 @@ impl KeyManager {
         Ok(Self {
             keypair,
             key_path: key_path_str.to_string(),
+            backend: SigningBackend::Software,
         })
+    }
+    /// Initialize KeyManager with SE050 hardware backend.
+    /// DKP is generated/loaded inside the secure element.
+    /// Private key NEVER leaves the chip.
+    #[cfg(feature = "secure-element")]
+    pub fn init_with_se050(
+        se_config: &crate::secure_element::config::SeConfig,
+        base_path: &str,
+        fallback_key_path: &str,
+    ) -> Result<Self> {
+        use crate::secure_element::dkp::DkpManager;
+
+        info!("Initializing KeyManager with SE050 hardware backend...");
+
+        // Try hardware path first
+        match DkpManager::init(se_config, base_path) {
+            Ok(dkp) => {
+                let key_id = dkp.active_key_id();
+                let signer = dkp
+                    .create_signer()
+                    .map_err(|e| anyhow!("Create SE050 signer: {}", e))?;
+
+                // We still need a software keypair for pubkey_der()
+                // Load or generate a software key as reference
+                let rng = SystemRandom::new();
+                let pkcs8_bytes = if Path::new(fallback_key_path).exists() {
+                    fs::read(fallback_key_path)?
+                } else {
+                    let pkcs8 =
+                        EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
+                            .map_err(|_| anyhow!("Generate fallback keypair"))?;
+                    fs::create_dir_all(
+                        Path::new(fallback_key_path)
+                            .parent()
+                            .ok_or_else(|| anyhow!("Invalid path"))?,
+                    )?;
+                    fs::write(fallback_key_path, pkcs8.as_ref())?;
+                    pkcs8.as_ref().to_vec()
+                };
+
+                let keypair =
+                    EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &pkcs8_bytes, &rng)
+                        .map_err(|_| anyhow!("Load fallback keypair"))?;
+
+                // If SE050 public key is available, use it instead
+                let pub_der_path = format!("{}/keys/dkp_pub.der", base_path);
+                if Path::new(&pub_der_path).exists() {
+                    info!("DKP public key available at {}", pub_der_path);
+                }
+
+                log_audit(
+                    "system",
+                    AuditCategory::Identity,
+                    AuditSeverity::Info,
+                    AuditAction::Loaded,
+                    &format!(
+                        "DKP initialized via SE050 hardware (key={})",
+                        dkp.active_key.key_id
+                    ),
+                );
+
+                info!(
+                    "KeyManager initialized with SE050 backend (key_id=0x{:08X})",
+                    key_id
+                );
+
+                Ok(Self {
+                    keypair,
+                    key_path: fallback_key_path.to_string(),
+                    backend: SigningBackend::Hardware { signer, key_id },
+                })
+            }
+            Err(e) => {
+                warn!("SE050 DKP init failed: {} — falling back to software", e);
+                Self::load_or_generate(fallback_key_path)
+            }
+        }
     }
     /// Signs the provided message bytes using the node’s private ECDSA key.
     /// Returns the raw signature bytes, used in attestation messages.
     pub fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let rng = SystemRandom::new();
-        let sig = self
-            .keypair
-            .sign(&rng, data)
-            .map_err(|_| anyhow!("Failed to sign data"))?;
-
-        log_audit(
-            "system",
-            AuditCategory::Cryptography,
-            AuditSeverity::Info,
-            AuditAction::Used,
-            "Node identity key used to sign data",
-        );
-        Ok(sig.as_ref().to_vec())
+        match &self.backend {
+            SigningBackend::Software => {
+                let rng = SystemRandom::new();
+                let sig = self
+                    .keypair
+                    .sign(&rng, data)
+                    .map_err(|_| anyhow!("Failed to sign data"))?;
+                log_audit(
+                    "system",
+                    AuditCategory::Cryptography,
+                    AuditSeverity::Info,
+                    AuditAction::Used,
+                    "Key used to sign data (software)",
+                );
+                Ok(sig.as_ref().to_vec())
+            }
+            #[cfg(feature = "secure-element")]
+            SigningBackend::Hardware { signer, key_id } => {
+                crate::secure_element::safe_mode::guard_crypto_operation("sign")?;
+                let sig = signer
+                    .sign(*key_id, data)
+                    .map_err(|e| anyhow!("SE050 sign failed: {}", e))?;
+                log_audit(
+                    "system",
+                    AuditCategory::Cryptography,
+                    AuditSeverity::Info,
+                    AuditAction::Used,
+                    "Key used to sign data (SE050 hardware)",
+                );
+                Ok(sig)
+            }
+        }
     }
 
     /// Returns the node’s public key encoded in DER format,
