@@ -4,7 +4,7 @@ Section: security
 Priority: optional
 Architecture: amd64
 Maintainer: CyberZeus Security <security@cyberzeus.io>
-Depends: libc6 (>= 2.31), systemd, ca-certificates
+Depends: libc6 (>= 2.31), systemd, ca-certificates, nftables
 Description: SGX Guardian Client - Zero-Trust Edge Security Agent
  SGX Guardian Client is a zero-trust edge security agent designed
  to operate autonomously on distributed nodes. It enforces signed

@@ -13,7 +13,7 @@ tokio = { version = "1.37", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "json", "chrono"] }
 tracing-appender = "0.2"
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 windows-sys = { version = "0.52", features = ["Win32_System_Console"] }
@@ -33,6 +33,10 @@ p256 = { version = "0.13", features = ["ecdsa"] }
 once_cell = "1.19"
 warp = { version = "0.3", features = ["tls"] }
 reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
+async-trait = "0.1"
+dashmap = "5.5"
+network-interface = "1.1"
+uuid = { version = "1", features = ["v4","serde"] }
 
 [build-dependencies]
 tonic-build = "0.11.0"
@@ -41,6 +45,10 @@ tonic-build = "0.11.0"
 rcgen = "0.12"
 tempfile = "3.8"
 uuid = { version = "1", features = ["v4"] }
+
+[features]
+default = []
+secure-element = []
 
 [workspace]
 members = ["sgx-pa-cli"]

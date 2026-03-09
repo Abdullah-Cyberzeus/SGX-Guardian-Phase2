@@ -1,36 +1,27 @@
 //! SG-X Guardian Client entrypoint.
 //! Initializes node identity, loads configuration, starts discovery,
 //! attestation, metrics tracking, and the gRPC server runtime.
-mod audit;
-mod config_loader;
-mod policy;
-pub mod proto {
-    pub mod sgx {
-        include!(concat!(env!("OUT_DIR"), "/sgx.rs"));
-    }
-}
-mod attestation_service;
-mod client;
-mod cloud;
-mod key_manager;
-mod logging;
-mod metrics;
-mod metrics_server;
-mod p2p_discovery;
-mod server;
 
-use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
-use crate::audit::logger::{init_audit_logger, log_audit};
-use crate::audit::verifier::AuditVerifier;
-use crate::config_loader::CloudConfig;
-use base64::{engine::general_purpose, Engine as _};
-use client::send_ping;
-use config_loader::load_config;
-use key_manager::KeyManager;
+use sgx_guardian_client::attestation_service;
+use sgx_guardian_client::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use sgx_guardian_client::audit::logger::{init_audit_logger, log_audit};
+use sgx_guardian_client::audit::verifier::AuditVerifier;
+use sgx_guardian_client::client::send_ping;
+use sgx_guardian_client::config_loader::{load_config, CloudConfig};
+use sgx_guardian_client::key_manager::KeyManager;
+#[cfg(feature = "secure-element")]
+use sgx_guardian_client::secure_element;
+
 #[allow(unused_imports)]
-use logging::{init_logger, log_error, log_event};
-use metrics::Metrics;
-use server::start_server;
+use sgx_guardian_client::logging::{init_logger, log_error, log_event};
+use sgx_guardian_client::metrics::Metrics;
+use sgx_guardian_client::nebula::install::NebulaInstall;
+use sgx_guardian_client::p2p_discovery::P2PDiscovery;
+use sgx_guardian_client::policy;
+use sgx_guardian_client::server;
+use sgx_guardian_client::server::start_server;
+
+use base64::{engine::general_purpose, Engine as _};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -45,10 +36,6 @@ use tokio::{signal, task};
 
 #[cfg(windows)]
 use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
-/// Entry point for the SG-X Guardian Client.
-/// Initializes identity keys, loads node configurations, starts P2P discovery,
-/// attestation services, metrics tracking, structured logging, and the gRPC server.
-/// This function orchestrates the full runtime lifecycle for each SG-X node.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(" SGX Guardian Client Starting...");
@@ -73,7 +60,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let node_id = args[1].clone();
     // Generate node-specific identity key path
     let node_key_path = format!("/var/lib/sgx-guardian/sgx-agent/device_{}.key", node_id);
-    // Initialize or load persistent identity keypair
+    // === Hardware Key Manager Initialization (Phase 2 — HKM) ===
+    #[cfg(feature = "secure-element")]
+    let km = {
+        let se_base_path = "/var/lib/sgx-guardian";
+        let se_config = secure_element::SeConfig::default();
+
+        match KeyManager::init_with_se050(&se_config, se_base_path, &node_key_path) {
+            Ok(hw_km) => {
+                println!("DKP initialized via SE050 hardware");
+                log_audit(
+                    &node_id,
+                    AuditCategory::Identity,
+                    AuditSeverity::Info,
+                    AuditAction::Loaded,
+                    "Hardware Key Manager: DKP active via SE050",
+                );
+                hw_km
+            }
+            Err(e) => {
+                eprintln!("SE050 HKM failed: {} — using software keys", e);
+                KeyManager::load_or_generate(&node_key_path)?
+            }
+        }
+    };
+
+    #[cfg(not(feature = "secure-element"))]
     let km = KeyManager::load_or_generate(&node_key_path)?;
 
     let pubkey_b64 = general_purpose::STANDARD.encode(km.pubkey_der());
@@ -83,7 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Generate and log attestation evidence for this node
-    use crate::attestation_service::AttestationService;
+    use sgx_guardian_client::attestation_service::AttestationService;
 
     let sample_policy_path = "/etc/sgx-guardian/schemas/uep_policy_v1.yaml";
 
@@ -222,7 +234,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(false)
     {
         tokio::spawn(async {
-            cloud::mock_server::run_mock_cloud(([127, 0, 0, 1], 9443)).await;
+            sgx_guardian_client::cloud::mock_server::run_mock_cloud(([127, 0, 0, 1], 9443)).await;
         });
 
         log_audit(
@@ -252,7 +264,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
 
         tokio::spawn(async move {
-            if let Err(e) = cloud::client::send_heartbeat(&node_id_clone, &endpoint).await {
+            if let Err(e) =
+                sgx_guardian_client::cloud::client::send_heartbeat(&node_id_clone, &endpoint).await
+            {
                 log_error(
                     &node_id_clone,
                     &format!("Cloud uplink heartbeat failed: {}", e),
@@ -265,6 +279,305 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut m = metrics.lock().await;
         m.record_connection();
     }
+
+    // === Nebula Installation Verification ===
+    println!("\n🔎 Verifying Nebula Installation...");
+
+    // === Generate CA + Node Certificates for Nebula (if not exist) ===
+    use sgx_guardian_client::nebula::ca::NebulaCA;
+    use sgx_guardian_client::nebula::daemon::NebulaDaemon;
+    use sgx_guardian_client::nebula::models::CircleMembership;
+
+    let nebula_base_dir =
+        std::env::var("SGX_NEBULA_DIR").unwrap_or("/var/lib/sgx-guardian/nebula".to_string());
+
+    match NebulaInstall::check_binary() {
+        Ok(_) => println!("✅ Nebula binary found"),
+        Err(e) => {
+            eprintln!("❌ Nebula binary missing: {}", e);
+            log_error(&node_id, &format!("Nebula binary missing: {}", e));
+            std::process::exit(1);
+        }
+    }
+
+    match NebulaInstall::check_version() {
+        Ok(v) => println!("✅ Nebula version: {}", v.trim()),
+        Err(e) => {
+            eprintln!("❌ Nebula version check failed: {}", e);
+            log_error(&node_id, &format!("Nebula version check failed: {}", e));
+            std::process::exit(1);
+        }
+    }
+
+    match NebulaInstall::test_daemon_start() {
+        Ok(_) => println!("✅ Nebula daemon responding"),
+        Err(e) => {
+            eprintln!("❌ Nebula daemon test failed: {}", e);
+            log_error(&node_id, &format!("Nebula daemon test failed: {}", e));
+            std::process::exit(1);
+        }
+    }
+
+    // Generate CA if not exists
+    if let Err(e) = NebulaCA::generate_ca(&nebula_base_dir) {
+        eprintln!("❌ Failed to generate CA: {:?}", e);
+        std::process::exit(1);
+    }
+
+    log_audit(
+        &node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Created,
+        "Nebula CA verified or generated",
+    );
+
+    // Issue cert for this node
+    let nebula_ip = match node_id.as_str() {
+        "nodeA" => "192.168.100.1/24",
+        "nodeB" => "192.168.100.2/24",
+        "nodeC" => "192.168.100.3/24",
+        _ => {
+            eprintln!("❌ Unknown node ID for Nebula IP mapping");
+            std::process::exit(1);
+        }
+    };
+
+    let membership = CircleMembership {
+        node_name: node_id.clone(),
+        circle_id: "guardian-circle-alpha".to_string(),
+        vc_hash: "mock-vc-proof-123".to_string(),
+        is_valid: true,
+    };
+
+    if node_id == "nodeA" {
+        // CA node: auto-issue its own certificate
+        if let Err(e) = NebulaCA::issue_node_cert(&nebula_base_dir, &membership, nebula_ip) {
+            eprintln!("❌ Failed to issue CA node certificate: {:?}", e);
+            std::process::exit(1);
+        }
+        log_audit(
+            &node_id,
+            AuditCategory::Network,
+            AuditSeverity::Info,
+            AuditAction::Created,
+            "Nebula CA certificate verified or issued for nodeA",
+        );
+    } else {
+        // Member node: check if cert already exists
+        let member_cert_path = format!("{}/nodes/{}.crt", nebula_base_dir, node_id);
+        let member_key_path = format!("{}/nodes/{}.key", nebula_base_dir, node_id);
+
+        if std::path::Path::new(&member_cert_path).exists()
+            && std::path::Path::new(&member_key_path).exists()
+        {
+            println!("✅ Nebula certificate already exists for {}", node_id);
+            log_audit(
+                &node_id,
+                AuditCategory::Network,
+                AuditSeverity::Info,
+                AuditAction::Succeeded,
+                &format!("Existing Nebula certificate found for {}", node_id),
+            );
+        } else {
+            println!(
+                "🔐 No Nebula certificate for {} — requesting from CA immediately",
+                node_id
+            );
+
+            let cert_node_id = node_id.clone();
+            let cert_overlay_ip = nebula_ip.to_string();
+            let cert_pubkey = pubkey_b64.clone();
+            let ca_address = "127.0.0.1:50061".to_string();
+            log_event(&node_id, "Nebula certificate missing, will request from CA");
+            // BLOCKING REQUEST — DO NOT SPAWN
+            sgx_guardian_client::cert_client::request_certificate_from_ca(
+                cert_node_id,
+                ca_address,
+                cert_overlay_ip,
+                cert_pubkey,
+            )
+            .await;
+
+            println!("✅ Certificate bootstrap completed for {}", node_id);
+        }
+    }
+    //configuration directory for nebula
+    use sgx_guardian_client::nebula::config::NebulaConfig;
+    let config_directory = nebula_base_dir.clone();
+    let is_lighthouse = node_id == "nodeA";
+
+    if let Err(e) =
+        NebulaConfig::generate_config(&node_id, nebula_ip, is_lighthouse, &config_directory)
+    {
+        eprintln!("❌ Failed to generate Nebula config: {:?}", e);
+        std::process::exit(1);
+    }
+
+    println!("🚀 Nebula Installation Verified Successfully\n");
+
+    // === Start Nebula ===
+    let nebula_config_path = format!("{}/nebula.yaml", nebula_base_dir);
+    if let Err(e) = NebulaDaemon::start(&nebula_config_path) {
+        eprintln!("❌ Failed to start Nebula daemon: {:?}", e);
+        std::process::exit(1);
+    }
+    println!("🌐 Nebula mesh daemon started successfully.");
+
+    log_audit(
+        &node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Started,
+        "Nebula mesh daemon started successfully",
+    );
+
+    // === Nebula Health Check ===
+    use sgx_guardian_client::nebula::health::NebulaHealth;
+
+    println!("🩺 Performing Nebula health check...");
+
+    let health_report = NebulaHealth::check(&nebula_base_dir, &node_id);
+
+    println!("--- Nebula Health Report ---");
+    println!("{}", health_report.summary());
+    println!("-----------------------------");
+
+    // === Start Expiry Monitor ===
+    use sgx_guardian_client::nebula::cert_lifecycle::ExpiryMonitor;
+    ExpiryMonitor::start(nebula_base_dir.clone(), node_id.clone());
+
+    // === CoT Deliverable Integration Start ===
+    println!("🔗 Initializing Circle of Trust (CoT) transport-agnostic layer...");
+
+    use sgx_guardian_client::cot::identity::DeviceIdentity;
+    use sgx_guardian_client::cot::interface_detector::InterfaceDetector;
+    use sgx_guardian_client::cot::membership::CircleMembership as CotCircleMembership;
+    use sgx_guardian_client::cot::router::CotRouter;
+    use sgx_guardian_client::cot::session_manager::SessionManager;
+    use sgx_guardian_client::cot::transport_registry::TransportRegistry;
+    use sgx_guardian_client::cot::transports;
+    use sgx_guardian_client::cot::trust_engine::TrustEngine;
+
+    // Step 1: Create device identity from existing KeyManager public key
+    let cot_identity = DeviceIdentity::from_public_key_with_name(&km.pubkey_der(), &node_id)
+        .expect("Failed to create CoT device identity");
+    println!(
+        "🔑 CoT Identity: {} ({})",
+        cot_identity,
+        cot_identity.device_id()
+    );
+
+    log_audit(
+        &node_id,
+        AuditCategory::Identity,
+        AuditSeverity::Info,
+        AuditAction::Succeeded,
+        &format!("CoT identity established: {}", cot_identity.short_id()),
+    );
+
+    // Step 2: Detect available network interfaces
+    let detected_interfaces = InterfaceDetector::detect_all().unwrap_or_else(|e| {
+        eprintln!("⚠️ Interface detection failed: {}", e);
+        Vec::new()
+    });
+
+    println!(
+        "📡 Detected {} network interfaces:",
+        detected_interfaces.len()
+    );
+    for iface in &detected_interfaces {
+        println!(
+            "   {} → {} [{}] {:?}",
+            iface.name,
+            iface.transport_type,
+            iface.status,
+            iface
+                .ip_addr
+                .map(|ip| ip.to_string())
+                .unwrap_or("no-ip".into())
+        );
+    }
+
+    // Step 3: Create and populate transport registry
+    let cot_registry = std::sync::Arc::new(TransportRegistry::new());
+    {
+        let usable = transports::auto_create_transports().unwrap_or_else(|_| Vec::new());
+        for transport in usable {
+            cot_registry.register(transport).await;
+        }
+    }
+    println!("🚛 Transport Registry: {}", cot_registry.summary().await);
+
+    // Step 4: Create session manager
+    let cot_sessions = std::sync::Arc::new(SessionManager::new());
+
+    // Step 5: Create circle membership
+    let cot_circle = std::sync::Arc::new(CotCircleMembership::new(
+        "guardian-circle-alpha".into(),
+        cot_identity.device_id().to_string(),
+        km.pubkey_der().to_vec(),
+    ));
+
+    // Step 6: Create trust engine
+    let cot_trust = std::sync::Arc::new(TrustEngine::new(cot_identity.clone(), cot_circle.clone()));
+
+    // Step 7: Create router
+    let cot_router = std::sync::Arc::new(CotRouter::new(
+        cot_identity.clone(),
+        cot_registry.clone(),
+        cot_sessions.clone(),
+        cot_circle.clone(),
+        cot_trust.clone(),
+    ));
+    println!("✅ CoT layer initialized successfully.");
+    println!("{}", cot_router.status_summary().await);
+
+    log_audit(
+        &node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Succeeded,
+        "CoT transport-agnostic layer initialized",
+    );
+
+    // Step 8: Periodic interface refresh (every 30s)
+    {
+        let reg = cot_registry.clone();
+        let nid = node_id.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                if let Ok(new) = transports::auto_create_transports() {
+                    for t in new {
+                        reg.register(t).await;
+                    }
+                }
+                let health = reg.health_check_all().await;
+                for (tt, h) in &health {
+                    if !h.is_healthy {
+                        log_error(&nid, &format!("CoT {} unhealthy: {}", tt, h.status_message));
+                    }
+                }
+            }
+        });
+    }
+
+    // Step 9: Periodic session cleanup (every 60s)
+    {
+        let sess = cot_sessions.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                let cleaned = sess.cleanup_expired().await;
+                if cleaned > 0 {
+                    println!("🧹 Cleaned {} expired CoT sessions", cleaned);
+                }
+            }
+        });
+    }
+    // === CoT Deliverable Integration End ===
+
     // === Integrate Discovery + Attestation Services ===
     println!("🛰️ Initializing P2P Discovery and Attestation Services...");
 
@@ -281,12 +594,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let node_id_clone = node_id.clone();
         let auditor_arc_clone = auditor_arc.clone();
         async move {
-            if let Err(e) = p2p_discovery::P2PDiscovery::run(
-                tx,
-                node_id_clone.clone(),
-                auditor_arc_clone.clone(),
-            )
-            .await
+            if let Err(e) =
+                P2PDiscovery::run(tx, node_id_clone.clone(), auditor_arc_clone.clone()).await
             {
                 eprintln!("Discovery service error: {:?}", e);
                 log_error(&node_id_clone, &format!("Discovery service error: {:?}", e));
@@ -334,7 +643,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let port = metrics_cfg.port;
 
             tokio::spawn(async move {
-                metrics_server::start_metrics_server(metrics_clone, (bind_ip, port)).await;
+                sgx_guardian_client::metrics_server::start_metrics_server(
+                    metrics_clone,
+                    (bind_ip, port),
+                )
+                .await;
             });
         }
     }
@@ -471,10 +784,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-    // Wait for servers to initialize
-    tokio::time::sleep(Duration::from_secs(20)).await;
-
-    // === APPLY POLICY ENFORCEMENT AFTER NODE IS STEADY ===
+    // === CERT BOOTSTRAP SERVER (nodeA only, plaintext port 50061) ===
+    if node_id == "nodeA" {
+        tokio::spawn(async move {
+            if let Err(e) = server::start_cert_bootstrap_server("0.0.0.0:50061".to_string()).await {
+                eprintln!("Cert bootstrap server failed: {:?}", e);
+            }
+        });
+    }
     use sgx_guardian_client::enforcement;
     use sgx_guardian_client::policy::get_active_policy;
 
