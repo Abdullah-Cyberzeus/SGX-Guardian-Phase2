@@ -34,8 +34,8 @@ pub async fn request_certificate_from_ca(
     }
 
     println!(
-        "No CA-signed certificate found for {} -- requesting from CA at {}",
-        node_id, ca_addr
+        "No CA-signed certificate found -- requesting from CA at {}",
+        ca_addr
     );
     println!("Waiting for CA approval...");
 
@@ -58,7 +58,7 @@ pub async fn request_certificate_from_ca(
 
         // Re-check: cert may have appeared on local filesystem
         if Path::new(&cert_path).exists() && Path::new(&key_path).exists() {
-            println!("CA-signed certificate received for {}", node_id);
+            println!("CA-signed certificate received");
             log_event(&node_id, "CA-signed certificate detected on filesystem");
             log_audit(
                 &node_id,
@@ -72,8 +72,8 @@ pub async fn request_certificate_from_ca(
 
         if attempt > 1 {
             println!(
-                "Certificate request attempt #{} for {} -> CA at {}",
-                attempt, node_id, ca_addr
+                "Certificate request attempt #{} -> CA at {}",
+                attempt, ca_addr
             );
         }
 
@@ -108,7 +108,7 @@ pub async fn request_certificate_from_ca(
                         }
                     }
 
-                    println!("CA-signed certificate received for {}", node_id);
+                    println!("CA-signed certificate received from CA");
                     log_event(&node_id, "CA-signed certificate received and saved");
                     log_audit(
                         &node_id,
@@ -125,10 +125,7 @@ pub async fn request_certificate_from_ca(
                     }
                 }
                 "rejected" => {
-                    eprintln!(
-                        "Certificate request rejected for {}: {}",
-                        node_id, resp.message
-                    );
+                    eprintln!("Certificate request rejected: {}", resp.message);
                     log_audit(
                         &node_id,
                         AuditCategory::Network,
@@ -138,14 +135,14 @@ pub async fn request_certificate_from_ca(
                     );
                 }
                 other => {
-                    eprintln!("Unknown cert response status '{}' for {}", other, node_id);
+                    eprintln!("Unknown cert response status '{}'", other);
                 }
             },
             Err(e) => {
                 if attempt <= 3 {
                     eprintln!(
-                        "Certificate request failed (attempt #{}) for {}: {} -- retrying in {}s",
-                        attempt, node_id, e, RETRY_INTERVAL_SECS
+                        "Certificate request failed (attempt #{}) : {} -- retrying in {}s",
+                        attempt, e, RETRY_INTERVAL_SECS
                     );
                 }
                 log_event(
