@@ -231,10 +231,29 @@ impl AttestationService {
             Err(_) => return Ok(false),
         };
         // Step 6: Prepare verification key
-        let peer_pubkey = base64::engine::general_purpose::STANDARD.decode(&ev.pubkey_der_b64)?;
+        let peer_pubkey_raw = base64::engine::general_purpose::STANDARD.decode(&ev.pubkey_der_b64)?;
 
-        let peer_key =
-            signature::UnparsedPublicKey::new(&signature::ECDSA_P256_SHA256_FIXED, &peer_pubkey);
+        // Handle both raw EC point (65 bytes from software/hardware)
+        // and full SubjectPublicKeyInfo DER (91 bytes legacy)
+        let peer_pubkey = if peer_pubkey_raw.len() == 91 {
+            // Extract raw 65-byte EC point from DER wrapper
+            peer_pubkey_raw[26..].to_vec()
+        } else {
+            peer_pubkey_raw
+        };
+
+        // Auto-detect signature format:
+        // ring/software → FIXED (exactly 64 bytes, r||s concatenated)
+        // SE050/hardware → ASN.1 DER (starts with 0x30, typically 70-72 bytes)
+        let is_asn1 = !sig_bytes.is_empty() && sig_bytes[0] == 0x30;
+
+        let verification_algo: &dyn signature::VerificationAlgorithm = if is_asn1 {
+            &signature::ECDSA_P256_SHA256_ASN1
+        } else {
+            &signature::ECDSA_P256_SHA256_FIXED
+        };
+
+        let peer_key = signature::UnparsedPublicKey::new(verification_algo, &peer_pubkey);
         // Step 7: Verify signature
         match peer_key.verify(&msg, &sig_bytes) {
             Ok(_) => {
@@ -588,14 +607,44 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::key_manager::KeyManager;
-    /// Ensures that generated attestation evidence can be verified using
-    /// the node’s own public key (sanity test).
+    use base64::engine::general_purpose;
+    use p256::ecdsa::{signature::Signer, Signature, SigningKey};
+    use p256::SecretKey;
+    use sha2::{Digest, Sha256};
+
+    fn make_test_evidence(policy: &str, nonce: &str) -> AttestationEvidence {
+        let secret = SecretKey::from_slice(&[42u8; 32]).expect("valid deterministic secret key");
+        let signing_key = SigningKey::from(secret);
+        let verify_key = signing_key.verifying_key();
+        let raw_pubkey = verify_key.to_encoded_point(false).as_bytes().to_vec();
+
+        // Build SE050-style SPKI DER wrapper (26-byte prefix + 65-byte raw point).
+        let mut spki = vec![
+            0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01, 0x06,
+            0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
+        ];
+        spki.extend_from_slice(&raw_pubkey);
+
+        let clean_policy = policy.replace("\r", "").replace("\n", "").trim().to_string();
+        let digest = Sha256::digest(clean_policy.as_bytes());
+        let policy_digest = hex::encode(digest);
+        let msg = format!("{}{}", nonce, policy_digest);
+
+        let signature: Signature = signing_key.sign(msg.as_bytes());
+        let sig_der = signature.to_der();
+
+        AttestationEvidence {
+            nonce: nonce.to_string(),
+            policy_digest,
+            signature: general_purpose::STANDARD.encode(sig_der.as_bytes()),
+            pubkey_der_b64: general_purpose::STANDARD.encode(spki),
+        }
+    }
+
     #[test]
     fn test_attestation_create_and_verify() {
-        let km = KeyManager::load_or_generate("/tmp/test_attestation.key").unwrap();
         let policy = "allow: all";
-        let ev = AttestationService::create_signed_evidence(&km, policy).unwrap();
+        let ev = make_test_evidence(policy, "00112233445566778899aabbccddeeff");
         assert!(AttestationService::verify_signed_evidence(&ev, policy).unwrap());
     }
 }

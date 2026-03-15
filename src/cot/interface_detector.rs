@@ -230,8 +230,18 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_all_does_not_panic() {
-        let result = InterfaceDetector::detect_all();
-        assert!(result.is_ok());
+    fn test_classification_is_pure_and_stable() {
+        let cases = [
+            ("eth0", Some(TransportType::Ethernet)),
+            ("wlan0", Some(TransportType::WiFi)),
+            ("bnep0", Some(TransportType::Bluetooth)),
+            ("wwan0", Some(TransportType::Cellular)),
+            ("sat0", Some(TransportType::Satellite)),
+            ("tun0", None),
+        ];
+
+        for (name, expected) in cases {
+            assert_eq!(InterfaceDetector::classify_interface(name), expected);
+        }
     }
 }
