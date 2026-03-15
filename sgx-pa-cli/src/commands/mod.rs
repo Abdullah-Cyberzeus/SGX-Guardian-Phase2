@@ -3,6 +3,9 @@
 //! policy signing, viewing logs, checking status, attestation results,
 //! and listing trusted peers.
 pub mod attestation;
+pub mod dkp_revoke;
+pub mod dkp_rotate;
+pub mod dkp_status;
 pub mod keygen;
 pub mod logs;
 pub mod peers;
