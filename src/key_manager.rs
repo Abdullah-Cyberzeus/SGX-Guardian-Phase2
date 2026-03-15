@@ -144,7 +144,11 @@ impl KeyManager {
                     AuditAction::Loaded,
                     &format!(
                         "DKP initialized via SE050 hardware (key={})",
-                        dkp.active_key.key_id
+                        dkp
+                            .history
+                            .active_key()
+                            .map(|k| k.key_id.clone())
+                            .unwrap_or_else(|| format!("0x{:08X}", key_id))
                     ),
                 );
 
@@ -202,10 +206,42 @@ impl KeyManager {
         }
     }
 
-    /// Returns the node’s public key encoded in DER format,
-    /// used by peers during attestation verification.
+    /// Returns the node's public key as raw EC point bytes (65 bytes: 04||x||y).
+    /// Software: from ring keypair. Hardware: from exported DKP DER file.
     pub fn pubkey_der(&self) -> Vec<u8> {
-        self.keypair.public_key().as_ref().to_vec()
+        match &self.backend {
+            SigningBackend::Software => {
+                // ring returns raw 65-byte EC point directly
+                self.keypair.public_key().as_ref().to_vec()
+            }
+            #[cfg(feature = "secure-element")]
+            SigningBackend::Hardware { signer: _, key_id: _ } => {
+                let dkp_pub_path = "/var/lib/sgx-guardian/keys/dkp_pub.der";
+                match std::fs::read(dkp_pub_path) {
+                    Ok(der_bytes) => {
+                        // SE050 exports SubjectPublicKeyInfo DER (91 bytes).
+                        // Extract raw 65-byte EC point starting at offset 26.
+                        if der_bytes.len() == 91 {
+                            der_bytes[26..].to_vec()
+                        } else {
+                            der_bytes
+                        }
+                    }
+                    Err(_) => {
+                        // Fallback to software key if file not found
+                        self.keypair.public_key().as_ref().to_vec()
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn backend_name(&self) -> &str {
+        match &self.backend {
+            SigningBackend::Software => "Software",
+            #[cfg(feature = "secure-element")]
+            SigningBackend::Hardware { .. } => "SE050",
+        }
     }
 
     /// Returns the filesystem path where the private key is stored.

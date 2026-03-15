@@ -36,6 +36,12 @@ enum Commands {
     Attestation,
     /// Verify a signed policy.sig file
     Verify(commands::verify::VerifyArgs),
+    /// Show DKP key history/status
+    DkpStatus,
+    /// Rotate DKP to next version
+    DkpRotate,
+    /// Revoke a specific DKP version
+    DkpRevoke(commands::dkp_revoke::DkpRevokeArgs),
 }
 /// Entry point for the SGX Policy Authority CLI.
 /// Dispatches the selected subcommand and routes execution
@@ -62,5 +68,8 @@ fn main() {
                 eprintln!("Error: {}", e);
             }
         }
+        Commands::DkpStatus => commands::dkp_status::run(),
+        Commands::DkpRotate => commands::dkp_rotate::run(),
+        Commands::DkpRevoke(args) => commands::dkp_revoke::run(args),
     }
 }

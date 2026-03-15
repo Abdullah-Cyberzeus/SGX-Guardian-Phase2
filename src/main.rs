@@ -88,6 +88,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(not(feature = "secure-element"))]
     let km = KeyManager::load_or_generate(&node_key_path)?;
 
+    // === DKP Auto-Rotation Check ===
+    #[cfg(feature = "secure-element")]
+    {
+        let se_config = sgx_guardian_client::secure_element::SeConfig::default();
+        let base_path = "/var/lib/sgx-guardian";
+        if let Ok(mut dkp) = sgx_guardian_client::secure_element::dkp::DkpManager::init(
+            &se_config, base_path
+        ) {
+            match dkp.check_and_auto_rotate() {
+                Ok(Some(new_meta)) => {
+                    println!("  DKP auto-rotated to v{}", new_meta.version);
+                    // Reinitialize KeyManager with new key
+                    // (daemon restart is safer for now)
+                }
+                Ok(None) => { /* no rotation needed */ }
+                Err(e) => {
+                    eprintln!("  Auto-rotation check failed: {}", e);
+                }
+            }
+        }
+    }
+
+    // === Crypto Provider Status ===
+    match km.backend_name() {
+        "SE050" => {
+            println!("  Secure Element detected: SE050");
+            println!("  Signing provider: SE050 hardware (ECDSA-P256)");
+            println!("  RNG source: SE050 TRNG");
+        }
+        _ => {
+            println!("  Secure Element not available");
+            println!("  Signing provider: software (ring crate, ECDSA-P256)");
+            println!("  RNG source: software RNG (SystemRandom)");
+        }
+    }
+
     let pubkey_b64 = general_purpose::STANDARD.encode(km.pubkey_der());
     println!(
         "Node Identity Initialized | Public Key Prefix: {}...",
