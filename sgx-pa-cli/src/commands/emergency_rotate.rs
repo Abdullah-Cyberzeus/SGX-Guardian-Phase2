@@ -32,8 +32,11 @@ pub fn run() {
     let mut fail_count = 0;
 
     // Detect hardware mode
-    let has_ssscli = Command::new("ssscli").arg("--version").output()
-        .map(|o| o.status.success()).unwrap_or(false);
+    let has_ssscli = Command::new("ssscli")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
 
     if has_ssscli {
         println!("  Mode: Hardware (SE050 detected)");
@@ -72,11 +75,17 @@ pub fn run() {
     let sw_rotated = rotate_software_key();
     if sw_rotated {
         println!("│  ✅ Software key rotated (will regenerate on next daemon start)");
-        audit_entries.push(format!("{} EMERGENCY software key rotation completed", timestamp));
+        audit_entries.push(format!(
+            "{} EMERGENCY software key rotation completed",
+            timestamp
+        ));
         success_count += 1;
     } else {
         println!("│  ⚠️  No software key found — skipping");
-        audit_entries.push(format!("{} EMERGENCY software key skipped (not found)", timestamp));
+        audit_entries.push(format!(
+            "{} EMERGENCY software key skipped (not found)",
+            timestamp
+        ));
     }
     println!("└──────────────────────────────────────────────────\n");
 
@@ -88,11 +97,17 @@ pub fn run() {
     let tls_rotated = rotate_tls_cert();
     if tls_rotated {
         println!("│  ✅ TLS certificate removed (will regenerate on next daemon start)");
-        audit_entries.push(format!("{} EMERGENCY TLS certificate rotation completed", timestamp));
+        audit_entries.push(format!(
+            "{} EMERGENCY TLS certificate rotation completed",
+            timestamp
+        ));
         success_count += 1;
     } else {
         println!("│  ⚠️  No TLS certificate found — skipping");
-        audit_entries.push(format!("{} EMERGENCY TLS certificate skipped (not found)", timestamp));
+        audit_entries.push(format!(
+            "{} EMERGENCY TLS certificate skipped (not found)",
+            timestamp
+        ));
     }
     println!("└──────────────────────────────────────────────────\n");
 
@@ -115,7 +130,6 @@ pub fn run() {
     // Write audit log
     write_audit_log(&audit_entries);
 }
-
 
 /// Rotate DKP — reuses logic from dkp_rotate
 fn rotate_dkp(has_ssscli: bool) -> bool {
@@ -142,7 +156,10 @@ fn rotate_dkp(has_ssscli: bool) -> bool {
     };
 
     let current_version = keys[active_idx]["version"].as_u64().unwrap_or(1) as u32;
-    let current_key_id = keys[active_idx]["key_id"].as_str().unwrap_or("unknown").to_string();
+    let current_key_id = keys[active_idx]["key_id"]
+        .as_str()
+        .unwrap_or("unknown")
+        .to_string();
     let new_version = current_version + 1;
     let new_key_id = DKP_BASE_KEY_ID + new_version - 1;
     let new_key_id_hex = format!("0x{:08X}", new_key_id);
@@ -183,7 +200,6 @@ fn rotate_dkp(has_ssscli: bool) -> bool {
     fs::write(METADATA_PATH, serde_json::to_string_pretty(&keys).unwrap()).is_ok()
 }
 
-
 /// Rotate software attestation key — backup old, daemon regenerates on restart
 fn rotate_software_key() -> bool {
     if !Path::new(AGENT_DIR).exists() {
@@ -196,12 +212,18 @@ fn rotate_software_key() -> bool {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.starts_with("device_") && name.ends_with(".key") {
                 let old_path = entry.path();
-                let backup = format!("{}.emergency_backup_{}", old_path.display(),
-                    Utc::now().format("%Y%m%d_%H%M%S"));
+                let backup = format!(
+                    "{}.emergency_backup_{}",
+                    old_path.display(),
+                    Utc::now().format("%Y%m%d_%H%M%S")
+                );
                 match fs::rename(&old_path, &backup) {
                     Ok(_) => {
-                        println!("│  Backed up: {} → {}", name,
-                            Path::new(&backup).file_name().unwrap().to_string_lossy());
+                        println!(
+                            "│  Backed up: {} → {}",
+                            name,
+                            Path::new(&backup).file_name().unwrap().to_string_lossy()
+                        );
                         found = true;
                     }
                     Err(e) => {
@@ -213,7 +235,6 @@ fn rotate_software_key() -> bool {
     }
     found
 }
-
 
 /// Rotate TLS certificate — remove old cert, daemon regenerates on restart
 fn rotate_tls_cert() -> bool {
@@ -227,8 +248,11 @@ fn rotate_tls_cert() -> bool {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.contains("_cert.der") || name.contains("_cert.pem") {
                 let path = entry.path();
-                let backup = format!("{}.emergency_backup_{}", path.display(),
-                    Utc::now().format("%Y%m%d_%H%M%S"));
+                let backup = format!(
+                    "{}.emergency_backup_{}",
+                    path.display(),
+                    Utc::now().format("%Y%m%d_%H%M%S")
+                );
                 match fs::rename(&path, &backup) {
                     Ok(_) => {
                         println!("│  Backed up: {}", name);
@@ -244,10 +268,11 @@ fn rotate_tls_cert() -> bool {
     found
 }
 
-
 /// Write audit log entry for emergency rotation
 fn write_audit_log(entries: &[String]) {
-    let log_dir = Path::new(AUDIT_LOG_PATH).parent().unwrap_or(Path::new("/tmp"));
+    let log_dir = Path::new(AUDIT_LOG_PATH)
+        .parent()
+        .unwrap_or(Path::new("/tmp"));
     let _ = fs::create_dir_all(log_dir);
 
     let mut log_content = String::new();

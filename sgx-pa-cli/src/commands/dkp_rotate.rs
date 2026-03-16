@@ -23,7 +23,10 @@ pub fn run() {
 
     let json = match fs::read_to_string(METADATA_PATH) {
         Ok(j) => j,
-        Err(e) => { eprintln!("Read error: {}", e); return; }
+        Err(e) => {
+            eprintln!("Read error: {}", e);
+            return;
+        }
     };
 
     // Load history (handles both old single format and new array format)
@@ -34,7 +37,10 @@ pub fn run() {
         } else {
             match serde_json::from_str::<serde_json::Value>(trimmed) {
                 Ok(v) => vec![v],
-                Err(e) => { eprintln!("Parse error: {}", e); return; }
+                Err(e) => {
+                    eprintln!("Parse error: {}", e);
+                    return;
+                }
             }
         }
     };
@@ -43,11 +49,17 @@ pub fn run() {
     let active_idx = keys.iter().position(|k| k["status"] == "Active");
     let active_idx = match active_idx {
         Some(i) => i,
-        None => { eprintln!("No active key found. Cannot rotate."); return; }
+        None => {
+            eprintln!("No active key found. Cannot rotate.");
+            return;
+        }
     };
 
     let current_version = keys[active_idx]["version"].as_u64().unwrap_or(1) as u32;
-    let current_key_id = keys[active_idx]["key_id"].as_str().unwrap_or("unknown").to_string();
+    let current_key_id = keys[active_idx]["key_id"]
+        .as_str()
+        .unwrap_or("unknown")
+        .to_string();
 
     let new_version = current_version + 1;
     let new_key_id = DKP_BASE_KEY_ID + new_version - 1;
@@ -58,8 +70,11 @@ pub fn run() {
     println!("New:     {} (v{})", new_key_id_hex, new_version);
 
     // Check for SE050 hardware
-    let has_ssscli = Command::new("ssscli").arg("--version").output()
-        .map(|o| o.status.success()).unwrap_or(false);
+    let has_ssscli = Command::new("ssscli")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
 
     if has_ssscli {
         // === HARDWARE MODE: generate real SE050 key ===
@@ -73,10 +88,16 @@ pub fn run() {
                 println!("  SE050: Key generated at slot {}", new_key_id_hex);
             }
             Ok(o) => {
-                eprintln!("  SE050 key gen failed: {}", String::from_utf8_lossy(&o.stderr));
+                eprintln!(
+                    "  SE050 key gen failed: {}",
+                    String::from_utf8_lossy(&o.stderr)
+                );
                 return;
             }
-            Err(e) => { eprintln!("  ssscli error: {}", e); return; }
+            Err(e) => {
+                eprintln!("  ssscli error: {}", e);
+                return;
+            }
         }
 
         let exp = Command::new("ssscli")
@@ -86,7 +107,10 @@ pub fn run() {
             Ok(o) if o.status.success() => {
                 println!("  SE050: Public key exported to {}", PUBKEY_PATH);
             }
-            _ => { eprintln!("  Public key export failed"); return; }
+            _ => {
+                eprintln!("  Public key export failed");
+                return;
+            }
         }
     } else {
         // === SOFTWARE MODE: regenerate ring keypair ===
@@ -151,5 +175,3 @@ pub fn run() {
         Err(e) => eprintln!("Failed to write metadata: {}", e),
     }
 }
-
-
