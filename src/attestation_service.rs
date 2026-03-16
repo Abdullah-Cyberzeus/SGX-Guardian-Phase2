@@ -231,7 +231,8 @@ impl AttestationService {
             Err(_) => return Ok(false),
         };
         // Step 6: Prepare verification key
-        let peer_pubkey_raw = base64::engine::general_purpose::STANDARD.decode(&ev.pubkey_der_b64)?;
+        let peer_pubkey_raw =
+            base64::engine::general_purpose::STANDARD.decode(&ev.pubkey_der_b64)?;
 
         // Handle both raw EC point (65 bytes from software/hardware)
         // and full SubjectPublicKeyInfo DER (91 bytes legacy)
@@ -625,7 +626,11 @@ mod tests {
         ];
         spki.extend_from_slice(&raw_pubkey);
 
-        let clean_policy = policy.replace("\r", "").replace("\n", "").trim().to_string();
+        let clean_policy = policy
+            .replace("\r", "")
+            .replace("\n", "")
+            .trim()
+            .to_string();
         let digest = Sha256::digest(clean_policy.as_bytes());
         let policy_digest = hex::encode(digest);
         let msg = format!("{}{}", nonce, policy_digest);

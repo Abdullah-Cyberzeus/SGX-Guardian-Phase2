@@ -30,7 +30,10 @@ pub fn run(args: DkpRevokeArgs) {
 
     let json = match fs::read_to_string(METADATA_PATH) {
         Ok(j) => j,
-        Err(e) => { eprintln!("Read error: {}", e); return; }
+        Err(e) => {
+            eprintln!("Read error: {}", e);
+            return;
+        }
     };
 
     // Load history array
@@ -41,15 +44,18 @@ pub fn run(args: DkpRevokeArgs) {
         } else {
             match serde_json::from_str::<serde_json::Value>(trimmed) {
                 Ok(v) => vec![v],
-                Err(e) => { eprintln!("Parse error: {}", e); return; }
+                Err(e) => {
+                    eprintln!("Parse error: {}", e);
+                    return;
+                }
             }
         }
     };
 
     // Find the target version
-    let target_idx = keys.iter().position(|k| {
-        k["version"].as_u64().unwrap_or(0) as u32 == args.version
-    });
+    let target_idx = keys
+        .iter()
+        .position(|k| k["version"].as_u64().unwrap_or(0) as u32 == args.version);
 
     let target_idx = match target_idx {
         Some(i) => i,
@@ -57,7 +63,11 @@ pub fn run(args: DkpRevokeArgs) {
             eprintln!("Version {} not found in key history.", args.version);
             println!("Available versions:");
             for k in &keys {
-                println!("  v{} [{}]", k["version"], k["status"].as_str().unwrap_or("?"));
+                println!(
+                    "  v{} [{}]",
+                    k["version"],
+                    k["status"].as_str().unwrap_or("?")
+                );
             }
             return;
         }
@@ -94,5 +104,3 @@ pub fn run(args: DkpRevokeArgs) {
         Err(e) => eprintln!("Failed to write metadata: {}", e),
     }
 }
-
-

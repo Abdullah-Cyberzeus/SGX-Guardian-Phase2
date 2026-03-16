@@ -144,8 +144,7 @@ impl KeyManager {
                     AuditAction::Loaded,
                     &format!(
                         "DKP initialized via SE050 hardware (key={})",
-                        dkp
-                            .history
+                        dkp.history
                             .active_key()
                             .map(|k| k.key_id.clone())
                             .unwrap_or_else(|| format!("0x{:08X}", key_id))
@@ -215,7 +214,10 @@ impl KeyManager {
                 self.keypair.public_key().as_ref().to_vec()
             }
             #[cfg(feature = "secure-element")]
-            SigningBackend::Hardware { signer: _, key_id: _ } => {
+            SigningBackend::Hardware {
+                signer: _,
+                key_id: _,
+            } => {
                 let dkp_pub_path = "/var/lib/sgx-guardian/keys/dkp_pub.der";
                 match std::fs::read(dkp_pub_path) {
                     Ok(der_bytes) => {

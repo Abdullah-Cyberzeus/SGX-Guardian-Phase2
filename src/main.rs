@@ -93,9 +93,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let se_config = sgx_guardian_client::secure_element::SeConfig::default();
         let base_path = "/var/lib/sgx-guardian";
-        if let Ok(mut dkp) = sgx_guardian_client::secure_element::dkp::DkpManager::init(
-            &se_config, base_path
-        ) {
+        if let Ok(mut dkp) =
+            sgx_guardian_client::secure_element::dkp::DkpManager::init(&se_config, base_path)
+        {
             match dkp.check_and_auto_rotate() {
                 Ok(Some(new_meta)) => {
                     println!("  DKP auto-rotated to v{}", new_meta.version);

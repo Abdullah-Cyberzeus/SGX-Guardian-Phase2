@@ -19,7 +19,10 @@ pub fn run() {
 
     let json = match fs::read_to_string(METADATA_PATH) {
         Ok(j) => j,
-        Err(e) => { eprintln!("Failed to read {}: {}", METADATA_PATH, e); return; }
+        Err(e) => {
+            eprintln!("Failed to read {}: {}", METADATA_PATH, e);
+            return;
+        }
     };
 
     let keys: Vec<serde_json::Value> = {
@@ -29,7 +32,10 @@ pub fn run() {
         } else {
             match serde_json::from_str::<serde_json::Value>(trimmed) {
                 Ok(v) => vec![v],
-                Err(_) => { eprintln!("Failed to parse metadata"); return; }
+                Err(_) => {
+                    eprintln!("Failed to parse metadata");
+                    return;
+                }
             }
         }
     };
@@ -46,14 +52,23 @@ pub fn run() {
         };
         println!("{} Version {}  [{}]", marker, key["version"], status);
         println!("    Key ID:    {}", key["key_id"].as_str().unwrap_or("?"));
-        println!("    Algorithm: {}", key["algorithm"].as_str().unwrap_or("?"));
-        println!("    Created:   {}", key["created_at"].as_str().unwrap_or("?"));
+        println!(
+            "    Algorithm: {}",
+            key["algorithm"].as_str().unwrap_or("?")
+        );
+        println!(
+            "    Created:   {}",
+            key["created_at"].as_str().unwrap_or("?")
+        );
         if let Some(from) = key["rotated_from"].as_str() {
             println!("    Rotated from: {}", from);
         }
         if let Some(at) = key["revoked_at"].as_str() {
             println!("    Revoked at: {}", at);
-            println!("    Reason:     {}", key["revoke_reason"].as_str().unwrap_or("none"));
+            println!(
+                "    Reason:     {}",
+                key["revoke_reason"].as_str().unwrap_or("none")
+            );
         }
         println!();
     }
@@ -63,10 +78,11 @@ pub fn run() {
         println!("Active public key: {} ({} bytes)", PUBKEY_PATH, size);
     }
 
-    match std::process::Command::new("ssscli").arg("--version").output() {
+    match std::process::Command::new("ssscli")
+        .arg("--version")
+        .output()
+    {
         Ok(o) if o.status.success() => println!("SE050: Available"),
         _ => println!("SE050: Not available (software-only mode)"),
     }
 }
-
-
