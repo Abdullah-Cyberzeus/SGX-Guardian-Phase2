@@ -42,6 +42,8 @@ enum Commands {
     DkpRotate,
     /// Revoke a specific DKP version
     DkpRevoke(commands::dkp_revoke::DkpRevokeArgs),
+    /// Emergency rotation of ALL critical keys
+    EmergencyRotate,
 }
 /// Entry point for the SGX Policy Authority CLI.
 /// Dispatches the selected subcommand and routes execution
@@ -71,5 +73,6 @@ fn main() {
         Commands::DkpStatus => commands::dkp_status::run(),
         Commands::DkpRotate => commands::dkp_rotate::run(),
         Commands::DkpRevoke(args) => commands::dkp_revoke::run(args),
+        Commands::EmergencyRotate => commands::emergency_rotate::run(),
     }
 }
