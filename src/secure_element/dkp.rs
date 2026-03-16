@@ -203,7 +203,7 @@ impl DkpManager {
     pub fn revoke(&mut self, version: u32, reason: &str) -> Result<(), SeError> {
         self.history
             .revoke_version(version, reason)
-            .map_err(|e| SeError::KeyError(e))?;
+            .map_err(SeError::KeyError)?;
 
         // Save updated history with revocation recorded
         self.history
@@ -248,7 +248,7 @@ mod tests {
 
     #[test]
     fn test_key_id_version_offset() {
-        assert_eq!(DKP_BASE_KEY_ID + 0, 0x20000010); // v1
+        assert_eq!(DKP_BASE_KEY_ID, 0x20000010); // v1
         assert_eq!(DKP_BASE_KEY_ID + 1, 0x20000011); // v2
         assert_eq!(DKP_BASE_KEY_ID + 2, 0x20000012); // v3
     }

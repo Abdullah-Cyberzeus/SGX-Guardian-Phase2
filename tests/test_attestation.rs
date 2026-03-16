@@ -1,7 +1,6 @@
 use base64::{engine::general_purpose, Engine as _};
 use p256::ecdsa::{signature::Signer, Signature, SigningKey};
 use p256::SecretKey;
-use serde_json;
 use sgx_guardian_client::attestation_service::{AttestationEvidence, AttestationService};
 use sha2::{Digest, Sha256};
 
@@ -11,7 +10,11 @@ fn fixed_signing_key() -> SigningKey {
 }
 
 fn normalize_policy(policy: &str) -> String {
-    policy.replace("\r", "").replace("\n", "").trim().to_string()
+    policy
+        .replace("\r", "")
+        .replace("\n", "")
+        .trim()
+        .to_string()
 }
 
 fn policy_digest_hex(policy: &str) -> String {
@@ -23,8 +26,8 @@ fn spki_from_raw_p256_pubkey(raw_pubkey: &[u8]) -> Vec<u8> {
     // SE050-style SubjectPublicKeyInfo prefix for ECDSA P-256 public key.
     // Total length should be 91 bytes after appending 65-byte raw key.
     let mut spki = vec![
-        0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01, 0x06,
-        0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
+        0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01, 0x06, 0x08,
+        0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
     ];
     spki.extend_from_slice(raw_pubkey);
     spki
