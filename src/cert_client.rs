@@ -5,6 +5,8 @@ use crate::audit::logger::log_audit;
 use crate::logging::{log_error, log_event};
 use crate::proto::sgx::cert_service_client::CertServiceClient;
 use crate::proto::sgx::CertSignRequest;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use tonic::transport::Channel;
 
@@ -197,5 +199,15 @@ async fn write_file(path: &str, content: &str) -> Result<(), String> {
     }
     tokio::fs::write(path, content)
         .await
-        .map_err(|e| format!("write failed for {}: {}", path, e))
+        .map_err(|e| format!("write failed for {}: {}", path, e))?;
+
+    #[cfg(unix)]
+    if path.ends_with(".key") {
+        let perms = std::fs::Permissions::from_mode(0o600);
+        tokio::fs::set_permissions(path, perms)
+            .await
+            .map_err(|e| format!("chmod failed for {}: {}", path, e))?;
+    }
+
+    Ok(())
 }

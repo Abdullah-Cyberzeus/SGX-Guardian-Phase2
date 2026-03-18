@@ -9,6 +9,13 @@ fn fixed_signing_key() -> SigningKey {
     SigningKey::from(secret)
 }
 
+/// Generate a deterministic test nonce from a label.
+/// Produces a 32-char hex string (16 bytes) — same output every run.
+fn test_nonce(label: &str) -> String {
+    let hash = Sha256::digest(format!("sgx-guardian-test-nonce::{}", label).as_bytes());
+    hex::encode(&hash[..16])
+}
+
 fn normalize_policy(policy: &str) -> String {
     policy
         .replace("\r", "")
@@ -67,8 +74,8 @@ fn make_evidence(policy: &str, nonce: &str, use_spki_der: bool) -> AttestationEv
 #[test]
 fn test_verify_success_with_raw_public_key() {
     let policy = "allow: all";
-    let nonce = "00112233445566778899aabbccddeeff";
-    let ev = make_evidence(policy, nonce, false);
+    let nonce = test_nonce("raw_pubkey");
+    let ev = make_evidence(policy, &nonce, false);
 
     let verified = AttestationService::verify_signed_evidence(&ev, policy).unwrap();
     assert!(verified);
@@ -77,8 +84,8 @@ fn test_verify_success_with_raw_public_key() {
 #[test]
 fn test_verify_success_with_spki_der_public_key() {
     let policy = "policy: allow_all";
-    let nonce = "ffeeddccbbaa99887766554433221100";
-    let ev = make_evidence(policy, nonce, true);
+    let nonce = test_nonce("spki_der");
+    let ev = make_evidence(policy, &nonce, true);
 
     let verified = AttestationService::verify_signed_evidence(&ev, policy).unwrap();
     assert!(verified);
@@ -87,8 +94,8 @@ fn test_verify_success_with_spki_der_public_key() {
 #[test]
 fn test_verification_fails_with_tampered_signature() {
     let policy = "policy: allow_all";
-    let nonce = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    let mut ev = make_evidence(policy, nonce, true);
+    let nonce = test_nonce("tampered_sig");
+    let mut ev = make_evidence(policy, &nonce, true);
 
     let mut sig = general_purpose::STANDARD.decode(&ev.signature).unwrap();
     sig[0] ^= 0x01;
@@ -101,8 +108,8 @@ fn test_verification_fails_with_tampered_signature() {
 #[test]
 fn test_verification_fails_with_invalid_signature_base64() {
     let policy = "policy: allow_all";
-    let nonce = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-    let mut ev = make_evidence(policy, nonce, true);
+    let nonce = test_nonce("invalid_b64");
+    let mut ev = make_evidence(policy, &nonce, true);
     ev.signature = "NOT_BASE64!!!".to_string();
 
     let ok = AttestationService::verify_signed_evidence(&ev, policy).unwrap();
@@ -111,8 +118,8 @@ fn test_verification_fails_with_invalid_signature_base64() {
 
 #[test]
 fn test_verification_fails_with_modified_policy() {
-    let nonce = "cccccccccccccccccccccccccccccccc";
-    let ev = make_evidence("policy: allow_all", nonce, true);
+    let nonce = test_nonce("modified_policy");
+    let ev = make_evidence("policy: allow_all", &nonce, true);
 
     let ok = AttestationService::verify_signed_evidence(&ev, "policy: deny_all").unwrap();
     assert!(!ok);
@@ -121,8 +128,8 @@ fn test_verification_fails_with_modified_policy() {
 #[test]
 fn test_policy_digest_has_sha256_format() {
     let policy = "allow: all";
-    let nonce = "dddddddddddddddddddddddddddddddd";
-    let ev = make_evidence(policy, nonce, true);
+    let nonce = test_nonce("digest_format");
+    let ev = make_evidence(policy, &nonce, true);
 
     assert_eq!(ev.policy_digest.len(), 64);
     assert!(ev.policy_digest.chars().all(|c| c.is_ascii_hexdigit()));
@@ -131,8 +138,8 @@ fn test_policy_digest_has_sha256_format() {
 #[test]
 fn test_signature_is_valid_base64_and_non_empty() {
     let policy = "allow: all";
-    let nonce = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
-    let ev = make_evidence(policy, nonce, true);
+    let nonce = test_nonce("sig_b64_check");
+    let ev = make_evidence(policy, &nonce, true);
 
     let decoded = general_purpose::STANDARD.decode(&ev.signature).unwrap();
     assert!(!decoded.is_empty());
@@ -141,8 +148,8 @@ fn test_signature_is_valid_base64_and_non_empty() {
 #[test]
 fn test_attestation_evidence_serialization_roundtrip() {
     let policy = "serialization_test";
-    let nonce = "ffffffffffffffffffffffffffffffff";
-    let original = make_evidence(policy, nonce, true);
+    let nonce = test_nonce("serialization");
+    let original = make_evidence(policy, &nonce, true);
 
     let json = serde_json::to_string(&original).unwrap();
     let deserialized: AttestationEvidence = serde_json::from_str(&json).unwrap();
@@ -156,9 +163,9 @@ fn test_attestation_evidence_serialization_roundtrip() {
 #[test]
 fn test_policy_normalization_works_for_verification() {
     let pretty_policy = "  allow: all  \n  version: 1  ";
-    let nonce = "11111111111111111111111111111111";
+    let nonce = test_nonce("normalization");
     // Build evidence with exactly the same normalization rules used by verifier.
-    let ev = make_evidence(pretty_policy, nonce, true);
+    let ev = make_evidence(pretty_policy, &nonce, true);
 
     let ok = AttestationService::verify_signed_evidence(&ev, pretty_policy).unwrap();
     assert!(ok);
@@ -167,8 +174,8 @@ fn test_policy_normalization_works_for_verification() {
 #[test]
 fn test_long_policy_verification_success() {
     let long_policy = "rule: allow\n".repeat(1000);
-    let nonce = "22222222222222222222222222222222";
-    let ev = make_evidence(&long_policy, nonce, true);
+    let nonce = test_nonce("long_policy");
+    let ev = make_evidence(&long_policy, &nonce, true);
 
     let verified = AttestationService::verify_signed_evidence(&ev, &long_policy).unwrap();
     assert!(verified);

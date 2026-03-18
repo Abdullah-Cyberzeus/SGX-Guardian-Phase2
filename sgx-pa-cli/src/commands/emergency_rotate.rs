@@ -141,11 +141,22 @@ fn rotate_dkp(has_ssscli: bool) -> bool {
     let mut keys: Vec<serde_json::Value> = {
         let trimmed = json.trim();
         if trimmed.starts_with('[') {
-            serde_json::from_str(trimmed).unwrap_or_default()
+            match serde_json::from_str::<Vec<serde_json::Value>>(trimmed) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("❌ Failed to parse DKP metadata: {}", e);
+                    eprintln!("   File may be corrupted: {}", METADATA_PATH);
+                    return false;
+                }
+            }
         } else {
             match serde_json::from_str::<serde_json::Value>(trimmed) {
                 Ok(v) => vec![v],
-                Err(_) => return false,
+                Err(e) => {
+                    eprintln!("❌ Failed to parse DKP metadata: {}", e);
+                    eprintln!("   File may be corrupted: {}", METADATA_PATH);
+                    return false;
+                }
             }
         }
     };

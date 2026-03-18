@@ -209,9 +209,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     _ => Err(format!("Unknown type: {}", src.source_type)),
                 };
                 match result {
-                    Ok(hash) => println!("    PCR{}: {} → {}...", src.pcr_index, src.label, &hash[..12]),
+                    Ok(hash) => println!(
+                        "    PCR{}: {} → {}...",
+                        src.pcr_index,
+                        src.label,
+                        &hash[..12]
+                    ),
                     Err(e) => {
-                        let _ = pcr_engine.extend_from_string(src.pcr_index, &format!("ERROR:{}", e));
+                        let _ =
+                            pcr_engine.extend_from_string(src.pcr_index, &format!("ERROR:{}", e));
                         measurement_errors.push(PcrMeasurementError {
                             pcr_index: src.pcr_index,
                             source: src.source.clone(),
@@ -227,7 +233,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Determine integrity status
         let has_critical_fail = measurement_errors.iter().any(|err| {
-            sources.iter().any(|s| s.pcr_index == err.pcr_index && s.critical)
+            sources
+                .iter()
+                .any(|s| s.pcr_index == err.pcr_index && s.critical)
         });
         let integrity_status = if measurement_errors.is_empty() {
             "PASS".to_string()
@@ -259,7 +267,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         snapshot.measured_at = chrono::Utc::now().to_rfc3339();
 
         // Sign: SHA256(composite_bytes || nonce_bytes || timestamp_bytes)  (BINARY concat)
-        let composite_bytes = hex::decode(&snapshot.composite_digest).unwrap_or_else(|_| vec![0u8; 32]);
+        let composite_bytes =
+            hex::decode(&snapshot.composite_digest).unwrap_or_else(|_| vec![0u8; 32]);
         let nonce_sign_bytes = hex::decode(&snapshot.nonce).unwrap_or_else(|_| vec![0u8; 16]);
         let ts_bytes = snapshot.measured_at.as_bytes();
         let mut sign_input = Vec::with_capacity(32 + 16 + ts_bytes.len());
@@ -269,8 +278,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let sign_hash = sha2::Sha256::digest(&sign_input);
 
         if let Ok(sig) = km.sign(&sign_hash) {
-            snapshot.composite_signature = Some(base64::engine::general_purpose::STANDARD.encode(&sig));
-            println!("  PCR composite signed by DKP (v{}) ✅", snapshot.key_version);
+            snapshot.composite_signature =
+                Some(base64::engine::general_purpose::STANDARD.encode(&sig));
+            println!(
+                "  PCR composite signed by DKP (v{}) ✅",
+                snapshot.key_version
+            );
         }
 
         // Save snapshot
@@ -285,8 +298,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Ok(baseline) = PcrBaseline::load(baseline_path) {
             // Validate schema version
             if baseline.schema_version != PCR_SCHEMA_VERSION {
-                eprintln!("  ⚠️ Baseline schema v{} != current v{} — re-create baseline",
-                    baseline.schema_version, PCR_SCHEMA_VERSION);
+                eprintln!(
+                    "  ⚠️ Baseline schema v{} != current v{} — re-create baseline",
+                    baseline.schema_version, PCR_SCHEMA_VERSION
+                );
             } else {
                 // Verify baseline signature
                 let pubkey = km.pubkey_der();
@@ -305,10 +320,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Ok(mismatches) => {
                             eprintln!("  ⚠️ PCR MISMATCH detected:");
                             for idx in &mismatches {
-                                eprintln!("    PCR{} [{}]: expected {}.. got {}..",
-                                    idx, PcrEngine::pcr_name(*idx),
+                                eprintln!(
+                                    "    PCR{} [{}]: expected {}.. got {}..",
+                                    idx,
+                                    PcrEngine::pcr_name(*idx),
                                     &baseline.pcr_values[*idx][..16],
-                                    &snapshot.pcr_values[*idx][..16]);
+                                    &snapshot.pcr_values[*idx][..16]
+                                );
                             }
                         }
                         Err(e) => eprintln!("  ⚠️ Baseline compare error: {}", e),
