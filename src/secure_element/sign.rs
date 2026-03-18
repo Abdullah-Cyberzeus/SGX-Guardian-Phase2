@@ -12,6 +12,7 @@ use crate::secure_element::config::SeConfig;
 use crate::secure_element::error::SeError;
 use crate::secure_element::ssscli::SssCli;
 use std::fs;
+use uuid::Uuid;
 
 pub struct SeSigner {
     cli: SssCli,
@@ -28,38 +29,46 @@ impl SeSigner {
     /// Writes data to temp file, ssscli signs inside chip, reads signature back.
     pub fn sign(&self, key_id: u32, data: &[u8]) -> Result<Vec<u8>, SeError> {
         let hex_id = format!("0x{:08X}", key_id);
-        let tmp_in = "/tmp/guardian_se_sign_in.bin";
-        let tmp_out = "/tmp/guardian_se_sign_out.bin";
+        let sign_id = Uuid::new_v4().simple().to_string();
+        let sign_tag = &sign_id[..8];
+        let tmp_in = format!("/tmp/guardian_se_sign_{}_in.bin", sign_tag);
+        let tmp_out = format!("/tmp/guardian_se_sign_{}_out.bin", sign_tag);
 
-        fs::write(tmp_in, data).map_err(|e| SeError::CryptoError(format!("Write input: {}", e)))?;
+        let result = (|| -> Result<Vec<u8>, SeError> {
+            fs::write(&tmp_in, data)
+                .map_err(|e| SeError::CryptoError(format!("Write input: {}", e)))?;
 
-        // ssscli sign <keyid> <input> <output>  (no sha256 subcommand!)
-        self.cli.sign(&hex_id, tmp_in, tmp_out)?;
+            // ssscli sign <keyid> <input> <output>  (no sha256 subcommand!)
+            self.cli.sign(&hex_id, &tmp_in, &tmp_out)?;
 
-        let signature = fs::read(tmp_out)
-            .map_err(|e| SeError::CryptoError(format!("Read signature: {}", e)))?;
+            fs::read(&tmp_out).map_err(|e| SeError::CryptoError(format!("Read signature: {}", e)))
+        })();
 
-        let _ = fs::remove_file(tmp_in);
-        let _ = fs::remove_file(tmp_out);
+        let _ = fs::remove_file(&tmp_in);
+        let _ = fs::remove_file(&tmp_out);
 
-        Ok(signature)
+        result
     }
 
     /// Verify signature using SE050.
     pub fn verify(&self, key_id: u32, data: &[u8], sig: &[u8]) -> Result<bool, SeError> {
         let hex_id = format!("0x{:08X}", key_id);
-        let tmp_d = "/tmp/guardian_se_vfy_data.bin";
-        let tmp_s = "/tmp/guardian_se_vfy_sig.bin";
+        let verify_id = Uuid::new_v4().simple().to_string();
+        let verify_tag = &verify_id[..8];
+        let tmp_d = format!("/tmp/guardian_se_vfy_{}_data.bin", verify_tag);
+        let tmp_s = format!("/tmp/guardian_se_vfy_{}_sig.bin", verify_tag);
 
-        fs::write(tmp_d, data).map_err(|e| SeError::CryptoError(e.to_string()))?;
-        fs::write(tmp_s, sig).map_err(|e| SeError::CryptoError(e.to_string()))?;
+        let result = (|| -> Result<bool, SeError> {
+            fs::write(&tmp_d, data).map_err(|e| SeError::CryptoError(e.to_string()))?;
+            fs::write(&tmp_s, sig).map_err(|e| SeError::CryptoError(e.to_string()))?;
 
-        // ssscli verify <keyid> <input> <sigfile>  (no sha256 subcommand!)
-        let ok = self.cli.verify(&hex_id, tmp_d, tmp_s).is_ok();
+            // ssscli verify <keyid> <input> <sigfile>  (no sha256 subcommand!)
+            Ok(self.cli.verify(&hex_id, &tmp_d, &tmp_s).is_ok())
+        })();
 
-        let _ = fs::remove_file(tmp_d);
-        let _ = fs::remove_file(tmp_s);
+        let _ = fs::remove_file(&tmp_d);
+        let _ = fs::remove_file(&tmp_s);
 
-        Ok(ok)
+        result
     }
 }

@@ -177,6 +177,12 @@ pub struct PcrEngine {
     extended: [bool; PCR_COUNT],
 }
 
+impl Default for PcrEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PcrEngine {
     /// New engine — all PCRs initialized to 32 bytes of 0x00.
     pub fn new() -> Self {
@@ -196,7 +202,7 @@ impl PcrEngine {
             ));
         }
         let mut hasher = Sha256::new();
-        hasher.update(&self.registers[pcr_index]);
+        hasher.update(self.registers[pcr_index]);
         hasher.update(measurement);
         let result = hasher.finalize();
         self.registers[pcr_index].copy_from_slice(&result);
@@ -208,16 +214,16 @@ impl PcrEngine {
     pub fn extend_from_file(&mut self, pcr_index: usize, path: &str) -> Result<String, String> {
         let data = fs::read(path).map_err(|e| format!("Read {}: {}", path, e))?;
         let measurement = Sha256::digest(&data);
-        let hex = hex::encode(&measurement);
         self.extend(pcr_index, &measurement)?;
+        let hex = hex::encode(measurement);
         Ok(hex)
     }
 
     /// Extend with SHA-256 hash of a string.
     pub fn extend_from_string(&mut self, pcr_index: usize, value: &str) -> Result<String, String> {
         let measurement = Sha256::digest(value.as_bytes());
-        let hex = hex::encode(&measurement);
         self.extend(pcr_index, &measurement)?;
+        let hex = hex::encode(measurement);
         Ok(hex)
     }
 
@@ -251,7 +257,7 @@ impl PcrEngine {
 
     pub fn get_hex(&self, pcr_index: usize) -> String {
         if pcr_index < PCR_COUNT {
-            hex::encode(&self.registers[pcr_index])
+            hex::encode(self.registers[pcr_index])
         } else {
             "invalid".into()
         }
@@ -330,8 +336,8 @@ pub fn read_device_uid(fallback: &str) -> String {
             );
             for line in combined.lines() {
                 let t = line.trim();
-                if t.starts_with("Unique ID:") {
-                    let uid = t["Unique ID:".len()..].trim().to_string();
+                if let Some(stripped) = t.strip_prefix("Unique ID:") {
+                    let uid = stripped.trim().to_string();
                     // Validate: SE050 UID is 36 hex chars
                     if uid.len() >= 20 && uid.chars().all(|c| c.is_ascii_hexdigit()) {
                         return uid;
@@ -544,7 +550,7 @@ mod tests {
 
     #[test]
     fn test_integrity_status_fail_on_critical() {
-        let errors = vec![PcrMeasurementError {
+        let errors = [PcrMeasurementError {
             pcr_index: 0,
             source: "bootloader".into(),
             error: "missing".into(),
