@@ -164,6 +164,162 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Local attestation evidence verification failed",
         );
     }
+
+    // === PCR Measurement (ATT-003) ===
+    println!("\n  Measuring platform integrity (PCR)...");
+    {
+        use sgx_guardian_client::secure_element::pcr::*;
+        use sgx_guardian_client::secure_element::pcr_config;
+        use sha2::Digest;
+
+        let mut pcr_engine = PcrEngine::new();
+        let mut measurement_errors: Vec<PcrMeasurementError> = Vec::new();
+
+        // Detect environment
+        let is_hardware = std::path::Path::new("/proc/device-tree/model").exists();
+        println!(
+            "  PCR mode: {}",
+            if is_hardware {
+                "Hardware (board)"
+            } else {
+                "Software (simulated)"
+            }
+        );
+
+        let sources = if is_hardware {
+            pcr_config::default_measurement_sources()
+        } else {
+            pcr_config::software_measurement_sources()
+        };
+
+        // Perform measurements
+        for src in &sources {
+            if src.source_type == "multi_file" {
+                let files: Vec<String> = src
+                    .source
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect();
+                let errs = pcr_engine.extend_from_files(src.pcr_index, &files);
+                measurement_errors.extend(errs);
+            } else {
+                let result = match src.source_type.as_str() {
+                    "file" => pcr_engine.extend_from_file(src.pcr_index, &src.source),
+                    "string" => pcr_engine.extend_from_string(src.pcr_index, &src.source),
+                    _ => Err(format!("Unknown type: {}", src.source_type)),
+                };
+                match result {
+                    Ok(hash) => println!("    PCR{}: {} → {}...", src.pcr_index, src.label, &hash[..12]),
+                    Err(e) => {
+                        let _ = pcr_engine.extend_from_string(src.pcr_index, &format!("ERROR:{}", e));
+                        measurement_errors.push(PcrMeasurementError {
+                            pcr_index: src.pcr_index,
+                            source: src.source.clone(),
+                            error: e.clone(),
+                        });
+                        println!("    PCR{}: {} → ⚠️ {}", src.pcr_index, src.label, e);
+                    }
+                }
+            }
+        }
+
+        pcr_engine.print_status();
+
+        // Determine integrity status
+        let has_critical_fail = measurement_errors.iter().any(|err| {
+            sources.iter().any(|s| s.pcr_index == err.pcr_index && s.critical)
+        });
+        let integrity_status = if measurement_errors.is_empty() {
+            "PASS".to_string()
+        } else if has_critical_fail {
+            "FAIL".to_string()
+        } else {
+            "DEGRADED".to_string()
+        };
+
+        if integrity_status == "FAIL" {
+            eprintln!("  🔴 CRITICAL: Platform integrity check FAILED — attestation will be rejected by peers");
+        } else if integrity_status == "DEGRADED" {
+            println!("  ⚠️ Some measurements failed (non-critical) — status DEGRADED");
+        } else {
+            println!("  Platform integrity: ✅ PASS");
+        }
+
+        // Build snapshot
+        let mut snapshot = pcr_engine.snapshot();
+        snapshot.measurement_errors = measurement_errors;
+        snapshot.integrity_status = integrity_status;
+        snapshot.device_uid = read_device_uid(&node_id);
+        snapshot.key_version = read_dkp_key_version();
+
+        // Generate nonce + timestamp
+        let mut nonce_bytes = [0u8; 16];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce_bytes);
+        snapshot.nonce = hex::encode(nonce_bytes);
+        snapshot.measured_at = chrono::Utc::now().to_rfc3339();
+
+        // Sign: SHA256(composite_bytes || nonce_bytes || timestamp_bytes)  (BINARY concat)
+        let composite_bytes = hex::decode(&snapshot.composite_digest).unwrap_or_else(|_| vec![0u8; 32]);
+        let nonce_sign_bytes = hex::decode(&snapshot.nonce).unwrap_or_else(|_| vec![0u8; 16]);
+        let ts_bytes = snapshot.measured_at.as_bytes();
+        let mut sign_input = Vec::with_capacity(32 + 16 + ts_bytes.len());
+        sign_input.extend_from_slice(&composite_bytes);
+        sign_input.extend_from_slice(&nonce_sign_bytes);
+        sign_input.extend_from_slice(ts_bytes);
+        let sign_hash = sha2::Sha256::digest(&sign_input);
+
+        if let Ok(sig) = km.sign(&sign_hash) {
+            snapshot.composite_signature = Some(base64::engine::general_purpose::STANDARD.encode(&sig));
+            println!("  PCR composite signed by DKP (v{}) ✅", snapshot.key_version);
+        }
+
+        // Save snapshot
+        let pcr_path = "/var/lib/sgx-guardian/pcr/current.json";
+        match snapshot.save(pcr_path) {
+            Ok(_) => println!("  PCR snapshot → {}", pcr_path),
+            Err(e) => eprintln!("  PCR save failed: {}", e),
+        }
+
+        // Compare against baseline
+        let baseline_path = "/etc/sgx-guardian/pcr_baseline.json";
+        if let Ok(baseline) = PcrBaseline::load(baseline_path) {
+            // Validate schema version
+            if baseline.schema_version != PCR_SCHEMA_VERSION {
+                eprintln!("  ⚠️ Baseline schema v{} != current v{} — re-create baseline",
+                    baseline.schema_version, PCR_SCHEMA_VERSION);
+            } else {
+                // Verify baseline signature
+                let pubkey = km.pubkey_der();
+                if !baseline.verify_signature(&pubkey) {
+                    if baseline.key_version != snapshot.key_version {
+                        eprintln!("  ⚠️ Baseline signed with DKP v{}, current is v{}. Re-create baseline.",
+                            baseline.key_version, snapshot.key_version);
+                    } else {
+                        eprintln!("  🔴 Baseline signature INVALID — possible tampering!");
+                    }
+                } else {
+                    match snapshot.compare_baseline(&baseline) {
+                        Ok(mismatches) if mismatches.is_empty() => {
+                            println!("  PCR baseline: ✅ ALL MATCH");
+                        }
+                        Ok(mismatches) => {
+                            eprintln!("  ⚠️ PCR MISMATCH detected:");
+                            for idx in &mismatches {
+                                eprintln!("    PCR{} [{}]: expected {}.. got {}..",
+                                    idx, PcrEngine::pcr_name(*idx),
+                                    &baseline.pcr_values[*idx][..16],
+                                    &snapshot.pcr_values[*idx][..16]);
+                            }
+                        }
+                        Err(e) => eprintln!("  ⚠️ Baseline compare error: {}", e),
+                    }
+                }
+            }
+        } else {
+            println!("  No baseline — create with: sgx-pa-cli pcr-baseline-create");
+        }
+    }
+
     println!("\n Loading node configurations...");
     let node_a = load_config("/etc/sgx-guardian/nodeA.yaml").expect("Failed to load nodeA config");
 

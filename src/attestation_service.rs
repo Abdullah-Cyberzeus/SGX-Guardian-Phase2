@@ -174,6 +174,12 @@ pub struct AttestationEvidence {
     pub policy_digest: String,
     pub signature: String,
     pub pubkey_der_b64: String,
+    /// PCR snapshot (when available)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pcr_values: Option<crate::secure_element::pcr::PcrSnapshot>,
+    /// DKP key version used for signing
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub key_version: Option<u32>,
 }
 impl AttestationService {
     /// Creates signed attestation evidence by hashing the policy file,
@@ -196,11 +202,18 @@ impl AttestationService {
         let sig_bytes = km.sign(msg.as_bytes())?;
         let signature_b64 = general_purpose::STANDARD.encode(sig_bytes);
         let pubkey_b64 = base64::engine::general_purpose::STANDARD.encode(km.pubkey_der());
+        // Load PCR snapshot if available
+        let pcr_values = crate::secure_element::pcr::PcrSnapshot::load(
+            "/var/lib/sgx-guardian/pcr/current.json"
+        ).ok();
+        let key_version = Some(crate::secure_element::pcr::read_dkp_key_version());
         Ok(AttestationEvidence {
             nonce,
             policy_digest,
             signature: signature_b64,
             pubkey_der_b64: pubkey_b64,
+            pcr_values,
+            key_version,
         })
     }
     /// Verifies incoming attestation evidence by recomputing the policy digest,
@@ -220,6 +233,21 @@ impl AttestationService {
         if ev.policy_digest != expected_digest {
             println!("❌ Policy digest mismatch");
             return Ok(false);
+        }
+        // Verify PCR snapshot freshness (if present)
+        if let Some(ref pcr) = ev.pcr_values {
+            if pcr.schema_version != crate::secure_element::pcr::PCR_SCHEMA_VERSION {
+                println!("⚠️ PCR schema version mismatch (got {}, expected {})",
+                    pcr.schema_version, crate::secure_element::pcr::PCR_SCHEMA_VERSION);
+            }
+            if !pcr.is_fresh() {
+                println!("⚠️ PCR snapshot is stale (older than {} seconds)",
+                    crate::secure_element::pcr::MAX_PCR_SNAPSHOT_AGE_SECS);
+            }
+            if pcr.integrity_status == "FAIL" {
+                println!("🔴 Peer PCR integrity FAILED — rejecting attestation");
+                return Ok(false);
+            }
         }
         // Step 4: Build same message bytes as during signing
         let mut msg = Vec::new();
@@ -643,6 +671,8 @@ mod tests {
             policy_digest,
             signature: general_purpose::STANDARD.encode(sig_der.as_bytes()),
             pubkey_der_b64: general_purpose::STANDARD.encode(spki),
+            pcr_values: None,
+            key_version: None,
         }
     }
 
