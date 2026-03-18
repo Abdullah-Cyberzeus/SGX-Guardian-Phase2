@@ -44,6 +44,12 @@ enum Commands {
     DkpRevoke(commands::dkp_revoke::DkpRevokeArgs),
     /// Emergency rotation of ALL critical keys
     EmergencyRotate,
+    /// Show current PCR measurement values
+    PcrStatus,
+    /// Create golden PCR baseline from current snapshot
+    PcrBaselineCreate,
+    /// Verify current PCR values against golden baseline
+    PcrBaselineVerify,
 }
 /// Entry point for the SGX Policy Authority CLI.
 /// Dispatches the selected subcommand and routes execution
@@ -74,5 +80,8 @@ fn main() {
         Commands::DkpRotate => commands::dkp_rotate::run(),
         Commands::DkpRevoke(args) => commands::dkp_revoke::run(args),
         Commands::EmergencyRotate => commands::emergency_rotate::run(),
+        Commands::PcrStatus => commands::pcr_status::run(),
+        Commands::PcrBaselineCreate => commands::pcr_baseline::run_create(),
+        Commands::PcrBaselineVerify => commands::pcr_baseline::run_verify(),
     }
 }
