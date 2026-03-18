@@ -41,9 +41,18 @@ pub fn run() {
         "\n  Composite:  {}",
         snap["composite_digest"].as_str().unwrap_or("?")
     );
-    println!("  Integrity:  {}", snap["integrity_status"].as_str().unwrap_or("?"));
-    println!("  Measured:   {}", snap["measured_at"].as_str().unwrap_or("?"));
-    println!("  Device UID: {}", snap["device_uid"].as_str().unwrap_or("?"));
+    println!(
+        "  Integrity:  {}",
+        snap["integrity_status"].as_str().unwrap_or("?")
+    );
+    println!(
+        "  Measured:   {}",
+        snap["measured_at"].as_str().unwrap_or("?")
+    );
+    println!(
+        "  Device UID: {}",
+        snap["device_uid"].as_str().unwrap_or("?")
+    );
     println!("  Key ver:    {}", snap["key_version"]);
     println!(
         "  Signed:     {}",

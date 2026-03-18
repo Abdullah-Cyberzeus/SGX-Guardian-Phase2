@@ -70,7 +70,10 @@ pub fn run_create() {
             if let Some(parent) = Path::new(BASELINE_PATH).parent() {
                 let _ = fs::create_dir_all(parent);
             }
-            match fs::write(BASELINE_PATH, serde_json::to_string_pretty(&baseline).unwrap()) {
+            match fs::write(
+                BASELINE_PATH,
+                serde_json::to_string_pretty(&baseline).unwrap(),
+            ) {
                 Ok(_) => {
                     println!("✅ Baseline created and SIGNED at {}", BASELINE_PATH);
                     println!("   Device UID: {}", device_uid);
@@ -94,7 +97,10 @@ pub fn run_create() {
             if let Some(parent) = Path::new(BASELINE_PATH).parent() {
                 let _ = fs::create_dir_all(parent);
             }
-            match fs::write(BASELINE_PATH, serde_json::to_string_pretty(&baseline).unwrap()) {
+            match fs::write(
+                BASELINE_PATH,
+                serde_json::to_string_pretty(&baseline).unwrap(),
+            ) {
                 Ok(_) => {
                     println!("⚠️ Baseline created but NOT SIGNED (no signing key available)");
                     println!("   Baseline at: {}", BASELINE_PATH);
@@ -146,8 +152,9 @@ fn sign_baseline_hash(hash: &[u8], key_version: u32) -> Option<String> {
                         &rng,
                     ) {
                         if let Ok(sig) = keypair.sign(&rng, hash) {
-                            return Some(base64::engine::general_purpose::STANDARD
-                                .encode(sig.as_ref()));
+                            return Some(
+                                base64::engine::general_purpose::STANDARD.encode(sig.as_ref()),
+                            );
                         }
                     }
                 }
@@ -196,7 +203,11 @@ pub fn run_verify() {
 
     if let (Some(bp), Some(sp)) = (b_pcrs, s_pcrs) {
         if bp.len() != sp.len() {
-            eprintln!("PCR count mismatch: baseline={}, current={}", bp.len(), sp.len());
+            eprintln!(
+                "PCR count mismatch: baseline={}, current={}",
+                bp.len(),
+                sp.len()
+            );
             return;
         }
         let mut all_match = true;
