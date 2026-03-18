@@ -203,9 +203,9 @@ impl AttestationService {
         let signature_b64 = general_purpose::STANDARD.encode(sig_bytes);
         let pubkey_b64 = base64::engine::general_purpose::STANDARD.encode(km.pubkey_der());
         // Load PCR snapshot if available
-        let pcr_values = crate::secure_element::pcr::PcrSnapshot::load(
-            "/var/lib/sgx-guardian/pcr/current.json"
-        ).ok();
+        let pcr_values =
+            crate::secure_element::pcr::PcrSnapshot::load("/var/lib/sgx-guardian/pcr/current.json")
+                .ok();
         let key_version = Some(crate::secure_element::pcr::read_dkp_key_version());
         Ok(AttestationEvidence {
             nonce,
@@ -237,12 +237,17 @@ impl AttestationService {
         // Verify PCR snapshot freshness (if present)
         if let Some(ref pcr) = ev.pcr_values {
             if pcr.schema_version != crate::secure_element::pcr::PCR_SCHEMA_VERSION {
-                println!("⚠️ PCR schema version mismatch (got {}, expected {})",
-                    pcr.schema_version, crate::secure_element::pcr::PCR_SCHEMA_VERSION);
+                println!(
+                    "⚠️ PCR schema version mismatch (got {}, expected {})",
+                    pcr.schema_version,
+                    crate::secure_element::pcr::PCR_SCHEMA_VERSION
+                );
             }
             if !pcr.is_fresh() {
-                println!("⚠️ PCR snapshot is stale (older than {} seconds)",
-                    crate::secure_element::pcr::MAX_PCR_SNAPSHOT_AGE_SECS);
+                println!(
+                    "⚠️ PCR snapshot is stale (older than {} seconds)",
+                    crate::secure_element::pcr::MAX_PCR_SNAPSHOT_AGE_SECS
+                );
             }
             if pcr.integrity_status == "FAIL" {
                 println!("🔴 Peer PCR integrity FAILED — rejecting attestation");
@@ -256,11 +261,20 @@ impl AttestationService {
         // Step 5: Decode Base64 safely
         let sig_bytes = match general_purpose::STANDARD.decode(&ev.signature) {
             Ok(b) => b,
-            Err(_) => return Ok(false),
+            Err(e) => {
+                eprintln!("⚠️ Attestation rejected: invalid signature base64: {}", e);
+                return Ok(false);
+            }
         };
         // Step 6: Prepare verification key
         let peer_pubkey_raw =
-            base64::engine::general_purpose::STANDARD.decode(&ev.pubkey_der_b64)?;
+            match base64::engine::general_purpose::STANDARD.decode(&ev.pubkey_der_b64) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    eprintln!("⚠️ Attestation rejected: invalid pubkey base64: {}", e);
+                    return Ok(false);
+                }
+            };
 
         // Handle both raw EC point (65 bytes from software/hardware)
         // and full SubjectPublicKeyInfo DER (91 bytes legacy)
@@ -274,12 +288,16 @@ impl AttestationService {
         // Auto-detect signature format:
         // ring/software → FIXED (exactly 64 bytes, r||s concatenated)
         // SE050/hardware → ASN.1 DER (starts with 0x30, typically 70-72 bytes)
-        let is_asn1 = !sig_bytes.is_empty() && sig_bytes[0] == 0x30;
-
-        let verification_algo: &dyn signature::VerificationAlgorithm = if is_asn1 {
-            &signature::ECDSA_P256_SHA256_ASN1
-        } else {
-            &signature::ECDSA_P256_SHA256_FIXED
+        let verification_algo: &dyn signature::VerificationAlgorithm = match sig_bytes.len() {
+            64 => &signature::ECDSA_P256_SHA256_FIXED,
+            _ if sig_bytes.first() == Some(&0x30) => &signature::ECDSA_P256_SHA256_ASN1,
+            _ => {
+                eprintln!(
+                    "⚠️ Attestation rejected: unrecognized signature format (len={})",
+                    sig_bytes.len()
+                );
+                return Ok(false);
+            }
         };
 
         let peer_key = signature::UnparsedPublicKey::new(verification_algo, &peer_pubkey);

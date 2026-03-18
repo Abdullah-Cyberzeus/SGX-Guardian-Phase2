@@ -225,13 +225,21 @@ impl KeyManager {
                         // Extract raw 65-byte EC point starting at offset 26.
                         if der_bytes.len() == 91 {
                             der_bytes[26..].to_vec()
-                        } else {
+                        } else if der_bytes.len() == 65 {
                             der_bytes
+                        } else {
+                            panic!(
+                                "FATAL: DKP pubkey at {} unexpected length {}",
+                                dkp_pub_path,
+                                der_bytes.len()
+                            );
                         }
                     }
-                    Err(_) => {
-                        // Fallback to software key if file not found
-                        self.keypair.public_key().as_ref().to_vec()
+                    Err(e) => {
+                        panic!(
+                            "FATAL: Hardware backend active but DKP pubkey missing at {}: {}",
+                            dkp_pub_path, e
+                        );
                     }
                 }
             }
