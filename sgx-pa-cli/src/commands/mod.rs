@@ -10,6 +10,8 @@ pub mod emergency_rotate;
 pub mod keygen;
 pub mod logs;
 pub mod peers;
+pub mod pcr_baseline;
+pub mod pcr_status;
 pub mod sign;
 pub mod status;
 pub mod verify;

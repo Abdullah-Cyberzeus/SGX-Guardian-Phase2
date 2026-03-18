@@ -11,6 +11,8 @@ pub mod dkp;
 pub mod error;
 pub mod key_meta;
 pub mod key_storage;
+pub mod pcr;
+pub mod pcr_config;
 pub mod safe_mode;
 pub mod se050;
 pub mod sign;
