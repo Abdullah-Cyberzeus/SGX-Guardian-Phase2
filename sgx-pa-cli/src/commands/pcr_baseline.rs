@@ -4,8 +4,29 @@ use sha2::Digest;
 use std::fs;
 use std::path::Path;
 
-const PCR_PATH: &str = "/var/lib/sgx-guardian/pcr/current.json";
-const BASELINE_PATH: &str = "/etc/sgx-guardian/pcr_baseline.json";
+const PCR_DIR: &str = "/var/lib/sgx-guardian/pcr";
+
+fn find_pcr_snapshot() -> Option<(String, String)> {
+    if let Ok(entries) = std::fs::read_dir(PCR_DIR) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with("_current.json") {
+                let node = name.trim_end_matches("_current.json").to_string();
+                return Some((entry.path().to_string_lossy().to_string(), node));
+            }
+        }
+    }
+    let old = format!("{}/current.json", PCR_DIR);
+    if Path::new(&old).exists() {
+        Some((old, "unknown".into()))
+    } else {
+        None
+    }
+}
+
+fn baseline_path_for(node_id: &str) -> String {
+    format!("/etc/sgx-guardian/pcr_{}_baseline.json", node_id)
+}
 
 #[derive(Subcommand)]
 pub enum PcrBaselineCmd {
@@ -18,12 +39,16 @@ pub enum PcrBaselineCmd {
 pub fn run_create() {
     println!("=== Create PCR Golden Baseline ===\n");
 
-    if !Path::new(PCR_PATH).exists() {
-        eprintln!("No PCR snapshot. Run guardian daemon first.");
-        return;
-    }
+    let (pcr_path, node_id) = match find_pcr_snapshot() {
+        Some(p) => p,
+        None => {
+            eprintln!("No PCR snapshot. Run daemon first.");
+            return;
+        }
+    };
+    println!("  Node: {}\n", node_id);
 
-    let json = match fs::read_to_string(PCR_PATH) {
+    let json = match fs::read_to_string(&pcr_path) {
         Ok(j) => j,
         Err(e) => {
             eprintln!("Read error: {}", e);
@@ -67,15 +92,18 @@ pub fn run_create() {
                 "schema_version": snap["schema_version"],
             });
 
-            if let Some(parent) = Path::new(BASELINE_PATH).parent() {
+            if let Some(parent) = Path::new(&baseline_path_for(&node_id)).parent() {
                 let _ = fs::create_dir_all(parent);
             }
             match fs::write(
-                BASELINE_PATH,
+                &baseline_path_for(&node_id),
                 serde_json::to_string_pretty(&baseline).unwrap(),
             ) {
                 Ok(_) => {
-                    println!("✅ Baseline created and SIGNED at {}", BASELINE_PATH);
+                    println!(
+                        "✅ Baseline created and SIGNED at {}",
+                        &baseline_path_for(&node_id)
+                    );
                     println!("   Device UID: {}", device_uid);
                     println!("   Key version: {}", key_version);
                 }
@@ -94,16 +122,16 @@ pub fn run_create() {
                 "schema_version": snap["schema_version"],
             });
 
-            if let Some(parent) = Path::new(BASELINE_PATH).parent() {
+            if let Some(parent) = Path::new(&baseline_path_for(&node_id)).parent() {
                 let _ = fs::create_dir_all(parent);
             }
             match fs::write(
-                BASELINE_PATH,
+                &baseline_path_for(&node_id),
                 serde_json::to_string_pretty(&baseline).unwrap(),
             ) {
                 Ok(_) => {
                     println!("⚠️ Baseline created but NOT SIGNED (no signing key available)");
-                    println!("   Baseline at: {}", BASELINE_PATH);
+                    println!("   Baseline at: {}", &baseline_path_for(&node_id));
                     println!("   The daemon will sign it on next startup if signature is empty.");
                 }
                 Err(e) => eprintln!("Write error: {}", e),
@@ -167,19 +195,23 @@ fn sign_baseline_hash(hash: &[u8], key_version: u32) -> Option<String> {
 
 pub fn run_verify() {
     println!("=== Verify PCR Baseline ===\n");
-    if !Path::new(BASELINE_PATH).exists() {
+    let (pcr_path, node_id) = match find_pcr_snapshot() {
+        Some(p) => p,
+        None => {
+            eprintln!("No snapshot.");
+            return;
+        }
+    };
+    let bl_path = baseline_path_for(&node_id);
+    if !Path::new(&bl_path).exists() {
         eprintln!("No baseline. Create first: sgx-pa-cli pcr-baseline create");
-        return;
-    }
-    if !Path::new(PCR_PATH).exists() {
-        eprintln!("No snapshot. Run guardian daemon first.");
         return;
     }
 
     let baseline: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(BASELINE_PATH).unwrap()).unwrap();
+        serde_json::from_str(&fs::read_to_string(&bl_path).unwrap()).unwrap();
     let snapshot: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(PCR_PATH).unwrap()).unwrap();
+        serde_json::from_str(&fs::read_to_string(&pcr_path).unwrap()).unwrap();
 
     // Verify baseline signature first
     let sig = baseline["baseline_signature"].as_str().unwrap_or("");

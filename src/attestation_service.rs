@@ -203,9 +203,9 @@ impl AttestationService {
         let signature_b64 = general_purpose::STANDARD.encode(sig_bytes);
         let pubkey_b64 = base64::engine::general_purpose::STANDARD.encode(km.pubkey_der());
         // Load PCR snapshot if available
-        let pcr_values =
-            crate::secure_element::pcr::PcrSnapshot::load("/var/lib/sgx-guardian/pcr/current.json")
-                .ok();
+        let node_id_pcr = std::env::args().nth(1).unwrap_or_else(|| "nodeA".into());
+        let pcr_load_path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node_id_pcr);
+        let pcr_values = crate::secure_element::pcr::PcrSnapshot::load(&pcr_load_path).ok();
         let key_version = Some(crate::secure_element::pcr::read_dkp_key_version());
         Ok(AttestationEvidence {
             nonce,

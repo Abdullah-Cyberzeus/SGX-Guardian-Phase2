@@ -1,0 +1,6 @@
+[advisories]
+# Temporary ignores; remove once dependencies are upgraded.
+ignore = [
+    "RUSTSEC-2025-0134",
+    "RUSTSEC-2026-0049",
+]
