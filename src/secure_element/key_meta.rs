@@ -23,12 +23,10 @@ use std::path::Path;
 /// ║  30 days = 2592000                                   ║
 /// ║  1 year  = 31536000  (production default)            ║
 /// ╚══════════════════════════════════════════════════════╝
-//pub const DKP_ROTATION_INTERVAL_SECS: i64 = 31_536_000; // 1 year
-pub const DKP_ROTATION_INTERVAL_SECS: i64 = 300; // 5 min
+pub const DKP_ROTATION_INTERVAL_SECS: i64 = 31_536_000; // 1 year
 /// Grace period for revoked key verification (seconds).
 /// Default: 30 days = 2592000
-//pub const REVOCATION_GRACE_PERIOD_SECS: i64 = 30 * 24 * 3600;
-pub const REVOCATION_GRACE_PERIOD_SECS: i64 = 600;
+pub const REVOCATION_GRACE_PERIOD_SECS: i64 = 30 * 24 * 3600;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum KeyStatus {
