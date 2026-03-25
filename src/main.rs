@@ -187,7 +187,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
 
         let sources = if is_hardware {
-            pcr_config::default_measurement_sources()
+            pcr_config::default_measurement_sources(&node_id)
         } else {
             pcr_config::software_measurement_sources()
         };
@@ -287,15 +287,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Save snapshot
-        let pcr_path = "/var/lib/sgx-guardian/pcr/current.json";
-        match snapshot.save(pcr_path) {
+        let pcr_path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node_id);
+        match snapshot.save(&pcr_path) {
             Ok(_) => println!("  PCR snapshot → {}", pcr_path),
             Err(e) => eprintln!("  PCR save failed: {}", e),
         }
 
         // Compare against baseline
-        let baseline_path = "/etc/sgx-guardian/pcr_baseline.json";
-        if let Ok(baseline) = PcrBaseline::load(baseline_path) {
+        let baseline_path = format!("/etc/sgx-guardian/pcr_{}_baseline.json", node_id);
+        if let Ok(baseline) = PcrBaseline::load(&baseline_path) {
             // Validate schema version
             if baseline.schema_version != PCR_SCHEMA_VERSION {
                 eprintln!(

@@ -24,7 +24,7 @@ pub const PCR_CONFIG: usize = 4;
 /// ║  CHANGE FOR TESTING: 60 = 1 min, 300 = 5 min     ║
 /// ║  PRODUCTION DEFAULT: 600 = 10 minutes            ║
 /// ╚══════════════════════════════════════════════════╝
-pub const MAX_PCR_SNAPSHOT_AGE_SECS: i64 = 600;
+pub const MAX_PCR_SNAPSHOT_AGE_SECS: i64 = 86400; // 24h — PCR files don't change at runtime
 
 /// Current schema version — increment when snapshot format changes.
 pub const PCR_SCHEMA_VERSION: u8 = 1;
