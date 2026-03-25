@@ -103,7 +103,7 @@ impl NebulaHealth {
 
         let json: serde_json::Value = serde_json::from_str(&stdout).ok()?;
 
-        let not_after = json.get("details")?.get("notAfter")?.as_str()?;
+        let not_after = Self::extract_not_after(&json)?;
 
         let parsed = chrono::DateTime::parse_from_rfc3339(not_after).ok()?;
 
@@ -113,5 +113,23 @@ impl NebulaHealth {
         let seconds_remaining = expiry - now;
 
         Some(seconds_remaining / 86400)
+    }
+
+    fn extract_not_after(json: &serde_json::Value) -> Option<&str> {
+        // nebula-cert JSON shape can be either:
+        // 1) object: {"details":{"notAfter":"..."}}
+        // 2) array:  [{"details":{"notAfter":"..."}, ...}]
+        if let Some(v) = json
+            .get("details")
+            .and_then(|d| d.get("notAfter"))
+            .and_then(|n| n.as_str())
+        {
+            return Some(v);
+        }
+        json.as_array()?
+            .first()?
+            .get("details")?
+            .get("notAfter")?
+            .as_str()
     }
 }

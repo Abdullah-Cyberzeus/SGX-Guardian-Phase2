@@ -15,7 +15,7 @@ pub struct PcrMeasurementSource {
 }
 
 /// Hardware board measurement sources
-pub fn default_measurement_sources() -> Vec<PcrMeasurementSource> {
+pub fn default_measurement_sources(node_id: &str) -> Vec<PcrMeasurementSource> {
     vec![
         PcrMeasurementSource {
             pcr_index: 0,
@@ -54,7 +54,7 @@ pub fn default_measurement_sources() -> Vec<PcrMeasurementSource> {
             pcr_index: 4,
             label: "Guardian config".into(),
             source_type: "file".into(),
-            source: "/etc/sgx-guardian/nodeA.yaml".into(),
+            source: format!("/etc/sgx-guardian/{}.yaml", node_id),
             critical: false,
         },
     ]
