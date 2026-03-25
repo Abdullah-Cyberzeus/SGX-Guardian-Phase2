@@ -1,15 +1,37 @@
 use std::fs;
-use std::path::Path;
 
-const PCR_PATH: &str = "/var/lib/sgx-guardian/pcr/current.json";
+const PCR_DIR: &str = "/var/lib/sgx-guardian/pcr";
+
+fn find_pcr_snapshot() -> Option<String> {
+    if let Ok(entries) = fs::read_dir(PCR_DIR) {
+        let mut found: Vec<String> = entries
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.ends_with("_current.json") || name == "current.json" {
+                    Some(e.path().to_string_lossy().to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        found.sort();
+        return found.into_iter().next();
+    }
+    None
+}
 
 pub fn run() {
     println!("=== PCR Status ===\n");
-    if !Path::new(PCR_PATH).exists() {
-        println!("No PCR snapshot found. Run the guardian daemon first.");
-        return;
-    }
-    let json = match fs::read_to_string(PCR_PATH) {
+    let pcr_path = match find_pcr_snapshot() {
+        Some(p) => p,
+        None => {
+            println!("No PCR snapshot found. Run the guardian daemon first.");
+            return;
+        }
+    };
+    println!("  Source: {}\n", pcr_path);
+    let json = match fs::read_to_string(&pcr_path) {
         Ok(j) => j,
         Err(e) => {
             eprintln!("Read error: {}", e);

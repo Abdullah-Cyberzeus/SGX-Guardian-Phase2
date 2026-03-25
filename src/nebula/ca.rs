@@ -32,6 +32,13 @@ impl NebulaCA {
             )));
         }
 
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(format!("{}/ca.crt", ca_dir), fs::Permissions::from_mode(0o644));
+            let _ = fs::set_permissions(format!("{}/ca.key", ca_dir), fs::Permissions::from_mode(0o600));
+        }
+
         println!("✅ Nebula CA generated successfully.");
         Ok(())
     }
@@ -82,7 +89,7 @@ impl NebulaCA {
             .arg("-ip")
             .arg(ip)
             .arg("-duration")
-            .arg("8700h")
+            .arg("8600h")
             .arg("-groups")
             .arg("guardian,member")
             .arg("-ca-crt")
@@ -100,6 +107,13 @@ impl NebulaCA {
                 "Certificate signing failed: {}",
                 String::from_utf8_lossy(&output.stderr)
             )));
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&cert_path, fs::Permissions::from_mode(0o644));
+            let _ = fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600));
         }
 
         println!("✅ Certificate issued for {}", membership.node_name);
