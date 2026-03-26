@@ -1,0 +1,1938 @@
+^C
+root@imx8mp-var-dart:/tmp# ^C                                                                                                                
+root@imx8mp-var-dart:/tmp# root@imx8mp-var-dart:/tmp# ^C                                                                                     
+root@imx8mp-var-dart:/tmp# ls -lh                                                                                                            
+total 36K                                                                                                                                    
+-rw-rw-r-- 1 root root 3.5K Mar 25 08:52 devmem2.c                                                                                           
+-rw-r--r-- 1 root root   32 Mar 20 09:07 guardian_se_sign_0594768f_in.bin                                                                    
+-rw-r--r-- 1 root root   32 Mar 20 09:07 guardian_se_sign_1a269185_in.bin                                                                    
+-rw-r--r-- 1 root root   32 Mar 20 08:50 guardian_se_sign_985c1115_in.bin                                                                    
+-rw-r--r-- 1 root root   70 Mar 20 08:50 guardian_se_sign_985c1115_out.bin                                                                   
+-rw-r--r-- 1 root root   70 Mar 23 17:06 pcr_sig.bin                                                                                         
+-rw-r--r-- 1 root root  160 Mar 23 17:26 signed_data.bin                                                                                     
+srw-rw-rw- 1 root root    0 Mar  9 20:40 sockinstctrl                                                                                        
+srw-rw-rw- 1 root root    0 Mar  9 20:40 swupdateprog                                                                                        
+drwx------ 3 root root   60 Mar  9 20:40 systemd-private-f4b54a2bd57f4b53b6b24fab81f76943-ModemManager.service-KwR92T                        
+drwx------ 3 root root   60 Mar  9 20:40 systemd-private-f4b54a2bd57f4b53b6b24fab81f76943-systemd-logind.service-ep7hiK                      
+drwx------ 3 root root   60 Mar  3  2023 systemd-private-f4b54a2bd57f4b53b6b24fab81f76943-systemd-resolved.service-A19Nti                    
+drwx------ 3 root root   60 Mar  3  2023 systemd-private-f4b54a2bd57f4b53b6b24fab81f76943-systemd-timesyncd.service-WPVeEY                   
+-rw-r--r-- 1 root root   91 Mar 23 17:05 verify_pub.der                                                                                      
+-rw-r--r-- 1 root root  178 Mar 23 17:25 verify_pub.pem                                                                                      
+root@imx8mp-var-dart:/tmp# cd ..                                                                                                             
+root@imx8mp-var-dart:/# cd /tmp                                                                                                              
+root@imx8mp-var-dart:/tmp# gcc devmem2.c -o devmem2                                                                                          
+-sh: gcc: command not found                                                                                                                  
+root@imx8mp-var-dart:/tmp# ^C                                                                                                                
+root@imx8mp-var-dart:/tmp# ^C                                                                                                                
+root@imx8mp-var-dart:/tmp# ^C                                                                                                                
+root@imx8mp-var-dart:/tmp# [1348834.861087] systemd-journald[188]: Data hash table of /run/log/journal/3be6ca819dec4cd789c609898cbf4710/system.journal has a fill level at 75.0 (10923 of 14563 items, 83886
+08 file size, 767 bytes per hash table item), suggesting rotation.                                                                           
+[1348834.882440] systemd-journald[188]: /run/log/journal/3be6ca819dec4cd789c609898cbf4710/system.journal: Journal header limits reached or header out-of-date, rotating.
+[1358261.480454] systemd-journald[188]: Data hash table of /run/log/journal/3be6ca819dec4cd789c609898cbf4710/system.journal has a fill level at 75.0 (10924 of 14563 items, 8388608 file size, 767 bytes per
+ hash table item), suggesting rotation.                                                                                                      
+[1358261.501862] systemd-journald[188]: /run/log/journal/3be6ca819dec4cd789c609898cbf4710/system.journal: Journal header limits reached or header out-of-date, rotating.
+^C                                                                                                                                           
+root@imx8mp-var-dart:/tmp# cd ..
+root@imx8mp-var-dart:/# rm -f sgx_gurdian_client
+root@imx8mp-var-dart:/# rm -rf /var/lib/sgx-guardian/keys/*
+root@imx8mp-var-dart:/# rm -f sgx-pa-cli
+root@imx8mp-var-dart:/# rm -rf /var/lib/sgx-guardian/keys/*
+root@imx8mp-var-dart:/# rm -rf /var/lib/sgx-guardian/sgx-agent/*
+root@imx8mp-var-dart:/# ssscli erase 0x20000010
+Erasing Key entry from KeyID = 0x20000010
+sss   :INFO :atr (Len=35)
+      00 A0 00 00    03 96 04 03    E8 00 FE 02    0B 03 E8 08 
+      01 00 00 00    00 64 00 00    0A 4A 43 4F    50 34 20 41 
+      54 50 4F 
+sss   :INFO :Newer version of Applet Found
+sss   :INFO :Compiled for 0x30100. Got newer 0x30600                                                                                         
+Erased Key entry from KeyID = 0x20000010                                                                                                     
+root@imx8mp-var-dart:/# ssscli erase 0x20000011                                                                                              
+Erasing Key entry from KeyID = 0x20000011                                                                                                    
+sss   :INFO :atr (Len=35)
+      00 A0 00 00    03 96 04 03    E8 00 FE 02    0B 03 E8 08                                                                               
+      01 00 00 00    00 64 00 00    0A 4A 43 4F    50 34 20 41 
+      54 50 4F 
+sss   :INFO :Newer version of Applet Found
+sss   :INFO :Compiled for 0x30100. Got newer 0x30600
+Erased Key entry from KeyID = 0x20000011
+root@imx8mp-var-dart:/# ssscli erase 0x20000012
+Erasing Key entry from KeyID = 0x20000012
+sss   :INFO :atr (Len=35)
+      00 A0 00 00    03 96 04 03    E8 00 FE 02    0B 03 E8 08 
+      01 00 00 00    00 64 00 00    0A 4A 43 4F    50 34 20 41 
+      54 50 4F 
+sss   :INFO :Newer version of Applet Found
+sss   :INFO :Compiled for 0x30100. Got newer 0x30600
+Erased Key entry from KeyID = 0x20000012
+root@imx8mp-var-dart:/# ssscli erase 0x20000013
+Erasing Key entry from KeyID = 0x20000013
+sss   :INFO :atr (Len=35)
+      00 A0 00 00    03 96 04 03    E8 00 FE 02    0B 03 E8 08 
+      01 00 00 00    00 64 00 00    0A 4A 43 4F    50 34 20 41                                                                               
+      54 50 4F                                                                                                                               
+sss   :INFO :Newer version of Applet Found                                                                                                   
+sss   :INFO :Compiled for 0x30100. Got newer 0x30600                                                                                         
+Erased Key entry from KeyID = 0x20000013                                                                                                     
+root@imx8mp-var-dart:/# ssscli erase 0x20000014                                                                                              
+Erasing Key entry from KeyID = 0x20000014                                                                                                    
+sss   :INFO :atr (Len=35)                                                                                                                    
+      00 A0 00 00    03 96 04 03    E8 00 FE 02    0B 03 E8 08                                                                               
+      01 00 00 00    00 64 00 00    0A 4A 43 4F    50 34 20 41                                                                               
+      54 50 4F                                                                                                                               
+sss   :INFO :Newer version of Applet Found                                                                                                   
+sss   :INFO :Compiled for 0x30100. Got newer 0x30600                                                                                         
+Erased Key entry from KeyID = 0x20000014                                                                                                     
+root@imx8mp-var-dart:/# ssscli erase 0x20000015                                                                                              
+Erasing Key entry from KeyID = 0x20000015                                                                                                    
+sss   :INFO :atr (Len=35)                                                                                                                    
+      00 A0 00 00    03 96 04 03    E8 00 FE 02    0B 03 E8 08                                                                               
+      01 00 00 00    00 64 00 00    0A 4A 43 4F    50 34 20 41                                                                               
+      54 50 4F                                                                                                                               
+sss   :INFO :Newer version of Applet Found                                                                                                   
+sss   :INFO :Compiled for 0x30100. Got newer 0x30600                                                                                         
+Erased Key entry from KeyID = 0x20000015                                                                                                     
+root@imx8mp-var-dart:/# ssscli erase 0x20000016                                                                                              
+Erasing Key entry from KeyID = 0x20000016                                                                                                    
+sss   :INFO :atr (Len=35)                                                                                                                    
+      00 A0 00 00    03 96 04 03    E8 00 FE 02    0B 03 E8 08                                                                               
+      01 00 00 00    00 64 00 00    0A 4A 43 4F    50 34 20 41                                                                               
+      54 50 4F                                                                                                                               
+sss   :INFO :Newer version of Applet Found                                                                                                   
+sss   :INFO :Compiled for 0x30100. Got newer 0x30600                                                                                         
+Erased Key entry from KeyID = 0x20000016                                                                                                     
+root@imx8mp-var-dart:/# ssscli erase 0x20000017                                                                                              
+Erasing Key entry from KeyID = 0x20000017                                                                                                    
+sss   :INFO :atr (Len=35)                                                                                                                    
+      00 A0 00 00    03 96 04 03    E8 00 FE 02    0B 03 E8 08                                                                               
+      01 00 00 00    00 64 00 00    0A 4A 43 4F    50 34 20 41                                                                               
+      54 50 4F                                                                                                                               
+sss   :INFO :Newer version of Applet Found                                                                                                   
+sss   :INFO :Compiled for 0x30100. Got newer 0x30600                                                                                         
+Erased Key entry from KeyID = 0x20000017                                                                                                     
+root@imx8mp-var-dart:/# ssscli erase 0x20000018                                                                                              
+Erasing Key entry from KeyID = 0x20000018                                                                                                    
+sss   :INFO :atr (Len=35)                                                                                                                    
+      00 A0 00 00    03 96 04 03    E8 00 FE 02    0B 03 E8 08                                                                               
+      01 00 00 00    00 64 00 00    0A 4A 43 4F    50 34 20 41                                                                               
+      54 50 4F                                                                                                                               
+sss   :INFO :Newer version of Applet Found                                                                                                   
+sss   :INFO :Compiled for 0x30100. Got newer 0x30600                                                                                         
+ERROR:sss.keyobject:sss_key_object_get_handle FAILED                                                                                         
+ERROR! Could not Erase Key Entry from KeyID 0x20000018 
+root@imx8mp-var-dart:/# rm -rf /var/lib/sgx-guardian/sgx-agent/*                                                                             
+root@imx8mp-var-dart:/# root@imx8mp-var-dart:/# root@imx8mp-var-dart:/# ^C
+root@imx8mp-var-dart:/# chmod +x sgx_guardian_client
+root@imx8mp-var-dart:/# chmod +x sgx-pa-cli
+root@imx8mp-var-dart:/# mkdir -p /var/lib/sgx-guardian/boot
+root@imx8mp-var-dart:/# ./sgx_guardian_client nodeA
+ SGX Guardian Client Starting...
+  No existing DKP found — generating new DKP inside SE050...
+  DKP generated successfully (v1)
+DKP initialized via SE050 hardware
+  Existing DKP found (v1) — loading from SE050
+  Using existing device identity key (0x20000010)
+  Secure Element detected: SE050
+  Signing provider: SE050 hardware (ECDSA-P256)
+  RNG source: SE050 TRNG
+Node Identity Initialized | Public Key Prefix: BJdHWlQezF6uhdPhcGHu...
+Created local attestation evidence (nonce=cad0b51a..)
+⚠️ PCR snapshot is stale (older than 86400 seconds)
+✅ Attestation verified successfully.
+✅ Local attestation evidence verified successfully.
+
+  Verifying secure boot chain...
+  Secure Boot Chain:
+    HAB:           ✅ Enabled
+    Device state:  🔒 CLOSED (enforcing)
+    HAB events:    ✅ None
+    Device model:  Variscite VAR-SOM-MX8M-PLUS on Symphony-Board
+    Binary hash:   33996410629f70f4...
+    Boot chain:    ✅ INTACT
+
+  Measuring platform integrity (PCR)...
+  PCR mode: Hardware (board)
+    PCR0: Boot chain state → 7b43a793adef...
+    PCR1: Device tree → d8ac44d1d0c7...
+    PCR2: Kernel → 9d3b762929a2...
+    PCR3: /bin/sh → 38e2b8acb9f9...
+    PCR3: /sbin/init → ece86283bf02...
+    PCR3: /usr/bin/ssscli → 4659b4c5f5cd...
+    PCR4: Guardian config → fb2bba8b33ff...
+  PCR Measurements:
+    PCR0 [✅]: d559d05f0a954bd9..  (BIOS/Bootloader)
+    PCR1 [✅]: bae8a7a76fc99554..  (Firmware/DTB)
+    PCR2 [✅]: d05dabd586787b0a..  (Kernel)
+    PCR3 [✅]: 48b8c39bec0572df..  (RootFS)
+    PCR4 [✅]: e28f9ea9f4d0b852..  (Configuration)
+    Composite: 8034ce34a0af05d9...
+  Platform integrity: ✅ PASS
+  PCR composite signed by DKP (v1) ✅
+  PCR snapshot → /var/lib/sgx-guardian/pcr/nodeA_current.json
+  ⚠️ Baseline signed with DKP v8, current is v1. Re-create baseline.
+
+ Loading node configurations...
+✅ Loaded Node A: nodeA (guardian-node-A) at 127.0.0.1:50051 | key: placeholder-key-A
+✅ Loaded Node B: nodeB (guardian-node-B) at 127.0.0.1:50052 | key: placeholder-key-B
+✅ Loaded Node C: nodeC (guardian-node-C) at 127.0.0.1:50053 | key: placeholder-key-C
+
+ Starting inter-node mock communication...
+
+🔎 Verifying Nebula Installation...
+✅ Nebula binary found
+✅ Nebula version: Version: 1.9.5
+✅ Nebula daemon responding
+ℹ️ CA already exists.
+✅ Circle membership validated for nodeA
+ℹ️ Certificate and key already exist for nodeA
+ℹ️ Nebula config already exists.
+🚀 Nebula Installation Verified Successfully
+
+🚀 Starting Nebula daemon...
+✅ Nebula daemon started successfully.
+🌐 Nebula mesh daemon started successfully.
+🩺 Performing Nebula health check...
+--- Nebula Health Report ---
+CA Cert: true
+CA Key: true
+Node Cert: true
+Node Key: true
+Daemon Running: true
+Cert Days Remaining: 348
+-----------------------------
+🔗 Initializing Circle of Trust (CoT) transport-agnostic layer...
+🔑 CoT Identity: nodeA(0fe1ab7c9f6e22cd) (0fe1ab7c9f6e22cd86c9cdcd8e45169f03f577cb00785772bb0333cdcd4c2978)
+📡 Detected 3 network interfaces:
+   wlan0 → WiFi [DOWN] "no-ip"
+   wlan1 → WiFi [UP] "192.168.56.1"
+   wwan0 → Cellular [DOWN] "no-ip"
+🚛 Transport Registry: [WiFi(pri=20, avail=true)]
+✅ CoT layer initialized successfully.
+CoT Router Status:
+  Local: nodeA(0fe1ab7c9f6e22cd)
+  Transports: [WiFi(pri=20, avail=true)]
+  Sessions: 0 total, 0 active, 0 suspended
+  Circle guardian-circle-alpha: 1 members (0 verified)
+🛰️ Initializing P2P Discovery and Attestation Services...
+✅ P2P Discovery and Attestation background services started.
+⚠️ No signed policy found — running with last active policy
+🛰️ Attestation Service background task started (listening for new peers)
+🛰️ Spawning attestation listener on port 50151
+🔒 Attestation listener started on 127.0.0.1:50151
+🔐 TLS certificate ready at /var/lib/sgx-guardian/sgx-agent/device_nodeA_cert.der
+🔥gRPC TLS Server is initializing at 127.0.0.1:50051
+🔐 TLS Identity + CA loaded successfully. Starting secure gRPC server...
+🔐 CertService bootstrap server starting on 0.0.0.0:50061 (plaintext)
+✅ mDNS service registered for nodeA
+💡 [Simulation Mode] Using static peer list for discovery testing.
+Peer discovery listener active (UDP mDNS)
+✅ Nebula certificate healthy (348 days remaining)
+^C
+ shutting down gracefully...
+🛑 Node nodeA shutting down gracefully.
+root@imx8mp-var-dart:/# ./sgx-pa-cli pcr-baseline-create                                                                                                                                   
+=== Create PCR Golden Baseline ===
+
+  Node: nodeA
+
+✅ Baseline created and SIGNED at /etc/sgx-guardian/pcr_nodeA_baseline.json
+   Device UID: 040050011f595a6179b9b204783ebae51090
+   Key version: 1
+root@imx8mp-var-dart:/# ./sgx_guardian_client nodeA
+ SGX Guardian Client Starting...
+  Existing DKP found (v1) — loading from SE050
+  Using existing device identity key (0x20000010)
+DKP initialized via SE050 hardware
+  Existing DKP found (v1) — loading from SE050
+  Using existing device identity key (0x20000010)
+  Secure Element detected: SE050
+  Signing provider: SE050 hardware (ECDSA-P256)
+  RNG source: SE050 TRNG
+Node Identity Initialized | Public Key Prefix: BJdHWlQezF6uhdPhcGHu...
+Created local attestation evidence (nonce=a92a03f4..)
+✅ Attestation verified successfully.
+✅ Local attestation evidence verified successfully.
+
+  Verifying secure boot chain...
+  Secure Boot Chain:
+    HAB:           ✅ Enabled
+    Device state:  🔒 CLOSED (enforcing)
+    HAB events:    ✅ None
+    Device model:  Variscite VAR-SOM-MX8M-PLUS on Symphony-Board
+    Binary hash:   33996410629f70f4...
+    Boot chain:    ✅ INTACT
+
+  Measuring platform integrity (PCR)...
+  PCR mode: Hardware (board)
+    PCR0: Boot chain state → 7b43a793adef...
+    PCR1: Device tree → d8ac44d1d0c7...
+    PCR2: Kernel → 9d3b762929a2...
+    PCR3: /bin/sh → 38e2b8acb9f9...
+    PCR3: /sbin/init → ece86283bf02...
+    PCR3: /usr/bin/ssscli → 4659b4c5f5cd...
+    PCR4: Guardian config → fb2bba8b33ff...
+  PCR Measurements:
+    PCR0 [✅]: d559d05f0a954bd9..  (BIOS/Bootloader)
+    PCR1 [✅]: bae8a7a76fc99554..  (Firmware/DTB)
+    PCR2 [✅]: d05dabd586787b0a..  (Kernel)
+    PCR3 [✅]: 48b8c39bec0572df..  (RootFS)
+    PCR4 [✅]: e28f9ea9f4d0b852..  (Configuration)
+    Composite: 8034ce34a0af05d9...
+  Platform integrity: ✅ PASS
+  PCR composite signed by DKP (v1) ✅
+  PCR snapshot → /var/lib/sgx-guardian/pcr/nodeA_current.json
+  PCR baseline: ✅ ALL MATCH
+
+ Loading node configurations...
+✅ Loaded Node A: nodeA (guardian-node-A) at 127.0.0.1:50051 | key: placeholder-key-A
+✅ Loaded Node B: nodeB (guardian-node-B) at 127.0.0.1:50052 | key: placeholder-key-B
+✅ Loaded Node C: nodeC (guardian-node-C) at 127.0.0.1:50053 | key: placeholder-key-C
+
+ Starting inter-node mock communication...
+
+🔎 Verifying Nebula Installation...
+✅ Nebula binary found
+✅ Nebula version: Version: 1.9.5
+✅ Nebula daemon responding
+ℹ️ CA already exists.
+✅ Circle membership validated for nodeA
+ℹ️ Certificate and key already exist for nodeA
+ℹ️ Nebula config already exists.
+🚀 Nebula Installation Verified Successfully
+
+🚀 Starting Nebula daemon...
+✅ Nebula daemon started successfully.
+🌐 Nebula mesh daemon started successfully.
+🩺 Performing Nebula health check...
+--- Nebula Health Report ---
+CA Cert: true
+CA Key: true
+Node Cert: true
+Node Key: true
+Daemon Running: true
+Cert Days Remaining: 348
+-----------------------------
+🔗 Initializing Circle of Trust (CoT) transport-agnostic layer...
+🔑 CoT Identity: nodeA(0fe1ab7c9f6e22cd) (0fe1ab7c9f6e22cd86c9cdcd8e45169f03f577cb00785772bb0333cdcd4c2978)
+📡 Detected 3 network interfaces:
+   wlan0 → WiFi [DOWN] "no-ip"
+   wlan1 → WiFi [UP] "192.168.56.1"
+   wwan0 → Cellular [DOWN] "no-ip"
+🚛 Transport Registry: [WiFi(pri=20, avail=true)]
+✅ CoT layer initialized successfully.
+CoT Router Status:
+  Local: nodeA(0fe1ab7c9f6e22cd)
+  Transports: [WiFi(pri=20, avail=true)]
+  Sessions: 0 total, 0 active, 0 suspended
+  Circle guardian-circle-alpha: 1 members (0 verified)
+🛰️ Initializing P2P Discovery and Attestation Services...
+✅ P2P Discovery and Attestation background services started.
+🛰️ Attestation Service background task started (listening for new peers)
+⚠️ No signed policy found — running with last active policy
+🛰️ Spawning attestation listener on port 50151
+🔐 TLS certificate ready at /var/lib/sgx-guardian/sgx-agent/device_nodeA_cert.der
+🔒 Attestation listener started on 127.0.0.1:50151
+🔥gRPC TLS Server is initializing at 127.0.0.1:50051
+🔐 TLS Identity + CA loaded successfully. Starting secure gRPC server...
+🔐 CertService bootstrap server starting on 0.0.0.0:50061 (plaintext)
+✅ mDNS service registered for nodeA
+💡 [Simulation Mode] Using static peer list for discovery testing.
+Peer discovery listener active (UDP mDNS)
+✅ Nebula certificate healthy (348 days remaining)
+^C
+ shutting down gracefully...
+🛑 Node nodeA shutting down gracefully.
+root@imx8mp-var-dart:/# cat /var/lib/sgx-guardian/boot/nodeA_chain_status.json
+{
+  "hab_enabled": true,
+  "device_closed": true,
+  "hab_events_found": false,
+  "hab_description": "HAB status: Board operational (HAB verification tools not available in userspace — verify via U-Boot)",
+  "kernel_version": "Linux version 6.1.36-imx8mp+g662f7a7a2748 (oe-user@oe-host) (aarch64-poky-linux-gcc (GCC) 12.3.0, GNU ld (GNU Binutils) 2.40.0.20230620) #1 SMP PREEMPT Fri Feb 21 03:52:29 UTC 2025",
+  "device_model": "Variscite VAR-SOM-MX8M-PLUS on Symphony-Board",
+  "guardian_binary_hash": "33996410629f70f467f4d5a55bda05d4ea82aef15f8da4cb1118427bf4a5a563",
+  "boot_chain_intact": true
+}root@imx8mp-var-dart:/# python3 -c "
+> import json
+> s=json.load(open('/var/lib/sgx-guardian/pcr/nodeA_current.json'))
+> old='4d575c984b4fa464204be9fed24ff2b2887ff5fb3fd66217284db3866191e8ea'
+> print('Old PCR0:', old[:20]+'...')
+> print('New PCR0:', s['pcr_values'][0][:20]+'...')
+> print('Changed:', '✅ YES' if old != s['pcr_values'][0] else '❌ NO')
+> "
+Old PCR0: 4d575c984b4fa464204b...
+New PCR0: d559d05f0a954bd9b11c...
+Changed: ✅ YES
+root@imx8mp-var-dart:/# ./sgx-pa-cli pcr-baseline-create
+=== Create PCR Golden Baseline ===
+
+  Node: nodeA
+
+✅ Baseline created and SIGNED at /etc/sgx-guardian/pcr_nodeA_baseline.json
+   Device UID: 040050011f595a6179b9b204783ebae51090
+   Key version: 1
+root@imx8mp-var-dart:/# ./sgx-pa-cli pcr-baseline-create
+=== Create PCR Golden Baseline ===
+
+  Node: nodeA
+
+✅ Baseline created and SIGNED at /etc/sgx-guardian/pcr_nodeA_baseline.json
+   Device UID: 040050011f595a6179b9b204783ebae51090
+   Key version: 1
+root@imx8mp-var-dart:/# ./sgx-pa-cli pcr-baseline-verify
+=== Verify PCR Baseline ===
+
+  Baseline signature: present
+  PCR0 [BIOS/Bootloader]: ✅ MATCH
+  PCR1 [Firmware/DTB]: ✅ MATCH
+  PCR2 [Kernel]: ✅ MATCH
+  PCR3 [RootFS]: ✅ MATCH
+  PCR4 [Configuration]: ✅ MATCH
+
+  Result: ✅ ALL PCRs MATCH — device integrity verified
+root@imx8mp-var-dart:/# ./sgx_guardian_client nodeA &
+[1] 3564704
+ SGX Guardian Client Starting...
+root@imx8mp-var-dart:/#   Existing DKP found (v1) — loading from SE050
+  Using existing device identity key (0x20000010)
+sleep 10; kill %1
+DKP initialized via SE050 hardware
+  Existing DKP found (v1) — loading from SE050
+  Using existing device identity key (0x20000010)
+  Secure Element detected: SE050
+  Signing provider: SE050 hardware (ECDSA-P256)
+  RNG source: SE050 TRNG
+Node Identity Initialized | Public Key Prefix: BJdHWlQezF6uhdPhcGHu...
+Created local attestation evidence (nonce=c5d5f5fb..)
+✅ Attestation verified successfully.
+✅ Local attestation evidence verified successfully.
+
+  Verifying secure boot chain...
+  Secure Boot Chain:
+    HAB:           ✅ Enabled
+    Device state:  🔒 CLOSED (enforcing)
+    HAB events:    ✅ None
+    Device model:  Variscite VAR-SOM-MX8M-PLUS on Symphony-Board
+    Binary hash:   33996410629f70f4...
+    Boot chain:    ✅ INTACT
+
+  Measuring platform integrity (PCR)...
+  PCR mode: Hardware (board)
+    PCR0: Boot chain state → 7b43a793adef...
+    PCR1: Device tree → d8ac44d1d0c7...
+    PCR2: Kernel → 9d3b762929a2...
+    PCR3: /bin/sh → 38e2b8acb9f9...
+    PCR3: /sbin/init → ece86283bf02...
+    PCR3: /usr/bin/ssscli → 4659b4c5f5cd...
+    PCR4: Guardian config → fb2bba8b33ff...
+  PCR Measurements:
+    PCR0 [✅]: d559d05f0a954bd9..  (BIOS/Bootloader)
+    PCR1 [✅]: bae8a7a76fc99554..  (Firmware/DTB)
+    PCR2 [✅]: d05dabd586787b0a..  (Kernel)
+    PCR3 [✅]: 48b8c39bec0572df..  (RootFS)
+    PCR4 [✅]: e28f9ea9f4d0b852..  (Configuration)
+    Composite: 8034ce34a0af05d9...
+  Platform integrity: ✅ PASS
+  PCR composite signed by DKP (v1) ✅
+  PCR snapshot → /var/lib/sgx-guardian/pcr/nodeA_current.json
+  PCR baseline: ✅ ALL MATCH
+
+ Loading node configurations...
+✅ Loaded Node A: nodeA (guardian-node-A) at 127.0.0.1:50051 | key: placeholder-key-A
+✅ Loaded Node B: nodeB (guardian-node-B) at 127.0.0.1:50052 | key: placeholder-key-B
+✅ Loaded Node C: nodeC (guardian-node-C) at 127.0.0.1:50053 | key: placeholder-key-C
+
+ Starting inter-node mock communication...
+
+🔎 Verifying Nebula Installation...
+✅ Nebula binary found
+✅ Nebula version: Version: 1.9.5
+✅ Nebula daemon responding
+ℹ️ CA already exists.
+✅ Circle membership validated for nodeA
+ℹ️ Certificate and key already exist for nodeA
+ℹ️ Nebula config already exists.
+🚀 Nebula Installation Verified Successfully
+
+🚀 Starting Nebula daemon...
+✅ Nebula daemon started successfully.
+🌐 Nebula mesh daemon started successfully.
+🩺 Performing Nebula health check...
+--- Nebula Health Report ---
+CA Cert: true
+CA Key: true
+Node Cert: true
+Node Key: true
+Daemon Running: true
+Cert Days Remaining: 348
+-----------------------------
+🔗 Initializing Circle of Trust (CoT) transport-agnostic layer...
+🔑 CoT Identity: nodeA(0fe1ab7c9f6e22cd) (0fe1ab7c9f6e22cd86c9cdcd8e45169f03f577cb00785772bb0333cdcd4c2978)
+📡 Detected 3 network interfaces:
+   wlan0 → WiFi [DOWN] "no-ip"
+   wlan1 → WiFi [UP] "192.168.56.1"
+   wwan0 → Cellular [DOWN] "no-ip"
+🚛 Transport Registry: [WiFi(pri=20, avail=true)]
+✅ CoT layer initialized successfully.
+CoT Router Status:
+  Local: nodeA(0fe1ab7c9f6e22cd)
+  Transports: [WiFi(pri=20, avail=true)]
+  Sessions: 0 total, 0 active, 0 suspended
+  Circle guardian-circle-alpha: 1 members (0 verified)
+🛰️ Initializing P2P Discovery and Attestation Services...
+✅ P2P Discovery and Attestation background services started.
+🛰️ Attestation Service background task started (listening for new peers)
+⚠️ No signed policy found — running with last active policy
+🛰️ Spawning attestation listener on port 50151
+🔐 TLS certificate ready at /var/lib/sgx-guardian/sgx-agent/device_nodeA_cert.der
+🔒 Attestation listener started on 127.0.0.1:50151
+🔐 CertService bootstrap server starting on 0.0.0.0:50061 (plaintext)
+🔥gRPC TLS Server is initializing at 127.0.0.1:50051
+🔐 TLS Identity + CA loaded successfully. Starting secure gRPC server...
+✅ mDNS service registered for nodeA
+💡 [Simulation Mode] Using static peer list for discovery testing.
+Peer discovery listener active (UDP mDNS)
+✅ Nebula certificate healthy (348 days remaining)
+root@imx8mp-var-dart:/# cp /var/lib/sgx-guardian/pcr/nodeA_current.json /tmp/run1.json
+[1]+  Terminated              ./sgx_guardian_client nodeA
+root@imx8mp-var-dart:/# cp /var/lib/sgx-guardian/pcr/nodeA_current.json /tmp/run1.json
+root@imx8mp-var-dart:/# ./sgx_guardian_client nodeA &                                 
+[1] 3566475
+ SGX Guardian Client Starting...
+root@imx8mp-var-dart:/# sleep 10; kill %1  Existing DKP found (v1) — loading from SE050
+  Using existing device identity key (0x20000010)
+DKP initialized via SE050 hardware
+  Existing DKP found (v1) — loading from SE050
+  Using existing device identity key (0x20000010)
+  Secure Element detected: SE050
+  Signing provider: SE050 hardware (ECDSA-P256)
+  RNG source: SE050 TRNG
+Node Identity Initialized | Public Key Prefix: BJdHWlQezF6uhdPhcGHu...
+Created local attestation evidence (nonce=1106011c..)
+✅ Attestation verified successfully.
+✅ Local attestation evidence verified successfully.
+
+  Verifying secure boot chain...
+  Secure Boot Chain:
+    HAB:           ✅ Enabled
+    Device state:  🔒 CLOSED (enforcing)
+    HAB events:    ✅ None
+    Device model:  Variscite VAR-SOM-MX8M-PLUS on Symphony-Board
+    Binary hash:   33996410629f70f4...
+    Boot chain:    ✅ INTACT
+
+  Measuring platform integrity (PCR)...
+  PCR mode: Hardware (board)
+    PCR0: Boot chain state → 7b43a793adef...
+    PCR1: Device tree → d8ac44d1d0c7...
+    PCR2: Kernel → 9d3b762929a2...
+    PCR3: /bin/sh → 38e2b8acb9f9...
+    PCR3: /sbin/init → ece86283bf02...
+    PCR3: /usr/bin/ssscli → 4659b4c5f5cd...
+    PCR4: Guardian config → fb2bba8b33ff...
+  PCR Measurements:
+    PCR0 [✅]: d559d05f0a954bd9..  (BIOS/Bootloader)
+    PCR1 [✅]: bae8a7a76fc99554..  (Firmware/DTB)
+    PCR2 [✅]: d05dabd586787b0a..  (Kernel)
+    PCR3 [✅]: 48b8c39bec0572df..  (RootFS)
+    PCR4 [✅]: e28f9ea9f4d0b852..  (Configuration)
+    Composite: 8034ce34a0af05d9...
+  Platform integrity: ✅ PASS
+  PCR composite signed by DKP (v1) ✅
+  PCR snapshot → /var/lib/sgx-guardian/pcr/nodeA_current.json
+  PCR baseline: ✅ ALL MATCH
+
+ Loading node configurations...
+✅ Loaded Node A: nodeA (guardian-node-A) at 127.0.0.1:50051 | key: placeholder-key-A
+✅ Loaded Node B: nodeB (guardian-node-B) at 127.0.0.1:50052 | key: placeholder-key-B
+✅ Loaded Node C: nodeC (guardian-node-C) at 127.0.0.1:50053 | key: placeholder-key-C
+
+ Starting inter-node mock communication...
+
+🔎 Verifying Nebula Installation...
+✅ Nebula binary found
+✅ Nebula version: Version: 1.9.5
+✅ Nebula daemon responding
+ℹ️ CA already exists.
+✅ Circle membership validated for nodeA
+ℹ️ Certificate and key already exist for nodeA
+ℹ️ Nebula config already exists.
+🚀 Nebula Installation Verified Successfully
+
+🚀 Starting Nebula daemon...
+✅ Nebula daemon started successfully.
+🌐 Nebula mesh daemon started successfully.
+🩺 Performing Nebula health check...
+--- Nebula Health Report ---
+CA Cert: true
+CA Key: true
+Node Cert: true
+Node Key: true
+Daemon Running: true
+Cert Days Remaining: 348
+-----------------------------
+🔗 Initializing Circle of Trust (CoT) transport-agnostic layer...
+🔑 CoT Identity: nodeA(0fe1ab7c9f6e22cd) (0fe1ab7c9f6e22cd86c9cdcd8e45169f03f577cb00785772bb0333cdcd4c2978)
+📡 Detected 3 network interfaces:
+   wlan0 → WiFi [DOWN] "no-ip"
+   wlan1 → WiFi [UP] "192.168.56.1"
+   wwan0 → Cellular [DOWN] "no-ip"
+🚛 Transport Registry: [WiFi(pri=20, avail=true)]
+✅ CoT layer initialized successfully.
+CoT Router Status:
+  Local: nodeA(0fe1ab7c9f6e22cd)
+  Transports: [WiFi(pri=20, avail=true)]
+  Sessions: 0 total, 0 active, 0 suspended
+  Circle guardian-circle-alpha: 1 members (0 verified)
+🛰️ Initializing P2P Discovery and Attestation Services...
+✅ P2P Discovery and Attestation background services started.
+🛰️ Attestation Service background task started (listening for new peers)
+⚠️ No signed policy found — running with last active policy
+🛰️ Spawning attestation listener on port 50151
+🔐 TLS certificate ready at /var/lib/sgx-guardian/sgx-agent/device_nodeA_cert.der
+🔒 Attestation listener started on 127.0.0.1:50151
+🔥gRPC TLS Server is initializing at 127.0.0.1:50051
+🔐 TLS Identity + CA loaded successfully. Starting secure gRPC server...
+🔐 CertService bootstrap server starting on 0.0.0.0:50061 (plaintext)
+✅ mDNS service registered for nodeA
+💡 [Simulation Mode] Using static peer list for discovery testing.
+Peer discovery listener active (UDP mDNS)
+✅ Nebula certificate healthy (348 days remaining)
+^C
+root@imx8mp-var-dart:/# cp /var/lib/sgx-guardian/pcr/nodeA_current.json /tmp/run2.json
+root@imx8mp-var-dart:/# python3 -c "
+> import json
+> r1=json.load(open('/tmp/run1.json'))
+> r2=json.load(open('/tmp/run2.json'))
+> for i in range(5):
+>     m='✅' if r1['pcr_values'][i]==r2['pcr_values'][i] else '❌'
+>     print(f'PCR{i}: {m}')
+> print('Composite:','✅ MATCH' if r1['composite_digest']==r2['composite_digest'] else '❌')
+> "
+PCR0: ✅
+PCR1: ✅
+PCR2: ✅
+PCR3: ✅
+PCR4: ✅
+Composite: ✅ MATCH
+root@imx8mp-var-dart:/# echo "# tampered" >> /etc/sgx-guardian/nodeA.yaml
+root@imx8mp-var-dart:/# ./sgx_guardian_client nodeA 2>&1 | grep "MISMATCH"
+  ⚠️ PCR MISMATCH detected:
+
+root@imx8mp-var-dart:/# 
+root@imx8mp-var-dart:/# sed -i '/# tampered/d' /etc/sgx-guardian/nodeA.yaml
+root@imx8mp-var-dart:/# ./sgx_guardian_client nodeA 2>&1 | grep "baseline"
+
+  PCR baseline: ✅ ALL MATCH
+root@imx8mp-var-dart:/# 
+root@imx8mp-var-dart:/# sed -i '/# tampered/d' /etc/sgx-guardian/nodeA.yaml
+root@imx8mp-var-dart:/# ^C                                                
+root@imx8mp-var-dart:/# ./sgx-pa-cli boot-status
+=== Secure Boot Chain Status ===
+
+  Source: /var/lib/sgx-guardian/boot/nodeA_chain_status.json
+
+  HAB Enabled:      ✅ Yes
+  Device Closed:    🔒 Yes (enforcing)
+  HAB Events:       ✅ None
+  Device Model:     Variscite VAR-SOM-MX8M-PLUS on Symphony-Board
+  Boot Chain:       ✅ INTACT
+  Binary Hash:      33996410629f70f4...
+
+  Trust Chain:
+    [Boot ROM] → [HAB verifies U-Boot] → [U-Boot verifies Kernel]
+    → [Kernel loads verified RootFS] → [Guardian daemon] → [SE050 signs PCR]
+root@imx8mp-var-dart:/# python3 -c "
+> import json
+> s=json.load(open('/var/lib/sgx-guardian/boot/nodeA_chain_status.json'))
+> print('From daemon:', s.get('guardian_binary_hash','N/A')[:20]+'...')
+> "
+From daemon: 33996410629f70f467f4...
+root@imx8mp-var-dart:/# sha256sum /root/sgx_guardian_client
+sha256sum: /root/sgx_guardian_client: No such file or directory
+root@imx8mp-var-dart:/# [1367196.336760] systemd-journald[188]: Data hash table of /run/log/journal/3be6ca819dec4cd789c609898cbf4710/system.journal has a fill level at 75.0 (10923 of 14563 items, 8388608 
+file size, 767 bytes per hash table item), suggesting rotation.
+[1367196.358096] systemd-journald[188]: /run/log/journal/3be6ca819dec4cd789c609898cbf4710/system.journal: Journal header limits reached or header out-of-date, rotating.
+^C
+root@imx8mp-var-dart:/# sha256sum /sgx_guardian_client
+33996410629f70f467f4d5a55bda05d4ea82aef15f8da4cb1118427bf4a5a563  /sgx_guardian_client
+root@imx8mp-var-dart:/# sha256sum "$(readlink -f /proc/$(pidof sgx_guardian_client)/exe)"
+33996410629f70f467f4d5a55bda05d4ea82aef15f8da4cb1118427bf4a5a563  /sgx_guardian_client
+root@imx8mp-var-dart:/# python3 -c "
+on
+s=json.load(open('/var/lib/sgx-guardian/boot/nodeA_chain_status.json'))
+print('From daemon:', s.get('guardian_binary_hash','N/A')[:20]+'...')
+"> import json
+> s=json.load(open('/var/lib/sgx-guardian/boot/nodeA_chain_status.json'))
+> print('From daemon:', s.get('guardian_binary_hash','N/A')[:20]+'...')
+> "
+From daemon: 33996410629f70f467f4...
+root@imx8mp-var-dart:/# sha256sum /sgx_guardian_client
+33996410629f70f467f4d5a55bda05d4ea82aef15f8da4cb1118427bf4a5a563  /sgx_guardian_client
+root@imx8mp-var-dart:/# ✅ Nebula certificate healthy (348 days remaining)
+^C
+root@imx8mp-var-dart:/# ls -lh
+total 17M
+drwxr-xr-x   2 root root 4.0K Mar  9  2018 bin
+drwxr-xr-x   2 root root 4.0K May 10  2025 boot
+drwxr-xr-x   6 root root 4.0K May 13  2025 data
+drwxr-xr-x  18 root root 4.2K Mar  9 20:40 dev
+drwxr-xr-x  73 root root 4.0K Mar 10 11:03 etc
+drwxr-xr-x   5 root root 4.0K Apr 18  2025 home
+drwxr-xr-x  10 root root 4.0K Mar  9  2018 lib
+drwxr-xr-x   2 root root 4.0K Mar 25 15:46 logs
+drwx------   2 root root  16K Apr 17  2025 lost+found
+drwxr-xr-x   2 root root 4.0K Apr 18  2025 luks_data
+drwxr-xr-x   2 root root 4.0K Mar  9  2018 media
+drwxr-xr-x   2 root root 4.0K Mar  9  2018 mnt
+drwxr-xr-x   6 root root 4.0K Apr 18  2025 opt
+dr-xr-xr-x 230 root root    0 Jan  1  1970 proc
+drwx------   3 root root 4.0K Mar  3  2023 root
+drwxr-xr-x  23 root root  840 Mar  9 20:43 run
+drwxr-xr-x   2 root root 4.0K Mar  9  2018 sbin
+drwxr-xr-x   2 root root 4.0K Mar 25 15:46 sgx-agent
+-rwxr-xr-x   1 root root 2.4M Mar 25 14:40 sgx-pa-cli
+-rwxr-xr-x   1 root root  15M Mar 25 14:40 sgx_guardian_client
+drwxr-xr-x   2 root root 4.0K Mar  9  2018 srv
+dr-xr-xr-x  13 root root    0 Jan  1  1970 sys
+drwxrwxrwt   6 root root  380 Mar 25 16:05 tmp
+drwxr-xr-x  41 root root 4.0K Mar  9  2018 unit_tests
+drwxr-xr-x  12 root root 4.0K Mar  9  2018 usr
+drwxr-xr-x   9 root root 4.0K Mar  3  2023 var
+drwxr-xr-x   6 root root 4.0K Mar  9  2018 www
+root@imx8mp-var-dart:/# cd tmp
+root@imx8mp-var-dart:/tmp# ls -lh
+total 44K
+-rw-rw-r-- 1 root root 3.5K Mar 25 08:52 devmem2.c
+-rw-r--r-- 1 root root   32 Mar 20 09:07 guardian_se_sign_0594768f_in.bin
+-rw-r--r-- 1 root root   32 Mar 20 09:07 guardian_se_sign_1a269185_in.bin
+-rw-r--r-- 1 root root   32 Mar 20 08:50 guardian_se_sign_985c1115_in.bin
+-rw-r--r-- 1 root root   70 Mar 20 08:50 guardian_se_sign_985c1115_out.bin
+-rw-r--r-- 1 root root   70 Mar 23 17:06 pcr_sig.bin
+-rw-r--r-- 1 root root  887 Mar 25 16:03 run1.json
+-rw-r--r-- 1 root root  887 Mar 25 16:04 run2.json
+-rw-r--r-- 1 root root  160 Mar 23 17:26 signed_data.bin
+srw-rw-rw- 1 root root    0 Mar  9 20:40 sockinstctrl
+srw-rw-rw- 1 root root    0 Mar  9 20:40 swupdateprog
+drwx------ 3 root root   60 Mar  9 20:40 systemd-private-f4b54a2bd57f4b53b6b24fab81f76943-ModemManager.service-KwR92T
+drwx------ 3 root root   60 Mar  9 20:40 systemd-private-f4b54a2bd57f4b53b6b24fab81f76943-systemd-logind.service-ep7hiK
+drwx------ 3 root root   60 Mar  3  2023 systemd-private-f4b54a2bd57f4b53b6b24fab81f76943-systemd-resolved.service-A19Nti
+drwx------ 3 root root   60 Mar  3  2023 systemd-private-f4b54a2bd57f4b53b6b24fab81f76943-systemd-timesyncd.service-WPVeEY
+-rw-r--r-- 1 root root   91 Mar 23 17:05 verify_pub.der
+-rw-r--r-- 1 root root  178 Mar 23 17:25 verify_pub.pem
+root@imx8mp-var-dart:/tmp# chmod +x /tmp/devmem2  
+chmod: cannot access '/tmp/devmem2': No such file or directory
+root@imx8mp-var-dart:/tmp# chmod +x devmem2                                                                                                                                                                 
+chmod: cannot access 'devmem2': No such file or directory
+root@imx8mp-var-dart:/tmp# cd ..
+root@imx8mp-var-dart:/# reboot
+root@imx8mp-var-dart:/#          Stopping Session c3 of User root...
+[  OK  ] Removed slice Slice /system/modprobe.
+[  OK  ] Stopped target Graphical Interface.
+[  OK  ] Stopped target Multi-User System.
+[  OK  ] Stopped target Login Prompts.
+[  OK  ] Stopped target RPC Port Mapper.
+[  OK  ] Stopped target Timer Units.
+[  OK  ] Stopped Daily rotation of log files.
+[  OK  ] Stopped Daily Cleanup of Temporary Directories.
+[  OK  ] Stopped target System Time Synchronized.
+[  OK  ] Stopped target System Time Set.
+[  OK  ] Closed Load/Save RF Kill Switch Status /dev/rfkill Watch.
+         Stopping Modem Manager...
+         Stopping Cervais ARMIA API Service...
+         Stopping Job spooling tools...
+         Stopping Avahi mDNS/DNS-SD Stack...
+         Stopping containerd container runtime...
+         Stopping Periodic Command Scheduler...
+         Stopping Defined Networking client daemon...
+         Stopping DNS forwarder and DHCP server...
+         Stopping Start evtest for keys event1 input device...
+         Stopping Nebula overlay networking tool...
+         Stopping NFS status monitor for NFSv2/3 locking....
+         Stopping Network Time Service...
+         Stopping Bluetooth OBEX service...
+         Stopping Telephony service...
+         Stopping Serial Getty on ttymxc1...
+         Stopping SWUpdate daemon...
+         Stopping System Logging Service...
+[  OK  ] Stopped File System Check on /dev/mmcblk2p4.
+         Stopping Load/Save OS Random Seed...
+         Stopping Target Communication Framework agent...
+         Stopping TEE Supplicant...
+[  OK  ] Stopped OpenSSH Key Generation.
+[  OK  ] Stopped Modem Manager.
+[  OK  ] Stopped Job spooling tools.
+[  OK  ] Stopped Avahi mDNS/DNS-SD Stack.
+[  OK  ] Stopped Periodic Command Scheduler.
+[  OK  ] Stopped Defined Networking client daemon.
+[  OK  ] Stopped Start evtest for keys event1 input device.
+[  OK  ] Stopped Telephony service.
+[  OK  ] Stopped System Logging Service.
+[  OK  ] Stopped TEE Supplicant.
+[  OK  ] Stopped Bluetooth OBEX service.
+[  OK  ] Stopped SWUpdate daemon.
+[  OK  ] Stopped NFS status monitor for NFSv2/3 locking..
+[  OK  ] Stopped Network Time Service.
+[  OK  ] Stopped Target Communication Framework agent.
+[  OK  ] Stopped containerd container runtime.
+[  OK  ] Stopped Nebula overlay networking tool.
+[  OK  ] Stopped Cervais ARMIA API Service.
+[  OK  ] Stopped Serial Getty on ttymxc1.
+[  OK  ] Stopped DNS forwarder and DHCP server.
+[  OK  ] Stopped Load/Save OS Random Seed.
+[  OK  ] Stopped Session c3 of User root.
+[  OK  ] Removed slice Slice /system/serial-getty.
+[  OK  ] Stopped target Network is Online.
+[  OK  ] Stopped target Host and Network Name Lookups.
+[  OK  ] Stopped Network Manager Wait Online.
+[  OK  ] Stopped /etc/rc.local Compatibility.
+         Stopping User Login Management...
+         Stopping Permit User Sessions...
+         Stopping User Manager for UID 0...
+[  OK  ] Stopped Permit User Sessions.
+[  OK  ] Stopped User Manager for UID 0.
+[  OK  ] Stopped target Network.
+[  OK  ] Stopped target Remote File Systems.
+         Stopping Network Manager...
+         Stopping User Runtime Directory /run/user/0...
+         Stopping Variscite WIFI setup service...
+         Stopping WPA supplicant...
+[  OK  ] Unmounted /run/user/0.
+[  OK  ] Stopped User Runtime Directory /run/user/0.
+[  OK  ] Removed slice User Slice of UID 0.
+[1369959.095128] kauditd_printk_skb: 1 callbacks suppressed
+[1369959.095138] audit: type=1325 audit(1774458872.899:32): table=nm-shared-wlan1:2 family=2 entries=2 op=nft_unregister_table pid=3577829 comm="nft"
+[  OK  ] Stopped 1369959.113980] audit: type=1300 audit(1774458872.899:32): arch=c00000b7 syscall=211 success=yes exit=128 a0=3 a1=ffffe21952d0 a2=0 a3=1 items=0 ppid=721 pid=3577829 auid=4294967295 uid=0
+ gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm="nft" exe="/usr/sbin/nft" key=(null)
+;39mWPA supplicant.
+[1369959.143688] audit: type=1327 audit(1774458872.899:32): proctitle=2F7573722F7362696E2F6E6674002D66002D
+[  OK  ] Stopped User Login Management.
+[  OK  ] Stopped Network Manager.
+[  OK  ] Stopped target Preparation for Network.
+         Stopping D-Bus System Message Bus...
+[  OK  ] Stopped IPv6 Packet Filtering Framework.
+[  OK  ] Stopped IPv4 Packet Filtering Framework.
+[  OK  ] Stopped Generate network units from Kernel command line.
+[  OK  ] Stopped D-Bus System Message Bus.
+[  OK  ] Stopped Variscite WIFI setup service.
+[  OK  ] Stopped target Basic System.
+[  OK  ] Stopped target Path Units.
+[  OK  ] Stopped Dispatch Password …ts to Console Directory Watch.
+[  OK  ] Stopped Forward Password R…uests to Wall Directory Watch.
+[  OK  ] Stopped target Slice Units.
+[  OK  ] Removed slice User and Session Slice.
+[  OK  ] Stopped target Socket Units.
+[  OK  ] Closed Avahi mDNS/DNS-SD Stack Activation Socket.
+[  OK  ] Closed D-Bus System Message Bus Socket.
+[  OK  ] Closed Docker Socket for the API.
+[  OK  ] Closed PC/SC Smart Card Daemon Activation Socket.
+[  OK  ] Closed sshd.socket.
+[  OK  ] Closed SWUpdate socket listener.
+[  OK  ] Closed Syslog Socket.
+[  OK  ] Closed Weston socket.
+[  OK  ] Stopped target System Initialization.
+         Stopping Network Name Resolution...
+[  OK  ] Stopped Apply Kernel Variables.
+         Stopping Network Time Synchronization...
+[  OK  ] Unmounted /run/credentials/systemd-sysctl.service.
+[  OK  ] Stopped Network Name Resolution.
+[  OK  ] Unmounted /run/credentials/systemd-resolved.service.
+[  OK  ] Stopped Network Time Synchronization.
+[  OK  ] Stopped Create Volatile Files and Directories.
+[  OK  ] Stopped target Local File Systems.
+         Unmounting /data...
+[1369960.278829] EXT4-fs (mmcblk2p3): unmounting filesystem.
+         Unmounting /run/credential…temd-tmpfiles-setup.service...
+         Unmounting /run/credential…-tmpfiles-setup-dev.service...
+         Unmounting /run/credential…temd-vconsole-setup.service...
+         Unmounting /run/media/rootfs1-mmcblk2p1...
+[1369960.364489] EXT4-fs (mmcblk2p1): unmounting filesystem.
+         Unmounting Temporary Directory /tmp...
+         Unmounting /var/volatile...
+[  OK  ] Unmounted /data.
+[  OK  ] Unmounted /run/credentials…ystemd-tmpfiles-setup.service.
+[  OK  ] Unmounted /run/credentials…md-tmpfiles-setup-dev.service.
+[  OK  ] Unmounted /run/credentials…ystemd-vconsole-setup.service.
+[  OK  ] Unmounted /run/media/rootfs1-mmcblk2p1.
+[  OK  ] Unmounted Temporary Directory /tmp.
+[  OK  ] Stopped File System Check on /dev/mmcblk2p1.
+[  OK  ] Stopped File System Check on /dev/mmcblk2p3.
+[  OK  ] Removed slice Slice /system/systemd-fsck.
+[  OK  ] Unmounted /var/volatile.
+[  OK  ] Stopped target Preparation for Local File Systems.
+[  OK  ] Stopped target Swaps.
+[  OK  ] Reached target Unmount All Filesystems.
+[  OK  ] Stopped Remount Root and Kernel File Systems.
+[  OK  ] Stopped Create Static Device Nodes in /dev.
+[  OK  ] Reached target System Shutdown.
+[  OK  ] Reached target Late Shutdown Services.
+[  OK  ] Finished System Reboot.
+[  OK  ] Reached target System Reboot.
+[1369960.740952] audit: type=1334 audit(1774458874.543:33): prog-id=6 op=UNLOAD
+[1369960.748091] audit: type=1334 audit(1774458874.543:34): prog-id=5 op=UNLOAD
+[1369960.755269] audit: type=1334 audit(1774458874.551:35): prog-id=4 op=UNLOAD
+[1369960.762450] audit: type=1334 audit(1774458874.551:36): prog-id=3 op=UNLOAD
+[1369960.769589] audit: type=1334 audit(1774458874.563:37): prog-id=12 op=UNLOAD
+[1369960.776778] audit: type=1334 audit(1774458874.563:38): prog-id=11 op=UNLOAD
+[1369960.783965] audit: type=1334 audit(1774458874.567:39): prog-id=8 op=UNLOAD
+[1369960.803069] watchdog: watchdog0: watchdog did not stop!
+[1369960.821073] systemd-shutdown[1]: Using hardware watchdog 'imx2+ watchdog', version 0, device /dev/watchdog0
+[1369960.831065] systemd-shutdown[1]: Watchdog running with a timeout of 1min.
+[1369960.849009] systemd-shutdown[1]: Syncing filesystems and block devices.
+[1369960.859077] systemd-shutdown[1]: Sending SIGTERM to remaining processes...
+[1369960.876076] systemd-journald[188]: Received SIGTERM from PID 1 (systemd-shutdow).
+[1369960.916174] systemd-shutdown[1]: Sending SIGKILL to remaining processes...
+[1369960.931635] systemd-shutdown[1]: Unmounting file systems.
+[1369960.939351] (sd-remount)[3577887]: Remounting '/' read-only with options ''.
+[1369960.962224] EXT4-fs (mmcblk2p2): re-mounted. Quota mode: none.
+[1369961.013698] systemd-shutdown[1]: All filesystems unmounted.
+[1369961.019590] systemd-shutdown[1]: Deactivating swaps.
+[1369961.024879] systemd-shutdown[1]: All swaps deactivated.
+[1369961.030330] systemd-shutdown[1]: Detaching loop devices.
+[1369961.038067] systemd-shutdown[1]: All loop devices detached.
+[1369961.043840] systemd-shutdown[1]: Stopping MD devices.
+[1369961.049331] systemd-shutdown[1]: All MD devices stopped.
+[1369961.054915] systemd-shutdown[1]: Detaching DM devices.
+[1369961.060451] systemd-shutdown[1]: All DM devices detached.
+[1369961.066035] systemd-shutdown[1]: All filesystems, swaps, loop devices, MD devices and DM devices detached.
+[1369961.075885] watchdog: watchdog0: watchdog did not stop!
+[1369961.086239] systemd-shutdown[1]: Syncing filesystems and block devices.
+[1369961.093170] systemd-shutdown[1]: Rebooting.
+[1369961.097548] kvm: exiting hardware virtualization
+[1369961.133433] imx2-wdt 30280000.watchdog: Device shutdown: Expect reboot!
+[1369961.140712] reboot: Restarting system
+
+U-Boot SPL 2023.04-lf_v2023.04_var02+gf3824329202 (Dec 23 2024 - 07:01:02 +0000)
+SEC0:  RNG instantiated
+Normal Boot
+Trying to boot from BOOTROM
+Boot Stage: Primary boot
+image offset 0x8000, pagesize 0x200, ivt offset 0x0
+hab fuse not enabled
+
+Authenticate image from DDR location 0x401fadc0...
+
+
+U-Boot 2023.04-lf_v2023.04_var02+gf3824329202 (Dec 23 2024 - 07:01:02 +0000)
+
+CPU:   i.MX8MP[8] rev1.1 1800 MHz (running at 1200 MHz)
+CPU:   Commercial temperature grade (0C to 95C) at 70C
+Reset cause: POR
+Model: Variscite VAR-SOM-MX8M-PLUS on Symphony-Board
+DRAM:  4 GiB
+extcon_ptn5150_init: Can't find device id=0x3d
+extcon_ptn5150_setup: port init failed, err=-19
+Core:  201 devices, 25 uclasses, devicetree: separate
+MMC:   FSL_SDHC: 1, FSL_SDHC: 2
+Loading Environment from MMC... OK
+In:    serial
+Out:   serial
+Err:   serial
+SEC0:  RNG instantiated
+switch to partitions #0, OK
+mmc2(part 0) is current device
+
+Part number: VSM-MX8MP-A24
+Assembly: AS412225208
+Production date: 2024 Dec 10
+Serial Number: f8:dc:7a:f3:a2:52
+SOM revision: 2.0
+flash target is MMC:2
+Net:   No ethernet found.
+Fastboot: Normal
+Normal Boot
+Hit any key to stop autoboot:  0 
+Running BSP bootcmd ...
+switch to partitions #0, OK
+mmc2(part 0) is current device
+Failed to load '/boot/boot.scr'
+Failed to load '/boot/uEnv.txt'
+13731191 bytes read in 43 ms (304.5 MiB/s)
+Uncompressed size: 34871648 = 0x2141960
+Booting from mmc ...
+fdt_file=imx8mp-var-som-symphony.dtb
+75031 bytes read in 2 ms (35.8 MiB/s)
+hab fuse not enabled
+
+Authenticate image from DDR location 0x40480000...
+
+Secure boot disabled
+
+HAB Configuration: 0xf0, HAB State: 0x66
+No HAB Events Found!
+
+Moving Image from 0x40480000 to 0x40600000, end=42740000
+## Flattened Device Tree blob at 43000000
+   Booting using the fdt blob at 0x43000000
+Working FDT set to 43000000
+   Using Device Tree in place at 0000000043000000, end 0000000043015516
+Working FDT set to 43000000
+
+Starting kernel ...
+
+[    0.000000] Booting Linux on physical CPU 0x0000000000 [0x410fd034]
+[    0.000000] Linux version 6.1.36-imx8mp+g662f7a7a2748 (oe-user@oe-host) (aarch64-poky-linux-gcc (GCC) 12.3.0, GNU ld (GNU Binutils) 2.40.0.20230620) #1 SMP PREEMPT Fri Feb 21 03:52:29 UTC 2025
+[    0.000000] Machine model: Variscite VAR-SOM-MX8M-PLUS on Symphony-Board
+[    0.000000] efi: UEFI not found.
+[    0.000000] Reserved memory: bypass linux,cma node, using cmdline CMA params instead
+[    0.000000] OF: reserved mem: node linux,cma compatible matching fail
+[    0.000000] Reserved memory: created DMA memory pool at 0x0000000094300000, size 1 MiB
+[    0.000000] OF: reserved mem: initialized node vdev0buffer@94300000, compatible id shared-dma-pool
+[    0.000000] NUMA: No NUMA configuration found
+[    0.000000] NUMA: Faking a node at [mem 0x0000000040000000-0x000000013fffffff]
+[    0.000000] NUMA: NODE_DATA [mem 0x13f842700-0x13f844fff]
+[    0.000000] Zone ranges:
+[    0.000000]   DMA      [mem 0x0000000040000000-0x00000000ffffffff]
+[    0.000000]   DMA32    empty
+[    0.000000]   Normal   [mem 0x0000000100000000-0x000000013fffffff]
+[    0.000000] Movable zone start for each node
+[    0.000000] Early memory node ranges
+[    0.000000]   node   0: [mem 0x0000000040000000-0x0000000055ffffff]
+[    0.000000]   node   0: [mem 0x0000000058000000-0x00000000923fffff]
+[    0.000000]   node   0: [mem 0x0000000092400000-0x00000000943fffff]
+[    0.000000]   node   0: [mem 0x0000000094400000-0x00000000ffffffff]
+[    0.000000]   node   0: [mem 0x0000000100000000-0x000000010fffffff]
+[    0.000000]   node   0: [mem 0x0000000110000000-0x000000013fffffff]
+[    0.000000] Initmem setup node 0 [mem 0x0000000040000000-0x000000013fffffff]
+[    0.000000] On node 0, zone DMA: 8192 pages in unavailable ranges
+[    0.000000] cma: Reserved 960 MiB at 0x00000000c4000000
+[    0.000000] psci: probing for conduit method from DT.
+[    0.000000] psci: PSCIv1.1 detected in firmware.
+[    0.000000] psci: Using standard PSCI v0.2 function IDs
+[    0.000000] psci: Trusted OS migration not required
+[    0.000000] psci: SMC Calling Convention v1.2
+[    0.000000] percpu: Embedded 20 pages/cpu s44712 r8192 d29016 u81920
+[    0.000000] Detected VIPT I-cache on CPU0
+[    0.000000] CPU features: detected: GIC system register CPU interface
+[    0.000000] CPU features: detected: ARM erratum 845719
+[    0.000000] alternatives: applying boot alternatives
+[    0.000000] Fallback order for Node 0: 0 
+[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 1024000
+[    0.000000] Policy zone: Normal
+[    0.000000] Kernel command line: console=ttymxc1,115200 root=/dev/mmcblk2p2 rootwait rw cma=960M cma_name=linux,cma
+[    0.000000] Dentry cache hash table entries: 524288 (order: 10, 4194304 bytes, linear)
+[    0.000000] Inode-cache hash table entries: 262144 (order: 9, 2097152 bytes, linear)
+[    0.000000] mem auto-init: stack:all(zero), heap alloc:off, heap free:off
+[    0.000000] software IO TLB: area num 4.
+[    0.000000] software IO TLB: mapped [mem 0x00000000c0000000-0x00000000c4000000] (64MB)
+[    0.000000] Memory: 2703232K/4161536K available (19584K kernel code, 2058K rwdata, 7436K rodata, 4160K init, 667K bss, 475264K reserved, 983040K cma-reserved)
+[    0.000000] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=4, Nodes=1
+[    0.000000] rcu: Preemptible hierarchical RCU implementation.
+[    0.000000] rcu:     RCU event tracing is enabled.
+[    0.000000] rcu:     RCU restricting CPUs from NR_CPUS=256 to nr_cpu_ids=4.
+[    0.000000]  Trampoline variant of Tasks RCU enabled.
+[    0.000000]  Tracing variant of Tasks RCU enabled.
+[    0.000000] rcu: RCU calculated value of scheduler-enlistment delay is 25 jiffies.
+[    0.000000] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=4
+[    0.000000] NR_IRQS: 64, nr_irqs: 64, preallocated irqs: 0
+[    0.000000] GICv3: GIC: Using split EOI/Deactivate mode
+[    0.000000] GICv3: 160 SPIs implemented
+[    0.000000] GICv3: 0 Extended SPIs implemented
+[    0.000000] Root IRQ handler: gic_handle_irq
+[    0.000000] GICv3: GICv3 features: 16 PPIs
+[    0.000000] GICv3: CPU0: found redistributor 0 region 0:0x0000000038880000
+[    0.000000] ITS: No ITS available, not enabling LPIs
+[    0.000000] rcu: srcu_init: Setting srcu_struct sizes based on contention.
+[    0.000000] arch_timer: cp15 timer(s) running at 8.00MHz (phys).
+[    0.000000] clocksource: arch_sys_counter: mask: 0xffffffffffffff max_cycles: 0x1d854df40, max_idle_ns: 440795202120 ns
+[    0.000000] sched_clock: 56 bits at 8MHz, resolution 125ns, wraps every 2199023255500ns
+[    0.000457] Console: colour dummy device 80x25
+[    0.000522] Calibrating delay loop (skipped), value calculated using timer frequency.. 16.00 BogoMIPS (lpj=32000)
+[    0.000532] pid_max: default: 32768 minimum: 301
+[    0.000589] LSM: Security Framework initializing
+[    0.000673] Mount-cache hash table entries: 8192 (order: 4, 65536 bytes, linear)
+[    0.000690] Mountpoint-cache hash table entries: 8192 (order: 4, 65536 bytes, linear)
+[    0.001985] cblist_init_generic: Setting adjustable number of callback queues.
+[    0.001994] cblist_init_generic: Setting shift to 2 and lim to 1.
+[    0.002061] cblist_init_generic: Setting shift to 2 and lim to 1.
+[    0.002215] rcu: Hierarchical SRCU implementation.
+[    0.002218] rcu:     Max phase no-delay instances is 1000.
+[    0.004249] EFI services will not be available.
+[    0.004521] smp: Bringing up secondary CPUs ...
+[    0.004986] Detected VIPT I-cache on CPU1
+[    0.005065] GICv3: CPU1: found redistributor 1 region 0:0x00000000388a0000
+[    0.005099] CPU1: Booted secondary processor 0x0000000001 [0x410fd034]
+[    0.005572] Detected VIPT I-cache on CPU2
+[    0.005635] GICv3: CPU2: found redistributor 2 region 0:0x00000000388c0000
+[    0.005654] CPU2: Booted secondary processor 0x0000000002 [0x410fd034]
+[    0.006089] Detected VIPT I-cache on CPU3
+[    0.006153] GICv3: CPU3: found redistributor 3 region 0:0x00000000388e0000
+[    0.006172] CPU3: Booted secondary processor 0x0000000003 [0x410fd034]
+[    0.006226] smp: Brought up 1 node, 4 CPUs
+[    0.006232] SMP: Total of 4 processors activated.
+[    0.006236] CPU features: detected: 32-bit EL0 Support
+[    0.006238] CPU features: detected: 32-bit EL1 Support
+[    0.006242] CPU features: detected: CRC32 instructions
+[    0.006297] CPU: All CPU(s) started at EL2
+[    0.006315] alternatives: applying system-wide alternatives
+[    0.008153] devtmpfs: initialized
+[    0.017105] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.017126] futex hash table entries: 1024 (order: 4, 65536 bytes, linear)
+[    0.045887] pinctrl core: initialized pinctrl subsystem
+[    0.048548] DMI not present or invalid.
+[    0.049122] NET: Registered PF_NETLINK/PF_ROUTE protocol family
+[    0.050042] DMA: preallocated 512 KiB GFP_KERNEL pool for atomic allocations
+[    0.050259] DMA: preallocated 512 KiB GFP_KERNEL|GFP_DMA pool for atomic allocations
+[    0.050440] DMA: preallocated 512 KiB GFP_KERNEL|GFP_DMA32 pool for atomic allocations
+[    0.050492] audit: initializing netlink subsys (disabled)
+[    0.050599] audit: type=2000 audit(0.048:1): state=initialized audit_enabled=0 res=1
+[    0.051076] thermal_sys: Registered thermal governor 'step_wise'
+[    0.051080] thermal_sys: Registered thermal governor 'power_allocator'
+[    0.051111] cpuidle: using governor menu
+[    0.051320] hw-breakpoint: found 6 breakpoint and 4 watchpoint registers.
+[    0.051402] ASID allocator initialised with 65536 entries
+[    0.052445] Serial: AMBA PL011 UART driver
+[    0.052523] imx mu driver is registered.
+[    0.052545] imx rpmsg driver is registered.
+[    0.060296] imx8mp-pinctrl 30330000.pinctrl: initialized IMX pinctrl driver
+[    0.071986] KASLR disabled due to lack of seed
+[    0.090260] HugeTLB: registered 1.00 GiB page size, pre-allocated 0 pages
+[    0.090269] HugeTLB: 0 KiB vmemmap can be freed for a 1.00 GiB page
+[    0.090274] HugeTLB: registered 32.0 MiB page size, pre-allocated 0 pages
+[    0.090278] HugeTLB: 0 KiB vmemmap can be freed for a 32.0 MiB page
+[    0.090284] HugeTLB: registered 2.00 MiB page size, pre-allocated 0 pages
+[    0.090289] HugeTLB: 0 KiB vmemmap can be freed for a 2.00 MiB page
+[    0.090293] HugeTLB: registered 64.0 KiB page size, pre-allocated 0 pages
+[    0.090298] HugeTLB: 0 KiB vmemmap can be freed for a 64.0 KiB page
+[    0.091942] ACPI: Interpreter disabled.
+[    0.092497] iommu: Default domain type: Translated 
+[    0.092502] iommu: DMA domain TLB invalidation policy: strict mode 
+[    0.092787] SCSI subsystem initialized
+[    0.093087] usbcore: registered new interface driver usbfs
+[    0.093123] usbcore: registered new interface driver hub
+[    0.093145] usbcore: registered new device driver usb
+[    0.094032] mc: Linux media interface: v0.10
+[    0.094067] videodev: Linux video capture interface: v2.00
+[    0.094143] pps_core: LinuxPPS API ver. 1 registered
+[    0.094147] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+[    0.094163] PTP clock support registered
+[    0.094283] EDAC MC: Ver: 3.0.0
+[    0.095172] FPGA manager framework
+[    0.095247] Advanced Linux Sound Architecture Driver Initialized.
+[    0.095758] Bluetooth: Core ver 2.22
+[    0.095782] NET: Registered PF_BLUETOOTH protocol family
+[    0.095786] Bluetooth: HCI device and connection manager initialized
+[    0.095793] Bluetooth: HCI socket layer initialized
+[    0.095798] Bluetooth: L2CAP socket layer initialized
+[    0.095808] Bluetooth: SCO socket layer initialized
+[    0.096161] vgaarb: loaded
+[    0.096690] clocksource: Switched to clocksource arch_sys_counter
+[    0.096869] VFS: Disk quotas dquot_6.6.0
+[    0.096907] VFS: Dquot-cache hash table entries: 512 (order 0, 4096 bytes)
+[    0.097073] pnp: PnP ACPI: disabled
+[    0.103572] NET: Registered PF_INET protocol family
+[    0.103768] IP idents hash table entries: 65536 (order: 7, 524288 bytes, linear)
+[    0.106633] tcp_listen_portaddr_hash hash table entries: 2048 (order: 3, 32768 bytes, linear)
+[    0.106699] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+[    0.106712] TCP established hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.106924] TCP bind hash table entries: 32768 (order: 8, 1048576 bytes, linear)
+[    0.107795] TCP: Hash tables configured (established 32768 bind 32768)
+[    0.107907] UDP hash table entries: 2048 (order: 4, 65536 bytes, linear)
+[    0.107992] UDP-Lite hash table entries: 2048 (order: 4, 65536 bytes, linear)
+[    0.108200] NET: Registered PF_UNIX/PF_LOCAL protocol family
+[    0.108561] RPC: Registered named UNIX socket transport module.
+[    0.108565] RPC: Registered udp transport module.
+[    0.108568] RPC: Registered tcp transport module.
+[    0.108570] RPC: Registered tcp NFSv4.1 backchannel transport module.
+[    0.108578] PCI: CLS 0 bytes, default 64
+[    0.109231] hw perfevents: enabled with armv8_cortex_a53 PMU driver, 7 counters available
+[    0.109876] kvm [1]: IPA Size Limit: 40 bits
+[    0.111652] kvm [1]: GICv3: no GICV resource entry
+[    0.111657] kvm [1]: disabling GICv2 emulation
+[    0.111667] kvm [1]: GIC system register CPU interface enabled
+[    0.111753] kvm [1]: vgic interrupt IRQ9
+[    0.111832] kvm [1]: Hyp mode initialized successfully
+[    0.112937] Initialise system trusted keyrings
+[    0.113113] workingset: timestamp_bits=42 max_order=20 bucket_order=0
+[    0.119520] squashfs: version 4.0 (2009/01/31) Phillip Lougher
+[    0.120050] NFS: Registering the id_resolver key type
+[    0.120073] Key type id_resolver registered
+[    0.120076] Key type id_legacy registered
+[    0.120144] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
+[    0.120149] nfs4flexfilelayout_init: NFSv4 Flexfile Layout Driver Registering...
+[    0.120166] jffs2: version 2.2. (NAND) © 2001-2006 Red Hat, Inc.
+[    0.120482] 9p: Installing v9fs 9p2000 file system support
+[    0.155925] Key type asymmetric registered
+[    0.155930] Asymmetric key parser 'x509' registered
+[    0.155971] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 243)
+[    0.156089] io scheduler mq-deadline registered
+[    0.156094] io scheduler kyber registered
+[    0.161552] EINJ: ACPI disabled.
+[    0.171081] mxs-dma 33000000.dma-apbh: initialized
+[    0.177456] SoC: i.MX8MP revision 1.1
+[    0.181428] Bus freq driver module loaded
+[    0.186691] Serial: 8250/16550 driver, 4 ports, IRQ sharing enabled
+[    0.188861] 30860000.serial: ttymxc0 at MMIO 0x30860000 (irq = 16, base_baud = 1500000) is a IMX
+[    0.189410] 30890000.serial: ttymxc1 at MMIO 0x30890000 (irq = 17, base_baud = 1500000) is a IMX
+[    1.314532] printk: console [ttymxc1] enabled
+[    1.319439] 30a60000.serial: ttymxc3 at MMIO 0x30a60000 (irq = 18, base_baud = 1500000) is a IMX
+[    1.329744] imx-drm display-subsystem: no available port
+[    1.345825] loop: module loaded
+[    1.350316] megasas: 07.719.03.00-rc1
+[    1.360475] tun: Universal TUN/TAP device driver, 1.6
+[    1.366345] thunder_xcv, ver 1.0
+[    1.369619] thunder_bgx, ver 1.0
+[    1.372892] nicpf, ver 1.0
+[    1.377437] hns3: Hisilicon Ethernet Network Driver for Hip08 Family - version
+[    1.384670] hns3: Copyright (c) 2017 Huawei Corporation.
+[    1.390034] hclge is initializing
+[    1.393370] e1000: Intel(R) PRO/1000 Network Driver
+[    1.398255] e1000: Copyright (c) 1999-2006 Intel Corporation.
+[    1.404051] e1000e: Intel(R) PRO/1000 Network Driver
+[    1.409019] e1000e: Copyright(c) 1999 - 2015 Intel Corporation.
+[    1.414979] igb: Intel(R) Gigabit Ethernet Network Driver
+[    1.420382] igb: Copyright (c) 2007-2014 Intel Corporation.
+[    1.425988] igbvf: Intel(R) Gigabit Virtual Function Network Driver
+[    1.432259] igbvf: Copyright (c) 2009 - 2012 Intel Corporation.
+[    1.438348] sky2: driver version 1.30
+[    1.442558] usbcore: registered new interface driver r8152
+[    1.448311] VFIO - User Level meta-driver version: 0.3
+[    1.459105] usbcore: registered new interface driver uas
+[    1.464478] usbcore: registered new interface driver usb-storage
+[    1.470555] usbcore: registered new interface driver usbserial_generic
+[    1.477113] usbserial: USB Serial support registered for generic
+[    1.483154] usbcore: registered new interface driver ftdi_sio
+[    1.488920] usbserial: USB Serial support registered for FTDI USB Serial Device
+[    1.496264] usbcore: registered new interface driver usb_serial_simple
+[    1.502816] usbserial: USB Serial support registered for carelink
+[    1.508932] usbserial: USB Serial support registered for zio
+[    1.514610] usbserial: USB Serial support registered for funsoft
+[    1.520635] usbserial: USB Serial support registered for flashloader
+[    1.527010] usbserial: USB Serial support registered for google
+[    1.532951] usbserial: USB Serial support registered for libtransistor
+[    1.539498] usbserial: USB Serial support registered for vivopay
+[    1.545529] usbserial: USB Serial support registered for moto_modem
+[    1.551819] usbserial: USB Serial support registered for motorola_tetra
+[    1.558452] usbserial: USB Serial support registered for nokia
+[    1.564307] usbserial: USB Serial support registered for novatel_gps
+[    1.570681] usbserial: USB Serial support registered for hp4x
+[    1.576447] usbserial: USB Serial support registered for suunto
+[    1.582395] usbserial: USB Serial support registered for siemens_mpi
+[    1.588784] usbcore: registered new interface driver usb_ehset_test
+[    1.596482] input: 30370000.snvs:snvs-powerkey as /devices/platform/soc@0/30000000.bus/30370000.snvs/30370000.snvs:snvs-powerkey/input/input0
+[    1.610456] i2c_dev: i2c /dev entries driver
+[    1.619086] Bluetooth: HCI UART driver ver 2.3
+[    1.623557] Bluetooth: HCI UART protocol H4 registered
+[    1.628703] Bluetooth: HCI UART protocol BCSP registered
+[    1.634037] Bluetooth: HCI UART protocol LL registered
+[    1.639184] Bluetooth: HCI UART protocol ATH3K registered
+[    1.644605] Bluetooth: HCI UART protocol Three-wire (H5) registered
+[    1.650968] Bluetooth: HCI UART protocol Broadcom registered
+[    1.656649] Bluetooth: HCI UART protocol QCA registered
+[    1.662043] EDAC MC: ECC not enabled
+[    1.667097] sdhci: Secure Digital Host Controller Interface driver
+[    1.673299] sdhci: Copyright(c) Pierre Ossman
+[    1.678269] Synopsys Designware Multimedia Card Interface Driver
+[    1.684865] sdhci-pltfm: SDHCI platform and OF driver helper
+[    1.692540] ledtrig-cpu: registered to indicate activity on CPUs
+[    1.699620] SMCCC: SOC_ID: ARCH_SOC_ID not implemented, skipping ....
+[    1.706578] usbcore: registered new interface driver usbhid
+[    1.712165] usbhid: USB HID core driver
+[    1.720438]  cs_system_cfg: CoreSight Configuration manager initialised
+[    1.725652] mmc2: SDHCI controller on 30b60000.mmc [30b60000.mmc] using ADMA
+[    1.728423] optee: probing for conduit method.
+[    1.738653] optee: revision 3.21 (4e322819)
+[    1.739382] optee: dynamic shared memory is enabled
+[    1.748862] optee: initialized driver
+[    1.756625] NET: Registered PF_LLC protocol family
+[    1.762907] NET: Registered PF_INET6 protocol family
+[    1.770186] Segment Routing with IPv6
+[    1.773910] In-situ OAM (IOAM) with IPv6
+[    1.777887] NET: Registered PF_PACKET protocol family
+[    1.782976] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[    1.796930] Bluetooth: RFCOMM TTY layer initialized
+[    1.801833] Bluetooth: RFCOMM socket layer initialized
+[    1.807003] Bluetooth: RFCOMM ver 1.11
+[    1.810764] Bluetooth: BNEP (Ethernet Emulation) ver 1.3
+[    1.816090] Bluetooth: BNEP filters: protocol multicast
+[    1.821363] Bluetooth: BNEP socket layer initialized
+[    1.826344] Bluetooth: HIDP (Human Interface Emulation) ver 1.2
+[    1.832284] Bluetooth: HIDP socket layer initialized
+[    1.838189] 8021q: 802.1Q VLAN Support v1.8
+[    1.842407] lib80211: common routines for IEEE802.11 drivers
+[    1.848393] 9pnet: Installing 9P2000 support
+[    1.852829] Key type dns_resolver registered
+[    1.858110] registered taskstats version 1
+[    1.862251] Loading compiled-in X.509 certificates
+[    1.871668] mmc2: new HS400 Enhanced strobe MMC card at address 0001
+[    1.878676] mmcblk2: mmc2:0001 CJTD4R 58.2 GiB 
+[    1.884741]  mmcblk2: p1 p2 p3 p4
+[    1.888937] mmcblk2boot0: mmc2:0001 CJTD4R 4.00 MiB 
+[    1.894472] gpio-38 (scl): enforced open drain please flag it properly in DT/ACPI DSDT/board file
+[    1.894957] mmcblk2boot1: mmc2:0001 CJTD4R 4.00 MiB 
+[    1.909242] mmcblk2rpmb: mmc2:0001 CJTD4R 4.00 MiB, chardev (234:0)
+[    1.947948] nxp-pca9450 0-0025: pca9450bc probed.
+[    1.952784] i2c i2c-0: IMX I2C adapter registered
+[    1.958076] gpio-146 (scl): enforced open drain please flag it properly in DT/ACPI DSDT/board file
+[    1.968121] i2c i2c-2: IMX I2C adapter registered
+[    1.973347] gpio-148 (scl): enforced open drain please flag it properly in DT/ACPI DSDT/board file
+[    1.983066] i2c i2c-3: IMX I2C adapter registered
+[    1.988173] imx8mq-usb-phy 381f0040.usb-phy: supply vbus not found, using dummy regulator
+[    1.996792] imx8mq-usb-phy 382f0040.usb-phy: supply vbus not found, using dummy regulator
+[    2.013689] xhci-hcd xhci-hcd.0.auto: xHCI Host Controller
+[    2.019224] xhci-hcd xhci-hcd.0.auto: new USB bus registered, assigned bus number 1
+[    2.027218] xhci-hcd xhci-hcd.0.auto: hcc params 0x0220fe6d hci version 0x110 quirks 0x0000002001010010
+[    2.036662] xhci-hcd xhci-hcd.0.auto: irq 201, io mem 0x38100000
+[    2.042796] xhci-hcd xhci-hcd.0.auto: xHCI Host Controller
+[    2.048295] xhci-hcd xhci-hcd.0.auto: new USB bus registered, assigned bus number 2
+[    2.055968] xhci-hcd xhci-hcd.0.auto: Host supports USB 3.0 SuperSpeed
+[    2.063333] hub 1-0:1.0: USB hub found
+[    2.067112] hub 1-0:1.0: 1 port detected
+[    2.071337] usb usb2: We don't know the algorithms for LPM for this host, disabling LPM.
+[    2.080187] hub 2-0:1.0: USB hub found
+[    2.083965] hub 2-0:1.0: 1 port detected
+[    2.089321] xhci-hcd xhci-hcd.1.auto: xHCI Host Controller
+[    2.094848] xhci-hcd xhci-hcd.1.auto: new USB bus registered, assigned bus number 3
+[    2.102904] xhci-hcd xhci-hcd.1.auto: hcc params 0x0220fe6d hci version 0x110 quirks 0x0000002001010010
+[    2.112342] xhci-hcd xhci-hcd.1.auto: irq 202, io mem 0x38200000
+[    2.118479] xhci-hcd xhci-hcd.1.auto: xHCI Host Controller
+[    2.123982] xhci-hcd xhci-hcd.1.auto: new USB bus registered, assigned bus number 4
+[    2.131657] xhci-hcd xhci-hcd.1.auto: Host supports USB 3.0 SuperSpeed
+[    2.138989] hub 3-0:1.0: USB hub found
+[    2.142775] hub 3-0:1.0: 1 port detected
+[    2.146984] usb usb4: We don't know the algorithms for LPM for this host, disabling LPM.
+[    2.155814] hub 4-0:1.0: USB hub found
+[    2.159596] hub 4-0:1.0: 1 port detected
+[    2.164108] imx-cpufreq-dt imx-cpufreq-dt: cpu speed grade 5 mkt segment 0 supported-hw 0x20 0x1
+[    2.176980] [joyce]gpio driver and device was matched!
+[    2.177158] sdhci-esdhc-imx 30b40000.mmc: allocated mmc-pwrseq
+[    2.177606] sdhci-esdhc-imx 30b50000.mmc: allocated mmc-pwrseq
+[    2.182712] [joyce]gpio_probe finish
+[    2.199731] input: gpio-keys as /devices/platform/gpio-keys/input/input1
+[    2.225399] ALSA device list:
+[    2.228387]   No soundcards found.
+[    2.312710] mmc1: SDHCI controller on 30b50000.mmc [30b50000.mmc] using ADMA
+[    2.332619] mmc0: SDHCI controller on 30b40000.mmc [30b40000.mmc] using ADMA
+[    2.333002] usb 1-1: new high-speed USB device number 2 using xhci-hcd
+[    2.386884] mmc1: new ultra high speed SDR104 SDIO card at address 0001
+[    2.398079] mmc0: new ultra high speed SDR104 SDIO card at address 0001
+[    2.432216] EXT4-fs (mmcblk2p2): mounted filesystem with ordered data mode. Quota mode: none.
+[    2.440837] VFS: Mounted root (ext4 filesystem) on device 179:2.
+[    2.448253] devtmpfs: mounted
+[    2.452435] Freeing unused kernel memory: 4160K
+[    2.457080] Run /sbin/init as init process
+[    2.542751] hub 1-1:1.0: USB hub found
+[    2.546602] hub 1-1:1.0: 4 ports detected
+[    2.554280] systemd[1]: System time before build time, advancing clock.
+[    2.591920] systemd[1]: systemd 253.1^ running in system mode (+PAM -AUDIT -SELINUX -APPARMOR +IMA -SMACK +SECCOMP -GCRYPT -GNUTLS -OPENSSL +ACL +BLKID -CURL -ELFUTILS -FIDO2 -IDN2 -IDN -IPTC +KMOD -LI
+BCRYPTSETUP +LIBFDISK -PCRE2 -PWQUALITY -P11KIT -QRENCODE -TPM2 -BZIP2 -LZ4 -XZ -ZLIB +ZSTD -BPF_FRAMEWORK +XKBCOMMON +UTMP +SYSVINIT default-hierarchy=hybrid)
+[    2.623693] systemd[1]: Detected architecture arm64.
+[    2.625033] usb 2-1: new SuperSpeed USB device number 2 using xhci-hcd
+
+Welcome to NXP i.MX Release Distro 6.1-mickledore (mickled[    2.687109] hub 2-1:1.0: USB hub found
+ore)!
+
+[    2.691131] hub 2-1:1.0: 4 ports detected
+[    2.697720] systemd[1]: Hostname set to <imx8mp-var-dart>.
+[    2.783733] systemd-sysv-generator[170]: SysV service '/etc/init.d/rc.local' lacks a native systemd unit file. Automatically generating a unit file for compatibility. Please update package to include a
+ native systemd unit file, in order to make it more safe and robust.
+[    2.893031] usb 1-1.1: new full-speed USB device number 3 using xhci-hcd
+[    2.977086] usb 1-1.1: device no response, device descriptor read/64, error -32
+[    3.056876] systemd[1]: Queued start job for default target Graphical Interface.
+[    3.123712] systemd[1]: Created slice Slice /system/modprobe.
+[  OK  ] Created slice Slice /system/modprobe.
+[    3.147642] systemd[1]: Created slice Slice /system/serial-getty.
+[  OK  ] Created slice Slice /system/serial-getty.
+[    3.171618] systemd[1]: Created slice Slice /system/systemd-fsck.
+[    3.173721] usb 1-1.1: device no response, device descriptor read/64, error -32
+[  OK  ] Created slice Slice /system/systemd-fsck.
+[    3.203106] systemd[1]: Created slice User and Session Slice.
+[  OK  ] Created slice User and Session Slice.
+[    3.225285] systemd[1]: Started Dispatch Password Requests to Console Directory Watch.
+[  OK  ] Started Dispatch Password …ts to Console Directory Watch.
+[    3.249156] systemd[1]: Started Forward Password Requests to Wall Directory Watch.
+[  OK  ] Started Forward Password R…uests to Wall Directory Watch.
+[    3.273317] systemd[1]: Reached target Path Units.
+[  OK  ] Reached target Path Units.
+[    3.292834] systemd[1]: Reached target Remote File Systems.
+[  OK  ] Reached target Remote File Systems.
+[    3.312892] systemd[1]: Reached target Slice Units.
+[  OK  ] Reached target Slice Units.
+[    3.332980] systemd[1]: Reached target Swaps.
+[  OK  ] Reached target Swaps.
+[    3.373343] usb 1-1.1: new full-speed USB device number 4 using xhci-hcd
+[    3.386480] systemd[1]: Listening on RPCbind Server Activation Socket.
+[  OK  ] Listening on RPCbind Server Activation Socket.
+[    3.408977] systemd[1]: Reached target RPC Port Mapper.
+[  OK  ] Reached target RPC Port Mapper.
+[    3.430391] systemd[1]: Listening on Syslog Socket.
+[  OK  ] Listening on Syslog Socket.
+[    3.449406] systemd[1]: Listening on initctl Compatibility Named Pipe.
+[  OK  ] Listening on initctl Compatibility Na[    3.461637] usb 1-1.1: device no response, device descriptor read/64, error -32
+med Pipe.
+[    3.482041] systemd[1]: Listening on Journal Audit Socket.
+[  OK  ] Listening on Journal Audit Socket.
+[    3.505753] systemd[1]: Listening on Journal Socket (/dev/log).
+[  OK  ] Listening on Journal Socket (/dev/log).
+[    3.529920] systemd[1]: Listening on Journal Socket.
+[  OK  ] Listening on Journal Socket.
+[    3.549507] systemd[1]: Listening on udev Control Socket.
+[  OK  ] Listening on udev Control Socket.
+[    3.562204] systemd[1]: Listening on udev Kernel Socket.
+[  OK  ] Listening on udev Kernel Socket.
+[    3.585741] systemd[1]: Listening on User Database Manager Socket.
+[  OK  ] Listening on User Database Manager Socket.
+[    3.633440] systemd[1]: Mounting Huge Pages File System...
+         Mounting Huge Pages File System...
+[    3.657467] systemd[1]: Mounting POSIX Message Queue File System...
+         Mounting POSIX [    3.664758] usb 1-1.1: device no response, device descriptor read/64, error -32
+Message Queue File System...
+[    3.680676] systemd[1]: Mounting Kernel Debug File System...
+         Mounting Kernel Debug File System...
+[    3.701183] systemd[1]: Kernel Trace File System was skipped because of an unmet condition check (ConditionPathExists=/sys/kernel/tracing).
+[    3.718281] systemd[1]: Mounting Temporary Directory /tmp...
+         Mounting Temporary Directory /tmp...
+[    3.742723] systemd[1]: Starting Create List of Static Device Nodes...
+         Starting Create List of Static Device Nodes...
+[    3.769184] systemd[1]: Starting Load Kernel Module configfs...
+         Starting Load Kernel Module configfs...
+[    3.781125] usb 1-1-port1: attempt power cycle
+[    3.792351] systemd[1]: Starting Load Kernel Module drm...
+         Starting Load Kernel Module drm...
+[    3.817272] systemd[1]: Starting Load Kernel Module fuse...
+         Starting Load Kernel Module fuse...
+[    3.830216] fuse: init (API version 7.37)
+[    3.841734] systemd[1]: Starting RPC Bind...
+         Starting RPC Bind...
+[    3.861026] systemd[1]: File System Check on Root Device was skipped because of an unmet condition check (ConditionPathIsReadWrite=!/).
+[    3.879717] systemd[1]: Starting Journal Service...
+         Starting Journal Service...
+[    3.898597] systemd[1]: Load Kernel Modules was skipped because no trigger condition checks were met.
+[    3.926072] systemd-journald[187]: Collecting audit messages is enabled.
+[    3.929356] systemd[1]: Starting Generate network units from Kernel command line...
+         Starting Generate network …ts from Kernel command line...
+[    3.964832] systemd[1]: Starting Remount Root and Kernel File Systems...
+         Starting Remount Root and Kernel File Systems...
+[    3.982557] EXT4-fs (mmcblk2p2): re-mounted. Quota mode: none.
+[    3.996577] systemd[1]: Starting Apply Kernel Variables...
+         Starting Apply Kernel Variables...
+[    4.021515] systemd[1]: Starting Coldplug All udev Devices...
+         Starting Coldplug All udev Devices...
+[    4.044865] systemd[1]: Starting Setup Virtual Console...
+         Starting Setup Virtual Console...
+[    4.072864] systemd[1]: Started RPC Bind.
+[  OK  ] Started RPC Bind.
+[    4.089643] systemd[1]: Started Journal Service.
+[  OK  ] Started Journal Service.
+[  OK  ] Mounted Huge Pages File System.
+[  OK  ] Mounted POSIX Message Queue File System.
+[  OK  ] Mounted Kernel Debug File System.
+[  OK  ] Mounted Temporary Directory /tmp.
+[  OK  ] Finished Create List of Static Device Nodes.
+[  OK  ] Finished Load Kernel Module configfs.
+[  OK  ] Finished Load Kernel Module drm.
+[  OK  ] Finished Load Kernel Module fuse.
+[  OK  ] Finished Generate network units from Kernel command line.
+[  OK  ] Finished Remount Root and Kernel File Systems.
+[  OK  ] Finished Apply Kernel Variables.
+[  OK  ] Finished Setup Virtual Console.
+         Mounting FUSE Control File System...
+         Mounting Kernel Configuration File System.[    4.400743] usb 1-1.1: new full-speed USB device number 5 using xhci-hcd
+..
+[    4.409281] usb 1-1.1: Device not responding to setup address.
+         Starting Flush Journal to Persistent Storage...
+[    4.442867] systemd-journald[187]: Received client request to flush runtime journal.
+         Starting Create Static Device Nodes in /dev...
+[  OK  ] Mounted FUSE Control File System.
+[  OK  ] Mounted Kernel Configuration File System.
+[  OK  ] Finished Flush Journal to Persistent Storage.
+[  OK  ] Finished Create Static Device Nodes in /dev.
+[  OK  ] Reached target Preparation for Local File Systems.
+         Mounting /var/volatile...
+[    4.600516] audit: type=1334 audit(1677836960.040:2): prog-id=5 op=LOAD
+[    4.607216] audit: type=1334 audit(1677836960.048:3): prog-id=6 op=LOAD
+         Starting Rule-based Manage…for Device Events and Files...
+[    4.620803] usb 1-1.1: Device not responding to setup address.
+[  OK  ] Finished Coldplug All udev Devices.
+[  OK  ] Mounted /var/volatile.
+         Starting Load/Save OS Random Seed...
+[  OK  ] Started Rule-based Manager for Device Events and Files.
+         Starting Start Psplash Boot Screen...
+[  OK  ] Started Start Psplash Boot Screen.
+[  OK  ] Started Start psplash-syst…progress communication helper.
+[    4.840741] usb 1-1.1: device not accepting address 5, error -71
+[    4.924814] usb 1-1.1: new full-speed USB device number 6 using xhci-hcd
+[    4.932202] usb 1-1.1: Device not responding to setup address.
+[    5.144800] usb 1-1.1: Device not responding to setup address.
+[    5.356732] usb 1-1.1: device not accepting address 6, error -71
+[    5.363252] usb 1-1-port1: unable to enumerate USB device
+[  OK  ] Found device /dev/mmcblk2p3.
+         Starting File System Check on /dev/mmcblk2p3...
+[  OK  ] Found device /dev/mmcblk2p4.
+         Starting File System Check on /dev/mmcblk2p4...
+[  OK  ] Finished File System Check on /dev/mmcblk2p3.
+[  OK  ] Finished File System Check on /dev/mmcblk2p4.
+         Mounting /data...
+         Mounting /run/media/mmcblk2p4...
+[FAILED] Failed to mount /run/media/mmcblk2p4.
+See 'systemctl status run-media-mmcblk2p4.mount' for details.
+[    5.734268] EXT4-fs (mmcblk2p3): mounted filesystem with ordered data mode. Quota mode: none.
+[  OK  ] Found device /dev/mmcblk2p1.
+[  OK  ] Mounted /data.
+         Starting File System Check on /dev/mmcblk2p1...
+[    5.823966] caam-snvs 30370000.caam-snvs: ipid matched - 0x3e
+[    5.830294] caam-snvs 30370000.caam-snvs: violation handlers armed - non-secure state
+[  OK  ] Finished File System Check on /dev/mmcblk2p1.
+[    5.851826] caam 30900000.crypto: device ID = 0x0a16040100000100 (Era 9)
+[    5.860196] caam 30900000.crypto: job rings = 1, qi = 0
+         Mounting /run/media/rootfs1-mmcblk2p1...
+[    5.918595] [joyce]tps6598x_probe, 44,ret=0, vid=10244
+[    6.032919] EXT4-fs (mmcblk2p1): mounted filesystem with ordered data mode. Quota mode: none.
+[  OK  ] Mounted /run/media/rootfs1-mmcblk2p1.
+[  OK  ] Reached target Local File Systems.
+         Starting Create Volatile Files and Directories...
+[  OK  ] Finished Create Volatile Files and Directories.
+         Starting Network Name Resolution...
+         Starting Network Time Synchronization...
+         Starting Record System Boot/Shutdown in UTMP...
+[  OK  ] Finished Record System Boot/Shutdown in UTMP.
+[  OK  ] Listening on Load/Save RF …itch Status /dev/rfkill Watch.
+[    6.578735] imx-sdma 30bd0000.dma-controller: firmware found.
+[    6.584746] imx-sdma 30bd0000.dma-controller: loaded firmware 4.6
+[    6.672967] imx-sdma 30e10000.dma-controller: firmware found.
+[  OK  ] Started Network Name Resolution.
+[  OK  ] Reached target Host and Network Name Lookups.
+[    6.761907] systemd-journald[187]: Oldest entry in /run/log/journal/3be6ca819dec4cd789c609898cbf4710/system.journal is older than the configured file retention duration (1month), suggesting rotation.
+[    6.776458] caam algorithms registered in /proc/crypto
+[    6.779882] systemd-journald[187]: /run/log/journal/3be6ca819dec4cd789c609898cbf4710/system.journal: Journal header limits reached or header out-of-date, rotating.
+[    6.785875] caam 30900000.crypto: caam pkc algorithms registered in /proc/crypto
+[  OK  ] Started     6.808045] caam 30900000.crypto: rng crypto API alg registered prng-caam
+;39mNetwork Time Synchronization   6.816759] caam 30900000.crypto: registering rng-caam
+[0m.
+[    6.826082] Device caam-keygen registered
+[  OK  ] Reached target System Initialization.
+[    6.849647] random: crng init done
+[  OK  ] Started Daily Cleanup of Temporary Directories.
+[  OK  ] Reached target System Time Set.
+[  OK  ] Reached target System Time Synchronized.
+[  OK  ] Started Daily rotation of log files.
+[  OK  ] Reached target Timer Units.
+[  OK  ] Listening on Avahi mDNS/DNS-SD Stack Activation Socket.
+[  OK  ] Listening on D-Bus System Message Bus Socket.
+         Starting Docker Socket for the API...
+[  OK  ] Listening on PC/SC Smart Card Daemon Activation Socket.
+         Starting sshd.socket...
+[  OK  ] Listening on SWUpdate socket listener.
+         Starting Weston socket...
+[  OK  ] Finished Load/Save OS Random Seed.
+[  OK  ] Listening on Docker Socket for the API.
+[  OK  ] Listening on sshd.socket.
+[  OK  ] Listening on Weston socket.
+[  OK  ] Reached target Socket Units.
+[  OK  ] Reached target Basic System.
+         Starting Modem Manager...
+         Starting Cervais ARMIA API Service...
+[  OK  ] Started Job spooling tools.
+         Starting Avahi mDNS/DNS-SD Stack...
+[  OK  ] Started Periodic Command Scheduler.
+         Starting D-Bus System Message Bus...
+         Starting Disable redundant serial getty service...
+         Starting Defined Networking client daemon...
+[  OK  ] Started Configuration for i.MX GPU (Former rc_gpu.S).
+[  OK  ] Started Start evtest for keys event1 input device.
+         Starting IPv6 Packet Filtering Framework...
+         Starting IPv4 Packet Filtering Framework...
+         Starting Bluetooth OBEX service...
+         Starting Telephony service...
+[  OK  ] Started Updates psplash to basic.
+         Starting SWUpdate daemon...
+[  OK  ] Started System Logging Service.
+         Starting User Login Management...
+[  OK  ] Started TEE Supplicant.
+         Starting Variscite WIFI setup service...
+         Starting OpenSSH Key Generation...
+[  OK  ] Started D-Bus System Message Bus.
+[  OK  ] Started Defined Networking client daemon.
+[  OK  ] Finished Disable redundant serial getty service.
+[  OK  ] Finished IPv6 Packet Filtering Framework.
+[  OK  ] Finished IPv4 Packet Filtering Framework.
+[  OK  ] Started SWUpdate daemon.
+[  OK  ] Finished OpenSSH Key Generation.
+[  OK  ] Started User Login Management.
+[  OK  ] Reached target Preparation for Network.
+         Starting Network Manager...
+[  OK  ] Started Avahi mDNS/DNS-SD Stack.
+[  OK  ] Started Modem Manager.
+[  OK  ] Started Telephony service.
+[  OK  ] Started Bluetooth OBEX service.
+[  OK  ] Started Network Manager.
+         Starting Network Manager Wait Online...
+         Starting Hostname Service...
+[  OK  ] Started Hostname Service.
+         Starting Network Manager Script Dispatcher Service...
+[  OK  ] Started Network Manager Script Dispatcher Service.
+[  OK  ] Finished Network Manager Wait Online.
+         Starting Load/Save RF Kill Switch Status...
+[  OK  ] Started Load/Save RF Kill Switch Status.
+         Starting WPA supplicant...
+[  OK  ] Started WPA supplicant.
+[  OK  ] Finished Variscite WIFI setup service.
+[  OK  ] Reached target Network.
+[  OK  ] Reached target Network is Online.
+         Starting containerd container runtime...
+         Starting DNS forwarder and DHCP server...
+         Starting Nebula overlay networking tool...
+[  OK  ] Started NFS status monitor for NFSv2/3 locking..
+         Starting Network Time Service...
+[  OK  ] Started Update psplash to network.
+         Starting Terminate Psplash Boot Screen...
+         Starting /etc/rc.local Compatibility...
+         Starting Permit User Sessions...
+         Starting Target Communication Framework agent...
+[  OK  ] Started Network Time Service.
+[FAILED] Failed to start Terminate Psplash Boot Screen.
+See 'systemctl status psplash-quit.service' for details.
+[  OK  ] Started /etc/rc.local Compatibility.
+[  OK  ] Finished Permit User Sessions.
+[  OK  ] Started Target Communication Framework agent.
+[  OK  ] Started DNS forwarder and DHCP server.
+[  OK  ] Started Serial Getty on ttymxc1.
+[  OK  ] Reached target Login Prompts.
+         Starting Weston, a Wayland…ositor, as a system service...
+[   11.615550] audit: type=1334 audit(1774458878.759:8): prog-id=11 op=LOAD
+[   11.622371] audit: type=1334 audit(1774458878.771:9): prog-id=12 op=LOAD
+         Starting User Database Manager...
+[  OK  ] Started User Database Manager.
+[  OK  ] Created slice User Slice of UID 0.
+         Starting User Runtime Directory /run/user/0...
+[  OK  ] Started containerd container runtime.
+[  OK  ] Finished User Runtime Directory /run/user/0.
+         Starting User Manager for UID 0...
+[   12.010106] audit: type=1006 audit(1774458879.155:10): pid=799 uid=0 old-auid=4294967295 auid=0 tty=(none) old-ses=4294967295 ses=1 res=1
+[   12.022524] audit: type=1300 audit(1774458879.155:10): arch=c00000b7 syscall=64 success=yes exit=1 a0=8 a1=fffffe487480 a2=1 a3=1 items=0 ppid=1 pid=799 auid=0 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 
+sgid=0 fsgid=0 tty=(none) ses=1 comm="(systemd)" exe="/lib/systemd/systemd" key=(null)
+[   12.047946] audit: type=1327 audit(1774458879.155:10): proctitle="(systemd)"
+[   12.081090] audit: type=1334 audit(1774458879.223:11): prog-id=13 op=LOAD
+[  OK  ] Started User Manager for UID 0.
+[  OK  ] Started Session c1 of User root.
+[   12.560230] kauditd_printk_skb: 7 callbacks suppressed
+[   12.560239] audit: type=1006 audit(1774458879.703:15): pid=789 uid=0 old-auid=4294967295 auid=0 tty=tty7 old-ses=4294967295 ses=2 res=1
+[   12.577654] audit: type=1300 audit(1774458879.703:15): arch=c00000b7 syscall=64 success=yes exit=1 a0=8 a1=fffffe487480 a2=1 a3=1 items=0 ppid=1 pid=789 auid=0 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 
+sgid=0 fsgid=0 tty=tty7 ses=2 comm="(weston)" exe="/lib/systemd/systemd" key=(null)
+[   12.602838] audit: type=1327 audit(1774458879.703:15): proctitle="(weston)"
+[FAILED] Failed to start Weston, a …mpositor, as a system service.
+See 'systemctl status weston.service' for details.
+
+__      __        _          _ _
+\ \    / /       (_)        (_) |
+ \ \  / /_ _ _ __ _ ___  ___ _| |_ ___
+  \ \/ / _` | '__| / __|/ __| | __/ _ \
+   \  / (_| | |  | \__ \ (__| | ||  __/
+    \/ \__,_|_|  |_|___/\___|_|\__\___|
+
+          2024 Variscite, Ltd.
+
+NXP i.MX Release Distro 6.1-mickledore imx8mp-var-dart ttymxc1
+
+imx8mp-var-dart login: [   25.464744] usb 2-1.4: new SuperSpeed USB device number 3 using xhci-hcd
+[   25.490715] usb 2-1.4: LPM exit latency is zeroed, disabling LPM.
+[   25.732756] usbcore: registered new interface driver cdc_ether
+[   25.741727] usbcore: registered new interface driver cdc_wdm
+[   25.747788] usbcore: registered new interface driver option
+[   25.756585] usbserial: USB Serial support registered for GSM modem (1-port)
+[   25.769480] option 2-1.4:1.0: GSM modem (1-port) converter detected
+[   25.776377] usbcore: registered new interface driver cdc_ncm
+[   25.783044] usb 2-1.4: GSM modem (1-port) converter now attached to ttyUSB0
+[   25.792037] option 2-1.4:1.4: GSM modem (1-port) converter detected
+[   25.799706] usb 2-1.4: GSM modem (1-port) converter now attached to ttyUSB1
+[   25.845578] cdc_mbim 2-1.4:1.2: setting rx_max = 16384
+[   25.851484] cdc_mbim 2-1.4:1.2: cdc-wdm0: USB WDM device
+[   25.857836] cdc_mbim 2-1.4:1.2 wwan0: register 'cdc_mbim' at usb-xhci-hcd.0.auto-1.4, CDC MBIM, d2:4c:dc:51:67:1f
+[   25.868288] usbcore: registered new interface driver cdc_mbim
+[   25.868334] option 2-1.4:1.5: GSM modem (1-port) converter detected
+[   25.880623] usb 2-1.4: GSM modem (1-port) converter now attached to ttyUSB2
+[   25.887781] option 2-1.4:1.6: GSM modem (1-port) converter detected
+[   25.894411] usb 2-1.4: GSM modem (1-port) converter now attached to ttyUSB3
+[   25.901576] option 2-1.4:1.7: GSM modem (1-port) converter detected
+[   25.908149] usb 2-1.4: GSM modem (1-port) converter now attached to ttyUSB4
+ [   38.364640] audit: type=1334 audit(1774458905.512:16): prog-id=10 op=UNLOAD
+[   38.371662] audit: type=1334 audit(1774458905.512:17): prog-id=9 op=UNLOAD
+[   90.248784] audit: type=1325 audit(1774458957.381:18): table=nat family=2 entries=0 op=xt_register pid=916 comm="iptables"
+[   90.259932] audit: type=1300 audit(1774458957.381:18): arch=c00000b7 syscall=209 success=yes exit=0 a0=4 a1=0 a2=40 a3=ffffe75e7360 items=0 ppid=871 pid=916 auid=4294967295 uid=0 gid=0 euid=0 suid=0 fs
+uid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm="iptables" exe="/usr/sbin/xtables-legacy-multi" key=(null)
+[   90.288160] audit: type=1327 audit(1774458957.381:18): proctitle=69707461626C6573002D74006E6174002D2D6C6973742D72756C6573
+[   90.299175] audit: type=1325 audit(1774458957.409:19): table=nat family=2 entries=5 op=xt_replace pid=919 comm="iptables"
+[   90.310252] audit: type=1300 audit(1774458957.409:19): arch=c00000b7 syscall=208 success=yes exit=0 a0=4 a1=0 a2=40 a3=aaaaf39cc250 items=0 ppid=871 pid=919 auid=4294967295 uid=0 gid=0 euid=0 suid=0 fs
+uid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm="iptables" exe="/usr/sbin/xtables-legacy-multi" key=(null)
+[   90.338501] audit: type=1327 audit(1774458957.409:19): proctitle=69707461626C6573002D74006E6174002D4100504F5354524F5554494E47002D6F00776C616E30002D6A004D415351554552414445
+[   92.042481] 8021q: adding VLAN 0 to HW filter on device wwan0
+[   92.188203] audit: type=1325 audit(1774458959.337:20): table=nat family=2 entries=6 op=xt_replace pid=968 comm="iptables"
+[   92.199276] audit: type=1300 audit(1774458959.337:20): arch=c00000b7 syscall=208 success=yes exit=0 a0=4 a1=0 a2=40 a3=aaaab5cac250 items=0 ppid=871 pid=968 auid=4294967295 uid=0 gid=0 euid=0 suid=0 fs
+uid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm="iptables" exe="/usr/sbin/xtables-legacy-multi" key=(null)
+[   92.227695] audit: type=1327 audit(1774458959.337:20): proctitle=69707461626C6573002D74006E6174002D4100504F5354524F5554494E47002D6F007777616E30002D6A004D415351554552414445
+[   93.255642] IPv6: ADDRCONF(NETDEV_CHANGE): wlan1: link becomes ready
+[   93.717522] audit: type=1325 audit(1774458960.865:21): table=nat family=2 entries=7 op=xt_replace pid=1049 comm="iptables"
+[  105.668926] device-mapper: ioctl: 4.47.0-ioctl (2022-07-28) initialised: dm-devel@redhat.com
+reboot
+Password: 
+
+Login incorrect
+imx8mp-var-dart login: root
+[  156.035394] kauditd_printk_skb: 2 callbacks suppressed
+[  156.035403] audit: type=1006 audit(1774459032.896:22): pid=1307 uid=0 old-auid=4294967295 auid=0 tty=(none) old-ses=4294967295 ses=3 res=1
+[  156.053075] audit: type=1300 audit(1774459032.896:22): arch=c00000b7 syscall=64 success=yes exit=1 a0=8 a1=fffffe487480 a2=1 a3=0 items=0 ppid=1 pid=1307 auid=0 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0
+ sgid=0 fsgid=0 tty=(none) ses=3 comm="(systemd)" exe="/lib/systemd/systemd" key=(null)
+[  156.078752] audit: type=1327 audit(1774459032.896:22): proctitle="(systemd)"
+[  156.085860] audit: type=1334 audit(1774459032.920:23): prog-id=15 op=LOAD
+[  156.092751] audit: type=1300 audit(1774459032.920:23): arch=c00000b7 syscall=280 success=yes exit=8 a0=5 a1=ffffe2998db8 a2=90 a3=0 items=0 ppid=1 pid=1307 auid=0 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid
+=0 sgid=0 fsgid=0 tty=(none) ses=3 comm="systemd" exe="/lib/systemd/systemd" key=(null)
+[  156.118262] audit: type=1327 audit(1774459032.920:23): proctitle="(systemd)"
+[  156.125357] audit: type=1334 audit(1774459032.940:24): prog-id=15 op=UNLOAD
+[  156.132356] audit: type=1334 audit(1774459032.940:25): prog-id=16 op=LOAD
+[  156.139190] audit: type=1300 audit(1774459032.940:25): arch=c00000b7 syscall=280 success=yes exit=8 a0=5 a1=ffffe2998e68 a2=90 a3=aaaab9e0d04a items=0 ppid=1 pid=1307 auid=0 uid=0 gid=0 euid=0 suid=0 f
+suid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=3 comm="systemd" exe="/lib/systemd/systemd" key=(null)
+[  156.165659] audit: type=1327 audit(1774459032.940:25): proctitle="(systemd)"
+root@imx8mp-var-dart:~# ^C
+root@imx8mp-var-dart:~# ls -lh
+total 17M
+-rw-r--r-- 1 root root   91 Mar 10 11:58 guardian_pub10.der
+drwxr-xr-x 2 root root 4.0K Mar  9  2018 install
+drwxr-xr-x 2 root root 4.0K Mar 23 00:00 logs
+-rw-r--r-- 1 root root   35 Apr 17  2025 minicom.log
+-rw-r--r-- 1 root root   23 Mar 11 09:34 msg.bin
+-rw-r--r-- 1 root root   91 Mar 11 08:51 new_dkp_pub.der
+-rw-r--r-- 1 root root   65 Mar 10 12:07 raw_pub.bin
+-rw-r--r-- 1 root root   91 Mar 11 09:21 se050_pub.der
+-rw-r--r-- 1 root root   91 Mar 10 11:53 se050_pubkey.der
+drwxr-xr-x 3 root root 4.0K Mar  9  2018 se05x_mw_v04.05.01
+drwxr-xr-x 2 root root 4.0K Mar 11 08:40 sgx-agent
+-rwxr-xr-x 1 root root 2.4M Mar 19 08:55 sgx-pa-cli
+-rwxr-xr-x 1 root root  15M Mar 19 08:55 sgx_guardian_client
+-rw-r--r-- 1 root root   70 Mar 11 09:35 sig.bin
+-rw-r--r-- 1 root root   91 Mar 10 12:06 tmp_pub.der
+root@imx8mp-var-dart:~# reboot
+root@imx8mp-var-dart:~#          Stopping Session c2 of User root...
+[  OK  ] Removed slice Slice /system/modprobe.
+[  OK  ] Stopped target Graphical Interface.
+[  OK  ] Stopped target Multi-User System.
+[  OK  ] Stopped target Login Prompts.
+[  OK  ] Stopped target RPC Port Mapper.
+[  OK  ] Stopped target Timer Units.
+[  OK  ] Stopped Daily rotation of log files.
+[  OK  ] Stopped Daily Cleanup of Temporary Directories.
+[  OK  ] Stopped target System Time Synchronized.
+[  OK  ] Stopped target System Time Set.
+[  OK  ] Closed Load/Save RF Kill Switch Status /dev/rfkill Watch.
+         Stopping Modem Manager...
+         Stopping Cervais ARMIA API Service...
+         Stopping Job spooling tools...
+         Stopping Avahi mDNS/DNS-SD Stack...
+         Stopping containerd container runtime...
+         Stopping Periodic Command Scheduler...
+         Stopping Defined Networking client daemon...
+         Stopping DNS forwarder and DHCP server...
+         Stopping Start evtest for keys event1 input device...
+         Stopping Nebula overlay networking tool...
+         Stopping NFS status monitor for NFSv2/3 locking....
+         Stopping Network Time Service...
+         Stopping Bluetooth OBEX service...
+         Stopping Telephony service...
+         Stopping Serial Getty on ttymxc1...
+         Stopping SWUpdate daemon...
+         Stopping System Logging Service...
+[  OK  ] Stopped File System Check on /dev/mmcblk2p4.
+         Stopping Load/Save OS Random Seed...
+         Stopping Target Communication Framework agent...
+         Stopping TEE Supplicant...
+[  OK  ] Stopped OpenSSH Key Generation.
+[  OK  ] Stopped Modem Manager.
+[  OK  ] Stopped Job spooling tools.
+[  OK  ] Stopped Avahi mDNS/DNS-SD Stack.
+[  OK  ] Stopped Periodic Command Scheduler.
+[  OK  ] Stopped Defined Networking client daemon.
+[  OK  ] Stopped Start evtest for keys event1 input device.
+[  OK  ] Stopped Telephony service.
+[  OK  ] Stopped System Logging Service.
+[  OK  ] Stopped TEE Supplicant.
+[  OK  ] Stopped Bluetooth OBEX service.
+[  OK  ] Stopped SWUpdate daemon.
+[  OK  ] Stopped NFS status monitor for NFSv2/3 locking..
+[  OK  ] Stopped Network Time Service.
+[  OK  ] Stopped Target Communication Framework agent.
+[  OK  ] Stopped containerd container runtime.
+[  OK  ] Stopped Serial Getty on ttymxc1.
+[  OK  ] Stopped Nebula overlay networking tool.
+[  OK  ] Stopped Cervais ARMIA API Service.
+[  OK  ] Stopped DNS forwarder and DHCP server.
+[  OK  ] Stopped Load/Save OS Random Seed.
+[  OK  ] Stopped Session c2 of User root.
+[  OK  ] Removed slice Slice /system/serial-getty.
+[  OK  ] Stopped target Network is Online.
+[  OK  ] Stopped target Host and Network Name Lookups.
+[  OK  ] Stopped Network Manager Wait Online.
+[  OK  ] Stopped /etc/rc.local Compatibility.
+         Stopping User Login Management...
+         Stopping Permit User Sessions...
+         Stopping User Manager for UID 0...
+[  OK  ] Stopped User Manager for UID 0.
+[  OK  ] Stopped Permit User Sessions.
+[  OK  ] Stopped target Network.
+[  OK  ] Stopped target Remote File Systems.
+         Stopping Network Manager...
+         Stopping User Runtime Directory /run/user/0...
+         Stopping Variscite WIFI setup service...
+         Stopping WPA supplicant...
+[  OK  ] Unmounted /run/user/0.
+[  OK  ] Stopped User Runtime Directory /run/user/0.
+[  OK  ] Removed slice User Slice of UID 0.
+[  303.093064] kauditd_printk_skb: 1 callbacks suppressed
+[  303.093076] audit: type=1325 audit(1774459179.986:27): table=nm-shared-wlan1:2 family=2 entries=2 op=nft_unregister_table pid=1738 comm="nft"
+[  303.111126] audit: type=1300 audit(1774459179.986:27): arch=c00000b7 syscall=211 success=yes exit=128 a0=3 a1=ffffea675c10 a2=0 a3=1 items=0 ppid=667 pid=1738 auid=4294967295 uid=0 gid=0 euid=0 suid=0 
+fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm="nft" exe="/usr/sbin/nft" key=(null)
+[  303.137497] audit: type=1327 audit(1774459179.986:27): proctitle=2F7573722F7362696E2F6E6674002D66002D
+[  303.174974] PREP_CMD: FW is in reset state
+
+[  303.180268] set mac address failed! status=-1, error_code=0x1
+[  303.186061] Set MAC address failed
+[  OK  ] Stopped WPA supplicant.
+[  OK  ] Stopped Network Manager.
+[  OK  ] Stopped target Preparation for Network.
+         Stopping D-Bus System Message Bus...
+[  OK  ] Stopped IPv6 Packet Filtering Framework.
+[  OK  ] Stopped IPv4 Packet Filtering Framework.
+[  OK  ] Stopped Generate network units from Kernel command line.
+[  OK  ] Stopped D-Bus System Message Bus.
+[  OK  ] Stopped Variscite WIFI setup service.
+[  OK  ] Stopped target Basic System.
+[  OK  ] Stopped target Path Units.
+[  OK  ] Stopped Dispatch Password …ts to Console Directory Watch.
+[  OK  ] Stopped Forward Password R…uests to Wall Directory Watch.
+[  OK  ] Stopped target Slice Units.
+[  OK  ] Removed slice User and Session Slice.
+[  OK  ] Stopped target Socket Units.
+[  OK  ] Closed Avahi mDNS/DNS-SD Stack Activation Socket.
+[  OK  ] Closed D-Bus System Message Bus Socket.
+[  OK  ] Closed Docker Socket for the API.
+[  OK  ] Closed PC/SC Smart Card Daemon Activation Socket.
+[  OK  ] Closed sshd.socket.
+[  OK  ] Closed SWUpdate socket listener.
+[  OK  ] Closed Syslog Socket.
+[  OK  ] Closed Weston socket.
+[  OK  ] Stopped target System Initialization.
+         Stopping Network Name Resolution...
+[  OK  ] Stopped Apply Kernel Variables.
+         Stopping Network Time Synchronization...
+         Stopping Record System Boot/Shutdown in UTMP...
+[  OK  ] Unmounted /run/credentials/systemd-sysctl.service.
+[  OK  ] Stopped Network Name Resolution.
+[  OK  ] Unmounted /run/credentials/systemd-resolved.service.
+[  OK  ] Stopped Network Time Synchronization.
+[  OK  ] Stopped Record System Boot/Shutdown in UTMP.
+[  OK  ] Stopped Create Volatile Files and Directories.
+[  OK  ] Stopped target Local File Systems.
+         Unmounting /data...
+[  304.314930] EXT4-fs (mmcblk2p3): unmounting filesystem.
+         Unmounting /run/credential…temd-tmpfiles-setup.service...
+         Unmounting /run/credential…-tmpfiles-setup-dev.service...
+         Unmounting /run/credential…temd-vconsole-setup.service...
+         Unmounting /run/media/rootfs1-mmcblk2p1...
+[  304.398652] EXT4-fs (mmcblk2p1): unmounting filesystem.
+         Unmounting Temporary Directory /tmp...
+         Unmounting /var/volatile...
+[  OK  ] Unmounted /data.
+[  OK  ] Unmounted /run/credentials…ystemd-tmpfiles-setup.service.
+[  OK  ] Unmounted /run/credentials…md-tmpfiles-setup-dev.service.
+[  OK  ] Unmounted /run/credentials…ystemd-vconsole-setup.service.
+[  OK  ] Unmounted /run/media/rootfs1-mmcblk2p1.
+[  OK  ] Unmounted Temporary Directory /tmp.
+[  OK  ] Unmounted /var/volatile.
+[  OK  ] Stopped target Swaps.
+[  OK  ] Reached target Unmount All Filesystems.
+[  OK  ] Stopped File System Check on /dev/mmcblk2p1.
+[  OK  ] Stopped File System Check on /dev/mmcblk2p3.
+[  OK  ] Removed slice Slice /system/systemd-fsck.
+[  OK  ] Stopped target Preparation for Local File Systems.
+[  OK  ] Stopped Remount Root and Kernel File Systems.
+[  OK  ] Stopped Create Static Device Nodes in /dev.
+[  OK  ] Reached target System Shutdown.
+[  OK  ] Reached target Late Shutdown Services.
+[  OK  ] Finished System Reboot.
+[  OK  ] Reached target System Reboot.
+[  304.767810] audit: type=1334 audit(1774459181.663:28): prog-id=4 op=UNLOAD
+[  304.774746] audit: type=1334 audit(1774459181.663:29): prog-id=3 op=UNLOAD
+[  304.781660] audit: type=1334 audit(1774459181.667:30): prog-id=8 op=UNLOAD
+[  304.788577] audit: type=1334 audit(1774459181.667:31): prog-id=7 op=UNLOAD
+[  304.795482] audit: type=1334 audit(1774459181.671:32): prog-id=6 op=UNLOAD
+[  304.802385] audit: type=1334 audit(1774459181.671:33): prog-id=5 op=UNLOAD
+[  304.809277] audit: type=1334 audit(1774459181.691:34): prog-id=12 op=UNLOAD
+[  304.839199] watchdog: watchdog0: watchdog did not stop!
+[  304.859732] systemd-shutdown[1]: Using hardware watchdog 'imx2+ watchdog', version 0, device /dev/watchdog0
+[  304.869523] systemd-shutdown[1]: Watchdog running with a timeout of 1min.
+[  304.888502] systemd-shutdown[1]: Syncing filesystems and block devices.
+[  304.895334] systemd-shutdown[1]: Sending SIGTERM to remaining processes...
+[  304.920976] systemd-journald[187]: Received SIGTERM from PID 1 (systemd-shutdow).
+[  304.940665] systemd-shutdown[1]: Sending SIGKILL to remaining processes...
+[  304.957220] systemd-shutdown[1]: Unmounting file systems.
+[  304.964823] (sd-remount)[1796]: Remounting '/' read-only with options ''.
+[  304.985157] EXT4-fs (mmcblk2p2): re-mounted. Quota mode: none.
+[  304.999477] systemd-shutdown[1]: All filesystems unmounted.
+[  305.005122] systemd-shutdown[1]: Deactivating swaps.
+[  305.010225] systemd-shutdown[1]: All swaps deactivated.
+[  305.015515] systemd-shutdown[1]: Detaching loop devices.
+[  305.022752] systemd-shutdown[1]: All loop devices detached.
+[  305.028352] systemd-shutdown[1]: Stopping MD devices.
+[  305.033650] systemd-shutdown[1]: All MD devices stopped.
+[  305.038973] systemd-shutdown[1]: Detaching DM devices.
+[  305.044308] systemd-shutdown[1]: All DM devices detached.
+[  305.049735] systemd-shutdown[1]: All filesystems, swaps, loop devices, MD devices and DM devices detached.
+[  305.059411] watchdog: watchdog0: watchdog did not stop!
+[  305.070265] systemd-shutdown[1]: Syncing filesystems and block devices.
+[  305.077035] systemd-shutdown[1]: Rebooting.
+[  305.081251] kvm: exiting hardware virtualization
+[  305.113704] imx2-wdt 30280000.watchdog: Device shutdown: Expect reboot!
+[  305.121109] reboot: Restarting system
+T
+U-Boot SPL 2023.04-lf_v2023.04_var02+gf3824329202 (Dec 23 2024 - 07:01:02 +0000)
+SEC0:  RNG instantiated
+Normal Boot
+Trying to boot from BOOTROM
+Boot Stage: Primary boot
+image offset 0x8000, pagesize 0x200, ivt offset 0x0
+hab fuse not enabled
+
+Authenticate image from DDR location 0x401fadc0...
+
+
+U-Boot 2023.04-lf_v2023.04_var02+gf3824329202 (Dec 23 2024 - 07:01:02 +0000)
+
+CPU:   i.MX8MP[8] rev1.1 1800 MHz (running at 1200 MHz)
+CPU:   Commercial temperature grade (0C to 95C) at 70C
+Reset cause: POR
+Model: Variscite VAR-SOM-MX8M-PLUS on Symphony-Board
+DRAM:  4 GiB
+extcon_ptn5150_init: Can't find device id=0x3d
+extcon_ptn5150_setup: port init failed, err=-19
+Core:  201 devices, 25 uclasses, devicetree: separate
+MMC:   FSL_SDHC: 1, FSL_SDHC: 2
+Loading Environment from MMC... OK
+In:    serial
+Out:   serial
+Err:   serial
+SEC0:  RNG instantiated
+switch to partitions #0, OK
+mmc2(part 0) is current device
+
+Part number: VSM-MX8MP-A24
+Assembly: AS412225208
+Production date: 2024 Dec 10
+Serial Number: f8:dc:7a:f3:a2:52
+SOM revision: 2.0
+flash target is MMC:2
+Net:   No ethernet found.
+Fastboot: Normal
+Normal Boot
+Hit any key to stop autoboot:  0 
+u-boot=> hab_status
+
+Secure boot disabled
+
+HAB Configuration: 0xf0, HAB State: 0x66
+No HAB Events Found!
+
+u-boot=> fuse read 1 3
+Reading bank 1:
+
+Word 0x00000003: 88000000
+u-boot=> 
+CTRL-A Z for help | 115200 8N1 | NOR | Minicom 2.8 | VT102 | Offline | ttyUSB0                                                                                                                             
+

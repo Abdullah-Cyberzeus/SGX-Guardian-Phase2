@@ -35,8 +35,14 @@ impl NebulaCA {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(format!("{}/ca.crt", ca_dir), fs::Permissions::from_mode(0o644));
-            let _ = fs::set_permissions(format!("{}/ca.key", ca_dir), fs::Permissions::from_mode(0o600));
+            let _ = fs::set_permissions(
+                format!("{}/ca.crt", ca_dir),
+                fs::Permissions::from_mode(0o644),
+            );
+            let _ = fs::set_permissions(
+                format!("{}/ca.key", ca_dir),
+                fs::Permissions::from_mode(0o600),
+            );
         }
 
         println!("✅ Nebula CA generated successfully.");

@@ -165,6 +165,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
+    // === Secure Boot Chain Verification ===
+    println!("\n  Verifying secure boot chain...");
+    {
+        use sgx_guardian_client::secure_element::secure_boot::BootChainStatus;
+
+        let boot_status = BootChainStatus::check();
+        boot_status.print();
+
+        // Save boot chain status
+        let boot_status_path = format!("/var/lib/sgx-guardian/boot/{}_chain_status.json", node_id);
+        if let Err(e) = boot_status.save(&boot_status_path) {
+            eprintln!("  Boot chain save failed: {}", e);
+        }
+
+        if !boot_status.boot_chain_intact {
+            eprintln!(
+                "  ⚠️ Boot chain verification incomplete — PCR values may not be fully trusted"
+            );
+        }
+    }
+
     // === PCR Measurement (ATT-003) ===
     println!("\n  Measuring platform integrity (PCR)...");
     {
@@ -194,7 +215,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Perform measurements
         for src in &sources {
-            if src.source_type == "multi_file" {
+            if src.source_type == "boot_chain" {
+                // Measure the boot chain state string
+                use sgx_guardian_client::secure_element::secure_boot::BootChainStatus;
+                let boot_status = BootChainStatus::check();
+                let measurement = boot_status.to_measurement_string();
+                match pcr_engine.extend_from_string(src.pcr_index, &measurement) {
+                    Ok(hash) => println!(
+                        "    PCR{}: {} → {}...",
+                        src.pcr_index,
+                        src.label,
+                        &hash[..12]
+                    ),
+                    Err(e) => {
+                        let _ =
+                            pcr_engine.extend_from_string(src.pcr_index, &format!("ERROR:{}", e));
+                        measurement_errors.push(PcrMeasurementError {
+                            pcr_index: src.pcr_index,
+                            source: src.source.clone(),
+                            error: e.clone(),
+                        });
+                        println!("    PCR{}: {} → ⚠️ {}", src.pcr_index, src.label, e);
+                    }
+                }
+            } else if src.source_type == "multi_file" {
                 let files: Vec<String> = src
                     .source
                     .split(',')

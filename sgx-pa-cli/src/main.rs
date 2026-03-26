@@ -24,6 +24,8 @@ struct Cli {
 enum Commands {
     /// Show status information for a specific SGX Guardian node
     Status(commands::status::StatusArgs),
+    /// Show secure boot chain status
+    BootStatus,
     /// Show recent logs for a specific node
     Logs(LogsArgs),
     /// Generate a new ECDSA-P256 keypair
@@ -58,6 +60,7 @@ fn main() {
     let cli = Cli::parse();
     match cli.command {
         Commands::Status(args) => commands::status::run(args),
+        Commands::BootStatus => commands::boot_status::run(),
         Commands::Logs(args) => commands::logs::run(args),
         Commands::Keygen => commands::keygen::execute(),
         Commands::Sign(args) => commands::sign::execute(args),

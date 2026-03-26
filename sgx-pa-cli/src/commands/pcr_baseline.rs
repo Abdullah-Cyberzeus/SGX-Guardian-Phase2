@@ -100,7 +100,10 @@ pub fn run_create() {
                 serde_json::to_string_pretty(&baseline).unwrap(),
             ) {
                 Ok(_) => {
-                    println!("✅ Baseline created and SIGNED at {}", &baseline_path_for(&node_id));
+                    println!(
+                        "✅ Baseline created and SIGNED at {}",
+                        &baseline_path_for(&node_id)
+                    );
                     println!("   Device UID: {}", device_uid);
                     println!("   Key version: {}", key_version);
                 }
@@ -205,7 +208,8 @@ pub fn run_verify() {
         return;
     }
 
-    let baseline: serde_json::Value = serde_json::from_str(&fs::read_to_string(&bl_path).unwrap()).unwrap();
+    let baseline: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&bl_path).unwrap()).unwrap();
     let snapshot: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&pcr_path).unwrap()).unwrap();
 

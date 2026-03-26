@@ -19,9 +19,9 @@ pub fn default_measurement_sources(node_id: &str) -> Vec<PcrMeasurementSource> {
     vec![
         PcrMeasurementSource {
             pcr_index: 0,
-            label: "Bootloader".into(),
-            source_type: "file".into(),
-            source: "/proc/device-tree/model".into(),
+            label: "Boot chain state".into(),
+            source_type: "boot_chain".into(), // NEW type
+            source: "hab_status".into(),
             critical: true,
         },
         PcrMeasurementSource {
