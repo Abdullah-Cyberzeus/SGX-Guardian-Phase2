@@ -6,9 +6,9 @@ license = "Apache-2.0 OR MIT"
 build = "build.rs"
 
 [dependencies]
-tonic = { version = "0.11.0", features = ["tls", "tls-roots", "transport"] }
-prost = "0.12.6"
-prost-types = "0.12.6"
+tonic = { version = "0.12.3", features = ["tls", "tls-roots", "transport"] }
+prost = "0.13.5"
+prost-types = "0.13.5"
 tokio = { version = "1.37", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "json", "chrono"] }
@@ -31,7 +31,7 @@ rcgen = "0.12"
 pem = "3.0"
 p256 = { version = "0.13", features = ["ecdsa"] }
 once_cell = "1.19"
-warp = { version = "0.3", features = ["tls"] }
+warp = { version = "0.3", default-features = false }
 reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
 async-trait = "0.1"
 dashmap = "5.5"
@@ -39,7 +39,7 @@ network-interface = "1.1"
 uuid = { version = "1", features = ["v4","serde"] }
 
 [build-dependencies]
-tonic-build = "0.11.0"
+tonic-build = "0.12.3"
 
 [dev-dependencies]
 rcgen = "0.12"
