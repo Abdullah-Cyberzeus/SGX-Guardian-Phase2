@@ -94,17 +94,17 @@ fn build_nft_ruleset(rules: &[EnforcementRule]) -> Result<String> {
     // Allow mDNS (discovery)
     out.push_str("    udp dport 5353 accept\n");
 
-    // Allow local gRPC / node communication (example ports)
+    // Allow gRPC ports
     out.push_str("    tcp dport {50051,50052,50053} accept\n");
 
     // Allow attestation ports
     out.push_str("    tcp dport {50151,50152,50153} accept\n");
 
-    // Allow node discovery broadcast (UDP)
+    // Allow node discovery broadcast
     out.push_str("    udp dport 9000 accept\n");
     out.push_str("    udp sport 9000 accept\n");
 
-    // Allow config sync (TCP)
+    // Allow config sync
     out.push_str("    tcp dport 50070 accept\n");
 
     // Allow cert bootstrap
@@ -114,6 +114,7 @@ fn build_nft_ruleset(rules: &[EnforcementRule]) -> Result<String> {
     out.push_str("    ip protocol icmp accept\n");
 
     // ---- END DEV SAFETY RULES ----
+
 
     for rule in rules {
         out.push_str("    ");

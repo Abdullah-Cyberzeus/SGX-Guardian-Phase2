@@ -34,11 +34,14 @@ impl NodeConfig {
             return Err("hostname cannot be empty".into());
         }
 
-        // Only check empty — dynamic IPs may be 0.0.0.0 during discovery
+        // // Validate IP address format
+        // if self.ip.parse::<std::net::IpAddr>().is_err() {
+        //     return Err(format!("Invalid IP address: {}", self.ip));
+        // }
+        // Bas empty check karo
         if self.ip.trim().is_empty() {
             return Err("ip field cannot be empty".into());
         }
-
         // Validate valid port range
         if self.port == 0 {
             return Err(format!("Invalid port number: {}", self.port));
