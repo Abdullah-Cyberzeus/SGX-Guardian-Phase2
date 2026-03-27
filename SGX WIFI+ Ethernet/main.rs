@@ -1,32 +1,44 @@
 //! SG-X Guardian Client entrypoint.
 //! Initializes node identity, loads configuration, starts discovery,
 //! attestation, metrics tracking, and the gRPC server runtime.
-
-use sgx_guardian_client::attestation_service;
-use sgx_guardian_client::audit::event::{AuditAction, AuditCategory, AuditSeverity};
-use sgx_guardian_client::audit::logger::{init_audit_logger, log_audit};
-use sgx_guardian_client::audit::verifier::AuditVerifier;
-use sgx_guardian_client::client::send_ping;
-use sgx_guardian_client::config_loader::{load_config, CloudConfig};
-use sgx_guardian_client::key_manager::KeyManager;
-#[cfg(feature = "secure-element")]
-use sgx_guardian_client::secure_element;
-
-#[allow(unused_imports)]
-use sgx_guardian_client::logging::{init_logger, log_error, log_event};
-use sgx_guardian_client::metrics::Metrics;
-use sgx_guardian_client::nebula::install::NebulaInstall;
-use sgx_guardian_client::p2p_discovery::P2PDiscovery;
-use sgx_guardian_client::policy;
-use sgx_guardian_client::server;
-use sgx_guardian_client::server::start_server;
-// WiFi + Ethernet discovery imports
-use sgx_guardian_client::dynamic_config;
-use sgx_guardian_client::node_announcement::NodeAnnouncement;
-use sgx_guardian_client::node_broadcast;
-use sgx_guardian_client::node_listener;
-
+mod audit;
+mod config_loader;
+mod dynamic_config;
+mod nebula;
+mod policy;
+pub mod proto {
+    pub mod sgx {
+        include!(concat!(env!("OUT_DIR"), "/sgx.rs"));
+    }
+}
+mod attestation_service;
+mod cert_client;
+mod cert_service;
+mod client;
+mod cloud;
+mod key_manager;
+mod logging;
+mod metrics;
+mod metrics_server;
+mod node_announcement;
+mod node_broadcast;
+mod node_listener;
+mod p2p_discovery;
+mod server;
+use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use crate::audit::logger::{init_audit_logger, log_audit};
+use crate::audit::verifier::AuditVerifier;
+use crate::config_loader::CloudConfig;
 use base64::{engine::general_purpose, Engine as _};
+use client::send_ping;
+use config_loader::load_config;
+use key_manager::KeyManager;
+#[allow(unused_imports)]
+use logging::{init_logger, log_error, log_event};
+use metrics::Metrics;
+use nebula::install::NebulaInstall;
+
+use server::start_server;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -41,9 +53,41 @@ use tokio::{signal, task};
 
 #[cfg(windows)]
 use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
+
+async fn wait_for_valid_node_ip(node_id: &str, path: &str) -> String {
+    loop {
+        let cfg = crate::config_loader::load_config(path).expect("Failed to reload config");
+
+        if cfg.ip != "0.0.0.0" && cfg.ip != "127.0.0.1" {
+            println!("✅ {} discovered at {}", node_id, cfg.ip);
+            return cfg.ip;
+        }
+
+        println!("⏳ Waiting for {} discovery...", node_id);
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+}
+/// Entry point for the SG-X Guardian Client.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(" SGX Guardian Client Starting...");
+
+    // Parse command-line arguments
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() < 2 {
+        eprintln!("Usage: cargo run -- <node_id>");
+        std::process::exit(1);
+    }
+
+    let node_id = args[1].clone();
+
+    // Start node announcement listener
+    let node_id_clone = node_id.clone();
+
+    tokio::spawn(async move {
+        node_listener::start_listener(node_id_clone).await;
+    });
     #[cfg(windows)]
     {
         static CTRL_C_PRESSED: AtomicBool = AtomicBool::new(false);
@@ -63,78 +107,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
     let node_id = args[1].clone();
-    // Start node announcement listener (UDP broadcast receiver)
-    {
-        let node_id_clone = node_id.clone();
-        tokio::spawn(async move {
-            node_listener::start_listener(node_id_clone).await;
-        });
-    }
     // Generate node-specific identity key path
     let node_key_path = format!("/var/lib/sgx-guardian/sgx-agent/device_{}.key", node_id);
-    // === Hardware Key Manager Initialization (Phase 2 — HKM) ===
-    #[cfg(feature = "secure-element")]
-    let km = {
-        let se_base_path = "/var/lib/sgx-guardian";
-        let se_config = secure_element::SeConfig::default();
-
-        match KeyManager::init_with_se050(&se_config, se_base_path, &node_key_path) {
-            Ok(hw_km) => {
-                println!("DKP initialized via SE050 hardware");
-                log_audit(
-                    &node_id,
-                    AuditCategory::Identity,
-                    AuditSeverity::Info,
-                    AuditAction::Loaded,
-                    "Hardware Key Manager: DKP active via SE050",
-                );
-                hw_km
-            }
-            Err(e) => {
-                eprintln!("SE050 HKM failed: {} — using software keys", e);
-                KeyManager::load_or_generate(&node_key_path)?
-            }
-        }
-    };
-
-    #[cfg(not(feature = "secure-element"))]
+    // Initialize or load persistent identity keypair
     let km = KeyManager::load_or_generate(&node_key_path)?;
-
-    // === DKP Auto-Rotation Check ===
-    #[cfg(feature = "secure-element")]
-    {
-        let se_config = sgx_guardian_client::secure_element::SeConfig::default();
-        let base_path = "/var/lib/sgx-guardian";
-        if let Ok(mut dkp) =
-            sgx_guardian_client::secure_element::dkp::DkpManager::init(&se_config, base_path)
-        {
-            match dkp.check_and_auto_rotate() {
-                Ok(Some(new_meta)) => {
-                    println!("  DKP auto-rotated to v{}", new_meta.version);
-                    // Reinitialize KeyManager with new key
-                    // (daemon restart is safer for now)
-                }
-                Ok(None) => { /* no rotation needed */ }
-                Err(e) => {
-                    eprintln!("  Auto-rotation check failed: {}", e);
-                }
-            }
-        }
-    }
-
-    // === Crypto Provider Status ===
-    match km.backend_name() {
-        "SE050" => {
-            println!("  Secure Element detected: SE050");
-            println!("  Signing provider: SE050 hardware (ECDSA-P256)");
-            println!("  RNG source: SE050 TRNG");
-        }
-        _ => {
-            println!("  Secure Element not available");
-            println!("  Signing provider: software (ring crate, ECDSA-P256)");
-            println!("  RNG source: software RNG (SystemRandom)");
-        }
-    }
 
     let pubkey_b64 = general_purpose::STANDARD.encode(km.pubkey_der());
     println!(
@@ -143,7 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Generate and log attestation evidence for this node
-    use sgx_guardian_client::attestation_service::AttestationService;
+    use crate::attestation_service::AttestationService;
 
     let sample_policy_path = "/etc/sgx-guardian/schemas/uep_policy_v1.yaml";
 
@@ -176,224 +152,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Local attestation evidence verification failed",
         );
     }
-
-    // === Secure Boot Chain Verification ===
-    println!("\n  Verifying secure boot chain...");
-    {
-        use sgx_guardian_client::secure_element::secure_boot::BootChainStatus;
-
-        let boot_status = BootChainStatus::check();
-        boot_status.print();
-
-        // Save boot chain status
-        let boot_status_path = format!("/var/lib/sgx-guardian/boot/{}_chain_status.json", node_id);
-        if let Err(e) = boot_status.save(&boot_status_path) {
-            eprintln!("  Boot chain save failed: {}", e);
-        }
-
-        if !boot_status.boot_chain_intact {
-            eprintln!(
-                "  ⚠️ Boot chain verification incomplete — PCR values may not be fully trusted"
-            );
-        }
-    }
-
-    // === PCR Measurement (ATT-003) ===
-    println!("\n  Measuring platform integrity (PCR)...");
-    {
-        use sgx_guardian_client::secure_element::pcr::*;
-        use sgx_guardian_client::secure_element::pcr_config;
-        use sha2::Digest;
-
-        let mut pcr_engine = PcrEngine::new();
-        let mut measurement_errors: Vec<PcrMeasurementError> = Vec::new();
-
-        // Detect environment
-        let is_hardware = std::path::Path::new("/proc/device-tree/model").exists();
-        println!(
-            "  PCR mode: {}",
-            if is_hardware {
-                "Hardware (board)"
-            } else {
-                "Software (simulated)"
-            }
-        );
-
-        let sources = if is_hardware {
-            pcr_config::default_measurement_sources(&node_id)
-        } else {
-            pcr_config::software_measurement_sources()
-        };
-
-        // Perform measurements
-        for src in &sources {
-            if src.source_type == "boot_chain" {
-                // Measure the boot chain state string
-                use sgx_guardian_client::secure_element::secure_boot::BootChainStatus;
-                let boot_status = BootChainStatus::check();
-                let measurement = boot_status.to_measurement_string();
-                match pcr_engine.extend_from_string(src.pcr_index, &measurement) {
-                    Ok(hash) => println!(
-                        "    PCR{}: {} → {}...",
-                        src.pcr_index,
-                        src.label,
-                        &hash[..12]
-                    ),
-                    Err(e) => {
-                        let _ =
-                            pcr_engine.extend_from_string(src.pcr_index, &format!("ERROR:{}", e));
-                        measurement_errors.push(PcrMeasurementError {
-                            pcr_index: src.pcr_index,
-                            source: src.source.clone(),
-                            error: e.clone(),
-                        });
-                        println!("    PCR{}: {} → ⚠️ {}", src.pcr_index, src.label, e);
-                    }
-                }
-            } else if src.source_type == "multi_file" {
-                let files: Vec<String> = src
-                    .source
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .collect();
-                let errs = pcr_engine.extend_from_files(src.pcr_index, &files);
-                measurement_errors.extend(errs);
-            } else {
-                let result = match src.source_type.as_str() {
-                    "file" => pcr_engine.extend_from_file(src.pcr_index, &src.source),
-                    "string" => pcr_engine.extend_from_string(src.pcr_index, &src.source),
-                    _ => Err(format!("Unknown type: {}", src.source_type)),
-                };
-                match result {
-                    Ok(hash) => println!(
-                        "    PCR{}: {} → {}...",
-                        src.pcr_index,
-                        src.label,
-                        &hash[..12]
-                    ),
-                    Err(e) => {
-                        let _ =
-                            pcr_engine.extend_from_string(src.pcr_index, &format!("ERROR:{}", e));
-                        measurement_errors.push(PcrMeasurementError {
-                            pcr_index: src.pcr_index,
-                            source: src.source.clone(),
-                            error: e.clone(),
-                        });
-                        println!("    PCR{}: {} → ⚠️ {}", src.pcr_index, src.label, e);
-                    }
-                }
-            }
-        }
-
-        pcr_engine.print_status();
-
-        // Determine integrity status
-        let has_critical_fail = measurement_errors.iter().any(|err| {
-            sources
-                .iter()
-                .any(|s| s.pcr_index == err.pcr_index && s.critical)
-        });
-        let integrity_status = if measurement_errors.is_empty() {
-            "PASS".to_string()
-        } else if has_critical_fail {
-            "FAIL".to_string()
-        } else {
-            "DEGRADED".to_string()
-        };
-
-        if integrity_status == "FAIL" {
-            eprintln!("  🔴 CRITICAL: Platform integrity check FAILED — attestation will be rejected by peers");
-        } else if integrity_status == "DEGRADED" {
-            println!("  ⚠️ Some measurements failed (non-critical) — status DEGRADED");
-        } else {
-            println!("  Platform integrity: ✅ PASS");
-        }
-
-        // Build snapshot
-        let mut snapshot = pcr_engine.snapshot();
-        snapshot.measurement_errors = measurement_errors;
-        snapshot.integrity_status = integrity_status;
-        snapshot.device_uid = read_device_uid(&node_id);
-        snapshot.key_version = read_dkp_key_version();
-
-        // Generate nonce + timestamp
-        let mut nonce_bytes = [0u8; 16];
-        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce_bytes);
-        snapshot.nonce = hex::encode(nonce_bytes);
-        snapshot.measured_at = chrono::Utc::now().to_rfc3339();
-
-        // Sign: SHA256(composite_bytes || nonce_bytes || timestamp_bytes)  (BINARY concat)
-        let composite_bytes =
-            hex::decode(&snapshot.composite_digest).unwrap_or_else(|_| vec![0u8; 32]);
-        let nonce_sign_bytes = hex::decode(&snapshot.nonce).unwrap_or_else(|_| vec![0u8; 16]);
-        let ts_bytes = snapshot.measured_at.as_bytes();
-        let mut sign_input = Vec::with_capacity(32 + 16 + ts_bytes.len());
-        sign_input.extend_from_slice(&composite_bytes);
-        sign_input.extend_from_slice(&nonce_sign_bytes);
-        sign_input.extend_from_slice(ts_bytes);
-        let sign_hash = sha2::Sha256::digest(&sign_input);
-
-        if let Ok(sig) = km.sign(&sign_hash) {
-            snapshot.composite_signature =
-                Some(base64::engine::general_purpose::STANDARD.encode(&sig));
-            println!(
-                "  PCR composite signed by DKP (v{}) ✅",
-                snapshot.key_version
-            );
-        }
-
-        // Save snapshot
-        let pcr_path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node_id);
-        match snapshot.save(&pcr_path) {
-            Ok(_) => println!("  PCR snapshot → {}", pcr_path),
-            Err(e) => eprintln!("  PCR save failed: {}", e),
-        }
-
-        // Compare against baseline
-        let baseline_path = format!("/etc/sgx-guardian/pcr_{}_baseline.json", node_id);
-        if let Ok(baseline) = PcrBaseline::load(&baseline_path) {
-            // Validate schema version
-            if baseline.schema_version != PCR_SCHEMA_VERSION {
-                eprintln!(
-                    "  ⚠️ Baseline schema v{} != current v{} — re-create baseline",
-                    baseline.schema_version, PCR_SCHEMA_VERSION
-                );
-            } else {
-                // Verify baseline signature
-                let pubkey = km.pubkey_der();
-                if !baseline.verify_signature(&pubkey) {
-                    if baseline.key_version != snapshot.key_version {
-                        eprintln!("  ⚠️ Baseline signed with DKP v{}, current is v{}. Re-create baseline.",
-                            baseline.key_version, snapshot.key_version);
-                    } else {
-                        eprintln!("  🔴 Baseline signature INVALID — possible tampering!");
-                    }
-                } else {
-                    match snapshot.compare_baseline(&baseline) {
-                        Ok(mismatches) if mismatches.is_empty() => {
-                            println!("  PCR baseline: ✅ ALL MATCH");
-                        }
-                        Ok(mismatches) => {
-                            eprintln!("  ⚠️ PCR MISMATCH detected:");
-                            for idx in &mismatches {
-                                eprintln!(
-                                    "    PCR{} [{}]: expected {}.. got {}..",
-                                    idx,
-                                    PcrEngine::pcr_name(*idx),
-                                    &baseline.pcr_values[*idx][..16],
-                                    &snapshot.pcr_values[*idx][..16]
-                                );
-                            }
-                        }
-                        Err(e) => eprintln!("  ⚠️ Baseline compare error: {}", e),
-                    }
-                }
-            }
-        } else {
-            println!("  No baseline — create with: sgx-pa-cli pcr-baseline-create");
-        }
-    }
-
     // === DYNAMIC IP DETECTION + CONFIG AUTO-UPDATE ===
     println!("\n🔍 Detecting local LAN IP address...");
 
@@ -409,8 +167,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             String::new()
         }
     };
+    // ✅ NEW — sanitize + update only own config
+    println!("\n🔧 Sanitizing configs before load...");
 
-    // Sanitize configs before load
+    // Step 1: fix invalid IPs in all configs
     for yaml_file in &[
         "/etc/sgx-guardian/config/nodeA.yaml",
         "/etc/sgx-guardian/config/nodeB.yaml",
@@ -421,18 +181,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Update ONLY current node config with detected IP
+    // Step 2: update ONLY current node config
     if !detected_ip.is_empty() {
         let my_config_path = format!("/etc/sgx-guardian/config/{}.yaml", node_id);
+
         let _ = dynamic_config::update_config_ip_if_changed(&my_config_path, &detected_ip);
     }
+    // === Load configs AFTER update ===
+    println!("\n📦 Loading node configurations...");
 
-    println!("\n Loading node configurations...");
-    let node_a = load_config("/etc/sgx-guardian/nodeA.yaml").expect("Failed to load nodeA config");
-
-    let node_b = load_config("/etc/sgx-guardian/nodeB.yaml").expect("Failed to load nodeB config");
-
-    let node_c = load_config("/etc/sgx-guardian/nodeC.yaml").expect("Failed to load nodeC config");
+    let node_a =
+        load_config("/etc/sgx-guardian/config/nodeA.yaml").expect("Failed to load nodeA config");
+    let node_b =
+        load_config("/etc/sgx-guardian/config/nodeB.yaml").expect("Failed to load nodeB config");
+    let node_c =
+        load_config("/etc/sgx-guardian/config/nodeC.yaml").expect("Failed to load nodeC config");
 
     println!(
         "✅ Loaded Node A: {} ({}) at {}:{} | key: {}",
@@ -533,7 +296,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(false)
     {
         tokio::spawn(async {
-            sgx_guardian_client::cloud::mock_server::run_mock_cloud(([127, 0, 0, 1], 9443)).await;
+            cloud::mock_server::run_mock_cloud(([127, 0, 0, 1], 9443)).await;
         });
 
         log_audit(
@@ -563,9 +326,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
 
         tokio::spawn(async move {
-            if let Err(e) =
-                sgx_guardian_client::cloud::client::send_heartbeat(&node_id_clone, &endpoint).await
-            {
+            if let Err(e) = cloud::client::send_heartbeat(&node_id_clone, &endpoint).await {
                 log_error(
                     &node_id_clone,
                     &format!("Cloud uplink heartbeat failed: {}", e),
@@ -579,13 +340,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         m.record_connection();
     }
 
-    // === Nebula Installation Verification ===
+    // === Nebula Installation Verification (Deliverable 1) ===
     println!("\n🔎 Verifying Nebula Installation...");
 
     // === Generate CA + Node Certificates for Nebula (if not exist) ===
-    use sgx_guardian_client::nebula::ca::NebulaCA;
-    use sgx_guardian_client::nebula::daemon::NebulaDaemon;
-    use sgx_guardian_client::nebula::models::CircleMembership;
+    use nebula::ca::NebulaCA;
+    use nebula::daemon::NebulaDaemon;
+    use nebula::models::CircleMembership;
 
     let nebula_base_dir =
         std::env::var("SGX_NEBULA_DIR").unwrap_or("/var/lib/sgx-guardian/nebula".to_string());
@@ -650,7 +411,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     if node_id == "nodeA" {
-        // CA node: auto-issue its own certificate
+        // CA node: auto-issue its own certificate (self-bootstrap)
         if let Err(e) = NebulaCA::issue_node_cert(&nebula_base_dir, &membership, nebula_ip) {
             eprintln!("❌ Failed to issue CA node certificate: {:?}", e);
             std::process::exit(1);
@@ -687,10 +448,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let cert_node_id = node_id.clone();
             let cert_overlay_ip = nebula_ip.to_string();
             let cert_pubkey = pubkey_b64.clone();
-            let ca_address = "127.0.0.1:50061".to_string();
-            log_event(&node_id, "Nebula certificate missing, will request from CA");
-            // BLOCKING REQUEST — DO NOT SPAWN
-            sgx_guardian_client::cert_client::request_certificate_from_ca(
+            let node_a_ip =
+                wait_for_valid_node_ip("nodeA", "/etc/sgx-guardian/config/nodeA.yaml").await;
+
+            let ca_address = format!("{}:50061", node_a_ip);
+
+            println!("🚀 Sending cert request to CA at {}", ca_address);
+
+            cert_client::request_certificate_from_ca(
                 cert_node_id,
                 ca_address,
                 cert_overlay_ip,
@@ -702,7 +467,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     //configuration directory for nebula
-    use sgx_guardian_client::nebula::config::NebulaConfig;
+    use nebula::config::NebulaConfig;
     let config_directory = nebula_base_dir.clone();
     let is_lighthouse = node_id == "nodeA";
 
@@ -732,7 +497,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // === Nebula Health Check ===
-    use sgx_guardian_client::nebula::health::NebulaHealth;
+    use nebula::health::NebulaHealth;
 
     println!("🩺 Performing Nebula health check...");
 
@@ -743,7 +508,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("-----------------------------");
 
     // === Start Expiry Monitor ===
-    use sgx_guardian_client::nebula::cert_lifecycle::ExpiryMonitor;
+    use nebula::cert_lifecycle::ExpiryMonitor;
     ExpiryMonitor::start(nebula_base_dir.clone(), node_id.clone());
 
     // === CoT Deliverable Integration Start ===
@@ -875,48 +640,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
-    // === CoT Deliverable Integration End ===
-
-    // === Integrate Discovery + Attestation Services ===
-    println!("🛰️ Initializing P2P Discovery and Attestation Services...");
-
-    // Create async channel between discovery ↔ attestation
-    let (disc_tx, disc_rx) = mpsc::channel(64);
-
-    // Prepare shared auditor context (used by discovery + logs)
-    let node_id_clone = node_id.clone();
-    let auditor_arc = Arc::new(Mutex::new(node_id_clone.clone()));
-
-    // Spawn Discovery service
-    tokio::spawn({
-        let tx = disc_tx.clone();
-        let node_id_clone = node_id.clone();
-        let auditor_arc_clone = auditor_arc.clone();
-        async move {
-            if let Err(e) =
-                P2PDiscovery::run(tx, node_id_clone.clone(), auditor_arc_clone.clone()).await
-            {
-                eprintln!("Discovery service error: {:?}", e);
-                log_error(&node_id_clone, &format!("Discovery service error: {:?}", e));
-            }
-        }
-    });
-
-    // Spawn Attestation service
-    tokio::spawn({
-        let node_id_clone = node_id.clone();
-        async move {
-            if let Err(e) = attestation_service::run(disc_rx).await {
-                eprintln!("Attestation service error: {:?}", e);
-                log_error(
-                    &node_id_clone,
-                    &format!("Attestation service error: {:?}", e),
-                );
-            }
-        }
-    });
-
-    println!("✅ P2P Discovery and Attestation background services started.");
 
     let (this_node, peers) = match node_id.as_str() {
         "nodeA" => (node_a.clone(), vec![node_b, node_c]),
@@ -929,24 +652,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // === NODE BROADCAST + CONFIG SYNC ===
-    let detected_ip_for_broadcast = if detected_ip.is_empty() {
-        this_node.ip.clone()
-    } else {
-        detected_ip.clone()
+    use crate::node_announcement::NodeAnnouncement;
+
+    let announcement = NodeAnnouncement {
+        node_id: this_node.node_id.clone(),
+        hostname: this_node.hostname.clone(),
+        ip: detected_ip.clone(),
+        port: this_node.port,
+        public_key: this_node.public_key.clone(),
     };
-
-    // Initial broadcast
-    let announcement = NodeAnnouncement::new_signed(
-        this_node.node_id.clone(),
-        this_node.hostname.clone(),
-        detected_ip_for_broadcast.clone(),
-        this_node.port,
-        this_node.public_key.clone(),
-    );
     node_broadcast::broadcast_node(&announcement);
-
-    // Start background IP monitor
     dynamic_config::start_ip_monitor(
         node_id.clone(),
         format!("/etc/sgx-guardian/config/{}.yaml", node_id),
@@ -954,45 +669,75 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         dynamic_config::NodeConfigBroadcast {
             node_id: this_node.node_id.clone(),
             hostname: this_node.hostname.clone(),
-            ip: detected_ip_for_broadcast.clone(),
+            ip: detected_ip.clone(),
             port: this_node.port,
             public_key: this_node.public_key.clone(),
         },
     )
     .await;
 
-    // Periodic broadcast (every 30 seconds)
-    {
-        let node_id_bc = node_id.clone();
-        let hostname_bc = this_node.hostname.clone();
-        let pubkey_bc = pubkey_b64.clone();
-        let port_bc = this_node.port;
-
-        tokio::spawn(async move {
-            loop {
-                let current_ip = match dynamic_config::detect_local_lan_ip() {
-                    Ok(ip) => ip.to_string(),
-                    Err(_) => {
-                        tokio::time::sleep(Duration::from_secs(10)).await;
-                        continue;
-                    }
-                };
-
-                let announcement = NodeAnnouncement::new_signed(
-                    node_id_bc.clone(),
-                    hostname_bc.clone(),
-                    current_ip,
-                    port_bc,
-                    pubkey_bc.clone(),
-                );
-
-                node_broadcast::broadcast_node(&announcement);
-                tokio::time::sleep(Duration::from_secs(30)).await;
-            }
-        });
-    }
     println!("✅ Config auto-update system active\n");
-    // === END NODE BROADCAST + CONFIG SYNC ===
+    // === END DYNAMIC CONFIG SYNC ===
+
+    println!("🛰️ Initializing P2P Discovery and Attestation Services...");
+
+    let (disc_tx, disc_rx) = mpsc::channel(64);
+
+    let node_id_clone = node_id.clone();
+    let auditor_arc = Arc::new(Mutex::new(node_id_clone.clone()));
+
+    tokio::spawn({
+        let tx = disc_tx.clone();
+        let node_id_clone = node_id.clone();
+        let auditor_arc_clone = auditor_arc.clone();
+        async move {
+            if let Err(e) =
+                p2p_discovery::P2PDiscovery::run(tx, node_id_clone.clone(), auditor_arc_clone).await
+            {
+                eprintln!("Discovery service error: {:?}", e);
+            }
+        }
+    });
+
+    tokio::spawn({
+        // let node_id_clone = node_id.clone();
+        async move {
+            if let Err(e) = attestation_service::run(disc_rx).await {
+                eprintln!("Attestation service error: {:?}", e);
+            }
+        }
+    });
+
+    println!("✅ P2P Discovery and Attestation background services started.");
+    // Periodic node broadcast (every 30 seconds)
+    let node_id_bc = node_id.clone();
+    let hostname_bc = this_node.hostname.clone();
+    let pubkey_bc = pubkey_b64.clone();
+    let port_bc = this_node.port;
+
+    tokio::spawn(async move {
+        loop {
+            // Fresh IP har baar detect karo
+            let current_ip = match dynamic_config::detect_local_lan_ip() {
+                Ok(ip) => ip.to_string(),
+                Err(_) => {
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    continue;
+                }
+            };
+
+            let announcement = NodeAnnouncement {
+                node_id: node_id_bc.clone(),
+                hostname: hostname_bc.clone(),
+                ip: current_ip,
+                port: port_bc,
+                public_key: pubkey_bc.clone(),
+            };
+
+            node_broadcast::broadcast_node(&announcement);
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        }
+    });
     // === Metrics server enable/disable (node-specific, YAML-driven)
     if let Some(metrics_cfg) = &this_node.metrics {
         if metrics_cfg.enabled {
@@ -1007,11 +752,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let port = metrics_cfg.port;
 
             tokio::spawn(async move {
-                sgx_guardian_client::metrics_server::start_metrics_server(
-                    metrics_clone,
-                    (bind_ip, port),
-                )
-                .await;
+                metrics_server::start_metrics_server(metrics_clone, (bind_ip, port)).await;
             });
         }
     }
@@ -1026,8 +767,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ => "Metrics server disabled (YAML)",
         },
     );
-
-    let this_addr = format!("{}:{}", this_node.ip, this_node.port);
+    // Always bind to all interfaces (avoid stale IP issues)
+    let this_addr = format!("0.0.0.0:{}", this_node.port);
     log_event(&node_id, &format!("Starting server at {}", this_addr));
     use sgx_guardian_client::policy::load_policy_runtime;
     use sgx_guardian_client::policy_manager::load_and_activate_policy;
@@ -1105,13 +846,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "/var/lib/sgx-guardian/sgx-agent/device_{}_cert.der",
         node_id
     );
-    // SAN = hostname and IP of node
-    let san_ip_str = if detected_ip.is_empty() {
-        "127.0.0.1".to_string()
-    } else {
-        detected_ip.clone()
-    };
-    let san = [this_node.hostname.as_str(), san_ip_str.as_str()];
+    // Use real detected IP in certificate
+    let san = [this_node.hostname.as_str(), detected_ip.as_str()];
     // Ensure certificate exists
     match tls::ensure_node_certificate_or_generate(&key_path, &cert_path, &san) {
         Ok(_) => {
@@ -1161,6 +897,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
+    // === APPLY POLICY ENFORCEMENT AFTER NODE IS STEADY ===
     use sgx_guardian_client::enforcement;
     use sgx_guardian_client::policy::get_active_policy;
 

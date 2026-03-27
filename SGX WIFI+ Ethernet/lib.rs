@@ -6,27 +6,20 @@ pub mod audit;
 pub mod cert_client;
 pub mod cert_service;
 pub mod client;
-pub mod cloud;
 pub mod config_loader;
 pub mod cot;
 pub mod enforcement;
 pub mod key_manager;
 pub mod logging;
 pub mod metrics;
-pub mod metrics_server;
 pub mod nebula;
 pub mod p2p_discovery;
 pub mod policy;
 pub mod policy_manager;
 pub mod policy_state;
-pub mod secure_element;
 pub mod server;
 pub mod tls;
-// WiFi + Ethernet discovery modules
 pub mod dynamic_config;
-pub mod node_announcement;
-pub mod node_broadcast;
-pub mod node_listener;
 
 // gRPC proto (auto-generated)
 pub mod proto {
