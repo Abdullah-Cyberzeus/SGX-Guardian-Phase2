@@ -46,45 +46,46 @@ pub fn detect_local_lan_ip() -> Result<Ipv4Addr> {
     let interfaces =
         NetworkInterface::show().map_err(|e| anyhow::anyhow!("Network scan failed: {}", e))?;
 
-    let mut candidates: Vec<(u8, Ipv4Addr)> = Vec::new();
+    let mut candidates: Vec<(u8, String, Ipv4Addr)> = Vec::new();
 
     for iface in interfaces {
-        if iface.name.starts_with("lo") || is_virtual_interface(&iface.name) {
+        if iface.name.starts_with("lo")
+            || is_virtual_interface(&iface.name)
+            || iface.name.starts_with("nebula")
+            || iface.name.starts_with("docker")
+        {
             continue;
         }
-        if iface.name.starts_with("nebula") {
-            continue;
-        }
+
         for addr in iface.addr {
             if let Addr::V4(v4) = addr {
                 let ip = v4.ip;
-                let o = ip.octets();
-                if ip.is_loopback() {
+                if !is_routable_ip(&ip.to_string()) {
                     continue;
                 }
-                if o[0] == 169 && o[1] == 254 {
-                    continue;
-                }
-                if o[0] == 172 && (17..=31).contains(&o[1]) {
-                    continue;
-                }
-                let priority = if o[0] == 192 && o[1] == 168 {
+
+                let priority = if iface.name.starts_with("eth") {
+                    0
+                } else if iface.name == "wlan0" {
                     1
-                } else if o[0] == 10 {
+                } else if iface.name.starts_with("wlan") {
                     2
-                } else {
+                } else if iface.name.starts_with("wwan") {
                     3
+                } else {
+                    4
                 };
-                candidates.push((priority, ip));
+
+                candidates.push((priority, iface.name.clone(), ip));
             }
         }
     }
 
-    candidates.sort_by_key(|(p, _)| *p);
+    candidates.sort_by(|(pa, na, _), (pb, nb, _)| pa.cmp(pb).then_with(|| na.cmp(nb)));
     candidates
         .into_iter()
         .next()
-        .map(|(_, ip)| ip)
+        .map(|(_, _, ip)| ip)
         .ok_or_else(|| anyhow::anyhow!("No LAN IP found"))
 }
 

@@ -419,7 +419,7 @@ impl AttestationService {
         );
 
         println!("Peer {} successfully attested and trusted", addr);
-        write_trusted_peer(&addr, &addr);
+        write_trusted_peer(&addr, &peer_ip);
         write_last_attestation(&addr, &peer_ev.policy_digest, "success");
         Ok(true)
     }
@@ -471,7 +471,7 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
 
     println!("🛰️ Spawning attestation listener on port {}", listen_port);
 
-    let bind_ip = node_conf.ip.clone();
+    let bind_ip = "0.0.0.0".to_string();
     tokio::spawn(async move {
         if let Err(e) = start_attestation_listener(bind_ip, listen_port).await {
             eprintln!("⚠️ Attestation listener error: {:?}", e);
