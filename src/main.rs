@@ -707,16 +707,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Nebula CA verified or generated",
     );
 
-    // Issue cert for this node
-    let nebula_ip = match node_id.as_str() {
-        "nodeA" => "192.168.100.1/24",
-        "nodeB" => "192.168.100.2/24",
-        "nodeC" => "192.168.100.3/24",
-        _ => {
-            eprintln!("❌ Unknown node ID for Nebula IP mapping");
-            std::process::exit(1);
-        }
-    };
+    // === Overlay IP Pool ===
+    use sgx_guardian_client::nebula::interface::NebulaInterface;
+    use sgx_guardian_client::nebula::overlay::OverlayPool;
+
+    let pool_path = format!("{}/overlay_pool.json", nebula_base_dir);
+    let mut overlay_pool = OverlayPool::load_or_create(
+        &pool_path,
+        "guardian-circle-alpha",
+        "192.168.100",
+        "nodeA",
+    );
+
+    let nebula_ip_str = overlay_pool
+        .allocate(&node_id)
+        .expect("Failed to allocate overlay IP");
+    let nebula_ip = format!("{}/24", nebula_ip_str);
+
+    if let Err(e) = overlay_pool.save(&pool_path) {
+        eprintln!("⚠️ Failed to save overlay pool: {}", e);
+    }
+
+    println!("🌐 Overlay IP: {} ({})", nebula_ip, overlay_pool.summary());
+
+    log_audit(
+        &node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Succeeded,
+        &format!("Overlay IP allocated: {}", nebula_ip),
+    );
 
     let membership = CircleMembership {
         node_name: node_id.clone(),
@@ -727,7 +747,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if node_id == "nodeA" {
         // CA node: auto-issue its own certificate
-        if let Err(e) = NebulaCA::issue_node_cert(&nebula_base_dir, &membership, nebula_ip) {
+        if let Err(e) = NebulaCA::issue_node_cert(&nebula_base_dir, &membership, &nebula_ip) {
             eprintln!("❌ Failed to issue CA node certificate: {:?}", e);
             std::process::exit(1);
         }
@@ -804,10 +824,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //configuration directory for nebula
     use sgx_guardian_client::nebula::config::NebulaConfig;
     let config_directory = nebula_base_dir.clone();
-    let is_lighthouse = node_id == "nodeA";
 
     if let Err(e) =
-        NebulaConfig::generate_config(&node_id, nebula_ip, is_lighthouse, &config_directory)
+        NebulaConfig::generate_config_from_pool(&node_id, &overlay_pool, &config_directory)
     {
         eprintln!("❌ Failed to generate Nebula config: {:?}", e);
         std::process::exit(1);
@@ -841,6 +860,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Nebula Health Report ---");
     println!("{}", health_report.summary());
     println!("-----------------------------");
+
+    // === Overlay Health Check ===
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    let overlay_health = NebulaHealth::check_overlay(&overlay_pool, &node_id);
+    println!("--- Overlay Health Report ---");
+    println!("{}", overlay_health.summary());
+    println!("{}", NebulaInterface::status_report());
+    println!("-----------------------------");
+
+    if !overlay_health.is_healthy() {
+        eprintln!("⚠️ Overlay health degraded — check nebula0 interface");
+    }
+
+    log_audit(
+        &node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Succeeded,
+        &format!("Overlay health: {}", overlay_health.summary()),
+    );
 
     // === Start Expiry Monitor ===
     use sgx_guardian_client::nebula::cert_lifecycle::ExpiryMonitor;

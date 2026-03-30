@@ -1,6 +1,8 @@
 //! Nebula Health Monitoring Module
 //! Provides read-only health diagnostics for Nebula PKI and daemon state.
 
+use crate::nebula::interface::NebulaInterface;
+use crate::nebula::overlay::OverlayPool;
 use std::path::Path;
 use std::process::Command;
 
@@ -131,5 +133,100 @@ impl NebulaHealth {
             .get("details")?
             .get("notAfter")?
             .as_str()
+    }
+}
+
+/// Overlay-specific health report.
+#[derive(Debug, Clone)]
+pub struct OverlayHealthReport {
+    pub interface_up: bool,
+    pub expected_ip: String,
+    pub actual_ip: String,
+    pub ip_correct: bool,
+    pub pool_valid: bool,
+    pub pool_summary: String,
+}
+
+impl OverlayHealthReport {
+    pub fn is_healthy(&self) -> bool {
+        self.interface_up && self.ip_correct && self.pool_valid
+    }
+
+    pub fn summary(&self) -> String {
+        format!(
+            "Overlay: up={} ip_match={} pool_ok={} [{}→{}] {}",
+            self.interface_up,
+            self.ip_correct,
+            self.pool_valid,
+            self.expected_ip,
+            self.actual_ip,
+            if self.is_healthy() {
+                "✅ HEALTHY"
+            } else {
+                "❌ DEGRADED"
+            }
+        )
+    }
+}
+
+impl NebulaHealth {
+    /// Check overlay-specific health indicators.
+    pub fn check_overlay(pool: &OverlayPool, node_name: &str) -> OverlayHealthReport {
+        let interface_up = NebulaInterface::is_up();
+        let expected_ip = pool.get_ip_cidr(node_name).unwrap_or_else(|| "none".into());
+        let actual_ip = NebulaInterface::get_overlay_ip().unwrap_or_else(|| "none".into());
+        let ip_correct = expected_ip == actual_ip && expected_ip != "none";
+
+        let pool_valid = pool.allocated_count() > 0 && pool.get_ip(&pool.owner_node).is_some();
+
+        OverlayHealthReport {
+            interface_up,
+            expected_ip,
+            actual_ip,
+            ip_correct,
+            pool_valid,
+            pool_summary: pool.summary(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod overlay_health_tests {
+    use super::*;
+    use crate::nebula::overlay::OverlayPool;
+
+    #[test]
+    fn test_overlay_health_pool_valid() {
+        let pool = OverlayPool::new("alpha", "192.168.100", "nodeA");
+        let report = NebulaHealth::check_overlay(&pool, "nodeA");
+        assert!(report.pool_valid); // pool has owner allocated
+        assert!(!report.interface_up); // no nebula0 on dev machine
+        assert!(!report.is_healthy()); // interface down = not healthy
+    }
+
+    #[test]
+    fn test_overlay_health_summary_format() {
+        let pool = OverlayPool::new("alpha", "192.168.100", "nodeA");
+        let report = NebulaHealth::check_overlay(&pool, "nodeA");
+        let s = report.summary();
+        assert!(s.contains("Overlay:"));
+        assert!(s.contains("up="));
+        assert!(s.contains("ip_match="));
+    }
+
+    #[test]
+    fn test_overlay_health_unknown_node() {
+        let pool = OverlayPool::new("alpha", "192.168.100", "nodeA");
+        let report = NebulaHealth::check_overlay(&pool, "nodeZ");
+        assert!(!report.ip_correct); // nodeZ not in pool
+        assert_eq!(report.expected_ip, "none");
+    }
+
+    #[test]
+    fn test_overlay_health_degraded_shows_icon() {
+        let pool = OverlayPool::new("alpha", "192.168.100", "nodeA");
+        let report = NebulaHealth::check_overlay(&pool, "nodeA");
+        // On dev machine, interface is down → DEGRADED
+        assert!(report.summary().contains("❌ DEGRADED"));
     }
 }
