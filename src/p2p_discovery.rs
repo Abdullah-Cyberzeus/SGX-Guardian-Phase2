@@ -86,20 +86,28 @@ impl P2PDiscovery {
         // ✅ Use tx_clone_sim safely for simulation peers later
         println!("💡 [Simulation Mode] Using static peer list for discovery testing.");
 
-        let config_paths = [
+        let config_paths_abs = [
+            "/etc/sgx-guardian/config/nodeA.yaml",
+            "/etc/sgx-guardian/config/nodeB.yaml",
+            "/etc/sgx-guardian/config/nodeC.yaml",
+        ];
+        let config_paths_rel = [
             "config/nodeA.yaml",
             "config/nodeB.yaml",
             "config/nodeC.yaml",
         ];
 
         let mut configs = Vec::new();
-
-        for path in config_paths {
-            match load_config(path) {
+        for (abs_path, rel_path) in config_paths_abs.iter().zip(config_paths_rel.iter()) {
+            // Try absolute first (boards), then relative (laptop dev)
+            match load_config(abs_path) {
                 Ok(cfg) => configs.push(cfg),
-                Err(e) => {
-                    log_event(&node_id, &format!("⚠️ Failed to load {}: {}", path, e));
-                }
+                Err(_) => match load_config(rel_path) {
+                    Ok(cfg) => configs.push(cfg),
+                    Err(e) => {
+                        log_event(&node_id, &format!("⚠️ Failed to load config: {}", e));
+                    }
+                },
             }
         }
 

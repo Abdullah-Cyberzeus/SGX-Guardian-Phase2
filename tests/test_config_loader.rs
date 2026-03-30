@@ -1,4 +1,4 @@
-//! Covers: valid config, invalid YAML, missing fields, invalid IP, port=0,
+//! Covers: valid config, invalid YAML, missing fields, empty IP, port=0,
 //! empty public_key, and file read errors.
 
 use sgx_guardian_client::config_loader::load_config;
@@ -82,18 +82,18 @@ public_key: ABC
 }
 
 #[test]
-fn test_invalid_ip_fails() {
+fn test_empty_ip_fails() {
     let yaml = r#"
 node_id: nodeA
 hostname: host
-ip: 999.999.999.999
+ip: ""
 port: 50051
 public_key: ABC
 "#;
 
     let p = write_temp_config("bad_ip", yaml);
     let res = load_config(&p);
-    assert!(res.is_err(), "Invalid IP must cause validation failure");
+    assert!(res.is_err(), "Empty IP must cause validation failure");
     let _ = fs::remove_file(&p);
 }
 

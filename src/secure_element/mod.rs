@@ -15,6 +15,7 @@ pub mod pcr;
 pub mod pcr_config;
 pub mod safe_mode;
 pub mod se050;
+pub mod secure_boot;
 pub mod sign;
 pub mod ssscli;
 pub mod tamper;

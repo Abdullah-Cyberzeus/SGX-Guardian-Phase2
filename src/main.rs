@@ -7,7 +7,7 @@ use sgx_guardian_client::audit::event::{AuditAction, AuditCategory, AuditSeverit
 use sgx_guardian_client::audit::logger::{init_audit_logger, log_audit};
 use sgx_guardian_client::audit::verifier::AuditVerifier;
 use sgx_guardian_client::client::send_ping;
-use sgx_guardian_client::config_loader::{load_config, CloudConfig};
+use sgx_guardian_client::config_loader::{load_config, CloudConfig, NodeConfig};
 use sgx_guardian_client::key_manager::KeyManager;
 #[cfg(feature = "secure-element")]
 use sgx_guardian_client::secure_element;
@@ -20,9 +20,13 @@ use sgx_guardian_client::p2p_discovery::P2PDiscovery;
 use sgx_guardian_client::policy;
 use sgx_guardian_client::server;
 use sgx_guardian_client::server::start_server;
+// WiFi + Ethernet discovery imports
+use sgx_guardian_client::dynamic_config;
+use sgx_guardian_client::node_announcement::NodeAnnouncement;
+use sgx_guardian_client::node_broadcast;
+use sgx_guardian_client::node_listener;
 
 use base64::{engine::general_purpose, Engine as _};
-use std::env;
 use std::fs;
 use std::path::PathBuf;
 #[cfg(windows)]
@@ -51,13 +55,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             SetConsoleCtrlHandler(Some(ctrl_handler), 1);
         }
     }
-    // Parse command-line arguments for node ID
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: cargo run -- <node_id>");
-        std::process::exit(1);
+    let node_id = std::env::args().nth(1).unwrap_or_else(|| "nodeA".into());
+
+    // === FIRST: Ensure all required directories exist ===
+    for dir in &[
+        "/etc/sgx-guardian/config",
+        "/etc/sgx-guardian/schemas",
+        "/etc/sgx-guardian/policies",
+        "/var/lib/sgx-guardian/keys",
+        "/var/lib/sgx-guardian/pcr",
+        "/var/lib/sgx-guardian/boot",
+        "/var/lib/sgx-guardian/sgx-agent",
+        "/var/lib/sgx-guardian/nebula/ca",
+        "/var/lib/sgx-guardian/nebula/nodes",
+        "/var/lib/sgx-guardian/nebula/requests",
+        "/var/log/sgx-guardian",
+    ] {
+        let _ = std::fs::create_dir_all(dir);
     }
-    let node_id = args[1].clone();
+
+    // Create default node configs if missing
+    for (nid, port) in &[("nodeA", 50051u16), ("nodeB", 50052), ("nodeC", 50053)] {
+        let path = format!("/etc/sgx-guardian/config/{}.yaml", nid);
+        if !std::path::Path::new(&path).exists() {
+            let letter = &nid[4..];
+            let content = format!(
+                "---\nnode_id: \"{}\"\nhostname: \"guardian-node-{}\"\nip: \"0.0.0.0\"\nport: {}\npublic_key: \"placeholder-key-{}\"\n\nsecure_element:\n  enabled: true\n  scp_key_path: \"/home/root/se05x_mw_v04.05.01/simw-top/scripts/se050F_scp_keys.txt\"\n  interface: \"t1oi2c\"\n  auth_type: \"PlatformSCP\"\n  connection_type: \"se05x\"\n",
+                nid, letter, port, letter
+            );
+            let _ = std::fs::write(&path, &content);
+        }
+        // Also create /etc/sgx-guardian/<node>.yaml symlink/copy
+        let main_path = format!("/etc/sgx-guardian/{}.yaml", nid);
+        if !std::path::Path::new(&main_path).exists() {
+            let _ = std::fs::copy(&path, &main_path);
+        }
+    }
+
+    // Create default policy schema if missing
+    let schema_path = "/etc/sgx-guardian/schemas/uep_policy_v1.yaml";
+    if !std::path::Path::new(schema_path).exists() {
+        let schema = "---\npolicy_id: \"123e4567-e89b-12d3-a456-426614174000\"\nversion: \"1.0.0\"\ndescription: \"Default Guardian Edge Policy\"\nrules:\n  - id: \"rule-001\"\n    action: \"ALLOW\"\n    src_cidr: \"10.0.0.0/24\"\n    dst_cidr: \"0.0.0.0/0\"\n    protocol: \"TCP\"\n    port: 443\n  - id: \"rule-005\"\n    action: \"DENY\"\n    src_cidr: \"0.0.0.0/0\"\n    dst_cidr: \"10.0.0.10\"\n    protocol: \"UDP\"\n";
+        let _ = std::fs::write(schema_path, schema);
+    }
+
+    // Start node announcement listener (UDP broadcast receiver)
+    {
+        let node_id_clone = node_id.clone();
+        tokio::spawn(async move {
+            node_listener::start_listener(node_id_clone).await;
+        });
+    }
     // Generate node-specific identity key path
     let node_key_path = format!("/var/lib/sgx-guardian/sgx-agent/device_{}.key", node_id);
     // === Hardware Key Manager Initialization (Phase 2 — HKM) ===
@@ -135,9 +183,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let sample_policy_path = "/etc/sgx-guardian/schemas/uep_policy_v1.yaml";
 
-    let sample_policy = fs::read_to_string(sample_policy_path).expect(
-        "Failed to read policy file for attestation test (check /etc/sgx-guardian/schemas)",
-    );
+    let sample_policy = fs::read_to_string(sample_policy_path).unwrap_or_else(|e| {
+        eprintln!(
+            "⚠️ Policy schema not found: {} — using empty default",
+            e
+        );
+        String::from(
+            "---\npolicy_id: \"default\"\nversion: \"0.0.0\"\ndescription: \"Empty default\"\nrules: []\n",
+        )
+    });
 
     let evidence = AttestationService::create_signed_evidence(&km, &sample_policy)?;
     println!(
@@ -163,6 +217,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             AuditAction::Failed,
             "Local attestation evidence verification failed",
         );
+    }
+
+    // === Secure Boot Chain Verification ===
+    println!("\n  Verifying secure boot chain...");
+    {
+        use sgx_guardian_client::secure_element::secure_boot::BootChainStatus;
+
+        let boot_status = BootChainStatus::check();
+        boot_status.print();
+
+        // Save boot chain status
+        let boot_status_path = format!("/var/lib/sgx-guardian/boot/{}_chain_status.json", node_id);
+        if let Err(e) = boot_status.save(&boot_status_path) {
+            eprintln!("  Boot chain save failed: {}", e);
+        }
+
+        if !boot_status.boot_chain_intact {
+            eprintln!(
+                "  ⚠️ Boot chain verification incomplete — PCR values may not be fully trusted"
+            );
+        }
     }
 
     // === PCR Measurement (ATT-003) ===
@@ -194,7 +269,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Perform measurements
         for src in &sources {
-            if src.source_type == "multi_file" {
+            if src.source_type == "boot_chain" {
+                // Measure the boot chain state string
+                use sgx_guardian_client::secure_element::secure_boot::BootChainStatus;
+                let boot_status = BootChainStatus::check();
+                let measurement = boot_status.to_measurement_string();
+                match pcr_engine.extend_from_string(src.pcr_index, &measurement) {
+                    Ok(hash) => println!(
+                        "    PCR{}: {} → {}...",
+                        src.pcr_index,
+                        src.label,
+                        &hash[..12]
+                    ),
+                    Err(e) => {
+                        let _ =
+                            pcr_engine.extend_from_string(src.pcr_index, &format!("ERROR:{}", e));
+                        measurement_errors.push(PcrMeasurementError {
+                            pcr_index: src.pcr_index,
+                            source: src.source.clone(),
+                            error: e.clone(),
+                        });
+                        println!("    PCR{}: {} → ⚠️ {}", src.pcr_index, src.label, e);
+                    }
+                }
+            } else if src.source_type == "multi_file" {
                 let files: Vec<String> = src
                     .source
                     .split(',')
@@ -338,12 +436,73 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // === DYNAMIC IP DETECTION + CONFIG AUTO-UPDATE ===
+    println!("\n🔍 Detecting local LAN IP address...");
+
+    let detected_ip = match dynamic_config::detect_local_lan_ip() {
+        Ok(ip) => {
+            println!("🌐 Detected LAN IP: {}", ip);
+            log_event(&node_id, &format!("Detected LAN IP: {}", ip));
+            ip.to_string()
+        }
+        Err(e) => {
+            eprintln!("❌ IP detection failed: {:?}", e);
+            log_error(&node_id, &format!("IP detection failed: {:?}", e));
+            String::new()
+        }
+    };
+
+    // Sanitize configs before load
+    for yaml_file in &[
+        "/etc/sgx-guardian/config/nodeA.yaml",
+        "/etc/sgx-guardian/config/nodeB.yaml",
+        "/etc/sgx-guardian/config/nodeC.yaml",
+    ] {
+        if let Err(e) = dynamic_config::sanitize_config_ip_if_invalid(yaml_file) {
+            eprintln!("⚠️ Sanitize failed for {}: {:?}", yaml_file, e);
+        }
+    }
+
+    // Update ONLY current node config with detected IP
+    if !detected_ip.is_empty() {
+        let config_path = format!("/etc/sgx-guardian/config/{}.yaml", node_id);
+        let main_path = format!("/etc/sgx-guardian/{}.yaml", node_id);
+        let _ = dynamic_config::update_config_ip_if_changed(&config_path, &detected_ip);
+        // Keep main path in sync
+        let _ = std::fs::copy(&config_path, &main_path);
+    }
+
+    fn load_config_safe(node: &str) -> NodeConfig {
+        // Try config/ dir first (dynamic configs live here)
+        let config_path = format!("/etc/sgx-guardian/config/{}.yaml", node);
+        if let Ok(cfg) = load_config(&config_path) {
+            return cfg;
+        }
+        // Fallback to root dir
+        let root_path = format!("/etc/sgx-guardian/{}.yaml", node);
+        if let Ok(cfg) = load_config(&root_path) {
+            return cfg;
+        }
+        // Last resort: default config
+        eprintln!("⚠️ No config found for {} — using defaults", node);
+        NodeConfig {
+            node_id: node.to_string(),
+            hostname: format!("guardian-node-{}", &node[4..]),
+            ip: "0.0.0.0".to_string(),
+            port: match node {
+                "nodeA" => 50051,
+                "nodeB" => 50052,
+                _ => 50053,
+            },
+            public_key: format!("placeholder-key-{}", &node[4..]),
+            metrics: None,
+        }
+    }
+
     println!("\n Loading node configurations...");
-    let node_a = load_config("/etc/sgx-guardian/nodeA.yaml").expect("Failed to load nodeA config");
-
-    let node_b = load_config("/etc/sgx-guardian/nodeB.yaml").expect("Failed to load nodeB config");
-
-    let node_c = load_config("/etc/sgx-guardian/nodeC.yaml").expect("Failed to load nodeC config");
+    let node_a = load_config_safe("nodeA");
+    let node_b = load_config_safe("nodeB");
+    let node_c = load_config_safe("nodeC");
 
     println!(
         "✅ Loaded Node A: {} ({}) at {}:{} | key: {}",
@@ -360,7 +519,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Read the UEP policy YAML file
     let _yaml_content = fs::read_to_string("/etc/sgx-guardian/schemas/uep_policy_v1.yaml")
-        .expect("Cannot read policy file (/etc/sgx-guardian/schemas)");
+        .unwrap_or_else(|e| {
+            eprintln!("⚠️ Policy schema not found: {} — using empty default", e);
+            // Return minimal valid policy YAML
+            String::from(
+                "---\npolicy_id: \"default\"\nversion: \"0.0.0\"\ndescription: \"Empty default\"\nrules: []\n",
+            )
+        });
     // Validate and parse the YAML policy
     fn print_policy_from_yaml(yaml: &str, label: &str) {
         match policy::validate_policy(yaml) {
@@ -598,7 +763,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let cert_node_id = node_id.clone();
             let cert_overlay_ip = nebula_ip.to_string();
             let cert_pubkey = pubkey_b64.clone();
-            let ca_address = "127.0.0.1:50061".to_string();
+            // Use nodeA's discovered/configured IP for cert requests
+            let ca_address = {
+                // First try: use nodeA config IP (updated by broadcast discovery)
+                let node_a_config_path = "/etc/sgx-guardian/config/nodeA.yaml";
+                if let Ok(a_conf) = load_config(node_a_config_path) {
+                    if a_conf.ip != "0.0.0.0" && a_conf.ip != "127.0.0.1" {
+                        format!("{}:50061", a_conf.ip)
+                    } else {
+                        // Fallback: check if we received a broadcast from nodeA
+                        let fallback_path = "/etc/sgx-guardian/nodeA.yaml";
+                        if let Ok(a_conf2) = load_config(fallback_path) {
+                            if a_conf2.ip != "0.0.0.0" && a_conf2.ip != "127.0.0.1" {
+                                format!("{}:50061", a_conf2.ip)
+                            } else {
+                                "127.0.0.1:50061".to_string() // absolute last resort
+                            }
+                        } else {
+                            "127.0.0.1:50061".to_string()
+                        }
+                    }
+                } else {
+                    "127.0.0.1:50061".to_string()
+                }
+            };
+            println!("📡 CA address for cert request: {}", ca_address);
             log_event(&node_id, "Nebula certificate missing, will request from CA");
             // BLOCKING REQUEST — DO NOT SPAWN
             sgx_guardian_client::cert_client::request_certificate_from_ca(
@@ -839,6 +1028,71 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }
     };
+
+    // === NODE BROADCAST + CONFIG SYNC ===
+    let detected_ip_for_broadcast = if detected_ip.is_empty() {
+        this_node.ip.clone()
+    } else {
+        detected_ip.clone()
+    };
+
+    // Initial broadcast
+    let announcement = NodeAnnouncement::new_signed(
+        this_node.node_id.clone(),
+        this_node.hostname.clone(),
+        detected_ip_for_broadcast.clone(),
+        this_node.port,
+        this_node.public_key.clone(),
+    );
+    node_broadcast::broadcast_node(&announcement);
+
+    // Start background IP monitor
+    dynamic_config::start_ip_monitor(
+        node_id.clone(),
+        format!("/etc/sgx-guardian/config/{}.yaml", node_id),
+        vec![],
+        dynamic_config::NodeConfigBroadcast {
+            node_id: this_node.node_id.clone(),
+            hostname: this_node.hostname.clone(),
+            ip: detected_ip_for_broadcast.clone(),
+            port: this_node.port,
+            public_key: this_node.public_key.clone(),
+        },
+    )
+    .await;
+
+    // Periodic broadcast (every 30 seconds)
+    {
+        let node_id_bc = node_id.clone();
+        let hostname_bc = this_node.hostname.clone();
+        let pubkey_bc = pubkey_b64.clone();
+        let port_bc = this_node.port;
+
+        tokio::spawn(async move {
+            loop {
+                let current_ip = match dynamic_config::detect_local_lan_ip() {
+                    Ok(ip) => ip.to_string(),
+                    Err(_) => {
+                        tokio::time::sleep(Duration::from_secs(10)).await;
+                        continue;
+                    }
+                };
+
+                let announcement = NodeAnnouncement::new_signed(
+                    node_id_bc.clone(),
+                    hostname_bc.clone(),
+                    current_ip,
+                    port_bc,
+                    pubkey_bc.clone(),
+                );
+
+                node_broadcast::broadcast_node(&announcement);
+                tokio::time::sleep(Duration::from_secs(30)).await;
+            }
+        });
+    }
+    println!("✅ Config auto-update system active\n");
+    // === END NODE BROADCAST + CONFIG SYNC ===
     // === Metrics server enable/disable (node-specific, YAML-driven)
     if let Some(metrics_cfg) = &this_node.metrics {
         if metrics_cfg.enabled {
@@ -873,7 +1127,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
 
-    let this_addr = format!("{}:{}", this_node.ip, this_node.port);
+    let this_addr = format!("0.0.0.0:{}", this_node.port);
     log_event(&node_id, &format!("Starting server at {}", this_addr));
     use sgx_guardian_client::policy::load_policy_runtime;
     use sgx_guardian_client::policy_manager::load_and_activate_policy;
@@ -952,7 +1206,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         node_id
     );
     // SAN = hostname and IP of node
-    let san = [this_node.hostname.as_str(), "127.0.0.1"];
+    let san_ip_str = if detected_ip.is_empty() {
+        "127.0.0.1".to_string()
+    } else {
+        detected_ip.clone()
+    };
+    let san = [this_node.hostname.as_str(), san_ip_str.as_str()];
     // Ensure certificate exists
     match tls::ensure_node_certificate_or_generate(&key_path, &cert_path, &san) {
         Ok(_) => {
