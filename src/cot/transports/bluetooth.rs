@@ -44,7 +44,7 @@ impl BluetoothTransport {
         let s = String::from_utf8_lossy(&o.stdout);
         s.lines()
             .find(|l| l.contains("RSSI"))
-            .and_then(|l| l.split(':').last())
+            .and_then(|l| l.split(':').next_back())
             .and_then(|v| v.trim().parse::<i8>().ok())
     }
 

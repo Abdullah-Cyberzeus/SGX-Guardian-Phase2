@@ -100,9 +100,10 @@ fn build_nft_ruleset(rules: &[EnforcementRule]) -> Result<String> {
     // Allow attestation ports
     out.push_str("    tcp dport {50151,50152,50153} accept\n");
 
-    // Allow node discovery broadcast (UDP)
+    // Allow node discovery broadcast (UDP destination only)
+    // Reply traffic is covered by ct state established,related above.
+    // Do NOT accept by source port -- that creates a firewall bypass.
     out.push_str("    udp dport 9000 accept\n");
-    out.push_str("    udp sport 9000 accept\n");
 
     // Allow config sync (TCP)
     out.push_str("    tcp dport 50070 accept\n");

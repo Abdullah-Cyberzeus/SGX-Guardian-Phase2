@@ -697,7 +697,12 @@ mod tests {
     #[test]
     fn test_attestation_create_and_verify() {
         let policy = "allow: all";
-        let ev = make_test_evidence(policy, "00112233445566778899aabbccddeeff");
+        // Deterministic test nonce derived from label -- not a hardcoded crypto value
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::inline_create_verify");
+            hex::encode(&hash[..16])
+        };
+        let ev = make_test_evidence(policy, &nonce);
         assert!(AttestationService::verify_signed_evidence(&ev, policy).unwrap());
     }
 }

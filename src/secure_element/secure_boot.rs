@@ -150,7 +150,9 @@ impl BootChainStatus {
         status.guardian_binary_hash = compute_guardian_binary_hash();
 
         // === Final chain integrity ===
+        // Requires device_closed -- an OPEN device does NOT enforce signatures
         status.boot_chain_intact = status.hab_enabled
+            && status.device_closed
             && !status.hab_events_found
             && !status.device_model.is_empty()
             && !status.kernel_version.is_empty();
@@ -201,7 +203,8 @@ impl BootChainStatus {
         );
         println!("    Device model:  {}", self.device_model);
         if let Some(ref hash) = self.guardian_binary_hash {
-            println!("    Binary hash:   {}...", &hash[..16]);
+            let short: String = hash.chars().take(16).collect();
+            println!("    Binary hash:   {}...", short);
         }
         println!(
             "    Boot chain:    {}",
@@ -283,6 +286,7 @@ mod tests {
         };
         // All conditions met
         status.boot_chain_intact = status.hab_enabled
+            && status.device_closed
             && !status.hab_events_found
             && !status.device_model.is_empty()
             && !status.kernel_version.is_empty();
