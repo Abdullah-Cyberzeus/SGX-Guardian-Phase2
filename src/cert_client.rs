@@ -128,6 +128,7 @@ pub async fn request_certificate_from_ca(
                 }
                 "rejected" => {
                     eprintln!("Certificate request rejected: {}", resp.message);
+                    eprintln!("Manual intervention required -- not retrying.");
                     log_audit(
                         &node_id,
                         AuditCategory::Network,
@@ -135,6 +136,7 @@ pub async fn request_certificate_from_ca(
                         AuditAction::Rejected,
                         &format!("Certificate request rejected: {}", resp.message),
                     );
+                    return;
                 }
                 other => {
                     eprintln!("Unknown cert response status '{}'", other);

@@ -712,12 +712,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use sgx_guardian_client::nebula::overlay::OverlayPool;
 
     let pool_path = format!("{}/overlay_pool.json", nebula_base_dir);
-    let mut overlay_pool = OverlayPool::load_or_create(
-        &pool_path,
-        "guardian-circle-alpha",
-        "192.168.100",
-        "nodeA",
-    );
+    let mut overlay_pool =
+        OverlayPool::load_or_create(&pool_path, "guardian-circle-alpha", "192.168.100", "nodeA");
 
     let nebula_ip_str = overlay_pool
         .allocate(&node_id)

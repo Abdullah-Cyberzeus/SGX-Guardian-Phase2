@@ -64,6 +64,19 @@ impl NebulaCA {
 
         fs::create_dir_all(&nodes_dir)?;
 
+        // Sanitize node_name to prevent path traversal
+        if membership.node_name.is_empty()
+            || !membership
+                .node_name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(Error::other(format!(
+                "Invalid node name '{}': must be alphanumeric with - or _ only",
+                membership.node_name
+            )));
+        }
+
         let cert_path = format!("{}/{}.crt", nodes_dir, membership.node_name);
         let key_path = format!("{}/{}.key", nodes_dir, membership.node_name);
 

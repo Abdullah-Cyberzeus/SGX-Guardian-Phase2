@@ -55,7 +55,10 @@ impl OverlayPool {
             return Ok(existing.clone());
         }
         if self.next_host > 254 {
-            return Err(format!("Overlay pool exhausted for circle {}", self.circle_id));
+            return Err(format!(
+                "Overlay pool exhausted for circle {}",
+                self.circle_id
+            ));
         }
         let ip = format!("{}.{}", self.subnet_base, self.next_host);
         self.allocations.insert(node_name.to_string(), ip.clone());
@@ -103,8 +106,7 @@ impl OverlayPool {
         if let Some(parent) = Path::new(path).parent() {
             fs::create_dir_all(parent).map_err(|e| format!("Dir create: {}", e))?;
         }
-        let json =
-            serde_json::to_string_pretty(self).map_err(|e| format!("Serialize: {}", e))?;
+        let json = serde_json::to_string_pretty(self).map_err(|e| format!("Serialize: {}", e))?;
         fs::write(path, json).map_err(|e| format!("Write: {}", e))
     }
 
@@ -115,7 +117,12 @@ impl OverlayPool {
     }
 
     /// Load existing pool or create new one.
-    pub fn load_or_create(path: &str, circle_id: &str, subnet_base: &str, owner_node: &str) -> Self {
+    pub fn load_or_create(
+        path: &str,
+        circle_id: &str,
+        subnet_base: &str,
+        owner_node: &str,
+    ) -> Self {
         if Path::new(path).exists() {
             match Self::load(path) {
                 Ok(pool) => {
