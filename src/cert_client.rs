@@ -1,26 +1,30 @@
-//! Certificate Client (Member-side) — runs on nodeB, nodeC.
+// src/cert_client.rs  — FULL REPLACEMENT
+//
+// KEY FIX: When nodeA returns ca_cert_pem in the CertSignResponse,
+// we now save it to <nebula_base_dir>/ca/ca.crt so that nodeB/nodeC
+// share the SAME CA as nodeA.  Previously this was silently discarded
+// if the file already existed, which masked the CA mismatch bug.
 
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::logging::{log_error, log_event};
 use crate::proto::sgx::cert_service_client::CertServiceClient;
 use crate::proto::sgx::CertSignRequest;
+use crate::nebula::ca::NebulaCA;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use tonic::transport::Channel;
 
-/// Base directory — the ONLY path we use.
 const NEBULA_BASE_DIR: &str = "/var/lib/sgx-guardian/nebula";
-
-/// Retry interval (seconds).
 const RETRY_INTERVAL_SECS: u64 = 5;
 
-/// Requests a CA-signed Nebula certificate from nodeA.
+/// Request a CA-signed Nebula certificate from nodeA.
 ///
-/// Called on startup by non-CA nodes when their cert is missing.
-/// Connects via PLAINTEXT to the bootstrap port (no TLS required).
-/// Returns only after certificate is received. NEVER crashes or exits.
+/// Blocks until the cert is received.  On success:
+/// - Writes <NEBULA_BASE_DIR>/nodes/<node_id>.crt
+/// - Writes <NEBULA_BASE_DIR>/nodes/<node_id>.key
+/// - Saves   <NEBULA_BASE_DIR>/ca/ca.crt  (CRITICAL — shared CA)
 pub async fn request_certificate_from_ca(
     node_id: String,
     ca_addr: String,
@@ -28,19 +32,24 @@ pub async fn request_certificate_from_ca(
     public_key_pem: String,
 ) {
     let cert_path = format!("{}/nodes/{}.crt", NEBULA_BASE_DIR, node_id);
-    let key_path = format!("{}/nodes/{}.key", NEBULA_BASE_DIR, node_id);
+    let key_path  = format!("{}/nodes/{}.key", NEBULA_BASE_DIR, node_id);
 
-    // ── Idempotency: skip if cert already exists ────────────────
-    if Path::new(&cert_path).exists() && Path::new(&key_path).exists() {
-        return; // silent — cert already present
+    // Idempotent: cert AND CA cert both present
+    if Path::new(&cert_path).exists()
+        && Path::new(&key_path).exists()
+        && NebulaCA::ca_cert_exists(NEBULA_BASE_DIR)
+    {
+        println!(
+            "ℹ️  Cert + CA cert already present for {} — skipping bootstrap.",
+            node_id
+        );
+        return;
     }
 
     println!(
-        "No CA-signed certificate found -- requesting from CA at {}",
-        ca_addr
+        "📡 Requesting certificate from CA at {} (overlay: {})",
+        ca_addr, overlay_ip
     );
-    println!("Waiting for CA approval...");
-
     log_event(
         &node_id,
         &format!("Starting certificate request to CA at {}", ca_addr),
@@ -58,23 +67,19 @@ pub async fn request_certificate_from_ca(
     loop {
         attempt += 1;
 
-        // Re-check: cert may have appeared on local filesystem
-        if Path::new(&cert_path).exists() && Path::new(&key_path).exists() {
-            println!("CA-signed certificate received");
-            log_event(&node_id, "CA-signed certificate detected on filesystem");
-            log_audit(
-                &node_id,
-                AuditCategory::Network,
-                AuditSeverity::Info,
-                AuditAction::Succeeded,
-                "CA-signed certificate received (local detection)",
-            );
+        // Re-check in case another code path wrote the files
+        if Path::new(&cert_path).exists()
+            && Path::new(&key_path).exists()
+            && NebulaCA::ca_cert_exists(NEBULA_BASE_DIR)
+        {
+            println!("✅ Cert + CA cert detected on filesystem — done.");
+            log_event(&node_id, "Cert + CA cert detected on filesystem");
             return;
         }
 
         if attempt > 1 {
             println!(
-                "Certificate request attempt #{} -> CA at {}",
+                "📡 Cert request attempt #{} → CA at {}",
                 attempt, ca_addr
             );
         }
@@ -82,35 +87,52 @@ pub async fn request_certificate_from_ca(
         match try_request(&node_id, &ca_addr, &overlay_ip, &public_key_pem).await {
             Ok(resp) => match resp.status.as_str() {
                 "approved" => {
-                    // Save cert if not already written by CA on same machine
-                    if !Path::new(&cert_path).exists() {
+                    // ── Save node cert ────────────────────────────────
+                    if !Path::new(&cert_path).exists() && !resp.signed_cert_pem.is_empty() {
                         if let Err(e) = write_file(&cert_path, &resp.signed_cert_pem).await {
-                            eprintln!("Failed to save cert: {} -- will retry", e);
-                            log_error(&node_id, &format!("Failed to save cert: {}", e));
-                            tokio::time::sleep(std::time::Duration::from_secs(RETRY_INTERVAL_SECS))
-                                .await;
+                            eprintln!("❌ Save cert failed: {} — retrying", e);
+                            log_error(&node_id, &format!("Save cert: {}", e));
+                            tokio::time::sleep(std::time::Duration::from_secs(RETRY_INTERVAL_SECS)).await;
                             continue;
                         }
                     }
+
+                    // ── Save node key ─────────────────────────────────
                     if !Path::new(&key_path).exists() && !resp.node_key_pem.is_empty() {
                         if let Err(e) = write_file(&key_path, &resp.node_key_pem).await {
-                            eprintln!("Failed to save key: {} -- will retry", e);
-                            log_error(&node_id, &format!("Failed to save key: {}", e));
-                            tokio::time::sleep(std::time::Duration::from_secs(RETRY_INTERVAL_SECS))
-                                .await;
+                            eprintln!("❌ Save key failed: {} — retrying", e);
+                            log_error(&node_id, &format!("Save key: {}", e));
+                            tokio::time::sleep(std::time::Duration::from_secs(RETRY_INTERVAL_SECS)).await;
                             continue;
                         }
                     }
 
-                    // Save CA cert if provided and missing
+                    // ── Save CA cert (CRITICAL FIX) ───────────────────
+                    // We always save the CA cert from nodeA to ensure all nodes
+                    // share the same CA.  NebulaCA::save_ca_cert() handles the
+                    // fingerprint comparison and warns on mismatch.
                     if !resp.ca_cert_pem.is_empty() {
-                        let ca_path = format!("{}/ca/ca.crt", NEBULA_BASE_DIR);
-                        if !Path::new(&ca_path).exists() {
-                            let _ = write_file(&ca_path, &resp.ca_cert_pem).await;
+                        match NebulaCA::save_ca_cert(NEBULA_BASE_DIR, &resp.ca_cert_pem) {
+                            Ok(_) => {
+                                if let Some(fp) = NebulaCA::ca_fingerprint(NEBULA_BASE_DIR) {
+                                    println!("🔏 CA fingerprint (nodeA): {}", fp);
+                                    log_event(&node_id, &format!("CA cert saved, fingerprint: {}", fp));
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("❌ Failed to save CA cert: {} — this will break the overlay!", e);
+                                log_error(&node_id, &format!("CA cert save failed: {}", e));
+                                // Don't retry forever — surface the error and continue.
+                            }
                         }
+                    } else {
+                        eprintln!(
+                            "⚠️  CertSignResponse.ca_cert_pem is empty! \
+                             Check cert_service.rs on nodeA is populating this field."
+                        );
                     }
 
-                    println!("CA-signed certificate received from CA");
+                    println!("✅ CA-signed certificate received from nodeA");
                     log_event(&node_id, "CA-signed certificate received and saved");
                     log_audit(
                         &node_id,
@@ -121,35 +143,43 @@ pub async fn request_certificate_from_ca(
                     );
                     return;
                 }
+
                 "pending" => {
                     if attempt == 1 {
-                        println!("Certificate request pending -- waiting for admin approval on CA");
+                        println!(
+                            "⏳ Certificate request pending — waiting for admin approval on nodeA.\n\
+                             Run on nodeA: edit {}/requests/{}.yaml → set approve: true",
+                            NEBULA_BASE_DIR, node_id
+                        );
                     }
                 }
+
                 "rejected" => {
-                    eprintln!("Certificate request rejected: {}", resp.message);
+                    eprintln!("❌ Certificate request rejected: {}", resp.message);
+                    eprintln!("   Manual intervention required — not retrying.");
                     log_audit(
                         &node_id,
                         AuditCategory::Network,
                         AuditSeverity::Warning,
                         AuditAction::Rejected,
-                        &format!("Certificate request rejected: {}", resp.message),
+                        &format!("Certificate rejected: {}", resp.message),
                     );
+                    return;
                 }
-                other => {
-                    eprintln!("Unknown cert response status '{}'", other);
-                }
+
+                other => eprintln!("⚠️  Unknown cert response status: '{}'", other),
             },
+
             Err(e) => {
                 if attempt <= 3 {
                     eprintln!(
-                        "Certificate request failed (attempt #{}) : {} -- retrying in {}s",
+                        "⚠️  Cert request attempt #{} failed: {} — retrying in {}s",
                         attempt, e, RETRY_INTERVAL_SECS
                     );
                 }
                 log_event(
                     &node_id,
-                    &format!("Certificate request attempt #{} failed: {}", attempt, e),
+                    &format!("Cert request attempt #{} failed: {}", attempt, e),
                 );
             }
         }
@@ -158,28 +188,27 @@ pub async fn request_certificate_from_ca(
     }
 }
 
-/// Single gRPC request to CA node via PLAINTEXT (bootstrap — no TLS).
+/// Single gRPC attempt to the CA (PLAINTEXT — bootstrap phase, no TLS yet).
 async fn try_request(
     node_id: &str,
     ca_addr: &str,
     overlay_ip: &str,
     public_key_pem: &str,
 ) -> Result<crate::proto::sgx::CertSignResponse, String> {
-    // PLAINTEXT connection — no TLS needed for bootstrap
     let endpoint = Channel::from_shared(format!("http://{}", ca_addr))
         .map_err(|e| format!("Invalid CA address: {}", e))?;
 
     let channel = endpoint
         .connect()
         .await
-        .map_err(|e| format!("Connection to CA failed: {}", e))?;
+        .map_err(|e| format!("Connection to CA at {} failed: {}", ca_addr, e))?;
 
     let mut client = CertServiceClient::new(channel);
 
     let request = tonic::Request::new(CertSignRequest {
-        node_id: node_id.to_string(),
+        node_id:        node_id.to_string(),
         public_key_pem: public_key_pem.to_string(),
-        overlay_ip: overlay_ip.to_string(),
+        overlay_ip:     overlay_ip.to_string(),
     });
 
     let response = client
@@ -190,23 +219,29 @@ async fn try_request(
     Ok(response.into_inner())
 }
 
-/// Write content to file, creating parent dirs.
+/// Write content to a file, creating parent dirs.
 async fn write_file(path: &str, content: &str) -> Result<(), String> {
     if let Some(parent) = Path::new(path).parent() {
         tokio::fs::create_dir_all(parent)
             .await
-            .map_err(|e| format!("mkdir failed: {}", e))?;
+            .map_err(|e| format!("mkdir {}: {}", parent.display(), e))?;
     }
-    tokio::fs::write(path, content)
+
+    // Write atomically via temp file
+    let tmp = format!("{}.tmp", path);
+    tokio::fs::write(&tmp, content)
         .await
-        .map_err(|e| format!("write failed for {}: {}", path, e))?;
+        .map_err(|e| format!("write {}: {}", tmp, e))?;
+    tokio::fs::rename(&tmp, path)
+        .await
+        .map_err(|e| format!("rename {} → {}: {}", tmp, path, e))?;
 
     #[cfg(unix)]
     if path.ends_with(".key") {
         let perms = std::fs::Permissions::from_mode(0o600);
         tokio::fs::set_permissions(path, perms)
             .await
-            .map_err(|e| format!("chmod failed for {}: {}", path, e))?;
+            .map_err(|e| format!("chmod {}: {}", path, e))?;
     }
 
     Ok(())

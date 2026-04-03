@@ -8,3 +8,5 @@ pub mod models;
 pub mod utils;
 pub mod overlay;
 pub mod interface;
+pub mod overlay_registry;
+pub mod registry_sync;
