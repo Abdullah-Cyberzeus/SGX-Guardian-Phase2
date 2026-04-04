@@ -7,10 +7,11 @@
 
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
+use crate::config_loader::load_config;
 use crate::logging::{log_error, log_event};
+use crate::nebula::ca::NebulaCA;
 use crate::proto::sgx::cert_service_client::CertServiceClient;
 use crate::proto::sgx::CertSignRequest;
-use crate::nebula::ca::NebulaCA;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -18,6 +19,39 @@ use tonic::transport::Channel;
 
 const NEBULA_BASE_DIR: &str = "/var/lib/sgx-guardian/nebula";
 const RETRY_INTERVAL_SECS: u64 = 5;
+
+fn valid_lan_ip(ip: &str) -> bool {
+    !ip.is_empty() && ip != "0.0.0.0" && ip != "127.0.0.1"
+}
+
+fn resolve_nodea_ip_for_bootstrap() -> Option<String> {
+    if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
+        if valid_lan_ip(&env_ip) {
+            return Some(env_ip);
+        }
+    }
+
+    for path in [
+        "/etc/sgx-guardian/config/nodeA.yaml",
+        "/etc/sgx-guardian/nodeA.yaml",
+    ] {
+        if let Ok(cfg) = load_config(path) {
+            if valid_lan_ip(&cfg.ip) {
+                return Some(cfg.ip);
+            }
+        }
+    }
+    None
+}
+
+fn split_host_port(addr: &str) -> (String, u16) {
+    if let Some((host, port_s)) = addr.rsplit_once(':') {
+        if let Ok(port) = port_s.parse::<u16>() {
+            return (host.to_string(), port);
+        }
+    }
+    (addr.to_string(), 50061)
+}
 
 /// Request a CA-signed Nebula certificate from nodeA.
 ///
@@ -31,8 +65,14 @@ pub async fn request_certificate_from_ca(
     overlay_ip: String,
     public_key_pem: String,
 ) {
+    let (_, ca_port) = split_host_port(&ca_addr);
+    let mut current_ca_addr = ca_addr.clone();
+    if let Some(ip) = resolve_nodea_ip_for_bootstrap() {
+        current_ca_addr = format!("{}:{}", ip, ca_port);
+    }
+
     let cert_path = format!("{}/nodes/{}.crt", NEBULA_BASE_DIR, node_id);
-    let key_path  = format!("{}/nodes/{}.key", NEBULA_BASE_DIR, node_id);
+    let key_path = format!("{}/nodes/{}.key", NEBULA_BASE_DIR, node_id);
 
     // Idempotent: cert AND CA cert both present
     if Path::new(&cert_path).exists()
@@ -48,24 +88,35 @@ pub async fn request_certificate_from_ca(
 
     println!(
         "📡 Requesting certificate from CA at {} (overlay: {})",
-        ca_addr, overlay_ip
+        current_ca_addr, overlay_ip
     );
     log_event(
         &node_id,
-        &format!("Starting certificate request to CA at {}", ca_addr),
+        &format!("Starting certificate request to CA at {}", current_ca_addr),
     );
     log_audit(
         &node_id,
         AuditCategory::Network,
         AuditSeverity::Info,
         AuditAction::Started,
-        &format!("Certificate request initiated to CA at {}", ca_addr),
+        &format!("Certificate request initiated to CA at {}", current_ca_addr),
     );
 
     let mut attempt: u32 = 0;
 
     loop {
         attempt += 1;
+
+        if let Some(ip) = resolve_nodea_ip_for_bootstrap() {
+            let refreshed = format!("{}:{}", ip, ca_port);
+            if refreshed != current_ca_addr {
+                println!(
+                    "🔄 CA address updated from {} to {} (using latest nodeA config)",
+                    current_ca_addr, refreshed
+                );
+                current_ca_addr = refreshed;
+            }
+        }
 
         // Re-check in case another code path wrote the files
         if Path::new(&cert_path).exists()
@@ -80,11 +131,11 @@ pub async fn request_certificate_from_ca(
         if attempt > 1 {
             println!(
                 "📡 Cert request attempt #{} → CA at {}",
-                attempt, ca_addr
+                attempt, current_ca_addr
             );
         }
 
-        match try_request(&node_id, &ca_addr, &overlay_ip, &public_key_pem).await {
+        match try_request(&node_id, &current_ca_addr, &overlay_ip, &public_key_pem).await {
             Ok(resp) => match resp.status.as_str() {
                 "approved" => {
                     // ── Save node cert ────────────────────────────────
@@ -92,7 +143,8 @@ pub async fn request_certificate_from_ca(
                         if let Err(e) = write_file(&cert_path, &resp.signed_cert_pem).await {
                             eprintln!("❌ Save cert failed: {} — retrying", e);
                             log_error(&node_id, &format!("Save cert: {}", e));
-                            tokio::time::sleep(std::time::Duration::from_secs(RETRY_INTERVAL_SECS)).await;
+                            tokio::time::sleep(std::time::Duration::from_secs(RETRY_INTERVAL_SECS))
+                                .await;
                             continue;
                         }
                     }
@@ -102,7 +154,8 @@ pub async fn request_certificate_from_ca(
                         if let Err(e) = write_file(&key_path, &resp.node_key_pem).await {
                             eprintln!("❌ Save key failed: {} — retrying", e);
                             log_error(&node_id, &format!("Save key: {}", e));
-                            tokio::time::sleep(std::time::Duration::from_secs(RETRY_INTERVAL_SECS)).await;
+                            tokio::time::sleep(std::time::Duration::from_secs(RETRY_INTERVAL_SECS))
+                                .await;
                             continue;
                         }
                     }
@@ -116,11 +169,17 @@ pub async fn request_certificate_from_ca(
                             Ok(_) => {
                                 if let Some(fp) = NebulaCA::ca_fingerprint(NEBULA_BASE_DIR) {
                                     println!("🔏 CA fingerprint (nodeA): {}", fp);
-                                    log_event(&node_id, &format!("CA cert saved, fingerprint: {}", fp));
+                                    log_event(
+                                        &node_id,
+                                        &format!("CA cert saved, fingerprint: {}", fp),
+                                    );
                                 }
                             }
                             Err(e) => {
-                                eprintln!("❌ Failed to save CA cert: {} — this will break the overlay!", e);
+                                eprintln!(
+                                    "❌ Failed to save CA cert: {} — this will break the overlay!",
+                                    e
+                                );
                                 log_error(&node_id, &format!("CA cert save failed: {}", e));
                                 // Don't retry forever — surface the error and continue.
                             }
@@ -206,9 +265,9 @@ async fn try_request(
     let mut client = CertServiceClient::new(channel);
 
     let request = tonic::Request::new(CertSignRequest {
-        node_id:        node_id.to_string(),
+        node_id: node_id.to_string(),
         public_key_pem: public_key_pem.to_string(),
-        overlay_ip:     overlay_ip.to_string(),
+        overlay_ip: overlay_ip.to_string(),
     });
 
     let response = client

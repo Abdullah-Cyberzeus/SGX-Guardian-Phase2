@@ -46,8 +46,7 @@ pub fn ensure_dirs() -> Result<(), String> {
         "/var/lib/sgx-guardian/nebula/ca",
         "/var/lib/sgx-guardian/nebula/nodes",
     ] {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| format!("Cannot create {}: {}", dir, e))?;
+        std::fs::create_dir_all(dir).map_err(|e| format!("Cannot create {}: {}", dir, e))?;
     }
     Ok(())
 }
@@ -217,8 +216,7 @@ pub async fn request_ip_from_ca(
         pubkey_prefix: Some(pubkey_prefix.to_string()),
     };
 
-    let mut json = serde_json::to_string(&request)
-        .map_err(|e| format!("Serialize: {}", e))?;
+    let mut json = serde_json::to_string(&request).map_err(|e| format!("Serialize: {}", e))?;
     json.push('\n');
 
     let (reader, mut writer) = stream.into_split();
@@ -246,7 +244,9 @@ pub async fn request_ip_from_ca(
         let ip = response.ip.ok_or("No ip in response")?;
         Ok((ip_cidr, ip))
     } else {
-        Err(response.error.unwrap_or_else(|| "Unknown error".to_string()))
+        Err(response
+            .error
+            .unwrap_or_else(|| "Unknown error".to_string()))
     }
 }
 
@@ -254,11 +254,7 @@ pub async fn request_ip_from_ca(
 
 /// Call this from main.rs for any non-CA node.
 /// Order: cache → CA → deterministic fallback
-pub async fn resolve_overlay_ip(
-    node_name: &str,
-    ca_host: &str,
-    pubkey_prefix: &str,
-) -> String {
+pub async fn resolve_overlay_ip(node_name: &str, ca_host: &str, pubkey_prefix: &str) -> String {
     if let Err(e) = ensure_dirs() {
         eprintln!("⚠️  [OverlayIP] Dir setup failed: {}", e);
     }
@@ -269,7 +265,10 @@ pub async fn resolve_overlay_ip(
         return cached;
     }
 
-    println!("📡 [OverlayIP] Requesting IP from CA {}:{}...", ca_host, REGISTRY_SYNC_PORT);
+    println!(
+        "📡 [OverlayIP] Requesting IP from CA {}:{}...",
+        ca_host, REGISTRY_SYNC_PORT
+    );
 
     // 2. CA request
     match request_ip_from_ca(node_name, ca_host, pubkey_prefix).await {
@@ -286,9 +285,15 @@ pub async fn resolve_overlay_ip(
             eprintln!("   CA: {}:{}", ca_host, REGISTRY_SYNC_PORT);
             eprintln!("   Fix checklist:");
             eprintln!("     1. nodeA running? (cargo run -- nodeA)");
-            eprintln!("     2. Port open? (nc -zv {} {})", ca_host, REGISTRY_SYNC_PORT);
+            eprintln!(
+                "     2. Port open? (nc -zv {} {})",
+                ca_host, REGISTRY_SYNC_PORT
+            );
             eprintln!("     3. nodeA.yaml correct IP?");
-            eprintln!("     4. Firewall: sudo ufw allow {}/tcp", REGISTRY_SYNC_PORT);
+            eprintln!(
+                "     4. Firewall: sudo ufw allow {}/tcp",
+                REGISTRY_SYNC_PORT
+            );
 
             // 3. Deterministic fallback
             let host: u8 = match node_name {
@@ -301,7 +306,10 @@ pub async fn resolve_overlay_ip(
                 }
             };
             let fallback = format!("192.168.100.{}/24", host);
-            eprintln!("⚠️  [OverlayIP] Fallback: {} (temporary — connect CA for permanent)", fallback);
+            eprintln!(
+                "⚠️  [OverlayIP] Fallback: {} (temporary — connect CA for permanent)",
+                fallback
+            );
             let _ = save_local_ip_cache(node_name, &fallback);
             fallback
         }
@@ -312,8 +320,7 @@ pub async fn resolve_overlay_ip(
 
 pub fn save_local_ip_cache(node_name: &str, ip_cidr: &str) -> Result<(), String> {
     for dir in &["/var/lib/sgx-guardian", "/var/lib/sgx-guardian/nebula"] {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| format!("Cannot create {}: {}", dir, e))?;
+        std::fs::create_dir_all(dir).map_err(|e| format!("Cannot create {}: {}", dir, e))?;
     }
 
     let mut cache: HashMap<String, String> = if std::path::Path::new(CACHE_PATH).exists() {
@@ -328,14 +335,11 @@ pub fn save_local_ip_cache(node_name: &str, ip_cidr: &str) -> Result<(), String>
     cache.insert(node_name.to_string(), ip_cidr.to_string());
 
     let tmp = format!("{}.tmp", CACHE_PATH);
-    let json = serde_json::to_string_pretty(&cache)
-        .map_err(|e| format!("Serialize: {}", e))?;
+    let json = serde_json::to_string_pretty(&cache).map_err(|e| format!("Serialize: {}", e))?;
 
-    std::fs::write(&tmp, &json)
-        .map_err(|e| format!("Write {}: {}", tmp, e))?;
+    std::fs::write(&tmp, &json).map_err(|e| format!("Write {}: {}", tmp, e))?;
 
-    std::fs::rename(&tmp, CACHE_PATH)
-        .map_err(|e| format!("Rename: {}", e))?;
+    std::fs::rename(&tmp, CACHE_PATH).map_err(|e| format!("Rename: {}", e))?;
 
     Ok(())
 }
@@ -350,15 +354,11 @@ pub fn clear_local_ip_cache(node_name: &str) -> Result<(), String> {
     if !std::path::Path::new(CACHE_PATH).exists() {
         return Ok(());
     }
-    let content = std::fs::read_to_string(CACHE_PATH)
-        .map_err(|e| format!("Read: {}", e))?;
-    let mut cache: HashMap<String, String> =
-        serde_json::from_str(&content).unwrap_or_default();
+    let content = std::fs::read_to_string(CACHE_PATH).map_err(|e| format!("Read: {}", e))?;
+    let mut cache: HashMap<String, String> = serde_json::from_str(&content).unwrap_or_default();
     cache.remove(node_name);
-    let json = serde_json::to_string_pretty(&cache)
-        .map_err(|e| format!("Serialize: {}", e))?;
-    std::fs::write(CACHE_PATH, json)
-        .map_err(|e| format!("Write: {}", e))?;
+    let json = serde_json::to_string_pretty(&cache).map_err(|e| format!("Serialize: {}", e))?;
+    std::fs::write(CACHE_PATH, json).map_err(|e| format!("Write: {}", e))?;
     println!("🗑️  Cache cleared for {}", node_name);
     Ok(())
 }

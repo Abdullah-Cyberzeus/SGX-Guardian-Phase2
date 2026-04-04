@@ -26,9 +26,9 @@ use std::path::Path;
 
 pub const REGISTRY_SUBNET_BASE: &str = "192.168.100";
 pub const REGISTRY_CIDR: u8 = 24;
-pub const REGISTRY_OWNER_HOST: u8 = 1;       // Circle owner hamesha .1
-pub const REGISTRY_START_HOST: u8 = 2;       // Members .2 se shuru
-pub const REGISTRY_MAX_HOST: u8 = 254;       // Maximum .254
+pub const REGISTRY_OWNER_HOST: u8 = 1; // Circle owner hamesha .1
+pub const REGISTRY_START_HOST: u8 = 2; // Members .2 se shuru
+pub const REGISTRY_MAX_HOST: u8 = 254; // Maximum .254
 
 /// Permanent IP allocation record for one node.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,7 +103,12 @@ impl OverlayRegistry {
 
     /// Load registry from disk, or create new one if not found.
     /// This is the main entry point — always use this.
-    pub fn load_or_create(path: &str, circle_id: &str, subnet_base: &str, owner_node: &str) -> Self {
+    pub fn load_or_create(
+        path: &str,
+        circle_id: &str,
+        subnet_base: &str,
+        owner_node: &str,
+    ) -> Self {
         if Path::new(path).exists() {
             match Self::load(path) {
                 Ok(reg) => {
@@ -227,30 +232,25 @@ impl OverlayRegistry {
     pub fn save(&self, path: &str) -> Result<(), String> {
         // Create parent directories
         if let Some(parent) = Path::new(path).parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Cannot create dir: {}", e))?;
+            fs::create_dir_all(parent).map_err(|e| format!("Cannot create dir: {}", e))?;
         }
 
         // Write to temp file first, then atomic rename (prevents corruption)
         let tmp_path = format!("{}.tmp", path);
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("Serialize error: {}", e))?;
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| format!("Serialize error: {}", e))?;
 
-        fs::write(&tmp_path, &json)
-            .map_err(|e| format!("Write error: {}", e))?;
+        fs::write(&tmp_path, &json).map_err(|e| format!("Write error: {}", e))?;
 
-        fs::rename(&tmp_path, path)
-            .map_err(|e| format!("Rename error: {}", e))?;
+        fs::rename(&tmp_path, path).map_err(|e| format!("Rename error: {}", e))?;
 
         Ok(())
     }
 
     /// Load registry from disk.
     pub fn load(path: &str) -> Result<Self, String> {
-        let json = fs::read_to_string(path)
-            .map_err(|e| format!("Read error: {}", e))?;
-        serde_json::from_str(&json)
-            .map_err(|e| format!("Parse error: {}", e))
+        let json = fs::read_to_string(path).map_err(|e| format!("Read error: {}", e))?;
+        serde_json::from_str(&json).map_err(|e| format!("Parse error: {}", e))
     }
 
     /// All allocated nodes as a sorted list.
@@ -284,14 +284,23 @@ impl OverlayRegistry {
     /// Print all allocations as a table.
     pub fn print_table(&self) {
         println!("─────────────────────────────────────────────────");
-        println!("  Circle: {}  |  Subnet: {}.0/{}",
-            self.circle_id, self.subnet_base, self.cidr);
+        println!(
+            "  Circle: {}  |  Subnet: {}.0/{}",
+            self.circle_id, self.subnet_base, self.cidr
+        );
         println!("─────────────────────────────────────────────────");
         println!("  {:<12}  {:<20}  {}", "Node", "Overlay IP", "Role");
         println!("─────────────────────────────────────────────────");
         for record in self.all_nodes() {
-            let role = if record.is_owner { "CA / Lighthouse" } else { "Member" };
-            println!("  {:<12}  {:<20}  {}", record.node_name, record.overlay_ip_cidr, role);
+            let role = if record.is_owner {
+                "CA / Lighthouse"
+            } else {
+                "Member"
+            };
+            println!(
+                "  {:<12}  {:<20}  {}",
+                record.node_name, record.overlay_ip_cidr, role
+            );
         }
         println!("─────────────────────────────────────────────────");
     }
@@ -348,10 +357,8 @@ impl From<&OverlayRegistry> for crate::nebula::overlay::OverlayPool {
         );
         // Sync all allocations into pool
         for record in reg.allocations.values() {
-            pool.allocations.insert(
-                record.node_name.clone(),
-                record.overlay_ip.clone(),
-            );
+            pool.allocations
+                .insert(record.node_name.clone(), record.overlay_ip.clone());
         }
         pool.next_host = reg.next_host;
         pool
@@ -427,22 +434,28 @@ mod tests {
     fn test_find_next_host_skips_gaps() {
         let mut reg = make_registry();
         // Manually inject a record at .2 and .4 to create gap
-        reg.allocations.insert("nodeX".to_string(), NodeIpRecord {
-            node_name: "nodeX".to_string(),
-            overlay_ip: "192.168.100.2".to_string(),
-            overlay_ip_cidr: "192.168.100.2/24".to_string(),
-            is_owner: false,
-            allocated_at: "".to_string(),
-            pubkey_prefix: None,
-        });
-        reg.allocations.insert("nodeY".to_string(), NodeIpRecord {
-            node_name: "nodeY".to_string(),
-            overlay_ip: "192.168.100.4".to_string(),
-            overlay_ip_cidr: "192.168.100.4/24".to_string(),
-            is_owner: false,
-            allocated_at: "".to_string(),
-            pubkey_prefix: None,
-        });
+        reg.allocations.insert(
+            "nodeX".to_string(),
+            NodeIpRecord {
+                node_name: "nodeX".to_string(),
+                overlay_ip: "192.168.100.2".to_string(),
+                overlay_ip_cidr: "192.168.100.2/24".to_string(),
+                is_owner: false,
+                allocated_at: "".to_string(),
+                pubkey_prefix: None,
+            },
+        );
+        reg.allocations.insert(
+            "nodeY".to_string(),
+            NodeIpRecord {
+                node_name: "nodeY".to_string(),
+                overlay_ip: "192.168.100.4".to_string(),
+                overlay_ip_cidr: "192.168.100.4/24".to_string(),
+                is_owner: false,
+                allocated_at: "".to_string(),
+                pubkey_prefix: None,
+            },
+        );
         reg.next_host = 2; // Counter behind actual state
 
         // .2 taken, .3 free — should get .3
@@ -474,14 +487,17 @@ mod tests {
         reg.next_host = 255;
         // Manually fill all slots
         for i in 2..=254u8 {
-            reg.allocations.insert(format!("node{}", i), NodeIpRecord {
-                node_name: format!("node{}", i),
-                overlay_ip: format!("192.168.100.{}", i),
-                overlay_ip_cidr: format!("192.168.100.{}/24", i),
-                is_owner: false,
-                allocated_at: "".to_string(),
-                pubkey_prefix: None,
-            });
+            reg.allocations.insert(
+                format!("node{}", i),
+                NodeIpRecord {
+                    node_name: format!("node{}", i),
+                    overlay_ip: format!("192.168.100.{}", i),
+                    overlay_ip_cidr: format!("192.168.100.{}/24", i),
+                    is_owner: false,
+                    allocated_at: "".to_string(),
+                    pubkey_prefix: None,
+                },
+            );
         }
         assert!(reg.assign_ip("nodeOverflow").is_err());
     }

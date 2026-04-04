@@ -359,6 +359,10 @@ pub fn update_peer_config(node_id: &str, hostname: &str, ip: &str, port: u16, pu
         if existing.ends_with('\n') && !result.ends_with('\n') {
             result.push('\n');
         }
+        if result == existing {
+            println!("Config unchanged (field-level): {} -> ip={}", node_id, ip);
+            return;
+        }
 
         match std::fs::write(&path, &result) {
             Ok(_) => println!("Config updated (field-level): {} -> ip={}", node_id, ip),

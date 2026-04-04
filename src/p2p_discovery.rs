@@ -1,6 +1,4 @@
-use crate::attestation_service::AttestationService;
 use crate::config_loader::load_config;
-use crate::key_manager::KeyManager;
 use crate::logging::log_event;
 use anyhow::Result;
 use libmdns::Responder;
@@ -35,9 +33,6 @@ impl P2PDiscovery {
             &["node=sgx-guardian"],
         );
         println!("✅ mDNS service registered for {}", node_id);
-        let key_path = format!("/var/lib/sgx-guardian/sgx-agent/device_{}.key", node_id);
-        let km = Arc::new(KeyManager::load_or_generate(&key_path)?);
-        let _km_clone = km.clone();
         let node_id_clone = node_id.clone();
         let node_id_sim = node_id.clone();
         // ✅ Create two independent clones
@@ -122,33 +117,10 @@ impl P2PDiscovery {
                 tokio::time::sleep(Duration::from_secs(1)).await; // prevent race
                 let full_addr = format!("{}:{}", peer_ip, peer_port);
                 tx_clone_sim.send(full_addr.clone()).await.ok();
-                println!("🔐 Attesting discovered peer (sim-mode): {}", full_addr);
-                let km_ref = km.clone();
-                println!("🔐 Attesting discovered peer: {}:{}", peer_ip, peer_port);
-
-                // 👇 use peer_port + 100 for attestation listener (5015x range)
-                if let Ok(true) =
-                    AttestationService::mutual_attest(peer_ip.clone(), peer_port + 100, &km_ref)
-                        .await
-                {
-                    log_event(
-                        &node_id,
-                        &format!(
-                            "✅ Mutual attestation succeeded with {}:{}",
-                            peer_ip,
-                            peer_port + 100
-                        ),
-                    );
-                } else {
-                    log_event(
-                        &node_id,
-                        &format!(
-                            "❌ Mutual attestation failed with {}:{}",
-                            peer_ip,
-                            peer_port + 100
-                        ),
-                    );
-                }
+                println!(
+                    "🔐 Queued discovered peer for attestation (sim-mode): {}",
+                    full_addr
+                );
             }
         }
 

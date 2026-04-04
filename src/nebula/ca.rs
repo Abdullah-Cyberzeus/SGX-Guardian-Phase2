@@ -130,10 +130,7 @@ impl NebulaCA {
     /// Returns true if the CA cert exists and is non-empty.
     pub fn ca_cert_exists(base_dir: &str) -> bool {
         let ca_crt = format!("{}/ca/ca.crt", base_dir);
-        Path::new(&ca_crt).exists()
-            && fs::metadata(&ca_crt)
-                .map(|m| m.len() > 0)
-                .unwrap_or(false)
+        Path::new(&ca_crt).exists() && fs::metadata(&ca_crt).map(|m| m.len() > 0).unwrap_or(false)
     }
 
     /// Returns the fingerprint of the CA cert for verification.
@@ -153,7 +150,8 @@ impl NebulaCA {
                 let s = String::from_utf8_lossy(&out.stdout);
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
                     // Extract fingerprint from details.fingerprint or similar field
-                    if let Some(fp) = v.pointer("/details/fingerprint")
+                    if let Some(fp) = v
+                        .pointer("/details/fingerprint")
                         .or_else(|| v.pointer("/fingerprint"))
                         .and_then(|f| f.as_str())
                     {
@@ -189,16 +187,17 @@ impl NebulaCA {
             ));
         }
 
-        let ca_dir   = format!("{}/ca", base_dir);
+        let ca_dir = format!("{}/ca", base_dir);
         let nodes_dir = format!("{}/nodes", base_dir);
 
         fs::create_dir_all(&nodes_dir)?;
 
         // Validate node_name: alphanumeric + dash/underscore only
         if membership.node_name.is_empty()
-            || !membership.node_name.chars().all(|c| {
-                c.is_ascii_alphanumeric() || c == '-' || c == '_'
-            })
+            || !membership
+                .node_name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         {
             return Err(Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -210,7 +209,7 @@ impl NebulaCA {
         }
 
         let cert_path = format!("{}/{}.crt", nodes_dir, membership.node_name);
-        let key_path  = format!("{}/{}.key", nodes_dir, membership.node_name);
+        let key_path = format!("{}/{}.key", nodes_dir, membership.node_name);
 
         // ── Idempotent: both files already exist ──────────────────────
         if Path::new(&cert_path).exists() && Path::new(&key_path).exists() {
@@ -283,10 +282,13 @@ impl NebulaCA {
         {
             use std::os::unix::fs::PermissionsExt;
             let _ = fs::set_permissions(&cert_path, fs::Permissions::from_mode(0o644));
-            let _ = fs::set_permissions(&key_path,  fs::Permissions::from_mode(0o600));
+            let _ = fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600));
         }
 
-        println!("✅ Certificate issued for {} at {}", membership.node_name, ip);
+        println!(
+            "✅ Certificate issued for {} at {}",
+            membership.node_name, ip
+        );
         Ok(())
     }
 }

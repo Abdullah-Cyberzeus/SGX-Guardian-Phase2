@@ -18,7 +18,9 @@ impl NebulaDaemon {
     /// Called before start() to avoid "address already in use" on UDP 4242.
     pub fn kill_existing() {
         // Linux/macOS
-        let _ = Command::new("pkill").args(["-f", "nebula -config"]).output();
+        let _ = Command::new("pkill")
+            .args(["-f", "nebula -config"])
+            .output();
         // Give the OS a moment to release UDP 4242
         thread::sleep(Duration::from_millis(600));
     }
@@ -60,9 +62,12 @@ impl NebulaDaemon {
 
         // 2. Validate config
         match Self::test_config(config_path) {
-            Ok(_)  => println!("✅ Nebula config validated."),
+            Ok(_) => println!("✅ Nebula config validated."),
             Err(e) => {
-                eprintln!("❌ Nebula config INVALID — fix errors before starting:\n{}", e);
+                eprintln!(
+                    "❌ Nebula config INVALID — fix errors before starting:\n{}",
+                    e
+                );
                 return Err(e);
             }
         }
@@ -135,7 +140,9 @@ impl NebulaDaemon {
     #[allow(dead_code)]
     pub fn stop() -> Result<(), Error> {
         // Try SIGTERM first
-        let _ = Command::new("pkill").args(["-TERM", "-f", "nebula -config"]).output();
+        let _ = Command::new("pkill")
+            .args(["-TERM", "-f", "nebula -config"])
+            .output();
         thread::sleep(Duration::from_secs(2));
 
         // Force-kill if still running
@@ -146,7 +153,9 @@ impl NebulaDaemon {
         }
 
         // Remove the TUN interface (may already be gone)
-        let _ = Command::new("ip").args(["link", "delete", "nebula0"]).output();
+        let _ = Command::new("ip")
+            .args(["link", "delete", "nebula0"])
+            .output();
 
         println!("🛑 Nebula daemon stopped.");
         Ok(())

@@ -822,7 +822,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     resolve_ca_ip_from_config_inner()
                 }
             } else {
-               resolve_ca_ip_from_config_inner()
+                resolve_ca_ip_from_config_inner()
             }
         };
         println!("📡 nodeA (CA/Lighthouse) LAN IP: {}", ca_lan_ip);

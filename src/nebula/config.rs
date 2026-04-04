@@ -63,9 +63,9 @@ firewall:
 
 {lh}
 "#,
-            dir  = config_dir,
+            dir = config_dir,
             node = node_name,
-            lh   = lighthouse_config,
+            lh = lighthouse_config,
         );
 
         let mut file = fs::File::create(config_path)?;
@@ -147,16 +147,15 @@ firewall:
             "static_host_map: {}\n".to_string()
         } else {
             match lighthouse_lan_ip {
-                Some(lan_ip) if !lan_ip.is_empty()
-                    && lan_ip != "0.0.0.0"
-                    && lan_ip != "127.0.0.1" =>
+                Some(lan_ip)
+                    if !lan_ip.is_empty() && lan_ip != "0.0.0.0" && lan_ip != "127.0.0.1" =>
                 {
                     // Use the actual LAN IP so members can reach nodeA's UDP 4242
                     // before the overlay tunnel is established.
                     format!(
                         "static_host_map:\n  \"{owner_ov}\": [\"{lan}:4242\"]\n",
                         owner_ov = owner_overlay_ip,
-                        lan      = lan_ip,
+                        lan = lan_ip,
                     )
                 }
                 _ => {
@@ -228,12 +227,12 @@ firewall:
       host: any
 "#,
             circle = pool.circle_id,
-            node   = node_name,
-            ov_ip  = overlay_ip,
-            dir    = config_dir,
-            shm    = static_host_map_section,
-            lh     = lighthouse_section,
-            relay  = relay_section,
+            node = node_name,
+            ov_ip = overlay_ip,
+            dir = config_dir,
+            shm = static_host_map_section,
+            lh = lighthouse_section,
+            relay = relay_section,
         );
 
         // Always overwrite — we want fresh IPs on every start.
@@ -266,8 +265,8 @@ mod tests {
     #[test]
     fn test_lighthouse_config_has_no_static_host_map_entry() {
         let pool = OverlayPool::new("alpha", "192.168.100", "nodeA");
-        let dir  = tmp("lh");
-        let _    = std::fs::create_dir_all(&dir);
+        let dir = tmp("lh");
+        let _ = std::fs::create_dir_all(&dir);
         NebulaConfig::generate_config_from_pool_with_lighthouse("nodeA", &pool, &dir, None)
             .unwrap();
         let c = std::fs::read_to_string(format!("{}/nebula.yaml", dir)).unwrap();
@@ -284,14 +283,21 @@ mod tests {
         let mut pool = OverlayPool::new("alpha", "192.168.100", "nodeA");
         pool.allocate("nodeB").unwrap();
         let dir = tmp("mb");
-        let _   = std::fs::create_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
         NebulaConfig::generate_config_from_pool_with_lighthouse(
-            "nodeB", &pool, &dir, Some("192.168.1.42"),
-        ).unwrap();
+            "nodeB",
+            &pool,
+            &dir,
+            Some("192.168.1.42"),
+        )
+        .unwrap();
         let c = std::fs::read_to_string(format!("{}/nebula.yaml", dir)).unwrap();
         assert!(c.contains("am_lighthouse: false"));
-        assert!(c.contains("192.168.1.42:4242"),
-            "Expected real LAN IP in static_host_map, got:\n{}", c);
+        assert!(
+            c.contains("192.168.1.42:4242"),
+            "Expected real LAN IP in static_host_map, got:\n{}",
+            c
+        );
         assert!(!c.contains("LIGHTHOUSE_PUBLIC_IP"));
         assert!(!c.contains("NEEDS_NODE"));
         assert!(c.contains("192.168.100.2/24"));
@@ -303,11 +309,10 @@ mod tests {
         let mut pool = OverlayPool::new("alpha", "192.168.100", "nodeA");
         pool.allocate("nodeB").unwrap();
         let dir = tmp("mb_no_ip");
-        let _   = std::fs::create_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
         // None → should still succeed but embed placeholder warning text
-        NebulaConfig::generate_config_from_pool_with_lighthouse(
-            "nodeB", &pool, &dir, None,
-        ).unwrap();
+        NebulaConfig::generate_config_from_pool_with_lighthouse("nodeB", &pool, &dir, None)
+            .unwrap();
         let c = std::fs::read_to_string(format!("{}/nebula.yaml", dir)).unwrap();
         assert!(c.contains("NEEDS_NODE"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -316,29 +321,39 @@ mod tests {
     #[test]
     fn test_config_always_overwritten() {
         let pool = OverlayPool::new("alpha", "192.168.100", "nodeA");
-        let dir  = tmp("overwrite");
-        let _    = std::fs::create_dir_all(&dir);
+        let dir = tmp("overwrite");
+        let _ = std::fs::create_dir_all(&dir);
         // Write once with old IP
         NebulaConfig::generate_config_from_pool_with_lighthouse(
-            "nodeA", &pool, &dir, Some("10.0.0.1"),
-        ).unwrap();
+            "nodeA",
+            &pool,
+            &dir,
+            Some("10.0.0.1"),
+        )
+        .unwrap();
         // Write again with new IP — should overwrite
         NebulaConfig::generate_config_from_pool_with_lighthouse(
-            "nodeA", &pool, &dir, Some("10.0.0.99"),
-        ).unwrap();
+            "nodeA",
+            &pool,
+            &dir,
+            Some("10.0.0.99"),
+        )
+        .unwrap();
         let c = std::fs::read_to_string(format!("{}/nebula.yaml", dir)).unwrap();
         // The second write should win
-        assert!(!c.contains("10.0.0.1"), "Old IP should have been overwritten");
+        assert!(
+            !c.contains("10.0.0.1"),
+            "Old IP should have been overwritten"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn test_generate_config_unallocated_node_fails() {
         let pool = OverlayPool::new("alpha", "192.168.100", "nodeA");
-        let dir  = tmp("unalloc");
-        let result = NebulaConfig::generate_config_from_pool_with_lighthouse(
-            "nodeZ", &pool, &dir, None,
-        );
+        let dir = tmp("unalloc");
+        let result =
+            NebulaConfig::generate_config_from_pool_with_lighthouse("nodeZ", &pool, &dir, None);
         assert!(result.is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -346,9 +361,10 @@ mod tests {
     #[test]
     fn test_tun_device_is_nebula0() {
         let pool = OverlayPool::new("alpha", "192.168.100", "nodeA");
-        let dir  = tmp("tun");
-        let _    = std::fs::create_dir_all(&dir);
-        NebulaConfig::generate_config_from_pool_with_lighthouse("nodeA", &pool, &dir, None).unwrap();
+        let dir = tmp("tun");
+        let _ = std::fs::create_dir_all(&dir);
+        NebulaConfig::generate_config_from_pool_with_lighthouse("nodeA", &pool, &dir, None)
+            .unwrap();
         let c = std::fs::read_to_string(format!("{}/nebula.yaml", dir)).unwrap();
         assert!(c.contains("dev: nebula0"));
         assert!(!c.contains("dev: nebula1"));
@@ -360,10 +376,14 @@ mod tests {
         let mut pool = OverlayPool::new("alpha", "192.168.100", "nodeA");
         pool.allocate("nodeB").unwrap();
         let dir = tmp("relay");
-        let _   = std::fs::create_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
         NebulaConfig::generate_config_from_pool_with_lighthouse(
-            "nodeB", &pool, &dir, Some("10.1.2.3"),
-        ).unwrap();
+            "nodeB",
+            &pool,
+            &dir,
+            Some("10.1.2.3"),
+        )
+        .unwrap();
         let c = std::fs::read_to_string(format!("{}/nebula.yaml", dir)).unwrap();
         assert!(c.contains("use_relays: true"));
         assert!(c.contains("192.168.100.1"));

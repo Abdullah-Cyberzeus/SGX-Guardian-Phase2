@@ -2,18 +2,24 @@
 //! evidence between SGX Guardian nodes.
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
+use crate::config_loader::{load_config, NodeConfig};
 use crate::key_manager::KeyManager;
 use anyhow::Result;
 use base64::{engine::general_purpose, Engine as _};
+use chrono::DateTime;
 use rand::{thread_rng, RngCore};
 use ring::signature;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use tokio::sync::mpsc::Receiver;
 use tokio::time::Duration;
 
 // ---- Attestation identity key base path (single source of truth) ----
 const ATTESTATION_KEY_DIR: &str = "/var/lib/sgx-guardian/sgx-agent";
+const CONNECT_RETRY_ATTEMPTS: u8 = 8;
+const CONNECT_RETRY_DELAY_MS: u64 = 1000;
+const MAX_TRUSTED_PEER_AGE_HOURS: i64 = 24;
 
 // Trusted Peer JSON Logging Helpers ===
 use chrono::Utc;
@@ -163,6 +169,79 @@ fn merge_parent_peer_file() {
         eprintln!("⚠️ Failed to merge trusted peer JSON");
     }
 }
+
+fn load_node_config_for_attestation(node_id: &str) -> Result<NodeConfig> {
+    let candidates = [
+        format!("/etc/sgx-guardian/config/{}.yaml", node_id),
+        format!("/etc/sgx-guardian/{}.yaml", node_id),
+        format!("config/{}.yaml", node_id),
+    ];
+
+    for path in candidates {
+        if let Ok(conf) = load_config(&path) {
+            return Ok(conf);
+        }
+    }
+
+    anyhow::bail!(
+        "Failed to load node config for {} from /etc/sgx-guardian/config, /etc/sgx-guardian, or local config/",
+        node_id
+    )
+}
+
+fn allowed_attestation_targets(local_node_id: &str) -> HashSet<String> {
+    let mut targets = HashSet::new();
+    for node in ["nodeA", "nodeB", "nodeC"] {
+        if node == local_node_id {
+            continue;
+        }
+        if let Ok(conf) = load_node_config_for_attestation(node) {
+            if crate::dynamic_config::is_routable_ip(&conf.ip) {
+                targets.insert(format!("{}:{}", conf.ip, conf.port + 100));
+            }
+        }
+    }
+    targets
+}
+
+fn parse_peer_addr(peer_id: &str) -> Option<(String, u16)> {
+    let (ip, port_s) = peer_id.split_once(':')?;
+    let port = port_s.parse::<u16>().ok()?;
+    Some((ip.to_string(), port))
+}
+
+fn trusted_peer_is_recent(ts: &str) -> bool {
+    match DateTime::parse_from_rfc3339(ts) {
+        Ok(dt) => {
+            let age = Utc::now().signed_duration_since(dt.with_timezone(&Utc));
+            age.num_hours() <= MAX_TRUSTED_PEER_AGE_HOURS
+        }
+        Err(_) => false,
+    }
+}
+
+fn should_attempt_persisted_peer(
+    peer: &TrustedPeer,
+    local_ip: &str,
+    local_attest_port: u16,
+    allowed_targets: &HashSet<String>,
+) -> Option<(String, u16)> {
+    let (ip, port) = parse_peer_addr(&peer.peer_id)?;
+    if !crate::dynamic_config::is_routable_ip(&ip) {
+        return None;
+    }
+    if ip == local_ip && port == local_attest_port {
+        return None;
+    }
+    if !trusted_peer_is_recent(&peer.timestamp) {
+        return None;
+    }
+    if !allowed_targets.is_empty() && !allowed_targets.contains(&peer.peer_id) {
+        return None;
+    }
+    Some((ip, port))
+}
+
 /// Main service responsible for generating, verifying,
 /// and coordinating SG-X attestation workflows.
 pub struct AttestationService;
@@ -331,11 +410,11 @@ impl AttestationService {
             AuditAction::Started,
             &format!("Started mutual attestation with {}", addr),
         );
-        // Step 1: try connect with small retry loop
+        // Step 1: try connect with retry loop to tolerate startup races
         let mut attempt = 0;
         let mut stream_opt = None;
 
-        while attempt < 3 {
+        while attempt < CONNECT_RETRY_ATTEMPTS {
             match TcpStream::connect(addr.clone()).await {
                 Ok(s) => {
                     stream_opt = Some(s);
@@ -343,8 +422,11 @@ impl AttestationService {
                 }
                 Err(_) => {
                     attempt += 1;
-                    println!("⏳ Waiting for peer {} (attempt {}/3)...", addr, attempt);
-                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    println!(
+                        "⏳ Waiting for peer {} (attempt {}/{})...",
+                        addr, attempt, CONNECT_RETRY_ATTEMPTS
+                    );
+                    tokio::time::sleep(Duration::from_millis(CONNECT_RETRY_DELAY_MS)).await;
                 }
             }
         }
@@ -428,6 +510,26 @@ impl AttestationService {
 /// spawns the attestation listener, and runs periodic re-attestation every 60 seconds.
 pub async fn run(mut rx: Receiver<String>) -> Result<()> {
     println!("🛰️ Attestation Service background task started (listening for new peers)");
+    let node_id_env = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "nodeA".to_string());
+    let node_conf = load_node_config_for_attestation(&node_id_env)?;
+    let listen_port: u16 = node_conf.port + 100;
+    let local_ip = node_conf.ip.clone();
+    let allowed_targets = allowed_attestation_targets(&node_id_env);
+
+    // === Spawn background TCP listener for incoming attestations ===
+    println!("🛰️ Spawning attestation listener on port {}", listen_port);
+    let bind_ip = "0.0.0.0".to_string();
+    tokio::spawn(async move {
+        if let Err(e) = start_attestation_listener(bind_ip, listen_port).await {
+            eprintln!("⚠️ Attestation listener error: {:?}", e);
+        }
+    });
+
+    // Delay initial startup re-attestation to reduce race on cold boot.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
     // === Auto Re-Attest on Startup ===
     let contents = fs::read_to_string("/var/log/sgx-guardian/trusted_peers.json")
         .or_else(|_| fs::read_to_string("logs/trusted_peers.json"));
@@ -437,20 +539,24 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
         let parsed: Result<Vec<TrustedPeer>, serde_json::Error> = serde_json::from_str(&contents);
         if let Ok(peers_list) = parsed {
             for peer in peers_list {
+                let Some((ip, port)) =
+                    should_attempt_persisted_peer(&peer, &local_ip, listen_port, &allowed_targets)
+                else {
+                    println!(
+                        "Skipping persisted peer {} (stale/invalid/unexpected)",
+                        peer.peer_id
+                    );
+                    continue;
+                };
                 println!("Verifying persisted peer {} on startup...", peer.peer_id);
                 let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
                 let key_path = format!("{}/device_{}.key", ATTESTATION_KEY_DIR, node_id);
                 match KeyManager::load_or_generate(&key_path) {
                     Ok(km) => {
-                        let parts: Vec<&str> = peer.peer_id.split(':').collect();
-                        if parts.len() == 2 {
-                            let ip = parts[0].to_string();
-                            let port = parts[1].parse::<u16>().unwrap_or(50151);
-                            if let Ok(true) =
-                                AttestationService::mutual_attest(ip.clone(), port, &km).await
-                            {
-                                println!("✅ Persisted peer {} re-verified.", peer.peer_id);
-                            }
+                        if let Ok(true) =
+                            AttestationService::mutual_attest(ip.clone(), port, &km).await
+                        {
+                            println!("✅ Persisted peer {} re-verified.", peer.peer_id);
                         }
                     }
                     Err(e) => eprintln!("⚠️ Failed KeyManager load for {}: {:?}", peer.peer_id, e),
@@ -459,27 +565,23 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
         }
     }
 
-    // === Spawn background TCP listener for incoming attestations ===
-    use crate::config_loader::load_config;
-
-    let node_id_env = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "nodeA".to_string());
-    let node_conf = load_config(&format!("/etc/sgx-guardian/{}.yaml", node_id_env))
-        .expect("Failed to load node config in attestation service");
-    let listen_port: u16 = node_conf.port + 100;
-
-    println!("🛰️ Spawning attestation listener on port {}", listen_port);
-
-    let bind_ip = "0.0.0.0".to_string();
-    tokio::spawn(async move {
-        if let Err(e) = start_attestation_listener(bind_ip, listen_port).await {
-            eprintln!("⚠️ Attestation listener error: {:?}", e);
-        }
-    });
-
     // === Sprint 2 Day 9 – Periodic Re-Attestation Timer (every 60 seconds) ===
     tokio::spawn(async {
+        let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
+        let local_conf = match load_node_config_for_attestation(&node_id) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!(
+                    "⚠️ Re-attestation disabled: failed to load node config: {:?}",
+                    e
+                );
+                return;
+            }
+        };
+        let local_ip = local_conf.ip;
+        let local_attest_port = local_conf.port + 100;
+        let allowed_targets = allowed_attestation_targets(&node_id);
+
         loop {
             tokio::time::sleep(Duration::from_secs(60)).await;
             let contents = fs::read_to_string("/var/log/sgx-guardian/trusted_peers.json")
@@ -490,26 +592,25 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
                     serde_json::from_str(&contents);
                 if let Ok(peers_list) = parsed {
                     for peer in peers_list {
+                        let Some((ip, port)) = should_attempt_persisted_peer(
+                            &peer,
+                            &local_ip,
+                            local_attest_port,
+                            &allowed_targets,
+                        ) else {
+                            continue;
+                        };
                         println!("🔁 Re-attesting trusted peer: {}", peer.peer_id);
                         let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
                         let key_path = format!("{}/device_{}.key", ATTESTATION_KEY_DIR, node_id);
                         match KeyManager::load_or_generate(&key_path) {
                             Ok(km) => {
-                                let addr_parts: Vec<&str> = peer.peer_id.split(':').collect();
-                                if addr_parts.len() == 2 {
-                                    let ip = addr_parts[0].to_string();
-                                    let port = addr_parts[1].parse::<u16>().unwrap_or(50151);
-                                    if let Ok(true) =
-                                        AttestationService::mutual_attest(ip.clone(), port, &km)
-                                            .await
-                                    {
-                                        println!(
-                                            "✅ Peer {} re-attested successfully.",
-                                            peer.peer_id
-                                        );
-                                    } else {
-                                        eprintln!("⚠️ Re-attestation failed for {}", peer.peer_id);
-                                    }
+                                if let Ok(true) =
+                                    AttestationService::mutual_attest(ip.clone(), port, &km).await
+                                {
+                                    println!("✅ Peer {} re-attested successfully.", peer.peer_id);
+                                } else {
+                                    eprintln!("⚠️ Re-attestation failed for {}", peer.peer_id);
                                 }
                             }
                             Err(e) => eprintln!("⚠️ KeyManager load failed: {:?}", e),
