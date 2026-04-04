@@ -44,7 +44,6 @@ impl CertService for MyCertService {
     ) -> Result<Response<CertSignResponse>, Status> {
         let req = request.into_inner();
         let node_id = req.node_id.clone();
-        let overlay_ip = req.overlay_ip.clone();
         let public_key_pem = req.public_key_pem.clone();
 
         // ── 1. Log receipt ──────────────────────────────────────────
@@ -149,7 +148,7 @@ impl CertService for MyCertService {
             let yaml_data = CertRequestYaml {
                 node_id: node_id.clone(),
                 requested_at: chrono::Utc::now().to_rfc3339(),
-                overlay_ip: overlay_ip.clone(),
+                overlay_ip: "pending".to_string(),
                 public_key_fingerprint: fingerprint,
                 approve: false,
                 approved_at: None,
@@ -221,6 +220,33 @@ impl CertService for MyCertService {
 
         // ── 5. Sign using NebulaCA (sync — run in blocking task) ────
         println!("Signing certificate...");
+
+        use crate::nebula::overlay::OverlayPool;
+
+        // Load pool
+        let pool_path = format!("{}/overlay_pool.json", NEBULA_BASE_DIR);
+
+        let mut pool = OverlayPool::load_or_create(
+            &pool_path,
+            "guardian-circle-alpha",
+            "192.168.100",
+            "nodeA",
+        );
+
+        // Allocate IP
+        let assigned_ip = pool
+            .allocate(&node_id)
+            .map(|ip| format!("{}/24", ip))
+            .map_err(|e| Status::internal(format!("IP allocation failed: {}", e)))?;
+
+        // Save updated pool
+        pool.save(&pool_path)
+            .map_err(|e| Status::internal(format!("Pool save failed: {}", e)))?;
+
+        // Use CA-assigned IP
+        let overlay_ip = assigned_ip;
+
+        println!("📋 CA assigned overlay IP: {} → {}", node_id, overlay_ip);
 
         let membership = CircleMembership {
             node_name: node_id.clone(),

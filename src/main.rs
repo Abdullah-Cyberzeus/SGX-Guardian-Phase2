@@ -11,6 +11,7 @@ use sgx_guardian_client::config_loader::{load_config, CloudConfig, NodeConfig};
 use sgx_guardian_client::key_manager::KeyManager;
 #[cfg(feature = "secure-element")]
 use sgx_guardian_client::secure_element;
+use std::path::Path;
 
 #[allow(unused_imports)]
 use sgx_guardian_client::logging::{init_logger, log_error, log_event};
@@ -658,14 +659,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // === Nebula Installation Verification ===
     println!("\n🔎 Verifying Nebula Installation...");
 
-    // === Generate CA + Node Certificates for Nebula (if not exist) ===
     use sgx_guardian_client::nebula::ca::NebulaCA;
+    use sgx_guardian_client::nebula::config::NebulaConfig;
     use sgx_guardian_client::nebula::daemon::NebulaDaemon;
+    use sgx_guardian_client::nebula::interface::NebulaInterface;
     use sgx_guardian_client::nebula::models::CircleMembership;
+    use sgx_guardian_client::nebula::overlay::OverlayPool;
+    use sgx_guardian_client::nebula::overlay_registry::OverlayRegistry;
+    use sgx_guardian_client::nebula::registry_sync;
+    use sgx_guardian_client::nebula::registry_sync::SharedRegistry;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
 
     let nebula_base_dir =
         std::env::var("SGX_NEBULA_DIR").unwrap_or("/var/lib/sgx-guardian/nebula".to_string());
 
+    // Nebula binary checks
     match NebulaInstall::check_binary() {
         Ok(_) => println!("✅ Nebula binary found"),
         Err(e) => {
@@ -674,76 +683,98 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }
     }
-
     match NebulaInstall::check_version() {
         Ok(v) => println!("✅ Nebula version: {}", v.trim()),
         Err(e) => {
             eprintln!("❌ Nebula version check failed: {}", e);
-            log_error(&node_id, &format!("Nebula version check failed: {}", e));
             std::process::exit(1);
         }
     }
-
     match NebulaInstall::test_daemon_start() {
         Ok(_) => println!("✅ Nebula daemon responding"),
         Err(e) => {
             eprintln!("❌ Nebula daemon test failed: {}", e);
-            log_error(&node_id, &format!("Nebula daemon test failed: {}", e));
             std::process::exit(1);
         }
     }
 
-    // Generate CA if not exists
-    if let Err(e) = NebulaCA::generate_ca(&nebula_base_dir) {
-        eprintln!("❌ Failed to generate CA: {:?}", e);
-        std::process::exit(1);
-    }
+    // ── Kill any stale nebula daemon from a previous run ────────────────────
+    // (Prevents "address already in use" on UDP 4242)
+    let _ = std::process::Command::new("pkill")
+        .args(["-f", "nebula -config"])
+        .output();
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    log_audit(
-        &node_id,
-        AuditCategory::Network,
-        AuditSeverity::Info,
-        AuditAction::Created,
-        "Nebula CA verified or generated",
-    );
+    println!("\n🗺️  Resolving overlay IP and CA assignment...");
 
-    // === Overlay IP Pool ===
-    use sgx_guardian_client::nebula::interface::NebulaInterface;
-    use sgx_guardian_client::nebula::overlay::OverlayPool;
-
-    let pool_path = format!("{}/overlay_pool.json", nebula_base_dir);
-    let mut overlay_pool =
-        OverlayPool::load_or_create(&pool_path, "guardian-circle-alpha", "192.168.100", "nodeA");
-
-    let nebula_ip_str = overlay_pool
-        .allocate(&node_id)
-        .expect("Failed to allocate overlay IP");
-    let nebula_ip = format!("{}/24", nebula_ip_str);
-
-    if let Err(e) = overlay_pool.save(&pool_path) {
-        eprintln!("⚠️ Failed to save overlay pool: {}", e);
-    }
-
-    println!("🌐 Overlay IP: {} ({})", nebula_ip, overlay_pool.summary());
-
-    log_audit(
-        &node_id,
-        AuditCategory::Network,
-        AuditSeverity::Info,
-        AuditAction::Succeeded,
-        &format!("Overlay IP allocated: {}", nebula_ip),
-    );
-
-    let membership = CircleMembership {
-        node_name: node_id.clone(),
-        circle_id: "guardian-circle-alpha".to_string(),
-        vc_hash: "mock-vc-proof-123".to_string(),
-        is_valid: true,
-    };
+    let nebula_ip: String;
+    let overlay_pool: OverlayPool;
+    // The real LAN IP of nodeA — needed so members can embed it in static_host_map.
+    let lighthouse_lan_ip: Option<String>;
 
     if node_id == "nodeA" {
-        // CA node: auto-issue its own certificate
-        if let Err(e) = NebulaCA::issue_node_cert(&nebula_base_dir, &membership, &nebula_ip) {
+        // ────────────────────────────────────────────────────────────────────
+        // nodeA IS the CA + Lighthouse.
+        // 1. Generate CA (idempotent).
+        // 2. Assign its own overlay IP from the registry.
+        // 3. Issue its own cert.
+        // 4. Start the registry server so members can get IPs.
+        // ────────────────────────────────────────────────────────────────────
+
+        // 1. Generate CA — nodeA ONLY
+        if let Err(e) = NebulaCA::generate_ca(&nebula_base_dir) {
+            eprintln!("❌ Failed to generate CA: {:?}", e);
+            std::process::exit(1);
+        }
+        log_audit(
+            &node_id,
+            AuditCategory::Network,
+            AuditSeverity::Info,
+            AuditAction::Created,
+            "Nebula CA verified or generated",
+        );
+
+        // Log CA fingerprint so admins can verify all nodes use the same CA
+        if let Some(fp) = NebulaCA::ca_fingerprint(&nebula_base_dir) {
+            println!("🔏 CA fingerprint: {}", fp);
+            log_event(&node_id, &format!("Nebula CA fingerprint: {}", fp));
+        }
+
+        // 2. Load/create the overlay IP registry
+        let registry_path = format!("{}/overlay_registry.json", nebula_base_dir);
+        let reg = OverlayRegistry::load_or_create(
+            &registry_path,
+            "guardian-circle-alpha",
+            "192.168.100",
+            "nodeA",
+        );
+
+        let ip_cidr = reg
+            .get_ip_cidr("nodeA")
+            .expect("nodeA IP missing from registry")
+            .to_string();
+
+        println!("🌐 nodeA overlay IP: {}", ip_cidr);
+        reg.print_table();
+
+        if let Err(e) = reg.save(&registry_path) {
+            eprintln!("⚠️ Registry save failed: {}", e);
+        }
+
+        nebula_ip = ip_cidr.clone();
+        overlay_pool = OverlayPool::from(&reg);
+
+        // nodeA is its own lighthouse — no external LAN IP needed in config
+        lighthouse_lan_ip = None;
+
+        // 3. Issue nodeA's own certificate
+        let membership_a = CircleMembership {
+            node_name: node_id.clone(),
+            circle_id: "guardian-circle-alpha".to_string(),
+            vc_hash: "ca-self-signed".to_string(),
+            is_valid: true,
+        };
+        if let Err(e) = NebulaCA::issue_node_cert(&nebula_base_dir, &membership_a, &ip_cidr) {
             eprintln!("❌ Failed to issue CA node certificate: {:?}", e);
             std::process::exit(1);
         }
@@ -754,15 +785,85 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             AuditAction::Created,
             "Nebula CA certificate verified or issued for nodeA",
         );
+
+        // 4. Start registry server (IP assignment for members)
+        let shared_reg: SharedRegistry = Arc::new(RwLock::new(reg));
+        tokio::spawn({
+            let reg_clone = shared_reg.clone();
+            async move {
+                registry_sync::start_registry_server(reg_clone).await;
+            }
+        });
+        println!(
+            "✅ Registry sync server started on port {}",
+            registry_sync::REGISTRY_SYNC_PORT
+        );
     } else {
-        // Member node: check if cert already exists
+        // ────────────────────────────────────────────────────────────────────
+        // nodeB / nodeC — MEMBER NODES
+        // 1. Discover nodeA's real LAN IP.
+        // 2. Request overlay IP from the CA registry.
+        // 3. Fetch the CA cert from nodeA (via cert bootstrap response).
+        // 4. Request a Nebula cert from nodeA.
+        // Members MUST NOT call generate_ca().
+        // ────────────────────────────────────────────────────────────────────
+
+        // 1. Discover nodeA's real LAN IP (needed for static_host_map + CA bootstrap)
+        let ca_lan_ip: String = {
+            // Priority order:
+            //   a) SGX_LIGHTHOUSE_IP env var (explicit override)
+            //   b) nodeA config file (updated by UDP broadcast)
+            //   c) 127.0.0.1 last resort (loopback = local test only)
+            if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
+                if !env_ip.is_empty() && env_ip != "0.0.0.0" {
+                    println!("📌 Using SGX_LIGHTHOUSE_IP={}", env_ip);
+                    env_ip
+                } else {
+                    resolve_ca_ip_from_config_inner()
+                }
+            } else {
+                resolve_ca_ip_from_config_inner()
+            }
+        };
+        println!("📡 nodeA (CA/Lighthouse) LAN IP: {}", ca_lan_ip);
+        lighthouse_lan_ip = Some(ca_lan_ip.clone());
+
+        // 2. Resolve overlay IP — cache → CA registry → fallback
+        let pubkey_prefix = &pubkey_b64[..20.min(pubkey_b64.len())];
+        let ip_cidr = registry_sync::resolve_overlay_ip(&node_id, &ca_lan_ip, pubkey_prefix).await;
+        println!("🌐 Overlay IP for {}: {}", node_id, ip_cidr);
+
+        nebula_ip = ip_cidr.clone();
+
+        let ip_only = ip_cidr.split('/').next().unwrap_or("").to_string();
+        let mut pool = OverlayPool::new("guardian-circle-alpha", "192.168.100", "nodeA");
+        pool.allocations.insert(node_id.clone(), ip_only);
+        overlay_pool = pool;
+
+        log_audit(
+            &node_id,
+            AuditCategory::Network,
+            AuditSeverity::Info,
+            AuditAction::Succeeded,
+            &format!("Overlay IP resolved: {}", ip_cidr),
+        );
+
+        // 3. Fetch Nebula cert + CA cert from nodeA
         let member_cert_path = format!("{}/nodes/{}.crt", nebula_base_dir, node_id);
         let member_key_path = format!("{}/nodes/{}.key", nebula_base_dir, node_id);
 
-        if std::path::Path::new(&member_cert_path).exists()
-            && std::path::Path::new(&member_key_path).exists()
+        if Path::new(&member_cert_path).exists()
+            && Path::new(&member_key_path).exists()
+            && NebulaCA::ca_cert_exists(&nebula_base_dir)
         {
-            println!("✅ Nebula certificate already exists for {}", node_id);
+            println!(
+                "✅ Nebula certificate + CA cert already present for {}",
+                node_id
+            );
+            // Still log the CA fingerprint so mismatches surface in logs
+            if let Some(fp) = NebulaCA::ca_fingerprint(&nebula_base_dir) {
+                println!("🔏 CA fingerprint (local): {}", fp);
+            }
             log_audit(
                 &node_id,
                 AuditCategory::Network,
@@ -772,63 +873,90 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         } else {
             println!(
-                "🔐 No Nebula certificate for {} — requesting from CA immediately",
-                node_id
+                "🔐 Requesting cert + CA cert from nodeA at {}:50061...",
+                ca_lan_ip
             );
+            log_event(&node_id, "Nebula certificate missing — requesting from CA");
 
-            let cert_node_id = node_id.clone();
-            let cert_overlay_ip = nebula_ip.to_string();
-            let cert_pubkey = pubkey_b64.clone();
-            // Use nodeA's discovered/configured IP for cert requests
-            let ca_address = {
-                // First try: use nodeA config IP (updated by broadcast discovery)
-                let node_a_config_path = "/etc/sgx-guardian/config/nodeA.yaml";
-                if let Ok(a_conf) = load_config(node_a_config_path) {
-                    if a_conf.ip != "0.0.0.0" && a_conf.ip != "127.0.0.1" {
-                        format!("{}:50061", a_conf.ip)
-                    } else {
-                        // Fallback: check if we received a broadcast from nodeA
-                        let fallback_path = "/etc/sgx-guardian/nodeA.yaml";
-                        if let Ok(a_conf2) = load_config(fallback_path) {
-                            if a_conf2.ip != "0.0.0.0" && a_conf2.ip != "127.0.0.1" {
-                                format!("{}:50061", a_conf2.ip)
-                            } else {
-                                "127.0.0.1:50061".to_string() // absolute last resort
-                            }
-                        } else {
-                            "127.0.0.1:50061".to_string()
-                        }
-                    }
-                } else {
-                    "127.0.0.1:50061".to_string()
-                }
-            };
-            println!("📡 CA address for cert request: {}", ca_address);
-            log_event(&node_id, "Nebula certificate missing, will request from CA");
-            // BLOCKING REQUEST — DO NOT SPAWN
+            let ca_address = format!("{}:50061", ca_lan_ip);
+
+            // BLOCKING: wait until we have the cert before starting Nebula
             sgx_guardian_client::cert_client::request_certificate_from_ca(
-                cert_node_id,
+                node_id.clone(),
                 ca_address,
-                cert_overlay_ip,
-                cert_pubkey,
+                ip_cidr.clone(),
+                pubkey_b64.clone(),
             )
             .await;
+
+            // The cert_client writes the CA cert to nebula/ca/ca.crt via
+            // cert_service.rs CertSignResponse.ca_cert_pem.
+            // Verify it arrived:
+            if !NebulaCA::ca_cert_exists(&nebula_base_dir) {
+                eprintln!(
+                    "❌ CA cert still missing after bootstrap! \
+                 Check nodeA is running and cert_service wrote ca_cert_pem."
+                );
+                std::process::exit(1);
+            }
+
+            if let Some(fp) = NebulaCA::ca_fingerprint(&nebula_base_dir) {
+                println!("🔏 CA fingerprint (from nodeA): {}", fp);
+                log_event(&node_id, &format!("CA fingerprint: {}", fp));
+            }
 
             println!("✅ Certificate bootstrap completed for {}", node_id);
         }
     }
-    //configuration directory for nebula
-    use sgx_guardian_client::nebula::config::NebulaConfig;
-    let config_directory = nebula_base_dir.clone();
 
-    if let Err(e) =
-        NebulaConfig::generate_config_from_pool(&node_id, &overlay_pool, &config_directory)
-    {
+    // ── Generate Nebula config (always regenerate so IPs stay fresh) ─────────
+    // Pass the real nodeA LAN IP for member nodes.
+    if let Err(e) = NebulaConfig::generate_config_from_pool_with_lighthouse(
+        &node_id,
+        &overlay_pool,
+        &nebula_base_dir,
+        lighthouse_lan_ip.as_deref(),
+    ) {
         eprintln!("❌ Failed to generate Nebula config: {:?}", e);
         std::process::exit(1);
     }
 
+    // Verify and fix nebula0 IP if daemon was already running
+    // (handles the case where Nebula started but didn't assign the IP correctly)
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
     println!("🚀 Nebula Installation Verified Successfully\n");
+
+    // === Start Nebula ===
+    let nebula_config_path = format!("{}/nebula.yaml", nebula_base_dir);
+    if let Err(e) = NebulaDaemon::start(&nebula_config_path) {
+        eprintln!("❌ Failed to start Nebula daemon: {:?}", e);
+        std::process::exit(1);
+    }
+    println!("🌐 Nebula mesh daemon started successfully.");
+
+    // Wait for nebula0 to come up, then verify its IP
+    println!("⏳ Waiting for nebula0 interface...");
+    if NebulaInterface::wait_for_interface(15) {
+        match NebulaInterface::verify_and_fix_ip(&nebula_ip) {
+            Ok(_) => println!("✅ nebula0 IP verified: {}", nebula_ip),
+            Err(e) => eprintln!("⚠️  nebula0 IP fix failed: {} (continuing)", e),
+        }
+    } else {
+        eprintln!(
+            "⚠️  nebula0 did not appear within 15 s. \
+         Check: 'sudo journalctl -u nebula' or 'nebula -config {} -test'",
+            nebula_config_path
+        );
+    }
+
+    log_audit(
+        &node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Started,
+        "Nebula mesh daemon started successfully",
+    );
 
     // === Start Nebula ===
     let nebula_config_path = format!("{}/nebula.yaml", nebula_base_dir);
@@ -1394,4 +1522,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Ok(())
     }
+}
+
+// ── Helper function (add to main.rs as a nested fn or module fn) ─────────
+// Resolves nodeA's LAN IP from its config file (written by UDP broadcast).
+fn resolve_ca_ip_from_config_inner() -> String {
+    // Try the config/ subdir (dynamic, updated by broadcasts)
+    for path in &[
+        "/etc/sgx-guardian/config/nodeA.yaml",
+        "/etc/sgx-guardian/nodeA.yaml",
+    ] {
+        if let Ok(cfg) = sgx_guardian_client::config_loader::load_config(path) {
+            if cfg.ip != "0.0.0.0" && cfg.ip != "127.0.0.1" && !cfg.ip.is_empty() {
+                return cfg.ip;
+            }
+        }
+    }
+    eprintln!(
+        "⚠️  Could not find nodeA LAN IP from config files. \
+         Is nodeA running and broadcasting? Falling back to 127.0.0.1 (local test only)."
+    );
+    "127.0.0.1".to_string()
 }

@@ -7,4 +7,6 @@ pub mod install;
 pub mod interface;
 pub mod models;
 pub mod overlay;
+pub mod overlay_registry;
+pub mod registry_sync;
 pub mod utils;

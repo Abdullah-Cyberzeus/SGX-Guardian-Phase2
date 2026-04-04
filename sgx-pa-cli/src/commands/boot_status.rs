@@ -9,20 +9,8 @@ pub fn run() {
     let status_path = find_boot_status();
     match status_path {
         Some(path) => {
-            let json = match fs::read_to_string(&path) {
-                Ok(j) => j,
-                Err(e) => {
-                    eprintln!("❌ Failed to read boot status file {}: {}", path, e);
-                    return;
-                }
-            };
-            let status: serde_json::Value = match serde_json::from_str(&json) {
-                Ok(v) => v,
-                Err(e) => {
-                    eprintln!("❌ Invalid boot status JSON in {}: {}", path, e);
-                    return;
-                }
-            };
+            let json = fs::read_to_string(&path).unwrap_or_default();
+            let status: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
 
             println!("  Source: {}\n", path);
             println!(
@@ -63,8 +51,7 @@ pub fn run() {
             );
 
             if let Some(hash) = status["guardian_binary_hash"].as_str() {
-                let short: String = hash.chars().take(16).collect();
-                println!("  Binary Hash:      {}...", short);
+                println!("  Binary Hash:      {}...", &hash[..16]);
             }
 
             println!("\n  Trust Chain:");

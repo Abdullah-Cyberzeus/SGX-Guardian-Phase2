@@ -78,6 +78,71 @@ impl NebulaInterface {
             .unwrap_or_else(|| "no-stats".into());
         format!("nebula0: up={}, ip={}, {}", up, ip, stats)
     }
+
+    /// Manually assign IP to nebula0 if not set by daemon.
+    pub fn assign_overlay_ip(ip_cidr: &str) -> Result<(), String> {
+        let up_out = Command::new("ip")
+            .args(["link", "set", "nebula0", "up"])
+            .output()
+            .map_err(|e| format!("ip link set up failed: {}", e))?;
+
+        if !up_out.status.success() {
+            let stderr = String::from_utf8_lossy(&up_out.stderr);
+            if !stderr.contains("File exists") && !stderr.contains("already") {
+                return Err(format!("Interface up failed: {}", stderr));
+            }
+        }
+
+        let addr_out = Command::new("ip")
+            .args(["addr", "add", ip_cidr, "dev", "nebula0"])
+            .output()
+            .map_err(|e| format!("ip addr add failed: {}", e))?;
+
+        if !addr_out.status.success() {
+            let stderr = String::from_utf8_lossy(&addr_out.stderr);
+            if stderr.contains("File exists") {
+                return Ok(());
+            }
+            return Err(format!("addr add failed: {}", stderr));
+        }
+
+        println!("✅ nebula0 assigned IP: {}", ip_cidr);
+        Ok(())
+    }
+
+    /// Wait for nebula0 to appear after daemon start.
+    pub fn wait_for_interface(timeout_secs: u64) -> bool {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+
+        while std::time::Instant::now() < deadline {
+            if Self::is_up() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        false
+    }
+
+    /// Verify nebula0 has the expected IP, fix it if not.
+    pub fn verify_and_fix_ip(expected_ip_cidr: &str) -> Result<(), String> {
+        match Self::get_overlay_ip() {
+            Some(actual) if actual == expected_ip_cidr => {
+                println!("✅ nebula0 IP verified: {}", actual);
+                Ok(())
+            }
+            Some(actual) => {
+                eprintln!(
+                    "⚠️  nebula0 IP mismatch: expected={} actual={}",
+                    expected_ip_cidr, actual
+                );
+                Self::assign_overlay_ip(expected_ip_cidr)
+            }
+            None => {
+                println!("📋 nebula0 has no IP yet, assigning {}", expected_ip_cidr);
+                Self::assign_overlay_ip(expected_ip_cidr)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -89,5 +154,20 @@ mod tests {
         // On dev machine nebula0 doesn't exist — should return gracefully
         let report = NebulaInterface::status_report();
         assert!(report.contains("nebula0:"));
+    }
+
+    #[test]
+    fn test_is_up_returns_false_on_dev() {
+        assert!(!NebulaInterface::is_up());
+    }
+
+    #[test]
+    fn test_get_overlay_ip_none_on_dev() {
+        assert!(NebulaInterface::get_overlay_ip().is_none());
+    }
+
+    #[test]
+    fn test_verify_ip_false_when_no_interface() {
+        assert!(!NebulaInterface::verify_ip("192.168.100.1/24"));
     }
 }

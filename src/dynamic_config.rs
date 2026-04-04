@@ -1,19 +1,19 @@
-// src/dynamic_config.rs — VERSION 2
+// src/dynamic_config.rs - VERSION 2
 // ================================================================
 // CHANGES FROM V1:
 //
-// V1 mein main.rs broadcast ke liye peer IPs config se leta tha:
+// In V1, main.rs read peer IPs from config for startup broadcast:
 //   let peer_ips: Vec<String> = peers.iter().map(|p| p.ip.clone()).collect();
 //   broadcast_own_config_to_peers(&my_config, &peer_ips).await;
 //
-// Problem: Agar config mein 127.0.0.1 hai to broadcast fail hoga.
+// Problem: If config contains 127.0.0.1, broadcast can fail.
 //
 // V2 FIX:
-//   - main.rs se startup broadcast HATA DO (ya disabled rakho)
-//   - p2p_discovery.rs hi config sync karta hai jab real peer milta hai
-//   - is file mein koi change nahi — sirf main.rs integration simplify hua
-//   - Agar manual broadcast karna ho to: broadcast_to_real_ip() use karo
-//     jo seedha ek known real IP par bhejta hai (config se nahi)
+//   - Remove or disable startup broadcast in main.rs
+//   - Let p2p_discovery.rs handle config sync when a real peer is discovered
+//   - This file is mostly unchanged; main.rs integration is simplified
+//   - For manual broadcast, use broadcast_to_real_ip()
+//     which sends directly to a known real IP (not from config)
 // ================================================================
 
 use anyhow::{Context, Result};
@@ -169,7 +169,7 @@ fn replace_ip_in_yaml(content: &str, new_ip: &str) -> Result<String> {
 
 pub async fn broadcast_own_config_to_peers(
     my_config: &NodeConfigBroadcast,
-    peer_ips: &[String], // ← ye IPs REAL honi chahiye, config se nahi
+    peer_ips: &[String], // peer IPs must be real/routable, not config placeholders
 ) {
     // Extra safety: filter out non-routable IPs before broadcasting
     let valid_ips: Vec<&String> = peer_ips.iter().filter(|ip| is_routable_ip(ip)).collect();
@@ -219,7 +219,7 @@ pub async fn broadcast_own_config_to_peers(
     }
 }
 
-/// Single peer ko ek real IP par config bhejta hai
+/// Sends config to one peer at a known real IP.
 async fn send_config_tcp(addr: &str, payload: &[u8]) -> Result<()> {
     let mut stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(addr))
         .await
@@ -258,13 +258,13 @@ pub fn is_routable_ip(ip: &str) -> bool {
 }
 
 // ── STEP 5: Background IP Monitor ────────────────────────────────
-// NOTE: V2 mein peer_ips parameter empty Vec pass karo startup par.
-// Real broadcasts p2p_discovery handle karta hai.
-// Monitor sirf apni config update karta hai + future mDNS re-announce.
+// NOTE: In V2, pass an empty peer_ips Vec at startup.
+// Real broadcasts are handled by p2p_discovery.
+// This monitor updates local config and supports future mDNS re-announce.
 pub async fn start_ip_monitor(
     node_id: String,
     config_path: String,
-    peer_ips: Vec<String>, // V2: startup par empty ya known real IPs
+    peer_ips: Vec<String>, // V2: empty at startup or provide known real IPs
     initial_config: NodeConfigBroadcast,
 ) {
     tokio::spawn(async move {
@@ -293,7 +293,7 @@ pub async fn start_ip_monitor(
                         my_config.ip = new_ip.clone();
                         current_ip = new_ip;
 
-                        // Sirf routable peer IPs ko broadcast karo
+                        // Broadcast only to routable peer IPs.
                         let routable: Vec<String> = peer_ips
                             .iter()
                             .filter(|ip| is_routable_ip(ip))
@@ -359,6 +359,10 @@ pub fn update_peer_config(node_id: &str, hostname: &str, ip: &str, port: u16, pu
         if existing.ends_with('\n') && !result.ends_with('\n') {
             result.push('\n');
         }
+        if result == existing {
+            println!("Config unchanged (field-level): {} -> ip={}", node_id, ip);
+            return;
+        }
 
         match std::fs::write(&path, &result) {
             Ok(_) => println!("Config updated (field-level): {} -> ip={}", node_id, ip),
@@ -378,20 +382,20 @@ pub fn update_peer_config(node_id: &str, hostname: &str, ip: &str, port: u16, pu
 }
 
 // ── IP Format Sanitizer ─────────────────────────────────────────
-// Ye function config file mein IP check karta hai
-// Agar format invalid hai to 0.0.0.0 se replace karta hai
+// Validates the config IP format.
+// Replaces invalid values with 0.0.0.0.
 pub fn sanitize_config_ip_if_invalid(config_path: &str) -> Result<()> {
     let content = std::fs::read_to_string(config_path)
         .with_context(|| format!("Cannot read: {}", config_path))?;
 
     let current_ip = extract_ip_from_yaml(&content).unwrap_or_else(|| "0.0.0.0".to_string());
 
-    // Agar IP valid format hai — kuch mat karo
+    // If the IP format is valid, do nothing.
     if current_ip.parse::<std::net::Ipv4Addr>().is_ok() {
         return Ok(());
     }
 
-    // Invalid format hai — 0.0.0.0 se replace karo
+    // If the IP format is invalid, replace it with 0.0.0.0.
     println!(
         "⚠️ Invalid IP format '{}' in {} — resetting to 0.0.0.0",
         current_ip, config_path

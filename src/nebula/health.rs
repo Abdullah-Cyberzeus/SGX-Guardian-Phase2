@@ -196,6 +196,15 @@ mod overlay_health_tests {
     use crate::nebula::overlay::OverlayPool;
 
     #[test]
+    fn test_overlay_health_pool_valid() {
+        let pool = OverlayPool::new("alpha", "192.168.100", "nodeA");
+        let report = NebulaHealth::check_overlay(&pool, "nodeA");
+        assert!(report.pool_valid); // pool has owner allocated
+        assert!(!report.interface_up); // no nebula0 on dev machine
+        assert!(!report.is_healthy()); // interface down = not healthy
+    }
+
+    #[test]
     fn test_overlay_health_summary_format() {
         let pool = OverlayPool::new("alpha", "192.168.100", "nodeA");
         let report = NebulaHealth::check_overlay(&pool, "nodeA");
@@ -211,5 +220,13 @@ mod overlay_health_tests {
         let report = NebulaHealth::check_overlay(&pool, "nodeZ");
         assert!(!report.ip_correct); // nodeZ not in pool
         assert_eq!(report.expected_ip, "none");
+    }
+
+    #[test]
+    fn test_overlay_health_degraded_shows_icon() {
+        let pool = OverlayPool::new("alpha", "192.168.100", "nodeA");
+        let report = NebulaHealth::check_overlay(&pool, "nodeA");
+        // On dev machine, interface is down → DEGRADED
+        assert!(report.summary().contains("❌ DEGRADED"));
     }
 }

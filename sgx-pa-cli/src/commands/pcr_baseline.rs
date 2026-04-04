@@ -146,28 +146,24 @@ fn sign_baseline_hash(hash: &[u8], key_version: u32) -> Option<String> {
 
     // Method 1: Try ssscli (hardware board)
     let key_id = format!("0x{:08X}", 0x20000010 + key_version - 1);
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let tmp_in = format!("/tmp/guardian_baseline_hash_{}.bin", ts);
-    let tmp_out = format!("/tmp/guardian_baseline_sig_{}.bin", ts);
+    let tmp_in = "/tmp/guardian_baseline_hash.bin";
+    let tmp_out = "/tmp/guardian_baseline_sig.bin";
 
-    if fs::write(&tmp_in, hash).is_ok() {
+    if fs::write(tmp_in, hash).is_ok() {
         if let Ok(output) = Command::new("ssscli")
-            .args(["sign", &key_id, &tmp_in, &tmp_out])
+            .args(["sign", &key_id, tmp_in, tmp_out])
             .output()
         {
             if output.status.success() {
-                if let Ok(sig_bytes) = fs::read(&tmp_out) {
-                    let _ = fs::remove_file(&tmp_in);
-                    let _ = fs::remove_file(&tmp_out);
+                if let Ok(sig_bytes) = fs::read(tmp_out) {
+                    let _ = fs::remove_file(tmp_in);
+                    let _ = fs::remove_file(tmp_out);
                     return Some(base64::engine::general_purpose::STANDARD.encode(&sig_bytes));
                 }
             }
         }
-        let _ = fs::remove_file(&tmp_in);
-        let _ = fs::remove_file(&tmp_out);
+        let _ = fs::remove_file(tmp_in);
+        let _ = fs::remove_file(tmp_out);
     }
 
     // Method 2: Try ring with software key file
