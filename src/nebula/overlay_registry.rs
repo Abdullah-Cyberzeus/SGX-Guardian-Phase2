@@ -289,7 +289,7 @@ impl OverlayRegistry {
             self.circle_id, self.subnet_base, self.cidr
         );
         println!("─────────────────────────────────────────────────");
-        println!("  {:<12}  {:<20}  {}", "Node", "Overlay IP", "Role");
+        println!("  {:<12}  {:<20}  Role", "Node", "Overlay IP");
         println!("─────────────────────────────────────────────────");
         for record in self.all_nodes() {
             let role = if record.is_owner {
@@ -318,7 +318,7 @@ impl OverlayRegistry {
             .filter_map(|r| {
                 r.overlay_ip
                     .split('.')
-                    .last()
+                    .next_back()
                     .and_then(|s| s.parse::<u8>().ok())
             })
             .collect();

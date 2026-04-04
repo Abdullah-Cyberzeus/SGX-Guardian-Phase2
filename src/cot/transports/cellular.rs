@@ -37,7 +37,7 @@ impl CellularTransport {
         let s = String::from_utf8_lossy(&o.stdout);
         s.lines()
             .find(|l| l.contains("quality:") || l.contains("rssi:"))
-            .and_then(|l| l.split(':').last())
+            .and_then(|l| l.split(':').next_back())
             .and_then(|v| v.trim().trim_end_matches('%').parse::<u8>().ok())
             .map(|v| v.min(100))
     }
@@ -128,7 +128,7 @@ impl CellularDiagnostics {
         String::from_utf8_lossy(&o.stdout)
             .lines()
             .find(|l| l.contains("operator name:"))
-            .and_then(|l| l.split(':').last().map(|s| s.trim().to_string()))
+            .and_then(|l| l.split(':').next_back().map(|s| s.trim().to_string()))
     }
     pub fn has_data_route() -> bool {
         Command::new("ip")

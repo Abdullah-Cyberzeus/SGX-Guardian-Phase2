@@ -38,14 +38,11 @@ impl NebulaCA {
 
         // ── Partial state: one file present but not both ───────────────
         if Path::new(&ca_key).exists() != Path::new(&ca_crt).exists() {
-            return Err(Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "Partial CA state detected in {} (one of ca.key/ca.crt missing). \
+            return Err(Error::other(format!(
+                "Partial CA state detected in {} (one of ca.key/ca.crt missing). \
                      Manual intervention required — remove both files and restart nodeA.",
-                    ca_dir
-                ),
-            ));
+                ca_dir
+            )));
         }
 
         fs::create_dir_all(&ca_dir)?;
@@ -58,13 +55,10 @@ impl NebulaCA {
             .output()?;
 
         if !output.status.success() {
-            return Err(Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "CA generation failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                ),
-            ));
+            return Err(Error::other(format!(
+                "CA generation failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
         }
 
         // Set strict permissions on Linux/macOS
@@ -222,16 +216,13 @@ impl NebulaCA {
 
         // ── Partial state ─────────────────────────────────────────────
         if Path::new(&cert_path).exists() != Path::new(&key_path).exists() {
-            return Err(Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "Partial certificate state for {} (cert: {}, key: {}). \
+            return Err(Error::other(format!(
+                "Partial certificate state for {} (cert: {}, key: {}). \
                      Remove both files and retry.",
-                    membership.node_name,
-                    Path::new(&cert_path).exists(),
-                    Path::new(&key_path).exists()
-                ),
-            ));
+                membership.node_name,
+                Path::new(&cert_path).exists(),
+                Path::new(&key_path).exists()
+            )));
         }
 
         // CA must exist before we can sign
@@ -268,14 +259,11 @@ impl NebulaCA {
             .output()?;
 
         if !output.status.success() {
-            return Err(Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "Certificate signing failed for {}: {}",
-                    membership.node_name,
-                    String::from_utf8_lossy(&output.stderr)
-                ),
-            ));
+            return Err(Error::other(format!(
+                "Certificate signing failed for {}: {}",
+                membership.node_name,
+                String::from_utf8_lossy(&output.stderr)
+            )));
         }
 
         #[cfg(unix)]

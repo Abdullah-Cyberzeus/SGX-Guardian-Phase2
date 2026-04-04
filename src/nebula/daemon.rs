@@ -106,14 +106,11 @@ impl NebulaDaemon {
             // Return Ok — the daemon might still bring up the interface shortly
             Ok(())
         } else {
-            Err(Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "Nebula daemon exited immediately. \
+            Err(Error::other(format!(
+                "Nebula daemon exited immediately. \
                      Run: nebula -config {} -test  to see errors.",
-                    config_path
-                ),
-            ))
+                config_path
+            )))
         }
     }
 
