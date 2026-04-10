@@ -43,12 +43,12 @@ impl fmt::Display for TransportType {
 impl TransportType {
     /// Returns the default priority for this transport type.
     /// Lower number = higher priority (preferred).
-    /// Ethernet is most reliable, satellite is last resort.
+    /// Cellular is preferred for CoT data-path testing.
     pub fn default_priority(&self) -> u8 {
         match self {
+            TransportType::Cellular => 5,
             TransportType::Ethernet => 10,
             TransportType::WiFi => 20,
-            TransportType::Cellular => 30,
             TransportType::Bluetooth => 40,
             TransportType::Satellite => 50,
         }

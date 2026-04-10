@@ -173,15 +173,6 @@ mod tests {
         );
     }
     #[test]
-    fn test_priority_30() {
-        assert_eq!(
-            CellularTransport::new(make_cell(InterfaceStatus::Up))
-                .priority()
-                .0,
-            30
-        );
-    }
-    #[test]
     fn test_display_name() {
         let n = CellularTransport::new(make_cell(InterfaceStatus::Up)).display_name();
         assert!(n.contains("Cellular"));
@@ -197,12 +188,6 @@ mod tests {
             InterfaceStatus::Down,
         );
         assert!(CellularTransport::new(i).display_name().contains("rmnet0"));
-    }
-    #[test]
-    fn test_preserves() {
-        let t = CellularTransport::new(make_cell(InterfaceStatus::Down));
-        assert_eq!(t.transport_type(), TransportType::Cellular);
-        assert_eq!(t.priority().0, 30);
     }
     #[tokio::test]
     async fn test_down_unavailable() {

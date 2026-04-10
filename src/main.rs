@@ -75,6 +75,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = std::fs::create_dir_all(dir);
     }
 
+    if node_id == "nodeA" {
+        let requests_dir = "/var/lib/sgx-guardian/nebula/requests";
+        if let Ok(entries) = std::fs::read_dir(requests_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+                if !name.ends_with(".yaml") {
+                    continue;
+                }
+
+                let compatible = std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|content| serde_yaml::from_str::<serde_yaml::Value>(&content).ok())
+                    .and_then(|v| v.as_mapping().cloned())
+                    .map(|m| {
+                        let required = [
+                            "node_id",
+                            "requested_at",
+                            "overlay_ip",
+                            "public_key_fingerprint",
+                            "approve",
+                        ];
+                        let has_required = required
+                            .iter()
+                            .all(|k| m.contains_key(serde_yaml::Value::String((*k).to_string())));
+                        if !has_required {
+                            return false;
+                        }
+                        match m.get(serde_yaml::Value::String("approve".to_string())) {
+                            Some(serde_yaml::Value::String(v)) => {
+                                matches!(
+                                    v.as_str(),
+                                    "false" | "member" | "lighthouse" | "reject" | "no" | "lh"
+                                )
+                            }
+                            Some(serde_yaml::Value::Bool(v)) => !v,
+                            _ => false,
+                        }
+                    })
+                    .unwrap_or(false);
+
+                if !compatible {
+                    eprintln!("🗑️  Removing incompatible old approval YAML: {}", name);
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+        }
+    }
+
     // Create default node configs if missing
     for (nid, port) in &[("nodeA", 50051u16), ("nodeB", 50052), ("nodeC", 50053)] {
         let path = format!("/etc/sgx-guardian/config/{}.yaml", nid);
@@ -96,7 +147,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create default policy schema if missing
     let schema_path = "/etc/sgx-guardian/schemas/uep_policy_v1.yaml";
     if !std::path::Path::new(schema_path).exists() {
-        let schema = "---\npolicy_id: \"123e4567-e89b-12d3-a456-426614174000\"\nversion: \"1.0.0\"\ndescription: \"Default Guardian Edge Policy\"\nrules:\n  - id: \"rule-001\"\n    action: \"ALLOW\"\n    src_cidr: \"10.0.0.0/24\"\n    dst_cidr: \"0.0.0.0/0\"\n    protocol: \"TCP\"\n    port: 443\n  - id: \"rule-005\"\n    action: \"DENY\"\n    src_cidr: \"0.0.0.0/0\"\n    dst_cidr: \"10.0.0.10\"\n    protocol: \"UDP\"\n";
+        let schema = "---\npolicy_id: \"123e4567-e89b-12d3-a456-426614174000\"\nversion: \"1.0.0\"\ndescription: \"Default Guardian Edge Policy\"\nrules:\n  - id: \"rule-001\"\n    action: \"ALLOW\"\n    src: \"10.0.0.0/24\"\n    dst: \"0.0.0.0/0\"\n    protocol: \"TCP\"\n    port: 443\n  - id: \"rule-005\"\n    action: \"DENY\"\n    src: \"0.0.0.0/0\"\n    dst: \"10.0.0.10\"\n    protocol: \"UDP\"\n";
         let _ = std::fs::write(schema_path, schema);
     }
 
@@ -663,6 +714,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use sgx_guardian_client::nebula::config::NebulaConfig;
     use sgx_guardian_client::nebula::daemon::NebulaDaemon;
     use sgx_guardian_client::nebula::interface::NebulaInterface;
+    use sgx_guardian_client::nebula::lighthouse::LighthouseRegistry;
     use sgx_guardian_client::nebula::models::CircleMembership;
     use sgx_guardian_client::nebula::overlay::OverlayPool;
     use sgx_guardian_client::nebula::overlay_registry::OverlayRegistry;
@@ -707,10 +759,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n🗺️  Resolving overlay IP and CA assignment...");
 
-    let nebula_ip: String;
+    let mut nebula_ip: String;
     let overlay_pool: OverlayPool;
-    // The real LAN IP of nodeA — needed so members can embed it in static_host_map.
-    let lighthouse_lan_ip: Option<String>;
+    let mut lighthouse_registry: LighthouseRegistry;
 
     if node_id == "nodeA" {
         // ────────────────────────────────────────────────────────────────────
@@ -764,8 +815,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         nebula_ip = ip_cidr.clone();
         overlay_pool = OverlayPool::from(&reg);
 
-        // nodeA is its own lighthouse — no external LAN IP needed in config
-        lighthouse_lan_ip = None;
+        // Lighthouse registry (primary lighthouse is always nodeA)
+        let lh_path = format!("{}/lighthouse_registry.json", nebula_base_dir);
+        let owner_overlay = reg
+            .get_ip("nodeA")
+            .map(|ip| ip.to_string())
+            .unwrap_or_else(|| "192.168.100.1".to_string());
+        let lighthouse_endpoint_ip = if !detected_ip.is_empty() {
+            detected_ip.clone()
+        } else if !node_a.ip.is_empty() && node_a.ip != "0.0.0.0" {
+            node_a.ip.clone()
+        } else {
+            "0.0.0.0".to_string()
+        };
+        let lighthouse_endpoint = format!("{}:4242", lighthouse_endpoint_ip);
+        let mut lh_reg = LighthouseRegistry::load_or_create(
+            &lh_path,
+            "guardian-circle-alpha",
+            "nodeA",
+            &owner_overlay,
+            &lighthouse_endpoint,
+        );
+        let _ = lh_reg.update_endpoint("nodeA", &lighthouse_endpoint);
+        lh_reg.mark_active("nodeA");
+        if let Err(e) = lh_reg.save(&lh_path) {
+            eprintln!("⚠️ LH registry save failed: {}", e);
+        }
+        println!("📡 {}", lh_reg.summary());
+        lighthouse_registry = lh_reg;
 
         // 3. Issue nodeA's own certificate
         let membership_a = CircleMembership {
@@ -826,9 +903,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
         println!("📡 nodeA (CA/Lighthouse) LAN IP: {}", ca_lan_ip);
-        lighthouse_lan_ip = Some(ca_lan_ip.clone());
 
-        // 2. Resolve overlay IP — cache → CA registry → fallback
+        // If no registry sync from CA yet this boot, treat cache as suspect
+        if !std::path::Path::new(registry_sync::REGISTRY_PATH).exists() {
+            let _ = registry_sync::clear_local_ip_cache(&node_id);
+        }
+
+        // 2. Resolve overlay IP from CA registry
         let pubkey_prefix = &pubkey_b64[..20.min(pubkey_b64.len())];
         let ip_cidr = registry_sync::resolve_overlay_ip(&node_id, &ca_lan_ip, pubkey_prefix).await;
         println!("🌐 Overlay IP for {}: {}", node_id, ip_cidr);
@@ -839,6 +920,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut pool = OverlayPool::new("guardian-circle-alpha", "192.168.100", "nodeA");
         pool.allocations.insert(node_id.clone(), ip_only);
         overlay_pool = pool;
+
+        let lh_path = format!("{}/lighthouse_registry.json", nebula_base_dir);
+        let owner_overlay = overlay_pool
+            .get_ip("nodeA")
+            .cloned()
+            .unwrap_or_else(|| "192.168.100.1".to_string());
+        let lighthouse_endpoint = format!("{}:4242", ca_lan_ip);
+        let mut lh_reg = LighthouseRegistry::load_or_create(
+            &lh_path,
+            "guardian-circle-alpha",
+            "nodeA",
+            &owner_overlay,
+            &lighthouse_endpoint,
+        );
+        let _ = lh_reg.update_endpoint("nodeA", &lighthouse_endpoint);
+        lh_reg.mark_active("nodeA");
+        if let Err(e) = lh_reg.save(&lh_path) {
+            eprintln!("⚠️ LH registry save failed: {}", e);
+        }
+        println!("📡 {}", lh_reg.summary());
+        lighthouse_registry = lh_reg;
 
         log_audit(
             &node_id,
@@ -852,10 +954,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let member_cert_path = format!("{}/nodes/{}.crt", nebula_base_dir, node_id);
         let member_key_path = format!("{}/nodes/{}.key", nebula_base_dir, node_id);
 
-        if Path::new(&member_cert_path).exists()
-            && Path::new(&member_key_path).exists()
-            && NebulaCA::ca_cert_exists(&nebula_base_dir)
-        {
+        let cert_exists = Path::new(&member_cert_path).exists();
+        let key_exists = Path::new(&member_key_path).exists();
+        let ca_exists = NebulaCA::ca_cert_exists(&nebula_base_dir);
+        let cert_ip_ok = cert_exists && cert_matches_overlay_ip(&member_cert_path, &ip_cidr);
+
+        if cert_exists && key_exists && ca_exists && cert_ip_ok {
             println!(
                 "✅ Nebula certificate + CA cert already present for {}",
                 node_id
@@ -872,6 +976,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &format!("Existing Nebula certificate found for {}", node_id),
             );
         } else {
+            if cert_exists && key_exists && !cert_ip_ok {
+                eprintln!(
+                    "⚠️ Existing cert IP mismatch for {} (expected {}). Rebootstrapping cert.",
+                    node_id, ip_cidr
+                );
+                let _ = std::fs::remove_file(&member_cert_path);
+                let _ = std::fs::remove_file(&member_key_path);
+            }
+
             println!(
                 "🔐 Requesting cert + CA cert from nodeA at {}:50061...",
                 ca_lan_ip
@@ -879,6 +992,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             log_event(&node_id, "Nebula certificate missing — requesting from CA");
 
             let ca_address = format!("{}:50061", ca_lan_ip);
+            let wants_lh = std::env::var("SGX_WANTS_LIGHTHOUSE")
+                .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
+                .unwrap_or(false);
 
             // BLOCKING: wait until we have the cert before starting Nebula
             sgx_guardian_client::cert_client::request_certificate_from_ca(
@@ -886,6 +1002,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ca_address,
                 ip_cidr.clone(),
                 pubkey_b64.clone(),
+                wants_lh,
             )
             .await;
 
@@ -907,15 +1024,80 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!("✅ Certificate bootstrap completed for {}", node_id);
         }
+
+        let lh_path = format!("{}/lighthouse_registry.json", nebula_base_dir);
+        if let Ok(fresh_lh) = LighthouseRegistry::load(&lh_path) {
+            lighthouse_registry = fresh_lh;
+        }
+
+        if std::path::Path::new("/var/lib/sgx-guardian/nebula/am_lighthouse").exists() {
+            let endpoint_ip = if crate::dynamic_config::is_routable_ip(&detected_ip) {
+                detected_ip.clone()
+            } else {
+                load_config(&format!("/etc/sgx-guardian/config/{}.yaml", node_id))
+                    .ok()
+                    .map(|c| c.ip)
+                    .filter(|ip| crate::dynamic_config::is_routable_ip(ip))
+                    .unwrap_or_default()
+            };
+            if crate::dynamic_config::is_routable_ip(&endpoint_ip) {
+                let endpoint = format!("{}:4242", endpoint_ip);
+                if !lighthouse_registry.is_lighthouse(&node_id) {
+                    let self_overlay = ip_cidr.split('/').next().unwrap_or("").to_string();
+                    lighthouse_registry.add_lighthouse(&node_id, &self_overlay, &endpoint);
+                }
+                let _ = lighthouse_registry.update_endpoint(&node_id, &endpoint);
+                lighthouse_registry.mark_active(&node_id);
+                let _ = lighthouse_registry.save(&lh_path);
+            }
+
+            println!("🗼 Starting local registry sync server (lighthouse mode)");
+            let reg = OverlayRegistry::load_or_create(
+                registry_sync::REGISTRY_PATH,
+                "guardian-circle-alpha",
+                "192.168.100",
+                "nodeA",
+            );
+            let shared_reg: SharedRegistry = Arc::new(RwLock::new(reg));
+            tokio::spawn(async move {
+                registry_sync::start_registry_server(shared_reg).await;
+            });
+
+            if node_id != "nodeA" {
+                tokio::spawn(async move {
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                        let ca_host = resolve_ca_ip_from_config_inner();
+                        if let Ok(latest_json) =
+                            registry_sync::pull_registry_snapshot_from_ca(&ca_host).await
+                        {
+                            let tmp = format!("{}.tmp", registry_sync::REGISTRY_PATH);
+                            if std::fs::write(&tmp, &latest_json).is_ok() {
+                                let _ = std::fs::rename(&tmp, registry_sync::REGISTRY_PATH);
+                            }
+                        }
+
+                        if let Ok(latest_lh_json) =
+                            registry_sync::pull_lighthouse_snapshot_from_ca(&ca_host).await
+                        {
+                            let tmp = format!("{}.tmp", registry_sync::LIGHTHOUSE_REGISTRY_PATH);
+                            if std::fs::write(&tmp, &latest_lh_json).is_ok() {
+                                let _ =
+                                    std::fs::rename(&tmp, registry_sync::LIGHTHOUSE_REGISTRY_PATH);
+                            }
+                        }
+                    }
+                });
+            }
+        }
     }
 
     // ── Generate Nebula config (always regenerate so IPs stay fresh) ─────────
-    // Pass the real nodeA LAN IP for member nodes.
-    if let Err(e) = NebulaConfig::generate_config_from_pool_with_lighthouse(
+    if let Err(e) = NebulaConfig::generate_config_with_lighthouse(
         &node_id,
         &overlay_pool,
+        &lighthouse_registry,
         &nebula_base_dir,
-        lighthouse_lan_ip.as_deref(),
     ) {
         eprintln!("❌ Failed to generate Nebula config: {:?}", e);
         std::process::exit(1);
@@ -938,6 +1120,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Wait for nebula0 to come up, then verify its IP
     println!("⏳ Waiting for nebula0 interface...");
     if NebulaInterface::wait_for_interface(15) {
+        if let Some(cert_ip) = read_ip_from_nebula_cert(&nebula_base_dir, &node_id) {
+            if cert_ip != nebula_ip {
+                eprintln!(
+                    "🔄 Runtime IP corrected: {} → {} (from cert)",
+                    nebula_ip, cert_ip
+                );
+                nebula_ip = cert_ip;
+            }
+        }
         match NebulaInterface::verify_and_fix_ip(&nebula_ip) {
             Ok(_) => println!("✅ nebula0 IP verified: {}", nebula_ip),
             Err(e) => eprintln!("⚠️  nebula0 IP fix failed: {} (continuing)", e),
@@ -958,21 +1149,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Nebula mesh daemon started successfully",
     );
 
-    // === Start Nebula ===
-    let nebula_config_path = format!("{}/nebula.yaml", nebula_base_dir);
-    if let Err(e) = NebulaDaemon::start(&nebula_config_path) {
-        eprintln!("❌ Failed to start Nebula daemon: {:?}", e);
-        std::process::exit(1);
-    }
-    println!("🌐 Nebula mesh daemon started successfully.");
-
-    log_audit(
-        &node_id,
-        AuditCategory::Network,
-        AuditSeverity::Info,
-        AuditAction::Started,
-        "Nebula mesh daemon started successfully",
-    );
+    // Wait for Nebula to fully bind UDP 4242 before health checks.
+    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // === Nebula Health Check ===
     use sgx_guardian_client::nebula::health::NebulaHealth;
@@ -1004,6 +1182,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         AuditSeverity::Info,
         AuditAction::Succeeded,
         &format!("Overlay health: {}", overlay_health.summary()),
+    );
+
+    let lh_health = {
+        let mut report = NebulaHealth::check_lighthouse(&lighthouse_registry, &node_id);
+        for _ in 0..3 {
+            if report.udp_listening {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            report = NebulaHealth::check_lighthouse(&lighthouse_registry, &node_id);
+        }
+        report
+    };
+    println!("--- Lighthouse Health Report ---");
+    println!("{}", lh_health.summary());
+    println!("-------------------------------");
+
+    if !lh_health.is_healthy() {
+        eprintln!("⚠️ Lighthouse health degraded — check UDP 4242 reachability");
+    }
+
+    log_audit(
+        &node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Succeeded,
+        &format!("Lighthouse health: {}", lh_health.summary()),
     );
 
     // === Start Expiry Monitor ===
@@ -1369,13 +1574,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "/var/lib/sgx-guardian/sgx-agent/device_{}_cert.der",
         node_id
     );
-    // SAN = hostname and IP of node
-    let san_ip_str = if detected_ip.is_empty() {
-        "127.0.0.1".to_string()
-    } else {
-        detected_ip.clone()
-    };
-    let san = [this_node.hostname.as_str(), san_ip_str.as_str()];
+    // SAN = stable identity entries, not transient LAN IP.
+    let overlay_ip_only = nebula_ip
+        .split('/')
+        .next()
+        .unwrap_or("192.168.100.1")
+        .to_string();
+    let san: Vec<&str> = vec![
+        this_node.hostname.as_str(),
+        node_id.as_str(),
+        overlay_ip_only.as_str(),
+        "127.0.0.1",
+    ];
     // Ensure certificate exists
     match tls::ensure_node_certificate_or_generate(&key_path, &cert_path, &san) {
         Ok(_) => {
@@ -1527,20 +1737,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 // ── Helper function (add to main.rs as a nested fn or module fn) ─────────
 // Resolves nodeA's LAN IP from its config file (written by UDP broadcast).
 fn resolve_ca_ip_from_config_inner() -> String {
-    // Try the config/ subdir (dynamic, updated by broadcasts)
-    for path in &[
-        "/etc/sgx-guardian/config/nodeA.yaml",
-        "/etc/sgx-guardian/nodeA.yaml",
-    ] {
-        if let Ok(cfg) = sgx_guardian_client::config_loader::load_config(path) {
-            if cfg.ip != "0.0.0.0" && cfg.ip != "127.0.0.1" && !cfg.ip.is_empty() {
-                return cfg.ip;
+    // Give broadcasts a short window to populate nodeA's config on members.
+    for attempt in 1..=20 {
+        for path in &[
+            "/etc/sgx-guardian/config/nodeA.yaml",
+            "/etc/sgx-guardian/nodeA.yaml",
+        ] {
+            if let Ok(cfg) = sgx_guardian_client::config_loader::load_config(path) {
+                if cfg.ip != "0.0.0.0" && cfg.ip != "127.0.0.1" && !cfg.ip.is_empty() {
+                    return cfg.ip;
+                }
             }
         }
+        if attempt == 1 {
+            eprintln!("⏳ Waiting for nodeA LAN IP via discovery/config sync...");
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
     }
     eprintln!(
         "⚠️  Could not find nodeA LAN IP from config files. \
          Is nodeA running and broadcasting? Falling back to 127.0.0.1 (local test only)."
     );
     "127.0.0.1".to_string()
+}
+
+fn cert_matches_overlay_ip(cert_path: &str, expected_ip_cidr: &str) -> bool {
+    let output = std::process::Command::new("nebula-cert")
+        .args(["print", "-path", cert_path])
+        .output();
+    match output {
+        Ok(out) if out.status.success() => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            stdout.contains(expected_ip_cidr)
+        }
+        _ => false,
+    }
+}
+
+fn read_ip_from_nebula_cert(base: &str, node_id: &str) -> Option<String> {
+    let cert_path = format!("{}/nodes/{}.crt", base, node_id);
+    let out = std::process::Command::new("nebula-cert")
+        .args(["print", "-path", &cert_path])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    for line in text.lines() {
+        if let Some(idx) = line.find("192.168.100.") {
+            let rest = &line[idx..];
+            let end = rest
+                .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '/')
+                .unwrap_or(rest.len());
+            let cleaned = rest[..end].trim().to_string();
+            if cleaned.contains('/') && cleaned.starts_with("192.168.100.") {
+                return Some(cleaned);
+            }
+        }
+    }
+    None
 }

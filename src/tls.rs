@@ -127,22 +127,24 @@ pub fn ensure_node_certificate_or_generate(
             .map(|s| s.to_string())
             .collect::<Vec<String>>(),
     );
-    // ----- AUTO SAN + CN FIX FOR EACH NODE -----
-    // Determine node ID from CLI args (nodeA / nodeB / nodeC)
-    let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
-    // Load config for this node (PACKAGED PATH)
-    let conf_path = format!("/etc/sgx-guardian/{}.yaml", node_id);
-    let node_conf = crate::config_loader::load_config(&conf_path)
-        .expect("Failed to load node config inside TLS generator");
-    // Extract hostname + IP for SAN fields
-    let san_dns = node_conf.hostname.clone(); // guardian-node-A etc
-    let san_ip = node_conf.ip.clone(); // 127.0.0.1
-                                       // Apply SAN entries to certificate params
-    params.subject_alt_names = vec![
-        rcgen::SanType::DnsName(san_dns.clone()), // guardian-node-A
-        rcgen::SanType::DnsName("127.0.0.1".into()), // ← REQUIRED
-        rcgen::SanType::IpAddress(san_ip.parse().unwrap()), // 127.0.0.1
-    ];
+    // Convert SAN input into DNS/IP entries and keep loopback available.
+    let mut san_entries: Vec<rcgen::SanType> = Vec::new();
+    for san in subject_alt_names {
+        if let Ok(ip) = san.parse::<std::net::IpAddr>() {
+            san_entries.push(rcgen::SanType::IpAddress(ip));
+        } else {
+            san_entries.push(rcgen::SanType::DnsName((*san).to_string()));
+        }
+    }
+    let has_loopback = san_entries
+        .iter()
+        .any(|entry| matches!(entry, rcgen::SanType::IpAddress(ip) if ip.is_loopback()));
+    if !has_loopback {
+        san_entries.push(rcgen::SanType::IpAddress(
+            "127.0.0.1".parse().expect("valid loopback IP"),
+        ));
+    }
+    params.subject_alt_names = san_entries;
     // Add CN
     let mut dn = DistinguishedName::new();
     let cn = subject_alt_names.first().cloned().unwrap_or("sgx-node");

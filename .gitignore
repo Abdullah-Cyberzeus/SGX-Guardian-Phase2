@@ -17,3 +17,4 @@ cobertura.xml
 tarpaulin-report.html
 coverage/
 
+.codex/

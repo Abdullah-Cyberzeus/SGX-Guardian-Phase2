@@ -84,10 +84,7 @@ pub async fn start_listener(local_node_id: String) {
                         };
 
                         if should_write {
-                            println!(
-                                "Peer discovered: {} @ {}:{}",
-                                peer.node_id, peer.ip, peer.port
-                            );
+                            println!("Peer announcement received: {}", peer.node_id);
                             dedup_map.insert(peer.node_id.clone(), now);
 
                             let peer_clone = peer.clone();

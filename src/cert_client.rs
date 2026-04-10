@@ -64,6 +64,7 @@ pub async fn request_certificate_from_ca(
     ca_addr: String,
     overlay_ip: String,
     public_key_pem: String,
+    wants_lh: bool,
 ) {
     let (_, ca_port) = split_host_port(&ca_addr);
     let mut current_ca_addr = ca_addr.clone();
@@ -135,7 +136,15 @@ pub async fn request_certificate_from_ca(
             );
         }
 
-        match try_request(&node_id, &current_ca_addr, &overlay_ip, &public_key_pem).await {
+        match try_request(
+            &node_id,
+            &current_ca_addr,
+            &overlay_ip,
+            &public_key_pem,
+            wants_lh,
+        )
+        .await
+        {
             Ok(resp) => match resp.status.as_str() {
                 "approved" => {
                     // ── Save node cert ────────────────────────────────
@@ -189,6 +198,46 @@ pub async fn request_certificate_from_ca(
                             "⚠️  CertSignResponse.ca_cert_pem is empty! \
                              Check cert_service.rs on nodeA is populating this field."
                         );
+                    }
+
+                    if !resp.overlay_registry_json.is_empty() {
+                        let path = "/var/lib/sgx-guardian/nebula/overlay_registry.json";
+                        if let Err(e) = std::fs::write(path, &resp.overlay_registry_json) {
+                            eprintln!("⚠️  Failed to sync overlay registry: {}", e);
+                        } else {
+                            println!("📋 Overlay registry synced from CA");
+                        }
+                    }
+
+                    if !resp.lighthouse_registry_json.is_empty() {
+                        let path = "/var/lib/sgx-guardian/nebula/lighthouse_registry.json";
+                        if let Err(e) = std::fs::write(path, &resp.lighthouse_registry_json) {
+                            eprintln!("⚠️  Failed to sync lighthouse registry: {}", e);
+                        } else {
+                            println!("📋 Lighthouse registry synced from CA");
+                        }
+                    }
+
+                    if resp.assigned_lighthouse {
+                        println!("🗼 This node is now a LIGHTHOUSE in guardian-circle-alpha");
+                        if let Err(e) =
+                            std::fs::write("/var/lib/sgx-guardian/nebula/am_lighthouse", "true")
+                        {
+                            eprintln!("⚠️  Failed to write lighthouse marker: {}", e);
+                        }
+                    }
+
+                    if !resp.signed_policy_bytes.is_empty() {
+                        if let Err(e) = std::fs::create_dir_all("/etc/sgx-guardian/policies") {
+                            eprintln!("⚠️  Could not create policy dir: {}", e);
+                        } else if let Err(e) = std::fs::write(
+                            "/etc/sgx-guardian/policies/policy.sig",
+                            &resp.signed_policy_bytes,
+                        ) {
+                            eprintln!("⚠️  Failed to sync signed policy: {}", e);
+                        } else {
+                            println!("📜 Signed policy synced from CA");
+                        }
                     }
 
                     println!("✅ CA-signed certificate received from nodeA");
@@ -253,6 +302,7 @@ async fn try_request(
     ca_addr: &str,
     overlay_ip: &str,
     public_key_pem: &str,
+    wants_lh: bool,
 ) -> Result<crate::proto::sgx::CertSignResponse, String> {
     let endpoint = Channel::from_shared(format!("http://{}", ca_addr))
         .map_err(|e| format!("Invalid CA address: {}", e))?;
@@ -268,6 +318,7 @@ async fn try_request(
         node_id: node_id.to_string(),
         public_key_pem: public_key_pem.to_string(),
         overlay_ip: overlay_ip.to_string(),
+        wants_lighthouse: wants_lh,
     });
 
     let response = client

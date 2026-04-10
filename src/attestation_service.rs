@@ -11,15 +11,40 @@ use rand::{thread_rng, RngCore};
 use ring::signature;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::io::ErrorKind;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 use tokio::sync::mpsc::Receiver;
 use tokio::time::Duration;
 
 // ---- Attestation identity key base path (single source of truth) ----
 const ATTESTATION_KEY_DIR: &str = "/var/lib/sgx-guardian/sgx-agent";
-const CONNECT_RETRY_ATTEMPTS: u8 = 8;
+const CONNECT_RETRY_ATTEMPTS: u8 = 15;
 const CONNECT_RETRY_DELAY_MS: u64 = 1000;
 const MAX_TRUSTED_PEER_AGE_HOURS: i64 = 24;
+const ATTEST_ATTEMPT_THROTTLE_SECS: u64 = 30;
+const MAX_ATTEST_EVIDENCE_BYTES: u32 = 256 * 1024;
+static LIGHTHOUSE_WARNING_PRINTED: AtomicBool = AtomicBool::new(false);
+static OVERLAY_WAIT_LOGGED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+const DEFAULT_ATTEST_POLICY_YAML: &str = r#"---
+policy_id: "123e4567-e89b-12d3-a456-426614174000"
+version: "1.0.0"
+description: "Default Guardian Edge Policy"
+rules:
+  - id: "rule-001"
+    action: "ALLOW"
+    src: "10.0.0.0/24"
+    dst: "0.0.0.0/0"
+    protocol: "TCP"
+    port: 443
+  - id: "rule-005"
+    action: "DENY"
+    src: "0.0.0.0/0"
+    dst: "10.0.0.10"
+    protocol: "UDP"
+"#;
 
 // Trusted Peer JSON Logging Helpers ===
 use chrono::Utc;
@@ -199,6 +224,9 @@ fn allowed_attestation_targets(local_node_id: &str) -> HashSet<String> {
             if crate::dynamic_config::is_routable_ip(&conf.ip) {
                 targets.insert(format!("{}:{}", conf.ip, conf.port + 100));
             }
+            if let Some(overlay_ip) = overlay_ip_from_local_registry(node) {
+                targets.insert(format!("{}:{}", overlay_ip, conf.port + 100));
+            }
         }
     }
     targets
@@ -208,6 +236,204 @@ fn parse_peer_addr(peer_id: &str) -> Option<(String, u16)> {
     let (ip, port_s) = peer_id.split_once(':')?;
     let port = port_s.parse::<u16>().ok()?;
     Some((ip.to_string(), port))
+}
+
+fn parse_bool_env(name: &str, default: bool) -> bool {
+    match std::env::var(name) {
+        Ok(v) => matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"),
+        Err(_) => default,
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AttestationPolicyMaterial {
+    yaml: String,
+    digest: String,
+    source: &'static str,
+}
+
+fn compute_policy_digest_canonical(yaml: &str) -> Result<String> {
+    let parsed = crate::policy::validate_policy(yaml)
+        .map_err(|e| anyhow::anyhow!("Policy parse failed: {}", e))?;
+    Ok(crate::policy::canonical_policy_digest(&parsed))
+}
+
+fn is_hex_digest_64(input: &str) -> bool {
+    input.len() == 64 && input.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn load_attestation_policy_material() -> AttestationPolicyMaterial {
+    let (yaml, source) = if let Some(active) = crate::policy::get_active_policy() {
+        let canonical = crate::policy::canonical_policy_bytes(&active);
+        (
+            String::from_utf8_lossy(&canonical).to_string(),
+            "runtime-active-policy",
+        )
+    } else if let Ok(file_yaml) = fs::read_to_string("/etc/sgx-guardian/schemas/uep_policy_v1.yaml")
+    {
+        match compute_policy_digest_canonical(&file_yaml) {
+            Ok(_) => {
+                let parsed = crate::policy::validate_policy(&file_yaml)
+                    .expect("schema policy validated above");
+                let canonical = crate::policy::canonical_policy_bytes(&parsed);
+                (
+                    String::from_utf8_lossy(&canonical).to_string(),
+                    "schema-fallback",
+                )
+            }
+            Err(_) => {
+                let parsed = crate::policy::validate_policy(DEFAULT_ATTEST_POLICY_YAML)
+                    .expect("default policy valid");
+                let canonical = crate::policy::canonical_policy_bytes(&parsed);
+                (
+                    String::from_utf8_lossy(&canonical).to_string(),
+                    "unsigned-default",
+                )
+            }
+        }
+    } else {
+        let parsed = crate::policy::validate_policy(DEFAULT_ATTEST_POLICY_YAML)
+            .expect("default policy valid");
+        let canonical = crate::policy::canonical_policy_bytes(&parsed);
+        (
+            String::from_utf8_lossy(&canonical).to_string(),
+            "unsigned-default",
+        )
+    };
+
+    let digest = hex::encode(Sha256::digest(yaml.as_bytes()));
+    AttestationPolicyMaterial {
+        yaml,
+        digest,
+        source,
+    }
+}
+
+fn infer_node_id_from_base_port(base_port: u16) -> Option<&'static str> {
+    match base_port {
+        50051 => Some("nodeA"),
+        50052 => Some("nodeB"),
+        50053 => Some("nodeC"),
+        _ => None,
+    }
+}
+
+fn infer_node_id_from_peer(peer_ip: &str, base_port: u16) -> Option<String> {
+    if let Some(node_id) = infer_node_id_from_base_port(base_port) {
+        return Some(node_id.to_string());
+    }
+
+    for node in ["nodeA", "nodeB", "nodeC"] {
+        if let Ok(conf) = load_node_config_for_attestation(node) {
+            if conf.port == base_port && conf.ip == peer_ip {
+                return Some(node.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn overlay_ip_from_local_registry(node_id: &str) -> Option<String> {
+    let reg = crate::nebula::overlay_registry::OverlayRegistry::load(
+        crate::nebula::registry_sync::REGISTRY_PATH,
+    )
+    .ok()?;
+    reg.get_ip(node_id).map(|s| s.to_string())
+}
+
+async fn resolve_overlay_ip_for_node(node_id: &str) -> Option<String> {
+    if let Some(ip) = overlay_ip_from_local_registry(node_id) {
+        return Some(ip);
+    }
+
+    // On member nodes, ask nodeA's registry service for authoritative mapping.
+    let ca_cfg = load_node_config_for_attestation("nodeA").ok()?;
+    if !crate::dynamic_config::is_routable_ip(&ca_cfg.ip) {
+        return None;
+    }
+
+    match crate::nebula::registry_sync::query_ip_from_ca(node_id, &ca_cfg.ip).await {
+        Ok((_, ip)) if crate::dynamic_config::is_routable_ip(&ip) => Some(ip),
+        _ => None,
+    }
+}
+
+async fn resolve_attestation_target(
+    peer_ip: &str,
+    base_port: u16,
+    overlay_only: bool,
+) -> Option<(String, u16, String)> {
+    let peer_node_id =
+        infer_node_id_from_peer(peer_ip, base_port).unwrap_or_else(|| "unknown".into());
+    let attest_port = base_port.saturating_add(100);
+
+    if let Some(overlay_ip) = resolve_overlay_ip_for_node(&peer_node_id).await {
+        return Some((overlay_ip, attest_port, peer_node_id));
+    }
+
+    if overlay_only {
+        let seen = OVERLAY_WAIT_LOGGED.get_or_init(|| Mutex::new(HashSet::new()));
+        if let Ok(mut seen_nodes) = seen.lock() {
+            if seen_nodes.insert(peer_node_id.clone()) {
+                eprintln!(
+                    "⚠️ Overlay-only: waiting for registry sync before attesting {}",
+                    peer_node_id
+                );
+            }
+        }
+        return None;
+    }
+
+    if crate::dynamic_config::is_routable_ip(peer_ip) {
+        Some((peer_ip.to_string(), attest_port, peer_node_id))
+    } else {
+        None
+    }
+}
+
+async fn target_is_reachable(ip: &str, port: u16, timeout_secs: u64) -> bool {
+    let addr = format!("{}:{}", ip, port);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(timeout_secs),
+        tokio::net::TcpStream::connect(&addr),
+    )
+    .await
+    .map(|r| r.is_ok())
+    .unwrap_or(false)
+}
+
+async fn write_evidence_framed(
+    stream: &mut tokio::net::TcpStream,
+    ev: &AttestationEvidence,
+) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+
+    let payload = serde_json::to_vec(ev)?;
+    let len = payload.len() as u32;
+    if len > MAX_ATTEST_EVIDENCE_BYTES {
+        anyhow::bail!("Attestation payload too large: {} bytes", len);
+    }
+
+    stream.write_all(&len.to_be_bytes()).await?;
+    stream.write_all(&payload).await?;
+    stream.flush().await?;
+    Ok(())
+}
+
+async fn read_evidence_framed(stream: &mut tokio::net::TcpStream) -> Result<AttestationEvidence> {
+    use tokio::io::AsyncReadExt;
+
+    let mut len_buf = [0u8; 4];
+    stream.read_exact(&mut len_buf).await?;
+    let len = u32::from_be_bytes(len_buf);
+    if len == 0 || len > MAX_ATTEST_EVIDENCE_BYTES {
+        anyhow::bail!("Invalid attestation payload length: {}", len);
+    }
+
+    let mut payload = vec![0u8; len as usize];
+    stream.read_exact(&mut payload).await?;
+    let ev: AttestationEvidence = serde_json::from_slice(&payload)?;
+    Ok(ev)
 }
 
 fn trusted_peer_is_recent(ts: &str) -> bool {
@@ -270,13 +496,7 @@ impl AttestationService {
         let mut nonce_bytes = [0u8; 16];
         thread_rng().fill_bytes(&mut nonce_bytes);
         let nonce = hex::encode(nonce_bytes);
-        let clean_policy = policy_yaml
-            .replace("\r", "")
-            .replace("\n", "")
-            .trim()
-            .to_string();
-        let digest = Sha256::digest(clean_policy.as_bytes());
-        let policy_digest = hex::encode(digest);
+        let policy_digest = hex::encode(Sha256::digest(policy_yaml.as_bytes()));
         let msg = format!("{}{}", nonce, policy_digest);
         let sig_bytes = km.sign(msg.as_bytes())?;
         let signature_b64 = general_purpose::STANDARD.encode(sig_bytes);
@@ -299,18 +519,23 @@ impl AttestationService {
     /// reconstructing the signed message, and validating the signature using
     /// the peer’s public key.
     pub fn verify_signed_evidence(ev: &AttestationEvidence, policy_yaml: &str) -> Result<bool> {
-        // Step 1: Normalize policy content
-        let clean_policy = policy_yaml
-            .replace("\r", "")
-            .replace("\n", "")
-            .trim()
-            .to_string();
-        // Step 2: Recompute policy digest
-        let digest = Sha256::digest(clean_policy.as_bytes());
-        let expected_digest = hex::encode(digest);
+        if !is_hex_digest_64(&ev.policy_digest) {
+            eprintln!(
+                "⚠️ Attestation rejected: malformed policy digest '{}' (len={})",
+                ev.policy_digest,
+                ev.policy_digest.len()
+            );
+            return Ok(false);
+        }
+
+        // Step 1: Recompute policy digest
+        let expected_digest = hex::encode(Sha256::digest(policy_yaml.as_bytes()));
         // Step 3: Ensure digest matches
         if ev.policy_digest != expected_digest {
-            println!("❌ Policy digest mismatch");
+            println!(
+                "❌ Policy digest mismatch (expected={}, got={})",
+                expected_digest, ev.policy_digest
+            );
             return Ok(false);
         }
         // Verify PCR snapshot freshness (if present)
@@ -396,11 +621,9 @@ impl AttestationService {
     /// exchanges signed evidence, verifies policy digest & signature,
     /// and updates trusted peer state on success.
     pub async fn mutual_attest(peer_ip: String, peer_port: u16, km: &KeyManager) -> Result<bool> {
-        use std::fs;
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::TcpStream;
         let addr = format!("{}:{}", peer_ip, peer_port);
-        println!("Attempting mutual attestation with {}", addr);
+        println!("Attempting mutual attestation with overlay {}", addr);
         let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
 
         log_audit(
@@ -453,26 +676,25 @@ impl AttestationService {
         };
 
         // Step 2: send our attestation evidence
-        let policy_data = fs::read_to_string("/etc/sgx-guardian/schemas/uep_policy_v1.yaml")?;
-        let evidence = Self::create_signed_evidence(km, &policy_data)?;
-        let payload = serde_json::to_vec(&evidence)?;
-        stream.write_all(&payload).await?;
-        // Step 3: receive peer evidence
-        let mut buffer = vec![0u8; 4096];
-        let n = stream.read(&mut buffer).await?;
-        if n == 0 {
-            println!("⚠️ No data received from peer {}", addr);
+        let policy = load_attestation_policy_material();
+        let evidence = Self::create_signed_evidence(km, &policy.yaml)?;
+        if let Err(e) = write_evidence_framed(&mut stream, &evidence).await {
+            eprintln!(
+                "❌ Failed to send attestation evidence to {}: {:?}",
+                addr, e
+            );
             return Ok(false);
         }
-        let peer_ev: AttestationEvidence = match serde_json::from_slice(&buffer[..n]) {
-            Ok(e) => e,
+        // Step 3: receive peer evidence
+        let peer_ev = match read_evidence_framed(&mut stream).await {
+            Ok(ev) => ev,
             Err(e) => {
-                println!("❌ Failed to parse peer evidence: {:?}", e);
+                println!("⚠️ No valid attestation reply from peer {}: {:?}", addr, e);
                 return Ok(false);
             }
         };
         // Step 4: verify peer evidence (using peer's embedded public key)
-        let verified = Self::verify_signed_evidence(&peer_ev, &policy_data)?;
+        let verified = Self::verify_signed_evidence(&peer_ev, &policy.yaml)?;
         if !verified {
             let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
 
@@ -516,7 +738,17 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
     let node_conf = load_node_config_for_attestation(&node_id_env)?;
     let listen_port: u16 = node_conf.port + 100;
     let local_ip = node_conf.ip.clone();
-    let allowed_targets = allowed_attestation_targets(&node_id_env);
+    let overlay_only = parse_bool_env("SGX_ATTEST_OVERLAY_ONLY", true);
+    if overlay_only {
+        println!("🔒 Attestation target mode: overlay-only");
+    } else {
+        println!("🔓 Attestation target mode: overlay-preferred (LAN fallback enabled)");
+    }
+    let policy_info = load_attestation_policy_material();
+    println!(
+        "🛡️ Attestation policy digest: {} (source: {})",
+        policy_info.digest, policy_info.source
+    );
 
     // === Spawn background TCP listener for incoming attestations ===
     println!("🛰️ Spawning attestation listener on port {}", listen_port);
@@ -535,6 +767,7 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
         .or_else(|_| fs::read_to_string("logs/trusted_peers.json"));
 
     if let Ok(contents) = contents {
+        let allowed_targets = allowed_attestation_targets(&node_id_env);
         // Parse JSON safely
         let parsed: Result<Vec<TrustedPeer>, serde_json::Error> = serde_json::from_str(&contents);
         if let Ok(peers_list) = parsed {
@@ -542,31 +775,42 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
                 let Some((ip, port)) =
                     should_attempt_persisted_peer(&peer, &local_ip, listen_port, &allowed_targets)
                 else {
-                    println!(
-                        "Skipping persisted peer {} (stale/invalid/unexpected)",
-                        peer.peer_id
-                    );
                     continue;
                 };
-                println!("Verifying persisted peer {} on startup...", peer.peer_id);
+                let peer_target = format!("{}:{}", ip, port);
+                println!("Verifying persisted peer {} on startup...", peer_target);
                 let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
                 let key_path = format!("{}/device_{}.key", ATTESTATION_KEY_DIR, node_id);
                 match KeyManager::load_or_generate(&key_path) {
                     Ok(km) => {
-                        if let Ok(true) =
-                            AttestationService::mutual_attest(ip.clone(), port, &km).await
+                        let base_port = if port >= 100 { port - 100 } else { port };
+                        let Some((target_ip, target_port, peer_node)) =
+                            resolve_attestation_target(&ip, base_port, overlay_only).await
+                        else {
+                            continue;
+                        };
+
+                        if node_id != "nodeA"
+                            && peer_node == "nodeA"
+                            && !target_is_reachable(&target_ip, target_port, 2).await
                         {
-                            println!("✅ Persisted peer {} re-verified.", peer.peer_id);
+                            continue;
+                        }
+
+                        if let Ok(true) =
+                            AttestationService::mutual_attest(target_ip, target_port, &km).await
+                        {
+                            println!("✅ Persisted peer {} re-verified.", peer_target);
                         }
                     }
-                    Err(e) => eprintln!("⚠️ Failed KeyManager load for {}: {:?}", peer.peer_id, e),
+                    Err(e) => eprintln!("⚠️ Failed KeyManager load for {}: {:?}", peer_target, e),
                 }
             }
         }
     }
 
     // === Sprint 2 Day 9 – Periodic Re-Attestation Timer (every 60 seconds) ===
-    tokio::spawn(async {
+    tokio::spawn(async move {
         let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
         let local_conf = match load_node_config_for_attestation(&node_id) {
             Ok(c) => c,
@@ -580,10 +824,9 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
         };
         let local_ip = local_conf.ip;
         let local_attest_port = local_conf.port + 100;
-        let allowed_targets = allowed_attestation_targets(&node_id);
-
         loop {
             tokio::time::sleep(Duration::from_secs(60)).await;
+            let allowed_targets = allowed_attestation_targets(&node_id);
             let contents = fs::read_to_string("/var/log/sgx-guardian/trusted_peers.json")
                 .or_else(|_| fs::read_to_string("logs/trusted_peers.json"));
 
@@ -600,17 +843,36 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
                         ) else {
                             continue;
                         };
-                        println!("🔁 Re-attesting trusted peer: {}", peer.peer_id);
+                        let peer_target = format!("{}:{}", ip, port);
+                        println!("🔁 Re-attesting trusted peer: {}", peer_target);
                         let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
                         let key_path = format!("{}/device_{}.key", ATTESTATION_KEY_DIR, node_id);
                         match KeyManager::load_or_generate(&key_path) {
                             Ok(km) => {
-                                if let Ok(true) =
-                                    AttestationService::mutual_attest(ip.clone(), port, &km).await
+                                let base_port = if port >= 100 { port - 100 } else { port };
+                                let Some((target_ip, target_port, peer_node)) =
+                                    resolve_attestation_target(&ip, base_port, overlay_only).await
+                                else {
+                                    continue;
+                                };
+
+                                if node_id != "nodeA"
+                                    && peer_node == "nodeA"
+                                    && !target_is_reachable(&target_ip, target_port, 2).await
                                 {
-                                    println!("✅ Peer {} re-attested successfully.", peer.peer_id);
+                                    continue;
+                                }
+
+                                if let Ok(true) = AttestationService::mutual_attest(
+                                    target_ip.clone(),
+                                    target_port,
+                                    &km,
+                                )
+                                .await
+                                {
+                                    println!("✅ Peer {} re-attested successfully.", peer_target);
                                 } else {
-                                    eprintln!("⚠️ Re-attestation failed for {}", peer.peer_id);
+                                    eprintln!("⚠️ Re-attestation failed for {}", peer_target);
                                 }
                             }
                             Err(e) => eprintln!("⚠️ KeyManager load failed: {:?}", e),
@@ -621,26 +883,124 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
         }
     });
 
-    while let Some(peer) = rx.recv().await {
-        println!("🔐 Attesting discovered peer: {}", peer);
+    let local_node_id = node_id_env.clone();
 
-        // Parse peer address: expect "ip:port"
-        let (peer_ip, base_port) = if let Some((ip, port)) = peer.split_once(':') {
-            (ip.to_string(), port.parse::<u16>().unwrap_or(50051))
+    if local_node_id != "nodeA" {
+        tokio::spawn(async move {
+            let mut last_lh: Option<String> = None;
+            loop {
+                let current_lh = crate::dynamic_config::reachable_lighthouse_name().await;
+                if current_lh != last_lh {
+                    match (&last_lh, &current_lh) {
+                        (Some(prev), Some(curr)) => {
+                            println!(
+                                "🛑 Lighthouse {} closed; Lighthouse {} is active now",
+                                prev, curr
+                            );
+                        }
+                        (Some(prev), None) => {
+                            println!(
+                                "🛑 Lighthouse {} closed; no reachable lighthouse right now",
+                                prev
+                            );
+                        }
+                        (None, Some(curr)) => {
+                            println!("🗼 Lighthouse {} is active", curr);
+                        }
+                        (None, None) => {}
+                    }
+                    last_lh = current_lh;
+                }
+                tokio::time::sleep(Duration::from_secs(3)).await;
+            }
+        });
+    }
+
+    let mut last_attempts: HashMap<String, Instant> = HashMap::new();
+    let local_overlay_ip = overlay_ip_from_local_registry(&local_node_id);
+
+    while let Some(peer) = rx.recv().await {
+        // Parse preferred queue format "node_id|ip:port" with legacy fallback to "ip:port".
+        let (queued_node_id, peer_addr) = if let Some((nid, addr)) = peer.split_once('|') {
+            (Some(nid.to_string()), addr.to_string())
         } else {
-            (peer.clone(), 50051)
+            (None, peer.clone())
         };
 
-        // Derive attestation port (+100 offset)
-        let attest_port = base_port + 100;
+        let (peer_ip, base_port) = if let Some((ip, port)) = peer_addr.split_once(':') {
+            (ip.to_string(), port.parse::<u16>().unwrap_or(50051))
+        } else {
+            (peer_addr.clone(), 50051)
+        };
+
+        let discovered_node = queued_node_id
+            .clone()
+            .or_else(|| infer_node_id_from_peer(&peer_ip, base_port))
+            .unwrap_or_else(|| "unknown".to_string());
+
+        if discovered_node == local_node_id {
+            continue;
+        }
+
+        if local_node_id != "nodeA" {
+            let reachable_lh = crate::dynamic_config::reachable_lighthouse_name().await;
+            if let Some(lh_name) = reachable_lh {
+                if LIGHTHOUSE_WARNING_PRINTED.swap(false, Ordering::SeqCst) {
+                    println!(
+                        "✅ New lighthouse reachable: {} — resuming attestation",
+                        lh_name
+                    );
+                }
+            } else {
+                if !LIGHTHOUSE_WARNING_PRINTED.swap(true, Ordering::SeqCst) {
+                    println!("⚠️ No lighthouse reachable — pausing attestation until one returns");
+                }
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                continue;
+            }
+        }
+
+        let Some((target_ip, attest_port, peer_node_id)) =
+            resolve_attestation_target(&peer_ip, base_port, overlay_only).await
+        else {
+            continue;
+        };
+
+        // Self-attestation guard (by node identity and by resolved overlay IP).
+        if peer_node_id == local_node_id {
+            continue;
+        }
+        if let Some(ref local_ovl) = local_overlay_ip {
+            if &target_ip == local_ovl {
+                continue;
+            }
+        }
+
+        let target_key = format!("{}:{}", target_ip, attest_port);
+        if let Some(last) = last_attempts.get(&target_key) {
+            if last.elapsed().as_secs() < ATTEST_ATTEMPT_THROTTLE_SECS {
+                continue;
+            }
+        }
+        last_attempts.insert(target_key.clone(), Instant::now());
+
+        if local_node_id != "nodeA"
+            && peer_node_id == "nodeA"
+            && !target_is_reachable(&target_ip, attest_port, 2).await
+        {
+            continue;
+        }
+
+        println!("🔐 Attesting discovered peer over overlay: {}", target_key);
+
         let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
         let key_path = format!("{}/device_{}.key", ATTESTATION_KEY_DIR, node_id);
         match crate::key_manager::KeyManager::load_or_generate(&key_path) {
             Ok(km) => {
-                match AttestationService::mutual_attest(peer_ip.clone(), attest_port, &km).await {
-                    Ok(true) => println!("✅ Peer {} attested successfully.", peer_ip),
-                    Ok(false) => println!("❌ Peer {} attestation failed.", peer_ip),
-                    Err(e) => eprintln!("⚠️ Attestation error with {}: {:?}", peer_ip, e),
+                match AttestationService::mutual_attest(target_ip.clone(), attest_port, &km).await {
+                    Ok(true) => println!("✅ Peer {} attested successfully.", target_key),
+                    Ok(false) => println!("❌ Peer {} attestation failed.", target_key),
+                    Err(e) => eprintln!("⚠️ Attestation error with {}: {:?}", target_key, e),
                 }
             }
             Err(e) => eprintln!("⚠️ Failed to load key manager: {:?}", e),
@@ -653,8 +1013,6 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
 /// Starts a TCP listener to receive attestation evidence from peers,
 /// verify it, and respond with locally signed evidence.
 pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Result<()> {
-    use std::fs;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
     let addr = format!("{}:{}", bind_ip, listen_port);
@@ -664,7 +1022,15 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
     loop {
         match listener.accept().await {
             Ok((mut socket, remote)) => {
-                println!("📩 Received attestation request from {}", remote);
+                let local_node_id = std::env::args().nth(1).unwrap_or_else(|| "nodeA".into());
+                let local_overlay = overlay_ip_from_local_registry(&local_node_id);
+                if let Some(ref ovl) = local_overlay {
+                    if remote.ip().to_string() == *ovl {
+                        continue;
+                    }
+                }
+
+                println!("📩 Received attestation request from peer");
                 let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
 
                 log_audit(
@@ -674,73 +1040,60 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
                     AuditAction::Started,
                     &format!("Received attestation request from {}", remote),
                 );
-                let mut buffer = vec![0u8; 4096];
-                match socket.read(&mut buffer).await {
-                    Ok(n) if n > 0 => {
-                        // Deserialize peer evidence
-                        let incoming: AttestationEvidence =
-                            match serde_json::from_slice(&buffer[..n]) {
-                                Ok(ev) => ev,
-                                Err(e) => {
-                                    eprintln!("❌ Failed to parse incoming evidence: {:?}", e);
-                                    continue;
-                                }
-                            };
-
-                        // Verify peer evidence
-                        let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
-                        let key_path = format!("{}/device_{}.key", ATTESTATION_KEY_DIR, node_id);
-                        let km = KeyManager::load_or_generate(&key_path)?;
-                        let policy =
-                            fs::read_to_string("/etc/sgx-guardian/schemas/uep_policy_v1.yaml")?;
-                        let verified =
-                            AttestationService::verify_signed_evidence(&incoming, &policy)?;
-
-                        if verified {
-                            println!("✅ Verified attestation from {}", remote);
-                            let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
-
-                            log_audit(
-                                &node_id,
-                                AuditCategory::Attestation,
-                                AuditSeverity::Info,
-                                AuditAction::Succeeded,
-                                &format!("Incoming attestation verified from {}", remote),
-                            );
-
-                            // Send our own evidence back
-                            let reply = AttestationService::create_signed_evidence(&km, &policy)?;
-                            let payload = serde_json::to_vec(&reply)?;
-                            if let Err(e) = socket.write_all(&payload).await {
-                                eprintln!(
-                                    "⚠️ Failed to send attestation reply to {} : {:?}",
-                                    remote, e
-                                );
-                            } else {
-                                println!("📤 Sent attestation reply to {}", remote);
-                            }
-                        } else {
-                            eprintln!("❌ Attestation verification failed for {}", remote);
-                            let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
-
-                            log_audit(
-                                &node_id,
-                                AuditCategory::Attestation,
-                                AuditSeverity::Critical,
-                                AuditAction::Rejected,
-                                &format!("Incoming attestation rejected from {}", remote),
-                            );
-                        }
-                    }
-                    Ok(_) => {
-                        eprintln!("⚠️ Empty attestation request from {}", remote);
-                    }
+                let incoming = match read_evidence_framed(&mut socket).await {
+                    Ok(ev) => ev,
                     Err(e) => {
+                        if e.downcast_ref::<std::io::Error>()
+                            .map(|ioe| ioe.kind() == ErrorKind::UnexpectedEof)
+                            .unwrap_or(false)
+                        {
+                            continue;
+                        }
+                        eprintln!("❌ Failed to read incoming attestation: {:?}", e);
+                        continue;
+                    }
+                };
+
+                // Verify peer evidence
+                let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
+                let key_path = format!("{}/device_{}.key", ATTESTATION_KEY_DIR, node_id);
+                let km = KeyManager::load_or_generate(&key_path)?;
+                let policy = load_attestation_policy_material();
+                let verified = AttestationService::verify_signed_evidence(&incoming, &policy.yaml)?;
+
+                if verified {
+                    println!("✅ Verified attestation from peer");
+                    let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
+
+                    log_audit(
+                        &node_id,
+                        AuditCategory::Attestation,
+                        AuditSeverity::Info,
+                        AuditAction::Succeeded,
+                        &format!("Incoming attestation verified from {}", remote),
+                    );
+
+                    // Send our own evidence back
+                    let reply = AttestationService::create_signed_evidence(&km, &policy.yaml)?;
+                    if let Err(e) = write_evidence_framed(&mut socket, &reply).await {
                         eprintln!(
-                            "⚠️ Error reading attestation request from {} : {:?}",
+                            "⚠️ Failed to send attestation reply to {} : {:?}",
                             remote, e
                         );
+                    } else {
+                        println!("📤 Sent attestation reply to peer");
                     }
+                } else {
+                    eprintln!("❌ Attestation verification failed for peer");
+                    let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
+
+                    log_audit(
+                        &node_id,
+                        AuditCategory::Attestation,
+                        AuditSeverity::Critical,
+                        AuditAction::Rejected,
+                        &format!("Incoming attestation rejected from {}", remote),
+                    );
                 }
             }
             Err(e) => {
@@ -758,7 +1111,6 @@ mod tests {
     use base64::engine::general_purpose;
     use p256::ecdsa::{signature::Signer, Signature, SigningKey};
     use p256::SecretKey;
-    use sha2::{Digest, Sha256};
 
     fn make_test_evidence(policy: &str, nonce: &str) -> AttestationEvidence {
         let secret = SecretKey::from_slice(&[42u8; 32]).expect("valid deterministic secret key");
@@ -773,13 +1125,7 @@ mod tests {
         ];
         spki.extend_from_slice(&raw_pubkey);
 
-        let clean_policy = policy
-            .replace("\r", "")
-            .replace("\n", "")
-            .trim()
-            .to_string();
-        let digest = Sha256::digest(clean_policy.as_bytes());
-        let policy_digest = hex::encode(digest);
+        let policy_digest = hex::encode(Sha256::digest(policy.as_bytes()));
         let msg = format!("{}{}", nonce, policy_digest);
 
         let signature: Signature = signing_key.sign(msg.as_bytes());

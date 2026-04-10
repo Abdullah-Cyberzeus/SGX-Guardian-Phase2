@@ -8,6 +8,7 @@ message CertSignRequest {
   string node_id = 1;              // e.g. "nodeB"
   string public_key_pem = 2;       // requesting node public key PEM
   string overlay_ip = 3;           // e.g. "192.168.100.2/24"
+  bool wants_lighthouse = 4;       // request lighthouse role assignment
 }
 
 message CertSignResponse {
@@ -16,6 +17,10 @@ message CertSignResponse {
   string node_key_pem = 3;         // Nebula node private key content
   string ca_cert_pem = 4;          // CA public certificate content
   string message = 5;              // Human-readable status message
+  bool assigned_lighthouse = 6;    // approved as secondary lighthouse
+  string lighthouse_registry_json = 7; // serialized lighthouse registry
+  string overlay_registry_json = 8;    // serialized overlay registry
+  bytes signed_policy_bytes = 9;   // /etc/sgx-guardian/policies/policy.sig
 }
 
 service CertService {

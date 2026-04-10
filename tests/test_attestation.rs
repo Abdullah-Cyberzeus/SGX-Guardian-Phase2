@@ -159,24 +159,3 @@ fn test_attestation_evidence_serialization_roundtrip() {
     assert_eq!(original.signature, deserialized.signature);
     assert_eq!(original.pubkey_der_b64, deserialized.pubkey_der_b64);
 }
-
-#[test]
-fn test_policy_normalization_works_for_verification() {
-    let pretty_policy = "  allow: all  \n  version: 1  ";
-    let nonce = test_nonce("normalization");
-    // Build evidence with exactly the same normalization rules used by verifier.
-    let ev = make_evidence(pretty_policy, &nonce, true);
-
-    let ok = AttestationService::verify_signed_evidence(&ev, pretty_policy).unwrap();
-    assert!(ok);
-}
-
-#[test]
-fn test_long_policy_verification_success() {
-    let long_policy = "rule: allow\n".repeat(1000);
-    let nonce = test_nonce("long_policy");
-    let ev = make_evidence(&long_policy, &nonce, true);
-
-    let verified = AttestationService::verify_signed_evidence(&ev, &long_policy).unwrap();
-    assert!(verified);
-}

@@ -2,6 +2,8 @@
 //! Provides read-only health diagnostics for Nebula PKI and daemon state.
 
 use crate::nebula::interface::NebulaInterface;
+use crate::nebula::lighthouse::LighthouseRegistry;
+use crate::nebula::nat::NatDiagnostics;
 use crate::nebula::overlay::OverlayPool;
 use std::path::Path;
 use std::process::Command;
@@ -147,6 +149,37 @@ pub struct OverlayHealthReport {
     pub pool_summary: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct LighthouseHealthReport {
+    pub is_lighthouse: bool,
+    pub udp_listening: bool,
+    pub active_count: usize,
+    pub primary_active: bool,
+}
+
+impl LighthouseHealthReport {
+    pub fn is_healthy(&self) -> bool {
+        if self.is_lighthouse {
+            self.udp_listening && self.primary_active
+        } else {
+            // Member nodes do not listen on UDP 4242; they are healthy
+            // if a primary lighthouse is active in the registry.
+            self.primary_active && self.active_count > 0
+        }
+    }
+
+    pub fn summary(&self) -> String {
+        format!(
+            "LH: is_lh={} udp={} primary={} active={} {}",
+            self.is_lighthouse,
+            if self.udp_listening { "OPEN" } else { "CLOSED" },
+            self.primary_active,
+            self.active_count,
+            if self.is_healthy() { "✅" } else { "⚠️" }
+        )
+    }
+}
+
 impl OverlayHealthReport {
     pub fn is_healthy(&self) -> bool {
         self.interface_up && self.ip_correct && self.pool_valid
@@ -186,6 +219,18 @@ impl NebulaHealth {
             ip_correct,
             pool_valid,
             pool_summary: pool.summary(),
+        }
+    }
+
+    pub fn check_lighthouse(
+        registry: &LighthouseRegistry,
+        node_name: &str,
+    ) -> LighthouseHealthReport {
+        LighthouseHealthReport {
+            is_lighthouse: registry.is_lighthouse(node_name),
+            udp_listening: NatDiagnostics::nebula_listening(),
+            active_count: registry.active().len(),
+            primary_active: registry.primary().map(|p| p.is_active).unwrap_or(false),
         }
     }
 }
@@ -228,5 +273,24 @@ mod overlay_health_tests {
         let report = NebulaHealth::check_overlay(&pool, "nodeA");
         // On dev machine, interface is down → DEGRADED
         assert!(report.summary().contains("❌ DEGRADED"));
+    }
+
+    #[test]
+    fn test_lighthouse_health_summary_format() {
+        let reg = LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "10.0.0.1:4242");
+        let report = NebulaHealth::check_lighthouse(&reg, "nodeA");
+        let summary = report.summary();
+        assert!(summary.contains("LH:"));
+        assert!(summary.contains("is_lh=true"));
+        assert!(summary.contains("active=1"));
+    }
+
+    #[test]
+    fn test_lighthouse_health_primary_state_drives_health() {
+        let mut reg = LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "10.0.0.1:4242");
+        reg.mark_inactive("nodeA");
+        let report = NebulaHealth::check_lighthouse(&reg, "nodeB");
+        assert!(!report.primary_active);
+        assert!(!report.is_healthy());
     }
 }

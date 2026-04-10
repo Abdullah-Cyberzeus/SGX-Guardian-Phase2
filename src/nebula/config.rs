@@ -3,6 +3,7 @@
 // lighthouse_lan_ip parameter so member nodes embed the real
 // nodeA LAN IP instead of the placeholder "LIGHTHOUSE_PUBLIC_IP".
 
+use crate::nebula::lighthouse::LighthouseRegistry;
 use crate::nebula::overlay::OverlayPool;
 use std::fs;
 use std::io::Write;
@@ -109,11 +110,44 @@ firewall:
         config_dir: &str,
         lighthouse_lan_ip: Option<&str>,
     ) -> Result<(), std::io::Error> {
-        let config_path = format!("{}/nebula.yaml", config_dir);
+        let owner_overlay_ip = pool
+            .get_ip(&pool.owner_node)
+            .cloned()
+            .unwrap_or_else(|| format!("{}.1", pool.subnet_base));
 
+        let endpoint = match lighthouse_lan_ip {
+            Some(lan_ip) if Self::valid_lighthouse_lan_ip(lan_ip) => format!("{}:4242", lan_ip),
+            _ if node_name == pool.owner_node => "0.0.0.0:4242".to_string(),
+            _ => {
+                eprintln!(
+                    "⚠️  [NebulaConfig] No valid lighthouse LAN IP provided for {}. \
+                     Nebula tunnel may not establish until nodeA IP is known.",
+                    node_name
+                );
+                "NEEDS_NODEA_LAN_IP:4242".to_string()
+            }
+        };
+
+        let lh_registry = LighthouseRegistry::new(
+            &pool.circle_id,
+            &pool.owner_node,
+            &owner_overlay_ip,
+            &endpoint,
+        );
+
+        Self::generate_config_with_lighthouse(node_name, pool, &lh_registry, config_dir)
+    }
+
+    /// Multi-lighthouse config generation.
+    pub fn generate_config_with_lighthouse(
+        node_name: &str,
+        pool: &OverlayPool,
+        lh_registry: &LighthouseRegistry,
+        config_dir: &str,
+    ) -> Result<(), std::io::Error> {
+        let config_path = format!("{}/nebula.yaml", config_dir);
         fs::create_dir_all(config_dir)?;
 
-        // Get this node's overlay IP from the pool.
         let overlay_ip = pool.get_ip_cidr(node_name).ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::NotFound,
@@ -121,69 +155,67 @@ firewall:
             )
         })?;
 
-        let is_lighthouse = node_name == pool.owner_node;
+        let am_lh = node_name == "nodeA"
+            || std::path::Path::new("/var/lib/sgx-guardian/nebula/am_lighthouse").exists();
+        let is_lighthouse = am_lh || lh_registry.is_lighthouse(node_name);
+        let active_lighthouses = lh_registry
+            .active()
+            .iter()
+            .filter(|l| l.node_name != node_name)
+            .map(|l| l.overlay_ip.clone())
+            .collect::<Vec<String>>();
 
-        let owner_overlay_ip = pool
-            .get_ip(&pool.owner_node)
-            .cloned()
-            .unwrap_or_else(|| format!("{}.1", pool.subnet_base));
-
-        // ── Lighthouse section ────────────────────────────────────────────
         let lighthouse_section = if is_lighthouse {
-            "lighthouse:\n  am_lighthouse: true\n  interval: 60\n".to_string()
+            if active_lighthouses.is_empty() {
+                "lighthouse:\n  am_lighthouse: true\n  interval: 60\n".to_string()
+            } else {
+                let hosts: Vec<String> = active_lighthouses
+                    .iter()
+                    .map(|ip| format!("    - \"{}\"", ip))
+                    .collect();
+                format!(
+                    "lighthouse:\n  am_lighthouse: true\n  interval: 60\n  hosts:\n{}\n",
+                    hosts.join("\n")
+                )
+            }
         } else {
+            let hosts: Vec<String> = active_lighthouses
+                .iter()
+                .map(|ip| format!("    - \"{}\"", ip))
+                .collect();
             format!(
-                "lighthouse:\n  am_lighthouse: false\n  interval: 60\n  hosts:\n    - \"{overlay_ip_lh}\"\n",
-                overlay_ip_lh = owner_overlay_ip
+                "lighthouse:\n  am_lighthouse: false\n  interval: 60\n  hosts:\n{}\n",
+                hosts.join("\n")
             )
         };
 
-        // ── static_host_map section ───────────────────────────────────────
-        // The lighthouse node does not need a static_host_map entry for itself.
-        // Member nodes MUST have a real LAN IP:port so they can bootstrap
-        // before the overlay is up (they can't reach 192.168.100.1 yet!).
-        let static_host_map_section = if is_lighthouse {
-            // Lighthouse advertises nothing in static_host_map.
+        let entries = lh_registry
+            .static_host_map_entries()
+            .into_iter()
+            .filter(|(overlay, _)| {
+                overlay != &overlay_ip.split('/').next().unwrap_or("").to_string()
+            })
+            .collect::<Vec<(String, String)>>();
+        let static_host_map_section = if entries.is_empty() {
             "static_host_map: {}\n".to_string()
         } else {
-            match lighthouse_lan_ip {
-                Some(lan_ip)
-                    if !lan_ip.is_empty() && lan_ip != "0.0.0.0" && lan_ip != "127.0.0.1" =>
-                {
-                    // Use the actual LAN IP so members can reach nodeA's UDP 4242
-                    // before the overlay tunnel is established.
-                    format!(
-                        "static_host_map:\n  \"{owner_ov}\": [\"{lan}:4242\"]\n",
-                        owner_ov = owner_overlay_ip,
-                        lan = lan_ip,
-                    )
-                }
-                _ => {
-                    // Fallback: warn loudly; the overlay will not work until
-                    // nodeA's real IP is known.
-                    eprintln!(
-                        "⚠️  [NebulaConfig] No valid lighthouse LAN IP provided for {}. \
-                         Nebula tunnel will NOT work until nodeA's IP is discovered. \
-                         Set SGX_LIGHTHOUSE_IP=<nodeA-lan-ip> or ensure nodeA broadcasts \
-                         before this node starts.",
-                        node_name
-                    );
-                    format!(
-                        "static_host_map:\n  \"{owner_ov}\": [\"NEEDS_NODEА_LAN_IP:4242\"]\n",
-                        owner_ov = owner_overlay_ip
-                    )
-                }
-            }
+            let lines: Vec<String> = entries
+                .iter()
+                .map(|(overlay, physical)| format!("  \"{}\": [\"{}\"]", overlay, physical))
+                .collect();
+            format!("static_host_map:\n{}\n", lines.join("\n"))
         };
 
-        // ── Relay section (Nebula ≥ 1.7) ─────────────────────────────────
-        // Members should relay through the lighthouse if direct path fails.
         let relay_section = if is_lighthouse {
             "relay:\n  am_relay: true\n  use_relays: false\n".to_string()
         } else {
+            let relays: Vec<String> = active_lighthouses
+                .iter()
+                .map(|ip| format!("    - \"{}\"", ip))
+                .collect();
             format!(
-                "relay:\n  am_relay: false\n  use_relays: true\n  relays:\n    - \"{}\"\n",
-                owner_overlay_ip
+                "relay:\n  am_relay: false\n  use_relays: true\n  relays:\n{}\n",
+                relays.join("\n")
             )
         };
 
@@ -242,13 +274,18 @@ firewall:
         drop(file);
         fs::rename(&tmp_path, &config_path)?;
 
+        let endpoint_label = lh_registry
+            .primary_physical_endpoint()
+            .unwrap_or_else(|| "self".to_string());
         println!(
             "✅ Nebula config written: {} → {} (tun: nebula0, lighthouse_lan: {})",
-            node_name,
-            overlay_ip,
-            lighthouse_lan_ip.unwrap_or("self"),
+            node_name, overlay_ip, endpoint_label
         );
         Ok(())
+    }
+
+    fn valid_lighthouse_lan_ip(ip: &str) -> bool {
+        !ip.is_empty() && ip != "0.0.0.0" && ip != "127.0.0.1"
     }
 }
 
@@ -387,6 +424,35 @@ mod tests {
         let c = std::fs::read_to_string(format!("{}/nebula.yaml", dir)).unwrap();
         assert!(c.contains("use_relays: true"));
         assert!(c.contains("192.168.100.1"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_multi_lighthouse_config() {
+        let mut pool = OverlayPool::new("alpha", "192.168.100", "nodeA");
+        pool.allocate("nodeB").unwrap();
+        pool.allocate("nodeD").unwrap();
+
+        let mut reg = crate::nebula::lighthouse::LighthouseRegistry::new(
+            "alpha",
+            "nodeA",
+            "192.168.100.1",
+            "10.0.0.1:4242",
+        );
+        reg.add_secondary("nodeD", "192.168.100.4", "10.0.0.5:4242");
+
+        let dir = tmp("multi_lh");
+        let _ = std::fs::create_dir_all(&dir);
+        let result = NebulaConfig::generate_config_with_lighthouse("nodeB", &pool, &reg, &dir);
+        assert!(result.is_ok());
+
+        let c = std::fs::read_to_string(format!("{}/nebula.yaml", dir)).unwrap();
+        assert!(c.contains("10.0.0.1:4242"));
+        assert!(c.contains("10.0.0.5:4242"));
+        assert!(c.contains("\"192.168.100.1\""));
+        assert!(c.contains("\"192.168.100.4\""));
+        assert!(!c.contains("LIGHTHOUSE_PUBLIC_IP"));
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

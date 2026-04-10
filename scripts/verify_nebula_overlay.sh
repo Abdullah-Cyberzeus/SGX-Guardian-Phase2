@@ -52,6 +52,8 @@ fi
 section "3. Nebula Config"
 
 CFG="$NEBULA_BASE/nebula.yaml"
+AM_LH=""
+LH_ENDPOINTS=""
 
 if [ -f "$CFG" ]; then
     ok "Config exists: $CFG"
@@ -66,6 +68,39 @@ if [ -f "$CFG" ]; then
     STATIC=$(grep -A2 "static_host_map:" "$CFG" | head -5)
     echo "  static_host_map section:"
     echo "$STATIC" | sed 's/^/    /'
+
+    AM_LH=$(grep -E "^[[:space:]]*am_lighthouse:" "$CFG" | awk '{print $2}' | head -1 || true)
+    if [ "$AM_LH" = "true" ]; then
+        ok "Config role: lighthouse (am_lighthouse: true)"
+    elif [ "$AM_LH" = "false" ]; then
+        ok "Config role: member (am_lighthouse: false)"
+    else
+        warn "Could not parse am_lighthouse role"
+    fi
+
+    LH_ENDPOINTS=$(grep -A10 "static_host_map:" "$CFG" \
+        | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:4242' || true)
+
+    if [ "$AM_LH" = "true" ]; then
+        if grep -q "static_host_map: {}" "$CFG"; then
+            ok "Lighthouse static_host_map is empty as expected"
+        else
+            warn "Lighthouse static_host_map is not empty"
+        fi
+    elif [ "$AM_LH" = "false" ]; then
+        if [ -n "$LH_ENDPOINTS" ]; then
+            ok "Member static_host_map has real lighthouse endpoint(s): $(echo "$LH_ENDPOINTS" | tr '\n' ' ')"
+        else
+            fail "Member static_host_map missing real endpoint(s)"
+        fi
+
+        LH_HOST_COUNT=$(grep -A10 "lighthouse:" "$CFG" | grep -cE '^[[:space:]]*-[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+"' || true)
+        if [ "$LH_HOST_COUNT" -ge 1 ]; then
+            ok "lighthouse.hosts entries: $LH_HOST_COUNT"
+        else
+            fail "No lighthouse.hosts entries found for member node"
+        fi
+    fi
 
     # Validate config
     if nebula -config "$CFG" -test >/dev/null 2>&1; then
@@ -121,22 +156,28 @@ fi
 # ── 6. UDP 4242 CONNECTIVITY ─────────────────────────────────────────────
 section "6. UDP 4242 Reachability"
 
-if [ "$NODE_ID" != "nodeA" ]; then
-    NODE_A_IP=$(grep -A5 "static_host_map:" "$CFG" 2>/dev/null \
-                | grep -oP '\d+\.\d+\.\d+\.\d+' | head -1)
-    if [ -n "$NODE_A_IP" ]; then
-        echo "  Testing UDP 4242 to nodeA at $NODE_A_IP..."
+if ss -ulnp 2>/dev/null | grep -q ":4242"; then
+    ok "Local UDP 4242 listener detected"
+else
+    fail "Local UDP 4242 listener NOT detected"
+fi
+
+if [ "$AM_LH" != "true" ]; then
+    PRIMARY_LH_ENDPOINT=$(echo "$LH_ENDPOINTS" | head -1 || true)
+    if [ -n "$PRIMARY_LH_ENDPOINT" ]; then
+        NODE_A_IP="${PRIMARY_LH_ENDPOINT%:4242}"
+        echo "  Testing UDP 4242 to lighthouse at $PRIMARY_LH_ENDPOINT..."
         if nc -zu -w3 "$NODE_A_IP" 4242 2>/dev/null; then
-            ok "UDP 4242 reachable to $NODE_A_IP"
+            ok "UDP 4242 reachable to $PRIMARY_LH_ENDPOINT"
         else
-            fail "UDP 4242 NOT reachable to $NODE_A_IP"
+            fail "UDP 4242 NOT reachable to $PRIMARY_LH_ENDPOINT"
             echo "  Fix on nodeA: sudo ufw allow 4242/udp  OR  sudo nft add rule inet filter input udp dport 4242 accept"
         fi
     else
-        warn "Could not parse nodeA IP from config"
+        warn "Could not parse lighthouse endpoint from static_host_map"
     fi
 else
-    echo "  (skipped — this IS nodeA)"
+    echo "  (remote reachability skipped — this node is configured as lighthouse)"
 fi
 
 # ── 7. OVERLAY PING TEST ─────────────────────────────────────────────────

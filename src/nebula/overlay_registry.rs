@@ -1,22 +1,22 @@
 // src/nebula/overlay_registry.rs
 // ============================================================
-// Nebula Overlay IP Registry - Multi-Node, Multi-PC
+// Nebula Overlay IP Registry — Multi-Node, Multi-PC
 //
-// Problem: OverlayPool was saved only on a single PC.
-// If nodeA runs on PC1 and later moves to PC2, the .1 IP
-// could be reassigned, causing an IP conflict.
+// Problem yeh hai ke OverlayPool sirf ek PC par save hoti thi.
+// Agar nodeA PC1 par chale aur baad mein PC2 par, to .1 IP
+// dobara assign ho sakti thi — IP conflict.
 //
-// This file maintains a JSON-based registry where:
-//   - Each node name is permanently mapped to an overlay IP
-//   - Circle owner (nodeA) always gets .1
-//   - An atomic counter tracks the next available IP
-//   - File locks keep concurrent writes safe
+// Yeh file ek JSON-based registry maintain karti hai jis mein:
+//   - Har node ka naam → overlay IP permanently mapped hai
+//   - Circle owner (nodeA) hamesha .1 milta hai
+//   - Ek atomic counter next available IP track karta hai
+//   - File-lock se concurrent writes safe hain
 //
 // SYNC STRATEGY:
-//   - nodeA (CA) stores its registry in /var/lib/sgx-guardian/nebula/
-//   - Member nodes register their IP during cert requests
-//   - nodeA's registry is the master and assigns IPs
-//   - Member nodes cache their assigned IP locally
+//   - nodeA (CA) apni registry /var/lib/sgx-guardian/nebula/ mein rakhta hai
+//   - Member nodes cert request ke waqt apni IP bhi register karate hain
+//   - nodeA ki registry hi master hai — wo hi IP assign karta hai
+//   - Member nodes apni assigned IP locally cache karte hain
 // ============================================================
 
 use serde::{Deserialize, Serialize};
@@ -26,8 +26,8 @@ use std::path::Path;
 
 pub const REGISTRY_SUBNET_BASE: &str = "192.168.100";
 pub const REGISTRY_CIDR: u8 = 24;
-pub const REGISTRY_OWNER_HOST: u8 = 1; // Circle owner is always .1
-pub const REGISTRY_START_HOST: u8 = 2; // Members start from .2
+pub const REGISTRY_OWNER_HOST: u8 = 1; // Circle owner hamesha .1
+pub const REGISTRY_START_HOST: u8 = 2; // Members .2 se shuru
 pub const REGISTRY_MAX_HOST: u8 = 254; // Maximum .254
 
 /// Permanent IP allocation record for one node.
@@ -182,6 +182,92 @@ impl OverlayRegistry {
         );
 
         Ok(ip_cidr)
+    }
+
+    /// Set a specific IP/CIDR for a node (authoritative sync path).
+    /// Used when CA must honor an already-assigned overlay IP from registry sync.
+    pub fn set_ip(&mut self, node_name: &str, ip_cidr: &str) -> Result<(), String> {
+        let (ip, cidr_s) = ip_cidr
+            .split_once('/')
+            .ok_or_else(|| format!("Invalid CIDR format: {}", ip_cidr))?;
+        let cidr: u8 = cidr_s
+            .parse::<u8>()
+            .map_err(|_| format!("Invalid CIDR mask in {}", ip_cidr))?;
+
+        if cidr != self.cidr {
+            return Err(format!(
+                "CIDR mismatch for {}: got /{}, expected /{}",
+                node_name, cidr, self.cidr
+            ));
+        }
+
+        if !ip.starts_with(&format!("{}.", self.subnet_base)) {
+            return Err(format!(
+                "IP {} is outside subnet base {}",
+                ip, self.subnet_base
+            ));
+        }
+
+        let host = ip
+            .split('.')
+            .next_back()
+            .and_then(|s| s.parse::<u8>().ok())
+            .ok_or_else(|| format!("Invalid host octet in {}", ip))?;
+
+        if !(REGISTRY_OWNER_HOST..=REGISTRY_MAX_HOST).contains(&host) {
+            return Err(format!(
+                "Host octet {} out of range (.{}-.{})",
+                host, REGISTRY_OWNER_HOST, REGISTRY_MAX_HOST
+            ));
+        }
+
+        if node_name == self.owner_node && host != REGISTRY_OWNER_HOST {
+            return Err(format!(
+                "Owner {} must keep .{} (got .{})",
+                node_name, REGISTRY_OWNER_HOST, host
+            ));
+        }
+
+        if let Some(conflict) = self
+            .allocations
+            .iter()
+            .find(|(name, rec)| name.as_str() != node_name && rec.overlay_ip == ip)
+            .map(|(name, _)| name.clone())
+        {
+            return Err(format!(
+                "IP conflict: {} already allocated to {}",
+                ip, conflict
+            ));
+        }
+
+        let existing_pubkey = self
+            .allocations
+            .get(node_name)
+            .and_then(|r| r.pubkey_prefix.clone());
+
+        self.allocations.insert(
+            node_name.to_string(),
+            NodeIpRecord {
+                node_name: node_name.to_string(),
+                overlay_ip: ip.to_string(),
+                overlay_ip_cidr: ip_cidr.to_string(),
+                is_owner: node_name == self.owner_node,
+                allocated_at: Self::now_iso(),
+                pubkey_prefix: existing_pubkey,
+            },
+        );
+
+        if self.next_host <= host {
+            self.next_host = host.saturating_add(1);
+        }
+        self.next_host = self.next_host.max(REGISTRY_START_HOST);
+        self.last_modified = Self::now_iso();
+        Ok(())
+    }
+
+    /// Total allocated nodes in registry.
+    pub fn allocated_count(&self) -> usize {
+        self.allocations.len()
     }
 
     /// Get the assigned IP (with CIDR) for a node.
@@ -345,9 +431,9 @@ impl OverlayRegistry {
     }
 }
 
-// Compat bridge: convert OverlayRegistry -> OverlayPool
-// main.rs uses OverlayPool, so this conversion keeps integration simple.
-// It builds an OverlayPool view from registry state.
+// ── Compat bridge: convert OverlayRegistry → OverlayPool ─────
+// Yeh bridge isliye hai ke main.rs OverlayPool use karta hai.
+// Registry se pool banana easy hai.
 impl From<&OverlayRegistry> for crate::nebula::overlay::OverlayPool {
     fn from(reg: &OverlayRegistry) -> Self {
         let mut pool = crate::nebula::overlay::OverlayPool::new(
