@@ -98,12 +98,14 @@ impl NebulaCA {
                 println!("ℹ️  CA cert already saved and matches — skipping.");
                 return Ok(());
             }
-            // Fingerprints differ — this indicates a CA mismatch.
-            eprintln!(
-                "⚠️  CA cert mismatch at {}! Overwriting with CA-provided cert. \
-                 This may indicate a previously broken deployment.",
-                ca_crt
-            );
+            // SECURITY: Existing trust anchor differs from the one offered by the bootstrap
+            // response. Refuse to overwrite — this could be an attack or a misrouted response.
+            // Operator must explicitly delete /var/lib/sgx-guardian/nebula/ca/ca.crt to rotate.
+            return Err(Error::other(format!(
+                "CA cert mismatch at {}. Refusing to overwrite the existing trust anchor without explicit rotation. \
+                 If this is an intentional rotation, remove {} manually and restart.",
+                ca_crt, ca_crt
+            )));
         }
 
         // Write atomically: tmp → rename

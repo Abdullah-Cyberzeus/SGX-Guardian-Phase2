@@ -48,33 +48,33 @@ impl ExpiryMonitor {
                             "Expired Nebula certificate deleted for regeneration",
                         );
                     } else if days <= 7 {
-                        let msg =
-                            format!("🚨 CRITICAL: Nebula certificate expires in {} days", days);
-                        println!("{}", msg);
+                        // Generic message for stdout (CodeQL: avoid logging precise day count)
+                        println!("🚨 CRITICAL: Nebula certificate is nearing expiration");
+                        let msg = format!("Nebula certificate expires in {} days", days);
                         log_error(&node_name, &msg);
                         crate::audit::logger::log_audit(
                             &node_name,
                             crate::audit::event::AuditCategory::Tls,
                             crate::audit::event::AuditSeverity::Critical,
                             crate::audit::event::AuditAction::Succeeded,
-                            &format!("Nebula certificate expires in {} days", days),
+                            &msg,
                         );
                     } else if days <= 30 {
-                        let msg =
-                            format!("⚠️ WARNING: Nebula certificate expires in {} days", days);
-                        println!("{}", msg);
+                        // Generic message for stdout (CodeQL: avoid logging precise day count)
+                        println!("⚠️ WARNING: Nebula certificate will expire soon");
+                        let msg = format!("Nebula certificate expires in {} days", days);
                         log_event(&node_name, &msg);
                         crate::audit::logger::log_audit(
                             &node_name,
                             crate::audit::event::AuditCategory::Tls,
                             crate::audit::event::AuditSeverity::Warning,
                             crate::audit::event::AuditAction::Succeeded,
-                            &format!("Nebula certificate expires in {} days", days),
+                            &msg,
                         );
                     } else {
-                        let msg =
-                            format!("✅ Nebula certificate healthy ({} days remaining)", days);
-                        println!("{}", msg);
+                        // Generic message for stdout (CodeQL: avoid logging precise day count)
+                        println!("✅ Nebula certificate healthy");
+                        let msg = format!("Nebula certificate healthy ({} days remaining)", days);
                         log_event(&node_name, &msg);
                     }
                 } else {

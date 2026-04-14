@@ -104,7 +104,13 @@ pub fn run_create() {
                         "✅ Baseline created and SIGNED at {}",
                         &baseline_path_for(&node_id)
                     );
-                    println!("   Device UID: {}", device_uid);
+                    // Print only an 8-char fingerprint of the device UID, not the raw value.
+                    // The full UID is still stored inside the baseline file for verification.
+                    let device_uid_fp = {
+                        let hash = sha2::Sha256::digest(device_uid.as_bytes());
+                        hex::encode(&hash[..4])
+                    };
+                    println!("   Device UID (fingerprint): {}", device_uid_fp);
                     println!("   Key version: {}", key_version);
                 }
                 Err(e) => eprintln!("Write error: {}", e),
