@@ -11,6 +11,14 @@ use tokio::sync::Mutex;
 use tonic::transport::ServerTlsConfig;
 use tonic::{transport::Server, Request, Response, Status};
 
+fn ensure_rustls_crypto_provider() {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        // Explicitly select ring to avoid runtime panic when both rustls crypto
+        // backends are present in the dependency graph.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+}
+
 /// Basic gRPC Ping service used for inter-node liveness checks.
 /// Implements the `PingService` trait generated from the SG-X protobuf schema.
 pub struct MyPingService {
@@ -51,6 +59,8 @@ pub async fn start_server(
     identity: tonic::transport::Identity,
     ca_cert: tonic::transport::Certificate,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    ensure_rustls_crypto_provider();
+
     use crate::metrics::Metrics;
     use std::sync::Arc;
     use tokio::sync::Mutex;

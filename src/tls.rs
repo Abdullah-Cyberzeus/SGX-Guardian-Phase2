@@ -1,8 +1,11 @@
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use anyhow::{Context, Result};
-use rustls::server::AllowAnyAuthenticatedClient;
-use rustls::{Certificate, ClientConfig, PrivateKey, RootCertStore, ServerConfig};
+use rustls::pki_types::{
+    CertificateDer, PrivateKeyDer, PrivatePkcs1KeyDer, PrivatePkcs8KeyDer, PrivateSec1KeyDer,
+};
+use rustls::server::WebPkiClientVerifier;
+use rustls::{ClientConfig, RootCertStore, ServerConfig};
 use std::fs;
 use std::sync::Arc;
 
@@ -11,7 +14,7 @@ pub struct TlsConfig {
     pub client: ClientConfig,
 }
 /// Load PEM private key (safe, rustls-pemfile removed)
-pub fn load_private_key(path: &str) -> Result<PrivateKey> {
+pub fn load_private_key(path: &str) -> Result<PrivateKeyDer<'static>> {
     let pem_data = fs::read_to_string(path)
         .with_context(|| format!("Failed to read private key: {}", path))?;
 
@@ -21,12 +24,15 @@ pub fn load_private_key(path: &str) -> Result<PrivateKey> {
     for block in blocks {
         match block.tag() {
             "PRIVATE KEY" | "RSA PRIVATE KEY" => {
-                return Ok(PrivateKey(block.contents().to_vec()));
+                let key_bytes = block.contents().to_vec();
+                return Ok(match block.tag() {
+                    "PRIVATE KEY" => PrivatePkcs8KeyDer::from(key_bytes).into(),
+                    "RSA PRIVATE KEY" => PrivatePkcs1KeyDer::from(key_bytes).into(),
+                    _ => unreachable!(),
+                });
             }
             "EC PRIVATE KEY" => {
-                return Err(anyhow::anyhow!(
-                    "EC PRIVATE KEY (SEC1) not supported; provide PKCS#8"
-                ));
+                return Ok(PrivateSec1KeyDer::from(block.contents().to_vec()).into());
             }
             _ => continue,
         }
@@ -35,17 +41,17 @@ pub fn load_private_key(path: &str) -> Result<PrivateKey> {
     Err(anyhow::anyhow!("No valid private key found in PEM file"))
 }
 /// Load PEM certificates (safe, rustls-pemfile removed)
-pub fn load_certificate(path: &str) -> Result<Vec<Certificate>> {
+pub fn load_certificate(path: &str) -> Result<Vec<CertificateDer<'static>>> {
     let pem_data = fs::read_to_string(path)
         .with_context(|| format!("Failed to read certificate: {}", path))?;
 
     let blocks = pem::parse_many(&pem_data)
         .map_err(|e| anyhow::anyhow!("Failed to parse PEM certificates: {}", e))?;
 
-    let certs: Vec<Certificate> = blocks
+    let certs: Vec<CertificateDer<'static>> = blocks
         .into_iter()
         .filter(|b| b.tag() == "CERTIFICATE")
-        .map(|b| Certificate(b.contents().to_vec()))
+        .map(|b| CertificateDer::from(b.contents().to_vec()))
         .collect();
 
     if certs.is_empty() {
@@ -56,34 +62,32 @@ pub fn load_certificate(path: &str) -> Result<Vec<Certificate>> {
 }
 /// Build server-side TLS config (requires client certs)
 pub fn build_server_config(
-    server_cert: Vec<Certificate>,
-    private_key: PrivateKey,
-    client_ca: Vec<Certificate>,
+    server_cert: Vec<CertificateDer<'static>>,
+    private_key: PrivateKeyDer<'static>,
+    client_ca: Vec<CertificateDer<'static>>,
 ) -> Result<ServerConfig> {
     let mut root = RootCertStore::empty();
     for ca in client_ca {
-        root.add(&ca)?;
+        root.add(ca)?;
     }
-    let client_verifier = AllowAnyAuthenticatedClient::new(root);
+    let client_verifier = WebPkiClientVerifier::builder(Arc::new(root)).build()?;
     let config = ServerConfig::builder()
-        .with_safe_defaults()
-        .with_client_cert_verifier(Arc::new(client_verifier))
+        .with_client_cert_verifier(client_verifier)
         .with_single_cert(server_cert, private_key)?;
 
     Ok(config)
 }
 /// Build client-side TLS config
 pub fn build_client_config(
-    ca_certs: Vec<Certificate>,
-    client_cert: Vec<Certificate>,
-    private_key: PrivateKey,
+    ca_certs: Vec<CertificateDer<'static>>,
+    client_cert: Vec<CertificateDer<'static>>,
+    private_key: PrivateKeyDer<'static>,
 ) -> Result<ClientConfig> {
     let mut root = RootCertStore::empty();
     for ca in ca_certs {
-        root.add(&ca)?;
+        root.add(ca)?;
     }
     let config = ClientConfig::builder()
-        .with_safe_defaults()
         .with_root_certificates(root)
         .with_client_auth_cert(client_cert, private_key)?;
     Ok(config)

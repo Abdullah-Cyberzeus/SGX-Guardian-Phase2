@@ -111,14 +111,14 @@ impl NebulaInterface {
     }
 
     /// Wait for nebula0 to appear after daemon start.
-    pub fn wait_for_interface(timeout_secs: u64) -> bool {
+    pub async fn wait_for_interface(timeout_secs: u64) -> bool {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
 
         while std::time::Instant::now() < deadline {
             if Self::is_up() {
                 return true;
             }
-            std::thread::sleep(std::time::Duration::from_millis(500));
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
         false
     }

@@ -1,22 +1,22 @@
-// src/dynamic_config.rs — VERSION 2
+// src/dynamic_config.rs - VERSION 2
 // ================================================================
 // CHANGES FROM V1:
 //
-// V1 mein main.rs broadcast ke liye peer IPs config se leta tha:
+// In V1, main.rs took peer IPs from config for broadcast:
 //   let peer_ips: Vec<String> = peers.iter().map(|p| p.ip.clone()).collect();
 //   broadcast_own_config_to_peers(&my_config, &peer_ips).await;
 //
-// Problem: Agar config mein 127.0.0.1 hai to broadcast fail hoga.
+// Problem: If config contains 127.0.0.1, broadcast fails.
 //
 // V2 FIX:
-//   - main.rs se startup broadcast HATA DO (ya disabled rakho)
-//   - p2p_discovery.rs hi config sync karta hai jab real peer milta hai
-//   - is file mein koi change nahi — sirf main.rs integration simplify hua
-//   - Agar manual broadcast karna ho to: broadcast_to_real_ip() use karo
-//     jo seedha ek known real IP par bhejta hai (config se nahi)
+//   - Remove (or keep disabled) startup broadcast from main.rs.
+//   - Let p2p_discovery.rs handle config sync when a real peer is found.
+//   - No functional change is required in this file; main.rs integration was simplified.
+//   - For manual broadcast, use broadcast_to_real_ip() with a known real IP
+//     instead of reading peer targets from config.
 // ================================================================
-
 use crate::config_loader::load_config;
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;

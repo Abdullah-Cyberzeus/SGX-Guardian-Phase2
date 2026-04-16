@@ -16,13 +16,13 @@ pub struct NebulaDaemon;
 impl NebulaDaemon {
     /// Kill any running nebula process.
     /// Called before start() to avoid "address already in use" on UDP 4242.
-    pub fn kill_existing() {
+    pub async fn kill_existing() {
         // Linux/macOS
         let _ = Command::new("pkill")
             .args(["-f", "nebula -config"])
             .output();
         // Give the OS a moment to release UDP 4242
-        thread::sleep(Duration::from_millis(600));
+        tokio::time::sleep(Duration::from_millis(600)).await;
     }
 
     /// Validate the config file with nebula's built-in check.
@@ -54,11 +54,11 @@ impl NebulaDaemon {
     ///   2. Validate the config.
     ///   3. Spawn the daemon.
     ///   4. Wait up to 20 s for nebula0 to appear.
-    pub fn start(config_path: &str) -> Result<(), Error> {
+    pub async fn start(config_path: &str) -> Result<(), Error> {
         println!("🚀 Starting Nebula daemon (config: {})...", config_path);
 
         // 1. Kill stale instance
-        Self::kill_existing();
+        Self::kill_existing().await;
 
         // 2. Validate config
         match Self::test_config(config_path) {
@@ -92,7 +92,7 @@ impl NebulaDaemon {
             if Instant::now() >= deadline {
                 break;
             }
-            thread::sleep(Duration::from_millis(500));
+            tokio::time::sleep(Duration::from_millis(500)).await;
         }
 
         // Interface didn't appear — check if daemon is still running

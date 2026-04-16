@@ -76,15 +76,26 @@ impl BootChainStatus {
             }
         }
 
-        // === Method 4: Check dmesg for HAB-related messages ===
-        if let Ok(output) = Command::new("dmesg").output() {
-            let dmesg = String::from_utf8_lossy(&output.stdout);
-            let dmesg_lower = dmesg.to_lowercase();
+        // === Method 4: Optional dmesg check for HAB-related messages ===
+        // Disabled by default to avoid scanning large kernel logs on long-lived boards.
+        // Enable only when needed:
+        //   SGX_BOOT_CHECK_DMESG=1
+        if std::env::var("SGX_BOOT_CHECK_DMESG")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        {
+            if let Ok(output) = Command::new("dmesg")
+                .args(["--nopager", "-T", "--since", "10 minutes ago"])
+                .output()
+            {
+                let dmesg = String::from_utf8_lossy(&output.stdout);
+                let dmesg_lower = dmesg.to_lowercase();
 
-            if dmesg_lower.contains("hab") {
-                status.hab_enabled = true;
-                if dmesg_lower.contains("hab event") || dmesg_lower.contains("hab failure") {
-                    status.hab_events_found = true;
+                if dmesg_lower.contains("hab") {
+                    status.hab_enabled = true;
+                    if dmesg_lower.contains("hab event") || dmesg_lower.contains("hab failure") {
+                        status.hab_events_found = true;
+                    }
                 }
             }
         }

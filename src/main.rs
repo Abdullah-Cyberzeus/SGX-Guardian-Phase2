@@ -41,8 +41,16 @@ use tokio::{signal, task};
 
 #[cfg(windows)]
 use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
+
+fn ensure_rustls_crypto_provider() {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ensure_rustls_crypto_provider();
     println!(" SGX Guardian Client Starting...");
     #[cfg(windows)]
     {
@@ -412,7 +420,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Generate nonce + timestamp
         let mut nonce_bytes = [0u8; 16];
-        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce_bytes);
+        let nonce_rng = ring::rand::SystemRandom::new();
+        ring::rand::SecureRandom::fill(&nonce_rng, &mut nonce_bytes).map_err(|_| {
+            std::io::Error::other("Failed to generate PCR snapshot nonce from system RNG")
+        })?;
         snapshot.nonce = hex::encode(nonce_bytes);
         snapshot.measured_at = chrono::Utc::now().to_rfc3339();
 
@@ -896,10 +907,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("📌 Using SGX_LIGHTHOUSE_IP={}", env_ip);
                     env_ip
                 } else {
-                    resolve_ca_ip_from_config_inner()
+                    resolve_ca_ip_from_config_inner().await
                 }
             } else {
-                resolve_ca_ip_from_config_inner()
+                resolve_ca_ip_from_config_inner().await
             }
         };
         println!("📡 nodeA (CA/Lighthouse) LAN IP: {}", ca_lan_ip);
@@ -1067,7 +1078,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tokio::spawn(async move {
                     loop {
                         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                        let ca_host = resolve_ca_ip_from_config_inner();
+                        let ca_host = resolve_ca_ip_from_config_inner().await;
                         if let Ok(latest_json) =
                             registry_sync::pull_registry_snapshot_from_ca(&ca_host).await
                         {
@@ -1111,7 +1122,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // === Start Nebula ===
     let nebula_config_path = format!("{}/nebula.yaml", nebula_base_dir);
-    if let Err(e) = NebulaDaemon::start(&nebula_config_path) {
+    if let Err(e) = NebulaDaemon::start(&nebula_config_path).await {
         eprintln!("❌ Failed to start Nebula daemon: {:?}", e);
         std::process::exit(1);
     }
@@ -1119,7 +1130,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Wait for nebula0 to come up, then verify its IP
     println!("⏳ Waiting for nebula0 interface...");
-    if NebulaInterface::wait_for_interface(15) {
+    if NebulaInterface::wait_for_interface(15).await {
         if let Some(cert_ip) = read_ip_from_nebula_cert(&nebula_base_dir, &node_id) {
             if cert_ip != nebula_ip {
                 eprintln!(
@@ -1736,7 +1747,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 // ── Helper function (add to main.rs as a nested fn or module fn) ─────────
 // Resolves nodeA's LAN IP from its config file (written by UDP broadcast).
-fn resolve_ca_ip_from_config_inner() -> String {
+async fn resolve_ca_ip_from_config_inner() -> String {
     // Give broadcasts a short window to populate nodeA's config on members.
     for attempt in 1..=20 {
         for path in &[
@@ -1752,7 +1763,7 @@ fn resolve_ca_ip_from_config_inner() -> String {
         if attempt == 1 {
             eprintln!("⏳ Waiting for nodeA LAN IP via discovery/config sync...");
         }
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
     eprintln!(
         "⚠️  Could not find nodeA LAN IP from config files. \

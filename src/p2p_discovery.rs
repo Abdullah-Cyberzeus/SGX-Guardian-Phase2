@@ -1,7 +1,6 @@
 use crate::config_loader::{load_config, NodeConfig};
 use crate::logging::log_event;
 use anyhow::Result;
-use libmdns::Responder;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -76,31 +75,11 @@ impl P2PDiscovery {
         node_id: String,
         _logger: Arc<Mutex<String>>,
     ) -> Result<()> {
-        log_event(&node_id, "Starting mDNS discovery");
-
-        let responder = match Responder::new() {
-            Ok(r) => Some(r),
-            Err(e) => {
-                eprintln!(
-                    "⚠️ mDNS responder unavailable (continuing without mDNS): {}",
-                    e
-                );
-                None
-            }
-        };
-        let _svc = responder.as_ref().map(|r| {
-            r.register(
-                "_sgx-guardian._tcp".to_string(),
-                node_id.clone(),
-                8443,
-                &["node=sgx-guardian"],
-            )
-        });
-        if _svc.is_some() {
-            println!("✅ mDNS service registered for {}", node_id);
-        } else {
-            println!("⚠️ mDNS service disabled; using broadcast/config discovery only");
-        }
+        log_event(
+            &node_id,
+            "Starting peer discovery (broadcast/config mode; mDNS disabled)",
+        );
+        println!("⚠️ mDNS service disabled; using broadcast/config discovery only");
         let node_id_clone = node_id.clone();
         let node_id_sim = node_id.clone();
         // ✅ Create clone for simulation path

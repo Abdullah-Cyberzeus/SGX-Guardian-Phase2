@@ -7,7 +7,7 @@ use crate::key_manager::KeyManager;
 use anyhow::Result;
 use base64::{engine::general_purpose, Engine as _};
 use chrono::DateTime;
-use rand::{thread_rng, RngCore};
+use ring::rand::{SecureRandom, SystemRandom};
 use ring::signature;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -494,7 +494,9 @@ impl AttestationService {
         policy_yaml: &str,
     ) -> Result<AttestationEvidence> {
         let mut nonce_bytes = [0u8; 16];
-        thread_rng().fill_bytes(&mut nonce_bytes);
+        let rng = SystemRandom::new();
+        rng.fill(&mut nonce_bytes)
+            .map_err(|_| anyhow::anyhow!("Failed to generate attestation nonce"))?;
         let nonce = hex::encode(nonce_bytes);
         let policy_digest = hex::encode(Sha256::digest(policy_yaml.as_bytes()));
         let msg = format!("{}{}", nonce, policy_digest);
