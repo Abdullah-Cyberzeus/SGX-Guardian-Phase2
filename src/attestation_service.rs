@@ -486,6 +486,325 @@ pub struct AttestationEvidence {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub key_version: Option<u32>,
 }
+
+// ════════════════════════════════════════════════════════════════
+// Hardware Attestation Protocol — Challenge-Response Structures
+// ════════════════════════════════════════════════════════════════
+
+/// Boot chain summary embedded in attestation quotes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BootChainSummary {
+    pub hab_enabled: bool,
+    pub device_closed: bool,
+    pub hab_events_found: bool,
+    pub boot_chain_intact: bool,
+}
+
+/// Cryptographic proof of device integrity state.
+/// Contains PCR values, boot chain status, device metadata.
+/// Signed by SE050 DKP key (ECDSA-P256).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttestationQuote {
+    /// Protocol version
+    pub version: u32,
+    /// Verifier's nonce (32 bytes hex) — proves freshness
+    pub challenge_nonce: String,
+    /// Device-generated nonce (16 bytes hex)
+    pub device_nonce: String,
+    /// ISO 8601 timestamp
+    pub timestamp: String,
+    /// Node identifier
+    pub node_id: String,
+    /// SE050 Certificate UID (hardware identity)
+    pub device_uid: String,
+    /// DKP key version used for signing
+    pub key_version: u32,
+    /// Public key (Base64-encoded)
+    pub pubkey_b64: String,
+    /// Current PCR values (5 registers)
+    pub pcr_values: Vec<String>,
+    /// PCR composite digest (SHA-256)
+    pub composite_digest: String,
+    /// PCR integrity status
+    pub integrity_status: String,
+    /// Boot chain status
+    pub boot_chain: BootChainSummary,
+    /// Firmware version
+    pub firmware_version: String,
+    /// Active policy digest
+    pub active_policy_digest: String,
+}
+
+/// Signed attestation quote with cryptographic binding.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignedQuote {
+    /// The attestation quote (JSON-serialized)
+    pub quote_json: String,
+    /// ECDSA-P256 signature over SHA-256(quote_json) — Base64
+    pub signature_b64: String,
+    /// Signing backend ("SE050" or "Software")
+    pub signing_backend: String,
+}
+
+/// Challenge sent by verifier to prover.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChallengeRequest {
+    pub verifier_node_id: String,
+    pub nonce: String, // 32 bytes hex
+    pub timestamp: String,
+}
+
+/// Response from prover containing signed quote.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChallengeResponse {
+    pub prover_node_id: String,
+    pub signed_quote: SignedQuote,
+    /// Optional counter-challenge for mutual attestation
+    pub counter_challenge_nonce: Option<String>,
+}
+
+/// Result of verifying a signed quote.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuoteVerificationResult {
+    pub verified: bool,
+    pub nonce_valid: bool,
+    pub signature_valid: bool,
+    pub pcr_match: bool,
+    pub boot_chain_ok: bool,
+    pub freshness_ok: bool,
+    pub reason: String,
+    pub timestamp: String,
+}
+
+impl AttestationQuote {
+    /// Generate a fresh attestation quote from current platform state.
+    pub fn generate(challenge_nonce: &str, node_id: &str, km: &KeyManager) -> Result<Self> {
+        use crate::secure_element::pcr::{read_dkp_key_version, PcrEngine, PcrSnapshot};
+        use crate::secure_element::secure_boot::BootChainStatus;
+
+        // Load current PCR snapshot
+        let pcr_path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node_id);
+        let snapshot = PcrSnapshot::load(&pcr_path).unwrap_or_else(|_| PcrEngine::new().snapshot());
+
+        // Load boot chain status
+        let boot = BootChainStatus::check();
+
+        // Generate device nonce
+        let mut dev_nonce = [0u8; 16];
+        let rng = SystemRandom::new();
+        rng.fill(&mut dev_nonce)
+            .map_err(|_| anyhow::anyhow!("RNG failed"))?;
+
+        // Read device UID
+        let device_uid = crate::secure_element::pcr::read_device_uid(node_id);
+
+        // Get active policy digest
+        let policy_mat = load_attestation_policy_material();
+
+        let pubkey_b64 = general_purpose::STANDARD.encode(km.pubkey_der());
+
+        Ok(Self {
+            version: 1,
+            challenge_nonce: challenge_nonce.to_string(),
+            device_nonce: hex::encode(dev_nonce),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            node_id: node_id.to_string(),
+            device_uid,
+            key_version: read_dkp_key_version(),
+            pubkey_b64,
+            pcr_values: snapshot.pcr_values.clone(),
+            composite_digest: snapshot.composite_digest.clone(),
+            integrity_status: snapshot.integrity_status.clone(),
+            boot_chain: BootChainSummary {
+                hab_enabled: boot.hab_enabled,
+                device_closed: boot.device_closed,
+                hab_events_found: boot.hab_events_found,
+                boot_chain_intact: boot.boot_chain_intact,
+            },
+            firmware_version: boot.kernel_version,
+            active_policy_digest: policy_mat.digest,
+        })
+    }
+
+    /// Sign the quote using the KeyManager (SE050 or software).
+    pub fn sign(&self, km: &KeyManager) -> Result<SignedQuote> {
+        let quote_json =
+            serde_json::to_string(self).map_err(|e| anyhow::anyhow!("Quote serialize: {}", e))?;
+        let hash = Sha256::digest(quote_json.as_bytes());
+        let sig = km.sign(&hash)?;
+        Ok(SignedQuote {
+            quote_json,
+            signature_b64: general_purpose::STANDARD.encode(&sig),
+            signing_backend: km.backend_name().to_string(),
+        })
+    }
+}
+
+impl SignedQuote {
+    /// Verify a signed quote against a known public key and optional baseline.
+    pub fn verify(
+        &self,
+        peer_pubkey_der: &[u8],
+        expected_nonce: &str,
+        baseline: Option<&crate::secure_element::pcr::PcrBaseline>,
+        max_age_secs: u64,
+    ) -> QuoteVerificationResult {
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut result = QuoteVerificationResult {
+            verified: false,
+            nonce_valid: false,
+            signature_valid: false,
+            pcr_match: false,
+            boot_chain_ok: false,
+            freshness_ok: false,
+            reason: String::new(),
+            timestamp: now,
+        };
+
+        // 1. Verify signature
+        let hash = Sha256::digest(self.quote_json.as_bytes());
+        let sig_bytes = match general_purpose::STANDARD.decode(&self.signature_b64) {
+            Ok(b) => b,
+            Err(_) => {
+                result.reason = "Invalid signature base64".into();
+                return result;
+            }
+        };
+
+        let peer_pubkey = if peer_pubkey_der.len() == 91 {
+            peer_pubkey_der[26..].to_vec()
+        } else {
+            peer_pubkey_der.to_vec()
+        };
+
+        let algo: &dyn signature::VerificationAlgorithm = match sig_bytes.len() {
+            64 => &signature::ECDSA_P256_SHA256_FIXED,
+            _ if sig_bytes.first() == Some(&0x30) => &signature::ECDSA_P256_SHA256_ASN1,
+            _ => {
+                result.reason = format!("Unknown sig format (len={})", sig_bytes.len());
+                return result;
+            }
+        };
+
+        let key = signature::UnparsedPublicKey::new(algo, &peer_pubkey);
+        if key.verify(&hash, &sig_bytes).is_err() {
+            result.reason = "Signature verification failed".into();
+            return result;
+        }
+        result.signature_valid = true;
+
+        // 2. Deserialize quote
+        let quote: AttestationQuote = match serde_json::from_str(&self.quote_json) {
+            Ok(q) => q,
+            Err(e) => {
+                result.reason = format!("Quote parse: {}", e);
+                return result;
+            }
+        };
+
+        // 3. Check nonce
+        result.nonce_valid = quote.challenge_nonce == expected_nonce;
+        if !result.nonce_valid {
+            result.reason = "Nonce mismatch (possible replay)".into();
+            return result;
+        }
+
+        // 4. Check freshness
+        if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&quote.timestamp) {
+            let age = chrono::Utc::now().signed_duration_since(ts.with_timezone(&chrono::Utc));
+            result.freshness_ok = age.num_seconds().unsigned_abs() <= max_age_secs;
+        }
+        if !result.freshness_ok {
+            result.reason = format!("Quote too old (max {}s)", max_age_secs);
+            return result;
+        }
+
+        // 5. Check boot chain
+        result.boot_chain_ok =
+            !quote.boot_chain.hab_events_found && quote.integrity_status != "FAIL";
+
+        // 6. Compare PCRs against baseline (if provided)
+        if let Some(bl) = baseline {
+            if bl.pcr_values.len() == quote.pcr_values.len() {
+                result.pcr_match = bl
+                    .pcr_values
+                    .iter()
+                    .zip(quote.pcr_values.iter())
+                    .all(|(a, b)| a == b);
+            }
+            if !result.pcr_match {
+                result.reason = "PCR mismatch against baseline".into();
+                // Still set verified=false but don't return — let caller decide severity
+            }
+        } else {
+            result.pcr_match = true; // No baseline = skip comparison
+        }
+
+        result.verified = result.signature_valid
+            && result.nonce_valid
+            && result.freshness_ok
+            && result.boot_chain_ok
+            && result.pcr_match;
+
+        if result.verified {
+            result.reason = "All checks passed".into();
+        } else if result.reason.is_empty() {
+            result.reason = "Boot chain or integrity check failed".into();
+        }
+
+        result
+    }
+
+    /// Save the signed quote to a JSON file.
+    pub fn save(&self, path: &str) -> Result<()> {
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| anyhow::anyhow!("Serialize: {}", e))?;
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        std::fs::write(path, json).map_err(|e| anyhow::anyhow!("Write: {}", e))
+    }
+
+    /// Load a signed quote from a JSON file.
+    pub fn load(path: &str) -> Result<Self> {
+        let json =
+            std::fs::read_to_string(path).map_err(|e| anyhow::anyhow!("Read {}: {}", path, e))?;
+        serde_json::from_str(&json).map_err(|e| anyhow::anyhow!("Parse: {}", e))
+    }
+}
+
+/// Save a QuoteVerificationResult to the attestation results log.
+pub fn save_verification_result(result: &QuoteVerificationResult, peer_node: &str) {
+    #[derive(Serialize, Deserialize)]
+    struct ResultEntry {
+        peer: String,
+        #[serde(flatten)]
+        result: QuoteVerificationResult,
+    }
+
+    let entry = ResultEntry {
+        peer: peer_node.to_string(),
+        result: result.clone(),
+    };
+
+    let path = "/var/log/sgx-guardian/attestation_results.json";
+    let mut entries: Vec<serde_json::Value> = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+
+    if let Ok(val) = serde_json::to_value(&entry) {
+        entries.push(val);
+        // Keep last 100 results
+        if entries.len() > 100 {
+            entries.drain(0..entries.len() - 100);
+        }
+        if let Ok(json) = serde_json::to_string_pretty(&entries) {
+            let _ = std::fs::write(path, json);
+        }
+    }
+}
+
 impl AttestationService {
     /// Creates signed attestation evidence by hashing the policy file,
     /// generating a random nonce, and signing the combined message.
@@ -619,6 +938,47 @@ impl AttestationService {
             }
         }
     }
+    /// Generate a signed attestation quote in response to a challenge nonce.
+    /// The quote contains current PCR values, boot chain status, and device metadata.
+    /// Signed by SE050 DKP (or software key if SE050 unavailable).
+    pub fn generate_quote(challenge_nonce: &str, km: &KeyManager) -> Result<SignedQuote> {
+        let node_id = std::env::args().nth(1).unwrap_or_else(|| "nodeA".into());
+        let quote = AttestationQuote::generate(challenge_nonce, &node_id, km)?;
+        quote.sign(km)
+    }
+
+    /// Handle an incoming challenge request: generate quote and return response.
+    pub fn handle_challenge(req: &ChallengeRequest, km: &KeyManager) -> Result<ChallengeResponse> {
+        let node_id = std::env::args().nth(1).unwrap_or_else(|| "nodeA".into());
+        let signed_quote = Self::generate_quote(&req.nonce, km)?;
+
+        // Optional: generate counter-challenge for mutual attestation
+        let mut counter_nonce_bytes = [0u8; 32];
+        let rng = SystemRandom::new();
+        let counter_nonce = if rng.fill(&mut counter_nonce_bytes).is_ok() {
+            Some(hex::encode(counter_nonce_bytes))
+        } else {
+            None
+        };
+
+        Ok(ChallengeResponse {
+            prover_node_id: node_id,
+            signed_quote,
+            counter_challenge_nonce: counter_nonce,
+        })
+    }
+
+    /// Verify a signed quote from a peer.
+    /// Returns a detailed verification result.
+    pub fn verify_quote(
+        signed_quote: &SignedQuote,
+        expected_nonce: &str,
+        peer_pubkey_der: &[u8],
+        baseline: Option<&crate::secure_element::pcr::PcrBaseline>,
+    ) -> QuoteVerificationResult {
+        signed_quote.verify(peer_pubkey_der, expected_nonce, baseline, 300)
+    }
+
     /// Performs the full mutual attestation handshake: connects to peer,
     /// exchanges signed evidence, verifies policy digest & signature,
     /// and updates trusted peer state on success.
@@ -1148,5 +1508,60 @@ mod tests {
         let policy = "allow: all";
         let ev = make_test_evidence(policy, "00112233445566778899aabbccddeeff");
         assert!(AttestationService::verify_signed_evidence(&ev, policy).unwrap());
+    }
+
+    #[test]
+    fn test_signed_quote_serialization_roundtrip() {
+        let quote = SignedQuote {
+            quote_json: r#"{"version":1,"challenge_nonce":"aabb"}"#.to_string(),
+            signature_b64: "dGVzdA==".to_string(),
+            signing_backend: "Software".to_string(),
+        };
+        let json = serde_json::to_string(&quote).unwrap();
+        let parsed: SignedQuote = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.signing_backend, "Software");
+        assert_eq!(parsed.quote_json, quote.quote_json);
+    }
+
+    #[test]
+    fn test_boot_chain_summary_serialization() {
+        let summary = BootChainSummary {
+            hab_enabled: true,
+            device_closed: true,
+            hab_events_found: false,
+            boot_chain_intact: true,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"hab_enabled\":true"));
+        assert!(json.contains("\"boot_chain_intact\":true"));
+    }
+
+    #[test]
+    fn test_challenge_request_serialization() {
+        let req = ChallengeRequest {
+            verifier_node_id: "nodeA".to_string(),
+            nonce: "ff".repeat(32),
+            timestamp: "2026-04-17T12:00:00Z".to_string(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: ChallengeRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.verifier_node_id, "nodeA");
+        assert_eq!(parsed.nonce.len(), 64);
+    }
+
+    #[test]
+    fn test_verification_result_defaults() {
+        let result = QuoteVerificationResult {
+            verified: false,
+            nonce_valid: false,
+            signature_valid: false,
+            pcr_match: false,
+            boot_chain_ok: false,
+            freshness_ok: false,
+            reason: "test".into(),
+            timestamp: "2026-04-17T12:00:00Z".into(),
+        };
+        assert!(!result.verified);
+        assert_eq!(result.reason, "test");
     }
 }

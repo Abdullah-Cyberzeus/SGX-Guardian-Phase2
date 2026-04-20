@@ -1,6 +1,7 @@
 // ===== Public exports for integration tests =====
 
 // Core modules
+pub mod api;
 pub mod attestation_service;
 pub mod audit;
 pub mod cert_client;

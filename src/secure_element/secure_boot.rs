@@ -30,6 +30,36 @@ pub struct BootChainStatus {
     pub boot_chain_intact: bool,
 }
 
+/// Read a 32-bit value from a physical memory address via /dev/mem.
+/// Returns None if /dev/mem is inaccessible or mmap fails.
+/// Requires root (daemon runs as root).
+fn read_phys_u32(phys_addr: u64) -> Option<u32> {
+    use std::fs::OpenOptions;
+    use std::os::unix::io::AsRawFd;
+
+    let file = OpenOptions::new().read(true).open("/dev/mem").ok()?;
+    let page_size: u64 = 4096;
+    let page_base = phys_addr & !(page_size - 1);
+    let offset_in_page = (phys_addr - page_base) as usize;
+
+    unsafe {
+        let ptr = libc::mmap(
+            std::ptr::null_mut(),
+            page_size as usize,
+            libc::PROT_READ,
+            libc::MAP_SHARED,
+            file.as_raw_fd(),
+            page_base as libc::off_t,
+        );
+        if ptr == libc::MAP_FAILED {
+            return None;
+        }
+        let value = std::ptr::read_volatile((ptr as *const u8).add(offset_in_page) as *const u32);
+        libc::munmap(ptr, page_size as usize);
+        Some(value)
+    }
+}
+
 impl BootChainStatus {
     /// Check HAB status from Linux userspace.
     /// On i.MX8MP with HAB closed, we verify through multiple indicators.
@@ -58,21 +88,15 @@ impl BootChainStatus {
             .trim()
             .to_string();
 
-        // === Method 3: Try devmem2 to read OTP fuse shadow registers ===
-        // SEC_CONFIG fuse at OCOTP bank 1 word 3
-        // i.MX8MP shadow register offset for bank 1 word 3
-        if let Ok(output) = Command::new("devmem2")
-            .args(["0x30350470"]) // OCOTP shadow register for SEC_CONFIG
-            .output()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            // devmem2 output: "Read at address 0x30350470: 0xNNNNNNNN"
-            if let Some(val_str) = stdout.split("0x").last() {
-                if let Ok(val) = u32::from_str_radix(val_str.trim(), 16) {
-                    // Bit 25 = SEC_CONFIG[1] = device closed
-                    status.device_closed = (val & 0x02000000) != 0;
-                    status.hab_enabled = true;
-                }
+        // === Method 3: Read OCOTP via /dev/mem (replaces devmem2) ===
+        let mut sec_config_read_ok = false;
+
+        // SEC_CONFIG at OCOTP bank 1 word 3: base 0x30350000 + offset 0x470
+        if let Some(val) = read_phys_u32(0x30350470) {
+            sec_config_read_ok = true;
+            status.device_closed = (val & 0x02000000) != 0; // bit 25
+            if status.device_closed {
+                status.hab_enabled = true;
             }
         }
 
@@ -106,55 +130,30 @@ impl BootChainStatus {
             "/proc/device-tree/model",      // DT loaded by verified U-Boot
             "/proc/device-tree/compatible", // DT compatible set by verified U-Boot
         ];
-        let all_present = signed_indicators
+        let _all_present = signed_indicators
             .iter()
             .all(|p| std::path::Path::new(p).exists());
 
         // === Method 6: Check if SRK fuses are programmed ===
-        // Try reading fuse bank 6 word 0 via devmem2
-        if let Ok(output) = Command::new("devmem2")
-            .args(["0x30350630"]) // OCOTP bank 6 word 0 shadow register
-            .output()
-        {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                // If value is non-zero, SRK fuses are programmed
-                if let Some(val_str) = stdout.split("0x").last() {
-                    if let Ok(val) = u32::from_str_radix(val_str.trim(), 16) {
-                        if val != 0 {
-                            status.hab_enabled = true;
-                        }
-                    }
-                }
+        // SRK fuse bank 6 word 0: base 0x30350000 + offset 0x630
+        if let Some(val) = read_phys_u32(0x30350630) {
+            if val != 0 {
+                status.hab_enabled = true;
             }
         }
 
-        // === Determine overall status ===
-        // On our board, HAB is done by HAE (confirmed from email chain).
-        // If devmem2 is unavailable, we trust the hardware configuration.
-        // The fact that the board boots at all with a closed SEC_CONFIG
-        // proves the signed image is valid.
-        if !status.hab_enabled {
-            // devmem2 might not be available — check for board indicators
-            if !status.device_model.is_empty() && all_present {
-                // Board is running, DT is present — if HAB were broken, it wouldn't boot
-                status.hab_description =
-                    "HAB status: Unable to verify from Linux — check via U-Boot hab_status command"
-                        .into();
-                // Mark as enabled based on known hardware configuration
-                // In production: this should be verified once via U-Boot
-                status.hab_enabled = false;
-                status.device_closed = false; // Known from HAB fuse programming
-            } else {
-                status.hab_description = "HAB status: Unable to determine".into();
-            }
-        } else if status.hab_events_found {
-            status.hab_description = "HAB EVENTS DETECTED — boot chain may be compromised!".into();
-        } else if status.device_closed {
+        // === Status description ===
+        if status.device_closed && status.hab_enabled && !status.hab_events_found {
             status.hab_description = "HAB: Enabled, device CLOSED, secure boot ENFORCING".into();
+        } else if status.hab_enabled && !status.device_closed {
+            status.hab_description = "HAB: Enabled but device OPEN".into();
+        } else if !sec_config_read_ok {
+            status.hab_description = "HAB: Cannot read OCOTP (need root + /dev/mem)".into();
         } else {
-            status.hab_description =
-                "HAB: Enabled but device OPEN (signatures checked but not enforced)".into();
+            status.hab_description = "HAB: Not enabled".into();
+        }
+        if status.hab_events_found {
+            status.hab_description = "HAB EVENTS DETECTED — boot chain compromised!".into();
         }
 
         // === Guardian binary integrity ===

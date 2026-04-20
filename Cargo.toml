@@ -6,6 +6,7 @@ license = "Apache-2.0 OR MIT"
 build = "build.rs"
 
 [dependencies]
+axum = { version = "0.7", features = ["macros", "multipart"] }
 tonic = { version = "0.14.5", features = ["transport", "tls-native-roots", "tls-ring"] }
 tonic-prost = "0.14.2"
 prost = "0.14.3"
@@ -35,17 +36,19 @@ async-trait = "0.1"
 dashmap = "5.5"
 network-interface = "2.0"
 uuid = { version = "1", features = ["v4","serde"] }
+libc = "0.2"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+tempfile = "3.8"
 
 [build-dependencies]
 tonic-prost-build = "0.14.2"
 
 [dev-dependencies]
 rcgen = "0.12"
-tempfile = "3.8"
 uuid = { version = "1", features = ["v4"] }
 
 [features]
-default = []
+default = ["secure-element"]
 secure-element = []
 
 [workspace]

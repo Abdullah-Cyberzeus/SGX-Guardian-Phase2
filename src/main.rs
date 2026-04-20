@@ -1,6 +1,11 @@
 //! SG-X Guardian Client entrypoint.
 //! Initializes node identity, loads configuration, starts discovery,
 //! attestation, metrics tracking, and the gRPC server runtime.
+//!
+//! UART SAFETY: Startup output is split into phases with async delays
+//! between them to prevent serial buffer overflow at 115200 baud.
+//! At 115200 baud the UART can drain ~11,500 chars/sec. A 300ms pause
+//! allows ~3,450 chars to flush.
 
 use sgx_guardian_client::attestation_service;
 use sgx_guardian_client::audit::event::{AuditAction, AuditCategory, AuditSeverity};
@@ -41,6 +46,14 @@ use tokio::{signal, task};
 
 #[cfg(windows)]
 use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
+
+/// UART drain delay — lets the 115200 baud serial buffer flush.
+const UART_DRAIN_MS: u64 = 300;
+
+/// Async helper to let the UART buffer drain between output phases.
+async fn uart_drain() {
+    tokio::time::sleep(Duration::from_millis(UART_DRAIN_MS)).await;
+}
 
 fn ensure_rustls_crypto_provider() {
     if rustls::crypto::CryptoProvider::get_default().is_none() {
@@ -127,7 +140,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .unwrap_or(false);
 
                 if !compatible {
-                    eprintln!("🗑️  Removing incompatible old approval YAML: {}", name);
                     let _ = std::fs::remove_file(path);
                 }
             }
@@ -218,58 +230,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // === Crypto Provider Status ===
-    match km.backend_name() {
-        "SE050" => {
-            println!("  Secure Element detected: SE050");
-            println!("  Signing provider: SE050 hardware (ECDSA-P256)");
-            println!("  RNG source: SE050 TRNG");
-        }
-        _ => {
-            println!("  Secure Element not available");
-            println!("  Signing provider: software (ring crate, ECDSA-P256)");
-            println!("  RNG source: software RNG (SystemRandom)");
-        }
-    }
+    // === Crypto Provider Status (batched) ===
+    let crypto_info = match km.backend_name() {
+        "SE050" => "SE050 hardware | ECDSA-P256 | SE050 TRNG",
+        _ => "software (ring) | ECDSA-P256 | SystemRandom",
+    };
 
     let pubkey_b64 = general_purpose::STANDARD.encode(km.pubkey_der());
-    println!(
-        "Node Identity Initialized | Public Key Prefix: {}...",
-        &pubkey_b64[..20]
-    );
+    println!("Identity: {} | Key: {}...", crypto_info, &pubkey_b64[..20]);
 
     // Generate and log attestation evidence for this node
     use sgx_guardian_client::attestation_service::AttestationService;
 
     let sample_policy_path = "/etc/sgx-guardian/schemas/uep_policy_v1.yaml";
 
-    let sample_policy = fs::read_to_string(sample_policy_path).unwrap_or_else(|e| {
-        eprintln!(
-            "⚠️ Policy schema not found: {} — using empty default",
-            e
-        );
+    let sample_policy = fs::read_to_string(sample_policy_path).unwrap_or_else(|_| {
         String::from(
             "---\npolicy_id: \"default\"\nversion: \"0.0.0\"\ndescription: \"Empty default\"\nrules: []\n",
         )
     });
 
     let evidence = AttestationService::create_signed_evidence(&km, &sample_policy)?;
-    println!(
-        "Created local attestation evidence (nonce={}..)",
-        &evidence.nonce[..8]
-    );
     let verified = AttestationService::verify_signed_evidence(&evidence, &sample_policy)?;
-    if verified {
-        println!("✅ Local attestation evidence verified successfully.");
-        log_audit(
-            &node_id,
-            AuditCategory::Attestation,
-            AuditSeverity::Info,
-            AuditAction::Succeeded,
-            "Local attestation evidence verified",
-        );
-    } else {
-        eprintln!("❌ Local attestation verification failed!");
+    println!(
+        "Attestation: nonce={}.. | {}",
+        &evidence.nonce[..8],
+        if verified {
+            "✅ verified"
+        } else {
+            "❌ FAILED"
+        }
+    );
+    if !verified {
         log_audit(
             &node_id,
             AuditCategory::Attestation,
@@ -285,19 +277,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         use sgx_guardian_client::secure_element::secure_boot::BootChainStatus;
 
         let boot_status = BootChainStatus::check();
-        boot_status.print();
+        let hab = if boot_status.hab_enabled {
+            "✅"
+        } else {
+            "❌"
+        };
+        let closed = if boot_status.device_closed {
+            "🔒CLOSED"
+        } else {
+            "🔓OPEN"
+        };
+        let chain = if boot_status.boot_chain_intact {
+            "✅INTACT"
+        } else {
+            "⚠️INCOMPLETE"
+        };
+        println!(
+            "SecureBoot: HAB={} | {} | Chain={} | {}",
+            hab, closed, chain, boot_status.device_model
+        );
 
-        // Save boot chain status
         let boot_status_path = format!("/var/lib/sgx-guardian/boot/{}_chain_status.json", node_id);
-        if let Err(e) = boot_status.save(&boot_status_path) {
-            eprintln!("  Boot chain save failed: {}", e);
-        }
-
-        if !boot_status.boot_chain_intact {
-            eprintln!(
-                "  ⚠️ Boot chain verification incomplete — PCR values may not be fully trusted"
-            );
-        }
+        let _ = boot_status.save(&boot_status_path);
     }
 
     // === PCR Measurement (ATT-003) ===
@@ -499,6 +500,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // ── UART DRAIN after Identity/PCR phase ──
+    uart_drain().await;
+
     // === DYNAMIC IP DETECTION + CONFIG AUTO-UPDATE ===
     println!("\n🔍 Detecting local LAN IP address...");
 
@@ -562,22 +566,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    println!("\n Loading node configurations...");
     let node_a = load_config_safe("nodeA");
     let node_b = load_config_safe("nodeB");
     let node_c = load_config_safe("nodeC");
 
     println!(
-        "✅ Loaded Node A: {} ({}) at {}:{} | key: {}",
-        node_a.node_id, node_a.hostname, node_a.ip, node_a.port, node_a.public_key
-    );
-    println!(
-        "✅ Loaded Node B: {} ({}) at {}:{} | key: {}",
-        node_b.node_id, node_b.hostname, node_b.ip, node_b.port, node_b.public_key
-    );
-    println!(
-        "✅ Loaded Node C: {} ({}) at {}:{} | key: {}",
-        node_c.node_id, node_c.hostname, node_c.ip, node_c.port, node_c.public_key
+        "Nodes: A={}:{} | B={}:{} | C={}:{}",
+        node_a.ip, node_a.port, node_b.ip, node_b.port, node_c.ip, node_c.port
     );
 
     // Read the UEP policy YAML file
@@ -718,6 +713,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         m.record_connection();
     }
 
+    // ── UART DRAIN after config/logging phase ──
+    uart_drain().await;
+
     // === Nebula Installation Verification ===
     println!("\n🔎 Verifying Nebula Installation...");
 
@@ -737,24 +735,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let nebula_base_dir =
         std::env::var("SGX_NEBULA_DIR").unwrap_or("/var/lib/sgx-guardian/nebula".to_string());
 
-    // Nebula binary checks
+    // Nebula binary checks (batched)
     match NebulaInstall::check_binary() {
-        Ok(_) => println!("✅ Nebula binary found"),
+        Ok(_) => {}
         Err(e) => {
             eprintln!("❌ Nebula binary missing: {}", e);
             log_error(&node_id, &format!("Nebula binary missing: {}", e));
             std::process::exit(1);
         }
     }
-    match NebulaInstall::check_version() {
-        Ok(v) => println!("✅ Nebula version: {}", v.trim()),
-        Err(e) => {
-            eprintln!("❌ Nebula version check failed: {}", e);
-            std::process::exit(1);
-        }
-    }
+    let nebula_ver = NebulaInstall::check_version().unwrap_or_else(|_| "unknown".into());
     match NebulaInstall::test_daemon_start() {
-        Ok(_) => println!("✅ Nebula daemon responding"),
+        Ok(_) => println!("✅ Nebula {} | daemon OK", nebula_ver.trim()),
         Err(e) => {
             eprintln!("❌ Nebula daemon test failed: {}", e);
             std::process::exit(1);
@@ -1226,6 +1218,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use sgx_guardian_client::nebula::cert_lifecycle::ExpiryMonitor;
     ExpiryMonitor::start(nebula_base_dir.clone(), node_id.clone());
 
+    // ── UART DRAIN after Nebula phase ──
+    uart_drain().await;
+
     // === CoT Deliverable Integration Start ===
     println!("🔗 Initializing Circle of Trust (CoT) transport-agnostic layer...");
 
@@ -1261,22 +1256,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Vec::new()
     });
 
+    let iface_summary: Vec<String> = detected_interfaces
+        .iter()
+        .map(|i| format!("{}({})", i.name, i.transport_type))
+        .collect();
     println!(
-        "📡 Detected {} network interfaces:",
-        detected_interfaces.len()
+        "  CoT interfaces [{}]: {}",
+        detected_interfaces.len(),
+        iface_summary.join(", ")
     );
-    for iface in &detected_interfaces {
-        println!(
-            "   {} → {} [{}] {:?}",
-            iface.name,
-            iface.transport_type,
-            iface.status,
-            iface
-                .ip_addr
-                .map(|ip| ip.to_string())
-                .unwrap_or("no-ip".into())
-        );
-    }
 
     // Step 3: Create and populate transport registry
     let cot_registry = std::sync::Arc::new(TransportRegistry::new());
@@ -1507,6 +1495,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
 
+    // ── UART DRAIN before server start ──
+    uart_drain().await;
+
     let this_addr = format!("0.0.0.0:{}", this_node.port);
     log_event(&node_id, &format!("Starting server at {}", this_addr));
     use sgx_guardian_client::policy::load_policy_runtime;
@@ -1638,6 +1629,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
+    // === REST Admin API (axum) on :8443 ===
+    let api_state = sgx_guardian_client::api::state::AppState::from_env(node_id.clone());
+    let api_bind: std::net::SocketAddr = "0.0.0.0:8443".parse().unwrap();
+    tokio::spawn({
+        let state = api_state.clone();
+        async move {
+            if let Err(e) = sgx_guardian_client::api::serve(state, api_bind).await {
+                eprintln!("REST API server failed: {:?}", e);
+            }
+        }
+    });
+    println!("REST admin API listening on http://{}/api/v1", api_bind);
     // === CERT BOOTSTRAP SERVER (nodeA only, plaintext port 50061) ===
     if node_id == "nodeA" {
         tokio::spawn(async move {

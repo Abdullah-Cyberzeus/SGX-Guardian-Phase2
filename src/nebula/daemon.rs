@@ -8,7 +8,6 @@
 
 use std::io::Error;
 use std::process::{Command, Stdio};
-use std::thread;
 use std::time::{Duration, Instant};
 
 pub struct NebulaDaemon;
@@ -135,12 +134,12 @@ impl NebulaDaemon {
 
     /// Stop the Nebula daemon gracefully then forcefully.
     #[allow(dead_code)]
-    pub fn stop() -> Result<(), Error> {
+    pub async fn stop() -> Result<(), Error> {
         // Try SIGTERM first
         let _ = Command::new("pkill")
             .args(["-TERM", "-f", "nebula -config"])
             .output();
-        thread::sleep(Duration::from_secs(2));
+        tokio::time::sleep(Duration::from_secs(2)).await;
 
         // Force-kill if still running
         if Self::is_running() {

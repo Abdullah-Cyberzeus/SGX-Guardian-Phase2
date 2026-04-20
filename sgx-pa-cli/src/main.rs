@@ -36,6 +36,10 @@ enum Commands {
     Peers,
     /// Show the last attestation result
     Attestation,
+    /// Generate a signed attestation quote with a challenge nonce
+    AttestGenerate(commands::attest_quote::GenerateQuoteArgs),
+    /// Verify a signed attestation quote
+    AttestVerify(commands::attest_quote::VerifyQuoteArgs),
     /// Verify a signed policy.sig file
     Verify(commands::verify::VerifyArgs),
     /// Show DKP key history/status
@@ -74,6 +78,8 @@ fn main() {
                 eprintln!("Error: {}", e);
             }
         }
+        Commands::AttestGenerate(args) => commands::attest_quote::run_generate(args),
+        Commands::AttestVerify(args) => commands::attest_quote::run_verify(args),
         Commands::Attestation => {
             if let Err(e) = commands::attestation::run() {
                 eprintln!("Error: {}", e);
