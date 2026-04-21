@@ -21,7 +21,7 @@ use tokio::time::Duration;
 
 // ---- Attestation identity key base path (single source of truth) ----
 const ATTESTATION_KEY_DIR: &str = "/var/lib/sgx-guardian/sgx-agent";
-const CONNECT_RETRY_ATTEMPTS: u8 = 15;
+const CONNECT_RETRY_ATTEMPTS: u8 = 5;
 const CONNECT_RETRY_DELAY_MS: u64 = 1000;
 const MAX_TRUSTED_PEER_AGE_HOURS: i64 = 24;
 const ATTEST_ATTEMPT_THROTTLE_SECS: u64 = 30;
@@ -1384,15 +1384,15 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
     loop {
         match listener.accept().await {
             Ok((mut socket, remote)) => {
-                let local_node_id = std::env::args().nth(1).unwrap_or_else(|| "nodeA".into());
-                let local_overlay = overlay_ip_from_local_registry(&local_node_id);
-                if let Some(ref ovl) = local_overlay {
-                    if remote.ip().to_string() == *ovl {
-                        continue;
-                    }
-                }
-
-                println!("📩 Received attestation request from peer");
+                // NOTE: Self-attestation guard removed from listener side.
+                // The SENDER side already guards against self-attestation
+                // (by node_id check and overlay IP check in the discovery loop).
+                // The listener should accept ALL valid connections and let
+                // cryptographic verification handle trust decisions.
+                // The old IP-based guard was causing "Broken pipe" errors
+                // when peers shared the same nebula0 interface (same-machine tests)
+                // or when overlay IPs hadn't synced yet.
+                println!("📩 Received attestation request from {}", remote.ip());
                 let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
 
                 log_audit(

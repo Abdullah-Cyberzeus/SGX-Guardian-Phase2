@@ -493,12 +493,12 @@ pub fn update_peer_config(node_id: &str, hostname: &str, ip: &str, port: u16, pu
             result.push('\n');
         }
         if result == existing {
-            println!("Config unchanged (field-level): {} -> ip={}", node_id, ip);
+            // Silent — unchanged configs don't need printing
             return;
         }
 
         match std::fs::write(&path, &result) {
-            Ok(_) => println!("Config updated (field-level): {} -> ip={}", node_id, ip),
+            Ok(_) => {} // Silent — config updates happen frequently, no need to print each one
             Err(e) => eprintln!("Config write failed: {} -> {}", path, e),
         }
         return;

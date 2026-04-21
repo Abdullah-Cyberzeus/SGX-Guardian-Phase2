@@ -2105,16 +2105,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    // background uptime tracker
+    // background uptime tracker + heartbeat writer
     let node_id_clone = node_id.clone();
     let metrics_clone = metrics.clone();
     tokio::spawn(async move {
+        let heartbeat_path = "/tmp/sgx_guardian_heartbeat";
         loop {
             {
                 let m = metrics_clone.lock().await;
                 let uptime = m.uptime().as_secs();
                 log_event(&node_id_clone, &format!("Uptime: {} seconds", uptime));
             }
+            // Write heartbeat file — external watchdog monitors this
+            let _ = std::fs::write(heartbeat_path, chrono::Utc::now().to_rfc3339());
             tokio::time::sleep(Duration::from_secs(30)).await;
         }
     });

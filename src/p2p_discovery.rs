@@ -153,10 +153,7 @@ impl P2PDiscovery {
                 let full_addr = format!("{}:{}", peer_ip, peer_port);
                 let queue_entry = format!("{}|{}", conf.node_id, full_addr);
                 tx_clone_sim.send(queue_entry).await.ok();
-                println!(
-                    "🔐 Queued discovered peer for attestation (sim-mode): {}",
-                    conf.node_id
-                );
+                // Silenced — peer queue messages repeat every 30s and flood UART
             }
         } else {
             println!("🔎 Simulation mode disabled (set SGX_SIM_MODE=true to enable)");
@@ -201,10 +198,7 @@ impl P2PDiscovery {
                         eprintln!("⚠️ Failed to queue peer for attestation: {:?}", e);
                         return;
                     }
-                    println!(
-                        "🔐 Queued discovered peer for attestation: {}",
-                        conf.node_id
-                    );
+                    // Silenced — peer queue messages repeat every 30s and flood UART
                 }
 
                 sleep(Duration::from_secs(15)).await;
