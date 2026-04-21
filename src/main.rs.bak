@@ -1,13 +1,18 @@
 //! SG-X Guardian Client entrypoint.
 //! Initializes node identity, loads configuration, starts discovery,
 //! attestation, metrics tracking, and the gRPC server runtime.
+//!
+//! UART SAFETY: Startup output is split into phases with async delays
+//! between them to prevent serial buffer overflow at 115200 baud.
+//! At 115200 baud the UART can drain ~11,500 chars/sec. A 300ms pause
+//! allows ~3,450 chars to flush.
 
 use sgx_guardian_client::attestation_service;
 use sgx_guardian_client::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use sgx_guardian_client::audit::logger::{init_audit_logger, log_audit};
 use sgx_guardian_client::audit::verifier::AuditVerifier;
 use sgx_guardian_client::client::send_ping;
-use sgx_guardian_client::config_loader::{load_config, CloudConfig, NodeConfig, RelayLimitsConfig};
+use sgx_guardian_client::config_loader::{load_config, CloudConfig, NodeConfig};
 use sgx_guardian_client::key_manager::KeyManager;
 #[cfg(feature = "secure-element")]
 use sgx_guardian_client::secure_element;
@@ -42,9 +47,23 @@ use tokio::{signal, task};
 #[cfg(windows)]
 use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
 
-const RELAY_SYNC_INTERVAL_SECS: u64 = 10;
+/// UART drain delay — lets the 115200 baud serial buffer flush.
+const UART_DRAIN_MS: u64 = 300;
+
+/// Async helper to let the UART buffer drain between output phases.
+async fn uart_drain() {
+    tokio::time::sleep(Duration::from_millis(UART_DRAIN_MS)).await;
+}
+
+fn ensure_rustls_crypto_provider() {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ensure_rustls_crypto_provider();
     println!(" SGX Guardian Client Starting...");
     #[cfg(windows)]
     {
@@ -111,14 +130,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             Some(serde_yaml::Value::String(v)) => {
                                 matches!(
                                     v.as_str(),
-                                    "false"
-                                        | "member"
-                                        | "lighthouse"
-                                        | "relay"
-                                        | "lh_relay"
-                                        | "reject"
-                                        | "no"
-                                        | "lh"
+                                    "false" | "member" | "lighthouse" | "reject" | "no" | "lh"
                                 )
                             }
                             Some(serde_yaml::Value::Bool(v)) => !v,
@@ -128,7 +140,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .unwrap_or(false);
 
                 if !compatible {
-                    eprintln!("🗑️  Removing incompatible old approval YAML: {}", name);
                     let _ = std::fs::remove_file(path);
                 }
             }
@@ -141,7 +152,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if !std::path::Path::new(&path).exists() {
             let letter = &nid[4..];
             let content = format!(
-                "---\nnode_id: \"{}\"\nhostname: \"guardian-node-{}\"\nip: \"0.0.0.0\"\nport: {}\npublic_key: \"placeholder-key-{}\"\n\nrelay:\n  enabled: false\n  max_peers: 5\n  max_bandwidth_mbps: 10\n  alert_threshold_pct: 80\n\nsecure_element:\n  enabled: true\n  scp_key_path: \"/home/root/se05x_mw_v04.05.01/simw-top/scripts/se050F_scp_keys.txt\"\n  interface: \"t1oi2c\"\n  auth_type: \"PlatformSCP\"\n  connection_type: \"se05x\"\n",
+                "---\nnode_id: \"{}\"\nhostname: \"guardian-node-{}\"\nip: \"0.0.0.0\"\nport: {}\npublic_key: \"placeholder-key-{}\"\n\nsecure_element:\n  enabled: true\n  scp_key_path: \"/home/root/se05x_mw_v04.05.01/simw-top/scripts/se050F_scp_keys.txt\"\n  interface: \"t1oi2c\"\n  auth_type: \"PlatformSCP\"\n  connection_type: \"se05x\"\n",
                 nid, letter, port, letter
             );
             let _ = std::fs::write(&path, &content);
@@ -219,58 +230,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // === Crypto Provider Status ===
-    match km.backend_name() {
-        "SE050" => {
-            println!("  Secure Element detected: SE050");
-            println!("  Signing provider: SE050 hardware (ECDSA-P256)");
-            println!("  RNG source: SE050 TRNG");
-        }
-        _ => {
-            println!("  Secure Element not available");
-            println!("  Signing provider: software (ring crate, ECDSA-P256)");
-            println!("  RNG source: software RNG (SystemRandom)");
-        }
-    }
+    // === Crypto Provider Status (batched) ===
+    let crypto_info = match km.backend_name() {
+        "SE050" => "SE050 hardware | ECDSA-P256 | SE050 TRNG",
+        _ => "software (ring) | ECDSA-P256 | SystemRandom",
+    };
 
     let pubkey_b64 = general_purpose::STANDARD.encode(km.pubkey_der());
-    println!(
-        "Node Identity Initialized | Public Key Prefix: {}...",
-        &pubkey_b64[..20]
-    );
+    println!("Identity: {} | Key: {}...", crypto_info, &pubkey_b64[..20]);
 
     // Generate and log attestation evidence for this node
     use sgx_guardian_client::attestation_service::AttestationService;
 
     let sample_policy_path = "/etc/sgx-guardian/schemas/uep_policy_v1.yaml";
 
-    let sample_policy = fs::read_to_string(sample_policy_path).unwrap_or_else(|e| {
-        eprintln!(
-            "⚠️ Policy schema not found: {} — using empty default",
-            e
-        );
+    let sample_policy = fs::read_to_string(sample_policy_path).unwrap_or_else(|_| {
         String::from(
             "---\npolicy_id: \"default\"\nversion: \"0.0.0\"\ndescription: \"Empty default\"\nrules: []\n",
         )
     });
 
     let evidence = AttestationService::create_signed_evidence(&km, &sample_policy)?;
-    println!(
-        "Created local attestation evidence (nonce={}..)",
-        &evidence.nonce[..8]
-    );
     let verified = AttestationService::verify_signed_evidence(&evidence, &sample_policy)?;
-    if verified {
-        println!("✅ Local attestation evidence verified successfully.");
-        log_audit(
-            &node_id,
-            AuditCategory::Attestation,
-            AuditSeverity::Info,
-            AuditAction::Succeeded,
-            "Local attestation evidence verified",
-        );
-    } else {
-        eprintln!("❌ Local attestation verification failed!");
+    println!(
+        "Attestation: nonce={}.. | {}",
+        &evidence.nonce[..8],
+        if verified {
+            "✅ verified"
+        } else {
+            "❌ FAILED"
+        }
+    );
+    if !verified {
         log_audit(
             &node_id,
             AuditCategory::Attestation,
@@ -286,19 +277,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         use sgx_guardian_client::secure_element::secure_boot::BootChainStatus;
 
         let boot_status = BootChainStatus::check();
-        boot_status.print();
+        let hab = if boot_status.hab_enabled {
+            "✅"
+        } else {
+            "❌"
+        };
+        let closed = if boot_status.device_closed {
+            "🔒CLOSED"
+        } else {
+            "🔓OPEN"
+        };
+        let chain = if boot_status.boot_chain_intact {
+            "✅INTACT"
+        } else {
+            "⚠️INCOMPLETE"
+        };
+        println!(
+            "SecureBoot: HAB={} | {} | Chain={} | {}",
+            hab, closed, chain, boot_status.device_model
+        );
 
-        // Save boot chain status
         let boot_status_path = format!("/var/lib/sgx-guardian/boot/{}_chain_status.json", node_id);
-        if let Err(e) = boot_status.save(&boot_status_path) {
-            eprintln!("  Boot chain save failed: {}", e);
-        }
-
-        if !boot_status.boot_chain_intact {
-            eprintln!(
-                "  ⚠️ Boot chain verification incomplete — PCR values may not be fully trusted"
-            );
-        }
+        let _ = boot_status.save(&boot_status_path);
     }
 
     // === PCR Measurement (ATT-003) ===
@@ -421,7 +421,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Generate nonce + timestamp
         let mut nonce_bytes = [0u8; 16];
-        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce_bytes);
+        let nonce_rng = ring::rand::SystemRandom::new();
+        ring::rand::SecureRandom::fill(&nonce_rng, &mut nonce_bytes).map_err(|_| {
+            std::io::Error::other("Failed to generate PCR snapshot nonce from system RNG")
+        })?;
         snapshot.nonce = hex::encode(nonce_bytes);
         snapshot.measured_at = chrono::Utc::now().to_rfc3339();
 
@@ -497,6 +500,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // ── UART DRAIN after Identity/PCR phase ──
+    uart_drain().await;
+
     // === DYNAMIC IP DETECTION + CONFIG AUTO-UPDATE ===
     println!("\n🔍 Detecting local LAN IP address...");
 
@@ -557,34 +563,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             public_key: format!("placeholder-key-{}", &node[4..]),
             metrics: None,
-            relay: None,
         }
     }
 
-    println!("\n Loading node configurations...");
     let node_a = load_config_safe("nodeA");
     let node_b = load_config_safe("nodeB");
     let node_c = load_config_safe("nodeC");
 
     println!(
-        "✅ Loaded Node A: {} ({}) at {}:{} | key: {}",
-        node_a.node_id, node_a.hostname, node_a.ip, node_a.port, node_a.public_key
+        "Nodes: A={}:{} | B={}:{} | C={}:{}",
+        node_a.ip, node_a.port, node_b.ip, node_b.port, node_c.ip, node_c.port
     );
-    println!(
-        "✅ Loaded Node B: {} ({}) at {}:{} | key: {}",
-        node_b.node_id, node_b.hostname, node_b.ip, node_b.port, node_b.public_key
-    );
-    println!(
-        "✅ Loaded Node C: {} ({}) at {}:{} | key: {}",
-        node_c.node_id, node_c.hostname, node_c.ip, node_c.port, node_c.public_key
-    );
-
-    let current_relay_cfg: RelayLimitsConfig = match node_id.as_str() {
-        "nodeA" => node_a.relay_or_default(),
-        "nodeB" => node_b.relay_or_default(),
-        "nodeC" => node_c.relay_or_default(),
-        _ => RelayLimitsConfig::default(),
-    };
 
     // Read the UEP policy YAML file
     let _yaml_content = fs::read_to_string("/etc/sgx-guardian/schemas/uep_policy_v1.yaml")
@@ -691,14 +680,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let metrics = Arc::new(Mutex::new(Metrics::default()));
-    {
-        let mut m = metrics.lock().await;
-        m.set_relay_limits(
-            current_relay_cfg.max_peers,
-            current_relay_cfg.max_bandwidth_mbps,
-            current_relay_cfg.alert_threshold_pct,
-        );
-    }
 
     // === Cloud uplink (outbound-only mock) ===
     let cloud_cfg = CloudConfig::from_env();
@@ -732,6 +713,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         m.record_connection();
     }
 
+    // ── UART DRAIN after config/logging phase ──
+    uart_drain().await;
+
     // === Nebula Installation Verification ===
     println!("\n🔎 Verifying Nebula Installation...");
 
@@ -745,40 +729,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use sgx_guardian_client::nebula::overlay_registry::OverlayRegistry;
     use sgx_guardian_client::nebula::registry_sync;
     use sgx_guardian_client::nebula::registry_sync::SharedRegistry;
-    use sgx_guardian_client::nebula::relay_registry::RelayRegistry;
-    use sgx_guardian_client::nebula::relay_tc::RelayTrafficControl;
-    use sgx_guardian_client::nebula::stats::NebulaStats;
-    use sgx_guardian_client::nebula::tunnel_state::TunnelState;
     use std::sync::Arc;
     use tokio::sync::RwLock;
 
     let nebula_base_dir =
         std::env::var("SGX_NEBULA_DIR").unwrap_or("/var/lib/sgx-guardian/nebula".to_string());
-    if node_id != "nodeA" {
-        println!(
-            "ℹ️ {} keeps local read-only relay registry snapshot",
-            node_id
-        );
-    }
 
-    // Nebula binary checks
+    // Nebula binary checks (batched)
     match NebulaInstall::check_binary() {
-        Ok(_) => println!("✅ Nebula binary found"),
+        Ok(_) => {}
         Err(e) => {
             eprintln!("❌ Nebula binary missing: {}", e);
             log_error(&node_id, &format!("Nebula binary missing: {}", e));
             std::process::exit(1);
         }
     }
-    match NebulaInstall::check_version() {
-        Ok(v) => println!("✅ Nebula version: {}", v.trim()),
-        Err(e) => {
-            eprintln!("❌ Nebula version check failed: {}", e);
-            std::process::exit(1);
-        }
-    }
+    let nebula_ver = NebulaInstall::check_version().unwrap_or_else(|_| "unknown".into());
     match NebulaInstall::test_daemon_start() {
-        Ok(_) => println!("✅ Nebula daemon responding"),
+        Ok(_) => println!("✅ Nebula {} | daemon OK", nebula_ver.trim()),
         Err(e) => {
             eprintln!("❌ Nebula daemon test failed: {}", e);
             std::process::exit(1);
@@ -931,10 +899,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("📌 Using SGX_LIGHTHOUSE_IP={}", env_ip);
                     env_ip
                 } else {
-                    resolve_ca_ip_from_config_inner()
+                    resolve_ca_ip_from_config_inner().await
                 }
             } else {
-                resolve_ca_ip_from_config_inner()
+                resolve_ca_ip_from_config_inner().await
             }
         };
         println!("📡 nodeA (CA/Lighthouse) LAN IP: {}", ca_lan_ip);
@@ -1030,9 +998,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let wants_lh = std::env::var("SGX_WANTS_LIGHTHOUSE")
                 .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
                 .unwrap_or(false);
-            let wants_relay = std::env::var("SGX_WANTS_RELAY")
-                .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
-                .unwrap_or(false);
 
             // BLOCKING: wait until we have the cert before starting Nebula
             sgx_guardian_client::cert_client::request_certificate_from_ca(
@@ -1041,7 +1006,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ip_cidr.clone(),
                 pubkey_b64.clone(),
                 wants_lh,
-                wants_relay,
             )
             .await;
 
@@ -1101,188 +1065,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tokio::spawn(async move {
                 registry_sync::start_registry_server(shared_reg).await;
             });
-        }
-    }
 
-    let node_for_registry_sync = node_id.clone();
-    let nebula_dir_for_registry_sync = nebula_base_dir.clone();
-    let pool_for_registry_sync = overlay_pool.clone();
-
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(RELAY_SYNC_INTERVAL_SECS)).await;
-            let ca_host = resolve_ca_ip_from_config_inner();
-            let mut topology_changed = false;
-
-            if let Ok(latest_json) = registry_sync::pull_registry_snapshot_from_ca(&ca_host).await {
-                if let Err(e) = registry_sync::apply_overlay_snapshot(
-                    &latest_json,
-                    registry_sync::REGISTRY_PATH,
-                ) {
-                    eprintln!("⚠️  Overlay snapshot rejected from {}: {}", ca_host, e);
-                }
-            }
-
-            if let Ok(latest_lh_json) =
-                registry_sync::pull_lighthouse_snapshot_from_ca(&ca_host).await
-            {
-                let before = std::fs::read_to_string(registry_sync::LIGHTHOUSE_REGISTRY_PATH)
-                    .unwrap_or_default();
-                if let Err(e) = registry_sync::apply_lighthouse_snapshot(
-                    &latest_lh_json,
-                    registry_sync::LIGHTHOUSE_REGISTRY_PATH,
-                ) {
-                    eprintln!("⚠️  Lighthouse snapshot rejected from {}: {}", ca_host, e);
-                } else {
-                    let after = std::fs::read_to_string(registry_sync::LIGHTHOUSE_REGISTRY_PATH)
-                        .unwrap_or_default();
-                    if !json_equivalent(&before, &after) {
-                        topology_changed = true;
-                    }
-                }
-            }
-
-            if let Ok(latest_relay_json) =
-                registry_sync::pull_relay_snapshot_from_ca(&ca_host).await
-            {
-                let before =
-                    std::fs::read_to_string(registry_sync::RELAY_REGISTRY_PATH).unwrap_or_default();
-                if let Err(e) = registry_sync::apply_relay_snapshot(
-                    &latest_relay_json,
-                    registry_sync::RELAY_REGISTRY_PATH,
-                ) {
-                    eprintln!("⚠️  Relay snapshot rejected from {}: {}", ca_host, e);
-                } else {
-                    let after = std::fs::read_to_string(registry_sync::RELAY_REGISTRY_PATH)
-                        .unwrap_or_default();
-                    if !json_equivalent(&before, &after) {
-                        topology_changed = true;
-                    }
-                }
-            }
-
-            if topology_changed {
-                match LighthouseRegistry::load(registry_sync::LIGHTHOUSE_REGISTRY_PATH) {
-                    Ok(lh) => {
-                        if let Err(e) = NebulaConfig::generate_config_with_lighthouse(
-                            &node_for_registry_sync,
-                            &pool_for_registry_sync,
-                            &lh,
-                            &nebula_dir_for_registry_sync,
-                        ) {
-                            eprintln!(
-                                "⚠️  Failed to regenerate Nebula config after registry sync: {:?}",
-                                e
-                            );
-                            continue;
+            if node_id != "nodeA" {
+                tokio::spawn(async move {
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                        let ca_host = resolve_ca_ip_from_config_inner().await;
+                        if let Ok(latest_json) =
+                            registry_sync::pull_registry_snapshot_from_ca(&ca_host).await
+                        {
+                            let tmp = format!("{}.tmp", registry_sync::REGISTRY_PATH);
+                            if std::fs::write(&tmp, &latest_json).is_ok() {
+                                let _ = std::fs::rename(&tmp, registry_sync::REGISTRY_PATH);
+                            }
                         }
 
-                        let config_path = format!("{}/nebula.yaml", nebula_dir_for_registry_sync);
-                        if let Err(e) = NebulaDaemon::start(&config_path).await {
-                            eprintln!(
-                                "⚠️  Failed to restart Nebula after relay/lighthouse update: {}",
-                                e
-                            );
-                        } else {
-                            println!("🔄 Nebula reloaded after relay/lighthouse registry update");
+                        if let Ok(latest_lh_json) =
+                            registry_sync::pull_lighthouse_snapshot_from_ca(&ca_host).await
+                        {
+                            let tmp = format!("{}.tmp", registry_sync::LIGHTHOUSE_REGISTRY_PATH);
+                            if std::fs::write(&tmp, &latest_lh_json).is_ok() {
+                                let _ =
+                                    std::fs::rename(&tmp, registry_sync::LIGHTHOUSE_REGISTRY_PATH);
+                            }
                         }
                     }
-                    Err(e) => {
-                        eprintln!(
-                            "⚠️  Cannot reload Nebula; lighthouse registry not readable: {}",
-                            e
-                        );
-                    }
-                }
+                });
             }
         }
-    });
-
-    if node_id == "nodeA" {
-        let lh_path = format!("{}/lighthouse_registry.json", nebula_base_dir);
-        let mut changed = false;
-        for (peer_id, cfg) in [("nodeB", &node_b), ("nodeC", &node_c)] {
-            let Some(overlay_ip) = overlay_pool.get_ip(peer_id).cloned() else {
-                continue;
-            };
-            if !crate::dynamic_config::is_routable_ip(&cfg.ip) {
-                continue;
-            }
-            let endpoint = format!("{}:4242", cfg.ip);
-            if lighthouse_registry.upsert_endpoint_only(peer_id, &overlay_ip, &endpoint) {
-                changed = true;
-            }
-        }
-        if changed {
-            if let Err(e) = lighthouse_registry.save(&lh_path) {
-                eprintln!(
-                    "⚠️ Failed to persist lighthouse registry endpoint backfill: {}",
-                    e
-                );
-            } else {
-                println!("📡 Backfilled member endpoints into lighthouse registry");
-            }
-        }
-    }
-
-    if node_id == "nodeA" {
-        let node_for_local_reload = node_id.clone();
-        let nebula_dir_for_local_reload = nebula_base_dir.clone();
-        let pool_for_local_reload = overlay_pool.clone();
-        let lh_path = registry_sync::LIGHTHOUSE_REGISTRY_PATH.to_string();
-        let relay_path = registry_sync::RELAY_REGISTRY_PATH.to_string();
-
-        tokio::spawn(async move {
-            let mut last_lh = std::fs::read_to_string(&lh_path).unwrap_or_default();
-            let mut last_relay = std::fs::read_to_string(&relay_path).unwrap_or_default();
-
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(RELAY_SYNC_INTERVAL_SECS)).await;
-
-                let cur_lh = std::fs::read_to_string(&lh_path).unwrap_or_default();
-                let cur_relay = std::fs::read_to_string(&relay_path).unwrap_or_default();
-
-                let lh_changed = !json_equivalent(&last_lh, &cur_lh);
-                let relay_changed = !json_equivalent(&last_relay, &cur_relay);
-                if !lh_changed && !relay_changed {
-                    continue;
-                }
-                last_lh = cur_lh;
-                last_relay = cur_relay;
-
-                match LighthouseRegistry::load(&lh_path) {
-                    Ok(lh) => {
-                        if let Err(e) = NebulaConfig::generate_config_with_lighthouse(
-                            &node_for_local_reload,
-                            &pool_for_local_reload,
-                            &lh,
-                            &nebula_dir_for_local_reload,
-                        ) {
-                            eprintln!(
-                                "⚠️ nodeA failed to regenerate Nebula config on local registry update: {:?}",
-                                e
-                            );
-                            continue;
-                        }
-                        let config_path = format!("{}/nebula.yaml", nebula_dir_for_local_reload);
-                        if let Err(e) = NebulaDaemon::start(&config_path).await {
-                            eprintln!(
-                                "⚠️ nodeA failed to reload Nebula after local registry update: {}",
-                                e
-                            );
-                        } else {
-                            println!("🔄 nodeA reloaded Nebula after local registry update");
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "⚠️ nodeA cannot reload Nebula; lighthouse registry unreadable: {}",
-                            e
-                        );
-                    }
-                }
-            }
-        });
     }
 
     // ── Generate Nebula config (always regenerate so IPs stay fresh) ─────────
@@ -1332,69 +1142,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
          Check: 'sudo journalctl -u nebula' or 'nebula -config {} -test'",
             nebula_config_path
         );
-    }
-
-    if current_relay_cfg.enabled {
-        if let Err(e) =
-            RelayTrafficControl::apply_bandwidth_limit(current_relay_cfg.max_bandwidth_mbps)
-        {
-            eprintln!("⚠️  Relay tc setup failed: {}", e);
-        } else {
-            println!(
-                "🛰️  Relay limits: enabled=true, max_peers={}, max_bw={} Mbps, alert={}%",
-                current_relay_cfg.max_peers,
-                current_relay_cfg.max_bandwidth_mbps,
-                current_relay_cfg.alert_threshold_pct
-            );
-        }
-    } else {
-        let _ = RelayTrafficControl::clear();
-    }
-
-    // === Relay Registry SELF-REGISTRATION (STRICT CONTROL FIX) ===
-    {
-        if node_id == "nodeA" {
-            let relay_registry_path = format!("{}/relay_registry.json", nebula_base_dir);
-
-            let mut relay_reg =
-                RelayRegistry::load_or_create(&relay_registry_path, "guardian-circle-alpha");
-
-            let overlay_ip_only = nebula_ip.split('/').next().unwrap_or("").to_string();
-            let physical_endpoint = format!("{}:4242", detected_ip);
-
-            // ✅ ONLY if relay.enabled == true
-            if current_relay_cfg.enabled {
-                let is_lighthouse = node_id == "nodeA";
-
-                relay_reg.add_relay(
-                    &node_id,
-                    &overlay_ip_only,
-                    &physical_endpoint,
-                    current_relay_cfg.max_peers,
-                    current_relay_cfg.max_bandwidth_mbps,
-                    is_lighthouse,
-                );
-
-                println!(
-                    "✅ Relay registered: {} → {} (relay=true, lighthouse={})",
-                    node_id, overlay_ip_only, is_lighthouse
-                );
-            } else {
-                println!(
-                    "🚫 {} relay disabled in config → skipping registry",
-                    node_id
-                );
-            }
-
-            if let Err(e) = relay_reg.save(&relay_registry_path) {
-                eprintln!("⚠️ Failed to save relay registry: {}", e);
-            }
-        } else {
-            println!(
-                "ℹ️ {} is read-only node → not modifying relay registry",
-                node_id
-            );
-        }
     }
 
     log_audit(
@@ -1467,165 +1214,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &format!("Lighthouse health: {}", lh_health.summary()),
     );
 
-    {
-        let relay_registry_path = format!("{}/relay_registry.json", nebula_base_dir);
-        let lighthouse_registry_path = format!("{}/lighthouse_registry.json", nebula_base_dir);
-
-        // ✅ FIX: clone BEFORE move
-        let node_id_clone = node_id.clone();
-
-        tokio::spawn(async move {
-            if node_id_clone != "nodeA" {
-                return;
-            }
-
-            loop {
-                let mut relay_reg = match RelayRegistry::load(&relay_registry_path) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        eprintln!("⚠️ Relay registry load failed on nodeA health loop: {}", e);
-                        tokio::time::sleep(std::time::Duration::from_secs(
-                            RELAY_SYNC_INTERVAL_SECS,
-                        ))
-                        .await;
-                        continue;
-                    }
-                };
-
-                relay_reg.health_check_all(2).await;
-
-                if let Err(e) = relay_reg.save(&relay_registry_path) {
-                    eprintln!("⚠️ Relay registry save failed: {}", e);
-                }
-
-                match sgx_guardian_client::nebula::lighthouse::LighthouseRegistry::load(
-                    &lighthouse_registry_path,
-                ) {
-                    Ok(mut lh_reg) => {
-                        lh_reg.health_check_all(2, &node_id_clone).await;
-                        if let Err(e) = lh_reg.save(&lighthouse_registry_path) {
-                            eprintln!("⚠️ Lighthouse registry save failed: {}", e);
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "⚠️ Lighthouse registry load failed on nodeA health loop: {}",
-                            e
-                        );
-                    }
-                }
-
-                tokio::time::sleep(std::time::Duration::from_secs(RELAY_SYNC_INTERVAL_SECS)).await;
-            }
-        });
-    }
-
-    // === Relay Stats Poller (every 10s) ===
-    {
-        let metrics_clone = metrics.clone();
-        let relay_cfg = current_relay_cfg.clone();
-
-        // ✅ FIX: clone BEFORE move
-        let node_for_stats = node_id.clone();
-
-        let relay_stats_path = format!("{}/relay_stats.json", nebula_base_dir);
-
-        tokio::spawn(async move {
-            let mut breach_active = false;
-
-            loop {
-                match NebulaStats::fetch().await {
-                    Ok(stats) => {
-                        let mut m = metrics_clone.lock().await;
-
-                        m.update_relay_stats(
-                            stats.active_peers,
-                            stats.total_bytes_relayed,
-                            stats.current_mbps,
-                            stats.direct_tunnels,
-                            stats.relay_tunnels,
-                        );
-
-                        if relay_cfg.enabled && relay_cfg.max_bandwidth_mbps > 0 {
-                            let threshold_mbps = (relay_cfg.max_bandwidth_mbps as f64)
-                                * (relay_cfg.alert_threshold_pct as f64 / 100.0);
-
-                            let over = stats.current_mbps >= threshold_mbps;
-
-                            if over && !breach_active {
-                                m.record_relay_limit_breach();
-                            }
-
-                            breach_active = over;
-                        }
-
-                        drop(m);
-
-                        // ✅ IMPORTANT: use clone here
-                        let payload = serde_json::json!({
-                            "node_id": node_for_stats.clone(),
-                            "updated_at": chrono::Utc::now().to_rfc3339(),
-                            "active_peers": stats.active_peers,
-                            "total_bytes_relayed": stats.total_bytes_relayed,
-                            "current_mbps": stats.current_mbps,
-                            "direct_tunnels": stats.direct_tunnels,
-                            "relay_tunnels": stats.relay_tunnels
-                        });
-
-                        let _ = std::fs::write(
-                            &relay_stats_path,
-                            serde_json::to_string_pretty(&payload)
-                                .unwrap_or_else(|_| "{}".to_string()),
-                        );
-                    }
-
-                    Err(e) => {
-                        eprintln!("⚠️ Relay stats fetch failed: {}", e);
-                    }
-                }
-
-                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-            }
-        });
-    }
-
-    // === Direct-vs-Relay Observability (read-only, every 15s) ===
-    {
-        let node_for_tunnel = node_id.clone();
-        tokio::spawn(async move {
-            let mut last_relay_used = false;
-            loop {
-                let relay_used = TunnelState::detect_relay_usage().await;
-                if relay_used && !last_relay_used {
-                    let peers = TunnelState::poll_all_peers().await;
-                    if peers.is_empty() {
-                        println!(
-                            "🔁 Direct path degraded on {} → relay path active",
-                            node_for_tunnel
-                        );
-                    } else {
-                        println!(
-                            "🔁 Direct path degraded on {} → relay path active ({} observed peer entries)",
-                            node_for_tunnel,
-                            peers.len()
-                        );
-                    }
-                }
-                if !relay_used && last_relay_used {
-                    println!(
-                        "↪️ Direct path restored on {} — relay path inactive",
-                        node_for_tunnel
-                    );
-                }
-                last_relay_used = relay_used;
-                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
-            }
-        });
-    }
-
     // === Start Expiry Monitor ===
     use sgx_guardian_client::nebula::cert_lifecycle::ExpiryMonitor;
     ExpiryMonitor::start(nebula_base_dir.clone(), node_id.clone());
+
+    // ── UART DRAIN after Nebula phase ──
+    uart_drain().await;
 
     // === CoT Deliverable Integration Start ===
     println!("🔗 Initializing Circle of Trust (CoT) transport-agnostic layer...");
@@ -1662,22 +1256,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Vec::new()
     });
 
+    let iface_summary: Vec<String> = detected_interfaces
+        .iter()
+        .map(|i| format!("{}({})", i.name, i.transport_type))
+        .collect();
     println!(
-        "📡 Detected {} network interfaces:",
-        detected_interfaces.len()
+        "  CoT interfaces [{}]: {}",
+        detected_interfaces.len(),
+        iface_summary.join(", ")
     );
-    for iface in &detected_interfaces {
-        println!(
-            "   {} → {} [{}] {:?}",
-            iface.name,
-            iface.transport_type,
-            iface.status,
-            iface
-                .ip_addr
-                .map(|ip| ip.to_string())
-                .unwrap_or("no-ip".into())
-        );
-    }
 
     // Step 3: Create and populate transport registry
     let cot_registry = std::sync::Arc::new(TransportRegistry::new());
@@ -1908,6 +1495,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
 
+    // ── UART DRAIN before server start ──
+    uart_drain().await;
+
     let this_addr = format!("0.0.0.0:{}", this_node.port);
     log_event(&node_id, &format!("Starting server at {}", this_addr));
     use sgx_guardian_client::policy::load_policy_runtime;
@@ -2039,6 +1629,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
+    // === REST Admin API (axum) on :8443 ===
+    let api_state = sgx_guardian_client::api::state::AppState::from_env(node_id.clone());
+    let api_bind: std::net::SocketAddr = "0.0.0.0:8443".parse().unwrap();
+    tokio::spawn({
+        let state = api_state.clone();
+        async move {
+            if let Err(e) = sgx_guardian_client::api::serve(state, api_bind).await {
+                eprintln!("REST API server failed: {:?}", e);
+            }
+        }
+    });
+    println!("REST admin API listening on http://{}/api/v1", api_bind);
     // === CERT BOOTSTRAP SERVER (nodeA only, plaintext port 50061) ===
     if node_id == "nodeA" {
         tokio::spawn(async move {
@@ -2148,7 +1750,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 // ── Helper function (add to main.rs as a nested fn or module fn) ─────────
 // Resolves nodeA's LAN IP from its config file (written by UDP broadcast).
-fn resolve_ca_ip_from_config_inner() -> String {
+async fn resolve_ca_ip_from_config_inner() -> String {
     // Give broadcasts a short window to populate nodeA's config on members.
     for attempt in 1..=20 {
         for path in &[
@@ -2164,7 +1766,7 @@ fn resolve_ca_ip_from_config_inner() -> String {
         if attempt == 1 {
             eprintln!("⏳ Waiting for nodeA LAN IP via discovery/config sync...");
         }
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
     eprintln!(
         "⚠️  Could not find nodeA LAN IP from config files. \
@@ -2206,13 +1808,4 @@ fn read_ip_from_nebula_cert(base: &str, node_id: &str) -> Option<String> {
         }
     }
     None
-}
-
-fn json_equivalent(a: &str, b: &str) -> bool {
-    let va = serde_json::from_str::<serde_json::Value>(a);
-    let vb = serde_json::from_str::<serde_json::Value>(b);
-    match (va, vb) {
-        (Ok(lhs), Ok(rhs)) => lhs == rhs,
-        _ => a.trim() == b.trim(),
-    }
 }

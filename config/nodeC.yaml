@@ -5,6 +5,12 @@ ip: "127.0.0.1"
 port: 50053
 public_key: "placeholder-key-C"
 
+relay:
+  enabled: false
+  max_peers: 5
+  max_bandwidth_mbps: 10
+  alert_threshold_pct: 80
+
 secure_element:
   enabled: true
   scp_key_path: "~/se05x_mw_v04.05.01/simw-top/scripts/se050F_scp_keys.txt"

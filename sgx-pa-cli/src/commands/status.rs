@@ -80,4 +80,10 @@ pub fn run(args: StatusArgs) {
         node_config.port,
         node_config.public_key
     );
+    if let Some(relay) = node_config.relay {
+        println!(
+            " - Relay: enabled={}, max_peers={}, max_bw={} Mbps, alert={}%",
+            relay.enabled, relay.max_peers, relay.max_bandwidth_mbps, relay.alert_threshold_pct
+        );
+    }
 }

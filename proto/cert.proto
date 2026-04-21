@@ -9,6 +9,7 @@ message CertSignRequest {
   string public_key_pem = 2;       // requesting node public key PEM
   string overlay_ip = 3;           // e.g. "192.168.100.2/24"
   bool wants_lighthouse = 4;       // request lighthouse role assignment
+  bool wants_relay = 5;            // request relay role assignment
 }
 
 message CertSignResponse {
@@ -21,6 +22,8 @@ message CertSignResponse {
   string lighthouse_registry_json = 7; // serialized lighthouse registry
   string overlay_registry_json = 8;    // serialized overlay registry
   bytes signed_policy_bytes = 9;   // /etc/sgx-guardian/policies/policy.sig
+  bool assigned_relay = 10;        // approved as relay-capable node
+  string relay_registry_json = 11; // serialized relay registry
 }
 
 service CertService {

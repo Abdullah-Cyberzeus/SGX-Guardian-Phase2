@@ -11,6 +11,42 @@ pub struct MetricsConfig {
     pub bind: String,
     pub port: u16,
 }
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct RelayLimitsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_relay_max_peers")]
+    pub max_peers: u32,
+    #[serde(default = "default_relay_max_bandwidth_mbps")]
+    pub max_bandwidth_mbps: u32,
+    #[serde(default = "default_relay_alert_threshold_pct")]
+    pub alert_threshold_pct: u8,
+}
+
+fn default_relay_max_peers() -> u32 {
+    5
+}
+
+fn default_relay_max_bandwidth_mbps() -> u32 {
+    10
+}
+
+fn default_relay_alert_threshold_pct() -> u8 {
+    80
+}
+
+impl Default for RelayLimitsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_peers: default_relay_max_peers(),
+            max_bandwidth_mbps: default_relay_max_bandwidth_mbps(),
+            alert_threshold_pct: default_relay_alert_threshold_pct(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct NodeConfig {
     pub node_id: String,
@@ -19,6 +55,7 @@ pub struct NodeConfig {
     pub port: u16,
     pub public_key: String,
     pub metrics: Option<MetricsConfig>,
+    pub relay: Option<RelayLimitsConfig>,
 }
 impl NodeConfig {
     /// Validates the node configuration fields, ensuring correct ID,
@@ -56,7 +93,22 @@ impl NodeConfig {
                 return Err("metrics.port cannot be 0".into());
             }
         }
+        if let Some(relay) = &self.relay {
+            if relay.alert_threshold_pct > 100 {
+                return Err(format!(
+                    "relay.alert_threshold_pct must be 0-100, got {}",
+                    relay.alert_threshold_pct
+                ));
+            }
+            if relay.max_peers == 0 {
+                return Err("relay.max_peers cannot be 0".into());
+            }
+        }
         Ok(())
+    }
+
+    pub fn relay_or_default(&self) -> RelayLimitsConfig {
+        self.relay.clone().unwrap_or_default()
     }
 }
 

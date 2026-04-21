@@ -82,3 +82,18 @@ fn test_metrics_uptime_increases() {
 
     assert!(second > first, "Uptime must increase over time");
 }
+
+#[test]
+fn test_metrics_relay_prometheus_fields() {
+    let mut m = Metrics::default();
+    m.set_relay_limits(7, 15, 85);
+    m.update_relay_stats(2, 1024, 3.5, 1, 1);
+    m.record_relay_limit_breach();
+
+    let s = m.snapshot().to_prometheus();
+    assert!(s.contains("sgx_relay_active_peers 2"));
+    assert!(s.contains("sgx_relay_bytes_total 1024"));
+    assert!(s.contains("sgx_relay_limit_breaches_total 1"));
+    assert!(s.contains("sgx_relay_max_peers 7"));
+    assert!(s.contains("sgx_relay_max_bandwidth_mbps 15"));
+}
