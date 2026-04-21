@@ -3,9 +3,12 @@
 // Overlay Registry Sync — Multi-PC Support
 // ============================================================
 
+use crate::nebula::lighthouse::LighthouseRegistry;
 use crate::nebula::overlay_registry::OverlayRegistry;
+use crate::nebula::relay_registry::RelayRegistry;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
@@ -14,15 +17,19 @@ use tokio::sync::RwLock;
 pub const REGISTRY_SYNC_PORT: u16 = 50062;
 pub const REGISTRY_PATH: &str = "/var/lib/sgx-guardian/nebula/overlay_registry.json";
 pub const LIGHTHOUSE_REGISTRY_PATH: &str = "/var/lib/sgx-guardian/nebula/lighthouse_registry.json";
+pub const RELAY_REGISTRY_PATH: &str = "/var/lib/sgx-guardian/nebula/relay_registry.json";
 pub const CACHE_PATH: &str = "/var/lib/sgx-guardian/nebula/local_ip_cache.json";
 
 pub type SharedRegistry = Arc<RwLock<OverlayRegistry>>;
+fn is_ca_node() -> bool {
+    std::env::args().nth(1).unwrap_or_default() == "nodeA"
+}
 
 // ── Wire Messages ─────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RegistryRequest {
-    pub action: String, // "assign" | "query" | "list" | "snapshot" | "snapshot_lh"
+    pub action: String, // "assign" | "query" | "list" | "snapshot" | "snapshot_lh" | "snapshot_relay"
     pub node_name: String,
     pub pubkey_prefix: Option<String>,
 }
@@ -83,6 +90,114 @@ pub async fn start_registry_server(registry: SharedRegistry) {
     }
 }
 
+fn parse_snapshot_payload(raw: &str) -> Result<serde_json::Value, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("empty snapshot payload".to_string());
+    }
+
+    let value: serde_json::Value =
+        serde_json::from_str(trimmed).map_err(|e| format!("invalid JSON snapshot: {}", e))?;
+
+    // Guard against writing control-plane error responses as data snapshots.
+    if let Some(obj) = value.as_object() {
+        if obj.get("success").is_some()
+            && (obj.get("error").is_some()
+                || obj.get("ip_cidr").is_some()
+                || obj.get("registry_summary").is_some())
+        {
+            return Err("received control response instead of registry snapshot".to_string());
+        }
+    }
+
+    Ok(value)
+}
+
+fn atomic_write(path: &str, content: &str) -> Result<(), String> {
+    let tmp = format!("{}.tmp", path);
+    std::fs::write(&tmp, content).map_err(|e| format!("write {}: {}", tmp, e))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("rename {} -> {}: {}", tmp, path, e))
+}
+
+pub fn apply_overlay_snapshot(raw: &str, path: &str) -> Result<(), String> {
+    let value = parse_snapshot_payload(raw)?;
+    let incoming: OverlayRegistry = serde_json::from_value(value.clone())
+        .map_err(|e| format!("invalid overlay snapshot schema: {}", e))?;
+
+    if !incoming.allocations.contains_key(&incoming.owner_node) {
+        return Err(format!(
+            "overlay snapshot missing owner allocation for {}",
+            incoming.owner_node
+        ));
+    }
+
+    if Path::new(path).exists() {
+        if let Ok(existing) = OverlayRegistry::load(path) {
+            if !incoming.allocations.contains_key(&existing.owner_node) {
+                return Err(format!(
+                    "overlay snapshot missing existing owner allocation for {}",
+                    existing.owner_node
+                ));
+            }
+        }
+    }
+
+    let normalized =
+        serde_json::to_string_pretty(&incoming).map_err(|e| format!("serialize overlay: {}", e))?;
+    atomic_write(path, &normalized)
+}
+
+pub fn apply_lighthouse_snapshot(raw: &str, path: &str) -> Result<(), String> {
+    let value = parse_snapshot_payload(raw)?;
+    let incoming: LighthouseRegistry = serde_json::from_value(value.clone())
+        .map_err(|e| format!("invalid lighthouse snapshot schema: {}", e))?;
+
+    let active_lh_total = incoming
+        .lighthouses
+        .iter()
+        .filter(|l| l.is_lighthouse)
+        .count();
+    if active_lh_total == 0 {
+        return Err("lighthouse snapshot contains no lighthouse entries".to_string());
+    }
+
+    if Path::new(path).exists() {
+        if let Ok(existing) = LighthouseRegistry::load(path) {
+            if !existing.lighthouses.is_empty() && incoming.lighthouses.is_empty() {
+                return Err(
+                    "refusing to overwrite non-empty lighthouse registry with empty snapshot"
+                        .to_string(),
+                );
+            }
+        }
+    }
+
+    let normalized = serde_json::to_string_pretty(&incoming)
+        .map_err(|e| format!("serialize lighthouse: {}", e))?;
+    atomic_write(path, &normalized)
+}
+
+pub fn apply_relay_snapshot(raw: &str, path: &str) -> Result<(), String> {
+    let value = parse_snapshot_payload(raw)?;
+    let incoming: RelayRegistry = serde_json::from_value(value.clone())
+        .map_err(|e| format!("invalid relay snapshot schema: {}", e))?;
+
+    if Path::new(path).exists() {
+        if let Ok(existing) = RelayRegistry::load(path) {
+            if !existing.relays.is_empty() && incoming.relays.is_empty() {
+                return Err(
+                    "refusing to overwrite non-empty relay registry with empty snapshot"
+                        .to_string(),
+                );
+            }
+        }
+    }
+
+    let normalized =
+        serde_json::to_string_pretty(&incoming).map_err(|e| format!("serialize relay: {}", e))?;
+    atomic_write(path, &normalized)
+}
+
 async fn handle_registry_connection(
     stream: TcpStream,
     registry: SharedRegistry,
@@ -114,9 +229,29 @@ async fn handle_registry_connection(
         }
     };
 
-    if request.action == "snapshot" || request.action == "snapshot_lh" {
+    if request.action == "snapshot"
+        || request.action == "snapshot_lh"
+        || request.action == "snapshot_relay"
+    {
+        // ✅ Only CA serves registry snapshots
+        if !is_ca_node() {
+            let resp = RegistryResponse {
+                success: false,
+                ip_cidr: None,
+                ip: None,
+                error: Some("Only CA can serve registry snapshots".into()),
+                registry_summary: None,
+            };
+            let mut json = serde_json::to_string(&resp)?;
+            json.push('\n');
+            writer.write_all(json.as_bytes()).await?;
+            return Ok(());
+        }
+
         let path = if request.action == "snapshot_lh" {
             LIGHTHOUSE_REGISTRY_PATH
+        } else if request.action == "snapshot_relay" {
+            RELAY_REGISTRY_PATH
         } else {
             REGISTRY_PATH
         };
@@ -412,6 +547,39 @@ pub async fn pull_lighthouse_snapshot_from_ca(ca_host: &str) -> Result<String, S
     Ok(response_line)
 }
 
+pub async fn pull_relay_snapshot_from_ca(ca_host: &str) -> Result<String, String> {
+    let addr = format!("{}:{}", ca_host, REGISTRY_SYNC_PORT);
+
+    let stream = tokio::time::timeout(std::time::Duration::from_secs(5), TcpStream::connect(&addr))
+        .await
+        .map_err(|_| "timeout".to_string())?
+        .map_err(|e| format!("connect: {}", e))?;
+
+    let request = RegistryRequest {
+        action: "snapshot_relay".to_string(),
+        node_name: "".to_string(),
+        pubkey_prefix: None,
+    };
+
+    let mut json = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+    json.push('\n');
+
+    let (reader, mut writer) = stream.into_split();
+    writer
+        .write_all(json.as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut buf_reader = BufReader::new(reader);
+    let mut response_line = String::new();
+    buf_reader
+        .read_line(&mut response_line)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(response_line)
+}
+
 async fn request_or_query_ip_from_registry(
     node_name: &str,
     ca_host: &str,
@@ -473,7 +641,7 @@ pub async fn resolve_overlay_ip(node_name: &str, ca_host: &str, pubkey_prefix: &
                         let _ = save_local_ip_cache(node_name, &ip_cidr);
                         return ip_cidr;
                     }
-                    Err(e) if attempt.is_multiple_of(6) => {
+                    Err(e) if attempt % 6 == 0 => {
                         eprintln!(
                             "⏳ [OverlayIP] Still waiting for CA ({}): {}",
                             fresh_ca_host, e
@@ -531,4 +699,40 @@ pub fn clear_local_ip_cache(node_name: &str) -> Result<(), String> {
     std::fs::write(CACHE_PATH, json).map_err(|e| format!("Write: {}", e))?;
     println!("🗑️  Cache cleared for {}", node_name);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp_file(name: &str) -> String {
+        let pid = std::process::id();
+        format!("/tmp/{}_{}.json", name, pid)
+    }
+
+    #[test]
+    fn test_apply_relay_snapshot_rejects_control_response() {
+        let path = tmp_file("relay_snapshot_control");
+        let payload = r#"{"success":false,"error":"Only CA can serve registry snapshots"}"#;
+        let res = apply_relay_snapshot(payload, &path);
+        assert!(res.is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_apply_relay_snapshot_refuses_empty_overwrite() {
+        let path = tmp_file("relay_snapshot_empty_overwrite");
+        let mut existing = RelayRegistry::new("guardian-circle-alpha");
+        existing.add_relay("nodeA", "192.168.100.1", "10.0.0.1:4242", 5, 10, true);
+        existing.save(&path).unwrap();
+
+        let incoming_empty = RelayRegistry::new("guardian-circle-alpha");
+        let payload = serde_json::to_string_pretty(&incoming_empty).unwrap();
+        let res = apply_relay_snapshot(&payload, &path);
+        assert!(res.is_err());
+
+        let preserved = RelayRegistry::load(&path).unwrap();
+        assert!(preserved.relays.contains_key("nodeA"));
+        let _ = std::fs::remove_file(&path);
+    }
 }

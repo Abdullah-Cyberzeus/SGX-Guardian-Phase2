@@ -10,6 +10,7 @@ use crate::audit::logger::log_audit;
 use crate::config_loader::load_config;
 use crate::logging::{log_error, log_event};
 use crate::nebula::ca::NebulaCA;
+use crate::nebula::registry_sync;
 use crate::proto::sgx::cert_service_client::CertServiceClient;
 use crate::proto::sgx::CertSignRequest;
 #[cfg(unix)]
@@ -19,6 +20,21 @@ use tonic::transport::Channel;
 
 const NEBULA_BASE_DIR: &str = "/var/lib/sgx-guardian/nebula";
 const RETRY_INTERVAL_SECS: u64 = 5;
+
+fn sync_role_marker(path: &str, enabled: bool) {
+    if enabled {
+        if let Err(e) = std::fs::write(path, "true") {
+            eprintln!("⚠️  Failed to write marker {}: {}", path, e);
+        }
+        return;
+    }
+
+    if Path::new(path).exists() {
+        if let Err(e) = std::fs::remove_file(path) {
+            eprintln!("⚠️  Failed to remove marker {}: {}", path, e);
+        }
+    }
+}
 
 fn valid_lan_ip(ip: &str) -> bool {
     !ip.is_empty() && ip != "0.0.0.0" && ip != "127.0.0.1"
@@ -65,6 +81,7 @@ pub async fn request_certificate_from_ca(
     overlay_ip: String,
     public_key_pem: String,
     wants_lh: bool,
+    wants_relay: bool,
 ) {
     let (_, ca_port) = split_host_port(&ca_addr);
     let mut current_ca_addr = ca_addr.clone();
@@ -142,6 +159,7 @@ pub async fn request_certificate_from_ca(
             &overlay_ip,
             &public_key_pem,
             wants_lh,
+            wants_relay,
         )
         .await
         {
@@ -202,30 +220,49 @@ pub async fn request_certificate_from_ca(
 
                     if !resp.overlay_registry_json.is_empty() {
                         let path = "/var/lib/sgx-guardian/nebula/overlay_registry.json";
-                        if let Err(e) = std::fs::write(path, &resp.overlay_registry_json) {
-                            eprintln!("⚠️  Failed to sync overlay registry: {}", e);
-                        } else {
-                            println!("📋 Overlay registry synced from CA");
+                        match registry_sync::apply_overlay_snapshot(
+                            &resp.overlay_registry_json,
+                            path,
+                        ) {
+                            Ok(_) => println!("📋 Overlay registry synced from CA"),
+                            Err(e) => eprintln!("⚠️  Overlay registry snapshot rejected: {}", e),
                         }
                     }
 
                     if !resp.lighthouse_registry_json.is_empty() {
                         let path = "/var/lib/sgx-guardian/nebula/lighthouse_registry.json";
-                        if let Err(e) = std::fs::write(path, &resp.lighthouse_registry_json) {
-                            eprintln!("⚠️  Failed to sync lighthouse registry: {}", e);
-                        } else {
-                            println!("📋 Lighthouse registry synced from CA");
+                        match registry_sync::apply_lighthouse_snapshot(
+                            &resp.lighthouse_registry_json,
+                            path,
+                        ) {
+                            Ok(_) => println!("📋 Lighthouse registry synced from CA"),
+                            Err(e) => eprintln!("⚠️  Lighthouse registry snapshot rejected: {}", e),
                         }
                     }
 
                     if resp.assigned_lighthouse {
                         println!("🗼 This node is now a LIGHTHOUSE in guardian-circle-alpha");
-                        if let Err(e) =
-                            std::fs::write("/var/lib/sgx-guardian/nebula/am_lighthouse", "true")
-                        {
-                            eprintln!("⚠️  Failed to write lighthouse marker: {}", e);
+                    }
+                    sync_role_marker(
+                        "/var/lib/sgx-guardian/nebula/am_lighthouse",
+                        resp.assigned_lighthouse,
+                    );
+
+                    if !resp.relay_registry_json.is_empty() {
+                        let path = "/var/lib/sgx-guardian/nebula/relay_registry.json";
+                        match registry_sync::apply_relay_snapshot(&resp.relay_registry_json, path) {
+                            Ok(_) => println!("📋 Relay registry synced from CA"),
+                            Err(e) => eprintln!("⚠️  Relay registry snapshot rejected: {}", e),
                         }
                     }
+
+                    if resp.assigned_relay {
+                        println!("🛰️ This node is now a RELAY in guardian-circle-alpha");
+                        if let Err(e) = set_relay_enabled_in_node_config(&node_id) {
+                            eprintln!("⚠️  Failed to enable relay in node config: {}", e);
+                        }
+                    }
+                    sync_role_marker("/var/lib/sgx-guardian/nebula/am_relay", resp.assigned_relay);
 
                     if !resp.signed_policy_bytes.is_empty() {
                         if let Err(e) = std::fs::create_dir_all("/etc/sgx-guardian/policies") {
@@ -256,7 +293,7 @@ pub async fn request_certificate_from_ca(
                     if attempt == 1 {
                         println!(
                             "⏳ Certificate request pending — waiting for admin approval on nodeA.\n\
-                             Run on nodeA: edit {}/requests/{}.yaml → set approve: true",
+                             Run on nodeA: edit {}/requests/{}.yaml → set approve: member|lighthouse|relay|lh_relay",
                             NEBULA_BASE_DIR, node_id
                         );
                     }
@@ -303,6 +340,7 @@ async fn try_request(
     overlay_ip: &str,
     public_key_pem: &str,
     wants_lh: bool,
+    wants_relay: bool,
 ) -> Result<crate::proto::sgx::CertSignResponse, String> {
     let endpoint = Channel::from_shared(format!("http://{}", ca_addr))
         .map_err(|e| format!("Invalid CA address: {}", e))?;
@@ -319,6 +357,7 @@ async fn try_request(
         public_key_pem: public_key_pem.to_string(),
         overlay_ip: overlay_ip.to_string(),
         wants_lighthouse: wants_lh,
+        wants_relay,
     });
 
     let response = client
@@ -354,5 +393,48 @@ async fn write_file(path: &str, content: &str) -> Result<(), String> {
             .map_err(|e| format!("chmod {}: {}", path, e))?;
     }
 
+    Ok(())
+}
+
+fn set_relay_enabled_in_node_config(node_id: &str) -> Result<(), String> {
+    let cfg_path = format!("/etc/sgx-guardian/config/{}.yaml", node_id);
+    let content =
+        std::fs::read_to_string(&cfg_path).map_err(|e| format!("read {}: {}", cfg_path, e))?;
+    let mut doc: serde_yaml::Value =
+        serde_yaml::from_str(&content).map_err(|e| format!("yaml parse: {}", e))?;
+
+    if !doc.is_mapping() {
+        return Err("node config root is not a YAML mapping".to_string());
+    }
+
+    let map = doc.as_mapping_mut().ok_or("invalid YAML mapping")?;
+    let relay_key = serde_yaml::Value::String("relay".to_string());
+
+    let relay_mapping = map
+        .entry(relay_key)
+        .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+
+    if !relay_mapping.is_mapping() {
+        *relay_mapping = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+    }
+
+    if let Some(relay_map) = relay_mapping.as_mapping_mut() {
+        relay_map.insert(
+            serde_yaml::Value::String("enabled".to_string()),
+            serde_yaml::Value::Bool(true),
+        );
+        relay_map
+            .entry(serde_yaml::Value::String("max_peers".to_string()))
+            .or_insert_with(|| serde_yaml::Value::Number(serde_yaml::Number::from(5)));
+        relay_map
+            .entry(serde_yaml::Value::String("max_bandwidth_mbps".to_string()))
+            .or_insert_with(|| serde_yaml::Value::Number(serde_yaml::Number::from(10)));
+        relay_map
+            .entry(serde_yaml::Value::String("alert_threshold_pct".to_string()))
+            .or_insert_with(|| serde_yaml::Value::Number(serde_yaml::Number::from(80)));
+    }
+
+    let updated = serde_yaml::to_string(&doc).map_err(|e| format!("yaml serialize: {}", e))?;
+    std::fs::write(&cfg_path, updated).map_err(|e| format!("write {}: {}", cfg_path, e))?;
     Ok(())
 }

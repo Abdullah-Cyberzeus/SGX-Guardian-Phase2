@@ -36,7 +36,7 @@ enum Commands {
     Peers,
     /// Show the last attestation result
     Attestation,
-    /// Generate a signed attestation quote with a challenge nonce
+    /// Generate a signed attestation quote
     AttestGenerate(commands::attest_quote::GenerateQuoteArgs),
     /// Verify a signed attestation quote
     AttestVerify(commands::attest_quote::VerifyQuoteArgs),
@@ -56,6 +56,16 @@ enum Commands {
     PcrBaselineCreate,
     /// Verify current PCR values against golden baseline
     PcrBaselineVerify,
+    /// Relay management commands
+    Relay(commands::relay::RelayArgs),
+    /// List relay nodes
+    RelayList,
+    /// Show relay stats for a node
+    RelayStats(commands::relay::RelayStatsArgs),
+    /// Set relay limits for a node
+    RelaySetLimit(commands::relay::RelaySetLimitArgs),
+    /// Enable/disable relay for a node
+    RelayToggle(commands::relay::RelayToggleArgs),
 }
 /// Entry point for the SGX Policy Authority CLI.
 /// Dispatches the selected subcommand and routes execution
@@ -78,13 +88,13 @@ fn main() {
                 eprintln!("Error: {}", e);
             }
         }
-        Commands::AttestGenerate(args) => commands::attest_quote::run_generate(args),
-        Commands::AttestVerify(args) => commands::attest_quote::run_verify(args),
         Commands::Attestation => {
             if let Err(e) = commands::attestation::run() {
                 eprintln!("Error: {}", e);
             }
         }
+        Commands::AttestGenerate(args) => commands::attest_quote::run_generate(args),
+        Commands::AttestVerify(args) => commands::attest_quote::run_verify(args),
         Commands::DkpStatus => commands::dkp_status::run(),
         Commands::DkpRotate => commands::dkp_rotate::run(),
         Commands::DkpRevoke(args) => commands::dkp_revoke::run(args),
@@ -92,5 +102,65 @@ fn main() {
         Commands::PcrStatus => commands::pcr_status::run(),
         Commands::PcrBaselineCreate => commands::pcr_baseline::run_create(),
         Commands::PcrBaselineVerify => commands::pcr_baseline::run_verify(),
+        Commands::Relay(args) => {
+            if let Err(e) = commands::relay::run(args) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::RelayList => {
+            if let Err(e) = commands::relay::run_list() {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::RelayStats(args) => {
+            if let Err(e) = commands::relay::run_stats(args) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::RelaySetLimit(args) => {
+            if let Err(e) = commands::relay::run_set_limit(args) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::RelayToggle(args) => {
+            if let Err(e) = commands::relay::run_toggle(args) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn test_relay_commands_parse() {
+        let c0 = Cli::try_parse_from(["sgx-pa-cli", "relay-list"]);
+        assert!(c0.is_ok());
+
+        let c1 = Cli::try_parse_from(["sgx-pa-cli", "relay", "list"]);
+        assert!(c1.is_ok());
+
+        let c2 = Cli::try_parse_from([
+            "sgx-pa-cli",
+            "relay",
+            "set-limit",
+            "nodeB",
+            "--max-peers",
+            "10",
+            "--max-bandwidth-mbps",
+            "20",
+        ]);
+        assert!(c2.is_ok());
+
+        let c3 = Cli::try_parse_from(["sgx-pa-cli", "relay", "toggle", "nodeC", "--enable"]);
+        assert!(c3.is_ok());
     }
 }

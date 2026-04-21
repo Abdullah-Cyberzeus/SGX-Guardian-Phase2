@@ -131,3 +131,48 @@ public_key: ""
     );
     let _ = fs::remove_file(&p);
 }
+
+#[test]
+fn test_node_config_parses_relay_limits() {
+    let yaml = r#"
+node_id: nodeB
+hostname: relay-node
+ip: 192.168.1.20
+port: 50052
+public_key: "PUBKEY123"
+relay:
+  enabled: true
+  max_peers: 9
+  max_bandwidth_mbps: 25
+  alert_threshold_pct: 70
+"#;
+
+    let p = write_temp_config("relay_cfg", yaml);
+    let cfg = load_config(&p).expect("relay config should parse");
+    let relay = cfg.relay.expect("relay section should exist");
+    assert!(relay.enabled);
+    assert_eq!(relay.max_peers, 9);
+    assert_eq!(relay.max_bandwidth_mbps, 25);
+    assert_eq!(relay.alert_threshold_pct, 70);
+    let _ = fs::remove_file(&p);
+}
+
+#[test]
+fn test_default_relay_limits() {
+    let yaml = r#"
+node_id: nodeB
+hostname: relay-node
+ip: 192.168.1.20
+port: 50052
+public_key: "PUBKEY123"
+"#;
+
+    let p = write_temp_config("relay_defaults", yaml);
+    let cfg = load_config(&p).expect("config should parse without relay section");
+    let relay = cfg.relay_or_default();
+    assert!(!relay.enabled);
+    assert_eq!(relay.max_peers, 5);
+    assert_eq!(relay.max_bandwidth_mbps, 10);
+    assert_eq!(relay.alert_threshold_pct, 80);
+    let _ = fs::remove_file(&p);
+}
