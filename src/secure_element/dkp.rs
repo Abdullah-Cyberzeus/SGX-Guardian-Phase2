@@ -41,34 +41,60 @@ impl DkpManager {
         // Try to load existing metadata history
         if let Ok(history) = DkpKeyHistory::load(&metadata_path) {
             if let Some(active) = history.active_key() {
-                println!(
-                    "  Existing DKP found (v{}) — loading from SE050",
-                    active.version
-                );
-                println!("  Using existing device identity key ({})", active.key_id);
-                info!(
-                    "DKP loaded: {} (v{}, age: {})",
-                    active.key_id,
-                    active.version,
-                    active.age_display()
-                );
+                // NEW: verify the slot advertised in metadata actually exists in SE050.
+                // Prevents the "metadata says v1 at 0x20000010 but chip slot was wiped"
+                // drift that put Board 115 into a reboot loop.
+                let slot_hex = active.key_id.clone();
+                let slot_found = match SeKeyStorage::new(config) {
+                    Ok(store) => match store.list_slots() {
+                        Ok(list) => list
+                            .to_uppercase()
+                            .contains(&slot_hex.to_uppercase().replace("0X", "0X")),
+                        Err(_) => false,
+                    },
+                    Err(_) => false,
+                };
 
-                // Check if auto-rotation is needed
-                if active.needs_rotation() {
+                if !slot_found {
                     warn!(
-                        "DKP v{} age ({}) exceeds rotation policy — rotation recommended",
+                        "DKP metadata claims slot {} but SE050 does not have it — \
+                         treating as fresh provisioning",
+                        slot_hex
+                    );
+                    // Rotate metadata out of the way so generate_dkp can recreate.
+                    let quarantine =
+                        format!("{}.stale.{}", metadata_path, chrono::Utc::now().timestamp());
+                    let _ = std::fs::rename(&metadata_path, &quarantine);
+                    // Fall through to fresh-provision branch below.
+                } else {
+                    println!(
+                        "  Existing DKP found (v{}) — loading from SE050",
+                        active.version
+                    );
+                    println!("  Using existing device identity key ({})", active.key_id);
+                    info!(
+                        "DKP loaded: {} (v{}, age: {})",
+                        active.key_id,
                         active.version,
                         active.age_display()
                     );
-                    println!("  ⚠️ DKP age exceeds rotation policy — auto-rotation recommended");
-                }
 
-                return Ok(Self {
-                    history,
-                    metadata_path,
-                    public_key_path,
-                    config: config.clone(),
-                });
+                    if active.needs_rotation() {
+                        warn!(
+                            "DKP v{} age ({}) exceeds rotation policy — rotation recommended",
+                            active.version,
+                            active.age_display()
+                        );
+                        println!("  ⚠️ DKP age exceeds rotation policy — auto-rotation recommended");
+                    }
+
+                    return Ok(Self {
+                        history,
+                        metadata_path,
+                        public_key_path,
+                        config: config.clone(),
+                    });
+                }
             }
         }
 
