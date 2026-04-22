@@ -71,6 +71,13 @@ pub struct RuntimeGates {
 
     /// Milliseconds to sleep between major subsystem startups. 0 = no cooldown.
     pub startup_cooldown_ms: u64,
+
+    // Board-freeze fix (Apr 2026)
+    /// Attempt to read OCOTP fuses via /sys/bus/nvmem. Default OFF.
+    /// When unset, BootChainStatus reports HAB: Unknown.
+    pub read_ocotp: bool,
+    /// Compute SHA-256 of the daemon binary (17 MB, ~1 s blocking). Default OFF.
+    pub measure_binary_hash: bool,
 }
 
 impl RuntimeGates {
@@ -104,6 +111,8 @@ impl RuntimeGates {
             disable_node_listener: env_true("SGX_DISABLE_NODE_LISTENER"),
             ssscli_timeout_secs: env_u64("SGX_SSSCLI_TIMEOUT_SECS", 10),
             startup_cooldown_ms: env_u64("SGX_STARTUP_COOLDOWN_MS", 0),
+            read_ocotp: env_true("SGX_READ_OCOTP"),
+            measure_binary_hash: env_true("SGX_MEASURE_BINARY_HASH"),
         }
     }
 
@@ -137,6 +146,11 @@ impl RuntimeGates {
             self.disable_node_listener,
             self.ssscli_timeout_secs,
             self.startup_cooldown_ms
+        );
+        tracing::info!(
+            "Runtime gates (boot): read_ocotp={} measure_binary_hash={}",
+            self.read_ocotp,
+            self.measure_binary_hash
         );
     }
 }

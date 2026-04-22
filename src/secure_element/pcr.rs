@@ -211,7 +211,29 @@ impl PcrEngine {
     }
 
     /// Extend with SHA-256 hash of a file's contents.
+    /// Files larger than 16 MB are hashed by their metadata instead of full
+    /// contents to avoid blocking the tokio runtime on large reads (e.g.
+    /// /boot/Image can be 30+ MB on some boards).
     pub fn extend_from_file(&mut self, pcr_index: usize, path: &str) -> Result<String, String> {
+        const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
+        let meta = fs::metadata(path).map_err(|e| format!("Stat {}: {}", path, e))?;
+        if meta.len() > MAX_FILE_BYTES {
+            let meta_str = format!(
+                "FILE_META:{}:size={}:mtime={:?}",
+                path,
+                meta.len(),
+                meta.modified().ok()
+            );
+            tracing::warn!(
+                "PCR{}: {} exceeds {} bytes — measuring metadata instead of contents",
+                pcr_index,
+                path,
+                MAX_FILE_BYTES
+            );
+            return self.extend_from_string(pcr_index, &meta_str);
+        }
+
         let data = fs::read(path).map_err(|e| format!("Read {}: {}", path, e))?;
         let measurement = Sha256::digest(&data);
         self.extend(pcr_index, &measurement)?;
