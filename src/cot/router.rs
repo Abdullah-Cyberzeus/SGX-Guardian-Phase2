@@ -3,6 +3,7 @@
 // Multi-Transport Router — ties everything together.
 // ============================================================
 
+use crate::cot::failover::FailoverEngine;
 use crate::cot::identity::DeviceIdentity;
 use crate::cot::membership::CircleMembership;
 use crate::cot::session_manager::SessionManager;
@@ -18,6 +19,7 @@ pub struct CotRouter {
     sessions: Arc<SessionManager>,
     circle: Arc<CircleMembership>,
     trust_engine: Arc<TrustEngine>,
+    failover: Option<Arc<FailoverEngine>>,
 }
 
 impl CotRouter {
@@ -27,6 +29,7 @@ impl CotRouter {
         sessions: Arc<SessionManager>,
         circle: Arc<CircleMembership>,
         trust_engine: Arc<TrustEngine>,
+        failover: Option<Arc<FailoverEngine>>,
     ) -> Self {
         Self {
             local_identity,
@@ -34,6 +37,7 @@ impl CotRouter {
             sessions,
             circle,
             trust_engine,
+            failover,
         }
     }
 
@@ -60,6 +64,33 @@ impl CotRouter {
                 "No endpoints for {}",
                 remote_device_id
             )));
+        }
+
+        if let Some(failover) = &self.failover {
+            if let Some(active_iface) = failover.current_interface().await {
+                if let Some(transport) = self.registry.get_by_interface(&active_iface).await {
+                    if transport.is_available().await {
+                        if let Some(endpoint) = member.endpoint_for(transport.transport_type()) {
+                            let message = TransportMessage::new(
+                                self.local_identity.device_id().to_string(),
+                                remote_device_id.to_string(),
+                                endpoint.address.clone(),
+                                payload.clone(),
+                            );
+                            if transport.send(&message).await.is_ok() {
+                                self.sessions
+                                    .get_or_create(
+                                        self.local_identity.device_id(),
+                                        remote_device_id,
+                                        endpoint.transport_type,
+                                    )
+                                    .await;
+                                return Ok(endpoint.transport_type);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         let mut endpoints = member.endpoints.clone();
@@ -150,7 +181,7 @@ mod tests {
         let r = Arc::new(TransportRegistry::new());
         let s = Arc::new(SessionManager::new());
         let t = Arc::new(TrustEngine::new(id.clone(), c.clone()));
-        let router = CotRouter::new(id, r, s, c, t);
+        let router = CotRouter::new(id, r, s, c, t, None);
         assert!(router
             .send_to_peer("unknown", b"hi".to_vec())
             .await
@@ -169,7 +200,7 @@ mod tests {
         let r = Arc::new(TransportRegistry::new());
         let s = Arc::new(SessionManager::new());
         let t = Arc::new(TrustEngine::new(id.clone(), c.clone()));
-        let router = CotRouter::new(id, r, s, c, t);
+        let router = CotRouter::new(id, r, s, c, t, None);
         assert!(router.status_summary().await.contains("CoT Router Status"));
     }
 }

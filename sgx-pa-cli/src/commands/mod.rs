@@ -2,8 +2,8 @@
 //! Each module implements one CLI feature such as key generation,
 //! policy signing, viewing logs, checking status, attestation results,
 //! and listing trusted peers.
-pub mod attestation;
 pub mod attest_quote;
+pub mod attestation;
 pub mod boot_status;
 pub mod dkp_revoke;
 pub mod dkp_rotate;
@@ -17,4 +17,5 @@ pub mod peers;
 pub mod relay;
 pub mod sign;
 pub mod status;
+pub mod transport;
 pub mod verify;

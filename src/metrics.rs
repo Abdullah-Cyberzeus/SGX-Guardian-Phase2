@@ -1,4 +1,5 @@
 use crate::logging::{log_error, log_event};
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 /// Tracks basic runtime metrics for each SG-X node,
 /// including uptime, number of connections, and error counts.
@@ -29,6 +30,12 @@ pub struct Metrics {
     pub relay_alert_threshold_pct: u8,
     pub relay_direct_tunnels: u32,
     pub relay_relay_tunnels: u32,
+    pub cot_transport_up: BTreeMap<(String, String), bool>,
+    pub cot_transport_latency_ms: BTreeMap<String, u64>,
+    pub cot_transport_bandwidth_kbps: BTreeMap<String, u64>,
+    pub cot_active_transport: Option<String>,
+    pub cot_switches_total: u64,
+    pub cot_switch_matrix: BTreeMap<(String, String), u64>,
 }
 /// Initializes metric counters with zeroed values and current start time.
 impl Default for Metrics {
@@ -48,6 +55,12 @@ impl Default for Metrics {
             relay_alert_threshold_pct: 80,
             relay_direct_tunnels: 0,
             relay_relay_tunnels: 0,
+            cot_transport_up: BTreeMap::new(),
+            cot_transport_latency_ms: BTreeMap::new(),
+            cot_transport_bandwidth_kbps: BTreeMap::new(),
+            cot_active_transport: None,
+            cot_switches_total: 0,
+            cot_switch_matrix: BTreeMap::new(),
         }
     }
 }
@@ -131,6 +144,34 @@ impl Metrics {
     pub fn record_relay_limit_breach(&mut self) {
         self.relay_limit_breaches_total += 1;
     }
+
+    pub fn set_cot_transport_state(
+        &mut self,
+        interface: &str,
+        transport: &str,
+        is_up: bool,
+        latency_ms: u64,
+        bandwidth_kbps: u64,
+    ) {
+        self.cot_transport_up
+            .insert((interface.to_string(), transport.to_string()), is_up);
+        self.cot_transport_latency_ms
+            .insert(transport.to_string(), latency_ms);
+        self.cot_transport_bandwidth_kbps
+            .insert(transport.to_string(), bandwidth_kbps);
+    }
+
+    pub fn set_cot_active_transport(&mut self, transport: &str) {
+        self.cot_active_transport = Some(transport.to_string());
+    }
+
+    pub fn record_cot_switch(&mut self, from: &str, to: &str) {
+        self.cot_switches_total += 1;
+        *self
+            .cot_switch_matrix
+            .entry((from.to_string(), to.to_string()))
+            .or_insert(0) += 1;
+    }
 }
 impl Metrics {
     /// Create a read-only snapshot of metrics
@@ -151,6 +192,28 @@ impl Metrics {
             relay_alert_threshold_pct: self.relay_alert_threshold_pct,
             relay_direct_tunnels: self.relay_direct_tunnels,
             relay_relay_tunnels: self.relay_relay_tunnels,
+            cot_transport_up: self
+                .cot_transport_up
+                .iter()
+                .map(|((iface, tt), up)| (iface.clone(), tt.clone(), *up))
+                .collect(),
+            cot_transport_latency_ms: self
+                .cot_transport_latency_ms
+                .iter()
+                .map(|(tt, ms)| (tt.clone(), *ms))
+                .collect(),
+            cot_transport_bandwidth_kbps: self
+                .cot_transport_bandwidth_kbps
+                .iter()
+                .map(|(tt, kbps)| (tt.clone(), *kbps))
+                .collect(),
+            cot_active_transport: self.cot_active_transport.clone(),
+            cot_switches_total: self.cot_switches_total,
+            cot_switch_matrix: self
+                .cot_switch_matrix
+                .iter()
+                .map(|((from, to), count)| (from.clone(), to.clone(), *count))
+                .collect(),
         }
     }
 }
@@ -172,6 +235,12 @@ pub struct MetricsSnapshot {
     pub relay_alert_threshold_pct: u8,
     pub relay_direct_tunnels: u32,
     pub relay_relay_tunnels: u32,
+    pub cot_transport_up: Vec<(String, String, bool)>,
+    pub cot_transport_latency_ms: Vec<(String, u64)>,
+    pub cot_transport_bandwidth_kbps: Vec<(String, u64)>,
+    pub cot_active_transport: Option<String>,
+    pub cot_switches_total: u64,
+    pub cot_switch_matrix: Vec<(String, String, u64)>,
 }
 
 impl MetricsSnapshot {
@@ -269,6 +338,63 @@ impl MetricsSnapshot {
         out.push_str("# HELP sgx_relay_tunnels Number of relay tunnels observed\n");
         out.push_str("# TYPE sgx_relay_tunnels gauge\n");
         out.push_str(&format!("sgx_relay_tunnels {}\n", self.relay_relay_tunnels));
+
+        out.push_str(
+            "# HELP sgx_cot_transport_up CoT transport health by interface (1=up, 0=down)\n",
+        );
+        out.push_str("# TYPE sgx_cot_transport_up gauge\n");
+        for (iface, transport, up) in &self.cot_transport_up {
+            out.push_str(&format!(
+                "sgx_cot_transport_up{{interface=\"{}\",transport=\"{}\"}} {}\n",
+                iface,
+                transport.to_lowercase(),
+                if *up { 1 } else { 0 }
+            ));
+        }
+
+        out.push_str("# HELP sgx_cot_transport_latency_ms CoT transport latency in milliseconds\n");
+        out.push_str("# TYPE sgx_cot_transport_latency_ms gauge\n");
+        for (transport, latency) in &self.cot_transport_latency_ms {
+            out.push_str(&format!(
+                "sgx_cot_transport_latency_ms{{transport=\"{}\"}} {}\n",
+                transport.to_lowercase(),
+                latency
+            ));
+        }
+
+        out.push_str("# HELP sgx_cot_transport_bandwidth_kbps CoT transport bandwidth in kbps\n");
+        out.push_str("# TYPE sgx_cot_transport_bandwidth_kbps gauge\n");
+        for (transport, bw) in &self.cot_transport_bandwidth_kbps {
+            out.push_str(&format!(
+                "sgx_cot_transport_bandwidth_kbps{{transport=\"{}\"}} {}\n",
+                transport.to_lowercase(),
+                bw
+            ));
+        }
+
+        out.push_str("# HELP sgx_cot_active_transport_info Active CoT transport\n");
+        out.push_str("# TYPE sgx_cot_active_transport_info gauge\n");
+        if let Some(active) = &self.cot_active_transport {
+            out.push_str(&format!(
+                "sgx_cot_active_transport_info{{transport=\"{}\"}} 1\n",
+                active.to_lowercase()
+            ));
+        }
+
+        out.push_str("# HELP sgx_cot_transport_switches_total Total CoT transport switches\n");
+        out.push_str("# TYPE sgx_cot_transport_switches_total counter\n");
+        out.push_str(&format!(
+            "sgx_cot_transport_switches_total {}\n",
+            self.cot_switches_total
+        ));
+        for (from, to, count) in &self.cot_switch_matrix {
+            out.push_str(&format!(
+                "sgx_cot_transport_switches_total{{from=\"{}\",to=\"{}\"}} {}\n",
+                from.to_lowercase(),
+                to.to_lowercase(),
+                count
+            ));
+        }
 
         out
     }

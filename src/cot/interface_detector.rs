@@ -95,6 +95,20 @@ impl InterfaceDetector {
     fn classify_interface(name: &str) -> Option<TransportType> {
         let lower = name.to_lowercase();
 
+        if Self::is_forced_satellite_interface(&lower) {
+            return Some(TransportType::Satellite);
+        }
+
+        if lower.starts_with("ppp") {
+            return Some(TransportType::Satellite);
+        }
+        if Self::is_satellite_usb_modem(name) {
+            return Some(TransportType::Satellite);
+        }
+        if lower.starts_with("sat") {
+            return Some(TransportType::Satellite);
+        }
+
         if lower.starts_with("eth")
             || lower.starts_with("en")
             || lower.starts_with("eno")
@@ -115,11 +129,38 @@ impl InterfaceDetector {
             return Some(TransportType::Cellular);
         }
 
-        if lower.starts_with("sat") {
-            return Some(TransportType::Satellite);
+        None
+    }
+
+    fn is_forced_satellite_interface(lower_name: &str) -> bool {
+        let Ok(raw) = std::env::var("SGX_SATELLITE_INTERFACES") else {
+            return false;
+        };
+        raw.split(',')
+            .map(|n| n.trim().to_lowercase())
+            .filter(|n| !n.is_empty())
+            .any(|n| n == lower_name)
+    }
+
+    fn is_satellite_usb_modem(iface_name: &str) -> bool {
+        if !iface_name.to_lowercase().starts_with("usb") {
+            return false;
         }
 
-        None
+        let path = format!("/sys/class/net/{}/device/uevent", iface_name);
+        let Ok(content) = std::fs::read_to_string(path) else {
+            return false;
+        };
+
+        const SAT_VENDOR_IDS: &[&str] = &["1546", "1bc7", "0846", "1291"];
+        for line in content.lines() {
+            if let Some(vid) = line.strip_prefix("ID_VENDOR_ID=") {
+                if SAT_VENDOR_IDS.contains(&vid.trim()) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Returns true if the interface name looks like a virtual/container NIC.
@@ -213,6 +254,10 @@ mod tests {
             InterfaceDetector::classify_interface("sat0"),
             Some(TransportType::Satellite)
         );
+        assert_eq!(
+            InterfaceDetector::classify_interface("ppp0"),
+            Some(TransportType::Satellite)
+        );
     }
 
     #[test]
@@ -237,11 +282,22 @@ mod tests {
             ("bnep0", Some(TransportType::Bluetooth)),
             ("wwan0", Some(TransportType::Cellular)),
             ("sat0", Some(TransportType::Satellite)),
+            ("ppp0", Some(TransportType::Satellite)),
             ("tun0", None),
         ];
 
         for (name, expected) in cases {
             assert_eq!(InterfaceDetector::classify_interface(name), expected);
         }
+    }
+
+    #[test]
+    fn test_classify_eth_with_env_override_as_satellite() {
+        std::env::set_var("SGX_SATELLITE_INTERFACES", "ens37");
+        assert_eq!(
+            InterfaceDetector::classify_interface("ens37"),
+            Some(TransportType::Satellite)
+        );
+        std::env::remove_var("SGX_SATELLITE_INTERFACES");
     }
 }

@@ -25,6 +25,9 @@ impl Transport for WiFiTransport {
     fn priority(&self) -> TransportPriority {
         self.interface.priority
     }
+    fn interface_name(&self) -> &str {
+        &self.interface.name
+    }
     async fn is_available(&self) -> bool {
         self.interface.is_usable()
     }

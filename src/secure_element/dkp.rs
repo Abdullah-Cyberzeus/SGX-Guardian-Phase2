@@ -85,7 +85,9 @@ impl DkpManager {
                             active.version,
                             active.age_display()
                         );
-                        println!("  ⚠️ DKP age exceeds rotation policy — auto-rotation recommended");
+                        println!(
+                            "  ⚠️ DKP age exceeds rotation policy — auto-rotation recommended"
+                        );
                     }
 
                     return Ok(Self {

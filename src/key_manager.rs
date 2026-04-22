@@ -172,9 +172,11 @@ impl KeyManager {
                                 "SE050 fallback key corrupt — quarantined to {} and regenerating",
                                 quarantine
                             );
-                            let pkcs8 =
-                                EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
-                                    .map_err(|_| anyhow!("Generate fallback keypair"))?;
+                            let pkcs8 = EcdsaKeyPair::generate_pkcs8(
+                                &ECDSA_P256_SHA256_FIXED_SIGNING,
+                                &rng,
+                            )
+                            .map_err(|_| anyhow!("Generate fallback keypair"))?;
                             fs::write(fallback_key_path, pkcs8.as_ref())?;
                             pkcs8.as_ref().to_vec()
                         }

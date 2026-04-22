@@ -1632,12 +1632,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     use sgx_guardian_client::cot::identity::DeviceIdentity;
     use sgx_guardian_client::cot::interface_detector::InterfaceDetector;
+    use sgx_guardian_client::cot::link_monitor::LinkMonitor;
     use sgx_guardian_client::cot::membership::CircleMembership as CotCircleMembership;
     use sgx_guardian_client::cot::router::CotRouter;
     use sgx_guardian_client::cot::session_manager::SessionManager;
     use sgx_guardian_client::cot::transport_registry::TransportRegistry;
-    use sgx_guardian_client::cot::transports;
     use sgx_guardian_client::cot::trust_engine::TrustEngine;
+    use sgx_guardian_client::cot::{failover::FailoverEngine, hotplug::HotplugWatcher};
 
     // Step 1: Create device identity from existing KeyManager public key
     let cot_identity = DeviceIdentity::from_public_key_with_name(&km.pubkey_der(), &node_id)
@@ -1679,36 +1680,68 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // Step 3: Create and populate transport registry
+    // Step 3: Create transport registry
     let cot_registry = std::sync::Arc::new(TransportRegistry::new());
+
+    // Step 4: Start hotplug watcher (handles initial registration + runtime changes)
+    HotplugWatcher::start(cot_registry.clone());
+
+    // Step 5: Start link monitor
+    let link_monitor = LinkMonitor::new(cot_registry.clone());
+    link_monitor.clone().start();
+
+    // Step 6: Start failover engine
+    let failover = FailoverEngine::new(link_monitor.clone(), cot_registry.clone());
+    failover.clone().start();
+
+    // Admin lock sync from file (written by sgx-pa-cli transport lock/unlock)
     {
-        let usable = transports::auto_create_transports().unwrap_or_else(|_| Vec::new());
-        for transport in usable {
-            cot_registry.register(transport).await;
-        }
+        let node_for_lock = node_id.clone();
+        let failover_for_lock = failover.clone();
+        tokio::spawn(async move {
+            let lock_path = format!(
+                "/var/lib/sgx-guardian/cot/transport_lock_{}.txt",
+                node_for_lock
+            );
+            loop {
+                let lock = fs::read_to_string(&lock_path)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+                if let Some(iface) = lock {
+                    failover_for_lock.lock_to_interface(&iface).await;
+                } else {
+                    failover_for_lock.unlock().await;
+                }
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        });
     }
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
     println!("🚛 Transport Registry: {}", cot_registry.summary().await);
 
-    // Step 4: Create session manager
+    // Step 7: Create session manager
     let cot_sessions = std::sync::Arc::new(SessionManager::new());
 
-    // Step 5: Create circle membership
+    // Step 8: Create circle membership
     let cot_circle = std::sync::Arc::new(CotCircleMembership::new(
         "guardian-circle-alpha".into(),
         cot_identity.device_id().to_string(),
         km.pubkey_der().to_vec(),
     ));
 
-    // Step 6: Create trust engine
+    // Step 9: Create trust engine
     let cot_trust = std::sync::Arc::new(TrustEngine::new(cot_identity.clone(), cot_circle.clone()));
 
-    // Step 7: Create router
+    // Step 10: Create router
     let cot_router = std::sync::Arc::new(CotRouter::new(
         cot_identity.clone(),
         cot_registry.clone(),
         cot_sessions.clone(),
         cot_circle.clone(),
         cot_trust.clone(),
+        Some(failover.clone()),
     ));
     println!("✅ CoT layer initialized successfully.");
     println!("{}", cot_router.status_summary().await);
@@ -1721,29 +1754,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "CoT transport-agnostic layer initialized",
     );
 
-    // Step 8: Periodic interface refresh (every 30s)
+    // Step 11: Export CoT transport metrics
     {
-        let reg = cot_registry.clone();
-        let nid = node_id.clone();
+        let metrics_clone = metrics.clone();
+        let monitor_clone = link_monitor.clone();
+        let failover_clone = failover.clone();
         tokio::spawn(async move {
+            let mut previous_active: Option<String> = None;
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                if let Ok(new) = transports::auto_create_transports() {
-                    for t in new {
-                        reg.register(t).await;
+                let snapshots = monitor_clone.all_snapshots().await;
+                let active_iface = failover_clone.current_interface().await;
+                let mut active_transport_name: Option<String> = None;
+
+                {
+                    let mut m = metrics_clone.lock().await;
+                    for snap in snapshots {
+                        let tt = snap.transport_type.to_string();
+                        m.set_cot_transport_state(
+                            &snap.interface_name,
+                            &tt,
+                            snap.is_up,
+                            snap.latency_ms,
+                            snap.bandwidth_kbps,
+                        );
+                        if Some(snap.interface_name.clone()) == active_iface {
+                            active_transport_name = Some(tt);
+                        }
+                    }
+                    if let Some(active) = active_transport_name.clone() {
+                        m.set_cot_active_transport(&active);
+                    }
+                    if let (Some(prev), Some(curr)) =
+                        (previous_active.clone(), active_transport_name.clone())
+                    {
+                        if prev != curr {
+                            m.record_cot_switch(&prev, &curr);
+                        }
                     }
                 }
-                let health = reg.health_check_all().await;
-                for (tt, h) in &health {
-                    if !h.is_healthy {
-                        log_error(&nid, &format!("CoT {} unhealthy: {}", tt, h.status_message));
-                    }
-                }
+
+                previous_active = active_transport_name;
+                tokio::time::sleep(Duration::from_secs(10)).await;
             }
         });
     }
 
-    // Step 9: Periodic session cleanup (every 60s)
+    // Step 12: Periodic session cleanup (every 60s)
     {
         let sess = cot_sessions.clone();
         tokio::spawn(async move {

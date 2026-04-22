@@ -124,7 +124,6 @@ pub async fn reachable_lighthouse_name() -> Option<String> {
                     changed = true;
                 }
             }
-
         }
 
         if let Some(ref reachable) = reachable_name {

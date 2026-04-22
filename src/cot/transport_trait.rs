@@ -78,6 +78,7 @@ impl TransportHealth {
 pub trait Transport: Send + Sync {
     fn transport_type(&self) -> TransportType;
     fn priority(&self) -> TransportPriority;
+    fn interface_name(&self) -> &str;
     async fn is_available(&self) -> bool;
     async fn send(&self, message: &TransportMessage) -> CotResult<()>;
     async fn health_check(&self) -> TransportHealth;

@@ -1,5 +1,8 @@
+pub mod failover;
+pub mod hotplug;
 pub mod identity;
 pub mod interface_detector;
+pub mod link_monitor;
 pub mod membership;
 pub mod router;
 pub mod session_manager;

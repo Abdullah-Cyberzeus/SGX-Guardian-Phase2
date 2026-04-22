@@ -66,6 +66,23 @@ enum Commands {
     RelaySetLimit(commands::relay::RelaySetLimitArgs),
     /// Enable/disable relay for a node
     RelayToggle(commands::relay::RelayToggleArgs),
+    /// CoT transport management commands
+    Transport(commands::transport::TransportArgs),
+    /// Alias for `transport list`
+    #[command(name = "transport-list")]
+    TransportList(commands::transport::TransportListArgs),
+    /// Alias for `transport stats`
+    #[command(name = "transport-stats")]
+    TransportStats(commands::transport::TransportListArgs),
+    /// Alias for `transport lock`
+    #[command(name = "transport-lock")]
+    TransportLock(commands::transport::TransportLockArgs),
+    /// Alias for `transport unlock`
+    #[command(name = "transport-unlock")]
+    TransportUnlock(commands::transport::TransportUnlockArgs),
+    /// Alias for `transport show`
+    #[command(name = "transport-show")]
+    TransportShow(commands::transport::TransportListArgs),
 }
 /// Entry point for the SGX Policy Authority CLI.
 /// Dispatches the selected subcommand and routes execution
@@ -132,6 +149,32 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        Commands::Transport(args) => commands::transport::run(args),
+        Commands::TransportList(args) => {
+            commands::transport::run(commands::transport::TransportArgs {
+                command: commands::transport::TransportCommand::List(args),
+            })
+        }
+        Commands::TransportStats(args) => {
+            commands::transport::run(commands::transport::TransportArgs {
+                command: commands::transport::TransportCommand::Stats(args),
+            })
+        }
+        Commands::TransportLock(args) => {
+            commands::transport::run(commands::transport::TransportArgs {
+                command: commands::transport::TransportCommand::Lock(args),
+            })
+        }
+        Commands::TransportUnlock(args) => {
+            commands::transport::run(commands::transport::TransportArgs {
+                command: commands::transport::TransportCommand::Unlock(args),
+            })
+        }
+        Commands::TransportShow(args) => {
+            commands::transport::run(commands::transport::TransportArgs {
+                command: commands::transport::TransportCommand::Show(args),
+            })
+        }
     }
 }
 
@@ -162,5 +205,15 @@ mod tests {
 
         let c3 = Cli::try_parse_from(["sgx-pa-cli", "relay", "toggle", "nodeC", "--enable"]);
         assert!(c3.is_ok());
+    }
+
+    #[test]
+    fn test_transport_commands_parse() {
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "transport", "list"]).is_ok());
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "transport", "stats"]).is_ok());
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "transport-list"]).is_ok());
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "transport-show"]).is_ok());
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "transport-lock", "ens33"]).is_ok());
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "transport-unlock"]).is_ok());
     }
 }
