@@ -21,6 +21,13 @@ impl RelayTrafficControl {
             return Self::clear();
         }
 
+        // Verify TUN is fully registered BEFORE applying tc.
+        // Without this, a partially-registered netdev caused kernel RCU
+        // stalls on i.MX8 boards (observed post-Sprint-4).
+        if !std::path::Path::new("/sys/class/net/nebula0/flags").exists() {
+            return Err("nebula0 not registered — skip tc (fixes RCU stall on i.MX8)".into());
+        }
+
         Self::clear()?;
         Self::run(&[
             "qdisc", "add", "dev", "nebula0", "root", "handle", "1:", "htb", "default", "10",

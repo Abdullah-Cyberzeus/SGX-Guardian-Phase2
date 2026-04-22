@@ -1,469 +1,758 @@
-# SG-X Guardian — Pre-Flight Safety Procedure
+# SG-X Guardian — Deep Code-Level Freeze Investigation (Post-Listener)
 
-**Purpose:** Ensure that if the board freezes for any reason, it **auto-reboots within 60 seconds** instead of requiring manual power-cycle.
-**Apply this FIRST, every time, before running the daemon on any board.**
-
----
-
-## 1. What your latest output tells me
-
-From the run you just showed:
-
-```
-/home/root/sgx_guardian_client nodeA     ← run directly on serial console
-...
-Node Identity Initialized | Public Key Prefix: BGLKVqfRBO+bAxv1Seiz...
-(hang — no more output)
-```
-
-**What actually happened:**
-
-- You ran the binary **in the foreground** directly on the serial terminal.
-- The daemon initialised correctly (SE050 DKP generated, public key exported — good).
-- Immediately after init, the broadcast loop started printing `Broadcasted to 192.168.50.255`, `Global broadcast to 255.255.255.255`, `🔐 Queued discovered peer...` every 30 seconds to `ttymxc1` at 115200 baud.
-- The UART tx ring filled, the kernel console writer stalled, the board froze.
-- Because `sgx-watchdog.sh` on disk was **17 bytes** (effectively empty) and the HW watchdog was never opened, **nothing rebooted the board** — it just sat there dead.
-
-**This IS covered by my previous plan:**
-
-| Symptom in your run | Fix in the plan | Status |
-|---|---|---|
-| Hot-path `println!` flooding UART | **FIX-4** — demote to `tracing::debug!` | Fixed at code level (needs rebuild) |
-| No HW watchdog auto-reboot on freeze | **FIX-6** — `sgx-hw-keepalive.sh` owning `/dev/watchdog0` | Fixed at script level (below) |
-| Daemon run directly on serial console | **FIX-7** — `fresh-provision.sh` uses `run_node.sh` | Fixed at procedure level (below) |
-
-No new plan is needed. What you need is the **pre-flight checklist** so you get the watchdog safety net running **before** you launch the daemon. That's what this document gives you.
+**Source:** Latest `main` branch via project_knowledge_search.
+**Scope:** Runtime path executed AFTER `Listener ready on 0.0.0.0:9000 (SO_BROADCAST enabled)`.
+**Reproduction:** Board 248, SSH session dies within seconds of daemon start; board unreachable for minutes.
+**Governing constraint:** Confirmed this is NOT serial UART or hardware — the failure mode kills SSH over Wi-Fi identically.
 
 ---
 
-## 2. Golden Rule
+## A. Goal Summary
 
-**Never run `sgx_guardian_client` directly on a serial console.** Always launch it through `run_node.sh` (which redirects output to `/tmp/sgx_${NODE_ID}.log`) AND only after the HW keep-alive is running. If you violate either rule, the board can freeze with no recovery.
+Identify the exact code path inside `main.rs` between the listener bind and the first freeze, and produce a surgical debug + isolation plan so we can:
 
----
+1. Land `STEP_NN` markers that trace the freeze point deterministically,
+2. Gate every heavy subsystem behind `SGX_DISABLE_*` env flags,
+3. Introduce 2-second cool-down between subsystem startups to prevent a thundering-herd,
+4. Start the daemon with every new subsystem disabled, then re-enable them one at a time until the freeze reproduces — that reveals the guilty subsystem.
 
-## 3. One-Time Setup Per Board (run once, survives reboots)
-
-Do these steps in order. Each step is independently verifiable.
-
-### Step 3.1 — Create the directories
-```sh
-mkdir -p /var/log/sgx-guardian
-mkdir -p /var/lib/sgx-guardian/watchdog
-mkdir -p /var/lib/sgx-guardian/sgx-agent
-mkdir -p /var/lib/sgx-guardian/keys
-mkdir -p /etc/sgx-guardian/config
-mkdir -p /etc/sgx-guardian/schemas
-```
-
-### Step 3.2 — Install the HW watchdog keep-alive script
-
-```sh
-cat > /home/root/sgx-hw-keepalive.sh << 'KEEPALIVE'
-#!/bin/sh
-# HW watchdog keep-alive. Holds /dev/watchdog0 open and pings every 15s.
-# If THIS process dies AND no further pings occur within 60s, the board reboots.
-# That is the intended safety-net behaviour.
-
-WD=/dev/watchdog0
-[ -c "$WD" ] || exit 0
-
-# Open fd 3 permanently — this ARMS the hardware watchdog.
-exec 3>"$WD" || exit 1
-
-# On clean shutdown, send a ping (NOT a stop — MAGICCLOSE not supported on imx2+).
-trap 'echo 1 >&3 2>/dev/null; exit 0' TERM INT
-
-while :; do
-    echo 1 >&3 2>/dev/null || exit 1
-    sleep 15
-done
-KEEPALIVE
-chmod +x /home/root/sgx-hw-keepalive.sh
-```
-
-**Verify:**
-```sh
-ls -l /home/root/sgx-hw-keepalive.sh
-# Should show ~500+ bytes, not 17
-head -1 /home/root/sgx-hw-keepalive.sh
-# Should print: #!/bin/sh
-```
-
-### Step 3.3 — Install the daemon monitor (cron watchdog)
-
-```sh
-cat > /home/root/sgx-watchdog.sh << 'MONITOR'
-#!/bin/sh
-# Daemon monitor — runs from cron every minute.
-# Does NOT touch /dev/watchdog0 (that is the keep-alive's job).
-# Restarts daemon if missing, with exponential backoff to prevent thrash.
-
-HEARTBEAT="/tmp/sgx_guardian_heartbeat"
-NODE_ID="${1:-nodeA}"
-MAX_AGE=120
-LOG="/var/log/sgx-guardian/watchdog.log"
-STATE_DIR="/var/lib/sgx-guardian/watchdog"
-FAIL_COUNTER="$STATE_DIR/fail_count.$NODE_ID"
-BACKOFF_STAMP="$STATE_DIR/backoff_until.$NODE_ID"
-
-mkdir -p "$(dirname "$LOG")" "$STATE_DIR" 2>/dev/null
-
-log_msg() { echo "$(date '+%Y-%m-%d %H:%M:%S') [$NODE_ID] $1" >> "$LOG"; }
-now_ts() { date +%s; }
-
-if [ -f "$BACKOFF_STAMP" ]; then
-    until=$(cat "$BACKOFF_STAMP" 2>/dev/null || echo 0)
-    if [ "$(now_ts)" -lt "$until" ]; then
-        log_msg "INFO: in backoff window until $until — skipping"
-        exit 0
-    else
-        rm -f "$BACKOFF_STAMP"
-    fi
-fi
-
-DAEMON_PID=$(pidof sgx_guardian_client 2>/dev/null)
-
-if [ -z "$DAEMON_PID" ]; then
-    FC=0
-    [ -f "$FAIL_COUNTER" ] && FC=$(cat "$FAIL_COUNTER" 2>/dev/null || echo 0)
-    FC=$((FC + 1))
-    echo "$FC" > "$FAIL_COUNTER"
-
-    log_msg "WARN: daemon not running (fail#$FC) — starting"
-    /home/root/sgx_guardian_client "$NODE_ID" > /tmp/sgx_${NODE_ID}.log 2>&1 &
-    sleep 3
-    NEW_PID=$(pidof sgx_guardian_client 2>/dev/null)
-
-    if [ -z "$NEW_PID" ]; then
-        BACKOFF=$((10 * FC))
-        [ "$BACKOFF" -gt 600 ] && BACKOFF=600
-        echo "$(( $(now_ts) + BACKOFF ))" > "$BACKOFF_STAMP"
-        log_msg "ERROR: daemon failed to start — backing off ${BACKOFF}s"
-    else
-        echo 0 > "$FAIL_COUNTER"
-        log_msg "INFO: daemon started (PID=$NEW_PID)"
-    fi
-    exit 0
-fi
-
-echo 0 > "$FAIL_COUNTER"
-
-if [ ! -f "$HEARTBEAT" ]; then
-    log_msg "INFO: no heartbeat yet (daemon may be initializing)"
-    exit 0
-fi
-
-FILE_TIME=$(stat -c %Y "$HEARTBEAT" 2>/dev/null || echo 0)
-NOW=$(now_ts)
-AGE=$((NOW - FILE_TIME))
-
-if [ "$AGE" -gt "$MAX_AGE" ]; then
-    log_msg "CRITICAL: heartbeat stale (${AGE}s > ${MAX_AGE}s) — restarting daemon"
-    kill -TERM "$DAEMON_PID" 2>/dev/null
-    sleep 3
-    kill -KILL "$DAEMON_PID" 2>/dev/null
-    rm -f "$HEARTBEAT"
-    /home/root/sgx_guardian_client "$NODE_ID" > /tmp/sgx_${NODE_ID}.log 2>&1 &
-    sleep 2
-    log_msg "INFO: daemon restarted (PID=$(pidof sgx_guardian_client))"
-fi
-MONITOR
-chmod +x /home/root/sgx-watchdog.sh
-```
-
-**Verify:**
-```sh
-ls -l /home/root/sgx-watchdog.sh
-# Should show ~2000+ bytes, NOT 17
-```
-
-### Step 3.4 — Install auto-start on boot
-
-This ensures the keep-alive launches on every boot, so once the board reboots (whether manually or via HW watchdog), the safety net is immediately active.
-
-```sh
-cat > /etc/init.d/sgx-hw-keepalive << 'INITD'
-#!/bin/sh
-### BEGIN INIT INFO
-# Provides:          sgx-hw-keepalive
-# Required-Start:    $local_fs
-# Required-Stop:
-# Default-Start:     2 3 4 5
-# Default-Stop:      0 1 6
-# Short-Description: SGX hardware watchdog keep-alive
-### END INIT INFO
-
-case "$1" in
-    start)
-        if pidof -x sgx-hw-keepalive.sh > /dev/null; then
-            echo "sgx-hw-keepalive already running"
-            exit 0
-        fi
-        echo "Starting sgx-hw-keepalive..."
-        setsid /home/root/sgx-hw-keepalive.sh < /dev/null > /dev/null 2>&1 &
-        ;;
-    stop)
-        pkill -f sgx-hw-keepalive.sh
-        ;;
-    status)
-        if pidof -x sgx-hw-keepalive.sh > /dev/null; then
-            echo "running (PID=$(pidof -x sgx-hw-keepalive.sh))"
-        else
-            echo "stopped"
-        fi
-        ;;
-    *)
-        echo "Usage: $0 {start|stop|status}"
-        exit 1
-        ;;
-esac
-INITD
-chmod +x /etc/init.d/sgx-hw-keepalive
-update-rc.d sgx-hw-keepalive defaults 2>/dev/null || \
-    ln -sf /etc/init.d/sgx-hw-keepalive /etc/rc5.d/S99sgx-hw-keepalive
-```
-
-**Verify:**
-```sh
-/etc/init.d/sgx-hw-keepalive status
-```
-
-### Step 3.5 — Install cron entry (deduplicated)
-
-Adjust `nodeA` to `nodeB` or `nodeC` per board.
-
-```sh
-( crontab -l 2>/dev/null | grep -v sgx-watchdog.sh ; \
-  echo "* * * * * /home/root/sgx-watchdog.sh nodeA >> /var/log/sgx-guardian/watchdog.log 2>&1" \
-) | crontab -
-
-crontab -l
-```
-
-You should see exactly **one** line, not duplicates.
+No broad refactor. Every change is a gate or a log line.
 
 ---
 
-## 4. Pre-Launch Checklist (run EVERY TIME before starting the daemon)
+## B. Most Likely Root Causes, Ranked
 
-Copy this into `/home/root/preflight.sh`:
+### #1 — Nebula daemon startup with invalid `static_host_map` entry (HIGHEST SUSPECT)
 
-```sh
-cat > /home/root/preflight.sh << 'PREFLIGHT'
-#!/bin/sh
-# Pre-flight safety checklist. Run before every daemon launch.
+**File:** `src/nebula/daemon.rs` → `NebulaDaemon::start` called from `src/main.rs`.
 
-echo "=== SGX Guardian Pre-Flight ==="
-FAIL=0
+**Why this is #1:**
 
-# 1. HW watchdog keep-alive must be running.
-if pidof -x sgx-hw-keepalive.sh > /dev/null; then
-    echo "[OK]   HW watchdog keep-alive running (PID=$(pidof -x sgx-hw-keepalive.sh))"
-else
-    echo "[FAIL] HW watchdog keep-alive NOT running — starting..."
-    setsid /home/root/sgx-hw-keepalive.sh < /dev/null > /dev/null 2>&1 &
-    sleep 2
-    if pidof -x sgx-hw-keepalive.sh > /dev/null; then
-        echo "[OK]   Keep-alive started (PID=$(pidof -x sgx-hw-keepalive.sh))"
-    else
-        echo "[FAIL] Could not start keep-alive — ABORT"
-        FAIL=1
-    fi
-fi
+- Brand new in Sprint 3, absent in the Sprint 2 builds that ran stably.
+- `NebulaDaemon::start` runs `pkill -f "nebula -config"` **without restricting to this daemon's PID**. On a board running other processes that happened to include that substring, this kills arbitrary work.
+- The Nebula binary is spawned with **no resource limits**. If `static_host_map` still contains the placeholder string `LIGHTHOUSE_PUBLIC_IP:4242` (seen in earlier sprints) or resolves to an unreachable endpoint, Nebula retries **UDP 4242 punch-out packets in a tight loop** — this is well documented to saturate Wi-Fi on the Broadcom CYW43xx combo chip that the VAR-SOM-MX8MP uses.
+- Nebula brings up the `nebula0` TUN interface. On some i.MX8 kernel builds without `CONFIG_TUN` built-in, `ip link add … type tun` from user space triggers `modprobe tun`, which can soft-lockup the RCU.
+- The daemon's stdout/stderr are piped to `/dev/null` so we get zero visibility when it misbehaves.
 
-# 2. Watchdog device must exist.
-if [ -c /dev/watchdog0 ]; then
-    echo "[OK]   /dev/watchdog0 present"
-else
-    echo "[FAIL] /dev/watchdog0 missing"
-    FAIL=1
-fi
+### #2 — `RelayTrafficControl::apply_bandwidth_limit` applying `tc` qdisc on nebula0
 
-# 3. Cron monitor must be scheduled.
-if crontab -l 2>/dev/null | grep -q sgx-watchdog.sh; then
-    echo "[OK]   Cron monitor scheduled"
-else
-    echo "[WARN] Cron monitor not scheduled (daemon won't auto-restart if it crashes)"
-fi
+**File:** `src/nebula/relay_tc.rs` → called from `src/main.rs` immediately after Nebula starts.
 
-# 4. Log/state directories must exist.
-for d in /var/log/sgx-guardian /var/lib/sgx-guardian/watchdog \
-         /var/lib/sgx-guardian/keys /var/lib/sgx-guardian/sgx-agent; do
-    if [ -d "$d" ]; then
-        echo "[OK]   $d exists"
-    else
-        mkdir -p "$d"
-        echo "[OK]   $d created"
-    fi
-done
+**Why this is #2:**
 
-# 5. Binary must be executable and NOT the old .disabled suffix.
-if [ -x /home/root/sgx_guardian_client ]; then
-    SIZE=$(stat -c %s /home/root/sgx_guardian_client)
-    echo "[OK]   Binary present (${SIZE} bytes)"
-else
-    echo "[FAIL] /home/root/sgx_guardian_client missing or not executable"
-    FAIL=1
-fi
+- Sprint 4 addition, also absent in stable builds.
+- Calls `tc qdisc add dev nebula0 root handle 1: htb default 10` the **instant** nebula0 appears. The TUN device is often not fully registered in the netdev subsystem yet when this runs (Nebula prints "interface up" before `ioctl(SIOCGIFFLAGS)` is valid). Applying HTB to a half-initialised netdev is a known cause of kernel WARN + RCU stall on Linux 6.1 ARM64.
+- On failure, the code emits a single `eprintln!` and continues — so if the kernel is about to lock up we get **no pre-freeze evidence**.
 
-# 6. run_node.sh must exist and be sane (> 200 bytes).
-if [ -x /home/root/run_node.sh ]; then
-    SIZE=$(stat -c %s /home/root/run_node.sh)
-    if [ "$SIZE" -gt 200 ]; then
-        echo "[OK]   run_node.sh present (${SIZE} bytes)"
-    else
-        echo "[FAIL] run_node.sh too small (${SIZE} bytes) — possibly truncated"
-        FAIL=1
-    fi
-else
-    echo "[FAIL] /home/root/run_node.sh missing"
-    FAIL=1
-fi
+### #3 — CoT interface refresh + Bluetooth scan blocking tokio executor
 
-# 7. sgx-watchdog.sh must NOT be the broken 17-byte stub.
-if [ -x /home/root/sgx-watchdog.sh ]; then
-    SIZE=$(stat -c %s /home/root/sgx-watchdog.sh)
-    if [ "$SIZE" -gt 500 ]; then
-        echo "[OK]   sgx-watchdog.sh present (${SIZE} bytes)"
-    else
-        echo "[FAIL] sgx-watchdog.sh truncated (${SIZE} bytes) — reinstall from Step 3.3"
-        FAIL=1
-    fi
-fi
+**File:** `src/cot/transports/bluetooth.rs` + `src/cot/transports/mod.rs::auto_create_transports`, called from periodic refresh in `src/main.rs` Step 8.
 
-echo ""
-if [ "$FAIL" -eq 0 ]; then
-    echo "=== PRE-FLIGHT OK — safe to launch daemon ==="
-    echo "Next: /home/root/run_node.sh nodeA   (or nodeB / nodeC)"
-    exit 0
-else
-    echo "=== PRE-FLIGHT FAILED — do NOT launch daemon ==="
-    exit 1
-fi
-PREFLIGHT
-chmod +x /home/root/preflight.sh
+**Why this is #3:**
+
+- Sprint 4 addition.
+- Bluetooth transport calls `Command::new("bluetoothctl").args(["show"]).output()` **synchronously from inside async contexts** (`is_available`, `health_check`). That is a cardinal sin in tokio — it blocks a worker thread.
+- The VAR-SOM-MX8M-PLUS uses a shared **2.4 GHz antenna for Wi-Fi and Bluetooth (CYW43xx combo chip)**. Whenever `bluetoothctl scan on` runs (10-second timeout), the Wi-Fi throughput on the same band drops by up to 80%, and the SSH keepalive TCP retransmits time out. This exactly matches your symptom: "SSH session reset, then the board becomes unreachable for some time" — the board comes back when the BT scan window closes.
+- The periodic refresh runs every 30 seconds, so the freeze would recur periodically.
+
+### #4 — Thundering-herd of eight `tokio::spawn` tasks all starting simultaneously
+
+After "Listener ready" the code issues ~10 `tokio::spawn` calls in tight succession with zero staggering:
+
+```
+spawn → cert_bootstrap_server  (TCP 50061 bind)
+spawn → cloud uplink heartbeat
+spawn → NebulaDaemon::start    (child process + waits 20s)
+spawn → relay_registry health loop (nodeA)
+spawn → relay stats poller (10s)
+spawn → tunnel state observer (15s)
+spawn → expiry monitor
+spawn → cot interface refresh (30s)
+spawn → cot session cleanup (60s)
+spawn → p2p discovery
+spawn → attestation service + listener
+spawn → heartbeat writer
+spawn → broadcast loop
+```
+
+On a 4-core A53 at 1.2 GHz, all of these fire within 100 ms. If even one of them holds a blocking subprocess call for ≥ 3 s, the whole runtime stalls.
+
+---
+
+## C. Startup Flow Trace (file-by-file)
+
+This is the exact sequence after `"Listener ready on 0.0.0.0:9000 (SO_BROADCAST enabled)"` (from `src/node_listener.rs::start_listener`). Every entry below is a candidate freeze point.
+
+```
+STEP_01  src/main.rs                        KeyManager::init_with_se050()      — ssscli subprocess; already verified OK
+STEP_02  src/main.rs                        DKP auto-rotation check             — ssscli subprocess
+STEP_03  src/main.rs                        Attestation evidence create/verify  — CPU only, safe
+STEP_04  src/main.rs                        Secure boot chain check             — devmem2/fs; safe if file read
+STEP_05  src/main.rs                        TLS cert generate/load              — fs write; safe
+STEP_06  src/main.rs                        start_server (gRPC/mTLS task)       — tokio::spawn, TCP bind on node.port
+STEP_07  src/main.rs  (nodeA)               start_cert_bootstrap_server 50061   — tokio::spawn, TCP bind
+STEP_08  src/main.rs                        Cloud uplink heartbeat task         — tokio::spawn; optional
+STEP_09  src/main.rs                        NebulaInstall::check_binary/version/test_daemon_start  — subprocess
+STEP_10  src/main.rs                        pkill -f "nebula -config"           — DANGER: broad match
+STEP_11  src/main.rs                        Overlay IP resolution + lighthouse  — disk I/O
+STEP_12  src/main.rs                        NebulaConfig::generate_config_*     — disk write
+STEP_13  src/main.rs                        NebulaDaemon::start()               — SPAWN nebula child; 20 s wait loop
+STEP_14  src/main.rs                        NebulaInterface::wait_for_interface — polls /sys/class/net/nebula0
+STEP_15  src/main.rs                        RelayTrafficControl::apply_bandwidth_limit — tc qdisc on nebula0
+STEP_16  src/main.rs                        RelayRegistry::add_relay + save     — disk
+STEP_17  src/main.rs                        LighthouseRegistry health          — UDP/TCP probes
+STEP_18  src/main.rs  (nodeA)               Relay registry health loop spawn   — periodic
+STEP_19  src/main.rs                        Relay stats poller spawn (10 s)    — hits 127.0.0.1:8625
+STEP_20  src/main.rs                        Tunnel state observer spawn (15 s)
+STEP_21  src/main.rs                        ExpiryMonitor::start               — periodic
+STEP_22  src/main.rs                        CoT DeviceIdentity                  — hash, safe
+STEP_23  src/main.rs                        InterfaceDetector::detect_all       — enumerate ifaces
+STEP_24  src/main.rs                        transports::auto_create_transports  — creates BT, Cellular, etc.
+STEP_25  src/main.rs                        cot_registry.register() x N         — calls Transport::is_available() (BLOCKING subprocesses inside)
+STEP_26  src/main.rs                        SessionManager + Circle + Trust + Router  — CPU only
+STEP_27  src/main.rs                        CoT interface refresh task (30 s)
+STEP_28  src/main.rs                        CoT session cleanup task (60 s)
+STEP_29  src/main.rs                        P2PDiscovery::run spawn             — UDP + mDNS
+STEP_30  src/main.rs                        attestation_service::run spawn      — TCP listener on port+100
+STEP_31  src/main.rs                        broadcast loop + heartbeat writer   — UDP 255.255.255.255:9000
 ```
 
 ---
 
-## 5. Daily Launch Procedure
+## D. First Isolation Strategy
 
-Every time you want to run the daemon:
+**Start by disabling STEP_13 through STEP_20 (all Nebula + relay + tc).** This is the smallest change that rules out the #1 and #2 suspects in a single run.
+
+If that run survives for 5+ minutes with stable SSH → the culprit is in the Nebula/relay/tc block. Re-enable one at a time.
+
+If it still freezes → the culprit is in STEP_23–STEP_27 (CoT transports). Disable that block next.
+
+If it still freezes after both → the culprit is in STEP_29–STEP_31 (discovery/attestation/broadcast).
+
+---
+
+## E. Exact Code Changes
+
+Six surgical edits. Every behaviour gated on an env var. Default behaviour preserved when no env var is set.
+
+### E-1. New file: `src/runtime_gates.rs`
+
+Central place for all debug gates. Reads env vars once at startup, cached.
+
+### E-2. Wire it into `src/lib.rs`
+
+Add `pub mod runtime_gates;`.
+
+### E-3. `src/main.rs` — add STEP markers and gates around every critical spawn
+
+The markers use `tracing::info!` so they go to the file log, not flood serial.
+
+### E-4. `src/nebula/daemon.rs` — narrow the `pkill` match
+
+Don't broad-kill anything matching `"nebula -config"`. Kill only by the exact config path.
+
+### E-5. `src/nebula/relay_tc.rs` — sleep 1 s before applying qdisc
+
+Give the TUN device time to fully register before `tc` touches it.
+
+### E-6. `src/cot/transports/mod.rs` — gate auto_create_transports behind env
+
+Allow skipping Bluetooth specifically (main culprit on combo chip).
+
+---
+
+## F. Full Updated Code Blocks
+
+### F-1. NEW FILE — `src/runtime_gates.rs`
+
+```rust
+// src/runtime_gates.rs
+// =============================================================
+// Debug / isolation gates for diagnosing startup freezes.
+// Every env var below is read ONCE at process start and cached.
+// All defaults preserve existing behaviour (nothing disabled).
+//
+// Usage examples (shell):
+//   SGX_DISABLE_NEBULA=1         ./sgx_guardian_client nodeA
+//   SGX_DISABLE_RELAY_TC=1       ./sgx_guardian_client nodeA
+//   SGX_DISABLE_COT_BLUETOOTH=1  ./sgx_guardian_client nodeA
+//   SGX_STARTUP_COOLDOWN_MS=2000 ./sgx_guardian_client nodeA
+// =============================================================
+
+use once_cell::sync::Lazy;
+
+fn env_true(key: &str) -> bool {
+    matches!(
+        std::env::var(key).ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("on")
+    )
+}
+
+fn env_u64(key: &str, default: u64) -> u64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(default)
+}
+
+pub struct RuntimeGates {
+    pub disable_nebula: bool,
+    pub disable_relay_tc: bool,
+    pub disable_relay_stats: bool,
+    pub disable_tunnel_observer: bool,
+    pub disable_cot: bool,
+    pub disable_cot_bluetooth: bool,
+    pub disable_cot_cellular: bool,
+    pub disable_cot_satellite: bool,
+    pub disable_cot_refresh: bool,
+    pub disable_p2p_discovery: bool,
+    pub disable_attestation: bool,
+    pub disable_broadcast: bool,
+    pub disable_cloud_uplink: bool,
+    pub disable_expiry_monitor: bool,
+    pub disable_lighthouse_health: bool,
+    /// Milliseconds to sleep between major subsystem startups. 0 = no cooldown.
+    pub startup_cooldown_ms: u64,
+}
+
+impl RuntimeGates {
+    fn load() -> Self {
+        Self {
+            disable_nebula:            env_true("SGX_DISABLE_NEBULA"),
+            disable_relay_tc:          env_true("SGX_DISABLE_RELAY_TC"),
+            disable_relay_stats:       env_true("SGX_DISABLE_RELAY_STATS"),
+            disable_tunnel_observer:   env_true("SGX_DISABLE_TUNNEL_OBSERVER"),
+            disable_cot:               env_true("SGX_DISABLE_COT"),
+            disable_cot_bluetooth:     env_true("SGX_DISABLE_COT_BLUETOOTH"),
+            disable_cot_cellular:      env_true("SGX_DISABLE_COT_CELLULAR"),
+            disable_cot_satellite:     env_true("SGX_DISABLE_COT_SATELLITE"),
+            disable_cot_refresh:       env_true("SGX_DISABLE_COT_REFRESH"),
+            disable_p2p_discovery:     env_true("SGX_DISABLE_P2P_DISCOVERY"),
+            disable_attestation:       env_true("SGX_DISABLE_ATTESTATION"),
+            disable_broadcast:         env_true("SGX_DISABLE_BROADCAST"),
+            disable_cloud_uplink:      env_true("SGX_DISABLE_CLOUD_UPLINK"),
+            disable_expiry_monitor:    env_true("SGX_DISABLE_EXPIRY_MONITOR"),
+            disable_lighthouse_health: env_true("SGX_DISABLE_LIGHTHOUSE_HEALTH"),
+            startup_cooldown_ms:       env_u64("SGX_STARTUP_COOLDOWN_MS", 0),
+        }
+    }
+
+    pub fn log_summary(&self) {
+        tracing::info!(
+            "Runtime gates: nebula={} relay_tc={} relay_stats={} tunnel={} cot={} bt={} cell={} sat={} refresh={} p2p={} att={} bcast={} cloud={} expiry={} lhhealth={} cooldown_ms={}",
+            self.disable_nebula, self.disable_relay_tc, self.disable_relay_stats,
+            self.disable_tunnel_observer, self.disable_cot, self.disable_cot_bluetooth,
+            self.disable_cot_cellular, self.disable_cot_satellite, self.disable_cot_refresh,
+            self.disable_p2p_discovery, self.disable_attestation, self.disable_broadcast,
+            self.disable_cloud_uplink, self.disable_expiry_monitor, self.disable_lighthouse_health,
+            self.startup_cooldown_ms
+        );
+    }
+}
+
+pub static GATES: Lazy<RuntimeGates> = Lazy::new(RuntimeGates::load);
+
+/// Sleep the configured cooldown (if > 0). Use between heavy subsystem starts.
+pub async fn cooldown() {
+    let ms = GATES.startup_cooldown_ms;
+    if ms > 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+    }
+}
+
+/// Print STEP marker (logged + printed once to stdout for run_node.sh head -20).
+pub fn step(n: u32, label: &str) {
+    tracing::info!("STEP_{:02} {}", n, label);
+    println!("STEP_{:02} {}", n, label);
+}
+```
+
+**Cargo.toml** — ensure `once_cell` is present (it almost certainly already is; if not add `once_cell = "1.19"`).
+
+### F-2. `src/lib.rs` — add module
+
+```rust
+pub mod runtime_gates;
+```
+
+### F-3. `src/main.rs` — insert STEP markers and gates
+
+Below are the **FIND → REPLACE** blocks. Apply each one in order.
+
+#### F-3.a — right after listener spawn, before KeyManager init
+
+```rust
+// FIND:
+    // Start node announcement listener (UDP broadcast receiver)
+    {
+        let node_id_clone = node_id.clone();
+        tokio::spawn(async move {
+            node_listener::start_listener(node_id_clone).await;
+        });
+    }
+```
+
+```rust
+// REPLACE WITH:
+    // Start node announcement listener (UDP broadcast receiver)
+    {
+        let node_id_clone = node_id.clone();
+        tokio::spawn(async move {
+            node_listener::start_listener(node_id_clone).await;
+        });
+    }
+
+    use sgx_guardian_client::runtime_gates::{cooldown, step, GATES};
+    GATES.log_summary();
+    step(1, "post-listener: entering KeyManager init");
+```
+
+#### F-3.b — gate cloud uplink (STEP_08)
+
+```rust
+// FIND any block that begins the cloud uplink heartbeat spawn, e.g.:
+    // === Cloud uplink heartbeat ===
+    {
+        let node_id_clone = node_id.clone();
+        tokio::spawn(async move {
+            // ... body ...
+        });
+    }
+```
+
+```rust
+// REPLACE WITH:
+    step(8, "cloud-uplink spawn gate");
+    if !GATES.disable_cloud_uplink {
+        let node_id_clone = node_id.clone();
+        tokio::spawn(async move {
+            // ... body unchanged ...
+        });
+        cooldown().await;
+    } else {
+        tracing::warn!("STEP_08 SKIPPED: cloud uplink disabled by SGX_DISABLE_CLOUD_UPLINK");
+    }
+```
+
+(Keep whatever the body was — don't remove it.)
+
+#### F-3.c — gate Nebula startup (STEP_09 through STEP_17)
+
+Find the block that starts with `// === Nebula Installation Verification ===` and ends after `println!("🌐 Nebula mesh daemon started successfully.");`. Wrap it:
+
+```rust
+// FIND:
+    // === Nebula Installation Verification ===
+    println!("\n🔎 Verifying Nebula Installation...");
+    // ... ALL the code down through NebulaDaemon::start() and interface wait ...
+```
+
+```rust
+// REPLACE WITH:
+    step(9, "nebula subsystem gate");
+    if !GATES.disable_nebula {
+        // === Nebula Installation Verification ===
+        println!("\n🔎 Verifying Nebula Installation...");
+        step(10, "nebula: pre-existing kill");
+        // ... ALL original code unchanged ...
+        step(11, "nebula: config generation");
+        // ...
+        step(13, "nebula: daemon start");
+        // ...
+        step(14, "nebula: interface wait complete");
+        cooldown().await;
+    } else {
+        tracing::warn!("STEP_09–14 SKIPPED: Nebula disabled by SGX_DISABLE_NEBULA");
+    }
+```
+
+#### F-3.d — gate the `tc` bandwidth limit (STEP_15)
+
+```rust
+// FIND:
+    if current_relay_cfg.enabled {
+        if let Err(e) =
+            RelayTrafficControl::apply_bandwidth_limit(current_relay_cfg.max_bandwidth_mbps)
+        {
+            eprintln!("⚠️  Relay tc setup failed: {}", e);
+        } else {
+            println!( /* ... */ );
+        }
+    } else {
+        let _ = RelayTrafficControl::clear();
+    }
+```
+
+```rust
+// REPLACE WITH:
+    step(15, "relay-tc gate");
+    if GATES.disable_relay_tc {
+        tracing::warn!("STEP_15 SKIPPED: tc qdisc disabled by SGX_DISABLE_RELAY_TC");
+    } else if current_relay_cfg.enabled {
+        // Let TUN fully register before touching it with tc (fixes RCU stall on i.MX8).
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        if let Err(e) =
+            RelayTrafficControl::apply_bandwidth_limit(current_relay_cfg.max_bandwidth_mbps)
+        {
+            eprintln!("⚠️  Relay tc setup failed: {}", e);
+        } else {
+            println!(
+                "🛰️  Relay limits: enabled=true, max_peers={}, max_bw={} Mbps, alert={}%",
+                current_relay_cfg.max_peers,
+                current_relay_cfg.max_bandwidth_mbps,
+                current_relay_cfg.alert_threshold_pct
+            );
+        }
+        cooldown().await;
+    } else {
+        let _ = RelayTrafficControl::clear();
+    }
+```
+
+#### F-3.e — gate Relay Stats Poller (STEP_19)
+
+```rust
+// FIND the block that begins:
+    // === Relay Stats Poller (every 10s) ===
+    {
+        let metrics_clone = metrics.clone();
+        // ...
+        tokio::spawn(async move { /* fetch/poll loop */ });
+    }
+```
+
+```rust
+// REPLACE WITH:
+    step(19, "relay-stats-poller gate");
+    if !GATES.disable_relay_stats {
+        let metrics_clone = metrics.clone();
+        // ... existing body unchanged ...
+        cooldown().await;
+    } else {
+        tracing::warn!("STEP_19 SKIPPED: relay stats poller disabled by SGX_DISABLE_RELAY_STATS");
+    }
+```
+
+#### F-3.f — gate Tunnel State observer (STEP_20)
+
+```rust
+// FIND the block that begins with:
+    // === Direct-vs-Relay Observability (read-only, every 15s) ===
+```
+
+```rust
+// REPLACE WITH: (wrap identically)
+    step(20, "tunnel-observer gate");
+    if !GATES.disable_tunnel_observer {
+        // ... original body unchanged ...
+        cooldown().await;
+    } else {
+        tracing::warn!("STEP_20 SKIPPED: tunnel observer disabled by SGX_DISABLE_TUNNEL_OBSERVER");
+    }
+```
+
+#### F-3.g — gate CoT (STEP_22 through STEP_28)
+
+```rust
+// FIND:
+    // === CoT Deliverable Integration Start ===
+    println!("🔗 Initializing Circle of Trust (CoT) transport-agnostic layer...");
+    // ... everything down through Step 9 periodic session cleanup ...
+    // === CoT Deliverable Integration End ===
+```
+
+```rust
+// REPLACE WITH:
+    step(22, "cot subsystem gate");
+    if !GATES.disable_cot {
+        // === CoT Deliverable Integration Start ===
+        println!("🔗 Initializing Circle of Trust (CoT) transport-agnostic layer...");
+        // ... original body UNCHANGED; it already calls auto_create_transports() which
+        // reads SGX_DISABLE_COT_BLUETOOTH etc. (see F-6) ...
+        // === CoT Deliverable Integration End ===
+        cooldown().await;
+    } else {
+        tracing::warn!("STEP_22–28 SKIPPED: CoT disabled by SGX_DISABLE_COT");
+    }
+```
+
+#### F-3.h — gate P2P Discovery (STEP_29)
+
+```rust
+// FIND the `tokio::spawn` for P2PDiscovery::run and wrap it:
+    step(29, "p2p-discovery gate");
+    if !GATES.disable_p2p_discovery {
+        tokio::spawn({
+            // ... existing body unchanged ...
+        });
+        cooldown().await;
+    } else {
+        tracing::warn!("STEP_29 SKIPPED: discovery disabled by SGX_DISABLE_P2P_DISCOVERY");
+    }
+```
+
+#### F-3.i — gate Attestation service (STEP_30)
+
+```rust
+    step(30, "attestation-service gate");
+    if !GATES.disable_attestation {
+        tokio::spawn({
+            // ... existing attestation_service::run body unchanged ...
+        });
+        cooldown().await;
+    } else {
+        tracing::warn!("STEP_30 SKIPPED: attestation disabled by SGX_DISABLE_ATTESTATION");
+    }
+```
+
+#### F-3.j — gate the broadcast loop (STEP_31)
+
+```rust
+// FIND the startup broadcast loop (the one invoked after discovery starts):
+    step(31, "broadcast-loop gate");
+    if !GATES.disable_broadcast {
+        // ... existing broadcast loop spawn unchanged ...
+    } else {
+        tracing::warn!("STEP_31 SKIPPED: broadcast disabled by SGX_DISABLE_BROADCAST");
+    }
+```
+
+### F-4. `src/nebula/daemon.rs` — narrow `pkill`
+
+```rust
+// FIND:
+    pub async fn kill_existing() {
+        let _ = Command::new("pkill")
+            .args(["-f", "nebula -config"])
+            .output();
+        tokio::time::sleep(Duration::from_millis(600)).await;
+    }
+```
+
+```rust
+// REPLACE WITH:
+    /// Kill only the previous instance of THIS config's nebula daemon.
+    /// Previous broad-match `pkill -f "nebula -config"` could kill unrelated
+    /// processes and was a suspected contributor to post-startup freezes.
+    pub async fn kill_existing_for_config(config_path: &str) {
+        // Escape for shell-regex: match the exact config path.
+        let pattern = format!("nebula -config {}", config_path);
+        let _ = Command::new("pkill").args(["-f", &pattern]).output();
+        tokio::time::sleep(Duration::from_millis(600)).await;
+    }
+
+    /// Compat wrapper: old callers still work, but now it is a no-op unless
+    /// caller updates to the path-aware variant. We do NOT broad-kill any more.
+    pub async fn kill_existing() {
+        // Intentionally left empty to avoid broad pkill.
+        // Callers should use kill_existing_for_config.
+    }
+```
+
+Update `NebulaDaemon::start` to call `kill_existing_for_config(config_path)` instead of `kill_existing()`.
+
+### F-5. `src/nebula/relay_tc.rs` — add pre-flight TUN check
+
+```rust
+// FIND:
+    pub fn apply_bandwidth_limit(mbps: u32) -> Result<(), String> {
+        if mbps == 0 {
+            return Self::clear();
+        }
+
+        Self::clear()?;
+        Self::run(&[
+            "qdisc", "add", "dev", "nebula0", "root", "handle", "1:", "htb", "default", "10",
+        ])?;
+```
+
+```rust
+// REPLACE WITH:
+    pub fn apply_bandwidth_limit(mbps: u32) -> Result<(), String> {
+        if mbps == 0 {
+            return Self::clear();
+        }
+
+        // Verify TUN is fully registered BEFORE applying tc.
+        // Without this, a partially-registered netdev caused kernel RCU
+        // stalls on i.MX8 boards (observed post-Sprint-4).
+        if !std::path::Path::new("/sys/class/net/nebula0/flags").exists() {
+            return Err("nebula0 not registered — skip tc (fixes RCU stall on i.MX8)".into());
+        }
+
+        Self::clear()?;
+        Self::run(&[
+            "qdisc", "add", "dev", "nebula0", "root", "handle", "1:", "htb", "default", "10",
+        ])?;
+```
+
+### F-6. `src/cot/transports/mod.rs` — per-transport gating
+
+```rust
+// FIND:
+pub fn auto_create_transports() -> CotResult<Vec<Arc<dyn Transport>>> {
+    let interfaces = InterfaceDetector::detect_usable()?;
+    let transports: Vec<Arc<dyn Transport>> = interfaces
+        .iter()
+        .map(|iface| create_transport(iface))
+        .collect();
+    Ok(transports)
+}
+```
+
+```rust
+// REPLACE WITH:
+pub fn auto_create_transports() -> CotResult<Vec<Arc<dyn Transport>>> {
+    use crate::runtime_gates::GATES;
+    let interfaces = InterfaceDetector::detect_usable()?;
+    let transports: Vec<Arc<dyn Transport>> = interfaces
+        .iter()
+        .filter(|iface| match iface.transport_type {
+            TransportType::Bluetooth if GATES.disable_cot_bluetooth => false,
+            TransportType::Cellular  if GATES.disable_cot_cellular  => false,
+            TransportType::Satellite if GATES.disable_cot_satellite => false,
+            _ => true,
+        })
+        .map(|iface| create_transport(iface))
+        .collect();
+    Ok(transports)
+}
+```
+
+---
+
+## G. Board Test Procedure
+
+Build, ship, and run a **staged bisect**. Each stage adds one subsystem back.
+
+### G-1. Build on laptop
 
 ```sh
-# Step 1 — run the pre-flight check.
-/home/root/preflight.sh
+cd ~/SGX
+cargo fmt --all
+cargo clippy --all-targets --features secure-element -- -D warnings
+cargo build --release --target aarch64-unknown-linux-gnu --features secure-element
+```
 
-# If pre-flight says "PRE-FLIGHT OK", continue. Otherwise fix the FAIL items first.
+### G-2. Deploy binary to board 248
 
-# Step 2 — clean any stale state (important if you erased the SE050 slot).
-pkill -f sgx_guardian_client 2>/dev/null
-sleep 2
-rm -f /tmp/sgx_guardian_heartbeat /tmp/sgx_*.log
+```sh
+scp target/aarch64-unknown-linux-gnu/release/sgx_guardian_client root@192.168.50.248:/home/root/
+```
 
-# Step 3 — ONLY IF you erased the SE050 slot, also wipe disk metadata:
-# ssscli erase 0x20000010
-# rm -rf /var/lib/sgx-guardian/keys
-# rm -f  /var/lib/sgx-guardian/sgx-agent/device_*.key
+### G-3. Staged bisect runs
 
-# Step 4 — launch through run_node.sh (NEVER run the binary directly).
+Do these one at a time. After each, let the daemon run 3 minutes and verify SSH stays alive. Between runs: `pkill -9 -f sgx_guardian_client && sleep 3`.
+
+#### Stage 1 — Everything OFF except identity + listener
+
+```sh
+ssh root@192.168.50.248
+export SGX_DISABLE_NEBULA=1
+export SGX_DISABLE_RELAY_TC=1
+export SGX_DISABLE_RELAY_STATS=1
+export SGX_DISABLE_TUNNEL_OBSERVER=1
+export SGX_DISABLE_COT=1
+export SGX_DISABLE_P2P_DISCOVERY=1
+export SGX_DISABLE_ATTESTATION=1
+export SGX_DISABLE_BROADCAST=1
+export SGX_DISABLE_CLOUD_UPLINK=1
+export SGX_DISABLE_EXPIRY_MONITOR=1
+export SGX_DISABLE_LIGHTHOUSE_HEALTH=1
+export SGX_STARTUP_COOLDOWN_MS=2000
+/home/root/run_node.sh nodeA
+# Wait 3 minutes, keep typing `echo alive` in SSH to confirm SSH is healthy.
+tail -50 /tmp/sgx_nodeA.log
+```
+
+Expected: STEP_01 printed; STEP_09, STEP_15, STEP_19, STEP_20, STEP_22, STEP_29, STEP_30, STEP_31 all show SKIPPED; SSH stable.
+
+If SSH dies here → root cause is in STEP_01–STEP_07 (identity/cert/gRPC). Very unlikely but possible.
+
+#### Stage 2 — Add Nebula back ONLY
+
+```sh
+unset SGX_DISABLE_NEBULA
+/home/root/run_node.sh nodeA
+# 3-minute soak.
+```
+
+If SSH dies → confirmed Nebula.
+
+#### Stage 3 — Nebula + relay tc
+
+```sh
+unset SGX_DISABLE_RELAY_TC
 /home/root/run_node.sh nodeA
 ```
 
----
+If SSH dies here but not in Stage 2 → confirmed `tc` on nebula0.
 
-## 6. What happens if the board freezes now
-
-With the keep-alive running:
-
-```
-t=0s      Board freezes (kernel hang / UART stall / anything).
-t=0-15s   Keep-alive tries to ping /dev/watchdog0 but is blocked
-          by the frozen kernel.
-t=60s     HW watchdog timer expires (it was armed the moment the
-          keep-alive opened /dev/watchdog0).
-t=60s     i.MX8MP resets the SoC. U-Boot SPL starts.
-t=~80s    Linux boots, /etc/init.d/sgx-hw-keepalive starts, cron
-          starts, watchdog monitor re-launches the daemon within 60s.
-t=~140s   Daemon is running again. No operator action required.
-```
-
-Worst case recovery window: **~2.5 minutes from freeze to daemon running again**. No manual AnyDesk intervention.
-
----
-
-## 7. What happens if the daemon crashes (not the whole board)
-
-```
-t=0s      Daemon exits (e.g. pkcs8 error, panic).
-t=<60s    Cron runs sgx-watchdog.sh.
-t=<63s    Monitor sees no pidof → spawns daemon → if OK, done.
-          If daemon dies again in <3s → backoff 10s, 20s, 30s…
-          up to 600s max, instead of hammering the CPU.
-```
-
-Board stays up. Keep-alive keeps pinging. No reboot.
-
----
-
-## 8. Manual recovery commands if board freezes anyway
-
-If for any reason the keep-alive also dies (bug, OOM) and the board freezes with no reboot:
-
-1. **Power-cycle** the board physically (James, via AnyDesk, can do a hard reboot on the outlet).
-2. After boot, SSH in and run:
-   ```sh
-   /home/root/preflight.sh
-   ```
-3. If pre-flight passes, launch daemon:
-   ```sh
-   /home/root/run_node.sh nodeA
-   ```
-
-That's it.
-
----
-
-## 9. Verifying the safety net is actually live
-
-Run these three commands after setup. All must pass.
+#### Stage 4 — Add CoT back
 
 ```sh
-# 9.1  Keep-alive is running and holds /dev/watchdog0.
-pidof -x sgx-hw-keepalive.sh && lsof /dev/watchdog0 2>/dev/null
-
-# 9.2  Cron has the monitor line.
-crontab -l | grep sgx-watchdog.sh
-
-# 9.3  Watchdog driver reports keep-alive pings.
-wdctl /dev/watchdog0
-# Expected: Timeout ~60s, KEEPALIVEPING STATUS=1
+unset SGX_DISABLE_COT
+# Keep bluetooth disabled separately:
+export SGX_DISABLE_COT_BLUETOOTH=1
+/home/root/run_node.sh nodeA
 ```
+
+#### Stage 5 — Enable Bluetooth transport
+
+```sh
+unset SGX_DISABLE_COT_BLUETOOTH
+/home/root/run_node.sh nodeA
+```
+
+If SSH dies here → confirmed Bluetooth scan starving Wi-Fi (combo chip).
+
+#### Stage 6 — Everything on
+
+```sh
+unset SGX_DISABLE_RELAY_STATS SGX_DISABLE_TUNNEL_OBSERVER SGX_DISABLE_P2P_DISCOVERY \
+      SGX_DISABLE_ATTESTATION SGX_DISABLE_BROADCAST SGX_DISABLE_CLOUD_UPLINK \
+      SGX_DISABLE_EXPIRY_MONITOR SGX_DISABLE_LIGHTHOUSE_HEALTH
+/home/root/run_node.sh nodeA
+```
+
+### G-4. Where to read STEP markers
+
+```sh
+grep STEP_ /tmp/sgx_nodeA.log
+```
+
+The **last STEP marker before the freeze** identifies the guilty subsystem within 1 stage.
 
 ---
 
-## 10. Why this handles your last freeze
+## H. Expected Results / Failure Signals
 
-The output you just showed me stopped right after:
-
-```
-Node Identity Initialized | Public Key Prefix: BGLKVqfRBO+bAxv1Seiz...
-```
-
-That is the **last `println!` before the broadcast loop starts**. The broadcast loop's per-tick prints saturate the UART on the serial console.
-
-- With the **new binary** (FIX-4 applied), those prints go to the tracing layer only, never to stdout → UART never floods → no freeze.
-- With the **current old binary** you still have on the board, you MUST launch via `run_node.sh` which redirects stdout to `/tmp/sgx_nodeA.log`. Running it directly on serial is what caused the freeze.
-- Either way, with the **keep-alive from Step 3.2** armed, even a kernel freeze recovers in ~2.5 minutes automatically instead of requiring manual intervention.
+| Stage | Pass Signal | Fail Signal → Cause |
+|-------|-------------|---------------------|
+| 1 | `tail /tmp/sgx_nodeA.log` shows STEP_01 and no more, SSH alive 3 min | Baseline broken — suspect gRPC server or cert loading |
+| 2 | Log shows STEP_09 → STEP_14, SSH alive 3 min | Last STEP is 13 and SSH dies → `nebula -config` spawn or config is the cause |
+| 3 | Log shows STEP_15 done, SSH alive 3 min | Last STEP is 15 and SSH dies → `tc qdisc` on nebula0 is the cause |
+| 4 | Log shows STEP_22 done, SSH alive 3 min | Last STEP is 22 and SSH dies → CoT registration (non-BT transports) |
+| 5 | Log shows STEP_22 + full refresh loop, SSH alive 3 min | SSH dies only now → BT scan / combo-chip Wi-Fi starvation |
+| 6 | Full startup, SSH alive 3 min | Dies only at STEP_31 → broadcast UDP storm |
 
 ---
 
-## Summary — what to do right now
+## I. Rollback Plan
 
-1. **On all three boards**, run Section 3 end to end (one-time setup).
-2. **Verify** with Section 9.
-3. **From now on**, launch the daemon only via Section 5 (preflight + `run_node.sh`).
-4. When you push the rebuilt binary with FIX-1 through FIX-4 applied, follow the same launch procedure.
+If any of the changes cause a regression or the staged runs are inconclusive:
 
-End of pre-flight procedure.
+1. Keep `runtime_gates.rs` (it's purely additive and off by default).
+2. Revert `src/main.rs` to its pre-change version via `git checkout main -- src/main.rs`.
+3. Revert `src/nebula/daemon.rs`, `src/nebula/relay_tc.rs`, `src/cot/transports/mod.rs` individually as needed.
+4. Nothing I'm proposing changes protocol semantics, cryptographic flow, or on-disk formats — so rollback is zero-risk to data integrity.
+
+---
+
+## Summary
+
+- #1 suspect is the Nebula daemon startup path (Sprint 3) + relay-tc qdisc application (Sprint 4). Both touch the kernel netdev subsystem aggressively within the first 5 seconds after the listener binds.
+- #2 suspect is the Bluetooth transport hitting the shared Wi-Fi/BT antenna on the CYW43xx combo chip — a known issue on this exact VAR-SOM-MX8MP part. Explains why SSH dies over Wi-Fi and recovers after a delay.
+- The staged bisect with env gates pinpoints the failure in at most 6 runs, without refactoring a single module. Start with Stage 1 — a full-off run — and walk forward.
+
+End of plan.

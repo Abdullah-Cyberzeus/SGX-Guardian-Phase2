@@ -13,15 +13,21 @@ use std::time::{Duration, Instant};
 pub struct NebulaDaemon;
 
 impl NebulaDaemon {
-    /// Kill any running nebula process.
-    /// Called before start() to avoid "address already in use" on UDP 4242.
-    pub async fn kill_existing() {
-        // Linux/macOS
-        let _ = Command::new("pkill")
-            .args(["-f", "nebula -config"])
-            .output();
-        // Give the OS a moment to release UDP 4242
+    /// Kill only the previous instance of THIS config's nebula daemon.
+    /// Previous broad-match `pkill -f "nebula -config"` could kill unrelated
+    /// processes and was a suspected contributor to post-startup freezes.
+    pub async fn kill_existing_for_config(config_path: &str) {
+        // Escape for shell-regex: match the exact config path.
+        let pattern = format!("nebula -config {}", config_path);
+        let _ = Command::new("pkill").args(["-f", &pattern]).output();
         tokio::time::sleep(Duration::from_millis(600)).await;
+    }
+
+    /// Compat wrapper: old callers still work, but now it is a no-op unless
+    /// caller updates to the path-aware variant. We do NOT broad-kill any more.
+    pub async fn kill_existing() {
+        // Intentionally left empty to avoid broad pkill.
+        // Callers should use kill_existing_for_config.
     }
 
     /// Validate the config file with nebula's built-in check.
@@ -57,7 +63,7 @@ impl NebulaDaemon {
         println!("🚀 Starting Nebula daemon (config: {})...", config_path);
 
         // 1. Kill stale instance
-        Self::kill_existing().await;
+        Self::kill_existing_for_config(config_path).await;
 
         // 2. Validate config
         match Self::test_config(config_path) {

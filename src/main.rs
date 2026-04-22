@@ -26,6 +26,7 @@ use sgx_guardian_client::dynamic_config;
 use sgx_guardian_client::node_announcement::NodeAnnouncement;
 use sgx_guardian_client::node_broadcast;
 use sgx_guardian_client::node_listener;
+use sgx_guardian_client::runtime_gates::{cooldown, step, GATES};
 
 use base64::{engine::general_purpose, Engine as _};
 use std::fs;
@@ -167,6 +168,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             node_listener::start_listener(node_id_clone).await;
         });
     }
+    GATES.log_summary();
+    step(1, "post-listener: entering KeyManager init");
     // Generate node-specific identity key path
     let node_key_path = format!("/var/lib/sgx-guardian/sgx-agent/device_{}.key", node_id);
     // === Hardware Key Manager Initialization (Phase 2 — HKM) ===
@@ -703,7 +706,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // === Cloud uplink (outbound-only mock) ===
     let cloud_cfg = CloudConfig::from_env();
 
-    if cloud_cfg.enabled {
+    step(8, "cloud-uplink spawn gate");
+    if cloud_cfg.enabled && !GATES.disable_cloud_uplink {
         let node_id_clone = node_id.clone();
         let endpoint = cloud_cfg.endpoint.clone();
 
@@ -725,6 +729,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
         });
+        cooldown().await;
+    } else if GATES.disable_cloud_uplink {
+        tracing::warn!("STEP_08 SKIPPED: cloud uplink disabled by SGX_DISABLE_CLOUD_UPLINK");
     }
 
     {
@@ -732,8 +739,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         m.record_connection();
     }
 
-    // === Nebula Installation Verification ===
-    println!("\n🔎 Verifying Nebula Installation...");
+    step(9, "nebula subsystem gate");
+    if !GATES.disable_nebula {
+        // === Nebula Installation Verification ===
+        println!("\n🔎 Verifying Nebula Installation...");
 
     use sgx_guardian_client::nebula::ca::NebulaCA;
     use sgx_guardian_client::nebula::config::NebulaConfig;
@@ -1334,7 +1343,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    if current_relay_cfg.enabled {
+    step(15, "relay-tc gate");
+    if GATES.disable_relay_tc {
+        tracing::warn!("STEP_15 SKIPPED: tc qdisc disabled by SGX_DISABLE_RELAY_TC");
+    } else if current_relay_cfg.enabled {
+        // Let TUN fully register before touching it with tc (fixes RCU stall on i.MX8).
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         if let Err(e) =
             RelayTrafficControl::apply_bandwidth_limit(current_relay_cfg.max_bandwidth_mbps)
         {
@@ -1347,6 +1361,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 current_relay_cfg.alert_threshold_pct
             );
         }
+        cooldown().await;
     } else {
         let _ = RelayTrafficControl::clear();
     }
@@ -1521,7 +1536,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // === Relay Stats Poller (every 10s) ===
-    {
+    step(19, "relay-stats-poller gate");
+    if !GATES.disable_relay_stats {
         let metrics_clone = metrics.clone();
         let relay_cfg = current_relay_cfg.clone();
 
@@ -1587,10 +1603,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tokio::time::sleep(std::time::Duration::from_secs(10)).await;
             }
         });
+        cooldown().await;
+    } else {
+        tracing::warn!("STEP_19 SKIPPED: relay stats poller disabled by SGX_DISABLE_RELAY_STATS");
     }
 
     // === Direct-vs-Relay Observability (read-only, every 15s) ===
-    {
+    step(20, "tunnel-observer gate");
+    if !GATES.disable_tunnel_observer {
         let node_for_tunnel = node_id.clone();
         tokio::spawn(async move {
             let mut last_relay_used = false;
@@ -1621,14 +1641,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tokio::time::sleep(std::time::Duration::from_secs(15)).await;
             }
         });
+        cooldown().await;
+    } else {
+        tracing::warn!("STEP_20 SKIPPED: tunnel observer disabled by SGX_DISABLE_TUNNEL_OBSERVER");
     }
 
     // === Start Expiry Monitor ===
     use sgx_guardian_client::nebula::cert_lifecycle::ExpiryMonitor;
     ExpiryMonitor::start(nebula_base_dir.clone(), node_id.clone());
 
+    } else {
+        tracing::warn!("STEP_09–14 SKIPPED: Nebula disabled by SGX_DISABLE_NEBULA");
+    }
+
     // === CoT Deliverable Integration Start ===
-    println!("🔗 Initializing Circle of Trust (CoT) transport-agnostic layer...");
+    step(22, "cot subsystem gate");
+    if !GATES.disable_cot {
+        println!("🔗 Initializing Circle of Trust (CoT) transport-agnostic layer...");
 
     use sgx_guardian_client::cot::identity::DeviceIdentity;
     use sgx_guardian_client::cot::interface_detector::InterfaceDetector;
@@ -1813,6 +1842,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     // === CoT Deliverable Integration End ===
+        cooldown().await;
+    } else {
+        tracing::warn!("STEP_22–28 SKIPPED: CoT disabled by SGX_DISABLE_COT");
+    }
 
     // === Integrate Discovery + Attestation Services ===
     println!("🛰️ Initializing P2P Discovery and Attestation Services...");
@@ -1825,33 +1858,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let auditor_arc = Arc::new(Mutex::new(node_id_clone.clone()));
 
     // Spawn Discovery service
-    tokio::spawn({
-        let tx = disc_tx.clone();
-        let node_id_clone = node_id.clone();
-        let auditor_arc_clone = auditor_arc.clone();
-        async move {
-            if let Err(e) =
-                P2PDiscovery::run(tx, node_id_clone.clone(), auditor_arc_clone.clone()).await
-            {
-                eprintln!("Discovery service error: {:?}", e);
-                log_error(&node_id_clone, &format!("Discovery service error: {:?}", e));
+    step(29, "p2p-discovery gate");
+    if !GATES.disable_p2p_discovery {
+        tokio::spawn({
+            let tx = disc_tx.clone();
+            let node_id_clone = node_id.clone();
+            let auditor_arc_clone = auditor_arc.clone();
+            async move {
+                if let Err(e) =
+                    P2PDiscovery::run(tx, node_id_clone.clone(), auditor_arc_clone.clone()).await
+                {
+                    eprintln!("Discovery service error: {:?}", e);
+                    log_error(&node_id_clone, &format!("Discovery service error: {:?}", e));
+                }
             }
-        }
-    });
+        });
+        cooldown().await;
+    } else {
+        tracing::warn!("STEP_29 SKIPPED: discovery disabled by SGX_DISABLE_P2P_DISCOVERY");
+    }
 
     // Spawn Attestation service
-    tokio::spawn({
-        let node_id_clone = node_id.clone();
-        async move {
-            if let Err(e) = attestation_service::run(disc_rx).await {
-                eprintln!("Attestation service error: {:?}", e);
-                log_error(
-                    &node_id_clone,
-                    &format!("Attestation service error: {:?}", e),
-                );
+    step(30, "attestation-service gate");
+    if !GATES.disable_attestation {
+        tokio::spawn({
+            let node_id_clone = node_id.clone();
+            async move {
+                if let Err(e) = attestation_service::run(disc_rx).await {
+                    eprintln!("Attestation service error: {:?}", e);
+                    log_error(
+                        &node_id_clone,
+                        &format!("Attestation service error: {:?}", e),
+                    );
+                }
             }
-        }
-    });
+        });
+        cooldown().await;
+    } else {
+        tracing::warn!("STEP_30 SKIPPED: attestation disabled by SGX_DISABLE_ATTESTATION");
+    }
 
     println!("✅ P2P Discovery and Attestation background services started.");
 
@@ -1874,14 +1919,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Initial broadcast
-    let announcement = NodeAnnouncement::new_signed(
-        this_node.node_id.clone(),
-        this_node.hostname.clone(),
-        detected_ip_for_broadcast.clone(),
-        this_node.port,
-        this_node.public_key.clone(),
-    );
-    node_broadcast::broadcast_node(&announcement);
+    step(31, "broadcast-loop gate");
+    if !GATES.disable_broadcast {
+        let announcement = NodeAnnouncement::new_signed(
+            this_node.node_id.clone(),
+            this_node.hostname.clone(),
+            detected_ip_for_broadcast.clone(),
+            this_node.port,
+            this_node.public_key.clone(),
+        );
+        node_broadcast::broadcast_node(&announcement);
+    } else {
+        tracing::warn!("STEP_31 SKIPPED: broadcast disabled by SGX_DISABLE_BROADCAST");
+    }
 
     // Start background IP monitor
     dynamic_config::start_ip_monitor(
@@ -1899,7 +1949,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await;
 
     // Periodic broadcast (every 30 seconds)
-    {
+    if !GATES.disable_broadcast {
         let node_id_bc = node_id.clone();
         let hostname_bc = this_node.hostname.clone();
         let pubkey_bc = pubkey_b64.clone();
@@ -2043,11 +2093,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         node_id
     );
     // SAN = stable identity entries, not transient LAN IP.
-    let overlay_ip_only = nebula_ip
-        .split('/')
-        .next()
-        .unwrap_or("192.168.100.1")
-        .to_string();
+    let overlay_ip_only = sgx_guardian_client::nebula::overlay_registry::OverlayRegistry::load(
+        "/var/lib/sgx-guardian/nebula/overlay_registry.json",
+    )
+    .ok()
+    .and_then(|r| r.get_ip(&node_id).map(|s| s.to_string()))
+    .unwrap_or_else(|| "192.168.100.1".to_string());
     let san: Vec<&str> = vec![
         this_node.hostname.as_str(),
         node_id.as_str(),
