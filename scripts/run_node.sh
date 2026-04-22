@@ -23,7 +23,7 @@ echo ""
 sleep 5
 if kill -0 $PID 2>/dev/null; then
     echo "Status: RUNNING"
-    head -20 "$LOG"
+    head -100 "$LOG"
 else
     echo "Status: CRASHED — check log:"
     tail -30 "$LOG"

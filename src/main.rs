@@ -161,66 +161,123 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = std::fs::write(schema_path, schema);
     }
 
+    GATES.log_summary();
+    step(0, "gates loaded");
+
     // Start node announcement listener (UDP broadcast receiver)
-    {
+    if !GATES.disable_node_listener {
         let node_id_clone = node_id.clone();
         tokio::spawn(async move {
             node_listener::start_listener(node_id_clone).await;
         });
+        step(1, "node-listener spawned");
+    } else {
+        tracing::warn!("STEP_01 SKIPPED: node_listener disabled by SGX_DISABLE_NODE_LISTENER");
     }
-    GATES.log_summary();
-    step(1, "post-listener: entering KeyManager init");
+    cooldown().await;
+
     // Generate node-specific identity key path
     let node_key_path = format!("/var/lib/sgx-guardian/sgx-agent/device_{}.key", node_id);
     // === Hardware Key Manager Initialization (Phase 2 — HKM) ===
+    step(2, "keymgr init gate");
     #[cfg(feature = "secure-element")]
     let km = {
-        let se_base_path = "/var/lib/sgx-guardian";
-        let se_config = secure_element::SeConfig::default();
+        if GATES.force_software_keys {
+            tracing::warn!(
+                "STEP_02 SE050 DKP SKIPPED: SGX_FORCE_SOFTWARE_KEYS / SGX_DISABLE_SE050_DKP set"
+            );
+            println!("⚙️  Software keys forced — skipping SE050 DKP entirely");
+            KeyManager::load_or_generate(&node_key_path)?
+        } else {
+            let se_base_path = "/var/lib/sgx-guardian".to_string();
+            let se_config = secure_element::SeConfig::default();
+            let node_key_path_cl = node_key_path.clone();
+            let timeout = std::time::Duration::from_secs(GATES.ssscli_timeout_secs.max(5) * 6);
 
-        match KeyManager::init_with_se050(&se_config, se_base_path, &node_key_path) {
-            Ok(hw_km) => {
-                println!("DKP initialized via SE050 hardware");
-                log_audit(
-                    &node_id,
-                    AuditCategory::Identity,
-                    AuditSeverity::Info,
-                    AuditAction::Loaded,
-                    "Hardware Key Manager: DKP active via SE050",
-                );
-                hw_km
-            }
-            Err(e) => {
-                eprintln!("SE050 HKM failed: {} — using software keys", e);
-                KeyManager::load_or_generate(&node_key_path)?
+            step(3, "KeyManager::init_with_se050 (spawn_blocking)");
+            let km_res = tokio::time::timeout(
+                timeout,
+                tokio::task::spawn_blocking(move || {
+                    KeyManager::init_with_se050(&se_config, &se_base_path, &node_key_path_cl)
+                }),
+            )
+            .await;
+
+            match km_res {
+                Ok(Ok(Ok(hw_km))) => {
+                    println!("DKP initialized via SE050 hardware");
+                    log_audit(
+                        &node_id,
+                        AuditCategory::Identity,
+                        AuditSeverity::Info,
+                        AuditAction::Loaded,
+                        "Hardware Key Manager: DKP active via SE050",
+                    );
+                    hw_km
+                }
+                Ok(Ok(Err(e))) => {
+                    eprintln!("SE050 HKM failed: {} — using software keys", e);
+                    KeyManager::load_or_generate(&node_key_path)?
+                }
+                Ok(Err(join_err)) => {
+                    eprintln!("SE050 HKM task panicked: {:?} — using software keys", join_err);
+                    KeyManager::load_or_generate(&node_key_path)?
+                }
+                Err(_) => {
+                    eprintln!(
+                        "SE050 HKM TIMED OUT after {:?} — using software keys (ssscli/I2C likely wedged)",
+                        timeout
+                    );
+                    log_audit(
+                        &node_id,
+                        AuditCategory::Identity,
+                        AuditSeverity::Critical,
+                        AuditAction::Failed,
+                        "SE050 HKM timed out — fell back to software keys",
+                    );
+                    KeyManager::load_or_generate(&node_key_path)?
+                }
             }
         }
     };
+    cooldown().await;
 
     #[cfg(not(feature = "secure-element"))]
     let km = KeyManager::load_or_generate(&node_key_path)?;
 
     // === DKP Auto-Rotation Check ===
+    step(4, "dkp-rotation gate");
     #[cfg(feature = "secure-element")]
-    {
+    if !GATES.force_software_keys && !GATES.disable_dkp_rotation {
         let se_config = sgx_guardian_client::secure_element::SeConfig::default();
-        let base_path = "/var/lib/sgx-guardian";
-        if let Ok(mut dkp) =
-            sgx_guardian_client::secure_element::dkp::DkpManager::init(&se_config, base_path)
-        {
-            match dkp.check_and_auto_rotate() {
-                Ok(Some(new_meta)) => {
-                    println!("  DKP auto-rotated to v{}", new_meta.version);
-                    // Reinitialize KeyManager with new key
-                    // (daemon restart is safer for now)
-                }
-                Ok(None) => { /* no rotation needed */ }
-                Err(e) => {
-                    eprintln!("  Auto-rotation check failed: {}", e);
-                }
+        let base_path = "/var/lib/sgx-guardian".to_string();
+        let timeout = std::time::Duration::from_secs(GATES.ssscli_timeout_secs.max(5) * 4);
+
+        let rot_res = tokio::time::timeout(
+            timeout,
+            tokio::task::spawn_blocking(move || {
+                let mut dkp = sgx_guardian_client::secure_element::dkp::DkpManager::init(
+                    &se_config, &base_path,
+                )
+                .ok()?;
+                Some(dkp.check_and_auto_rotate())
+            }),
+        )
+        .await;
+
+        match rot_res {
+            Ok(Ok(Some(Ok(Some(new_meta))))) => {
+                println!("  DKP auto-rotated to v{}", new_meta.version);
+            }
+            Ok(_) => {}
+            Err(_) => {
+                eprintln!("  DKP auto-rotation TIMED OUT — continuing");
             }
         }
+    } else {
+        tracing::warn!("STEP_04 SKIPPED: DKP rotation disabled");
     }
+    cooldown().await;
 
     // === Crypto Provider Status ===
     match km.backend_name() {
@@ -257,35 +314,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
     });
 
-    let evidence = AttestationService::create_signed_evidence(&km, &sample_policy)?;
-    println!(
-        "Created local attestation evidence (nonce={}..)",
-        &evidence.nonce[..8]
-    );
-    let verified = AttestationService::verify_signed_evidence(&evidence, &sample_policy)?;
-    if verified {
-        println!("✅ Local attestation evidence verified successfully.");
-        log_audit(
-            &node_id,
-            AuditCategory::Attestation,
-            AuditSeverity::Info,
-            AuditAction::Succeeded,
-            "Local attestation evidence verified",
+    step(5, "startup-attest-evidence gate");
+    if !GATES.disable_startup_attest_evidence {
+        let evidence = AttestationService::create_signed_evidence(&km, &sample_policy)?;
+        println!(
+            "Created local attestation evidence (nonce={}..)",
+            &evidence.nonce[..8]
         );
+        let verified = AttestationService::verify_signed_evidence(&evidence, &sample_policy)?;
+        if verified {
+            println!("✅ Local attestation evidence verified successfully.");
+            log_audit(
+                &node_id,
+                AuditCategory::Attestation,
+                AuditSeverity::Info,
+                AuditAction::Succeeded,
+                "Local attestation evidence verified",
+            );
+        } else {
+            eprintln!("❌ Local attestation verification failed!");
+            log_audit(
+                &node_id,
+                AuditCategory::Attestation,
+                AuditSeverity::Critical,
+                AuditAction::Failed,
+                "Local attestation evidence verification failed",
+            );
+        }
     } else {
-        eprintln!("❌ Local attestation verification failed!");
-        log_audit(
-            &node_id,
-            AuditCategory::Attestation,
-            AuditSeverity::Critical,
-            AuditAction::Failed,
-            "Local attestation evidence verification failed",
-        );
+        tracing::warn!("STEP_05 SKIPPED: startup attestation evidence disabled");
     }
+    cooldown().await;
 
     // === Secure Boot Chain Verification ===
-    println!("\n  Verifying secure boot chain...");
-    {
+    step(6, "secure-boot-check gate");
+    if !GATES.disable_secure_boot_check {
+        println!("\n  Verifying secure boot chain...");
         use sgx_guardian_client::secure_element::secure_boot::BootChainStatus;
 
         let boot_status = BootChainStatus::check();
@@ -302,11 +366,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "  ⚠️ Boot chain verification incomplete — PCR values may not be fully trusted"
             );
         }
+    } else {
+        tracing::warn!("STEP_06 SKIPPED: secure boot check disabled");
     }
+    cooldown().await;
 
     // === PCR Measurement (ATT-003) ===
-    println!("\n  Measuring platform integrity (PCR)...");
-    {
+    step(7, "pcr-measurement gate");
+    if !GATES.disable_pcr_measurement {
+        println!("\n  Measuring platform integrity (PCR)...");
         use sgx_guardian_client::secure_element::pcr::*;
         use sgx_guardian_client::secure_element::pcr_config;
         use sha2::Digest;
@@ -498,7 +566,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             println!("  No baseline — create with: sgx-pa-cli pcr-baseline-create");
         }
+    } else {
+        tracing::warn!("STEP_07 SKIPPED: PCR measurement disabled");
     }
+    cooldown().await;
 
     // === DYNAMIC IP DETECTION + CONFIG AUTO-UPDATE ===
     println!("\n🔍 Detecting local LAN IP address...");
@@ -646,13 +717,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         audit_log_path_dev
     };
 
-    if std::path::Path::new(audit_check_path).exists() {
+    if !GATES.disable_audit_verify && std::path::Path::new(audit_check_path).exists() {
+        step(10, "audit-verify");
         if let Err(e) = AuditVerifier::verify(audit_check_path) {
             log_error(
                 &node_id,
                 &format!("Audit log integrity warning (non-fatal): {}", e),
             );
         }
+    } else if GATES.disable_audit_verify {
+        tracing::warn!("audit verify disabled by SGX_DISABLE_AUDIT_VERIFY");
     }
 
     // === Initialize Audit Logger (tamper-evident) ===
@@ -2136,65 +2210,82 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let identity = Identity::from_pem(cert_pem.clone(), key_pem.clone());
     let ca_cert = TonicCertificate::from_pem(cert_pem.clone());
     // spawn gRPC server using tonic Identity + CA (mTLS)
-    let server_task = task::spawn({
-        let identity = identity.clone();
-        let ca_cert = ca_cert.clone();
-        let this_addr = this_addr.clone();
-        async move {
-            if let Err(e) = start_server(this_addr.clone(), identity, ca_cert).await {
-                eprintln!("Server failed at {}: {:?}", this_addr, e);
+    step(32, "grpc-server gate");
+    let server_task = if !GATES.disable_grpc_server {
+        task::spawn({
+            let identity = identity.clone();
+            let ca_cert = ca_cert.clone();
+            let this_addr = this_addr.clone();
+            async move {
+                if let Err(e) = start_server(this_addr.clone(), identity, ca_cert).await {
+                    eprintln!("Server failed at {}: {:?}", this_addr, e);
+                }
             }
-        }
-    });
+        })
+    } else {
+        tracing::warn!("STEP_32 SKIPPED: gRPC server disabled");
+        task::spawn(async {})
+    };
+
     // === CERT BOOTSTRAP SERVER (nodeA only, plaintext port 50061) ===
-    if node_id == "nodeA" {
+    step(33, "cert-bootstrap gate");
+    if node_id == "nodeA" && !GATES.disable_cert_bootstrap {
         tokio::spawn(async move {
-            if let Err(e) = server::start_cert_bootstrap_server("0.0.0.0:50061".to_string()).await {
+            if let Err(e) =
+                server::start_cert_bootstrap_server("0.0.0.0:50061".to_string()).await
+            {
                 eprintln!("Cert bootstrap server failed: {:?}", e);
             }
         });
+    } else if GATES.disable_cert_bootstrap {
+        tracing::warn!("STEP_33 SKIPPED: cert bootstrap disabled");
     }
     use sgx_guardian_client::enforcement;
     use sgx_guardian_client::policy::get_active_policy;
 
-    if let Some(active_policy) = get_active_policy() {
-        println!("🛡️ Applying policy enforcement (nftables)");
+    step(34, "policy-enforcement gate");
+    if !GATES.disable_policy_enforcement {
+        if let Some(active_policy) = get_active_policy() {
+            println!("🛡️ Applying policy enforcement (nftables)");
 
-        log_audit(
-            &node_id,
-            AuditCategory::Enforcement,
-            AuditSeverity::Info,
-            AuditAction::Started,
-            "Policy enforcement started",
-        );
+            log_audit(
+                &node_id,
+                AuditCategory::Enforcement,
+                AuditSeverity::Info,
+                AuditAction::Started,
+                "Policy enforcement started",
+            );
 
-        match enforcement::enforce_policy(&active_policy) {
-            Ok(_) => {
-                println!("✅ Policy enforcement applied successfully");
+            match enforcement::enforce_policy(&active_policy) {
+                Ok(_) => {
+                    println!("✅ Policy enforcement applied successfully");
 
-                log_audit(
-                    &node_id,
-                    AuditCategory::Enforcement,
-                    AuditSeverity::Info,
-                    AuditAction::Applied,
-                    "Policy enforcement applied successfully",
-                );
-            }
-            Err(e) => {
-                eprintln!("❌ Policy enforcement failed: {:?}", e);
+                    log_audit(
+                        &node_id,
+                        AuditCategory::Enforcement,
+                        AuditSeverity::Info,
+                        AuditAction::Applied,
+                        "Policy enforcement applied successfully",
+                    );
+                }
+                Err(e) => {
+                    eprintln!("❌ Policy enforcement failed: {:?}", e);
 
-                log_audit(
-                    &node_id,
-                    AuditCategory::Enforcement,
-                    AuditSeverity::Critical,
-                    AuditAction::Failed,
-                    "Policy enforcement failed",
-                );
+                    log_audit(
+                        &node_id,
+                        AuditCategory::Enforcement,
+                        AuditSeverity::Critical,
+                        AuditAction::Failed,
+                        "Policy enforcement failed",
+                    );
 
-                let mut m = metrics.lock().await;
-                m.record_enforcement_failure();
+                    let mut m = metrics.lock().await;
+                    m.record_enforcement_failure();
+                }
             }
         }
+    } else {
+        tracing::warn!("STEP_34 SKIPPED: policy enforcement disabled");
     }
     // === END POLICY ENFORCEMENT ===
 

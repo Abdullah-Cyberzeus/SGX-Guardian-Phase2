@@ -28,6 +28,7 @@ fn env_u64(key: &str, default: u64) -> u64 {
 }
 
 pub struct RuntimeGates {
+    // existing (already wired)
     pub disable_nebula: bool,
     pub disable_relay_tc: bool,
     pub disable_relay_stats: bool,
@@ -43,6 +44,31 @@ pub struct RuntimeGates {
     pub disable_cloud_uplink: bool,
     pub disable_expiry_monitor: bool,
     pub disable_lighthouse_health: bool,
+
+    // NEW — early-startup isolation (previously missing)
+    /// Force software ring keypair, never call ssscli for identity.
+    pub force_software_keys: bool,
+    /// Skip DKP auto-rotation check (one ssscli call).
+    pub disable_dkp_rotation: bool,
+    /// Skip AttestationService::create_signed_evidence (avoid ssscli sign at startup).
+    pub disable_startup_attest_evidence: bool,
+    /// Skip BootChainStatus::check (devmem2 + /sys reads).
+    pub disable_secure_boot_check: bool,
+    /// Skip PCR measurement (lots of filesystem reads + ssscli sign).
+    pub disable_pcr_measurement: bool,
+    /// Skip AuditVerifier::verify on existing audit.log.
+    pub disable_audit_verify: bool,
+    /// Skip mTLS cert setup + gRPC server spawn.
+    pub disable_grpc_server: bool,
+    /// Skip plaintext cert bootstrap server on :50061 (nodeA only).
+    pub disable_cert_bootstrap: bool,
+    /// Skip nftables policy enforcement.
+    pub disable_policy_enforcement: bool,
+    /// Skip node_listener UDP 9000 receiver.
+    pub disable_node_listener: bool,
+    /// Maximum seconds to wait for any single ssscli subprocess.
+    pub ssscli_timeout_secs: u64,
+
     /// Milliseconds to sleep between major subsystem startups. 0 = no cooldown.
     pub startup_cooldown_ms: u64,
 }
@@ -65,13 +91,25 @@ impl RuntimeGates {
             disable_cloud_uplink: env_true("SGX_DISABLE_CLOUD_UPLINK"),
             disable_expiry_monitor: env_true("SGX_DISABLE_EXPIRY_MONITOR"),
             disable_lighthouse_health: env_true("SGX_DISABLE_LIGHTHOUSE_HEALTH"),
+            force_software_keys: env_true("SGX_FORCE_SOFTWARE_KEYS")
+                || env_true("SGX_DISABLE_SE050_DKP"),
+            disable_dkp_rotation: env_true("SGX_DISABLE_DKP_ROTATION"),
+            disable_startup_attest_evidence: env_true("SGX_DISABLE_STARTUP_ATTEST"),
+            disable_secure_boot_check: env_true("SGX_DISABLE_SECURE_BOOT_CHECK"),
+            disable_pcr_measurement: env_true("SGX_DISABLE_PCR"),
+            disable_audit_verify: env_true("SGX_DISABLE_AUDIT_VERIFY"),
+            disable_grpc_server: env_true("SGX_DISABLE_GRPC_SERVER"),
+            disable_cert_bootstrap: env_true("SGX_DISABLE_CERT_BOOTSTRAP"),
+            disable_policy_enforcement: env_true("SGX_DISABLE_POLICY_ENFORCEMENT"),
+            disable_node_listener: env_true("SGX_DISABLE_NODE_LISTENER"),
+            ssscli_timeout_secs: env_u64("SGX_SSSCLI_TIMEOUT_SECS", 10),
             startup_cooldown_ms: env_u64("SGX_STARTUP_COOLDOWN_MS", 0),
         }
     }
 
     pub fn log_summary(&self) {
         tracing::info!(
-            "Runtime gates: nebula={} relay_tc={} relay_stats={} tunnel={} cot={} bt={} cell={} sat={} refresh={} p2p={} att={} bcast={} cloud={} expiry={} lhhealth={} cooldown_ms={}",
+            "Runtime gates: nebula={} relay_tc={} relay_stats={} tunnel={} cot={} bt={} cell={} sat={} refresh={} p2p={} att={} bcast={} cloud={} expiry={} lhhealth={} swkeys={} dkp_rot={} startup_attest={} sbcheck={} pcr={} audit={} grpc={} cert_bootstrap={} policy={} node_listener={} ssscli_timeout_secs={} cooldown_ms={}",
             self.disable_nebula,
             self.disable_relay_tc,
             self.disable_relay_stats,
@@ -87,6 +125,17 @@ impl RuntimeGates {
             self.disable_cloud_uplink,
             self.disable_expiry_monitor,
             self.disable_lighthouse_health,
+            self.force_software_keys,
+            self.disable_dkp_rotation,
+            self.disable_startup_attest_evidence,
+            self.disable_secure_boot_check,
+            self.disable_pcr_measurement,
+            self.disable_audit_verify,
+            self.disable_grpc_server,
+            self.disable_cert_bootstrap,
+            self.disable_policy_enforcement,
+            self.disable_node_listener,
+            self.ssscli_timeout_secs,
             self.startup_cooldown_ms
         );
     }
