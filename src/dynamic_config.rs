@@ -164,74 +164,29 @@ pub struct NodeConfigBroadcast {
 
 // ── STEP 1: IP Detection ────────────────────────────────────────
 pub fn detect_local_lan_ip() -> Result<Ipv4Addr> {
-    use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
+    let candidates = crate::network_selector::detect_candidates()
+        .map_err(|e| anyhow::anyhow!("Network scan failed: {}", e))?;
 
-    let interfaces =
-        NetworkInterface::show().map_err(|e| anyhow::anyhow!("Network scan failed: {}", e))?;
+    let best = crate::network_selector::best_candidate(&candidates)
+        .ok_or_else(|| anyhow::anyhow!("No LAN IP found"))?;
 
-    let mut candidates: Vec<(u8, String, Ipv4Addr)> = Vec::new();
+    println!(
+        "🌐 Best network selected: iface={} transport={} ip={} score={} metric={} latency~{}ms bw~{}kbps live={} stable={}/{}",
+        best.interface_name,
+        best.transport_type,
+        best.ip,
+        best.quality_score,
+        best.route_metric
+            .map(|m| m.to_string())
+            .unwrap_or_else(|| "n/a".to_string()),
+        best.observed_latency_ms,
+        best.observed_bandwidth_kbps,
+        best.using_live_metrics,
+        best.consecutive_successes,
+        best.consecutive_failures
+    );
 
-    for iface in interfaces {
-        if iface.name.starts_with("lo")
-            || is_virtual_interface(&iface.name)
-            || iface.name.starts_with("nebula")
-            || iface.name.starts_with("docker")
-            || iface.name.starts_with("defined")
-            || iface.name.starts_with("armia")
-        {
-            continue;
-        }
-
-        for addr in iface.addr {
-            if let Addr::V4(v4) = addr {
-                let ip = v4.ip;
-                if !is_routable_ip(&ip.to_string()) {
-                    continue;
-                }
-
-                // NODE IDENTITY priority — how other nodes find us.
-                // WiFi/Ethernet FIRST because peers on the LAN can reach us directly.
-                // Cellular LAST because it's behind carrier NAT — peers on our
-                // WiFi LAN cannot connect to our cellular IP.
-                //
-                // NOTE: This does NOT affect CoT transport priority (types.rs).
-                // CoT can still prefer cellular for data once the overlay is up.
-                let priority = if iface.name.starts_with("eth") || iface.name.starts_with("ens") {
-                    0 // Wired Ethernet — most stable
-                } else if iface.name == "wlan0" {
-                    1 // Primary WiFi — the LAN peers use
-                } else if iface.name.starts_with("wlan") {
-                    2 // Secondary WiFi
-                } else if iface.name.starts_with("wwan") || iface.name.starts_with("rmnet") {
-                    100 // Cellular — behind carrier NAT, NOT reachable by LAN peers
-                } else {
-                    50 // Unknown
-                };
-
-                candidates.push((priority, iface.name.clone(), ip));
-            }
-        }
-    }
-
-    candidates.sort_by(|(pa, na, _), (pb, nb, _)| pa.cmp(pb).then_with(|| na.cmp(nb)));
-    candidates
-        .into_iter()
-        .next()
-        .map(|(_, _, ip)| ip)
-        .ok_or_else(|| anyhow::anyhow!("No LAN IP found"))
-}
-
-fn is_virtual_interface(name: &str) -> bool {
-    let n = name.to_lowercase();
-    n.starts_with("docker")
-        || n.starts_with("veth")
-        || n.starts_with("br-")
-        || n.starts_with("virbr")
-        || n.starts_with("vnet")
-        || n.starts_with("flannel")
-        || n.starts_with("cni")
-        || n.starts_with("cali")
-        || n == "docker0"
+    Ok(best.ip)
 }
 
 // ── STEP 2: Config File Update ──────────────────────────────────

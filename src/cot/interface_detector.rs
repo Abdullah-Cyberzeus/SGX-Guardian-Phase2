@@ -51,11 +51,12 @@ impl InterfaceDetector {
                 network_interface::Addr::V6(_) => None,
             });
 
-            let status = if ip_addr.is_some() {
-                InterfaceStatus::Up
-            } else {
-                InterfaceStatus::Down
-            };
+            let status = Self::derive_status(
+                &nic.name,
+                ip_addr.is_some(),
+                Self::read_linux_operstate(&nic.name),
+                Self::read_linux_carrier(&nic.name),
+            );
 
             let info = InterfaceInfo::new(nic.name.clone(), transport_type, ip_addr, status);
 
@@ -178,7 +179,6 @@ impl InterfaceDetector {
     }
 
     /// Check Linux operstate for more accurate link status.
-    #[allow(dead_code)]
     fn read_linux_operstate(interface_name: &str) -> InterfaceStatus {
         let path = format!("/sys/class/net/{}/operstate", interface_name);
         match std::fs::read_to_string(&path) {
@@ -188,6 +188,48 @@ impl InterfaceDetector {
                 _ => InterfaceStatus::Unknown,
             },
             Err(_) => InterfaceStatus::Unknown,
+        }
+    }
+
+    fn read_linux_carrier(interface_name: &str) -> Option<bool> {
+        let path = format!("/sys/class/net/{}/carrier", interface_name);
+        std::fs::read_to_string(&path)
+            .ok()
+            .map(|state| state.trim() == "1")
+    }
+
+    fn derive_status(
+        interface_name: &str,
+        has_ip: bool,
+        operstate: InterfaceStatus,
+        carrier: Option<bool>,
+    ) -> InterfaceStatus {
+        if !has_ip {
+            return InterfaceStatus::Down;
+        }
+
+        let lower = interface_name.to_lowercase();
+        let is_ethernet_like = lower.starts_with("eth")
+            || lower.starts_with("en")
+            || lower.starts_with("eno")
+            || lower.starts_with("enp");
+
+        match operstate {
+            InterfaceStatus::Down => InterfaceStatus::Down,
+            InterfaceStatus::Up => {
+                if is_ethernet_like && carrier == Some(false) {
+                    InterfaceStatus::Down
+                } else {
+                    InterfaceStatus::Up
+                }
+            }
+            InterfaceStatus::Unknown => {
+                if is_ethernet_like && carrier == Some(false) {
+                    InterfaceStatus::Down
+                } else {
+                    InterfaceStatus::Up
+                }
+            }
         }
     }
 }
@@ -299,5 +341,29 @@ mod tests {
             Some(TransportType::Satellite)
         );
         std::env::remove_var("SGX_SATELLITE_INTERFACES");
+    }
+
+    #[test]
+    fn test_ethernet_with_ip_but_no_carrier_is_down() {
+        assert_eq!(
+            InterfaceDetector::derive_status("ens33", true, InterfaceStatus::Unknown, Some(false)),
+            InterfaceStatus::Down
+        );
+    }
+
+    #[test]
+    fn test_ethernet_with_ip_and_link_is_up() {
+        assert_eq!(
+            InterfaceDetector::derive_status("ens37", true, InterfaceStatus::Up, Some(true)),
+            InterfaceStatus::Up
+        );
+    }
+
+    #[test]
+    fn test_wifi_with_ip_can_remain_up_without_carrier_file() {
+        assert_eq!(
+            InterfaceDetector::derive_status("wlan0", true, InterfaceStatus::Unknown, None),
+            InterfaceStatus::Up
+        );
     }
 }

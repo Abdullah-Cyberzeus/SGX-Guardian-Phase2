@@ -1,11 +1,16 @@
 use crate::cot::link_monitor::LinkMonitor;
 use crate::cot::transport_registry::TransportRegistry;
+use crate::network_selector::{
+    best_candidate_with_live_metrics, detect_candidates, set_selected_interface,
+    LiveNetworkMetrics, SelectionPolicy,
+};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 
 const FAILURE_THRESHOLD: u32 = 3;
-const RECOVERY_THRESHOLD: u32 = 5;
+const RECOVERY_THRESHOLD: u32 = 3;
 const MIN_SWITCH_INTERVAL_SECS: i64 = 30;
 
 pub struct FailoverEngine {
@@ -21,6 +26,7 @@ mod tests {
     use super::*;
     use crate::cot::transport_trait::{Transport, TransportHealth, TransportMessage};
     use crate::cot::types::{CotResult, TransportPriority, TransportType};
+    use crate::network_selector::set_selected_interface;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     struct MockTransport {
@@ -61,6 +67,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_initial_selection_picks_best_available() {
+        set_selected_interface(None);
         let reg = Arc::new(TransportRegistry::new());
         let eth_up = Arc::new(AtomicBool::new(true));
         let wifi_up = Arc::new(AtomicBool::new(true));
@@ -83,7 +90,7 @@ mod tests {
         let monitor = LinkMonitor::new(reg.clone());
         monitor.probe_once_for_test().await;
         let failover = FailoverEngine::new(monitor, reg);
-        failover.evaluate().await;
+        failover.evaluate_now().await;
         assert_eq!(failover.current_interface().await.as_deref(), Some("ens33"));
     }
 }
@@ -122,30 +129,37 @@ impl FailoverEngine {
     pub fn start(self: Arc<Self>) {
         tokio::spawn(async move {
             loop {
-                self.evaluate().await;
+                self.evaluate_now().await;
                 tokio::time::sleep(Duration::from_secs(5)).await;
             }
         });
     }
 
-    async fn evaluate(&self) {
+    pub async fn evaluate_now(&self) {
         // Admin lock overrides
         if let Some(ref locked) = *self.manual_lock.read().await {
             let mut active = self.active_interface.write().await;
             if active.as_deref() != Some(locked) {
                 *active = Some(locked.clone());
+                set_selected_interface(Some(locked.clone()));
             }
             return;
         }
 
         let current = self.active_interface.read().await.clone();
 
-        // No active yet → pick best
+        // No active yet → pick best by composite quality score
         if current.is_none() {
-            if let Ok(best) = self.registry.best_available().await {
+            if let Some((name, label)) = self.select_best_by_quality().await {
+                *self.active_interface.write().await = Some(name.clone());
+                *self.last_switch_at.write().await = chrono::Utc::now().timestamp();
+                set_selected_interface(Some(name.clone()));
+                println!("✅ Initial active transport: {} ({})", name, label);
+            } else if let Ok(best) = self.registry.best_available().await {
                 let name = best.interface_name().to_string();
                 *self.active_interface.write().await = Some(name.clone());
                 *self.last_switch_at.write().await = chrono::Utc::now().timestamp();
+                set_selected_interface(Some(name.clone()));
                 println!(
                     "✅ Initial active transport: {} ({})",
                     name,
@@ -165,14 +179,25 @@ impl FailoverEngine {
         };
 
         if current_failed {
-            if let Ok(alt) = self.registry.best_available().await {
+            if let Some((new_name, _)) = self.select_best_by_quality().await {
+                if new_name != current_iface {
+                    println!(
+                        "⚠️ Network not reachable: {}. New best network: {}",
+                        current_iface, new_name
+                    );
+                    *self.active_interface.write().await = Some(new_name.clone());
+                    set_selected_interface(Some(new_name));
+                    *self.last_switch_at.write().await = now;
+                }
+            } else if let Ok(alt) = self.registry.best_available().await {
                 let new_name = alt.interface_name().to_string();
                 if new_name != current_iface {
                     println!(
-                        "🔁 Failover: {} → {} ({}+ failures on {})",
-                        current_iface, new_name, FAILURE_THRESHOLD, current_iface
+                        "⚠️ Network not reachable: {}. New best network: {}",
+                        current_iface, new_name
                     );
-                    *self.active_interface.write().await = Some(new_name);
+                    *self.active_interface.write().await = Some(new_name.clone());
+                    set_selected_interface(Some(new_name));
                     *self.last_switch_at.write().await = now;
                 }
             } else {
@@ -181,27 +206,98 @@ impl FailoverEngine {
             return;
         }
 
-        // Current healthy. Consider upgrade to better-priority interface.
+        // Current healthy. Consider upgrade to better-quality interface.
         let since_switch = now - *self.last_switch_at.read().await;
-        if since_switch >= MIN_SWITCH_INTERVAL_SECS {
-            let Ok(best) = self.registry.best_available().await else {
-                return;
-            };
-            let best_name = best.interface_name().to_string();
+        if let Some((best_name, label)) = self.select_best_by_quality().await {
             if best_name != current_iface {
                 let stable = match self.monitor.snapshot(&best_name).await {
                     Some(s) => s.consecutive_successes >= RECOVERY_THRESHOLD,
                     None => false,
                 };
-                if stable {
+                let immediate_upgrade = self
+                    .is_higher_priority_than_current(&best_name, &current_iface)
+                    .await;
+
+                if immediate_upgrade || (since_switch >= MIN_SWITCH_INTERVAL_SECS && stable) {
                     println!(
-                        "⬆️  Upgrade: {} → {} (higher priority, stable)",
-                        current_iface, best_name
+                        "⬆️  Upgrade: {} → {} (better network quality: {})",
+                        current_iface, best_name, label
                     );
-                    *self.active_interface.write().await = Some(best_name);
+                    *self.active_interface.write().await = Some(best_name.clone());
+                    set_selected_interface(Some(best_name));
                     *self.last_switch_at.write().await = now;
                 }
             }
         }
+    }
+
+    async fn is_higher_priority_than_current(
+        &self,
+        candidate_iface: &str,
+        current_iface: &str,
+    ) -> bool {
+        let candidate = self.registry.get_by_interface(candidate_iface).await;
+        let current = self.registry.get_by_interface(current_iface).await;
+        match (candidate, current) {
+            (Some(candidate), Some(current)) => candidate.priority() < current.priority(),
+            (Some(_), None) => true,
+            _ => false,
+        }
+    }
+
+    async fn select_best_by_quality(&self) -> Option<(String, String)> {
+        let snaps = self.monitor.all_snapshots().await;
+        if snaps.is_empty() {
+            return None;
+        }
+
+        let candidates = detect_candidates().ok()?;
+        let live_metrics: HashMap<String, LiveNetworkMetrics> = snaps
+            .iter()
+            .map(|snap| {
+                (
+                    snap.interface_name.clone(),
+                    LiveNetworkMetrics {
+                        is_up: snap.is_up,
+                        latency_ms: snap.latency_ms,
+                        bandwidth_kbps: snap.bandwidth_kbps,
+                        consecutive_failures: snap.consecutive_failures,
+                        consecutive_successes: snap.consecutive_successes,
+                        last_probed: snap.last_probed,
+                    },
+                )
+            })
+            .collect();
+        let allowed_interfaces: HashSet<String> = snaps
+            .iter()
+            .map(|snap| snap.interface_name.clone())
+            .collect();
+
+        let best = best_candidate_with_live_metrics(
+            &candidates,
+            &live_metrics,
+            &SelectionPolicy {
+                allowed_interfaces: Some(allowed_interfaces),
+                prefer_live_metrics: true,
+                require_live_metrics: true,
+                require_reachable: true,
+                require_live_up: true,
+                max_consecutive_failures: Some(FAILURE_THRESHOLD.saturating_sub(1)),
+            },
+        )?;
+
+        let label = format!(
+            "lat={}ms bw={}kbps pri={} metric={} stable={} live={}",
+            best.observed_latency_ms,
+            best.observed_bandwidth_kbps,
+            best.default_priority,
+            best.route_metric
+                .map(|metric| metric.to_string())
+                .unwrap_or_else(|| "n/a".to_string()),
+            best.consecutive_successes,
+            best.using_live_metrics
+        );
+
+        Some((best.interface_name, label))
     }
 }

@@ -26,6 +26,7 @@ pub mod server;
 pub mod tls;
 // WiFi + Ethernet discovery modules
 pub mod dynamic_config;
+pub mod network_selector;
 pub mod node_announcement;
 pub mod node_broadcast;
 pub mod node_listener;

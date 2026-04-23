@@ -29,6 +29,7 @@ use sgx_guardian_client::node_listener;
 use sgx_guardian_client::runtime_gates::{cooldown, step, GATES};
 
 use base64::{engine::general_purpose, Engine as _};
+use sha2::Digest;
 use std::fs;
 use std::path::PathBuf;
 #[cfg(windows)]
@@ -154,11 +155,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Create default policy schema if missing
+    // Create default policy schema if missing.
+    // CRITICAL: this string is byte-identical across all nodes — same binary,
+    // same default schema → same canonical digest → mutual attestation works
+    // out of the box on a fresh cohort.
     let schema_path = "/etc/sgx-guardian/schemas/uep_policy_v1.yaml";
+    const DEFAULT_SCHEMA: &str = "---\npolicy_id: \"123e4567-e89b-12d3-a456-426614174000\"\nversion: \"1.0.0\"\ndescription: \"Default Guardian Edge Policy\"\nrules:\n  - id: \"rule-001\"\n    action: \"ALLOW\"\n    src: \"10.0.0.0/24\"\n    dst: \"0.0.0.0/0\"\n    protocol: \"TCP\"\n    port: 443\n  - id: \"rule-005\"\n    action: \"DENY\"\n    src: \"0.0.0.0/0\"\n    dst: \"10.0.0.10\"\n    protocol: \"UDP\"\n";
     if !std::path::Path::new(schema_path).exists() {
-        let schema = "---\npolicy_id: \"123e4567-e89b-12d3-a456-426614174000\"\nversion: \"1.0.0\"\ndescription: \"Default Guardian Edge Policy\"\nrules:\n  - id: \"rule-001\"\n    action: \"ALLOW\"\n    src: \"10.0.0.0/24\"\n    dst: \"0.0.0.0/0\"\n    protocol: \"TCP\"\n    port: 443\n  - id: \"rule-005\"\n    action: \"DENY\"\n    src: \"0.0.0.0/0\"\n    dst: \"10.0.0.10\"\n    protocol: \"UDP\"\n";
-        let _ = std::fs::write(schema_path, schema);
+        let _ = std::fs::write(schema_path, DEFAULT_SCHEMA);
+    }
+    // Always log the canonical digest of the active schema so the operator
+    // can compare it across boards.
+    if let Ok(yaml) = std::fs::read_to_string(schema_path) {
+        if let Ok(parsed) = sgx_guardian_client::policy::validate_policy(&yaml) {
+            let canonical = sgx_guardian_client::policy::canonical_policy_bytes(&parsed);
+            let digest = hex::encode(sha2::Sha256::digest(&canonical));
+            println!(
+                "📜 Local schema canonical digest: {} (compare to peers — must match)",
+                digest
+            );
+        } else {
+            eprintln!(
+                "⚠️ Schema at {} is INVALID — attestation digest will fall back to constant default",
+                schema_path
+            );
+        }
     }
 
     // Start node announcement listener (UDP broadcast receiver)
@@ -1744,15 +1765,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Step 3: Create transport registry
         let cot_registry = std::sync::Arc::new(TransportRegistry::new());
 
-        // Step 4: Start hotplug watcher (handles initial registration + runtime changes)
-        HotplugWatcher::start(cot_registry.clone());
-
-        // Step 5: Start link monitor
+        // Step 4: Create monitor and failover engine before hotplug so runtime
+        // interface changes can trigger immediate re-probe and reselection.
         let link_monitor = LinkMonitor::new(cot_registry.clone());
-        link_monitor.clone().start();
-
-        // Step 6: Start failover engine
         let failover = FailoverEngine::new(link_monitor.clone(), cot_registry.clone());
+
+        // Step 5: Start hotplug watcher (handles initial registration + runtime changes)
+        HotplugWatcher::start(cot_registry.clone(), link_monitor.clone(), failover.clone());
+
+        // Step 6: Start background monitor and failover loops
+        link_monitor.clone().start();
         failover.clone().start();
 
         // Admin lock sync from file (written by sgx-pa-cli transport lock/unlock)

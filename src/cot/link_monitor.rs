@@ -1,5 +1,6 @@
 use crate::cot::transport_registry::TransportRegistry;
 use crate::cot::types::TransportType;
+use crate::network_selector::{set_live_metrics, LiveNetworkMetrics};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,15 +35,17 @@ impl LinkMonitor {
         println!("📊 Link monitor: started (probe interval=10s)");
         tokio::spawn(async move {
             loop {
-                self.probe_all().await;
+                self.probe_once().await;
                 tokio::time::sleep(Duration::from_secs(10)).await;
             }
         });
     }
 
-    async fn probe_all(&self) {
+    pub async fn probe_once(&self) {
         let transports = self.registry.all_sorted().await;
         if transports.is_empty() {
+            self.state.write().await.clear();
+            set_live_metrics(std::iter::empty::<(String, LiveNetworkMetrics)>());
             return;
         }
 
@@ -94,6 +97,21 @@ impl LinkMonitor {
                 );
             }
         }
+
+        let live_metrics = state.iter().map(|(iface, snapshot)| {
+            (
+                iface.clone(),
+                LiveNetworkMetrics {
+                    is_up: snapshot.is_up,
+                    latency_ms: snapshot.latency_ms,
+                    bandwidth_kbps: snapshot.bandwidth_kbps,
+                    consecutive_failures: snapshot.consecutive_failures,
+                    consecutive_successes: snapshot.consecutive_successes,
+                    last_probed: snapshot.last_probed,
+                },
+            )
+        });
+        set_live_metrics(live_metrics);
     }
 
     pub async fn snapshot(&self, iface_name: &str) -> Option<LinkSnapshot> {
@@ -106,7 +124,7 @@ impl LinkMonitor {
 
     #[cfg(test)]
     pub async fn probe_once_for_test(&self) {
-        self.probe_all().await;
+        self.probe_once().await;
     }
 }
 
@@ -168,10 +186,30 @@ mod tests {
         }))
         .await;
         let mon = LinkMonitor::new(reg);
-        mon.probe_all().await;
+        mon.probe_once().await;
         let snap = mon.snapshot("ens33").await.unwrap();
         assert!(snap.is_up);
         assert_eq!(snap.consecutive_successes, 1);
         assert_eq!(snap.consecutive_failures, 0);
+    }
+
+    #[tokio::test]
+    async fn test_probe_once_clears_state_when_registry_empty() {
+        let reg = Arc::new(TransportRegistry::new());
+        reg.register(Arc::new(MockTransport {
+            name: "ens33".into(),
+            tt: TransportType::Ethernet,
+            healthy: true,
+        }))
+        .await;
+
+        let mon = LinkMonitor::new(reg.clone());
+        mon.probe_once().await;
+        assert!(mon.snapshot("ens33").await.is_some());
+
+        reg.unregister_by_interface("ens33").await;
+        mon.probe_once().await;
+        assert!(mon.snapshot("ens33").await.is_none());
+        assert!(crate::network_selector::live_metrics_snapshot().is_empty());
     }
 }

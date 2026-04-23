@@ -1,4 +1,6 @@
+use crate::cot::failover::FailoverEngine;
 use crate::cot::interface_detector::InterfaceDetector;
+use crate::cot::link_monitor::LinkMonitor;
 use crate::cot::transport_registry::TransportRegistry;
 use crate::cot::transports::create_transport;
 use std::collections::HashMap;
@@ -14,7 +16,11 @@ struct InterfaceState {
 pub struct HotplugWatcher;
 
 impl HotplugWatcher {
-    pub fn start(registry: Arc<TransportRegistry>) {
+    pub fn start(
+        registry: Arc<TransportRegistry>,
+        monitor: Arc<LinkMonitor>,
+        failover: Arc<FailoverEngine>,
+    ) {
         tokio::spawn(async move {
             // Phase 1: Initialize baseline — do NOT emit "appeared" events
             let mut known: HashMap<String, InterfaceState> = HashMap::new();
@@ -34,11 +40,13 @@ impl HotplugWatcher {
                     }
                 }
             }
+            monitor.probe_once().await;
+            failover.evaluate_now().await;
 
             // Phase 2: Poll for changes (real hotplug events only)
-            let debounce = Duration::from_secs(3);
+            let debounce = Duration::from_secs(1);
             loop {
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                tokio::time::sleep(Duration::from_secs(2)).await;
 
                 let current = match InterfaceDetector::detect_all() {
                     Ok(c) => c,
@@ -50,6 +58,7 @@ impl HotplugWatcher {
 
                 let current_map: HashMap<String, &crate::cot::types::InterfaceInfo> =
                     current.iter().map(|i| (i.name.clone(), i)).collect();
+                let mut registry_changed = false;
 
                 // Check for newly appeared interfaces
                 for iface in &current {
@@ -71,6 +80,7 @@ impl HotplugWatcher {
                             if iface.is_usable() {
                                 let transport = create_transport(iface);
                                 registry.register(transport).await;
+                                registry_changed = true;
                             }
                         }
                         Some(state) => {
@@ -82,12 +92,14 @@ impl HotplugWatcher {
                                     println!("🔌 Hotplug: interface {} became usable", iface.name);
                                     let transport = create_transport(iface);
                                     registry.register(transport).await;
+                                    registry_changed = true;
                                 } else {
                                     println!(
                                         "🔌 Hotplug: interface {} became unusable",
                                         iface.name
                                     );
                                     registry.unregister_by_interface(&iface.name).await;
+                                    registry_changed = true;
                                 }
                                 known.insert(
                                     iface.name.clone(),
@@ -115,8 +127,14 @@ impl HotplugWatcher {
                             println!("🔌 Hotplug: interface {} removed", name);
                             registry.unregister_by_interface(&name).await;
                             known.remove(&name);
+                            registry_changed = true;
                         }
                     }
+                }
+
+                if registry_changed {
+                    monitor.probe_once().await;
+                    failover.evaluate_now().await;
                 }
             }
         });

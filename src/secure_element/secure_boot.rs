@@ -104,10 +104,23 @@ impl BootChainStatus {
 
         if GATES.read_ocotp {
             info!("BootChain: SGX_READ_OCOTP=1 — attempting nvmem OCOTP read");
+            Self::dump_ocotp_if_requested();
 
-            // SEC_CONFIG: bank 1 word 3 → nvmem offset (1*8 + 3) * 4 = 0x2C
-            // (imx-ocotp nvmem presents 4 bytes per fuse word, densely packed)
-            match run_with_timeout(Duration::from_secs(2), || read_nvmem_u32(0x2C)) {
+            // SEC_CONFIG offset is BSP-specific (Linux nvmem-imx-ocotp lays out
+            // banks differently per SoC). Default 0x1C matches the Variscite
+            // mickledore i.MX8MP build (bank 1 word 3 with 4-words/bank stride).
+            // Override per board with SGX_OCOTP_SEC_CONFIG_OFFSET=0xNN.
+            let sec_config_offset = std::env::var("SGX_OCOTP_SEC_CONFIG_OFFSET")
+                .ok()
+                .and_then(|s| {
+                    let s = s.trim_start_matches("0x").trim_start_matches("0X");
+                    u64::from_str_radix(s, 16).ok()
+                })
+                .unwrap_or(0x1C);
+
+            match run_with_timeout(Duration::from_secs(2), move || {
+                read_nvmem_u32(sec_config_offset)
+            }) {
                 Some(Some(val)) => {
                     sec_config_read_ok = true;
                     status.device_closed = (val & 0x02000000) != 0; // bit 25
@@ -127,8 +140,18 @@ impl BootChainStatus {
                 }
             }
 
-            // SRK fuse: bank 6 word 0 → nvmem offset (6*8 + 0) * 4 = 0xC0
-            match run_with_timeout(Duration::from_secs(2), || read_nvmem_u32(0xC0)) {
+            // SRK fuse offset is BSP-specific. Default 0x60 matches the
+            // Variscite mickledore i.MX8MP build (bank 6 word 0, 4-words/bank
+            // stride). Override per board with SGX_OCOTP_SRK_OFFSET=0xNN.
+            let srk_offset = std::env::var("SGX_OCOTP_SRK_OFFSET")
+                .ok()
+                .and_then(|s| {
+                    let s = s.trim_start_matches("0x").trim_start_matches("0X");
+                    u64::from_str_radix(s, 16).ok()
+                })
+                .unwrap_or(0x60);
+
+            match run_with_timeout(Duration::from_secs(2), move || read_nvmem_u32(srk_offset)) {
                 Some(Some(val)) => {
                     if val != 0 {
                         status.hab_enabled = true;
@@ -286,6 +309,43 @@ impl BootChainStatus {
                 "⚠️ INCOMPLETE / UNKNOWN"
             }
         );
+    }
+
+    /// Operator helper: dump the entire OCOTP nvmem image to stderr in
+    /// hex format, so the operator can manually verify offsets against
+    /// U-Boot `fuse read` output. Triggered by SGX_DUMP_OCOTP=1.
+    pub fn dump_ocotp_if_requested() {
+        if std::env::var("SGX_DUMP_OCOTP").ok().as_deref() != Some("1") {
+            return;
+        }
+        let candidates = [
+            "/sys/bus/nvmem/devices/imx-ocotp0/nvmem",
+            "/sys/bus/nvmem/devices/imx-ocotp1/nvmem",
+        ];
+        for path in &candidates {
+            if !std::path::Path::new(path).exists() {
+                continue;
+            }
+            match std::fs::read(path) {
+                Ok(bytes) => {
+                    eprintln!("=== OCOTP nvmem dump: {} ({} bytes) ===", path, bytes.len());
+                    for (i, chunk) in bytes.chunks(16).enumerate() {
+                        let hex: String = chunk
+                            .iter()
+                            .map(|b| format!("{:02x}", b))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        eprintln!("  0x{:04X}: {}", i * 16, hex);
+                    }
+                    eprintln!("=== end OCOTP dump ===");
+                    return;
+                }
+                Err(e) => {
+                    eprintln!("OCOTP dump from {} failed: {}", path, e);
+                }
+            }
+        }
+        eprintln!("OCOTP dump: no nvmem node found");
     }
 
     /// Save boot chain status to JSON.

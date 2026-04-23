@@ -252,60 +252,76 @@ struct AttestationPolicyMaterial {
     source: &'static str,
 }
 
-fn compute_policy_digest_canonical(yaml: &str) -> Result<String> {
-    let parsed = crate::policy::validate_policy(yaml)
-        .map_err(|e| anyhow::anyhow!("Policy parse failed: {}", e))?;
-    Ok(crate::policy::canonical_policy_digest(&parsed))
-}
-
 fn is_hex_digest_64(input: &str) -> bool {
     input.len() == 64 && input.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 fn load_attestation_policy_material() -> AttestationPolicyMaterial {
-    let (yaml, source) = if let Some(active) = crate::policy::get_active_policy() {
+    // Strict precedence — DETERMINISTIC across all nodes in a Circle.
+    //
+    // 1. If a signed policy was activated at startup, use it (canonical bytes).
+    // 2. Otherwise, ALL nodes must use the same shared schema file at the
+    //    well-known path. The file is canonicalised before hashing.
+    // 3. If the file is missing OR fails canonical parsing, we DO NOT fall
+    //    back to a different YAML — that would silently produce a different
+    //    digest and break mutual attestation. Instead, we use a constant
+    //    canonical-form digest derived from DEFAULT_ATTEST_POLICY_YAML so
+    //    every node hits the same hash. We also log a critical warning.
+
+    if let Some(active) = crate::policy::get_active_policy() {
         let canonical = crate::policy::canonical_policy_bytes(&active);
-        (
-            String::from_utf8_lossy(&canonical).to_string(),
-            "runtime-active-policy",
-        )
-    } else if let Ok(file_yaml) = fs::read_to_string("/etc/sgx-guardian/schemas/uep_policy_v1.yaml")
-    {
-        match compute_policy_digest_canonical(&file_yaml) {
-            Ok(_) => {
-                let parsed = crate::policy::validate_policy(&file_yaml)
-                    .expect("schema policy validated above");
+        let yaml = String::from_utf8_lossy(&canonical).to_string();
+        let digest = hex::encode(Sha256::digest(yaml.as_bytes()));
+        return AttestationPolicyMaterial {
+            yaml,
+            digest,
+            source: "runtime-active-policy",
+        };
+    }
+
+    // Try to load the shared schema file. ALWAYS canonicalise before hashing.
+    let schema_path = "/etc/sgx-guardian/schemas/uep_policy_v1.yaml";
+    if let Ok(file_yaml) = fs::read_to_string(schema_path) {
+        match crate::policy::validate_policy(&file_yaml) {
+            Ok(parsed) => {
                 let canonical = crate::policy::canonical_policy_bytes(&parsed);
-                (
-                    String::from_utf8_lossy(&canonical).to_string(),
-                    "schema-fallback",
-                )
+                let yaml = String::from_utf8_lossy(&canonical).to_string();
+                let digest = hex::encode(Sha256::digest(yaml.as_bytes()));
+                return AttestationPolicyMaterial {
+                    yaml,
+                    digest,
+                    source: "schema-canonical",
+                };
             }
-            Err(_) => {
-                let parsed = crate::policy::validate_policy(DEFAULT_ATTEST_POLICY_YAML)
-                    .expect("default policy valid");
-                let canonical = crate::policy::canonical_policy_bytes(&parsed);
-                (
-                    String::from_utf8_lossy(&canonical).to_string(),
-                    "unsigned-default",
-                )
+            Err(e) => {
+                tracing::error!(
+                    "Policy schema {} failed validation: {} — \
+                     falling back to constant default. Mutual attestation may \
+                     fail with peers that have a valid schema. Fix the schema \
+                     file on this node ASAP.",
+                    schema_path,
+                    e
+                );
             }
         }
     } else {
-        let parsed = crate::policy::validate_policy(DEFAULT_ATTEST_POLICY_YAML)
-            .expect("default policy valid");
-        let canonical = crate::policy::canonical_policy_bytes(&parsed);
-        (
-            String::from_utf8_lossy(&canonical).to_string(),
-            "unsigned-default",
-        )
-    };
+        tracing::error!(
+            "Policy schema {} missing. Mutual attestation may fail with peers \
+             that have the schema. Restore /etc/sgx-guardian/schemas/uep_policy_v1.yaml.",
+            schema_path
+        );
+    }
 
+    // Last-resort: deterministic constant across all builds of this binary.
+    let parsed =
+        crate::policy::validate_policy(DEFAULT_ATTEST_POLICY_YAML).expect("default policy valid");
+    let canonical = crate::policy::canonical_policy_bytes(&parsed);
+    let yaml = String::from_utf8_lossy(&canonical).to_string();
     let digest = hex::encode(Sha256::digest(yaml.as_bytes()));
     AttestationPolicyMaterial {
         yaml,
         digest,
-        source,
+        source: "constant-default",
     }
 }
 
