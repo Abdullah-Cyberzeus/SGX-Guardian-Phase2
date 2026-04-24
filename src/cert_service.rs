@@ -102,6 +102,29 @@ fn relay_limits_for_node(node_id: &str) -> (u32, u32) {
     // Defaults if node config not available yet
     (5, 10)
 }
+fn ensure_nodea_relay_entries(
+    lh_reg: &mut crate::nebula::lighthouse::LighthouseRegistry,
+    relay_reg: &mut RelayRegistry,
+    overlay_ip: &str,
+) {
+    let node_a_endpoint = resolve_member_lighthouse_endpoint("nodeA");
+    let (node_a_max_peers, node_a_max_bw) = relay_limits_for_node("nodeA");
+
+    lh_reg.upsert_node("nodeA", overlay_ip, &node_a_endpoint, true, true);
+    let _ = lh_reg.set_lighthouse_role("nodeA", true);
+    let _ = lh_reg.set_relay_role("nodeA", true);
+    lh_reg.mark_active("nodeA");
+
+    relay_reg.add_relay(
+        "nodeA",
+        overlay_ip,
+        &node_a_endpoint,
+        node_a_max_peers,
+        node_a_max_bw,
+        true,
+    );
+    relay_reg.mark_active("nodeA");
+}
 
 #[tonic::async_trait]
 impl CertService for MyCertService {
@@ -451,7 +474,17 @@ impl CertService for MyCertService {
             "0.0.0.0:4242",
         );
         let member_overlay = overlay_ip.split('/').next().unwrap_or("").to_string();
+        let node_a_overlay = reg
+            .get_ip("nodeA")
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "192.168.100.1".to_string());
         let member_endpoint = resolve_member_lighthouse_endpoint(&node_id);
+
+        // Always keep nodeA anchored as lighthouse+relay, even when additional relay
+        // nodes are approved later.
+        let mut relay_reg =
+            RelayRegistry::load_or_create(RELAY_REGISTRY_PATH, "guardian-circle-alpha");
+        ensure_nodea_relay_entries(&mut lh_reg, &mut relay_reg, &node_a_overlay);
 
         // Always keep an endpoint record for approved nodes (member/lighthouse/relay).
         // This lets static_host_map include reachable endpoints for relay forwarding paths.
@@ -476,8 +509,6 @@ impl CertService for MyCertService {
         lh_reg.mark_active(&node_id);
         let _ = lh_reg.save(&lh_path);
 
-        let mut relay_reg =
-            RelayRegistry::load_or_create(RELAY_REGISTRY_PATH, "guardian-circle-alpha");
         if assigned_relay {
             let (max_peers, max_bw) = relay_limits_for_node(&node_id);
             relay_reg.add_relay(
@@ -551,7 +582,9 @@ impl CertService for MyCertService {
 
 #[cfg(test)]
 mod tests {
-    use super::ApprovalDecision;
+    use super::{ensure_nodea_relay_entries, ApprovalDecision};
+    use crate::nebula::lighthouse::LighthouseRegistry;
+    use crate::nebula::relay_registry::RelayRegistry;
 
     #[test]
     fn test_approval_decision_parses_relay() {
@@ -566,5 +599,30 @@ mod tests {
         assert!(matches!(lighthouse, ApprovalDecision::Lighthouse));
         assert!(matches!(member, ApprovalDecision::Member));
         assert!(matches!(reject, ApprovalDecision::False));
+    }
+
+    #[test]
+    fn test_ensure_nodea_relay_entries_preserves_owner_relay_registration() {
+        let mut lh_reg =
+            LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "10.0.0.1:4242");
+        let mut relay_reg = RelayRegistry::new("alpha");
+
+        ensure_nodea_relay_entries(&mut lh_reg, &mut relay_reg, "192.168.100.1");
+
+        let node_a_lh = lh_reg
+            .lighthouses
+            .iter()
+            .find(|entry| entry.node_name == "nodeA")
+            .expect("nodeA lighthouse entry should exist");
+        assert!(node_a_lh.is_lighthouse);
+        assert!(node_a_lh.am_relay);
+        assert!(relay_reg.is_relay("nodeA"));
+        assert!(
+            relay_reg
+                .relays
+                .get("nodeA")
+                .expect("nodeA relay entry should exist")
+                .is_lighthouse
+        );
     }
 }

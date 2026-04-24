@@ -298,9 +298,9 @@ firewall:
         };
 
         // Optional fallback to lighthouse-relays when no dedicated relay exists.
-        // Disabled by default to avoid members choosing nodeA as relay unexpectedly.
-        let allow_lh_relay_fallback =
-            Self::env_bool("SGX_ALLOW_LH_RELAY_FALLBACK").unwrap_or(false);
+        // Enabled by default so nodeA acts as the out-of-the-box relay unless
+        // a dedicated relay is available or the operator explicitly disables it.
+        let allow_lh_relay_fallback = Self::env_bool("SGX_ALLOW_LH_RELAY_FALLBACK").unwrap_or(true);
         let active_relays = if !dedicated_relay_ips.is_empty() {
             dedicated_relay_ips
         } else if !known_relay_ips.is_empty() {
@@ -562,7 +562,6 @@ mod tests {
         pool.allocate("nodeB").unwrap();
         let dir = tmp("relay");
         let _ = std::fs::create_dir_all(&dir);
-        std::env::set_var("SGX_ALLOW_LH_RELAY_FALLBACK", "true");
         NebulaConfig::generate_config_from_pool_with_lighthouse(
             "nodeB",
             &pool,
@@ -573,6 +572,31 @@ mod tests {
         let c = std::fs::read_to_string(format!("{}/nebula.yaml", dir)).unwrap();
         assert!(c.contains("use_relays: true"));
         assert!(c.contains("192.168.100.1"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_lighthouse_relay_fallback_can_be_disabled() {
+        let mut pool = OverlayPool::new("alpha", "192.168.100", "nodeA");
+        pool.allocate("nodeB").unwrap();
+        let dir = tmp("relay_disabled");
+        let _ = std::fs::create_dir_all(&dir);
+        std::env::set_var("SGX_ALLOW_LH_RELAY_FALLBACK", "false");
+        NebulaConfig::generate_config_from_pool_with_lighthouse(
+            "nodeB",
+            &pool,
+            &dir,
+            Some("10.1.2.3"),
+        )
+        .unwrap();
+        let c = std::fs::read_to_string(format!("{}/nebula.yaml", dir)).unwrap();
+        let relay_block = c
+            .split("relay:\n")
+            .nth(1)
+            .and_then(|s| s.split("\nstats:\n").next())
+            .unwrap_or("");
+        assert!(relay_block.contains("use_relays: false"));
+        assert!(!relay_block.contains("\"192.168.100.1\""));
         std::env::remove_var("SGX_ALLOW_LH_RELAY_FALLBACK");
         let _ = std::fs::remove_dir_all(&dir);
     }

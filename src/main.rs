@@ -1426,29 +1426,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let overlay_ip_only = nebula_ip.split('/').next().unwrap_or("").to_string();
                 let physical_endpoint = format!("{}:4242", detected_ip);
 
-                // ✅ ONLY if relay.enabled == true
-                if current_relay_cfg.enabled {
-                    let is_lighthouse = node_id == "nodeA";
+                // nodeA is always the bootstrap relay and must always be present in
+                // relay_registry.json even if relay.enabled is false in config.
+                let is_lighthouse = true;
 
-                    relay_reg.add_relay(
-                        &node_id,
-                        &overlay_ip_only,
-                        &physical_endpoint,
-                        current_relay_cfg.max_peers,
-                        current_relay_cfg.max_bandwidth_mbps,
-                        is_lighthouse,
-                    );
+                relay_reg.add_relay(
+                    &node_id,
+                    &overlay_ip_only,
+                    &physical_endpoint,
+                    current_relay_cfg.max_peers,
+                    current_relay_cfg.max_bandwidth_mbps,
+                    is_lighthouse,
+                );
+                relay_reg.mark_active(&node_id);
 
-                    println!(
-                        "✅ Relay registered: {} → {} (relay=true, lighthouse={})",
-                        node_id, overlay_ip_only, is_lighthouse
-                    );
-                } else {
-                    println!(
-                        "🚫 {} relay disabled in config → skipping registry",
-                        node_id
-                    );
-                }
+                println!(
+                    "✅ Relay registered: {} → {} (relay=true, lighthouse={})",
+                    node_id, overlay_ip_only, is_lighthouse
+                );
 
                 if let Err(e) = relay_reg.save(&relay_registry_path) {
                     eprintln!("⚠️ Failed to save relay registry: {}", e);
