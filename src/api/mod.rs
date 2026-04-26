@@ -28,6 +28,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Phase 1 - read endpoints
         .route("/api/v1/node/status", get(handlers::node::status))
         .route("/api/v1/node/boot-status", get(handlers::node::boot_status))
+        .route("/api/v1/node/restart", post(handlers::node::restart))
         .route("/api/v1/peers", get(handlers::peers::list))
         .route("/api/v1/attestation", get(handlers::attestation::last))
         .route("/api/v1/logs", get(handlers::logs::tail))
@@ -44,10 +45,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/pcr/baseline/create",
             post(handlers::pcr::baseline_create),
         )
+        // alias expected by frontend service
+        .route(
+            "/api/v1/pcr/baseline/update",
+            post(handlers::pcr::baseline_create),
+        )
         .route(
             "/api/v1/pcr/baseline/verify",
             post(handlers::pcr::baseline_verify),
         )
+        // alias expected by frontend service
+        .route("/api/v1/pcr/verify", post(handlers::pcr::baseline_verify))
         .route("/api/v1/policy/sign", post(handlers::policy::sign))
         .route("/api/v1/policy/verify", post(handlers::policy::verify))
         // Health

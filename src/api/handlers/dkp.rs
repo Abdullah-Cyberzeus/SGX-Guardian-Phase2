@@ -157,8 +157,6 @@ pub async fn emergency_rotate(
     State(_): State<Arc<AppState>>,
     Json(b): Json<EmergencyBody>,
 ) -> Result<Json<ActionResponse>, ApiError> {
-    let reason = b.reason.unwrap_or_else(|| "emergency rotation".into());
-    Ok(Json(
-        run_cli(&["emergency-rotate", "--reason", &reason]).await?,
-    ))
+    let _ = b.reason;
+    Ok(Json(run_cli(&["emergency-rotate"]).await?))
 }

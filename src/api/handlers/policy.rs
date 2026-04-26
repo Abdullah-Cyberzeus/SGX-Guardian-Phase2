@@ -39,17 +39,8 @@ pub async fn sign(
         }
     }
     let policy = policy_path.ok_or_else(|| ApiError::BadRequest("missing policy field".into()))?;
-    let key = key_path.ok_or_else(|| ApiError::BadRequest("missing key field".into()))?;
-    Ok(Json(
-        run_cli(&[
-            "sign",
-            "--policy",
-            policy.to_str().unwrap_or(""),
-            "--key",
-            key.to_str().unwrap_or(""),
-        ])
-        .await?,
-    ))
+    let _ = key_path.take();
+    Ok(Json(run_cli(&["sign", policy.to_str().unwrap_or("")]).await?))
 }
 
 /// POST /api/v1/policy/verify
@@ -77,7 +68,7 @@ pub async fn verify(
     }
     let sig = sig_path.ok_or_else(|| ApiError::BadRequest("missing policy field".into()))?;
     Ok(Json(
-        run_cli(&["verify", "--policy", sig.to_str().unwrap_or("")]).await?,
+        run_cli(&["verify", "--signed", sig.to_str().unwrap_or("")]).await?,
     ))
 }
 

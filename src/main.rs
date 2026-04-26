@@ -2196,6 +2196,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
+    // === REST Admin API (axum) on :8443 ===
+    let api_state = sgx_guardian_client::api::state::AppState::from_env(node_id.clone());
+    let api_bind: std::net::SocketAddr = "0.0.0.0:8443".parse().unwrap();
+    tokio::spawn({
+        let state = api_state.clone();
+        async move {
+            if let Err(e) = sgx_guardian_client::api::serve(state, api_bind).await {
+                eprintln!("❌ REST API server failed: {:?}", e);
+            }
+        }
+    });
+    println!("✅ REST admin API listening on http://{}/api/v1", api_bind);
     // === CERT BOOTSTRAP SERVER (nodeA only, plaintext port 50061) ===
     if node_id == "nodeA" {
         tokio::spawn(async move {
