@@ -21,80 +21,6 @@ pub struct FailoverEngine {
     manual_lock: Arc<RwLock<Option<String>>>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::cot::transport_trait::{Transport, TransportHealth, TransportMessage};
-    use crate::cot::types::{CotResult, TransportPriority, TransportType};
-    use crate::network_selector::set_selected_interface;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    struct MockTransport {
-        name: String,
-        tt: TransportType,
-        pri: TransportPriority,
-        up: Arc<AtomicBool>,
-    }
-
-    #[async_trait::async_trait]
-    impl Transport for MockTransport {
-        fn transport_type(&self) -> TransportType {
-            self.tt
-        }
-        fn priority(&self) -> TransportPriority {
-            self.pri
-        }
-        fn interface_name(&self) -> &str {
-            &self.name
-        }
-        async fn is_available(&self) -> bool {
-            self.up.load(Ordering::SeqCst)
-        }
-        async fn send(&self, _message: &TransportMessage) -> CotResult<()> {
-            Ok(())
-        }
-        async fn health_check(&self) -> TransportHealth {
-            if self.up.load(Ordering::SeqCst) {
-                TransportHealth::healthy(2, 1000)
-            } else {
-                TransportHealth::unhealthy("down")
-            }
-        }
-        fn display_name(&self) -> String {
-            format!("Mock({})", self.name)
-        }
-    }
-
-    #[tokio::test]
-    async fn test_initial_selection_picks_best_available() {
-        set_selected_interface(None);
-        let reg = Arc::new(TransportRegistry::new());
-        let eth_up = Arc::new(AtomicBool::new(true));
-        let wifi_up = Arc::new(AtomicBool::new(true));
-
-        reg.register(Arc::new(MockTransport {
-            name: "wlan0".into(),
-            tt: TransportType::WiFi,
-            pri: TransportPriority::new(20),
-            up: wifi_up,
-        }))
-        .await;
-        reg.register(Arc::new(MockTransport {
-            name: "ens33".into(),
-            tt: TransportType::Ethernet,
-            pri: TransportPriority::new(10),
-            up: eth_up,
-        }))
-        .await;
-
-        let monitor = LinkMonitor::new(reg.clone());
-        monitor.probe_once_for_test().await;
-        let failover = FailoverEngine::new(monitor, reg);
-        failover.evaluate_now().await;
-        assert_eq!(failover.current_interface().await.as_deref(), Some("ens33"));
-    }
-}
-
 impl FailoverEngine {
     pub fn new(monitor: Arc<LinkMonitor>, registry: Arc<TransportRegistry>) -> Arc<Self> {
         Arc::new(Self {
@@ -299,5 +225,79 @@ impl FailoverEngine {
         );
 
         Some((best.interface_name, label))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cot::transport_trait::{Transport, TransportHealth, TransportMessage};
+    use crate::cot::types::{CotResult, TransportPriority, TransportType};
+    use crate::network_selector::set_selected_interface;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct MockTransport {
+        name: String,
+        tt: TransportType,
+        pri: TransportPriority,
+        up: Arc<AtomicBool>,
+    }
+
+    #[async_trait::async_trait]
+    impl Transport for MockTransport {
+        fn transport_type(&self) -> TransportType {
+            self.tt
+        }
+        fn priority(&self) -> TransportPriority {
+            self.pri
+        }
+        fn interface_name(&self) -> &str {
+            &self.name
+        }
+        async fn is_available(&self) -> bool {
+            self.up.load(Ordering::SeqCst)
+        }
+        async fn send(&self, _message: &TransportMessage) -> CotResult<()> {
+            Ok(())
+        }
+        async fn health_check(&self) -> TransportHealth {
+            if self.up.load(Ordering::SeqCst) {
+                TransportHealth::healthy(2, 1000)
+            } else {
+                TransportHealth::unhealthy("down")
+            }
+        }
+        fn display_name(&self) -> String {
+            format!("Mock({})", self.name)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_initial_selection_picks_best_available() {
+        set_selected_interface(None);
+        let reg = Arc::new(TransportRegistry::new());
+        let eth_up = Arc::new(AtomicBool::new(true));
+        let wifi_up = Arc::new(AtomicBool::new(true));
+
+        reg.register(Arc::new(MockTransport {
+            name: "wlan0".into(),
+            tt: TransportType::WiFi,
+            pri: TransportPriority::new(20),
+            up: wifi_up,
+        }))
+        .await;
+        reg.register(Arc::new(MockTransport {
+            name: "ens33".into(),
+            tt: TransportType::Ethernet,
+            pri: TransportPriority::new(10),
+            up: eth_up,
+        }))
+        .await;
+
+        let monitor = LinkMonitor::new(reg.clone());
+        monitor.probe_once_for_test().await;
+        let failover = FailoverEngine::new(monitor, reg);
+        failover.evaluate_now().await;
+        assert_eq!(failover.current_interface().await.as_deref(), Some("ens33"));
     }
 }

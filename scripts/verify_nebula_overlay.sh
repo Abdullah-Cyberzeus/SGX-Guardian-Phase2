@@ -65,7 +65,7 @@ if [ -f "$CFG" ]; then
         ok "No placeholder IP detected"
     fi
 
-    STATIC=$(grep -A2 "static_host_map:" "$CFG" | head -5)
+    STATIC=$(grep -A2 "static_host_map:" "$CFG" | head -5 || true)
     echo "  static_host_map section:"
     echo "$STATIC" | sed 's/^/    /'
 

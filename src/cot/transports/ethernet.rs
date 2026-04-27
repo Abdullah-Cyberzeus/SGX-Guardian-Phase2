@@ -101,25 +101,41 @@ impl Transport for EthernetTransport {
     }
 
     async fn send(&self, message: &TransportMessage) -> CotResult<()> {
-        let mut stream = TcpStream::connect(&message.target_address)
-            .await
-            .map_err(|e| {
-                CotError::TransportError(format!(
-                    "Ethernet send to {} failed: {}",
-                    message.target_address, e
-                ))
-            })?;
+        let mut stream = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            TcpStream::connect(&message.target_address),
+        )
+        .await
+        .map_err(|_| {
+            CotError::TransportError(format!(
+                "Ethernet connect to {} timed out",
+                message.target_address
+            ))
+        })?
+        .map_err(|e| {
+            CotError::TransportError(format!(
+                "Ethernet send to {} failed: {}",
+                message.target_address, e
+            ))
+        })?;
 
         let len = (message.payload.len() as u32).to_be_bytes();
-        stream.write_all(&len).await.map_err(|e| {
-            CotError::TransportError(format!("Ethernet write length failed: {}", e))
-        })?;
-        stream.write_all(&message.payload).await.map_err(|e| {
-            CotError::TransportError(format!("Ethernet write payload failed: {}", e))
-        })?;
-        stream
-            .flush()
+        tokio::time::timeout(std::time::Duration::from_secs(5), stream.write_all(&len))
             .await
+            .map_err(|_| CotError::TransportError("Ethernet write length timed out".into()))?
+            .map_err(|e| {
+                CotError::TransportError(format!("Ethernet write length failed: {}", e))
+            })?;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            stream.write_all(&message.payload),
+        )
+        .await
+        .map_err(|_| CotError::TransportError("Ethernet write payload timed out".into()))?
+        .map_err(|e| CotError::TransportError(format!("Ethernet write payload failed: {}", e)))?;
+        tokio::time::timeout(std::time::Duration::from_secs(5), stream.flush())
+            .await
+            .map_err(|_| CotError::TransportError("Ethernet flush timed out".into()))?
             .map_err(|e| CotError::TransportError(format!("Ethernet flush failed: {}", e)))?;
         Ok(())
     }
@@ -138,10 +154,7 @@ impl Transport for EthernetTransport {
             return TransportHealth::unhealthy("Ethernet network not reachable (no default route)");
         }
         let bw = self.link_speed_kbps();
-        let latency = match self.latency_probe_ms().await {
-            Some(ms) => ms,
-            None => 5,
-        };
+        let latency = self.latency_probe_ms().await.unwrap_or(5);
         if latency > 1200 {
             return TransportHealth::unhealthy("Ethernet network not reachable (probe timeout)");
         }

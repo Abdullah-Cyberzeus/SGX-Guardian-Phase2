@@ -122,7 +122,7 @@ pub fn detect_candidates() -> Result<Vec<NetworkCandidate>> {
         });
     }
 
-    out.sort_by(|a, b| candidate_sort_key(a).cmp(&candidate_sort_key(b)));
+    out.sort_by_key(candidate_sort_key);
     Ok(out)
 }
 
@@ -197,7 +197,7 @@ pub fn rank_candidates(
         ranked.retain(|candidate| candidate.consecutive_failures <= limit);
     }
 
-    ranked.sort_by(|a, b| candidate_sort_key(a).cmp(&candidate_sort_key(b)));
+    ranked.sort_by_key(candidate_sort_key);
     ranked
 }
 

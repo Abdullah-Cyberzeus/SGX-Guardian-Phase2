@@ -191,12 +191,12 @@ firewall:
             )
         };
 
+        let overlay_ip_base = overlay_ip.split('/').next().unwrap_or("");
+
         let mut entries = lh_registry
             .static_host_map_entries()
             .into_iter()
-            .filter(|(overlay, _)| {
-                overlay != &overlay_ip.split('/').next().unwrap_or("").to_string()
-            })
+            .filter(|(overlay, _)| overlay.as_str() != overlay_ip_base)
             .collect::<Vec<(String, String)>>();
 
         // Defensive merge from relay registry: if lighthouse registry lags,
@@ -204,7 +204,7 @@ firewall:
         if !cfg!(test) {
             if let Ok(relay_registry) = RelayRegistry::load(RELAY_REGISTRY_PATH) {
                 for relay in relay_registry.relays.values() {
-                    if relay.overlay_ip == overlay_ip.split('/').next().unwrap_or("").to_string() {
+                    if relay.overlay_ip == overlay_ip_base {
                         continue;
                     }
                     if relay.physical_endpoint.is_empty() {
@@ -237,7 +237,7 @@ firewall:
         let am_relay =
             forced_relay || explicit_relay_role.unwrap_or(is_lighthouse && lh_also_relay);
 
-        let self_overlay = overlay_ip.split('/').next().unwrap_or("").to_string();
+        let self_overlay = overlay_ip_base.to_string();
         let mut candidate_relays = lh_registry
             .active_relays()
             .iter()

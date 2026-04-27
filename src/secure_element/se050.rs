@@ -83,7 +83,12 @@ impl Se050 {
         // Step 3: Read Unique ID (18 bytes)
         let uid = match cli.get_uid() {
             Ok(id) => {
-                info!("SE050 Unique ID: {}", id);
+                let uid_fp = {
+                    use sha2::{Digest, Sha256};
+                    let hash = Sha256::digest(id.as_bytes());
+                    hex::encode(&hash[..4])
+                };
+                info!("SE050 UID fingerprint: {}", uid_fp);
                 Some(id)
             }
             Err(e) => {
@@ -95,7 +100,12 @@ impl Se050 {
         // Step 4: Read Certificate UID (10 bytes)
         let cert_uid = match cli.get_certuid() {
             Ok(id) => {
-                info!("SE050 Cert UID: {}", id);
+                let cert_fp = {
+                    use sha2::{Digest, Sha256};
+                    let hash = Sha256::digest(id.as_bytes());
+                    hex::encode(&hash[..4])
+                };
+                info!("SE050 Cert UID fingerprint: {}", cert_fp);
                 Some(id)
             }
             Err(e) => {
@@ -112,10 +122,7 @@ impl Se050 {
             AuditCategory::Identity,
             AuditSeverity::Info,
             AuditAction::Loaded,
-            &format!(
-                "SE050 initialized. UID: {}",
-                uid.as_deref().unwrap_or("unknown")
-            ),
+            "SE050 initialized successfully",
         );
 
         Ok(Self {

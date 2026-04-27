@@ -215,8 +215,7 @@ impl BootChainStatus {
         if GATES.measure_binary_hash {
             info!("BootChain: SGX_MEASURE_BINARY_HASH=1 — computing binary SHA-256 (blocking)");
             status.guardian_binary_hash =
-                run_with_timeout(Duration::from_secs(5), || compute_guardian_binary_hash())
-                    .flatten();
+                run_with_timeout(Duration::from_secs(5), compute_guardian_binary_hash).flatten();
             match &status.guardian_binary_hash {
                 Some(h) => info!("BootChain: binary hash computed ({}...)", &h[..16]),
                 None => warn!("BootChain: binary hash failed or TIMED OUT"),

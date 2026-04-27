@@ -47,9 +47,7 @@ impl DkpManager {
                 let slot_hex = active.key_id.clone();
                 let slot_found = match SeKeyStorage::new(config) {
                     Ok(store) => match store.list_slots() {
-                        Ok(list) => list
-                            .to_uppercase()
-                            .contains(&slot_hex.to_uppercase().replace("0X", "0X")),
+                        Ok(list) => list.to_uppercase().contains(&slot_hex.to_uppercase()),
                         Err(_) => false,
                     },
                     Err(_) => false,
@@ -127,9 +125,7 @@ impl DkpManager {
 
         // Check if key already exists in SE050 (idempotent)
         let id_list = storage.list_slots()?;
-        let exists = id_list
-            .to_uppercase()
-            .contains(&key_id_hex.to_uppercase().replace("0x", "0X"));
+        let exists = id_list.to_uppercase().contains(&key_id_hex.to_uppercase());
 
         if !exists {
             info!("Generating DKP at SE050 slot {}", key_id_hex);

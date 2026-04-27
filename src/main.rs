@@ -76,7 +76,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "/var/lib/sgx-guardian/nebula/requests",
         "/var/log/sgx-guardian",
     ] {
-        let _ = std::fs::create_dir_all(dir);
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            eprintln!(
+                "⚠️ Failed to create {}: {} (may cause issues later)",
+                dir, e
+            );
+        }
     }
 
     if node_id == "nodeA" {
@@ -257,7 +262,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let pubkey_b64 = general_purpose::STANDARD.encode(km.pubkey_der());
+    let pubkey_b64 = general_purpose::STANDARD.encode(km.pubkey_der()?);
     println!(
         "Node Identity Initialized | Public Key Prefix: {}...",
         &pubkey_b64[..20]
@@ -506,7 +511,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             } else {
                 // Verify baseline signature
-                let pubkey = km.pubkey_der();
+                let pubkey = km.pubkey_der()?;
                 if !baseline.verify_signature(&pubkey) {
                     if baseline.key_version != snapshot.key_version {
                         eprintln!("  ⚠️ Baseline signed with DKP v{}, current is v{}. Re-create baseline.",
@@ -1718,7 +1723,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         use sgx_guardian_client::cot::{failover::FailoverEngine, hotplug::HotplugWatcher};
 
         // Step 1: Create device identity from existing KeyManager public key
-        let cot_identity = DeviceIdentity::from_public_key_with_name(&km.pubkey_der(), &node_id)
+        let cot_pubkey = km.pubkey_der()?;
+        let cot_identity = DeviceIdentity::from_public_key_with_name(&cot_pubkey, &node_id)
             .expect("Failed to create CoT device identity");
         println!(
             "🔑 CoT Identity: {} ({})",
@@ -1806,7 +1812,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let cot_circle = std::sync::Arc::new(CotCircleMembership::new(
             "guardian-circle-alpha".into(),
             cot_identity.device_id().to_string(),
-            km.pubkey_der().to_vec(),
+            km.pubkey_der()?,
         ));
 
         // Step 9: Create trust engine
@@ -2211,7 +2217,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // === CERT BOOTSTRAP SERVER (nodeA only, plaintext port 50061) ===
     if node_id == "nodeA" {
         tokio::spawn(async move {
-            if let Err(e) = server::start_cert_bootstrap_server("0.0.0.0:50061".to_string()).await {
+            // Bind to detected LAN IP or localhost — do NOT expose on all interfaces
+            let bootstrap_addr = if detected_ip.is_empty() {
+                "127.0.0.1:50061".to_string()
+            } else {
+                format!("{}:50061", detected_ip)
+            };
+            if let Err(e) = server::start_cert_bootstrap_server(bootstrap_addr).await {
                 eprintln!("Cert bootstrap server failed: {:?}", e);
             }
         });
@@ -2366,13 +2378,22 @@ fn read_ip_from_nebula_cert(base: &str, node_id: &str) -> Option<String> {
         .ok()?;
     let text = String::from_utf8_lossy(&out.stdout);
     for line in text.lines() {
-        if let Some(idx) = line.find("192.168.100.") {
+        // Look for any private overlay IP (not just 192.168.100.x)
+        if let Some(idx) = line
+            .find("192.168.100.")
+            .or_else(|| line.find("10."))
+            .or_else(|| line.find("172.16."))
+        {
             let rest = &line[idx..];
             let end = rest
                 .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '/')
                 .unwrap_or(rest.len());
             let cleaned = rest[..end].trim().to_string();
-            if cleaned.contains('/') && cleaned.starts_with("192.168.100.") {
+            if cleaned.contains('/')
+                && (cleaned.starts_with("192.168.100.")
+                    || cleaned.starts_with("10.")
+                    || cleaned.starts_with("172.16."))
+            {
                 return Some(cleaned);
             }
         }

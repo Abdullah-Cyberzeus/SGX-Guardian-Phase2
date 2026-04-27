@@ -125,12 +125,7 @@ pub fn ensure_node_certificate_or_generate(
     let kp = KeyPair::from_der(&pkcs8_der)
         .map_err(|e| anyhow::anyhow!("Failed to create rcgen KeyPair: {:?}", e))?;
     // Build certificate params
-    let mut params = CertificateParams::new(
-        subject_alt_names
-            .iter()
-            .map(|s| s.to_string())
-            .collect::<Vec<String>>(),
-    );
+    let mut params = CertificateParams::default();
     // Convert SAN input into DNS/IP entries and keep loopback available.
     let mut san_entries: Vec<rcgen::SanType> = Vec::new();
     for san in subject_alt_names {

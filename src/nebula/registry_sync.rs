@@ -638,10 +638,10 @@ pub async fn resolve_overlay_ip(node_name: &str, ca_host: &str, pubkey_prefix: &
                             "✅ [OverlayIP] Assigned after {} retries: {} → {}",
                             attempt, node_name, ip_cidr
                         );
-                        let _ = save_local_ip_cache(node_name, &ip_cidr);
+                        // Do NOT cache fallback IPs — only CA-issued IPs are authoritative
                         return ip_cidr;
                     }
-                    Err(e) if attempt % 6 == 0 => {
+                    Err(e) if attempt.is_multiple_of(6) => {
                         eprintln!(
                             "⏳ [OverlayIP] Still waiting for CA ({}): {}",
                             fresh_ca_host, e

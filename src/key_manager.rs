@@ -269,11 +269,11 @@ impl KeyManager {
 
     /// Returns the node's public key as raw EC point bytes (65 bytes: 04||x||y).
     /// Software: from ring keypair. Hardware: from exported DKP DER file.
-    pub fn pubkey_der(&self) -> Vec<u8> {
+    pub fn pubkey_der(&self) -> Result<Vec<u8>> {
         match &self.backend {
             SigningBackend::Software => {
                 // ring returns raw 65-byte EC point directly
-                self.keypair.public_key().as_ref().to_vec()
+                Ok(self.keypair.public_key().as_ref().to_vec())
             }
             #[cfg(feature = "secure-element")]
             SigningBackend::Hardware {
@@ -286,23 +286,22 @@ impl KeyManager {
                         // SE050 exports SubjectPublicKeyInfo DER (91 bytes).
                         // Extract raw 65-byte EC point starting at offset 26.
                         if der_bytes.len() == 91 {
-                            der_bytes[26..].to_vec()
+                            Ok(der_bytes[26..].to_vec())
                         } else if der_bytes.len() == 65 {
-                            der_bytes
+                            Ok(der_bytes)
                         } else {
-                            panic!(
+                            Err(anyhow!(
                                 "FATAL: DKP pubkey at {} unexpected length {}",
                                 dkp_pub_path,
                                 der_bytes.len()
-                            );
+                            ))
                         }
                     }
-                    Err(e) => {
-                        panic!(
-                            "FATAL: Hardware backend active but DKP pubkey missing at {}: {}",
-                            dkp_pub_path, e
-                        );
-                    }
+                    Err(e) => Err(anyhow!(
+                        "FATAL: Hardware backend active but DKP pubkey missing at {}: {}",
+                        dkp_pub_path,
+                        e
+                    )),
                 }
             }
         }
@@ -336,8 +335,8 @@ mod tests {
 
         // Public keys must match across reloads (persistent identity)
         assert_eq!(
-            general_purpose::STANDARD.encode(km1.pubkey_der()),
-            general_purpose::STANDARD.encode(km2.pubkey_der())
+            general_purpose::STANDARD.encode(km1.pubkey_der().unwrap()),
+            general_purpose::STANDARD.encode(km2.pubkey_der().unwrap())
         );
 
         // Signing + verification placeholder (we’ll add verify later)

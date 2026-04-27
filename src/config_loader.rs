@@ -71,9 +71,12 @@ impl NodeConfig {
             return Err("hostname cannot be empty".into());
         }
 
-        // Only check empty — dynamic IPs may be 0.0.0.0 during discovery
-        if self.ip.trim().is_empty() {
+        let ip = self.ip.trim();
+        if ip.is_empty() {
             return Err("ip field cannot be empty".into());
+        }
+        if ip.parse::<std::net::IpAddr>().is_err() {
+            return Err(format!("Invalid node IP format: '{}'", self.ip));
         }
 
         // Validate valid port range

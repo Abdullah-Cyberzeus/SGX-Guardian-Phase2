@@ -617,7 +617,7 @@ impl AttestationQuote {
         // Get active policy digest
         let policy_mat = load_attestation_policy_material();
 
-        let pubkey_b64 = general_purpose::STANDARD.encode(km.pubkey_der());
+        let pubkey_b64 = general_purpose::STANDARD.encode(km.pubkey_der()?);
 
         Ok(Self {
             version: 1,
@@ -837,7 +837,7 @@ impl AttestationService {
         let msg = format!("{}{}", nonce, policy_digest);
         let sig_bytes = km.sign(msg.as_bytes())?;
         let signature_b64 = general_purpose::STANDARD.encode(sig_bytes);
-        let pubkey_b64 = base64::engine::general_purpose::STANDARD.encode(km.pubkey_der());
+        let pubkey_b64 = base64::engine::general_purpose::STANDARD.encode(km.pubkey_der()?);
         // Load PCR snapshot if available
         let node_id_pcr = std::env::args().nth(1).unwrap_or_else(|| "nodeA".into());
         let pcr_load_path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node_id_pcr);

@@ -77,7 +77,7 @@ impl NebulaDaemon {
             }
         }
 
-        // 3. Spawn daemon (redirect output to journald / syslog via inherited fds)
+        // 3. Spawn daemon (stdout/stderr discarded via Stdio::null — check syslog for nebula logs)
         let child = Command::new("nebula")
             .arg("-config")
             .arg(config_path)

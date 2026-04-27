@@ -36,12 +36,13 @@ impl SssCli {
     /// Establish authenticated PlatformSCP session with SE050.
     /// "Session already open" warning is normal and OK.
     pub fn connect(&self) -> Result<String, SeError> {
+        let scp_key_path = expand_tilde(&self.config.scp_key_path);
         self.run(&[
             "connect",
             "--auth_type",
             &self.config.auth_type,
             "--scpkey",
-            &self.config.scp_key_path,
+            &scp_key_path,
             &self.config.connection_type,
             &self.config.interface,
             "none",
@@ -172,6 +173,15 @@ impl SssCli {
         }
         None
     }
+}
+
+fn expand_tilde(path: &str) -> String {
+    if path.starts_with("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return format!("{}{}", home.to_string_lossy(), &path[1..]);
+        }
+    }
+    path.to_string()
 }
 
 // ── Unit Tests (6 tests) ────────────────────────────────────

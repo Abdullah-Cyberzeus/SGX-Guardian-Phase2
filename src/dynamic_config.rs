@@ -401,6 +401,17 @@ pub async fn start_ip_monitor(
 }
 
 pub fn update_peer_config(node_id: &str, hostname: &str, ip: &str, port: u16, public_key: &str) {
+    if node_id.is_empty()
+        || !node_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        eprintln!(
+            "⚠️ update_peer_config: rejected invalid node_id '{}'",
+            node_id
+        );
+        return;
+    }
     let path = format!("/etc/sgx-guardian/config/{}.yaml", node_id);
 
     if let Ok(existing) = std::fs::read_to_string(&path) {

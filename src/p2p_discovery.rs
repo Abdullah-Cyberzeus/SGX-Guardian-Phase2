@@ -42,14 +42,13 @@ fn load_known_node_configs(node_id: &str) -> Vec<NodeConfig> {
                     configs.push(cfg);
                 }
             }
-            Err(_) => match load_config(rel_path) {
-                Ok(cfg) => {
+            Err(_) => {
+                if let Ok(cfg) = load_config(rel_path) {
                     if cfg.node_id != node_id {
                         configs.push(cfg);
                     }
                 }
-                Err(_) => {}
-            },
+            }
         }
     }
 
@@ -171,8 +170,12 @@ impl P2PDiscovery {
 
             loop {
                 if node_id_cfg != "nodeA" && !crate::dynamic_config::overlay_is_reachable().await {
-                    sleep(Duration::from_secs(15)).await;
-                    continue;
+                    // Don't skip entirely — still enqueue LAN peers for bootstrap
+                    // Only skip overlay-specific peers
+                    eprintln!(
+                        "⏳ [{}] Overlay not yet reachable — LAN discovery continues",
+                        node_id_cfg
+                    );
                 }
 
                 for conf in load_known_node_configs(&node_id_cfg) {

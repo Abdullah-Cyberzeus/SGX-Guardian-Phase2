@@ -50,11 +50,17 @@ pub fn check_tamper(se: &Se050) -> TamperStatus {
         }
     }
 
-    // Check 3: Cert UID consistency
+    // Check 3: Cert UID consistency — fail closed on read error
     if let Some(ref orig_cert) = se.cert_uid {
-        if let Ok(cert) = se.cli.get_certuid() {
-            if &cert != orig_cert {
+        match se.cli.get_certuid() {
+            Ok(cert) if &cert != orig_cert => {
                 set_tamper("Cert UID changed");
+                return TamperStatus::Detected;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                error!("SE050 cert UID read failed: {}", e);
+                set_tamper("Cert UID read failed — possible tamper");
                 return TamperStatus::Detected;
             }
         }
@@ -77,7 +83,9 @@ pub fn is_tampered() -> bool {
     TAMPER_DETECTED.load(Ordering::SeqCst)
 }
 
-pub fn clear_tamper() {
+/// Reset tamper flag. Test-only — production code must never clear tamper.
+#[cfg(test)]
+pub(crate) fn clear_tamper() {
     TAMPER_DETECTED.store(false, Ordering::SeqCst);
 }
 

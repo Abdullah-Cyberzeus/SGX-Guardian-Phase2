@@ -66,21 +66,33 @@ impl Transport for CellularTransport {
                 self.interface.name
             )));
         }
-        let mut stream = TcpStream::connect(&message.target_address)
-            .await
-            .map_err(|e| CotError::TransportError(format!("Cellular send: {}", e)))?;
+        let mut stream = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            TcpStream::connect(&message.target_address),
+        )
+        .await
+        .map_err(|_| {
+            CotError::TransportError(format!(
+                "Cellular connect to {} timed out",
+                message.target_address
+            ))
+        })?
+        .map_err(|e| CotError::TransportError(format!("Cellular send: {}", e)))?;
         let len = (message.payload.len() as u32).to_be_bytes();
-        stream
-            .write_all(&len)
+        tokio::time::timeout(std::time::Duration::from_secs(5), stream.write_all(&len))
             .await
+            .map_err(|_| CotError::TransportError("Cell write timed out".into()))?
             .map_err(|e| CotError::TransportError(format!("Cell write: {}", e)))?;
-        stream
-            .write_all(&message.payload)
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            stream.write_all(&message.payload),
+        )
+        .await
+        .map_err(|_| CotError::TransportError("Cell payload timed out".into()))?
+        .map_err(|e| CotError::TransportError(format!("Cell payload: {}", e)))?;
+        tokio::time::timeout(std::time::Duration::from_secs(5), stream.flush())
             .await
-            .map_err(|e| CotError::TransportError(format!("Cell payload: {}", e)))?;
-        stream
-            .flush()
-            .await
+            .map_err(|_| CotError::TransportError("Cell flush timed out".into()))?
             .map_err(|e| CotError::TransportError(format!("Cell flush: {}", e)))?;
         Ok(())
     }

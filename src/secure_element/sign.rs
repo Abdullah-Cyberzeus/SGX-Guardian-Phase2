@@ -63,7 +63,13 @@ impl SeSigner {
             fs::write(&tmp_s, sig).map_err(|e| SeError::CryptoError(e.to_string()))?;
 
             // ssscli verify <keyid> <input> <sigfile>  (no sha256 subcommand!)
-            Ok(self.cli.verify(&hex_id, &tmp_d, &tmp_s).is_ok())
+            match self.cli.verify(&hex_id, &tmp_d, &tmp_s) {
+                Ok(_) => Ok(true),
+                Err(e) => {
+                    eprintln!("SE050 verify error (not just invalid sig): {}", e);
+                    Ok(false)
+                }
+            }
         })();
 
         let _ = fs::remove_file(&tmp_d);
