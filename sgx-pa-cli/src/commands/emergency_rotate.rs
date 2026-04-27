@@ -182,14 +182,31 @@ fn rotate_dkp(has_ssscli: bool) -> bool {
             .output();
         if gen.map(|o| o.status.success()).unwrap_or(false) {
             println!("│  SE050: Generated key at slot {}", new_key_id_hex);
-            // Export public key
-            let _ = Command::new("ssscli")
+            // Export public key — MUST succeed before updating metadata
+            let export = Command::new("ssscli")
                 .args(["get", "ecc", "pub", &new_key_id_hex, PUBKEY_PATH])
                 .output();
+            if !export.map(|o| o.status.success()).unwrap_or(false) {
+                eprintln!("│  SE050: Public key export FAILED — aborting rotation");
+                return false;
+            }
+            // Verify the exported file actually exists
+            if !std::path::Path::new(PUBKEY_PATH).exists() {
+                eprintln!(
+                    "│  SE050: Exported pubkey not found at {} — aborting",
+                    PUBKEY_PATH
+                );
+                return false;
+            }
         } else {
             println!("│  SE050: Key generation failed");
             return false;
         }
+    } else {
+        // Software mode: emergency rotation is NOT supported without ssscli
+        eprintln!("│  Software DKP emergency rotation is not implemented.");
+        eprintln!("│  Use 'sgx-pa-cli dkp-rotate' for software key rotation.");
+        return false;
     }
 
     // Update metadata
@@ -208,7 +225,23 @@ fn rotate_dkp(has_ssscli: bool) -> bool {
         "public_key_path": PUBKEY_PATH
     }));
 
-    fs::write(METADATA_PATH, serde_json::to_string_pretty(&keys).unwrap()).is_ok()
+    let serialized = match serde_json::to_string_pretty(&keys) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("❌ Failed to serialize DKP metadata: {}", e);
+            return false;
+        }
+    };
+    let tmp_path = format!("{}.tmp", METADATA_PATH);
+    if let Err(e) = fs::write(&tmp_path, &serialized) {
+        eprintln!("❌ Failed to write temp metadata: {}", e);
+        return false;
+    }
+    if let Err(e) = fs::rename(&tmp_path, METADATA_PATH) {
+        eprintln!("❌ Failed to atomically replace metadata: {}", e);
+        return false;
+    }
+    true
 }
 
 /// Rotate software attestation key — backup old, daemon regenerates on restart

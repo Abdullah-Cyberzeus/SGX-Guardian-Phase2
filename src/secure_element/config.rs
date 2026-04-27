@@ -26,7 +26,7 @@ impl Default for SeConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            scp_key_path: "~/se05x_mw_v04.05.01/simw-top/scripts/se050F_scp_keys.txt".to_string(),
+            scp_key_path: "/etc/sgx-guardian/se050_scp_keys.txt".to_string(),
             interface: "t1oi2c".to_string(),
             auth_type: "PlatformSCP".to_string(),
             connection_type: "se05x".to_string(),
@@ -53,8 +53,8 @@ mod tests {
     #[test]
     fn test_scp_key_path_contains_expected_segments() {
         let cfg = SeConfig::default();
-        assert!(cfg.scp_key_path.contains("se050F_scp_keys.txt"));
-        assert!(cfg.scp_key_path.contains("se05x_mw_v04.05.01"));
+        assert!(cfg.scp_key_path.contains("se050_scp_keys.txt"));
+        assert!(cfg.scp_key_path.contains("/etc/sgx-guardian"));
     }
 
     #[test]

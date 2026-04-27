@@ -249,4 +249,23 @@ mod tests {
             .await;
         assert_eq!(mgr.active_count().await, 2);
     }
+
+    #[tokio::test]
+    async fn test_session_survives_transport_change() {
+        let mgr = SessionManager::new();
+        let s1 = mgr
+            .get_or_create("local", "remote", TransportType::Ethernet)
+            .await;
+        let migrated = mgr
+            .migrate_session("remote", TransportType::WiFi)
+            .await
+            .unwrap();
+        let s2 = mgr
+            .get_or_create("local", "remote", TransportType::WiFi)
+            .await;
+
+        assert_eq!(s1.session_id, migrated.session_id);
+        assert_eq!(migrated.session_id, s2.session_id);
+        assert_eq!(s2.current_transport, TransportType::WiFi);
+    }
 }

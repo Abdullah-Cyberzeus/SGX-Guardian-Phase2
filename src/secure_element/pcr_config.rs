@@ -54,7 +54,7 @@ pub fn default_measurement_sources(node_id: &str) -> Vec<PcrMeasurementSource> {
             pcr_index: 4,
             label: "Guardian config".into(),
             source_type: "file".into(),
-            source: format!("/etc/sgx-guardian/{}.yaml", node_id),
+            source: format!("/etc/sgx-guardian/config/{}.yaml", node_id),
             critical: false,
         },
     ]

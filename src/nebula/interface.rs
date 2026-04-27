@@ -106,7 +106,7 @@ impl NebulaInterface {
             return Err(format!("addr add failed: {}", stderr));
         }
 
-        println!("✅ nebula0 assigned IP: {}", ip_cidr);
+        println!("✅ nebula0 overlay IP assigned successfully");
         Ok(())
     }
 
@@ -127,18 +127,19 @@ impl NebulaInterface {
     pub fn verify_and_fix_ip(expected_ip_cidr: &str) -> Result<(), String> {
         match Self::get_overlay_ip() {
             Some(actual) if actual == expected_ip_cidr => {
-                println!("✅ nebula0 IP verified: {}", actual);
+                println!("✅ nebula0 IP verified");
                 Ok(())
             }
             Some(actual) => {
-                eprintln!(
-                    "⚠️  nebula0 IP mismatch: expected={} actual={}",
-                    expected_ip_cidr, actual
-                );
+                eprintln!("⚠️  nebula0 IP mismatch detected — removing old, assigning new");
+                // Remove old IP first to avoid duplicate addresses
+                let _ = Command::new("ip")
+                    .args(["addr", "del", &actual, "dev", "nebula0"])
+                    .output();
                 Self::assign_overlay_ip(expected_ip_cidr)
             }
             None => {
-                println!("📋 nebula0 has no IP yet, assigning {}", expected_ip_cidr);
+                println!("📋 nebula0 has no IP yet, assigning overlay address");
                 Self::assign_overlay_ip(expected_ip_cidr)
             }
         }

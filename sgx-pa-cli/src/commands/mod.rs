@@ -14,6 +14,8 @@ pub mod logs;
 pub mod pcr_baseline;
 pub mod pcr_status;
 pub mod peers;
+pub mod relay;
 pub mod sign;
 pub mod status;
+pub mod transport;
 pub mod verify;

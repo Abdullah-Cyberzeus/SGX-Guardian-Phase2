@@ -35,20 +35,62 @@ impl KeyManager {
         let key_path_str = key_path;
         let key_path = Path::new(key_path_str);
         fs::create_dir_all("sgx-agent").ok();
-        // Read existing or generate new keypair
+        // Ensure parent directory exists BEFORE any read/write attempt
+        if let Some(parent) = key_path.parent() {
+            fs::create_dir_all(parent).ok();
+        }
+
+        // Try to load + parse existing key. On ANY parse failure, quarantine the bad
+        // file and regenerate — this is the critical fix for the
+        // "Failed to load keypair from pkcs8" crash loop observed on the boards.
         let pkcs8_bytes = if key_path.exists() {
-            info!("Loading existing identity key: {}", key_path.display());
-            log_audit(
-                "system",
-                AuditCategory::Identity,
-                AuditSeverity::Info,
-                AuditAction::Loaded,
-                "Existing node identity key loaded from disk",
-            );
-            fs::read(key_path)?
+            let raw = fs::read(key_path).unwrap_or_default();
+            // Probe-parse before committing. If OK, use it; if not, quarantine + regen.
+            match EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &raw, &rng) {
+                Ok(_) => {
+                    info!("Loading existing identity key: {}", key_path.display());
+                    log_audit(
+                        "system",
+                        AuditCategory::Identity,
+                        AuditSeverity::Info,
+                        AuditAction::Loaded,
+                        "Existing node identity key loaded from disk",
+                    );
+                    raw
+                }
+                Err(_) => {
+                    // File exists but is corrupt / wrong-format. Rename it aside and
+                    // regenerate. Previously this path called `?` and exited the daemon,
+                    // causing the reboot loop.
+                    let quarantine = format!(
+                        "{}.corrupt.{}",
+                        key_path.display(),
+                        chrono::Utc::now().timestamp()
+                    );
+                    let _ = fs::rename(key_path, &quarantine);
+                    warn!(
+                        "⚠️ Existing identity key was corrupt — quarantined to {} and regenerating",
+                        quarantine
+                    );
+                    log_audit(
+                        "system",
+                        AuditCategory::Identity,
+                        AuditSeverity::Critical,
+                        AuditAction::Failed,
+                        &format!(
+                            "Corrupt identity key quarantined to {} — regenerating",
+                            quarantine
+                        ),
+                    );
+                    let pkcs8 =
+                        EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
+                            .map_err(|_| anyhow!("Failed to generate keypair"))?;
+                    fs::write(key_path, pkcs8.as_ref())?;
+                    pkcs8.as_ref().to_vec()
+                }
+            }
         } else {
             warn!("⚠️ Identity key not found, generating new one...");
-
             log_audit(
                 "system",
                 AuditCategory::Identity,
@@ -58,19 +100,15 @@ impl KeyManager {
             );
             let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
                 .map_err(|_| anyhow!("Failed to generate keypair"))?;
-            fs::create_dir_all(
-                key_path
-                    .parent()
-                    .ok_or_else(|| anyhow!("Invalid key path"))?,
-            )?;
             fs::write(key_path, pkcs8.as_ref())?;
             info!("New identity key generated at {}", key_path.display());
             pkcs8.as_ref().to_vec()
         };
-        // Load keypair (ring 0.17+ requires RNG on load)
+
+        // Final load — this must succeed because we just wrote or validated the bytes.
         let keypair =
             EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &pkcs8_bytes, &rng)
-                .map_err(|_| anyhow!("Failed to load keypair from pkcs8"))?;
+                .map_err(|_| anyhow!("Failed to load keypair from pkcs8 after regen"))?;
         // === Save public key as DER file (optional export for CLI/testing) ===
         let pub_der_path = "sgx-agent/device_public.der";
         log_audit(
@@ -110,26 +148,50 @@ impl KeyManager {
                     .map_err(|e| anyhow!("Create SE050 signer: {}", e))?;
 
                 // We still need a software keypair for pubkey_der()
-                // Load or generate a software key as reference
+                // Load or generate a software key as reference. This path MUST tolerate
+                // a corrupt on-disk fallback (e.g., prior daemon crash mid-write), otherwise
+                // the entire daemon aborts and the board enters a reboot loop.
                 let rng = SystemRandom::new();
-                let pkcs8_bytes = if Path::new(fallback_key_path).exists() {
-                    fs::read(fallback_key_path)?
+                let fb_path = Path::new(fallback_key_path);
+                if let Some(parent) = fb_path.parent() {
+                    fs::create_dir_all(parent).ok();
+                }
+
+                let pkcs8_bytes = if fb_path.exists() {
+                    let raw = fs::read(fb_path).unwrap_or_default();
+                    match EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &raw, &rng) {
+                        Ok(_) => raw,
+                        Err(_) => {
+                            let quarantine = format!(
+                                "{}.corrupt.{}",
+                                fallback_key_path,
+                                chrono::Utc::now().timestamp()
+                            );
+                            let _ = fs::rename(fb_path, &quarantine);
+                            warn!(
+                                "SE050 fallback key corrupt — quarantined to {} and regenerating",
+                                quarantine
+                            );
+                            let pkcs8 = EcdsaKeyPair::generate_pkcs8(
+                                &ECDSA_P256_SHA256_FIXED_SIGNING,
+                                &rng,
+                            )
+                            .map_err(|_| anyhow!("Generate fallback keypair"))?;
+                            fs::write(fallback_key_path, pkcs8.as_ref())?;
+                            pkcs8.as_ref().to_vec()
+                        }
+                    }
                 } else {
                     let pkcs8 =
                         EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
                             .map_err(|_| anyhow!("Generate fallback keypair"))?;
-                    fs::create_dir_all(
-                        Path::new(fallback_key_path)
-                            .parent()
-                            .ok_or_else(|| anyhow!("Invalid path"))?,
-                    )?;
                     fs::write(fallback_key_path, pkcs8.as_ref())?;
                     pkcs8.as_ref().to_vec()
                 };
 
                 let keypair =
                     EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &pkcs8_bytes, &rng)
-                        .map_err(|_| anyhow!("Load fallback keypair"))?;
+                        .map_err(|_| anyhow!("Load fallback keypair after regen"))?;
 
                 // If SE050 public key is available, use it instead
                 let pub_der_path = format!("{}/keys/dkp_pub.der", base_path);
@@ -207,11 +269,11 @@ impl KeyManager {
 
     /// Returns the node's public key as raw EC point bytes (65 bytes: 04||x||y).
     /// Software: from ring keypair. Hardware: from exported DKP DER file.
-    pub fn pubkey_der(&self) -> Vec<u8> {
+    pub fn pubkey_der(&self) -> Result<Vec<u8>> {
         match &self.backend {
             SigningBackend::Software => {
                 // ring returns raw 65-byte EC point directly
-                self.keypair.public_key().as_ref().to_vec()
+                Ok(self.keypair.public_key().as_ref().to_vec())
             }
             #[cfg(feature = "secure-element")]
             SigningBackend::Hardware {
@@ -224,23 +286,22 @@ impl KeyManager {
                         // SE050 exports SubjectPublicKeyInfo DER (91 bytes).
                         // Extract raw 65-byte EC point starting at offset 26.
                         if der_bytes.len() == 91 {
-                            der_bytes[26..].to_vec()
+                            Ok(der_bytes[26..].to_vec())
                         } else if der_bytes.len() == 65 {
-                            der_bytes
+                            Ok(der_bytes)
                         } else {
-                            panic!(
+                            Err(anyhow!(
                                 "FATAL: DKP pubkey at {} unexpected length {}",
                                 dkp_pub_path,
                                 der_bytes.len()
-                            );
+                            ))
                         }
                     }
-                    Err(e) => {
-                        panic!(
-                            "FATAL: Hardware backend active but DKP pubkey missing at {}: {}",
-                            dkp_pub_path, e
-                        );
-                    }
+                    Err(e) => Err(anyhow!(
+                        "FATAL: Hardware backend active but DKP pubkey missing at {}: {}",
+                        dkp_pub_path,
+                        e
+                    )),
                 }
             }
         }
@@ -274,8 +335,8 @@ mod tests {
 
         // Public keys must match across reloads (persistent identity)
         assert_eq!(
-            general_purpose::STANDARD.encode(km1.pubkey_der()),
-            general_purpose::STANDARD.encode(km2.pubkey_der())
+            general_purpose::STANDARD.encode(km1.pubkey_der().unwrap()),
+            general_purpose::STANDARD.encode(km2.pubkey_der().unwrap())
         );
 
         // Signing + verification placeholder (we’ll add verify later)

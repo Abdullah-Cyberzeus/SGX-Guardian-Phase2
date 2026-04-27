@@ -143,3 +143,27 @@ pub async fn boot_status(State(s): State<Arc<AppState>>) -> Result<Json<BootStat
         timestamp: chrono::Utc::now().to_rfc3339(),
     }))
 }
+
+#[derive(Serialize)]
+pub struct RestartResponse {
+    pub success: bool,
+    pub message: String,
+    #[serde(rename = "expectedDowntime")]
+    pub expected_downtime: String,
+    pub timestamp: String,
+}
+
+pub async fn restart(State(_): State<Arc<AppState>>) -> Result<Json<RestartResponse>, ApiError> {
+    let out = tokio::process::Command::new("pkill")
+        .args(["-f", "sgx_guardian_client"])
+        .output()
+        .await
+        .map_err(|e| ApiError::Internal(format!("restart failed: {}", e)))?;
+
+    Ok(Json(RestartResponse {
+        success: out.status.success(),
+        message: "Guardian daemon restart initiated".into(),
+        expected_downtime: "5-10 seconds".into(),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+    }))
+}

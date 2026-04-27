@@ -11,4 +11,8 @@ pub mod nat;
 pub mod overlay;
 pub mod overlay_registry;
 pub mod registry_sync;
+pub mod relay_registry;
+pub mod relay_tc;
+pub mod stats;
+pub mod tunnel_state;
 pub mod utils;

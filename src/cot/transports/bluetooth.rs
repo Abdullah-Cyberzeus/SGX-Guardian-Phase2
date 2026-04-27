@@ -37,11 +37,18 @@ impl BluetoothTransport {
     }
 
     fn get_rssi(&self) -> Option<i8> {
-        let o = Command::new("hcitool")
-            .args(["rssi", "hci0"])
-            .output()
-            .ok()?;
-        let s = String::from_utf8_lossy(&o.stdout);
+        // hcitool rssi requires a device MAC, not interface name.
+        // Use hcitool con to find connected devices, then query RSSI.
+        let con_output = Command::new("hcitool").args(["con"]).output().ok()?;
+        let con_stdout = String::from_utf8_lossy(&con_output.stdout);
+        // Extract first connected device MAC (format: "< ACL XX:XX:XX:XX:XX:XX ...")
+        let mac = con_stdout
+            .lines()
+            .find(|l| l.contains("ACL"))
+            .and_then(|l| l.split_whitespace().nth(2))?;
+
+        let output = Command::new("hcitool").args(["rssi", mac]).output().ok()?;
+        let s = String::from_utf8_lossy(&output.stdout);
         s.lines()
             .find(|l| l.contains("RSSI"))
             .and_then(|l| l.split(':').next_back())
@@ -72,6 +79,9 @@ impl Transport for BluetoothTransport {
     }
     fn priority(&self) -> TransportPriority {
         self.interface.priority
+    }
+    fn interface_name(&self) -> &str {
+        &self.interface.name
     }
 
     async fn is_available(&self) -> bool {

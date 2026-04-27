@@ -42,6 +42,15 @@ pub async fn start_listener(local_node_id: String) {
     let mut dedup_map: HashMap<String, Instant> = HashMap::new();
 
     loop {
+        // Evict stale entries to prevent unbounded growth from spoofed IPs
+        let gc_now = Instant::now();
+        if rate_map.len() > 500 {
+            rate_map.retain(|_, (_, seen_at)| gc_now.duration_since(*seen_at).as_secs() <= 120);
+        }
+        if dedup_map.len() > 500 {
+            dedup_map.retain(|_, seen_at| gc_now.duration_since(*seen_at).as_secs() <= 60);
+        }
+
         match socket.recv_from(&mut buf).await {
             Ok((size, src)) => {
                 let src_ip = src.ip().to_string();

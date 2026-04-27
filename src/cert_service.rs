@@ -4,9 +4,11 @@
 
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
+use crate::config_loader::load_config;
 use crate::logging::log_event;
 use crate::nebula::ca::NebulaCA;
 use crate::nebula::models::CircleMembership;
+use crate::nebula::relay_registry::RelayRegistry;
 use crate::proto::sgx::cert_service_server::CertService;
 use crate::proto::sgx::{CertSignRequest, CertSignResponse};
 use serde::{Deserialize, Serialize};
@@ -15,6 +17,7 @@ use tonic::{Request, Response, Status};
 
 /// Base directory — the ONLY path we use.
 const NEBULA_BASE_DIR: &str = "/var/lib/sgx-guardian/nebula";
+const RELAY_REGISTRY_PATH: &str = "/var/lib/sgx-guardian/nebula/relay_registry.json";
 
 /// Poll interval for YAML approval check (seconds).
 const APPROVAL_POLL_SECS: u64 = 2;
@@ -32,6 +35,10 @@ enum ApprovalDecision {
     Member,
     #[serde(alias = "lighthouse", alias = "lh")]
     Lighthouse,
+    #[serde(alias = "relay")]
+    Relay,
+    #[serde(rename = "lh_relay", alias = "lhrelay", alias = "relay_lh")]
+    LhRelay,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -40,6 +47,7 @@ struct CertRequestYaml {
     requested_at: String,
     overlay_ip: String,
     public_key_fingerprint: String,
+    requested_role: String,
     approve: ApprovalDecision,
 }
 
@@ -78,6 +86,46 @@ fn resolve_member_lighthouse_endpoint(node_id: &str) -> String {
     "0.0.0.0:4242".to_string()
 }
 
+fn relay_limits_for_node(node_id: &str) -> (u32, u32) {
+    let cfg_paths = [
+        format!("/etc/sgx-guardian/config/{}.yaml", node_id),
+        format!("/etc/sgx-guardian/{}.yaml", node_id),
+    ];
+
+    for p in cfg_paths {
+        if let Ok(cfg) = load_config(&p) {
+            let relay = cfg.relay_or_default();
+            return (relay.max_peers, relay.max_bandwidth_mbps);
+        }
+    }
+
+    // Defaults if node config not available yet
+    (5, 10)
+}
+fn ensure_nodea_relay_entries(
+    lh_reg: &mut crate::nebula::lighthouse::LighthouseRegistry,
+    relay_reg: &mut RelayRegistry,
+    overlay_ip: &str,
+) {
+    let node_a_endpoint = resolve_member_lighthouse_endpoint("nodeA");
+    let (node_a_max_peers, node_a_max_bw) = relay_limits_for_node("nodeA");
+
+    lh_reg.upsert_node("nodeA", overlay_ip, &node_a_endpoint, true, true);
+    let _ = lh_reg.set_lighthouse_role("nodeA", true);
+    let _ = lh_reg.set_relay_role("nodeA", true);
+    lh_reg.mark_active("nodeA");
+
+    relay_reg.add_relay(
+        "nodeA",
+        overlay_ip,
+        &node_a_endpoint,
+        node_a_max_peers,
+        node_a_max_bw,
+        true,
+    );
+    relay_reg.mark_active("nodeA");
+}
+
 #[tonic::async_trait]
 impl CertService for MyCertService {
     async fn request_certificate(
@@ -88,9 +136,17 @@ impl CertService for MyCertService {
         let node_id = req.node_id.clone();
         let public_key_pem = req.public_key_pem.clone();
         let wants_lighthouse = req.wants_lighthouse;
+        let wants_relay = req.wants_relay;
+        let requested_role = match (wants_lighthouse, wants_relay) {
+            (true, true) => "lh_relay",
+            (true, false) => "lighthouse",
+            (false, true) => "relay",
+            (false, false) => "member",
+        };
 
         // ── 1. Log receipt ──────────────────────────────────────────
         println!("Certificate request received from {}", node_id);
+        println!("  Node requested role: {}", requested_role);
         log_event(
             "nodeA",
             &format!("Certificate request received from {}", node_id),
@@ -140,6 +196,12 @@ impl CertService for MyCertService {
                     tokio::fs::read_to_string(format!("{}/overlay_registry.json", NEBULA_BASE_DIR))
                         .await
                         .unwrap_or_default();
+                let relay_registry_json = tokio::fs::read_to_string(RELAY_REGISTRY_PATH)
+                    .await
+                    .unwrap_or_default();
+                let assigned_relay = RelayRegistry::load(RELAY_REGISTRY_PATH)
+                    .map(|r| r.is_relay(&node_id))
+                    .unwrap_or(false);
                 let signed_policy_bytes = tokio::fs::read("/etc/sgx-guardian/policies/policy.sig")
                     .await
                     .unwrap_or_default();
@@ -154,6 +216,8 @@ impl CertService for MyCertService {
                     lighthouse_registry_json,
                     overlay_registry_json,
                     signed_policy_bytes,
+                    assigned_relay,
+                    relay_registry_json,
                 }));
             } else {
                 eprintln!(
@@ -185,7 +249,10 @@ impl CertService for MyCertService {
                 if let Ok(parsed) = serde_yaml::from_str::<CertRequestYaml>(&content) {
                     if matches!(
                         parsed.approve,
-                        ApprovalDecision::Member | ApprovalDecision::Lighthouse
+                        ApprovalDecision::Member
+                            | ApprovalDecision::Lighthouse
+                            | ApprovalDecision::Relay
+                            | ApprovalDecision::LhRelay
                     ) {
                         // Old approved YAML is stale → delete it
                         println!(
@@ -229,6 +296,7 @@ impl CertService for MyCertService {
                 requested_at: chrono::Utc::now().to_rfc3339(),
                 overlay_ip: req.overlay_ip.clone(),
                 public_key_fingerprint: fingerprint,
+                requested_role: requested_role.to_string(),
                 approve: ApprovalDecision::False,
             };
 
@@ -242,14 +310,16 @@ impl CertService for MyCertService {
 
             // Terminal instructions for admin
             println!("Certificate request received from {}", node_id);
-            println!("  Node requested lighthouse role: {}", wants_lighthouse);
+            println!("  Node requested role: {}", requested_role);
             println!();
             println!("Approval file created: {}", yaml_path);
             println!();
             println!("Edit the file and set 'approve' to ONE of:");
             println!("  approve: false        (reject the request)");
             println!("  approve: member       (accept as standard member)");
-            println!("  approve: lighthouse   (accept and also make this node a Lighthouse)");
+            println!("  approve: lighthouse   (accept as lighthouse only)");
+            println!("  approve: relay        (accept as relay only)");
+            println!("  approve: lh_relay     (accept as lighthouse + relay)");
             println!();
             println!("Save the file to trigger approval.");
         }
@@ -258,7 +328,7 @@ impl CertService for MyCertService {
         let start = tokio::time::Instant::now();
         let timeout = std::time::Duration::from_secs(APPROVAL_TIMEOUT_SECS);
         let poll_interval = std::time::Duration::from_secs(APPROVAL_POLL_SECS);
-        let assigned_lh = loop {
+        let (assigned_lh, assigned_relay) = loop {
             if start.elapsed() > timeout {
                 println!(
                     "Approval timeout for {} after {} seconds",
@@ -284,6 +354,8 @@ impl CertService for MyCertService {
                     lighthouse_registry_json: String::new(),
                     overlay_registry_json: String::new(),
                     signed_policy_bytes: Vec::new(),
+                    assigned_relay: false,
+                    relay_registry_json: String::new(),
                 }));
             }
 
@@ -298,7 +370,7 @@ impl CertService for MyCertService {
                                 "nodeA",
                                 &format!("Certificate approval detected for {}", node_id),
                             );
-                            break false;
+                            break (false, false);
                         }
                         ApprovalDecision::Lighthouse => {
                             println!("Approval detected for {} (role: lighthouse)", node_id);
@@ -306,7 +378,23 @@ impl CertService for MyCertService {
                                 "nodeA",
                                 &format!("Certificate approval detected for {}", node_id),
                             );
-                            break true;
+                            break (true, false);
+                        }
+                        ApprovalDecision::Relay => {
+                            println!("Approval detected for {} (role: relay)", node_id);
+                            log_event(
+                                "nodeA",
+                                &format!("Certificate approval detected for {}", node_id),
+                            );
+                            break (false, true);
+                        }
+                        ApprovalDecision::LhRelay => {
+                            println!("Approval detected for {} (role: lh_relay)", node_id);
+                            log_event(
+                                "nodeA",
+                                &format!("Certificate approval detected for {}", node_id),
+                            );
+                            break (true, true);
                         }
                     }
                 }
@@ -376,34 +464,66 @@ impl CertService for MyCertService {
             return Err(Status::internal(format!("NebulaCA signing failed: {}", e)));
         }
 
+        use crate::nebula::lighthouse::LighthouseRegistry;
+        let lh_path = format!("{}/lighthouse_registry.json", NEBULA_BASE_DIR);
+        let mut lh_reg = LighthouseRegistry::load_or_create(
+            &lh_path,
+            "guardian-circle-alpha",
+            "nodeA",
+            "192.168.100.1",
+            "0.0.0.0:4242",
+        );
+        let member_overlay = overlay_ip.split('/').next().unwrap_or("").to_string();
+        let node_a_overlay = reg
+            .get_ip("nodeA")
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "192.168.100.1".to_string());
+        let member_endpoint = resolve_member_lighthouse_endpoint(&node_id);
+
+        // Always keep nodeA anchored as lighthouse+relay, even when additional relay
+        // nodes are approved later.
+        let mut relay_reg =
+            RelayRegistry::load_or_create(RELAY_REGISTRY_PATH, "guardian-circle-alpha");
+        ensure_nodea_relay_entries(&mut lh_reg, &mut relay_reg, &node_a_overlay);
+
+        // Always keep an endpoint record for approved nodes (member/lighthouse/relay).
+        // This lets static_host_map include reachable endpoints for relay forwarding paths.
+        lh_reg.upsert_node(
+            &node_id,
+            &member_overlay,
+            &member_endpoint,
+            assigned_lh,
+            assigned_relay,
+        );
+        // Keep role flags explicitly consistent in lighthouse registry snapshots.
+        let _ = lh_reg.set_relay_role(&node_id, assigned_relay);
+        let _ = lh_reg.set_lighthouse_role(&node_id, assigned_lh);
+
         if assigned_lh {
-            use crate::nebula::lighthouse::LighthouseRegistry;
-            let lh_path = format!("{}/lighthouse_registry.json", NEBULA_BASE_DIR);
-            let mut lh_reg = LighthouseRegistry::load_or_create(
-                &lh_path,
-                "guardian-circle-alpha",
-                "nodeA",
-                "192.168.100.1",
-                "0.0.0.0:4242",
-            );
-            let member_overlay = overlay_ip.split('/').next().unwrap_or("").to_string();
-            let member_endpoint = resolve_member_lighthouse_endpoint(&node_id);
-            lh_reg.add_lighthouse(&node_id, &member_overlay, &member_endpoint);
-            if let Some(entry) = lh_reg
-                .lighthouses
-                .iter_mut()
-                .find(|l| l.node_name == node_id)
-            {
-                entry.overlay_ip = member_overlay.clone();
-                entry.physical_endpoint = member_endpoint.clone();
-                entry.is_primary = false;
-                entry.is_active = true;
-            }
-            let _ = lh_reg.update_endpoint(&node_id, &member_endpoint);
-            lh_reg.mark_active(&node_id);
-            let _ = lh_reg.save(&lh_path);
             println!("🗼 Node {} promoted to Lighthouse role", node_id);
         }
+        if assigned_relay {
+            println!("🛰️ Node {} promoted to Relay role", node_id);
+        }
+        let _ = lh_reg.update_endpoint(&node_id, &member_endpoint);
+        lh_reg.mark_active(&node_id);
+        let _ = lh_reg.save(&lh_path);
+
+        if assigned_relay {
+            let (max_peers, max_bw) = relay_limits_for_node(&node_id);
+            relay_reg.add_relay(
+                &node_id,
+                &member_overlay,
+                &member_endpoint,
+                max_peers,
+                max_bw,
+                assigned_lh,
+            );
+            relay_reg.mark_active(&node_id);
+        } else {
+            relay_reg.remove_relay(&node_id);
+        }
+        let _ = relay_reg.save(RELAY_REGISTRY_PATH);
 
         // ── 6. Read generated cert/key ──────────────────────────────
         let signed_cert = tokio::fs::read_to_string(&cert_path)
@@ -425,6 +545,9 @@ impl CertService for MyCertService {
             tokio::fs::read_to_string(format!("{}/overlay_registry.json", NEBULA_BASE_DIR))
                 .await
                 .unwrap_or_default();
+        let relay_registry_json = tokio::fs::read_to_string(RELAY_REGISTRY_PATH)
+            .await
+            .unwrap_or_default();
         let signed_policy_bytes = tokio::fs::read("/etc/sgx-guardian/policies/policy.sig")
             .await
             .unwrap_or_default();
@@ -451,6 +574,55 @@ impl CertService for MyCertService {
             lighthouse_registry_json,
             overlay_registry_json,
             signed_policy_bytes,
+            assigned_relay,
+            relay_registry_json,
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ensure_nodea_relay_entries, ApprovalDecision};
+    use crate::nebula::lighthouse::LighthouseRegistry;
+    use crate::nebula::relay_registry::RelayRegistry;
+
+    #[test]
+    fn test_approval_decision_parses_relay() {
+        let relay: ApprovalDecision = serde_yaml::from_str("relay").unwrap();
+        let lh_relay: ApprovalDecision = serde_yaml::from_str("lh_relay").unwrap();
+        let lighthouse: ApprovalDecision = serde_yaml::from_str("lighthouse").unwrap();
+        let member: ApprovalDecision = serde_yaml::from_str("member").unwrap();
+        let reject: ApprovalDecision = serde_yaml::from_str("false").unwrap();
+
+        assert!(matches!(relay, ApprovalDecision::Relay));
+        assert!(matches!(lh_relay, ApprovalDecision::LhRelay));
+        assert!(matches!(lighthouse, ApprovalDecision::Lighthouse));
+        assert!(matches!(member, ApprovalDecision::Member));
+        assert!(matches!(reject, ApprovalDecision::False));
+    }
+
+    #[test]
+    fn test_ensure_nodea_relay_entries_preserves_owner_relay_registration() {
+        let mut lh_reg =
+            LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "10.0.0.1:4242");
+        let mut relay_reg = RelayRegistry::new("alpha");
+
+        ensure_nodea_relay_entries(&mut lh_reg, &mut relay_reg, "192.168.100.1");
+
+        let node_a_lh = lh_reg
+            .lighthouses
+            .iter()
+            .find(|entry| entry.node_name == "nodeA")
+            .expect("nodeA lighthouse entry should exist");
+        assert!(node_a_lh.is_lighthouse);
+        assert!(node_a_lh.am_relay);
+        assert!(relay_reg.is_relay("nodeA"));
+        assert!(
+            relay_reg
+                .relays
+                .get("nodeA")
+                .expect("nodeA relay entry should exist")
+                .is_lighthouse
+        );
     }
 }

@@ -102,8 +102,8 @@ impl NebulaCA {
             // response. Refuse to overwrite — this could be an attack or a misrouted response.
             // Operator must explicitly delete /var/lib/sgx-guardian/nebula/ca/ca.crt to rotate.
             return Err(Error::other(format!(
-                "CA cert mismatch at {}. Refusing to overwrite the existing trust anchor without explicit rotation. \
-                 If this is an intentional rotation, remove {} manually and restart.",
+                "CA cert mismatch at {}. Refusing to overwrite existing trust anchor. \
+                 Delete {} manually to accept new CA.",
                 ca_crt, ca_crt
             )));
         }

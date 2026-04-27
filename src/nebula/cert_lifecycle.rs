@@ -35,18 +35,22 @@ impl ExpiryMonitor {
                         let cert_path = format!("{}/{}.crt", nodes_dir, node_name);
                         let key_path = format!("{}/{}.key", nodes_dir, node_name);
 
-                        if std::path::Path::new(&cert_path).exists() {
-                            let _ = std::fs::remove_file(&cert_path);
-                        }
+                        let cert_removed = !std::path::Path::new(&cert_path).exists()
+                            || std::fs::remove_file(&cert_path).is_ok();
+                        let key_removed = !std::path::Path::new(&key_path).exists()
+                            || std::fs::remove_file(&key_path).is_ok();
 
-                        if std::path::Path::new(&key_path).exists() {
-                            let _ = std::fs::remove_file(&key_path);
+                        if cert_removed && key_removed {
+                            log_event(
+                                &node_name,
+                                "Expired Nebula certificate deleted for regeneration",
+                            );
+                        } else {
+                            log_error(
+                                &node_name,
+                                "Failed to delete expired Nebula cert/key for regeneration",
+                            );
                         }
-
-                        log_event(
-                            &node_name,
-                            "Expired Nebula certificate deleted for regeneration",
-                        );
                     } else if days <= 7 {
                         // Generic message for stdout (CodeQL: avoid logging precise day count)
                         println!("🚨 CRITICAL: Nebula certificate is nearing expiration");

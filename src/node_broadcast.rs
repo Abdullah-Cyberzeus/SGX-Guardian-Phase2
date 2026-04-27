@@ -70,13 +70,13 @@ pub fn broadcast_node(info: &NodeAnnouncement) {
     let bcast_ip = subnet_broadcast(&info.ip);
     let subnet_addr = SocketAddrV4::new(bcast_ip, port);
     match socket.send_to(bytes, subnet_addr) {
-        Ok(n) => println!("Broadcasted to {} ({} bytes)", subnet_addr, n),
-        Err(e) => eprintln!("Subnet broadcast failed: {}", e),
+        Ok(n) => tracing::debug!("Broadcasted to {} ({} bytes)", subnet_addr, n),
+        Err(e) => tracing::warn!("Broadcast send failed: {}", e),
     }
 
     let global_addr = SocketAddrV4::new(Ipv4Addr::BROADCAST, port);
     match socket.send_to(bytes, global_addr) {
-        Ok(n) => println!("Global broadcast to {} ({} bytes)", global_addr, n),
-        Err(e) => eprintln!("Global broadcast failed: {}", e),
+        Ok(n) => tracing::debug!("Global broadcast to {} ({} bytes)", global_addr, n),
+        Err(e) => tracing::warn!("Global broadcast send failed: {}", e),
     }
 }

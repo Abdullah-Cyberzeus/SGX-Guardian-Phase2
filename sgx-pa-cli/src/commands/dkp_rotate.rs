@@ -124,6 +124,7 @@ pub fn run() {
         // === SOFTWARE MODE: regenerate ring keypair ===
         println!("\n  No SE050 — software mode rotation.");
         println!("  Regenerating software keypair for new version...");
+        let mut rotated = false;
 
         // Find and regenerate the software key file for the current node
         // Look for device_nodeA.key pattern
@@ -138,6 +139,7 @@ pub fn run() {
                         Ok(_) => {
                             println!("  Old software key backed up: {}", backup);
                             println!("  New key will be generated on next daemon start.");
+                            rotated = true;
                         }
                         Err(e) => {
                             eprintln!("  Failed to backup old key: {}", e);
@@ -147,6 +149,13 @@ pub fn run() {
                     break;
                 }
             }
+        }
+        if !rotated {
+            eprintln!(
+                "  No software DKP key found to rotate in {}.",
+                SOFTWARE_KEY_DIR
+            );
+            return;
         }
     }
 
@@ -173,13 +182,25 @@ pub fn run() {
     keys.push(new_entry);
 
     // Step 4: Write entire history array
-    match fs::write(METADATA_PATH, serde_json::to_string_pretty(&keys).unwrap()) {
-        Ok(_) => {
-            println!("\n✅ Rotation complete:");
-            println!("  {} (v{}) → Deprecated", current_key_id, current_version);
-            println!("  {} (v{}) → Active", new_key_id_hex, new_version);
-            println!("\n  Restart guardian daemon to use the new key.");
+    let serialized = match serde_json::to_string_pretty(&keys) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("❌ Failed to serialize DKP metadata: {}", e);
+            return;
         }
-        Err(e) => eprintln!("Failed to write metadata: {}", e),
+    };
+    let tmp_path = format!("{}.tmp", METADATA_PATH);
+    if let Err(e) = fs::write(&tmp_path, &serialized) {
+        eprintln!("❌ Failed to write temp metadata: {}", e);
+        return;
     }
+    if let Err(e) = fs::rename(&tmp_path, METADATA_PATH) {
+        eprintln!("❌ Failed to atomically replace metadata: {}", e);
+        return;
+    }
+
+    println!("\n✅ Rotation complete:");
+    println!("  {} (v{}) → Deprecated", current_key_id, current_version);
+    println!("  {} (v{}) → Active", new_key_id_hex, new_version);
+    println!("\n  Restart guardian daemon to use the new key.");
 }

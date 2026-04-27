@@ -27,9 +27,16 @@ pub fn create_transport(iface: &InterfaceInfo) -> Arc<dyn Transport> {
 
 /// Auto-detect all interfaces and create transports for usable ones.
 pub fn auto_create_transports() -> CotResult<Vec<Arc<dyn Transport>>> {
+    use crate::runtime_gates::GATES;
     let interfaces = InterfaceDetector::detect_usable()?;
     let transports: Vec<Arc<dyn Transport>> = interfaces
         .iter()
+        .filter(|iface| match iface.transport_type {
+            TransportType::Bluetooth if GATES.disable_cot_bluetooth => false,
+            TransportType::Cellular if GATES.disable_cot_cellular => false,
+            TransportType::Satellite if GATES.disable_cot_satellite => false,
+            _ => true,
+        })
         .map(|iface| create_transport(iface))
         .collect();
     Ok(transports)

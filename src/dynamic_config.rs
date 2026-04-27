@@ -1,22 +1,22 @@
-// src/dynamic_config.rs - VERSION 2
+// src/dynamic_config.rs — VERSION 2
 // ================================================================
 // CHANGES FROM V1:
 //
-// In V1, main.rs took peer IPs from config for broadcast:
+// V1 mein main.rs broadcast ke liye peer IPs config se leta tha:
 //   let peer_ips: Vec<String> = peers.iter().map(|p| p.ip.clone()).collect();
 //   broadcast_own_config_to_peers(&my_config, &peer_ips).await;
 //
-// Problem: If config contains 127.0.0.1, broadcast fails.
+// Problem: Agar config mein 127.0.0.1 hai to broadcast fail hoga.
 //
 // V2 FIX:
-//   - Remove (or keep disabled) startup broadcast from main.rs.
-//   - Let p2p_discovery.rs handle config sync when a real peer is found.
-//   - No functional change is required in this file; main.rs integration was simplified.
-//   - For manual broadcast, use broadcast_to_real_ip() with a known real IP
-//     instead of reading peer targets from config.
+//   - main.rs se startup broadcast HATA DO (ya disabled rakho)
+//   - p2p_discovery.rs hi config sync karta hai jab real peer milta hai
+//   - is file mein koi change nahi — sirf main.rs integration simplify hua
+//   - Agar manual broadcast karna ho to: broadcast_to_real_ip() use karo
+//     jo seedha ek known real IP par bhejta hai (config se nahi)
 // ================================================================
-use crate::config_loader::load_config;
 
+use crate::config_loader::load_config;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
@@ -43,59 +43,113 @@ pub async fn overlay_is_reachable() -> bool {
     reachable_lighthouse_name().await.is_some()
 }
 
+fn host_from_endpoint(endpoint: &str) -> Option<String> {
+    endpoint
+        .rsplit_once(':')
+        .map(|(host, _)| host.to_string())
+        .filter(|h| !h.is_empty())
+}
+
+async fn tcp_port_open(addr: &str) -> bool {
+    tokio::time::timeout(Duration::from_secs(2), TcpStream::connect(addr))
+        .await
+        .map(|r| r.is_ok())
+        .unwrap_or(false)
+}
+
+async fn lighthouse_runtime_reachable(
+    overlay_ip: &str,
+    physical_endpoint: &str,
+    registry_port: u16,
+) -> bool {
+    let mut candidates = Vec::new();
+    if !overlay_ip.is_empty() {
+        candidates.push(format!("{}:{}", overlay_ip, registry_port));
+    }
+    if let Some(host) = host_from_endpoint(physical_endpoint) {
+        candidates.push(format!("{}:{}", host, registry_port));
+    }
+
+    for addr in candidates {
+        if tcp_port_open(&addr).await {
+            return true;
+        }
+    }
+    false
+}
+
 pub async fn reachable_lighthouse_name() -> Option<String> {
     use crate::nebula::lighthouse::LighthouseRegistry;
-    use crate::nebula::overlay_registry::OverlayRegistry;
-    use crate::nebula::registry_sync::{
-        LIGHTHOUSE_REGISTRY_PATH, REGISTRY_PATH, REGISTRY_SYNC_PORT,
-    };
+    use crate::nebula::registry_sync::{LIGHTHOUSE_REGISTRY_PATH, REGISTRY_SYNC_PORT};
 
-    let local_node_id = std::env::args().nth(1).unwrap_or_else(|| "nodeA".into());
-    let local_is_lh = local_node_id == "nodeA"
-        || std::path::Path::new("/var/lib/sgx-guardian/nebula/am_lighthouse").exists();
-
-    // First preference: active Lighthouse from lighthouse_registry.json,
-    // with deterministic ordering: primary first, then secondaries.
-    if let Ok(lh_reg) = LighthouseRegistry::load(LIGHTHOUSE_REGISTRY_PATH) {
-        let mut candidates = lh_reg.active().into_iter().cloned().collect::<Vec<_>>();
+    // Runtime mode: probe all lighthouse-role entries and refresh `is_active`
+    // based on live reachability, then return the best reachable candidate.
+    if let Ok(mut lh_reg) = LighthouseRegistry::load(LIGHTHOUSE_REGISTRY_PATH) {
+        let mut candidates = lh_reg
+            .lighthouses
+            .iter()
+            .filter(|l| l.is_lighthouse)
+            .cloned()
+            .collect::<Vec<_>>();
         candidates.sort_by(|a, b| {
             b.is_primary
                 .cmp(&a.is_primary)
+                .then_with(|| b.is_active.cmp(&a.is_active))
                 .then_with(|| a.node_name.cmp(&b.node_name))
         });
 
+        let old_primary = lh_reg.primary().map(|p| p.node_name.clone());
+        let mut changed = false;
+        let mut reachable_name: Option<String> = None;
+
         for lh in candidates {
-            let addr = format!("{}:{}", lh.overlay_ip, REGISTRY_SYNC_PORT);
-            let ok = tokio::time::timeout(Duration::from_secs(2), TcpStream::connect(&addr))
-                .await
-                .map(|r| r.is_ok())
-                .unwrap_or(false);
-            if ok {
-                return Some(lh.node_name);
+            let ok = lighthouse_runtime_reachable(
+                &lh.overlay_ip,
+                &lh.physical_endpoint,
+                REGISTRY_SYNC_PORT,
+            )
+            .await;
+
+            if ok && reachable_name.is_none() {
+                reachable_name = Some(lh.node_name.clone());
+            }
+
+            if let Some(entry) = lh_reg
+                .lighthouses
+                .iter_mut()
+                .find(|entry| entry.node_name == lh.node_name && entry.is_lighthouse)
+            {
+                if entry.is_active != ok {
+                    entry.is_active = ok;
+                    changed = true;
+                }
             }
         }
+
+        if let Some(ref reachable) = reachable_name {
+            if lh_reg.set_primary_lighthouse(reachable) {
+                changed = true;
+                if old_primary.as_deref() != Some(reachable.as_str()) {
+                    if let Some(prev) = old_primary {
+                        println!(
+                            "🔁 Lighthouse failover: {} -> {} (new primary)",
+                            prev, reachable
+                        );
+                    } else {
+                        println!("🔁 Lighthouse failover: {} promoted to primary", reachable);
+                    }
+                }
+            }
+        }
+
+        if changed {
+            let _ = lh_reg.save(LIGHTHOUSE_REGISTRY_PATH);
+        }
+
+        return reachable_name;
     }
 
-    // Fallback: nodeA from overlay registry.
-    let reg = match OverlayRegistry::load(REGISTRY_PATH) {
-        Ok(r) => r,
-        Err(_) => return None,
-    };
-    let ca_overlay = reg.get_ip("nodeA")?;
-    let addr = format!("{}:{}", ca_overlay, REGISTRY_SYNC_PORT);
-    let ok = tokio::time::timeout(Duration::from_secs(2), TcpStream::connect(&addr))
-        .await
-        .map(|r| r.is_ok())
-        .unwrap_or(false);
-    if ok {
-        Some("nodeA".to_string())
-    } else if local_is_lh {
-        // Secondary LH fallback: if we are promoted, we can act as control plane
-        // even when nodeA is down.
-        Some(local_node_id)
-    } else {
-        None
-    }
+    None
 }
 
 // ── Wire format ─────────────────────────────────────────────────
@@ -110,74 +164,29 @@ pub struct NodeConfigBroadcast {
 
 // ── STEP 1: IP Detection ────────────────────────────────────────
 pub fn detect_local_lan_ip() -> Result<Ipv4Addr> {
-    use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
+    let candidates = crate::network_selector::detect_candidates()
+        .map_err(|e| anyhow::anyhow!("Network scan failed: {}", e))?;
 
-    let interfaces =
-        NetworkInterface::show().map_err(|e| anyhow::anyhow!("Network scan failed: {}", e))?;
+    let best = crate::network_selector::best_candidate(&candidates)
+        .ok_or_else(|| anyhow::anyhow!("No LAN IP found"))?;
 
-    let mut candidates: Vec<(u8, String, Ipv4Addr)> = Vec::new();
+    println!(
+        "🌐 Best network selected: iface={} transport={} ip={} score={} metric={} latency~{}ms bw~{}kbps live={} stable={}/{}",
+        best.interface_name,
+        best.transport_type,
+        best.ip,
+        best.quality_score,
+        best.route_metric
+            .map(|m| m.to_string())
+            .unwrap_or_else(|| "n/a".to_string()),
+        best.observed_latency_ms,
+        best.observed_bandwidth_kbps,
+        best.using_live_metrics,
+        best.consecutive_successes,
+        best.consecutive_failures
+    );
 
-    for iface in interfaces {
-        if iface.name.starts_with("lo")
-            || is_virtual_interface(&iface.name)
-            || iface.name.starts_with("nebula")
-            || iface.name.starts_with("docker")
-            || iface.name.starts_with("defined")
-            || iface.name.starts_with("armia")
-        {
-            continue;
-        }
-
-        for addr in iface.addr {
-            if let Addr::V4(v4) = addr {
-                let ip = v4.ip;
-                if !is_routable_ip(&ip.to_string()) {
-                    continue;
-                }
-
-                // NODE IDENTITY priority — how other nodes find us.
-                // WiFi/Ethernet FIRST because peers on the LAN can reach us directly.
-                // Cellular LAST because it's behind carrier NAT — peers on our
-                // WiFi LAN cannot connect to our cellular IP.
-                //
-                // NOTE: This does NOT affect CoT transport priority (types.rs).
-                // CoT can still prefer cellular for data once the overlay is up.
-                let priority = if iface.name.starts_with("eth") || iface.name.starts_with("ens") {
-                    0 // Wired Ethernet — most stable
-                } else if iface.name == "wlan0" {
-                    1 // Primary WiFi — the LAN peers use
-                } else if iface.name.starts_with("wlan") {
-                    2 // Secondary WiFi
-                } else if iface.name.starts_with("wwan") || iface.name.starts_with("rmnet") {
-                    100 // Cellular — behind carrier NAT, NOT reachable by LAN peers
-                } else {
-                    50 // Unknown
-                };
-
-                candidates.push((priority, iface.name.clone(), ip));
-            }
-        }
-    }
-
-    candidates.sort_by(|(pa, na, _), (pb, nb, _)| pa.cmp(pb).then_with(|| na.cmp(nb)));
-    candidates
-        .into_iter()
-        .next()
-        .map(|(_, _, ip)| ip)
-        .ok_or_else(|| anyhow::anyhow!("No LAN IP found"))
-}
-
-fn is_virtual_interface(name: &str) -> bool {
-    let n = name.to_lowercase();
-    n.starts_with("docker")
-        || n.starts_with("veth")
-        || n.starts_with("br-")
-        || n.starts_with("virbr")
-        || n.starts_with("vnet")
-        || n.starts_with("flannel")
-        || n.starts_with("cni")
-        || n.starts_with("cali")
-        || n == "docker0"
+    Ok(best.ip)
 }
 
 // ── STEP 2: Config File Update ──────────────────────────────────
@@ -392,20 +401,17 @@ pub async fn start_ip_monitor(
 }
 
 pub fn update_peer_config(node_id: &str, hostname: &str, ip: &str, port: u16, public_key: &str) {
-    // SECURITY: Sanitize node_id before using as filename — peers are untrusted.
-    // Reject anything that isn't alphanumeric / dash / underscore.
     if node_id.is_empty()
         || !node_id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
         eprintln!(
-            "⚠️ update_peer_config: rejected invalid node_id '{}' (path traversal protection)",
+            "⚠️ update_peer_config: rejected invalid node_id '{}'",
             node_id
         );
         return;
     }
-
     let path = format!("/etc/sgx-guardian/config/{}.yaml", node_id);
 
     if let Ok(existing) = std::fs::read_to_string(&path) {
@@ -452,12 +458,12 @@ pub fn update_peer_config(node_id: &str, hostname: &str, ip: &str, port: u16, pu
             result.push('\n');
         }
         if result == existing {
-            println!("Config unchanged (field-level): {} -> ip={}", node_id, ip);
+            tracing::debug!("Config unchanged (field-level): {} -> ip={}", node_id, ip);
             return;
         }
 
         match std::fs::write(&path, &result) {
-            Ok(_) => println!("Config updated (field-level): {} -> ip={}", node_id, ip),
+            Ok(_) => tracing::debug!("Config updated (field-level): {} -> ip={}", node_id, ip),
             Err(e) => eprintln!("Config write failed: {} -> {}", path, e),
         }
         return;

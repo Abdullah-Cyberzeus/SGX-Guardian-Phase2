@@ -10,14 +10,17 @@ fn make_temp_key_path(name: &str) -> PathBuf {
 }
 
 #[test]
-fn test_load_or_generate_fails_with_corrupted_key() {
+fn test_load_or_generate_recovers_from_corrupted_key() {
     // Create corrupted PKCS#8 file
     let path = make_temp_key_path("corrupt");
     fs::write(&path, b"this_is_not_a_valid_pkcs8").unwrap();
 
-    // Should fail to load
+    // Should recover by quarantining and regenerating.
     let result = KeyManager::load_or_generate(path.to_str().unwrap());
-    assert!(result.is_err(), "Corrupted key file should cause failure");
+    assert!(
+        result.is_ok(),
+        "Corrupted key file should be quarantined and regenerated"
+    );
 
     let _ = fs::remove_file(path);
 }

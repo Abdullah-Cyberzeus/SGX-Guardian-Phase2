@@ -101,14 +101,25 @@ pub fn run(args: DkpRevokeArgs) {
     keys[target_idx]["revoked_at"] = serde_json::json!(Utc::now().to_rfc3339());
     keys[target_idx]["revoke_reason"] = serde_json::json!(args.reason);
 
-    // Write updated history
-    match fs::write(METADATA_PATH, serde_json::to_string_pretty(&keys).unwrap()) {
-        Ok(_) => {
-            println!("✅ Key v{} revoked.", args.version);
-            println!("   Reason: {}", args.reason);
-            println!("   Revocation is permanent. Key cannot be un-revoked.");
-            println!("   Verification of old signatures available for 30-day grace period.");
+    let serialized = match serde_json::to_string_pretty(&keys) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("❌ Failed to serialize DKP metadata: {}", e);
+            return;
         }
-        Err(e) => eprintln!("Failed to write metadata: {}", e),
+    };
+    let tmp_path = format!("{}.tmp", METADATA_PATH);
+    if let Err(e) = fs::write(&tmp_path, &serialized) {
+        eprintln!("❌ Failed to write temp metadata: {}", e);
+        return;
     }
+    if let Err(e) = fs::rename(&tmp_path, METADATA_PATH) {
+        eprintln!("❌ Failed to atomically replace metadata: {}", e);
+        return;
+    }
+
+    println!("✅ Key v{} revoked.", args.version);
+    println!("   Reason: {}", args.reason);
+    println!("   Revocation is permanent. Key cannot be un-revoked.");
+    println!("   Verification of old signatures available for 30-day grace period.");
 }
