@@ -32,7 +32,7 @@ impl LinkMonitor {
     }
 
     pub fn start(self: Arc<Self>) {
-        println!("📊 Link monitor: started (probe interval=10s)");
+        // println!("📊 Link monitor: started (probe interval=10s)");
         tokio::spawn(async move {
             loop {
                 self.probe_once().await;
@@ -86,15 +86,15 @@ impl LinkMonitor {
             entry.last_probed = chrono::Utc::now().timestamp();
 
             if entry.is_up {
-                println!(
-                    "📊 Link monitor: {} → {} up (latency={}ms, bw={}kbps)",
-                    iface, tt, entry.latency_ms, entry.bandwidth_kbps
-                );
+                // println!(
+                //     "📊 Link monitor: {} → {} up (latency={}ms, bw={}kbps)",
+                //     iface, tt, entry.latency_ms, entry.bandwidth_kbps
+                // );
             } else {
-                println!(
-                    "📊 Link monitor: {} → {} down (consecutive_failures={})",
-                    iface, tt, entry.consecutive_failures
-                );
+                // println!(
+                //     "📊 Link monitor: {} → {} down (consecutive_failures={})",
+                //     iface, tt, entry.consecutive_failures
+                // );
             }
         }
 

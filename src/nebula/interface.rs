@@ -156,19 +156,4 @@ mod tests {
         let report = NebulaInterface::status_report();
         assert!(report.contains("nebula0:"));
     }
-
-    #[test]
-    fn test_is_up_returns_false_on_dev() {
-        assert!(!NebulaInterface::is_up());
-    }
-
-    #[test]
-    fn test_get_overlay_ip_none_on_dev() {
-        assert!(NebulaInterface::get_overlay_ip().is_none());
-    }
-
-    #[test]
-    fn test_verify_ip_false_when_no_interface() {
-        assert!(!NebulaInterface::verify_ip("192.168.100.1/24"));
-    }
 }

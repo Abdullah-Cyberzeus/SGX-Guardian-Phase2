@@ -78,7 +78,18 @@ pub struct BootStatus {
 }
 
 pub async fn boot_status(State(s): State<Arc<AppState>>) -> Result<Json<BootStatus>, ApiError> {
-    let mut entries = tokio::fs::read_dir(&s.boot_dir).await.map_err(|_| {
+    let boot_dir = std::path::Path::new(&s.boot_dir);
+    if !boot_dir.is_absolute()
+        || boot_dir
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(ApiError::BadRequest("invalid boot status directory".into()));
+    }
+    let boot_dir = tokio::fs::canonicalize(boot_dir)
+        .await
+        .map_err(|_| ApiError::NotFound("boot directory missing".into()))?;
+    let mut entries = tokio::fs::read_dir(&boot_dir).await.map_err(|_| {
         ApiError::NotFound("boot status directory missing - daemon not started?".into())
     })?;
     let mut selected: Option<std::path::PathBuf> = None;

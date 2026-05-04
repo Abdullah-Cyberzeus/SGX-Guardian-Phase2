@@ -412,13 +412,13 @@ firewall:
         drop(file);
         fs::rename(&tmp_path, &config_path)?;
 
-        let endpoint_label = lh_registry
+        let _endpoint_label = lh_registry
             .primary_physical_endpoint()
             .unwrap_or_else(|| "self".to_string());
-        println!(
-            "✅ Nebula config written: {} → {} (tun: nebula0, lighthouse_lan: {})",
-            node_name, overlay_ip, endpoint_label
-        );
+        // println!(
+        //     "✅ Nebula config written: {} → {} (tun: nebula0, lighthouse_lan: {})",
+        //     node_name, overlay_ip, _endpoint_label
+        // );
         Ok(())
     }
 

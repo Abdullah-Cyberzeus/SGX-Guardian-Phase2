@@ -18,6 +18,7 @@ pub mod metrics_server;
 pub mod nebula;
 pub mod p2p_discovery;
 pub mod policy;
+pub mod policy_authority;
 pub mod policy_manager;
 pub mod policy_state;
 pub mod runtime_gates;

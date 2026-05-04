@@ -28,6 +28,7 @@ const ATTEST_ATTEMPT_THROTTLE_SECS: u64 = 30;
 const MAX_ATTEST_EVIDENCE_BYTES: u32 = 256 * 1024;
 static LIGHTHOUSE_WARNING_PRINTED: AtomicBool = AtomicBool::new(false);
 static OVERLAY_WAIT_LOGGED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+static LAST_ATTEST_REQUEST_LOGGED: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 const DEFAULT_ATTEST_POLICY_YAML: &str = r#"---
 policy_id: "123e4567-e89b-12d3-a456-426614174000"
 version: "1.0.0"
@@ -119,6 +120,41 @@ fn write_trusted_peer(peer_id: &str, ip: &str) {
             "⚠️ Failed to serialize trusted peer list for trusted_peers_{}.json",
             node
         );
+    }
+    merge_parent_peer_file();
+}
+
+fn remove_trusted_peer(peer_id: &str) {
+    let node = std::env::args().nth(1).unwrap_or("nodeX".into());
+    let prod_file = format!("/var/log/sgx-guardian/trusted_peers_{}.json", node);
+    let dev_file = format!(
+        "{}/logs/trusted_peers_{}.json",
+        std::env::var("SGX_GUARDIAN_HOME").unwrap_or_else(|_| "/var/lib/sgx-guardian".into()),
+        node
+    );
+
+    let mut data = Vec::<TrustedPeer>::new();
+    let existing = fs::read_to_string(&prod_file).or_else(|_| fs::read_to_string(&dev_file));
+    if let Ok(existing) = existing {
+        if let Ok(parsed) = serde_json::from_str::<Vec<TrustedPeer>>(&existing) {
+            data = parsed;
+        }
+    }
+
+    let before = data.len();
+    data.retain(|p| p.peer_id != peer_id);
+    let removed = before.saturating_sub(data.len());
+
+    if removed > 0 {
+        if let Ok(json) = serde_json::to_string_pretty(&data) {
+            let _ = fs::write(&prod_file, &json);
+            let _ = fs::create_dir_all("logs");
+            let _ = fs::write(&dev_file, &json);
+            println!(
+                "🗑️  Removed {} from trusted_peers (attestation failed)",
+                peer_id
+            );
+        }
     }
     merge_parent_peer_file();
 }
@@ -484,6 +520,54 @@ fn should_attempt_persisted_peer(
     Some((ip, port))
 }
 
+fn build_evidence_signing_message(
+    nonce: &str,
+    policy_digest: &str,
+    baseline_status: Option<&BaselineStatus>,
+) -> Vec<u8> {
+    let mut msg = Vec::new();
+    msg.extend_from_slice(nonce.as_bytes());
+    msg.extend_from_slice(policy_digest.as_bytes());
+    if let Some(bs) = baseline_status {
+        msg.extend_from_slice(b"|");
+        if let Ok(json) = serde_json::to_string(bs) {
+            msg.extend_from_slice(json.as_bytes());
+        }
+    }
+    msg
+}
+
+fn normalize_p256_pubkey(mut key: Vec<u8>) -> Option<Vec<u8>> {
+    if key.len() == 91 {
+        key = key[26..].to_vec();
+    }
+    if key.len() == 65 {
+        Some(key)
+    } else {
+        None
+    }
+}
+
+fn local_dkp_pubkey_candidates(km: &KeyManager) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+
+    if let Ok(k) = km.pubkey_der() {
+        if let Some(raw) = normalize_p256_pubkey(k) {
+            out.push(raw);
+        }
+    }
+
+    if let Ok(der) = std::fs::read("/var/lib/sgx-guardian/keys/dkp_pub.der") {
+        if let Some(raw) = normalize_p256_pubkey(der) {
+            out.push(raw);
+        }
+    }
+
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// Main service responsible for generating, verifying,
 /// and coordinating SG-X attestation workflows.
 pub struct AttestationService;
@@ -491,6 +575,7 @@ pub struct AttestationService;
 /// exchanged during the attestation handshake.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttestationEvidence {
+    pub node_id: String,
     pub nonce: String,
     pub policy_digest: String,
     pub signature: String,
@@ -501,6 +586,18 @@ pub struct AttestationEvidence {
     /// DKP key version used for signing
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub key_version: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub baseline_status: Option<BaselineStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BaselineStatus {
+    /// "ALL_MATCH" | "MISMATCH" | "ABSENT" | "BAD_SIGNATURE"
+    pub state: String,
+    /// Indices of PCRs that mismatched (empty when state == "ALL_MATCH")
+    pub mismatched_pcrs: Vec<usize>,
+    /// Hex of the local composite digest at evidence-creation time
+    pub composite_digest: String,
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -821,6 +918,57 @@ pub fn save_verification_result(result: &QuoteVerificationResult, peer_node: &st
     }
 }
 
+fn compute_local_baseline_status(node_id: &str, km: &KeyManager) -> BaselineStatus {
+    use crate::secure_element::pcr::{PcrBaseline, PcrSnapshot};
+
+    let snap_path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node_id);
+    let bl_path = format!("/etc/sgx-guardian/pcr_{}_baseline.json", node_id);
+
+    let snap = match PcrSnapshot::load(&snap_path) {
+        Ok(s) => s,
+        Err(_) => {
+            return BaselineStatus {
+                state: "ABSENT".into(),
+                mismatched_pcrs: vec![],
+                composite_digest: String::new(),
+            };
+        }
+    };
+
+    let baseline = match PcrBaseline::load(&bl_path) {
+        Ok(b) => b,
+        Err(_) => {
+            return BaselineStatus {
+                state: "ABSENT".into(),
+                mismatched_pcrs: vec![],
+                composite_digest: snap.composite_digest.clone(),
+            };
+        }
+    };
+
+    let pubkeys = local_dkp_pubkey_candidates(km);
+    let sig_ok = pubkeys.iter().any(|pk| baseline.verify_signature(pk));
+    if !sig_ok {
+        return BaselineStatus {
+            state: "BAD_SIGNATURE".into(),
+            mismatched_pcrs: vec![],
+            composite_digest: snap.composite_digest.clone(),
+        };
+    }
+
+    let mismatched = snap.compare_baseline(&baseline).unwrap_or_default();
+    let state = if mismatched.is_empty() {
+        "ALL_MATCH"
+    } else {
+        "MISMATCH"
+    };
+    BaselineStatus {
+        state: state.into(),
+        mismatched_pcrs: mismatched,
+        composite_digest: snap.composite_digest.clone(),
+    }
+}
+
 impl AttestationService {
     /// Creates signed attestation evidence by hashing the policy file,
     /// generating a random nonce, and signing the combined message.
@@ -828,28 +976,31 @@ impl AttestationService {
         km: &KeyManager,
         policy_yaml: &str,
     ) -> Result<AttestationEvidence> {
+        let node_id = std::env::args().nth(1).unwrap_or_else(|| "nodeA".into());
         let mut nonce_bytes = [0u8; 16];
         let rng = SystemRandom::new();
         rng.fill(&mut nonce_bytes)
             .map_err(|_| anyhow::anyhow!("Failed to generate attestation nonce"))?;
         let nonce = hex::encode(nonce_bytes);
         let policy_digest = hex::encode(Sha256::digest(policy_yaml.as_bytes()));
-        let msg = format!("{}{}", nonce, policy_digest);
-        let sig_bytes = km.sign(msg.as_bytes())?;
+        let baseline_status = Some(compute_local_baseline_status(&node_id, km));
+        let msg = build_evidence_signing_message(&nonce, &policy_digest, baseline_status.as_ref());
+        let sig_bytes = km.sign(&msg)?;
         let signature_b64 = general_purpose::STANDARD.encode(sig_bytes);
         let pubkey_b64 = base64::engine::general_purpose::STANDARD.encode(km.pubkey_der()?);
         // Load PCR snapshot if available
-        let node_id_pcr = std::env::args().nth(1).unwrap_or_else(|| "nodeA".into());
-        let pcr_load_path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node_id_pcr);
+        let pcr_load_path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node_id);
         let pcr_values = crate::secure_element::pcr::PcrSnapshot::load(&pcr_load_path).ok();
         let key_version = Some(crate::secure_element::pcr::read_dkp_key_version());
         Ok(AttestationEvidence {
+            node_id,
             nonce,
             policy_digest,
             signature: signature_b64,
             pubkey_der_b64: pubkey_b64,
             pcr_values,
             key_version,
+            baseline_status,
         })
     }
     /// Verifies incoming attestation evidence by recomputing the policy digest,
@@ -896,9 +1047,11 @@ impl AttestationService {
             }
         }
         // Step 4: Build same message bytes as during signing
-        let mut msg = Vec::new();
-        msg.extend_from_slice(ev.nonce.as_bytes());
-        msg.extend_from_slice(ev.policy_digest.as_bytes());
+        let msg = build_evidence_signing_message(
+            &ev.nonce,
+            &ev.policy_digest,
+            ev.baseline_status.as_ref(),
+        );
         // Step 5: Decode Base64 safely
         let sig_bytes = match general_purpose::STANDARD.decode(&ev.signature) {
             Ok(b) => b,
@@ -945,6 +1098,46 @@ impl AttestationService {
         // Step 7: Verify signature
         match peer_key.verify(&msg, &sig_bytes) {
             Ok(_) => {
+                // Step 8: enforce prover's self-baseline check
+                if let Some(bs) = &ev.baseline_status {
+                    match bs.state.as_str() {
+                        "ALL_MATCH" => {}
+                        "MISMATCH" => {
+                            eprintln!(
+                                "❌ Attestation rejected: prover {} reports PCR mismatch on PCRs {:?}",
+                                ev.node_id, bs.mismatched_pcrs
+                            );
+                            return Ok(false);
+                        }
+                        "BAD_SIGNATURE" => {
+                            eprintln!(
+                                "❌ Attestation rejected: prover {} baseline has bad signature",
+                                ev.node_id
+                            );
+                            return Ok(false);
+                        }
+                        "ABSENT" => {
+                            eprintln!(
+                                "⚠️ Prover {} has no signed baseline; treating as untrusted",
+                                ev.node_id
+                            );
+                            return Ok(false);
+                        }
+                        other => {
+                            eprintln!(
+                                "❌ Attestation rejected: prover {} unknown baseline state '{}'",
+                                ev.node_id, other
+                            );
+                            return Ok(false);
+                        }
+                    }
+                } else {
+                    eprintln!(
+                        "⚠️ Prover did not include baseline_status (older binary); \
+                         accepting only because legacy compatibility is still on. \
+                         Upgrade all peers to enforce."
+                    );
+                }
                 println!("✅ Attestation verified successfully.");
                 Ok(true)
             }
@@ -1001,7 +1194,7 @@ impl AttestationService {
     pub async fn mutual_attest(peer_ip: String, peer_port: u16, km: &KeyManager) -> Result<bool> {
         use tokio::net::TcpStream;
         let addr = format!("{}:{}", peer_ip, peer_port);
-        println!("Attempting mutual attestation with overlay {}", addr);
+        // println!("Attempting mutual attestation with overlay {}", addr);
         let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
 
         log_audit(
@@ -1085,6 +1278,7 @@ impl AttestationService {
             );
 
             write_last_attestation(&addr, &peer_ev.policy_digest, "failed");
+            remove_trusted_peer(&addr);
             println!("❌ Peer attestation verification failed for {}", addr);
             return Ok(false);
         }
@@ -1156,7 +1350,7 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
                     continue;
                 };
                 let peer_target = format!("{}:{}", ip, port);
-                println!("Verifying persisted peer {} on startup...", peer_target);
+                // println!("Verifying persisted peer {} on startup...", peer_target);
                 let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
                 let key_path = format!("{}/device_{}.key", ATTESTATION_KEY_DIR, node_id);
                 match KeyManager::load_or_generate(&key_path) {
@@ -1175,10 +1369,23 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
                             continue;
                         }
 
-                        if let Ok(true) =
-                            AttestationService::mutual_attest(target_ip, target_port, &km).await
+                        match AttestationService::mutual_attest(target_ip.clone(), target_port, &km)
+                            .await
                         {
-                            println!("✅ Persisted peer {} re-verified.", peer_target);
+                            Ok(true) => println!("✅ Persisted peer {} re-verified.", peer_target),
+                            Ok(false) => {
+                                eprintln!(
+                                    "❌ Persisted peer {} FAILED re-verification — removing from trust",
+                                    peer_target
+                                );
+                                remove_trusted_peer(&peer_target);
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "⚠️ Persisted peer {} re-verification error (transient): {:?}",
+                                    peer_target, e
+                                );
+                            }
                         }
                     }
                     Err(e) => eprintln!("⚠️ Failed KeyManager load for {}: {:?}", peer_target, e),
@@ -1241,16 +1448,32 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
                                     continue;
                                 }
 
-                                if let Ok(true) = AttestationService::mutual_attest(
+                                match AttestationService::mutual_attest(
                                     target_ip.clone(),
                                     target_port,
                                     &km,
                                 )
                                 .await
                                 {
-                                    println!("✅ Peer {} re-attested successfully.", peer_target);
-                                } else {
-                                    eprintln!("⚠️ Re-attestation failed for {}", peer_target);
+                                    Ok(true) => {
+                                        println!(
+                                            "✅ Peer {} re-attested successfully.",
+                                            peer_target
+                                        );
+                                    }
+                                    Ok(false) => {
+                                        eprintln!(
+                                            "❌ Persisted peer {} FAILED re-verification — removing from trust",
+                                            peer_target
+                                        );
+                                        remove_trusted_peer(&peer_target);
+                                    }
+                                    Err(e) => {
+                                        eprintln!(
+                                            "⚠️ Persisted peer {} re-verification error (transient): {:?}",
+                                            peer_target, e
+                                        );
+                                    }
                                 }
                             }
                             Err(e) => eprintln!("⚠️ KeyManager load failed: {:?}", e),
@@ -1408,7 +1631,22 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
                 // The old IP-based guard was causing "Broken pipe" errors
                 // when peers shared the same nebula0 interface (same-machine tests)
                 // or when overlay IPs hadn't synced yet.
-                println!("📩 Received attestation request from {}", remote.ip());
+                let remote_ip = remote.ip().to_string();
+                let should_print_request = LAST_ATTEST_REQUEST_LOGGED
+                    .get_or_init(|| Mutex::new(None))
+                    .lock()
+                    .map(|mut last| {
+                        if last.as_deref() == Some(remote_ip.as_str()) {
+                            false
+                        } else {
+                            *last = Some(remote_ip.clone());
+                            true
+                        }
+                    })
+                    .unwrap_or(true);
+                if should_print_request {
+                    println!("📩 Received attestation request from {}", remote.ip());
+                }
                 let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
 
                 log_audit(
@@ -1437,41 +1675,50 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
                 let key_path = format!("{}/device_{}.key", ATTESTATION_KEY_DIR, node_id);
                 let km = KeyManager::load_or_generate(&key_path)?;
                 let policy = load_attestation_policy_material();
-                let verified = AttestationService::verify_signed_evidence(&incoming, &policy.yaml)?;
+                match AttestationService::verify_signed_evidence(&incoming, &policy.yaml) {
+                    Ok(true) => {
+                        println!("✅ Verified attestation from peer");
+                        let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
 
-                if verified {
-                    println!("✅ Verified attestation from peer");
-                    let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
-
-                    log_audit(
-                        &node_id,
-                        AuditCategory::Attestation,
-                        AuditSeverity::Info,
-                        AuditAction::Succeeded,
-                        &format!("Incoming attestation verified from {}", remote),
-                    );
-
-                    // Send our own evidence back
-                    let reply = AttestationService::create_signed_evidence(&km, &policy.yaml)?;
-                    if let Err(e) = write_evidence_framed(&mut socket, &reply).await {
-                        eprintln!(
-                            "⚠️ Failed to send attestation reply to {} : {:?}",
-                            remote, e
+                        log_audit(
+                            &node_id,
+                            AuditCategory::Attestation,
+                            AuditSeverity::Info,
+                            AuditAction::Succeeded,
+                            &format!("Incoming attestation verified from {}", remote),
                         );
-                    } else {
-                        println!("📤 Sent attestation reply to peer");
-                    }
-                } else {
-                    eprintln!("❌ Attestation verification failed for peer");
-                    let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
 
-                    log_audit(
-                        &node_id,
-                        AuditCategory::Attestation,
-                        AuditSeverity::Critical,
-                        AuditAction::Rejected,
-                        &format!("Incoming attestation rejected from {}", remote),
-                    );
+                        // Send our own evidence back
+                        let reply = AttestationService::create_signed_evidence(&km, &policy.yaml)?;
+                        if let Err(e) = write_evidence_framed(&mut socket, &reply).await {
+                            eprintln!(
+                                "⚠️ Failed to send attestation reply to {} : {:?}",
+                                remote, e
+                            );
+                        } else {
+                            println!("📤 Sent attestation reply to peer");
+                        }
+                    }
+                    Ok(false) | Err(_) => {
+                        let peer_addr = socket
+                            .peer_addr()
+                            .map(|a| a.to_string())
+                            .unwrap_or_default();
+                        eprintln!(
+                            "❌ Listener: rejecting incoming attestation from {} (PCR/signature failure)",
+                            peer_addr
+                        );
+                        remove_trusted_peer(&peer_addr);
+                        let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
+                        log_audit(
+                            &node_id,
+                            AuditCategory::Attestation,
+                            AuditSeverity::Critical,
+                            AuditAction::Rejected,
+                            &format!("Incoming attestation rejected from {}", remote),
+                        );
+                        return Ok(());
+                    }
                 }
             }
             Err(e) => {
@@ -1504,25 +1751,36 @@ mod tests {
         spki.extend_from_slice(&raw_pubkey);
 
         let policy_digest = hex::encode(Sha256::digest(policy.as_bytes()));
-        let msg = format!("{}{}", nonce, policy_digest);
+        let baseline_status = BaselineStatus {
+            state: "ALL_MATCH".into(),
+            mismatched_pcrs: vec![],
+            composite_digest: String::new(),
+        };
+        let msg = build_evidence_signing_message(nonce, &policy_digest, Some(&baseline_status));
 
-        let signature: Signature = signing_key.sign(msg.as_bytes());
+        let signature: Signature = signing_key.sign(&msg);
         let sig_der = signature.to_der();
 
         AttestationEvidence {
+            node_id: "nodeA".to_string(),
             nonce: nonce.to_string(),
             policy_digest,
             signature: general_purpose::STANDARD.encode(sig_der.as_bytes()),
             pubkey_der_b64: general_purpose::STANDARD.encode(spki),
             pcr_values: None,
             key_version: None,
+            baseline_status: Some(baseline_status),
         }
     }
 
     #[test]
     fn test_attestation_create_and_verify() {
         let policy = "allow: all";
-        let ev = make_test_evidence(policy, "00112233445566778899aabbccddeeff");
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::inline_create_verify");
+            hex::encode(&hash[..16])
+        };
+        let ev = make_test_evidence(policy, &nonce);
         assert!(AttestationService::verify_signed_evidence(&ev, policy).unwrap());
     }
 

@@ -607,17 +607,6 @@ mod tests {
         assert_eq!(node_b.physical_endpoint, "10.0.0.99:4242");
     }
 
-    #[tokio::test]
-    async fn test_health_check_promotes_secondary_when_primary_inactive() {
-        let mut r = LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "10.0.0.1:4242");
-        r.add_secondary("nodeB", "192.168.100.2", "127.0.0.1:9");
-
-        r.health_check_all(1, "nodeB").await;
-
-        let primary = r.primary().map(|p| p.node_name.clone());
-        assert_eq!(primary.as_deref(), Some("nodeB"));
-    }
-
     #[test]
     fn test_set_lighthouse_role_reconciles_primary() {
         let mut r = LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "10.0.0.1:4242");

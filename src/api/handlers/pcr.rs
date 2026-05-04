@@ -39,8 +39,28 @@ const PCR_NAMES: [&str; 5] = [
 ];
 
 pub async fn status(State(s): State<Arc<AppState>>) -> Result<Json<PcrStatus>, ApiError> {
-    let path = format!("{}/{}_current.json", s.pcr_dir, s.node_id);
-    let text = tokio::fs::read_to_string(&path)
+    if !s
+        .node_id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(ApiError::NotFound(
+            "no PCR snapshot - daemon not started?".into(),
+        ));
+    }
+    let base = std::path::Path::new(&s.pcr_dir)
+        .canonicalize()
+        .map_err(|_| ApiError::NotFound("no PCR snapshot - daemon not started?".into()))?;
+    let path = base.join(format!("{}_current.json", s.node_id));
+    let resolved = path
+        .canonicalize()
+        .map_err(|_| ApiError::NotFound("no PCR snapshot - daemon not started?".into()))?;
+    if !resolved.starts_with(&base) {
+        return Err(ApiError::NotFound(
+            "no PCR snapshot - daemon not started?".into(),
+        ));
+    }
+    let text = tokio::fs::read_to_string(&resolved)
         .await
         .map_err(|_| ApiError::NotFound("no PCR snapshot - daemon not started?".into()))?;
     let v: serde_json::Value = serde_json::from_str(&text)?;

@@ -18,6 +18,7 @@ use tonic::{Request, Response, Status};
 /// Base directory — the ONLY path we use.
 const NEBULA_BASE_DIR: &str = "/var/lib/sgx-guardian/nebula";
 const RELAY_REGISTRY_PATH: &str = "/var/lib/sgx-guardian/nebula/relay_registry.json";
+const PA_PUB_PATH: &str = "/etc/sgx-guardian/policies/pa_admin_pub.der";
 
 /// Poll interval for YAML approval check (seconds).
 const APPROVAL_POLL_SECS: u64 = 2;
@@ -53,6 +54,19 @@ struct CertRequestYaml {
 
 /// gRPC CertService implementation — registered on nodeA only.
 pub struct MyCertService;
+
+async fn read_pa_pubkey_or_warn() -> Vec<u8> {
+    match tokio::fs::read(PA_PUB_PATH).await {
+        Ok(b) if !b.is_empty() => b,
+        _ => {
+            eprintln!(
+                "⚠️ PA signing public key missing at {} — member node will not receive a separate trust anchor. Run `sgx-pa-cli policy-sign-and-deploy` on nodeA to generate it.",
+                PA_PUB_PATH
+            );
+            Vec::new()
+        }
+    }
+}
 
 fn cert_contains_overlay_ip(cert_path: &str, expected_ip_cidr: &str) -> bool {
     let output = std::process::Command::new("nebula-cert")
@@ -205,6 +219,7 @@ impl CertService for MyCertService {
                 let signed_policy_bytes = tokio::fs::read("/etc/sgx-guardian/policies/policy.sig")
                     .await
                     .unwrap_or_default();
+                let signing_pubkey_der = read_pa_pubkey_or_warn().await;
 
                 return Ok(Response::new(CertSignResponse {
                     status: "approved".into(),
@@ -218,6 +233,7 @@ impl CertService for MyCertService {
                     signed_policy_bytes,
                     assigned_relay,
                     relay_registry_json,
+                    signing_pubkey_der,
                 }));
             } else {
                 eprintln!(
@@ -356,6 +372,7 @@ impl CertService for MyCertService {
                     signed_policy_bytes: Vec::new(),
                     assigned_relay: false,
                     relay_registry_json: String::new(),
+                    signing_pubkey_der: Vec::new(),
                 }));
             }
 
@@ -551,6 +568,7 @@ impl CertService for MyCertService {
         let signed_policy_bytes = tokio::fs::read("/etc/sgx-guardian/policies/policy.sig")
             .await
             .unwrap_or_default();
+        let signing_pubkey_der = read_pa_pubkey_or_warn().await;
 
         println!("Certificate approved and signed for {}", node_id);
         // Remove YAML after successful signing
@@ -576,6 +594,7 @@ impl CertService for MyCertService {
             signed_policy_bytes,
             assigned_relay,
             relay_registry_json,
+            signing_pubkey_der,
         }))
     }
 }

@@ -230,6 +230,15 @@ pub fn selected_interface() -> Option<String> {
         .clone()
 }
 
+pub fn candidate_for_interface(iface: &str) -> Option<NetworkCandidate> {
+    let candidates = detect_candidates().ok()?;
+    let live_metrics = live_metrics_snapshot();
+    let candidate = candidates
+        .into_iter()
+        .find(|candidate| candidate.interface_name == iface)?;
+    Some(apply_live_metrics(candidate, live_metrics.get(iface)))
+}
+
 pub fn classify_transport(name: &str) -> Option<TransportType> {
     let lower = name.to_lowercase();
     if lower.starts_with("sat") || lower.starts_with("ppp") {

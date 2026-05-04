@@ -170,21 +170,21 @@ pub fn detect_local_lan_ip() -> Result<Ipv4Addr> {
     let best = crate::network_selector::best_candidate(&candidates)
         .ok_or_else(|| anyhow::anyhow!("No LAN IP found"))?;
 
-    println!(
-        "🌐 Best network selected: iface={} transport={} ip={} score={} metric={} latency~{}ms bw~{}kbps live={} stable={}/{}",
-        best.interface_name,
-        best.transport_type,
-        best.ip,
-        best.quality_score,
-        best.route_metric
-            .map(|m| m.to_string())
-            .unwrap_or_else(|| "n/a".to_string()),
-        best.observed_latency_ms,
-        best.observed_bandwidth_kbps,
-        best.using_live_metrics,
-        best.consecutive_successes,
-        best.consecutive_failures
-    );
+    // println!(
+    //     "🌐 Best network selected: iface={} transport={} ip={} score={} metric={} latency~{}ms bw~{}kbps live={} stable={}/{}",
+    //     best.interface_name,
+    //     best.transport_type,
+    //     best.ip,
+    //     best.quality_score,
+    //     best.route_metric
+    //         .map(|m| m.to_string())
+    //         .unwrap_or_else(|| "n/a".to_string()),
+    //     best.observed_latency_ms,
+    //     best.observed_bandwidth_kbps,
+    //     best.using_live_metrics,
+    //     best.consecutive_successes,
+    //     best.consecutive_failures
+    // );
 
     Ok(best.ip)
 }

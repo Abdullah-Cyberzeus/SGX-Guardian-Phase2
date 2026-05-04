@@ -60,14 +60,16 @@ impl NebulaDaemon {
     ///   3. Spawn the daemon.
     ///   4. Wait up to 20 s for nebula0 to appear.
     pub async fn start(config_path: &str) -> Result<(), Error> {
-        println!("🚀 Starting Nebula daemon (config: {})...", config_path);
+        // println!("🚀 Starting Nebula daemon (config: {})...", config_path);
 
         // 1. Kill stale instance
         Self::kill_existing_for_config(config_path).await;
 
         // 2. Validate config
         match Self::test_config(config_path) {
-            Ok(_) => println!("✅ Nebula config validated."),
+            Ok(_) => {
+                // println!("✅ Nebula config validated.");
+            }
             Err(e) => {
                 eprintln!(
                     "❌ Nebula config INVALID — fix errors before starting:\n{}",
@@ -78,20 +80,20 @@ impl NebulaDaemon {
         }
 
         // 3. Spawn daemon (stdout/stderr discarded via Stdio::null — check syslog for nebula logs)
-        let child = Command::new("nebula")
+        let _child = Command::new("nebula")
             .arg("-config")
             .arg(config_path)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()?;
 
-        println!("   Nebula daemon PID: {}", child.id());
+        // println!("   Nebula daemon PID: {}", _child.id());
 
         // 4. Wait for nebula0 to appear (up to 20 s)
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             if Self::interface_exists() {
-                println!("✅ nebula0 interface is UP.");
+                // println!("✅ nebula0 interface is UP.");
                 return Ok(());
             }
             if Instant::now() >= deadline {

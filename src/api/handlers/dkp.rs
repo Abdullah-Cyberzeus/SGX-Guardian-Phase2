@@ -1,6 +1,7 @@
 use crate::api::{error::ApiError, state::AppState};
 use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[derive(Serialize)]
@@ -32,8 +33,20 @@ pub struct DkpStatus {
 }
 
 pub async fn status(State(s): State<Arc<AppState>>) -> Result<Json<DkpStatus>, ApiError> {
-    let meta_path = format!("{}/dkp_metadata.json", s.keys_dir);
-    let pub_path = format!("{}/dkp_pub.der", s.keys_dir);
+    let base = std::path::Path::new(&s.keys_dir)
+        .canonicalize()
+        .map_err(|_| ApiError::NotFound("no DKP found - daemon not started?".into()))?;
+    let meta_path = base.join("dkp_metadata.json");
+    let pub_path = base.join("dkp_pub.der");
+    if meta_path
+        .canonicalize()
+        .map(|p| !p.starts_with(&base))
+        .unwrap_or(true)
+    {
+        return Err(ApiError::NotFound(
+            "no DKP found - daemon not started?".into(),
+        ));
+    }
     let text = tokio::fs::read_to_string(&meta_path)
         .await
         .map_err(|_| ApiError::NotFound("no DKP found - daemon not started?".into()))?;
@@ -86,7 +99,7 @@ pub async fn status(State(s): State<Arc<AppState>>) -> Result<Json<DkpStatus>, A
         .unwrap_or(false);
     let active_pub_size = tokio::fs::metadata(&pub_path).await.ok().map(|m| m.len());
     let active_pub_path = if active_pub_size.is_some() {
-        Some(pub_path)
+        Some(pub_path.to_string_lossy().to_string())
     } else {
         None
     };
@@ -123,12 +136,72 @@ pub struct ActionResponse {
     pub timestamp: String,
 }
 
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file()
+}
+
+fn find_in_path(bin: &str) -> Option<PathBuf> {
+    let path_var = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_var) {
+        let candidate = dir.join(bin);
+        if is_executable_file(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn resolve_pa_cli_path() -> Option<PathBuf> {
+    // 1) Respect explicit override if provided.
+    if let Ok(override_path) = std::env::var("SGX_PA_CLI_PATH") {
+        let p = PathBuf::from(override_path);
+        if is_executable_file(&p) {
+            return Some(p);
+        }
+    }
+
+    // 2) Search process PATH (works when service PATH is configured correctly).
+    if let Some(p) = find_in_path("sgx-pa-cli") {
+        return Some(p);
+    }
+
+    // 3) In local dev runs, sgx-pa-cli is commonly a sibling binary in target/{debug,release}.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let sibling = dir.join("sgx-pa-cli");
+            if is_executable_file(&sibling) {
+                return Some(sibling);
+            }
+        }
+    }
+
+    // 4) Fall back to common install locations used by packaging/deploy scripts.
+    [
+        "/usr/local/bin/sgx-pa-cli",
+        "/usr/bin/sgx-pa-cli",
+        "/bin/sgx-pa-cli",
+    ]
+    .iter()
+    .map(PathBuf::from)
+    .find(|p| is_executable_file(p))
+}
+
 pub async fn run_cli(args: &[&str]) -> Result<ActionResponse, ApiError> {
-    let out = tokio::process::Command::new("sgx-pa-cli")
+    let cli_path = resolve_pa_cli_path().ok_or_else(|| {
+        let path_env = std::env::var("PATH").unwrap_or_else(|_| "<unset>".to_string());
+        ApiError::Internal(format!(
+            "sgx-pa-cli not found. Set SGX_PA_CLI_PATH or ensure binary exists in PATH. PATH={}",
+            path_env
+        ))
+    })?;
+
+    let out = tokio::process::Command::new(&cli_path)
         .args(args)
         .output()
         .await
-        .map_err(|e| ApiError::Internal(format!("sgx-pa-cli spawn: {}", e)))?;
+        .map_err(|e| {
+            ApiError::Internal(format!("sgx-pa-cli spawn ({}): {}", cli_path.display(), e))
+        })?;
     Ok(ActionResponse {
         success: out.status.success(),
         stdout: String::from_utf8_lossy(&out.stdout).to_string(),

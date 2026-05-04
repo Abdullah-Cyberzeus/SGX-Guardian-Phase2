@@ -60,6 +60,7 @@ impl TrustEngine {
         if !self.circle.is_member(&computed_id).await {
             self.record_decision(&computed_id, "verify_peer", false, "Not a circle member")
                 .await;
+            self.verification_cache.write().await.remove(&computed_id);
             return TrustVerification {
                 device_id: computed_id,
                 is_trusted: false,
@@ -89,6 +90,7 @@ impl TrustEngine {
         if member.trust_level == TrustLevel::Revoked {
             self.record_decision(&computed_id, "verify_peer", false, "Trust revoked")
                 .await;
+            self.verification_cache.write().await.remove(&computed_id);
             return TrustVerification {
                 device_id: computed_id,
                 is_trusted: false,
@@ -102,6 +104,7 @@ impl TrustEngine {
         if member.public_key_der != presented_public_key {
             self.record_decision(&computed_id, "verify_peer", false, "Public key mismatch")
                 .await;
+            self.verification_cache.write().await.remove(&computed_id);
             return TrustVerification {
                 device_id: computed_id,
                 is_trusted: false,

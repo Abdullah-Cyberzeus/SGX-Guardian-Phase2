@@ -1,8 +1,8 @@
 use crate::cot::link_monitor::LinkMonitor;
 use crate::cot::transport_registry::TransportRegistry;
 use crate::network_selector::{
-    best_candidate_with_live_metrics, detect_candidates, set_selected_interface,
-    LiveNetworkMetrics, SelectionPolicy,
+    best_candidate_with_live_metrics, candidate_for_interface, detect_candidates,
+    set_selected_interface, LiveNetworkMetrics, SelectionPolicy,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -80,12 +80,46 @@ impl FailoverEngine {
                 *self.active_interface.write().await = Some(name.clone());
                 *self.last_switch_at.write().await = chrono::Utc::now().timestamp();
                 set_selected_interface(Some(name.clone()));
+                if let Some(best) = candidate_for_interface(&name) {
+                    println!(
+                        "🌐 Best network selected: iface={} transport={} ip={} score={} metric={} latency~{}ms bw~{}kbps live={} stable={}/{}",
+                        best.interface_name,
+                        best.transport_type,
+                        best.ip,
+                        best.quality_score,
+                        best.route_metric
+                            .map(|m| m.to_string())
+                            .unwrap_or_else(|| "n/a".to_string()),
+                        best.observed_latency_ms,
+                        best.observed_bandwidth_kbps,
+                        best.using_live_metrics,
+                        best.consecutive_successes,
+                        best.consecutive_failures
+                    );
+                }
                 println!("✅ Initial active transport: {} ({})", name, label);
             } else if let Ok(best) = self.registry.best_available().await {
                 let name = best.interface_name().to_string();
                 *self.active_interface.write().await = Some(name.clone());
                 *self.last_switch_at.write().await = chrono::Utc::now().timestamp();
                 set_selected_interface(Some(name.clone()));
+                if let Some(best) = candidate_for_interface(&name) {
+                    println!(
+                        "🌐 Best network selected: iface={} transport={} ip={} score={} metric={} latency~{}ms bw~{}kbps live={} stable={}/{}",
+                        best.interface_name,
+                        best.transport_type,
+                        best.ip,
+                        best.quality_score,
+                        best.route_metric
+                            .map(|m| m.to_string())
+                            .unwrap_or_else(|| "n/a".to_string()),
+                        best.observed_latency_ms,
+                        best.observed_bandwidth_kbps,
+                        best.using_live_metrics,
+                        best.consecutive_successes,
+                        best.consecutive_failures
+                    );
+                }
                 println!(
                     "✅ Initial active transport: {} ({})",
                     name,
@@ -112,7 +146,24 @@ impl FailoverEngine {
                         current_iface, new_name
                     );
                     *self.active_interface.write().await = Some(new_name.clone());
-                    set_selected_interface(Some(new_name));
+                    set_selected_interface(Some(new_name.clone()));
+                    if let Some(best) = candidate_for_interface(&new_name) {
+                        println!(
+                            "🌐 Best network selected: iface={} transport={} ip={} score={} metric={} latency~{}ms bw~{}kbps live={} stable={}/{}",
+                            best.interface_name,
+                            best.transport_type,
+                            best.ip,
+                            best.quality_score,
+                            best.route_metric
+                                .map(|m| m.to_string())
+                                .unwrap_or_else(|| "n/a".to_string()),
+                            best.observed_latency_ms,
+                            best.observed_bandwidth_kbps,
+                            best.using_live_metrics,
+                            best.consecutive_successes,
+                            best.consecutive_failures
+                        );
+                    }
                     *self.last_switch_at.write().await = now;
                 }
             } else if let Ok(alt) = self.registry.best_available().await {
@@ -123,7 +174,24 @@ impl FailoverEngine {
                         current_iface, new_name
                     );
                     *self.active_interface.write().await = Some(new_name.clone());
-                    set_selected_interface(Some(new_name));
+                    set_selected_interface(Some(new_name.clone()));
+                    if let Some(best) = candidate_for_interface(&new_name) {
+                        println!(
+                            "🌐 Best network selected: iface={} transport={} ip={} score={} metric={} latency~{}ms bw~{}kbps live={} stable={}/{}",
+                            best.interface_name,
+                            best.transport_type,
+                            best.ip,
+                            best.quality_score,
+                            best.route_metric
+                                .map(|m| m.to_string())
+                                .unwrap_or_else(|| "n/a".to_string()),
+                            best.observed_latency_ms,
+                            best.observed_bandwidth_kbps,
+                            best.using_live_metrics,
+                            best.consecutive_successes,
+                            best.consecutive_failures
+                        );
+                    }
                     *self.last_switch_at.write().await = now;
                 }
             } else {
@@ -150,7 +218,24 @@ impl FailoverEngine {
                         current_iface, best_name, label
                     );
                     *self.active_interface.write().await = Some(best_name.clone());
-                    set_selected_interface(Some(best_name));
+                    set_selected_interface(Some(best_name.clone()));
+                    if let Some(best) = candidate_for_interface(&best_name) {
+                        println!(
+                            "🌐 Best network selected: iface={} transport={} ip={} score={} metric={} latency~{}ms bw~{}kbps live={} stable={}/{}",
+                            best.interface_name,
+                            best.transport_type,
+                            best.ip,
+                            best.quality_score,
+                            best.route_metric
+                                .map(|m| m.to_string())
+                                .unwrap_or_else(|| "n/a".to_string()),
+                            best.observed_latency_ms,
+                            best.observed_bandwidth_kbps,
+                            best.using_live_metrics,
+                            best.consecutive_successes,
+                            best.consecutive_failures
+                        );
+                    }
                     *self.last_switch_at.write().await = now;
                 }
             }

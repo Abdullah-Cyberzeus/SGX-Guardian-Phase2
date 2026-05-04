@@ -20,14 +20,22 @@ pub struct PeersResponse {
     pub timestamp: String,
 }
 
+async fn safe_read(filename: &str, base_dir: &str) -> Option<String> {
+    let base = std::path::Path::new(base_dir).canonicalize().ok()?;
+    let path = base.join(filename);
+    let resolved = path.canonicalize().ok()?;
+    if !resolved.starts_with(&base) {
+        return None;
+    }
+    tokio::fs::read_to_string(resolved).await.ok()
+}
+
 pub async fn list(State(s): State<Arc<AppState>>) -> Result<Json<PeersResponse>, ApiError> {
-    let primary = format!("{}/trusted_peers.json", s.log_dir_primary);
-    let fallback = format!("{}/trusted_peers.json", s.log_dir_fallback);
-    let text = match tokio::fs::read_to_string(&primary).await {
-        Ok(t) => t,
-        Err(_) => tokio::fs::read_to_string(&fallback)
+    let text = match safe_read("trusted_peers.json", &s.log_dir_primary).await {
+        Some(t) => t,
+        None => safe_read("trusted_peers.json", &s.log_dir_fallback)
             .await
-            .unwrap_or_else(|_| "[]".into()),
+            .unwrap_or_else(|| "[]".into()),
     };
     let raw: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap_or_default();
     let peers: Vec<Peer> = raw

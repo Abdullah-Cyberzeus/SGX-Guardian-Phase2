@@ -104,4 +104,16 @@ pub fn execute(args: SignArgs) {
         return;
     }
     println!("✅ Policy signed successfully → policy.sig");
+
+    // Also export the bare DER public key so nodeA can distribute it.
+    let pubkey_der_path = "pa_admin_pub.der";
+    if let Err(e) = fs::write(pubkey_der_path, pubkey_bytes) {
+        eprintln!("⚠️  Failed to write {}: {}", pubkey_der_path, e);
+    } else {
+        let fp = hex::encode(&Sha256::digest(pubkey_bytes)[..8]);
+        println!(
+            "🔑 PA public key exported to {} (fp={})\n   → scp this to nodeA:/etc/sgx-guardian/policies/pa_admin_pub.der",
+            pubkey_der_path, fp
+        );
+    }
 }

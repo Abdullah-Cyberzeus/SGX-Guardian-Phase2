@@ -264,16 +264,45 @@ pub async fn request_certificate_from_ca(
                     }
                     sync_role_marker("/var/lib/sgx-guardian/nebula/am_relay", resp.assigned_relay);
 
+                    // ── Save signed policy (if present) ──────────────
                     if !resp.signed_policy_bytes.is_empty() {
-                        if let Err(e) = std::fs::create_dir_all("/etc/sgx-guardian/policies") {
-                            eprintln!("⚠️  Could not create policy dir: {}", e);
-                        } else if let Err(e) = std::fs::write(
-                            "/etc/sgx-guardian/policies/policy.sig",
-                            &resp.signed_policy_bytes,
-                        ) {
-                            eprintln!("⚠️  Failed to sync signed policy: {}", e);
+                        let policy_path = "/etc/sgx-guardian/policies/policy.sig";
+                        if let Some(parent) = Path::new(policy_path).parent() {
+                            let _ = tokio::fs::create_dir_all(parent).await;
+                        }
+                        if let Err(e) =
+                            tokio::fs::write(policy_path, &resp.signed_policy_bytes).await
+                        {
+                            eprintln!("⚠️  Save signed policy failed: {}", e);
                         } else {
-                            println!("📜 Signed policy synced from CA");
+                            println!("📜 Signed policy saved to {}", policy_path);
+                        }
+                    }
+
+                    // ── Save Policy Authority signing public key ─────
+                    if !resp.signing_pubkey_der.is_empty() {
+                        let pubkey_path = "/etc/sgx-guardian/policies/pa_admin_pub.der";
+                        if let Some(parent) = Path::new(pubkey_path).parent() {
+                            let _ = tokio::fs::create_dir_all(parent).await;
+                        }
+                        match tokio::fs::write(pubkey_path, &resp.signing_pubkey_der).await {
+                            Ok(_) => {
+                                use sha2::{Digest, Sha256};
+                                let fp =
+                                    hex::encode(&Sha256::digest(&resp.signing_pubkey_der)[..8]);
+                                println!(
+                                    "🔑 PA signing public key saved to {} (fp={})",
+                                    pubkey_path, fp
+                                );
+                                log_event(
+                                    &node_id,
+                                    &format!("PA signing public key saved, fingerprint: {}", fp),
+                                );
+                            }
+                            Err(e) => {
+                                eprintln!("⚠️  Save PA pubkey failed: {}", e);
+                                log_error(&node_id, &format!("PA pubkey save: {}", e));
+                            }
                         }
                     }
 

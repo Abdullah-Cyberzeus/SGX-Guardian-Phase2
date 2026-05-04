@@ -62,12 +62,14 @@ fn make_evidence(policy: &str, nonce: &str, use_spki_der: bool) -> AttestationEv
     };
 
     AttestationEvidence {
+        node_id: "nodeA".to_string(),
         nonce: nonce.to_string(),
         policy_digest: digest,
         signature: general_purpose::STANDARD.encode(sig_der.as_bytes()),
         pubkey_der_b64: general_purpose::STANDARD.encode(pubkey_bytes),
         pcr_values: None,
         key_version: None,
+        baseline_status: None,
     }
 }
 

@@ -30,8 +30,11 @@ enum Commands {
     Logs(LogsArgs),
     /// Generate a new ECDSA-P256 keypair
     Keygen,
-    /// Sign a UEP policy file (YAML or JSON)
+    /// Sign a UEP policy file (YAML or JSON) — laptop/legacy flow
     Sign(SignArgs),
+    /// Sign a UEP policy with the nodeA-resident PA key and deploy it locally
+    /// so it auto-distributes to members through cert bootstrap.
+    PolicySignAndDeploy(commands::sign_and_deploy::SignAndDeployArgs),
     /// List all discovered and attested peers
     Peers,
     /// Show the last attestation result
@@ -95,6 +98,7 @@ fn main() {
         Commands::Logs(args) => commands::logs::run(args),
         Commands::Keygen => commands::keygen::execute(),
         Commands::Sign(args) => commands::sign::execute(args),
+        Commands::PolicySignAndDeploy(args) => commands::sign_and_deploy::execute(args),
         Commands::Verify(args) => {
             if let Err(e) = commands::verify::run(&args) {
                 eprintln!("Error: {}", e);

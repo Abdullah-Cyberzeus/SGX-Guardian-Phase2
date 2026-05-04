@@ -73,11 +73,12 @@ pub struct RuntimeGates {
     pub startup_cooldown_ms: u64,
 
     // Board-freeze fix (Apr 2026)
-    /// Attempt to read OCOTP fuses via /sys/bus/nvmem. Default OFF.
-    /// When unset, BootChainStatus reports HAB: Unknown.
+    /// Attempt to read OCOTP fuses via /sys/bus/nvmem. Default ON.
     pub read_ocotp: bool,
     /// Compute SHA-256 of the daemon binary (17 MB, ~1 s blocking). Default OFF.
     pub measure_binary_hash: bool,
+    /// Operator opt-out for OCOTP reads.
+    pub disable_read_ocotp: bool,
 }
 
 impl RuntimeGates {
@@ -111,8 +112,19 @@ impl RuntimeGates {
             disable_node_listener: env_true("SGX_DISABLE_NODE_LISTENER"),
             ssscli_timeout_secs: env_u64("SGX_SSSCLI_TIMEOUT_SECS", 10),
             startup_cooldown_ms: env_u64("SGX_STARTUP_COOLDOWN_MS", 0),
-            read_ocotp: env_true("SGX_READ_OCOTP"),
+            // Default ON, with two disable options:
+            // 1) SGX_DISABLE_READ_OCOTP=1
+            // 2) explicit SGX_READ_OCOTP=0|false|no|off
+            read_ocotp: {
+                let disable = env_true("SGX_DISABLE_READ_OCOTP");
+                let explicit_off = std::env::var("SGX_READ_OCOTP")
+                    .ok()
+                    .map(|v| matches!(v.as_str(), "0" | "false" | "FALSE" | "no" | "off"))
+                    .unwrap_or(false);
+                !(disable || explicit_off)
+            },
             measure_binary_hash: env_true("SGX_MEASURE_BINARY_HASH"),
+            disable_read_ocotp: env_true("SGX_DISABLE_READ_OCOTP"),
         }
     }
 
@@ -148,8 +160,9 @@ impl RuntimeGates {
             self.startup_cooldown_ms
         );
         tracing::info!(
-            "Runtime gates (boot): read_ocotp={} measure_binary_hash={}",
+            "Runtime gates (boot): read_ocotp={} (disable_flag={}) measure_binary_hash={}",
             self.read_ocotp,
+            self.disable_read_ocotp,
             self.measure_binary_hash
         );
     }

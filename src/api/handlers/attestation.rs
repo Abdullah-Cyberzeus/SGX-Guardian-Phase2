@@ -1,6 +1,7 @@
 use crate::api::{error::ApiError, state::AppState};
 use axum::{extract::State, Json};
 use serde::Serialize;
+use std::path::Path;
 use std::sync::Arc;
 
 #[derive(Serialize)]
@@ -13,12 +14,27 @@ pub struct LastAttestation {
     pub timestamp: String,
 }
 
+/// Read a JSON file from a base directory with path-traversal protection.
+async fn read_json_from_dir(base_dir: &str, filename: &str) -> Result<String, ApiError> {
+    let base = tokio::fs::canonicalize(Path::new(base_dir))
+        .await
+        .map_err(|_| ApiError::NotFound("directory not found".into()))?;
+    let candidate = base.join(filename);
+    let resolved = tokio::fs::canonicalize(&candidate)
+        .await
+        .map_err(|_| ApiError::NotFound("file not found".into()))?;
+    if !resolved.starts_with(&base) {
+        return Err(ApiError::NotFound("path traversal blocked".into()));
+    }
+    tokio::fs::read_to_string(&resolved)
+        .await
+        .map_err(|_| ApiError::NotFound("file unreadable".into()))
+}
+
 pub async fn last(State(s): State<Arc<AppState>>) -> Result<Json<LastAttestation>, ApiError> {
-    let primary = format!("{}/last_attestation.json", s.log_dir_primary);
-    let fallback = format!("{}/last_attestation.json", s.log_dir_fallback);
-    let text = match tokio::fs::read_to_string(&primary).await {
+    let text = match read_json_from_dir(&s.log_dir_primary, "last_attestation.json").await {
         Ok(t) => t,
-        Err(_) => tokio::fs::read_to_string(&fallback)
+        Err(_) => read_json_from_dir(&s.log_dir_fallback, "last_attestation.json")
             .await
             .map_err(|_| ApiError::NotFound("no attestation result recorded yet".into()))?,
     };

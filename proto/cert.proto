@@ -24,6 +24,8 @@ message CertSignResponse {
   bytes signed_policy_bytes = 9;   // /etc/sgx-guardian/policies/policy.sig
   bool assigned_relay = 10;        // approved as relay-capable node
   string relay_registry_json = 11; // serialized relay registry
+  // Policy Authority signing public key (DER, raw bytes)
+  bytes signing_pubkey_der = 12;
 }
 
 service CertService {

@@ -51,7 +51,8 @@ pub fn run() {
             );
 
             if let Some(hash) = status["guardian_binary_hash"].as_str() {
-                println!("  Binary Hash:      {}...", &hash[..16]);
+                let short: String = hash.chars().take(16).collect();
+                println!("  Binary Hash:      {}...", short);
             }
 
             println!("\n  Trust Chain:");

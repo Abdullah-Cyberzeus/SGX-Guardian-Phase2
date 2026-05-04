@@ -26,9 +26,15 @@ pub struct VerifyQuoteArgs {
     #[arg(long)]
     pub nonce: String,
 
-    /// Optional: path to PCR baseline for comparison
+    /// Override baseline path. If omitted, the verifier auto-loads
+    /// /etc/sgx-guardian/pcr_<node_id>_baseline.json based on the
+    /// quote's node_id field.
     #[arg(long)]
     pub baseline: Option<String>,
+    /// Explicitly skip baseline comparison. Without this flag,
+    /// missing or mismatching baseline causes FAILED result.
+    #[arg(long, default_value_t = false)]
+    pub no_baseline: bool,
 }
 
 pub fn run_generate(args: GenerateQuoteArgs) {
@@ -252,50 +258,180 @@ pub fn run_verify(args: VerifyQuoteArgs) {
         }
     );
 
-    // Compare PCRs if baseline provided
-    if let Some(ref bl_path) = args.baseline {
-        if let Ok(bl_json) = fs::read_to_string(bl_path) {
-            if let Ok(bl) = serde_json::from_str::<serde_json::Value>(&bl_json) {
-                let bl_pcrs = bl["pcr_values"].as_array();
-                let q_pcrs = quote["pcr_values"].as_array();
-                if let (Some(bp), Some(qp)) = (bl_pcrs, q_pcrs) {
+    // Compare PCRs against baseline.
+    // Resolution order:
+    //   1. --baseline <path> (operator override)
+    //   2. /etc/sgx-guardian/pcr_<node_id>_baseline.json (auto, default)
+    //   3. --no-baseline (explicit opt-out only)
+    let quote_node_id = quote["node_id"].as_str().unwrap_or("").to_string();
+    let auto_path = format!("/etc/sgx-guardian/pcr_{}_baseline.json", quote_node_id);
+    let resolved_baseline_path: Option<String> = if let Some(p) = args.baseline.clone() {
+        Some(p)
+    } else if std::path::Path::new(&auto_path).exists() {
+        Some(auto_path.clone())
+    } else {
+        None
+    };
+
+    let mut baseline_ok = false;
+    let mut baseline_skipped = false;
+    let mut baseline_load_err: Option<String> = None;
+
+    if args.no_baseline {
+        baseline_skipped = true;
+        println!("  Baseline:    ⚠️ skipped (--no-baseline)");
+    } else if let Some(bl_path) = resolved_baseline_path.as_deref() {
+        match fs::read_to_string(bl_path) {
+            Ok(bl_json) => match serde_json::from_str::<serde_json::Value>(&bl_json) {
+                Ok(bl) => {
+                    let bl_pcrs = bl["pcr_values"].as_array();
+                    let q_pcrs = quote["pcr_values"].as_array();
                     let names = ["BIOS", "DTB", "Kernel", "RootFS", "Config"];
-                    let mut all_match = true;
-                    for i in 0..bp.len().min(qp.len()) {
-                        let m = bp[i] == qp[i];
-                        if !m {
-                            all_match = false;
+                    if let (Some(bp), Some(qp)) = (bl_pcrs, q_pcrs) {
+                        let mut all_match = true;
+                        for i in 0..bp.len().min(qp.len()) {
+                            let m = bp[i] == qp[i];
+                            if !m {
+                                all_match = false;
+                            }
+                            println!(
+                                "  PCR{} [{}]: {}",
+                                i,
+                                names.get(i).unwrap_or(&"?"),
+                                if m { "✅ MATCH" } else { "❌ MISMATCH" }
+                            );
+                            if !m {
+                                println!("    expected {}", bp[i].as_str().unwrap_or("?"));
+                                println!("    got      {}", qp[i].as_str().unwrap_or("?"));
+                            }
                         }
+                        if let (Some(bc), Some(qc)) = (
+                            bl["composite_digest"].as_str(),
+                            quote["composite_digest"].as_str(),
+                        ) {
+                            if bc != qc {
+                                all_match = false;
+                                println!("  Composite:   ❌ MISMATCH");
+                                println!("    expected {}", bc);
+                                println!("    got      {}", qc);
+                            }
+                        }
+                        baseline_ok = all_match;
                         println!(
-                            "  PCR{} [{}]: {}",
-                            i,
-                            names.get(i).unwrap_or(&"?"),
-                            if m { "✅ MATCH" } else { "❌ MISMATCH" }
+                            "\n  Baseline:    {} (source: {})",
+                            if all_match {
+                                "✅ ALL MATCH"
+                            } else {
+                                "❌ MISMATCH"
+                            },
+                            bl_path
                         );
+                    } else {
+                        baseline_load_err = Some("baseline missing pcr_values array".into());
                     }
-                    println!(
-                        "\n  Baseline:    {}",
-                        if all_match {
-                            "✅ ALL MATCH"
-                        } else {
-                            "❌ MISMATCH"
-                        }
-                    );
                 }
-            }
-        } else {
-            eprintln!("  ⚠️ Could not read baseline: {}", bl_path);
+                Err(e) => baseline_load_err = Some(format!("baseline parse: {}", e)),
+            },
+            Err(e) => baseline_load_err = Some(format!("baseline read: {}", e)),
         }
     } else {
-        println!("  Baseline:    ⚠️ not provided (skipped)");
+        // No on-disk peer baseline (expected on a verifier that isn't the prover).
+        // Fall back to self-consistency: recompute composite from quoted PCRs and
+        // compare against the quote's claimed composite_digest. The whole quote
+        // is signed by the prover's DKP, so this still binds the values to HW.
+        let q_pcrs = quote["pcr_values"].as_array();
+        let claimed = quote["composite_digest"].as_str().unwrap_or("");
+        let mut self_ok = false;
+        if let (Some(pcrs), false) = (q_pcrs, claimed.is_empty()) {
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            for v in pcrs {
+                if let Some(s) = v.as_str() {
+                    if let Ok(b) = hex::decode(s) {
+                        h.update(&b);
+                    }
+                }
+            }
+            let computed = hex::encode(h.finalize());
+            self_ok = computed.eq_ignore_ascii_case(claimed);
+            println!(
+                "  Composite:   {} (self-check: computed={} claimed={})",
+                if self_ok { "✅ MATCH" } else { "❌ MISMATCH" },
+                &computed[..16],
+                &claimed[..16.min(claimed.len())]
+            );
+        }
+        baseline_ok = self_ok;
+        println!(
+            "  Baseline:    {} (peer baseline not local — used quote self-consistency)",
+            if self_ok {
+                "✅ self-consistent"
+            } else {
+                "❌ self-inconsistent"
+            }
+        );
     }
 
-    // Overall
-    let all_ok = nonce_ok && fresh && chain_ok;
+    if let Some(err) = &baseline_load_err {
+        eprintln!("  Baseline:    ❌ {}", err);
+    }
+
+    // Verify signature
+    let sig_b64 = signed["signature_b64"].as_str().unwrap_or("");
+    let sig_verified = if !sig_b64.is_empty() {
+        let pub_der_path = "/var/lib/sgx-guardian/keys/dkp_pub.der";
+        match std::fs::read(pub_der_path) {
+            Ok(pubkey_der) => {
+                use ring::signature;
+                use sha2::{Digest, Sha256};
+                let hash = Sha256::digest(quote_json.as_bytes());
+                let sig_bytes = base64::engine::general_purpose::STANDARD
+                    .decode(sig_b64)
+                    .unwrap_or_default();
+                let raw_key = if pubkey_der.len() == 91 {
+                    &pubkey_der[26..]
+                } else {
+                    &pubkey_der
+                };
+                let algo: &dyn signature::VerificationAlgorithm = match sig_bytes.len() {
+                    64 => &signature::ECDSA_P256_SHA256_FIXED,
+                    _ if sig_bytes.first() == Some(&0x30) => &signature::ECDSA_P256_SHA256_ASN1,
+                    _ => {
+                        println!("  Signature:   ⚠️ unknown format");
+                        &signature::ECDSA_P256_SHA256_FIXED
+                    }
+                };
+                let key = signature::UnparsedPublicKey::new(algo, raw_key);
+                key.verify(&hash, &sig_bytes).is_ok()
+            }
+            Err(_) => {
+                println!("  Signature:   ⚠️ no public key available for verification");
+                false
+            }
+        }
+    } else {
+        println!("  Signature:   ❌ missing");
+        false
+    };
+    println!(
+        "  Signature:   {}",
+        if sig_verified {
+            "✅ valid"
+        } else {
+            "❌ INVALID"
+        }
+    );
+
+    // Overall result MUST factor baseline (unless --no-baseline).
+    let baseline_pass = baseline_ok || baseline_skipped;
+    let all_ok = nonce_ok && fresh && chain_ok && baseline_pass && sig_verified;
     println!(
         "\n  Result:      {}",
         if all_ok { "✅ VERIFIED" } else { "❌ FAILED" }
     );
+    if !all_ok {
+        std::process::exit(1);
+    }
 }
 
 // ── Helpers ──

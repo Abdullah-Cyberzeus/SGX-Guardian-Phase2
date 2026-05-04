@@ -60,7 +60,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             SetConsoleCtrlHandler(Some(ctrl_handler), 1);
         }
     }
-    let node_id = std::env::args().nth(1).unwrap_or_else(|| "nodeA".into());
+    let node_id = match std::env::args().nth(1) {
+        Some(id) if !id.is_empty() && !id.starts_with('-') => id,
+        _ => {
+            eprintln!("❌ Usage: sgx-guardian <node_id>");
+            eprintln!("   node_id is REQUIRED. Defaulting to nodeA is unsafe.");
+            eprintln!("   An unconfigured node silently becoming CA would break trust.");
+            std::process::exit(1);
+        }
+    };
 
     // === FIRST: Ensure all required directories exist ===
     for dir in &[
@@ -157,6 +165,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let main_path = format!("/etc/sgx-guardian/{}.yaml", nid);
         if !std::path::Path::new(&main_path).exists() {
             let _ = std::fs::copy(&path, &main_path);
+        }
+    }
+
+    // === Policy Authority key bootstrap (nodeA only) ===
+    // Generates /etc/sgx-guardian/policies/pa_admin_{priv,pub}.der on first
+    // boot, persists thereafter. Member nodes never run this — they receive
+    // the public half through the cert-bootstrap response.
+    if node_id == "nodeA" {
+        match sgx_guardian_client::policy_authority::PaKey::load_or_generate() {
+            Ok(_) => {
+                println!(
+                    "🔑 Policy Authority key ready at /etc/sgx-guardian/policies/pa_admin_priv.der"
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "⚠️ PA key bootstrap failed: {} — manual signing required",
+                    e
+                );
+            }
         }
     }
 
@@ -1334,7 +1362,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 e
                             );
                             } else {
-                                println!("🔄 nodeA reloaded Nebula after local registry update");
+                                // println!("🔄 nodeA reloaded Nebula after local registry update");
                             }
                         }
                         Err(e) => {
