@@ -8,6 +8,7 @@ const PCR_DIR: &str = "/var/lib/sgx-guardian/pcr";
 const BOOT_DIR: &str = "/var/lib/sgx-guardian/boot";
 const RESULTS_PATH: &str = "/var/log/sgx-guardian/attestation_results.json";
 const QUOTE_PATH: &str = "/var/log/sgx-guardian/last_quote.json";
+const DKP_PUB_DER_PATH: &str = "/var/lib/sgx-guardian/keys/dkp_pub.der";
 
 #[derive(clap::Args)]
 pub struct GenerateQuoteArgs {
@@ -122,6 +123,7 @@ pub fn run_generate(args: GenerateQuoteArgs) {
             let signed = serde_json::json!({
                 "quote_json": quote_json,
                 "signature_b64": sig_b64,
+                "signing_pubkey_b64": read_signing_pubkey_b64(),
                 "signing_backend": if has_ssscli() { "SE050" } else { "Software" }
             });
 
@@ -379,34 +381,59 @@ pub fn run_verify(args: VerifyQuoteArgs) {
     // Verify signature
     let sig_b64 = signed["signature_b64"].as_str().unwrap_or("");
     let sig_verified = if !sig_b64.is_empty() {
-        let pub_der_path = "/var/lib/sgx-guardian/keys/dkp_pub.der";
-        match std::fs::read(pub_der_path) {
-            Ok(pubkey_der) => {
-                use ring::signature;
-                use sha2::{Digest, Sha256};
-                let hash = Sha256::digest(quote_json.as_bytes());
-                let sig_bytes = base64::engine::general_purpose::STANDARD
-                    .decode(sig_b64)
-                    .unwrap_or_default();
-                let raw_key = if pubkey_der.len() == 91 {
-                    &pubkey_der[26..]
-                } else {
-                    &pubkey_der
-                };
-                let algo: &dyn signature::VerificationAlgorithm = match sig_bytes.len() {
-                    64 => &signature::ECDSA_P256_SHA256_FIXED,
-                    _ if sig_bytes.first() == Some(&0x30) => &signature::ECDSA_P256_SHA256_ASN1,
-                    _ => {
-                        println!("  Signature:   ⚠️ unknown format");
-                        &signature::ECDSA_P256_SHA256_FIXED
-                    }
-                };
+        use ring::signature;
+        use sha2::{Digest, Sha256};
+        let hash = Sha256::digest(quote_json.as_bytes());
+        let sig_bytes = base64::engine::general_purpose::STANDARD
+            .decode(sig_b64)
+            .unwrap_or_default();
+        let algo: &dyn signature::VerificationAlgorithm = match sig_bytes.len() {
+            64 => &signature::ECDSA_P256_SHA256_FIXED,
+            _ if sig_bytes.first() == Some(&0x30) => &signature::ECDSA_P256_SHA256_ASN1,
+            _ => {
+                println!("  Signature:   ⚠️ unknown format");
+                &signature::ECDSA_P256_SHA256_FIXED
+            }
+        };
+
+        // Preferred: verify with signer key shipped in quote envelope (cross-node safe).
+        let embedded_ok = signed["signing_pubkey_b64"]
+            .as_str()
+            .and_then(|b64| base64::engine::general_purpose::STANDARD.decode(b64).ok())
+            .map(|pubkey_der| {
+                let raw_key = normalize_p256_pubkey(&pubkey_der);
                 let key = signature::UnparsedPublicKey::new(algo, raw_key);
                 key.verify(&hash, &sig_bytes).is_ok()
+            });
+
+        match embedded_ok {
+            Some(true) => true,
+            Some(false) => {
+                println!(
+                    "  Signature:   ⚠️ embedded signing key verify failed; trying local DKP key"
+                );
+                match std::fs::read(DKP_PUB_DER_PATH) {
+                    Ok(pubkey_der) => {
+                        let raw_key = normalize_p256_pubkey(&pubkey_der);
+                        let key = signature::UnparsedPublicKey::new(algo, raw_key);
+                        key.verify(&hash, &sig_bytes).is_ok()
+                    }
+                    Err(_) => false,
+                }
             }
-            Err(_) => {
-                println!("  Signature:   ⚠️ no public key available for verification");
-                false
+            None => {
+                // Backward compatibility for older quote files without signing_pubkey_b64
+                match std::fs::read(DKP_PUB_DER_PATH) {
+                    Ok(pubkey_der) => {
+                        let raw_key = normalize_p256_pubkey(&pubkey_der);
+                        let key = signature::UnparsedPublicKey::new(algo, raw_key);
+                        key.verify(&hash, &sig_bytes).is_ok()
+                    }
+                    Err(_) => {
+                        println!("  Signature:   ⚠️ no public key available for verification");
+                        false
+                    }
+                }
             }
         }
     } else {
@@ -455,6 +482,22 @@ fn has_ssscli() -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+fn read_signing_pubkey_b64() -> String {
+    std::fs::read(DKP_PUB_DER_PATH)
+        .map(|der| base64::engine::general_purpose::STANDARD.encode(der))
+        .unwrap_or_default()
+}
+
+fn normalize_p256_pubkey(pubkey_der_or_raw: &[u8]) -> &[u8] {
+    // DKP pubkey file in this project is commonly 91-byte SPKI DER.
+    // ring ECDSA_FIXED/ASN1 expect uncompressed raw point (65 bytes), so strip SPKI header.
+    if pubkey_der_or_raw.len() == 91 {
+        &pubkey_der_or_raw[26..]
+    } else {
+        pubkey_der_or_raw
+    }
 }
 
 fn sign_quote_hash(hash: &[u8], key_version: u32) -> Option<String> {

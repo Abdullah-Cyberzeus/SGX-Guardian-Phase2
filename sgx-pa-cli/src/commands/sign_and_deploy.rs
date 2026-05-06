@@ -33,8 +33,14 @@ pub fn execute(args: SignAndDeployArgs) {
                      (auto-distributed to members on next cert bootstrap)"
                 );
             }
-            Err(e) => eprintln!("❌ Policy signing failed: {}", e),
+            Err(e) => {
+                eprintln!("❌ Policy signing failed: {}", e);
+                std::process::exit(1);
+            }
         },
-        Err(e) => eprintln!("❌ PA key load/generate failed: {}", e),
+        Err(e) => {
+            eprintln!("❌ PA key load/generate failed: {}", e);
+            std::process::exit(1);
+        }
     }
 }

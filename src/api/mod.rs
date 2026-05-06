@@ -58,6 +58,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/pcr/verify", post(handlers::pcr::baseline_verify))
         .route("/api/v1/policy/sign", post(handlers::policy::sign))
         .route("/api/v1/policy/verify", post(handlers::policy::verify))
+        .route("/api/v1/policy/current", get(handlers::policy::current))
+        .route(
+            "/api/v1/policy/current",
+            axum::routing::put(handlers::policy::save_current),
+        )
+        .route(
+            "/api/v1/policy/sign-deploy-current",
+            post(handlers::policy::sign_deploy_current),
+        )
         // Health
         .route("/api/v1/health", get(|| async { "ok" }))
         .layer(cors)
