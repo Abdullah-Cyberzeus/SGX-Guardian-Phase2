@@ -116,7 +116,7 @@ impl NebulaHealth {
 
         let seconds_remaining = expiry - now;
 
-        Some(seconds_remaining / 86400)
+        Some(seconds_remaining.div_euclid(86_400))
     }
 
     fn extract_not_after(json: &serde_json::Value) -> Option<&str> {

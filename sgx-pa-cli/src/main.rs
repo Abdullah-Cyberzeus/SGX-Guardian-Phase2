@@ -97,7 +97,11 @@ fn main() {
         Commands::BootStatus => commands::boot_status::run(),
         Commands::Logs(args) => commands::logs::run(args),
         Commands::Keygen => commands::keygen::execute(),
-        Commands::Sign(args) => commands::sign::execute(args),
+        Commands::Sign(args) => {
+            if !commands::sign::execute(args) {
+                std::process::exit(1);
+            }
+        }
         Commands::PolicySignAndDeploy(args) => commands::sign_and_deploy::execute(args),
         Commands::Verify(args) => {
             if let Err(e) = commands::verify::run(&args) {

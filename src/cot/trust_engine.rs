@@ -76,6 +76,7 @@ impl TrustEngine {
             None => {
                 self.record_decision(&computed_id, "verify_peer", false, "Member data not found")
                     .await;
+                self.verification_cache.write().await.remove(&computed_id);
                 return TrustVerification {
                     device_id: computed_id,
                     is_trusted: false,

@@ -83,6 +83,15 @@ pub async fn request_certificate_from_ca(
     wants_lh: bool,
     wants_relay: bool,
 ) {
+    if node_id.is_empty()
+        || !node_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        eprintln!("❌ Invalid node_id for certificate bootstrap");
+        return;
+    }
+
     let (_, ca_port) = split_host_port(&ca_addr);
     let mut current_ca_addr = ca_addr.clone();
     if let Some(ip) = resolve_nodea_ip_for_bootstrap() {

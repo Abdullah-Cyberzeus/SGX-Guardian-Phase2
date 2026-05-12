@@ -36,13 +36,27 @@ pub async fn tail(
     Query(q): Query<LogsQuery>,
 ) -> Result<Json<LogsResponse>, ApiError> {
     let node = q.node.unwrap_or_else(|| s.node_id.clone());
+    if !is_valid_node_id(&node) {
+        return Err(ApiError::BadRequest(format!("invalid node name: {}", node)));
+    }
     let n = q.tail.unwrap_or(100).min(1000);
 
     let mut candidate: Option<std::path::PathBuf> = None;
     for dir in [&s.log_dir_primary, &s.log_dir_fallback] {
+        let base_dir = match tokio::fs::canonicalize(dir).await {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
         if let Ok(mut rd) = tokio::fs::read_dir(dir).await {
             let mut newest_mtime: Option<std::time::SystemTime> = None;
             while let Some(e) = rd.next_entry().await? {
+                let resolved = match tokio::fs::canonicalize(e.path()).await {
+                    Ok(p) => p,
+                    Err(_) => continue,
+                };
+                if !resolved.starts_with(&base_dir) {
+                    continue;
+                }
                 let name = e.file_name().to_string_lossy().to_string();
                 if !name.starts_with(&node) {
                     continue;
@@ -54,7 +68,7 @@ pub async fn tail(
                 let mt = meta.modified().ok();
                 if mt > newest_mtime {
                     newest_mtime = mt;
-                    candidate = Some(e.path());
+                    candidate = Some(resolved);
                 }
             }
         }
@@ -94,6 +108,16 @@ pub async fn tail(
         total,
         timestamp: chrono::Utc::now().to_rfc3339(),
     }))
+}
+
+fn is_valid_node_id(node: &str) -> bool {
+    !node.is_empty()
+        && !node.contains("..")
+        && !node.contains('/')
+        && !node.contains('\\')
+        && node
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
 }
 
 fn parse_log_line(raw: &str) -> LogEntry {

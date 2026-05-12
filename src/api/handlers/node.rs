@@ -34,8 +34,17 @@ pub async fn status(
     {
         return Err(ApiError::BadRequest(format!("invalid node name: {}", node)));
     }
-    let path = format!("{}/{}.yaml", s.config_dir, node);
-    let text = tokio::fs::read_to_string(&path)
+    let base_dir = tokio::fs::canonicalize(&s.config_dir)
+        .await
+        .map_err(|_| ApiError::Internal("invalid config directory".into()))?;
+    let candidate = base_dir.join(format!("{}.yaml", node));
+    let resolved = tokio::fs::canonicalize(&candidate)
+        .await
+        .map_err(|_| ApiError::NotFound(format!("config for {} not found", node)))?;
+    if !resolved.starts_with(&base_dir) {
+        return Err(ApiError::BadRequest(format!("invalid node name: {}", node)));
+    }
+    let text = tokio::fs::read_to_string(&resolved)
         .await
         .map_err(|_| ApiError::NotFound(format!("config for {} not found", node)))?;
     let cfg: crate::config_loader::NodeConfig = serde_yaml::from_str(&text)

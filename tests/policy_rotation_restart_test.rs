@@ -4,7 +4,32 @@ use p256::ecdsa::{signature::Signer, Signature, SigningKey};
 use rand::rngs::OsRng;
 use sgx_guardian_client::policy_manager::load_and_activate_policy;
 use sha2::{Digest, Sha256};
+use std::ffi::OsString;
 use std::fs;
+use std::path::Path;
+
+struct EnvVarGuard {
+    key: &'static str,
+    prev: Option<OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &Path) -> Self {
+        let prev = std::env::var_os(key);
+        std::env::set_var(key, value);
+        Self { key, prev }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(v) = self.prev.take() {
+            std::env::set_var(self.key, v);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
 
 fn build_signed_policy(policy_yaml: &str) -> String {
     let signing_key = SigningKey::random(&mut OsRng);
@@ -25,9 +50,10 @@ fn build_signed_policy(policy_yaml: &str) -> String {
 #[test]
 fn restart_with_same_policy_digest_does_not_overwrite_backup() {
     let td = tempfile::tempdir().expect("failed to create temp dir");
-    std::env::set_current_dir(td.path()).expect("failed to set current dir");
+    let policies_dir = td.path().join("policies");
+    let _policy_dir = EnvVarGuard::set("SGX_GUARDIAN_POLICY_DIR", &policies_dir);
 
-    fs::create_dir_all("policies").expect("failed to create policies dir");
+    fs::create_dir_all(&policies_dir).expect("failed to create policies dir");
 
     let active_yaml = r#"
 policy_id: "active-policy"
@@ -51,23 +77,24 @@ rules:
     protocol: "TCP"
 "#;
 
-    fs::write("policies/active_policy.yaml", active_yaml).expect("failed to write active policy");
-    fs::write("policies/backup_policy.yaml", original_backup_yaml)
-        .expect("failed to write backup policy");
+    let active_path = policies_dir.join("active_policy.yaml");
+    let backup_path = policies_dir.join("backup_policy.yaml");
+    let sig_path = td.path().join("policy.sig");
+
+    fs::write(&active_path, active_yaml).expect("failed to write active policy");
+    fs::write(&backup_path, original_backup_yaml).expect("failed to write backup policy");
 
     let signed = build_signed_policy(active_yaml);
-    fs::write("policy.sig", signed).expect("failed to write signed policy");
+    fs::write(&sig_path, signed).expect("failed to write signed policy");
 
-    let result = load_and_activate_policy("policy.sig");
+    let result = load_and_activate_policy(sig_path.to_str().expect("utf8 path"));
     assert!(
         result.is_ok(),
         "same-policy reload should be a no-op success"
     );
 
-    let backup_after =
-        fs::read_to_string("policies/backup_policy.yaml").expect("failed to read backup after");
-    let active_after =
-        fs::read_to_string("policies/active_policy.yaml").expect("failed to read active after");
+    let backup_after = fs::read_to_string(&backup_path).expect("failed to read backup after");
+    let active_after = fs::read_to_string(&active_path).expect("failed to read active after");
 
     assert_eq!(backup_after, original_backup_yaml);
     assert_eq!(active_after, active_yaml);

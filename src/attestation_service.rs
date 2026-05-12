@@ -1700,10 +1700,7 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
                         }
                     }
                     Ok(false) | Err(_) => {
-                        let peer_addr = socket
-                            .peer_addr()
-                            .map(|a| a.to_string())
-                            .unwrap_or_default();
+                        let peer_addr = incoming.node_id.clone();
                         eprintln!(
                             "❌ Listener: rejecting incoming attestation from {} (PCR/signature failure)",
                             peer_addr
@@ -1717,7 +1714,7 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
                             AuditAction::Rejected,
                             &format!("Incoming attestation rejected from {}", remote),
                         );
-                        return Ok(());
+                        continue;
                     }
                 }
             }

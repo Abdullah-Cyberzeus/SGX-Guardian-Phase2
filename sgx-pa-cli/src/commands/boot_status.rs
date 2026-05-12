@@ -9,8 +9,20 @@ pub fn run() {
     let status_path = find_boot_status();
     match status_path {
         Some(path) => {
-            let json = fs::read_to_string(&path).unwrap_or_default();
-            let status: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
+            let json = match fs::read_to_string(&path) {
+                Ok(v) => v,
+                Err(err) => {
+                    eprintln!("  Failed to read: {}", err);
+                    return;
+                }
+            };
+            let status: serde_json::Value = match serde_json::from_str(&json) {
+                Ok(v) => v,
+                Err(err) => {
+                    eprintln!("  Failed to parse: {}", err);
+                    return;
+                }
+            };
 
             println!("  Source: {}\n", path);
             println!(

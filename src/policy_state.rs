@@ -4,10 +4,11 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const POLICY_DIR: &str = "policies";
-pub const ACTIVE_POLICY: &str = "policies/active_policy.yaml";
-pub const BACKUP_POLICY: &str = "policies/backup_policy.yaml";
-pub const PENDING_POLICY: &str = "policies/pending_policy.yaml";
+pub const POLICY_DIR: &str = "/etc/sgx-guardian/policies";
+pub const ACTIVE_POLICY: &str = "/etc/sgx-guardian/policies/active_policy.yaml";
+pub const BACKUP_POLICY: &str = "/etc/sgx-guardian/policies/backup_policy.yaml";
+pub const PENDING_POLICY: &str = "/etc/sgx-guardian/policies/pending_policy.yaml";
+const POLICY_DIR_ENV: &str = "SGX_GUARDIAN_POLICY_DIR";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivationOutcome {
@@ -15,10 +16,29 @@ pub enum ActivationOutcome {
     Activated { backup_rotated: bool },
 }
 
+fn policy_dir_path() -> PathBuf {
+    std::env::var_os(POLICY_DIR_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(POLICY_DIR))
+}
+
+fn active_policy_path() -> PathBuf {
+    policy_dir_path().join("active_policy.yaml")
+}
+
+fn backup_policy_path() -> PathBuf {
+    policy_dir_path().join("backup_policy.yaml")
+}
+
+fn pending_policy_path() -> PathBuf {
+    policy_dir_path().join("pending_policy.yaml")
+}
+
 /// Ensure policy directory exists
 pub fn ensure_policy_dir() -> Result<()> {
-    if !Path::new(POLICY_DIR).exists() {
-        fs::create_dir_all(POLICY_DIR).context("Failed to create policy directory")?;
+    let policy_dir = policy_dir_path();
+    if !policy_dir.exists() {
+        fs::create_dir_all(&policy_dir).context("Failed to create policy directory")?;
     }
     Ok(())
 }
@@ -30,9 +50,9 @@ pub fn activate_policy(
 ) -> Result<ActivationOutcome> {
     ensure_policy_dir()?;
 
-    let active_path = PathBuf::from(ACTIVE_POLICY);
-    let backup_path = PathBuf::from(BACKUP_POLICY);
-    let pending_path = PathBuf::from(PENDING_POLICY);
+    let active_path = active_policy_path();
+    let backup_path = backup_policy_path();
+    let pending_path = pending_policy_path();
 
     activate_policy_with_paths(
         &active_path,
@@ -44,12 +64,12 @@ pub fn activate_policy(
 }
 
 pub fn current_active_policy_digest() -> Result<Option<String>> {
-    let active_path = Path::new(ACTIVE_POLICY);
+    let active_path = active_policy_path();
     if !active_path.exists() {
         return Ok(None);
     }
 
-    let active_bytes = fs::read(active_path).context("Failed to read active policy")?;
+    let active_bytes = fs::read(&active_path).context("Failed to read active policy")?;
     Ok(Some(hex::encode(Sha256::digest(&active_bytes))))
 }
 
@@ -93,8 +113,10 @@ fn current_policy_digest(active_path: &Path) -> Result<Option<String>> {
 
 /// Rollback active policy from backup
 pub fn rollback_policy() -> Result<()> {
-    if Path::new(BACKUP_POLICY).exists() {
-        fs::copy(BACKUP_POLICY, ACTIVE_POLICY).context("Failed to rollback policy")?;
+    let backup_path = backup_policy_path();
+    let active_path = active_policy_path();
+    if backup_path.exists() {
+        fs::copy(&backup_path, &active_path).context("Failed to rollback policy")?;
     }
     Ok(())
 }

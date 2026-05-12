@@ -144,7 +144,8 @@ pub fn run_generate(args: GenerateQuoteArgs) {
                         &snap["composite_digest"].as_str().unwrap_or("?")[..16]
                     );
                     println!("  Boot chain intact: {}", boot["boot_chain_intact"]);
-                    let _ = fs::write(RESULTS_PATH, serde_json::to_string_pretty(&signed).unwrap());
+                    // Don't write generated quote to RESULTS_PATH — that file stores
+                    // verification results (different schema). Quote already saved to QUOTE_PATH.
                 }
                 Err(e) => eprintln!("❌ Write failed: {}", e),
             }
@@ -451,7 +452,8 @@ pub fn run_verify(args: VerifyQuoteArgs) {
 
     // Overall result MUST factor baseline (unless --no-baseline).
     let baseline_pass = baseline_ok || baseline_skipped;
-    let all_ok = nonce_ok && fresh && chain_ok && baseline_pass && sig_verified;
+    let integrity_ok = matches!(integrity, "PASS" | "DEGRADED");
+    let all_ok = nonce_ok && fresh && chain_ok && baseline_pass && sig_verified && integrity_ok;
     println!(
         "\n  Result:      {}",
         if all_ok { "✅ VERIFIED" } else { "❌ FAILED" }

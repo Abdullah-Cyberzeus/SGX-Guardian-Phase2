@@ -296,47 +296,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &pubkey_b64[..20]
     );
 
-    // Generate and log attestation evidence for this node
-    use sgx_guardian_client::attestation_service::AttestationService;
-
-    let sample_policy_path = "/etc/sgx-guardian/schemas/uep_policy_v1.yaml";
-
-    let sample_policy = fs::read_to_string(sample_policy_path).unwrap_or_else(|e| {
-        eprintln!(
-            "⚠️ Policy schema not found: {} — using empty default",
-            e
-        );
-        String::from(
-            "---\npolicy_id: \"default\"\nversion: \"0.0.0\"\ndescription: \"Empty default\"\nrules: []\n",
-        )
-    });
-
-    let evidence = AttestationService::create_signed_evidence(&km, &sample_policy)?;
-    println!(
-        "Created local attestation evidence (nonce={}..)",
-        &evidence.nonce[..8]
-    );
-    let verified = AttestationService::verify_signed_evidence(&evidence, &sample_policy)?;
-    if verified {
-        println!("✅ Local attestation evidence verified successfully.");
-        log_audit(
-            &node_id,
-            AuditCategory::Attestation,
-            AuditSeverity::Info,
-            AuditAction::Succeeded,
-            "Local attestation evidence verified",
-        );
-    } else {
-        eprintln!("❌ Local attestation verification failed!");
-        log_audit(
-            &node_id,
-            AuditCategory::Attestation,
-            AuditSeverity::Critical,
-            AuditAction::Failed,
-            "Local attestation evidence verification failed",
-        );
-    }
-
     // === Secure Boot Chain Verification ===
     println!("\n  Verifying secure boot chain...");
     {
@@ -377,6 +336,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    let mut local_pcr_trusted = false;
     // === PCR Measurement (ATT-003) ===
     println!("\n  Measuring platform integrity (PCR)...");
     {
@@ -551,6 +511,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     match snapshot.compare_baseline(&baseline) {
                         Ok(mismatches) if mismatches.is_empty() => {
                             println!("  PCR baseline: ✅ ALL MATCH");
+                            local_pcr_trusted = true;
                         }
                         Ok(mismatches) => {
                             eprintln!("  ⚠️ PCR MISMATCH detected:");
@@ -571,6 +532,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             println!("  No baseline — create with: sgx-pa-cli pcr-baseline-create");
         }
+    }
+
+    // Generate and log attestation evidence for this node
+    use sgx_guardian_client::attestation_service::AttestationService;
+
+    let sample_policy_path = "/etc/sgx-guardian/schemas/uep_policy_v1.yaml";
+
+    let sample_policy = fs::read_to_string(sample_policy_path).unwrap_or_else(|e| {
+        eprintln!(
+            "⚠️ Policy schema not found: {} — using empty default",
+            e
+        );
+        String::from(
+            "---\npolicy_id: \"default\"\nversion: \"0.0.0\"\ndescription: \"Empty default\"\nrules: []\n",
+        )
+    });
+
+    let evidence = AttestationService::create_signed_evidence(&km, &sample_policy)?;
+    println!(
+        "Created local attestation evidence (nonce={}..)",
+        &evidence.nonce[..8]
+    );
+    let evidence_verified = AttestationService::verify_signed_evidence(&evidence, &sample_policy)?;
+    let verified = evidence_verified && local_pcr_trusted;
+    if verified {
+        println!("✅ Local attestation evidence verified successfully.");
+        log_audit(
+            &node_id,
+            AuditCategory::Attestation,
+            AuditSeverity::Info,
+            AuditAction::Succeeded,
+            "Local attestation evidence verified",
+        );
+    } else {
+        eprintln!("❌ Local attestation verification failed!");
+        log_audit(
+            &node_id,
+            AuditCategory::Attestation,
+            AuditSeverity::Critical,
+            AuditAction::Failed,
+            "Local attestation evidence verification failed",
+        );
     }
 
     // === DYNAMIC IP DETECTION + CONFIG AUTO-UPDATE ===

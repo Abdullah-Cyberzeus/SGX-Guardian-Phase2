@@ -289,6 +289,7 @@ firewall:
                 .map(|reg| {
                     reg.relays
                         .values()
+                        .filter(|r| r.is_active)
                         .filter(|r| r.node_name != node_name)
                         .filter(|r| r.overlay_ip != self_overlay)
                         .map(|r| r.overlay_ip.clone())

@@ -189,10 +189,8 @@ fn resolve_pa_cli_path() -> Option<PathBuf> {
 pub async fn run_cli(args: &[&str]) -> Result<ActionResponse, ApiError> {
     let cli_path = resolve_pa_cli_path().ok_or_else(|| {
         let path_env = std::env::var("PATH").unwrap_or_else(|_| "<unset>".to_string());
-        ApiError::Internal(format!(
-            "sgx-pa-cli not found. Set SGX_PA_CLI_PATH or ensure binary exists in PATH. PATH={}",
-            path_env
-        ))
+        eprintln!("sgx-pa-cli not found. PATH={}", path_env);
+        ApiError::Internal("sgx-pa-cli not found — check server logs".into())
     })?;
 
     let out = tokio::process::Command::new(&cli_path)

@@ -116,6 +116,17 @@ fn relay_limits_for_node(node_id: &str) -> (u32, u32) {
     // Defaults if node config not available yet
     (5, 10)
 }
+
+fn validate_node_id(node_id: &str) -> Result<(), Status> {
+    if node_id.is_empty()
+        || !node_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+    {
+        return Err(Status::invalid_argument("invalid node_id"));
+    }
+    Ok(())
+}
 fn ensure_nodea_relay_entries(
     lh_reg: &mut crate::nebula::lighthouse::LighthouseRegistry,
     relay_reg: &mut RelayRegistry,
@@ -148,6 +159,7 @@ impl CertService for MyCertService {
     ) -> Result<Response<CertSignResponse>, Status> {
         let req = request.into_inner();
         let node_id = req.node_id.clone();
+        validate_node_id(&node_id)?;
         let public_key_pem = req.public_key_pem.clone();
         let wants_lighthouse = req.wants_lighthouse;
         let wants_relay = req.wants_relay;
@@ -524,7 +536,9 @@ impl CertService for MyCertService {
         }
         let _ = lh_reg.update_endpoint(&node_id, &member_endpoint);
         lh_reg.mark_active(&node_id);
-        let _ = lh_reg.save(&lh_path);
+        if let Err(e) = lh_reg.save(&lh_path) {
+            eprintln!("⚠️ Failed to save lighthouse registry: {}", e);
+        }
 
         if assigned_relay {
             let (max_peers, max_bw) = relay_limits_for_node(&node_id);
@@ -540,7 +554,9 @@ impl CertService for MyCertService {
         } else {
             relay_reg.remove_relay(&node_id);
         }
-        let _ = relay_reg.save(RELAY_REGISTRY_PATH);
+        if let Err(e) = relay_reg.save(RELAY_REGISTRY_PATH) {
+            eprintln!("⚠️ Failed to save relay registry: {}", e);
+        }
 
         // ── 6. Read generated cert/key ──────────────────────────────
         let signed_cert = tokio::fs::read_to_string(&cert_path)
