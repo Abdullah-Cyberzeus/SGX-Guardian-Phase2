@@ -6,7 +6,6 @@ use std::fs;
 
 const PCR_DIR: &str = "/var/lib/sgx-guardian/pcr";
 const BOOT_DIR: &str = "/var/lib/sgx-guardian/boot";
-const RESULTS_PATH: &str = "/var/log/sgx-guardian/attestation_results.json";
 const QUOTE_PATH: &str = "/var/log/sgx-guardian/last_quote.json";
 const DKP_PUB_DER_PATH: &str = "/var/lib/sgx-guardian/keys/dkp_pub.der";
 
