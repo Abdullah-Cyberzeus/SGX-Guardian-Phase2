@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 const DEFAULT_GUARDIAN_PRIV_KEY_PATH: &str = "/etc/sgx-guardian/guardian_private.key";
 const DEFAULT_GUARDIAN_PUB_KEY_PATH: &str = "/etc/sgx-guardian/guardian_public.key";
-const DEFAULT_KEYGEN_WORKDIR: &str = "sgx-pa-cli";
+const DEFAULT_KEYGEN_WORKDIR: &str = "/etc/sgx-guardian/";
 const GENERATED_PRIV_KEY_NAME: &str = "guardian_private.key";
 const GENERATED_PUB_KEY_NAME: &str = "guardian_public.key";
 const GUARDIAN_PROVIDER: &str = "software";
