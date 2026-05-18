@@ -287,6 +287,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bs58"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
+dependencies = [
+ "tinyvec",
+]
+
+[[package]]
 name = "bstr"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2262,6 +2271,7 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "base64 0.21.7",
+ "bs58",
  "chrono",
  "clap",
  "comfy-table",
@@ -2286,6 +2296,7 @@ dependencies = [
  "async-trait",
  "axum 0.7.9",
  "base64 0.21.7",
+ "bs58",
  "chrono",
  "dashmap",
  "hex",
@@ -2307,6 +2318,7 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "tempfile",
+ "thiserror 1.0.69",
  "tokio",
  "tonic",
  "tonic-prost",

@@ -241,6 +241,12 @@ fn rotate_dkp(has_ssscli: bool) -> bool {
         eprintln!("❌ Failed to atomically replace metadata: {}", e);
         return false;
     }
+    if let Err(e) = sgx_guardian_client::did::method::update_dkp_version(
+        sgx_guardian_client::did::DEFAULT_DID_PATH,
+        new_version,
+    ) {
+        eprintln!("│  DID metadata update skipped: {}", e);
+    }
     true
 }
 

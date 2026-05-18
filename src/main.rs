@@ -79,6 +79,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "/var/lib/sgx-guardian/pcr",
         "/var/lib/sgx-guardian/boot",
         "/var/lib/sgx-guardian/sgx-agent",
+        "/var/lib/sgx-guardian/identity",
+        "/var/lib/sgx-guardian/identity/peers",
         "/var/lib/sgx-guardian/nebula/ca",
         "/var/lib/sgx-guardian/nebula/nodes",
         "/var/lib/sgx-guardian/nebula/requests",
@@ -265,13 +267,73 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             match dkp.check_and_auto_rotate() {
                 Ok(Some(new_meta)) => {
                     println!("  DKP auto-rotated to v{}", new_meta.version);
-                    // Reinitialize KeyManager with new key
-                    // (daemon restart is safer for now)
+                    if let Err(e) = sgx_guardian_client::did::method::update_dkp_version(
+                        sgx_guardian_client::did::DEFAULT_DID_PATH,
+                        new_meta.version,
+                    ) {
+                        eprintln!("  ⚠️ DID dkp_version update failed: {}", e);
+                    }
                 }
                 Ok(None) => { /* no rotation needed */ }
                 Err(e) => {
                     eprintln!("  Auto-rotation check failed: {}", e);
                 }
+            }
+        }
+    }
+
+    // === DID Initialization (W3C DID / did:guardian) ===
+    println!("\n🆔 Initializing W3C DID (did:guardian)...");
+    {
+        let did_path = sgx_guardian_client::did::DEFAULT_DID_PATH;
+        let dkp_pubkey_path = "/var/lib/sgx-guardian/keys/dkp_pub.der";
+        match sgx_guardian_client::did::method::create_if_absent(
+            &node_id,
+            &km,
+            dkp_pubkey_path,
+            did_path,
+        ) {
+            Ok(did) => {
+                println!("  ✅ DID active: {}", did.as_str());
+                log_audit(
+                    &node_id,
+                    AuditCategory::Did,
+                    AuditSeverity::Info,
+                    AuditAction::Loaded,
+                    &format!("DID resolved: {}", did.as_str()),
+                );
+            }
+            Err(sgx_guardian_client::did::DidError::DerivationMismatch) => {
+                eprintln!("  🔴 DID DERIVATION MISMATCH — refusing to start.");
+                log_audit(
+                    &node_id,
+                    AuditCategory::Did,
+                    AuditSeverity::Critical,
+                    AuditAction::Failed,
+                    "DID derivation mismatch — hardware fingerprint changed",
+                );
+                std::process::exit(2);
+            }
+            Err(sgx_guardian_client::did::DidError::Deactivated(when)) => {
+                eprintln!("  🔴 DID is deactivated at {} — refusing to start.", when);
+                log_audit(
+                    &node_id,
+                    AuditCategory::Did,
+                    AuditSeverity::Critical,
+                    AuditAction::Rejected,
+                    &format!("DID is deactivated at {}", when),
+                );
+                std::process::exit(3);
+            }
+            Err(e) => {
+                eprintln!("  ⚠️ DID initialization failed: {} — continuing.", e);
+                log_audit(
+                    &node_id,
+                    AuditCategory::Did,
+                    AuditSeverity::Warning,
+                    AuditAction::Failed,
+                    &format!("DID initialization failed: {}", e),
+                );
             }
         }
     }

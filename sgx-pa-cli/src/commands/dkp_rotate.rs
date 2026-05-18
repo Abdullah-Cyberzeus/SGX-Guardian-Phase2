@@ -198,6 +198,12 @@ pub fn run() {
         eprintln!("❌ Failed to atomically replace metadata: {}", e);
         return;
     }
+    if let Err(e) = sgx_guardian_client::did::method::update_dkp_version(
+        sgx_guardian_client::did::DEFAULT_DID_PATH,
+        new_version,
+    ) {
+        eprintln!("⚠️ DID metadata update skipped: {}", e);
+    }
 
     println!("\n✅ Rotation complete:");
     println!("  {} (v{}) → Deprecated", current_key_id, current_version);
