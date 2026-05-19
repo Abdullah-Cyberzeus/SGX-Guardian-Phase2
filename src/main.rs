@@ -257,8 +257,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let km = KeyManager::load_or_generate(&node_key_path)?;
 
     // === DKP Auto-Rotation Check ===
+    // Only probe the SE050 a SECOND time if the primary KeyManager init above
+    // actually came up on hardware. Re-initializing DkpManager on a flaky chip
+    // (e.g. during a network flap on the CA node) doubles ssscli/I2C contention
+    // and was an amplifier of the DKP-regeneration cascade. If we're on software
+    // keys, there is nothing to auto-rotate in the SE050 anyway.
     #[cfg(feature = "secure-element")]
-    {
+    if km.backend_name() == "SE050" {
         let se_config = sgx_guardian_client::secure_element::SeConfig::default();
         let base_path = "/var/lib/sgx-guardian";
         if let Ok(mut dkp) =
@@ -304,15 +309,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
             Err(sgx_guardian_client::did::DidError::DerivationMismatch) => {
-                eprintln!("  🔴 DID DERIVATION MISMATCH — refusing to start.");
+                // A mismatch derived from the PINNED v1 pubkey means the
+                // SE050 UID changed (true chip swap) — NOT a transient read
+                // blip (Fix 1/2 prevent those from ever regenerating the DKP).
+                // Even so, do NOT kill the daemon: the persisted did.json
+                // remains the authoritative identity. Log CRITICAL, keep the
+                // persisted DID, and continue in a degraded-but-running state
+                // so the operator can investigate instead of facing a boot loop.
+                eprintln!(
+                    "  🔴 DID DERIVATION MISMATCH (SE050 UID changed?) — \
+                     keeping persisted DID, continuing in DEGRADED mode."
+                );
                 log_audit(
                     &node_id,
                     AuditCategory::Did,
                     AuditSeverity::Critical,
                     AuditAction::Failed,
-                    "DID derivation mismatch — hardware fingerprint changed",
+                    "DID derivation mismatch — persisted DID retained, node DEGRADED",
                 );
-                std::process::exit(2);
+                if let Ok(rec) = sgx_guardian_client::did::DidRecord::load(
+                    sgx_guardian_client::did::DEFAULT_DID_PATH,
+                ) {
+                    println!("  ↳ Persisted DID retained: {}", rec.did);
+                }
             }
             Err(sgx_guardian_client::did::DidError::Deactivated(when)) => {
                 eprintln!("  🔴 DID is deactivated at {} — refusing to start.", when);

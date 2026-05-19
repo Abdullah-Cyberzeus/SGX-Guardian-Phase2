@@ -17,14 +17,38 @@ pub fn create_if_absent(
     dkp_pubkey_path: &str,
     did_path: &str,
 ) -> Result<Did, DidError> {
-    let dkp_pubkey = read_dkp_pubkey(dkp_pubkey_path)?;
     let (uid_string, uid_source, uid_bytes) = read_uid(node_id)?;
-    let candidate_did = derive(&uid_bytes, &dkp_pubkey);
 
+    // ── Existing DID present: validate against the PINNED v1 pubkey,
+    //    never against the live dkp_pub.der (which rotates) ──────────────
     if Path::new(did_path).exists() {
         let existing = DidRecord::load(did_path)?;
         let existing_did = Did::parse(&existing.did)?;
 
+        // Source of truth for re-derivation = the v1 pubkey stored INSIDE
+        // did.json. Fall back to the on-disk file only for legacy records
+        // written before this field existed.
+        let pinned_v1: Vec<u8> = match &existing.derivation.dkp_v1_pubkey_der_b64 {
+            Some(b64) => general_purpose::STANDARD
+                .decode(b64)
+                .map_err(|e| DidError::InvalidFormat(format!("pinned v1 pubkey b64: {}", e)))?,
+            None => {
+                // Legacy did.json. Try the live file; if it is unreadable we
+                // must NOT treat that as a mismatch — keep the persisted DID.
+                match read_dkp_pubkey(dkp_pubkey_path) {
+                    Ok(der) => der,
+                    Err(_) => {
+                        eprintln!(
+                            "  ⚠️ DKP pubkey unreadable and did.json has no pinned \
+                             v1 key (legacy) — trusting persisted DID, continuing"
+                        );
+                        return Ok(existing_did);
+                    }
+                }
+            }
+        };
+
+        let candidate_did = derive(&uid_bytes, &pinned_v1);
         if existing_did != candidate_did {
             return Err(DidError::DerivationMismatch);
         }
@@ -36,11 +60,16 @@ pub fn create_if_absent(
         return Ok(existing_did);
     }
 
+    // ── First boot: derive from the CURRENT DKP (this becomes v1) ────────
+    let dkp_pubkey = read_dkp_pubkey(dkp_pubkey_path)?;
+    let candidate_did = derive(&uid_bytes, &dkp_pubkey);
+
     let derivation = DerivationProof {
         se050_uid: uid_string,
         se050_uid_source: uid_source,
         dkp_v1_pubkey_sha256_b16: hex::encode(Sha256::digest(&dkp_pubkey)),
         dkp_v1_pubkey_path: dkp_pubkey_path.to_string(),
+        dkp_v1_pubkey_der_b64: Some(general_purpose::STANDARD.encode(&dkp_pubkey)),
     };
     let signing_bytes = derivation_signing_bytes(&derivation);
     let signature = km

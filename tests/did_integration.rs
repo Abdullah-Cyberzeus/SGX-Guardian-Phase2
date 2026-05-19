@@ -41,7 +41,7 @@ fn test_create_then_load_then_deactivate() {
 }
 
 #[test]
-fn test_derivation_mismatch_detected() {
+fn test_pinned_v1_pubkey_keeps_did_stable_when_live_pubkey_changes() {
     let td = TempDir::new().unwrap();
     let key_path1 = td.path().join("device1.key");
     let key_path2 = td.path().join("device2.key");
@@ -61,12 +61,13 @@ fn test_derivation_mismatch_detected() {
     let km2 = KeyManager::load_or_generate(key_path2.to_str().unwrap()).unwrap();
     std::fs::write(&dkp_pub, km2.pubkey_der().unwrap()).unwrap();
 
-    let err = create_if_absent(
+    let did2 = create_if_absent(
         "nodeT",
         &km2,
         dkp_pub.to_str().unwrap(),
         did_path.to_str().unwrap(),
     )
-    .unwrap_err();
-    assert!(matches!(err, did::DidError::DerivationMismatch));
+    .unwrap();
+    let rec = did::DidRecord::load(did_path.to_str().unwrap()).unwrap();
+    assert_eq!(did2.as_str(), rec.did);
 }

@@ -17,9 +17,54 @@ use crate::secure_element::error::SeError;
 use crate::secure_element::key_meta::{DkpKeyHistory, KeyMetadata};
 use crate::secure_element::key_storage::SeKeyStorage;
 use crate::secure_element::sign::SeSigner;
+use std::path::Path;
 use tracing::{info, warn};
 
 pub const DKP_BASE_KEY_ID: u32 = 0x20000010;
+
+/// Probe the SE050 for a slot with bounded retries. Between attempts, clear
+/// the stale ssscli session pickle so connect() re-establishes a fresh
+/// session (equivalent to the board's reset_ssscli.sh). Returns:
+///   Some(true)  = slot confirmed present
+///   Some(false) = chip reachable, slot confirmed absent
+///   None        = could not reach the chip after all retries (UNKNOWN)
+fn probe_slot_with_retry(config: &SeConfig, slot_hex: &str, attempts: u8) -> Option<bool> {
+    for attempt in 1..=attempts {
+        match SeKeyStorage::new(config) {
+            Ok(store) => match store.list_slots() {
+                Ok(list) => {
+                    return Some(list.to_uppercase().contains(&slot_hex.to_uppercase()));
+                }
+                Err(e) => {
+                    warn!(
+                        "SE050 readidlist attempt {}/{} failed: {}",
+                        attempt, attempts, e
+                    );
+                }
+            },
+            Err(e) => {
+                warn!(
+                    "SE050 connect attempt {}/{} failed: {}",
+                    attempt, attempts, e
+                );
+            }
+        }
+        // Clear stale session pickle so the next connect() is clean.
+        // ssscli writes ~/.ssscli_session.pkl (note the leading char varies
+        // by ssscli version: "~.ssscli_session.pkl" on these boards).
+        if let Some(home) = std::env::var_os("HOME") {
+            let home = home.to_string_lossy().to_string();
+            for candidate in [
+                format!("{}/.ssscli_session.pkl", home),
+                format!("{}/~.ssscli_session.pkl", home),
+                format!("{}/~.ssscli_session.pkl", "/root"),
+            ] {
+                let _ = std::fs::remove_file(&candidate);
+            }
+        }
+    }
+    None
+}
 
 pub struct DkpManager {
     /// Full key history (all versions)
@@ -41,30 +86,48 @@ impl DkpManager {
         // Try to load existing metadata history
         if let Ok(history) = DkpKeyHistory::load(&metadata_path) {
             if let Some(active) = history.active_key() {
-                // NEW: verify the slot advertised in metadata actually exists in SE050.
-                // Prevents the "metadata says v1 at 0x20000010 but chip slot was wiped"
-                // drift that put Board 115 into a reboot loop.
                 let slot_hex = active.key_id.clone();
-                let slot_found = match SeKeyStorage::new(config) {
-                    Ok(store) => match store.list_slots() {
-                        Ok(list) => list.to_uppercase().contains(&slot_hex.to_uppercase()),
-                        Err(_) => false,
-                    },
-                    Err(_) => false,
+
+                // Three-state probe (Fix 1): distinguish a TRANSIENT SE050 read
+                // failure from a GENUINELY-ABSENT slot. A network flap on a
+                // CA/lighthouse node contends the ssscli/I2C session; a momentary
+                // Err here previously caused the DKP to be regenerated, which
+                // changed the device identity key and cascaded into DID mismatch
+                // and baseline-signature invalidation across the whole mesh.
+                enum SlotProbe {
+                    Present,
+                    Absent,
+                    Unknown,
+                }
+                let probe = match probe_slot_with_retry(config, &slot_hex, 4) {
+                    Some(true) => SlotProbe::Present,
+                    Some(false) => SlotProbe::Absent,
+                    None => SlotProbe::Unknown,
                 };
 
-                if !slot_found {
+                // Only a CONFIRMED-absent slot (chip talked to us and the key
+                // is genuinely gone) justifies quarantining metadata and
+                // re-provisioning. Unknown = keep the existing key, sign via
+                // the slot the metadata points at; dkp_pub.der is already on
+                // disk from original provisioning.
+                if let SlotProbe::Absent = probe {
                     warn!(
-                        "DKP metadata claims slot {} but SE050 does not have it — \
+                        "DKP metadata claims slot {} but SE050 confirms it is ABSENT — \
                          treating as fresh provisioning",
                         slot_hex
                     );
-                    // Rotate metadata out of the way so generate_dkp can recreate.
                     let quarantine =
                         format!("{}.stale.{}", metadata_path, chrono::Utc::now().timestamp());
                     let _ = std::fs::rename(&metadata_path, &quarantine);
                     // Fall through to fresh-provision branch below.
                 } else {
+                    if let SlotProbe::Unknown = probe {
+                        println!(
+                            "  ⚠️ SE050 not reachable this boot — keeping existing DKP \
+                             (v{}) from metadata (no regeneration)",
+                            active.version
+                        );
+                    }
                     println!(
                         "  Existing DKP found (v{}) — loading from SE050",
                         active.version
@@ -94,6 +157,58 @@ impl DkpManager {
                         public_key_path,
                         config: config.clone(),
                     });
+                }
+            }
+        }
+
+        // Fix 5: before provisioning a brand-new DKP, try to restore a
+        // metadata file that a previous (buggy) boot quarantined. If the
+        // public key DER is still intact on disk, the SE050 slot almost
+        // certainly still holds the original key — regenerating would
+        // permanently change the device identity and break the DID/baseline.
+        if !Path::new(&metadata_path).exists() {
+            if let Some(parent) = Path::new(&metadata_path).parent() {
+                if let Ok(entries) = std::fs::read_dir(parent) {
+                    let mut quarantines: Vec<std::path::PathBuf> = entries
+                        .flatten()
+                        .map(|e| e.path())
+                        .filter(|p| {
+                            p.file_name()
+                                .and_then(|n| n.to_str())
+                                .map(|n| n.starts_with("dkp_metadata.json.stale."))
+                                .unwrap_or(false)
+                        })
+                        .collect();
+                    quarantines.sort();
+                    if let Some(newest) = quarantines.last() {
+                        let pub_ok = std::fs::metadata(&public_key_path)
+                            .map(|m| m.len() == 91)
+                            .unwrap_or(false);
+                        if pub_ok {
+                            if std::fs::rename(newest, &metadata_path).is_ok() {
+                                println!(
+                                    "  ♻️ Restored quarantined DKP metadata ({:?}) — \
+                                     pubkey intact, NOT regenerating",
+                                    newest.file_name().unwrap_or_default()
+                                );
+                                if let Ok(history) = DkpKeyHistory::load(&metadata_path) {
+                                    if history.active_key().is_some() {
+                                        return Ok(Self {
+                                            history,
+                                            metadata_path,
+                                            public_key_path,
+                                            config: config.clone(),
+                                        });
+                                    }
+                                }
+                            }
+                        } else {
+                            warn!(
+                                "Quarantined DKP metadata found but dkp_pub.der is \
+                                 missing/short — cannot safely restore, will provision"
+                            );
+                        }
+                    }
                 }
             }
         }

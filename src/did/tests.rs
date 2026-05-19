@@ -95,6 +95,7 @@ fn test_persistence_save_load_roundtrip() {
             se050_uid_source: "fallback".into(),
             dkp_v1_pubkey_sha256_b16: "ab".repeat(32),
             dkp_v1_pubkey_path: "/tmp/dkp_pub.der".into(),
+            dkp_v1_pubkey_der_b64: None,
         },
         current_dkp_version: 1,
         deriv_signature_b64: "Zm9v".into(),
@@ -125,6 +126,7 @@ fn test_atomic_write_does_not_leave_tmp_on_success() {
             se050_uid_source: "fallback".into(),
             dkp_v1_pubkey_sha256_b16: "00".repeat(32),
             dkp_v1_pubkey_path: "/tmp/dkp.der".into(),
+            dkp_v1_pubkey_der_b64: None,
         },
         current_dkp_version: 1,
         deriv_signature_b64: "AAA=".into(),
@@ -144,6 +146,7 @@ fn test_derivation_signing_bytes_stable() {
         se050_uid_source: "fallback".to_string(),
         dkp_v1_pubkey_sha256_b16: "11".repeat(32),
         dkp_v1_pubkey_path: "/tmp/dkp.der".to_string(),
+        dkp_v1_pubkey_der_b64: None,
     };
     let a = derivation_signing_bytes(&d);
     let b = derivation_signing_bytes(&d);
@@ -190,7 +193,7 @@ fn test_method_create_idempotent_and_deactivate() {
 }
 
 #[test]
-fn test_method_derivation_mismatch_detected() {
+fn test_method_uses_pinned_v1_pubkey_when_live_pubkey_changes() {
     let td = TempDir::new().unwrap();
     let key_path1 = td.path().join("device1.key");
     let key_path2 = td.path().join("device2.key");
@@ -209,14 +212,15 @@ fn test_method_derivation_mismatch_detected() {
 
     let km2 = KeyManager::load_or_generate(key_path2.to_str().unwrap()).unwrap();
     std::fs::write(&dkp_pub, km2.pubkey_der().unwrap()).unwrap();
-    let err = method::create_if_absent(
+    let did2 = method::create_if_absent(
         "nodeT",
         &km2,
         dkp_pub.to_str().unwrap(),
         did_path.to_str().unwrap(),
     )
-    .unwrap_err();
-    assert!(matches!(err, DidError::DerivationMismatch));
+    .unwrap();
+    let rec = DidRecord::load(did_path.to_str().unwrap()).unwrap();
+    assert_eq!(did2.as_str(), rec.did);
 }
 
 #[test]

@@ -14,6 +14,12 @@ pub struct DerivationProof {
     pub se050_uid_source: String,
     pub dkp_v1_pubkey_sha256_b16: String,
     pub dkp_v1_pubkey_path: String,
+    /// Full DKP v1 SEC1 DER, base64. The DID is pinned to THIS key forever.
+    /// dkp_pub.der on disk is overwritten on every legitimate DKP rotation,
+    /// so it must NOT be used to re-derive the DID. Optional for backward
+    /// compatibility with did.json files written before this fix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dkp_v1_pubkey_der_b64: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
