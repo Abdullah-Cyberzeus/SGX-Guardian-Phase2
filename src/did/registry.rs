@@ -1,6 +1,6 @@
-use crate::did::did::Did;
 use crate::did::errors::DidError;
 use crate::did::persistence::DEFAULT_PEERS_DIR;
+use crate::did::Did;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};

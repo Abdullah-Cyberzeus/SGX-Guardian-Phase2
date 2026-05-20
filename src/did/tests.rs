@@ -1,8 +1,8 @@
-use super::did::{derive, Did};
 use super::errors::DidError;
 use super::method;
 use super::persistence::{derivation_signing_bytes, DerivationProof, DidRecord};
 use super::registry;
+use super::{derive, Did};
 use crate::key_manager::KeyManager;
 use tempfile::TempDir;
 
@@ -26,8 +26,8 @@ fn test_derive_changes_with_uid() {
 #[test]
 fn test_derive_changes_with_pubkey() {
     let uid = b"uid-fixed";
-    let d1 = derive(uid, &vec![0xAA; 91]);
-    let d2 = derive(uid, &vec![0xBB; 91]);
+    let d1 = derive(uid, &[0xAA; 91]);
+    let d2 = derive(uid, &[0xBB; 91]);
     assert_ne!(d1, d2);
 }
 

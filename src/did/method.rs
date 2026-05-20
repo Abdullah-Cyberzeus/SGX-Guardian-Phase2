@@ -1,6 +1,6 @@
-use crate::did::did::{derive, Did};
 use crate::did::errors::DidError;
 use crate::did::persistence::{derivation_signing_bytes, DerivationProof, DidRecord};
+use crate::did::{derive, Did};
 use crate::key_manager::KeyManager;
 use crate::secure_element::pcr::{read_device_uid, read_dkp_key_version};
 use base64::{engine::general_purpose, Engine as _};
@@ -164,7 +164,7 @@ fn read_uid(fallback: &str) -> Result<(String, String, Vec<u8>), DidError> {
 
 fn uid_to_bytes(uid: &str) -> Vec<u8> {
     let trimmed = uid.trim();
-    if trimmed.len() % 2 == 0
+    if trimmed.len().is_multiple_of(2)
         && trimmed.len() >= 2
         && trimmed.chars().all(|c| c.is_ascii_hexdigit())
     {

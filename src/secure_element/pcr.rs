@@ -437,7 +437,7 @@ pub fn canonical_static_yaml_measurement(path: &str) -> String {
 fn canonicalize_static_config(v: &mut serde_yaml::Value) {
     if let serde_yaml::Value::Mapping(map) = v {
         for k in PCR_DYNAMIC_DENYLIST {
-            map.remove(&serde_yaml::Value::String((*k).to_string()));
+            map.remove(serde_yaml::Value::String((*k).to_string()));
         }
         for (_k, val) in map.iter_mut() {
             canonicalize_static_config(val);
@@ -478,7 +478,7 @@ fn serde_yaml_to_sorted_json(v: &serde_yaml::Value) -> String {
                 keys.sort();
                 let mut obj = serde_json::Map::new();
                 for k in keys {
-                    if let Some(val) = m.get(&serde_yaml::Value::String(k.clone())) {
+                    if let Some(val) = m.get(serde_yaml::Value::String(k.clone())) {
                         obj.insert(k, to_json(val));
                     }
                 }

@@ -1,5 +1,5 @@
-use crate::did::did::Did;
 use crate::did::errors::DidError;
+use crate::did::Did;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
