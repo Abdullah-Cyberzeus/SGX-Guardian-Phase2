@@ -96,6 +96,8 @@ fn test_persistence_save_load_roundtrip() {
             dkp_v1_pubkey_sha256_b16: "ab".repeat(32),
             dkp_v1_pubkey_path: "/tmp/dkp_pub.der".into(),
             dkp_v1_pubkey_der_b64: None,
+            dik_pubkey_sha256_b16: String::new(),
+            dik_pubkey_der_b64: None,
         },
         current_dkp_version: 1,
         deriv_signature_b64: "Zm9v".into(),
@@ -127,6 +129,8 @@ fn test_atomic_write_does_not_leave_tmp_on_success() {
             dkp_v1_pubkey_sha256_b16: "00".repeat(32),
             dkp_v1_pubkey_path: "/tmp/dkp.der".into(),
             dkp_v1_pubkey_der_b64: None,
+            dik_pubkey_sha256_b16: String::new(),
+            dik_pubkey_der_b64: None,
         },
         current_dkp_version: 1,
         deriv_signature_b64: "AAA=".into(),
@@ -147,6 +151,8 @@ fn test_derivation_signing_bytes_stable() {
         dkp_v1_pubkey_sha256_b16: "11".repeat(32),
         dkp_v1_pubkey_path: "/tmp/dkp.der".to_string(),
         dkp_v1_pubkey_der_b64: None,
+        dik_pubkey_sha256_b16: "22".repeat(32),
+        dik_pubkey_der_b64: Some("AA==".to_string()),
     };
     let a = derivation_signing_bytes(&d);
     let b = derivation_signing_bytes(&d);

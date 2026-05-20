@@ -21,6 +21,8 @@ pub enum DidCommand {
     Create,
     /// Deactivate this device's DID
     Deactivate(DidDeactivateArgs),
+    /// One-time migration: backup and remove did.json so daemon remints from DIK
+    Remint(DidRemintArgs),
 }
 
 #[derive(Args)]
@@ -39,6 +41,13 @@ pub struct DidDeactivateArgs {
     pub yes: bool,
 }
 
+#[derive(Args)]
+pub struct DidRemintArgs {
+    /// Confirm destructive operation (removes current did.json after backup)
+    #[arg(long)]
+    pub yes: bool,
+}
+
 pub fn run(args: DidArgs) {
     match args.command {
         DidCommand::Show => cmd_show(),
@@ -46,6 +55,7 @@ pub fn run(args: DidArgs) {
         DidCommand::Peers => cmd_peers(),
         DidCommand::Create => cmd_create(),
         DidCommand::Deactivate(a) => cmd_deactivate(a),
+        DidCommand::Remint(a) => cmd_remint(a),
     }
 }
 
@@ -76,6 +86,14 @@ fn cmd_show() {
             table.add_row(vec![
                 Cell::new("DKP_v1 pubkey hash"),
                 Cell::new(&rec.derivation.dkp_v1_pubkey_sha256_b16),
+            ]);
+            table.add_row(vec![
+                Cell::new("DIK pubkey hash"),
+                Cell::new(if rec.derivation.dik_pubkey_sha256_b16.is_empty() {
+                    "—"
+                } else {
+                    &rec.derivation.dik_pubkey_sha256_b16
+                }),
             ]);
             println!("{}", table);
         }
@@ -200,6 +218,35 @@ fn cmd_deactivate(args: DidDeactivateArgs) {
         }
         Err(e) => {
             eprintln!("❌ Deactivate failed: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_remint(args: DidRemintArgs) {
+    if !args.yes {
+        eprintln!("⚠️ Remint will move the current DID record aside and require daemon restart.");
+        eprintln!("Re-run with --yes to confirm.");
+        std::process::exit(1);
+    }
+
+    let did_path = did::DEFAULT_DID_PATH;
+    if !std::path::Path::new(did_path).exists() {
+        println!(
+            "ℹ️ No did.json found at {}. Restart daemon to mint from DIK.",
+            did_path
+        );
+        return;
+    }
+
+    let backup_path = format!("{}.dkp-era.bak", did_path);
+    match std::fs::rename(did_path, &backup_path) {
+        Ok(()) => {
+            println!("✅ DID record moved to backup: {}", backup_path);
+            println!("🔁 Restart sgx-guardian daemon to regenerate DID from SE050 UID + DIK.");
+        }
+        Err(e) => {
+            eprintln!("❌ Remint prep failed: {}", e);
             std::process::exit(1);
         }
     }

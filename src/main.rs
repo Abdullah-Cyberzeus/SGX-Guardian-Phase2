@@ -287,6 +287,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // === Device Identity Key (DIK) — non-rotating DID anchor ===
+    #[cfg(feature = "secure-element")]
+    {
+        let se_config = sgx_guardian_client::secure_element::SeConfig::default();
+        match sgx_guardian_client::secure_element::dik::DeviceIdentityKey::ensure(&se_config) {
+            Ok(_) => println!("🔑 Device Identity Key (DIK) ready (slot 0x20000100, non-rotating)"),
+            Err(e) => eprintln!(
+                "⚠️ DIK ensure failed: {} — DID will use cached anchor if present",
+                e
+            ),
+        }
+    }
+
     // === DID Initialization (W3C DID / did:guardian) ===
     println!("\n🆔 Initializing W3C DID (did:guardian)...");
     {
@@ -309,7 +322,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
             Err(sgx_guardian_client::did::DidError::DerivationMismatch) => {
-                // A mismatch derived from the PINNED v1 pubkey means the
+                // A mismatch derived from the pinned DIK pubkey means the
                 // SE050 UID changed (true chip swap) — NOT a transient read
                 // blip (Fix 1/2 prevent those from ever regenerating the DKP).
                 // Even so, do NOT kill the daemon: the persisted did.json
@@ -478,6 +491,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .collect();
                 let errs = pcr_engine.extend_from_files(src.pcr_index, &files);
                 measurement_errors.extend(errs);
+            } else if src.source_type == "static_yaml" {
+                let canonical = canonical_static_yaml_measurement(&src.source);
+                match pcr_engine.extend_from_string(src.pcr_index, &canonical) {
+                    Ok(hash) => println!(
+                        "    PCR{}: {} → {}...",
+                        src.pcr_index,
+                        src.label,
+                        &hash[..12]
+                    ),
+                    Err(e) => {
+                        let _ =
+                            pcr_engine.extend_from_string(src.pcr_index, &format!("ERROR:{}", e));
+                        measurement_errors.push(PcrMeasurementError {
+                            pcr_index: src.pcr_index,
+                            source: src.source.clone(),
+                            error: e.clone(),
+                        });
+                        println!("    PCR{}: {} → ⚠️ {}", src.pcr_index, src.label, e);
+                    }
+                }
             } else {
                 let result = match src.source_type.as_str() {
                     "file" => pcr_engine.extend_from_file(src.pcr_index, &src.source),

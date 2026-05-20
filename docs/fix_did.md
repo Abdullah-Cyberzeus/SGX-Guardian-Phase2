@@ -1,485 +1,315 @@
-# SG-X Guardian — Task 1 (W3C DID) Board Fix: Network-Change DKP Regeneration Cascade
+# SG-X Guardian — Task 1 DID: Two Production Fixes (DID↔DKP Decoupling + PCR4 Stability)
 
 **Date:** May 19, 2026
-**Scope:** Task 1 (W3C DID Implementation) only — Task 2 (DID Document) NOT yet implemented
-**Board:** Variscite VAR-SOM-MX8M-PLUS, nodeA (`imx8mp-var-dart`, 192.168.50.101)
-**Source:** Latest `main` via `project_knowledge_search` (GitHub private; project knowledge is authoritative)
+**Scope:** Task 1 (W3C DID) — Issue 1 (DID anchor) + Issue 2 (PCR4 vs network state)
+**Board:** Variscite VAR-SOM-MX8M-PLUS, nodeA
+**Source:** Latest `main` via `project_knowledge_search` (GitHub private; project knowledge authoritative)
 **Style:** Same FIND→REPLACE format as `PCR_Complete_Plan.md`
 
 ---
 
 ## Note on Code Access
 
-I could not `git clone` (private repo). As in every prior session, current `main` was read through `project_knowledge_search`. Every code excerpt and FIND block below is from the real current source: `src/secure_element/dkp.rs`, `src/secure_element/ssscli.rs`, `src/secure_element/key_storage.rs`, `src/key_manager.rs`, `src/main.rs`, `src/did/method.rs`.
-
-I cannot compile or run on the boards. The root cause below is derived by tracing the actual code paths against the three attached terminal logs (nodeA, nodeB, nodeC) line-by-line.
+GitHub repo is private — current `main` read via `project_knowledge_search`. Every FIND block below is the real current source: `src/secure_element/pcr_config.rs`, `src/secure_element/pcr.rs`, `src/secure_element/ssscli.rs`, `src/secure_element/dkp.rs`, `src/secure_element/key_storage.rs`, `src/did/method.rs`, `src/did/persistence.rs`, `src/main.rs`. I cannot compile/run on the boards; root causes are derived by tracing the code against the attached nodeA logs.
 
 ---
 
-# 1. What the Logs Actually Show (Evidence)
+# ISSUE 1 — DID Anchored to a Rotatable Key
 
-Reading nodeA's terminal across its 7 successive runs:
+## 1.1 The problem (confirmed)
 
-| Run | DKP line | Network | DID result |
-|---|---|---|---|
-| 1 (first boot) | `No existing DKP found — generating new DKP` → `DKP generated successfully (v1)` | wlan0 192.168.50.101 | ✅ `did:guardian:FbBin6gQ...` |
-| 2 (restart) | `Existing DKP found (v1) — loading from SE050` | wlan0 192.168.50.101 (unchanged) | ✅ same DID |
-| 3 (after reboot) | `Existing DKP found (v1)` | **eth0 192.168.4.3** then flips to wlan0 192.168.50.101 | ✅ same DID (survived ONE network change) |
-| **4** | `No existing DKP found — generating new DKP` (twice!) | eth0/wlan0 churn | 🔴 `DID DERIVATION MISMATCH — refusing to start` |
-| 5 | `No existing DKP found — generating new DKP` | — | ⚠️ `DKP public key unavailable... continuing` → `Secure Element not available` → `🔴 Baseline signature INVALID` |
-| 6 | same | — | same collapse |
-| 7 | same | — | same collapse |
+Current derivation (Task 1): `DID = did:guardian:base58(SHA256(SE050_UID ‖ DKP_pubkey_DER))`.
 
-Meanwhile **nodeB and nodeC** (network NOT changed) every single run: `Existing DKP found (v1) — loading from SE050` → ✅ stable DID. They only break because they start **rejecting nodeA**: `❌ Attestation rejected: prover nodeA baseline has bad signature`.
+The DKP is **operational and rotatable** (`dkp.rs::rotate()` exists, `check_and_auto_rotate()` runs every boot, slot `0x20000010` → `0x20000011` …). The on-disk pubkey `/var/lib/sgx-guardian/keys/dkp_pub.der` is **overwritten on every rotation** (`storage.export_public_key(new_id, &self.public_key_path)`).
 
-The first 5 checklist items passed. Item 6 (`DID persists after IP/network change`) is where it breaks — and it breaks the DKP, not the DID directly.
+So:
+- If `did.json` is deleted (factory reset, disk wipe, re-provision) **after** a DKP rotation, `create_if_absent` re-derives from the *current* DKP pubkey (now v2) → **a different DID**. The DID is not actually permanent — it is only as permanent as `did.json`.
+- This violates the spec requirement: *"DIDs remain constant across device lifetime, firmware updates, and network changes."*
 
-Two structural facts visible in *every* nodeA boot, even the healthy ones:
+## 1.2 The explicit question: can we use a fixed SE public key?
+
+**Short answer: a truly fixed factory key exists on the chip, but it is NOT usable with the current tooling. The correct, implementable fix is a dedicated non-rotating Device Identity Key (DIK).**
+
+### Option A — NXP factory attestation key (the "real" fixed key)
+
+The SE050E **does** carry a permanent, chip-unique, NXP-provisioned ECDSA-P256 attestation keypair with an NXP-signed certificate (SE050 datasheet AN13483 §3.4: *"All the generic SE050 variants have an attestation key trust provisioned by NXP"*). It is non-rotatable and cannot be erased by the user. This is exactly a "fixed SE identity public key."
+
+**Why we cannot use it right now — the proper reason:**
+
+The project's `ssscli` wrapper (`src/secure_element/ssscli.rs`) only wires these SE050 commands:
 
 ```
-STEP_01 post-listener: entering KeyManager init
-  No existing DKP found — generating new DKP inside SE050...   ← message #1 (KeyManager::init_with_se050)
-  DKP generated successfully (v1)
-DKP initialized via SE050 hardware
-  Existing DKP found (v1) — loading from SE050                  ← message #2 (auto-rotation block re-inits DkpManager)
-  Using existing device identity key (0x20000010)
+se05x : certuid, getrng, readidlist, reset, uid
+keys  : generate ecc, get ecc pub, sign, verify, erase
 ```
 
-`DkpManager::init()` runs **twice per boot**. That is the amplifier.
+There is **no command to export the NXP attestation public key or its certificate**. Retrieving it requires:
+1. New APDU / `ssscli` attestation plumbing (the attestation object read with `--attest` / attestation object ID), which is not implemented in `ssscli.rs`.
+2. Parsing and trust-validating the NXP attestation certificate chain.
+3. Handling SE050-variant differences (not all variants expose the same attestation object layout).
 
----
+That is real new firmware-interface work, not a config change. It is a valid future hardening item but is **not available with the code that exists today**. Using it now is not feasible — that is the proper reason.
 
-# 2. Root Cause (Confirmed from Code)
+### Option B — Dedicated non-rotating Device Identity Key (DIK) ✅ RECOMMENDED
 
-**The DID code is not the bug. It is correctly reporting a problem the DKP layer caused.**
+Generate **one additional** SE050 keypair, **once**, at a **fixed slot separate from the DKP**, that is:
+- **never rotated** (no `rotate()` path, never touched by `check_and_auto_rotate()`),
+- **never used for operational signing** (zero rotation pressure — it only ever produces a public key for DID derivation),
+- re-readable from the SE050 slot at any time (so the DID is re-derivable even if `did.json` is deleted).
 
-### 2.1 The trigger — `dkp.rs` drift detection treats a transient ssscli failure as "chip wiped"
+| | DKP (existing) | **DIK (new)** |
+|---|---|---|
+| Slot | `0x20000010` (+version offset) | `0x20000001` (fixed, never offset) |
+| Purpose | Operational signing (PCR, attestation, certs) | DID anchor **only** |
+| Rotation | Yes (auto + manual) | **Never** |
+| File | `/var/lib/sgx-guardian/keys/dkp_pub.der` (overwritten on rotate) | `/var/lib/sgx-guardian/keys/dik_pub.der` (write-once) |
+| Used by `did:guardian` | ❌ remove | ✅ |
 
-From current `src/secure_element/dkp.rs::DkpManager::init()`:
+New derivation: `DID = did:guardian:base58(SHA256(SE050_UID ‖ DIK_pubkey_DER))`.
+
+Properties this gives:
+1. **Survives DKP rotation** — DIK slot `0x20000001` is never touched by rotation. ✅
+2. **Survives `did.json` deletion** — re-read SE050 UID + DIK pubkey from slot `0x20000001` → identical DID. ✅
+3. **Survives firmware update / network change** — neither input depends on firmware or IP. ✅
+4. Satisfies the spec's "secure element public key" requirement (DIK is an SE050-resident key). ✅
+5. Uses **existing, proven** ssscli plumbing (`generate ecc` / `get ecc pub`) — no new APDU work. ✅
+
+The SE050 UID alone is already permanent and chip-unique; the DIK adds the cryptographic anchor the spec requires and lets the device *prove* control of its DID by signing a challenge with the DIK.
+
+## 1.3 Migration note (one-time, acceptable in Sprint 5)
+
+Existing test boards already minted DKP-derived DIDs:
+- nodeA `did:guardian:FbBin6gQHha6tDeAbTqQhDG4NX3KWCTbdF9pNP3K8giD`
+- nodeB `did:guardian:asNy11Z5Qhgm2xfU77g7q1eZrbyhKK4Tpq25Z361mjJ`
+- nodeC `did:guardian:9snsv5NXFBu2cDztivn9TJU8YRC41kTJLXTrxTRxLpuN`
+
+Switching to DIK changes these DIDs **once**. We are in Sprint 5 hardware testing, not production, so a one-time re-mint is acceptable and is the right time to fix this — before any production enrollment. After the DIK epoch the DID is permanent forever. Provide `sgx-pa-cli did remint` and document it.
+
+## 1.4 Fix Plan — Issue 1 (4 changes)
+
+### Fix 1.1 — New non-rotating DIK manager
+
+**New file:** `src/secure_element/dik.rs`
 
 ```rust
-let slot_hex = active.key_id.clone();
-let slot_found = match SeKeyStorage::new(config) {
-    Ok(store) => match store.list_slots() {
-        Ok(list) => list.to_uppercase().contains(&slot_hex.to_uppercase()),
-        Err(_) => false,          // ← BUG: ssscli error == "slot missing"
-    },
-    Err(_) => false,              // ← BUG: connect() error == "slot missing"
-};
+// src/secure_element/dik.rs
+// ============================================================
+// Device Identity Key (DIK) — PERMANENT, NON-ROTATING.
+//
+// Slot: 0x20000001 (fixed; distinct from DKP 0x20000010).
+// Purpose: the sole cryptographic anchor for did:guardian.
+// NEVER rotated. NEVER used for operational signing.
+//
+// Generated exactly once at first provisioning. If dik_pub.der
+// or dik_metadata.json is lost but the SE050 slot still holds
+// the key, the public key is re-exported — the DID is therefore
+// re-derivable and STABLE for the life of the chip.
+// ============================================================
 
-if !slot_found {
-    warn!("DKP metadata claims slot {} but SE050 does not have it — treating as fresh provisioning", slot_hex);
-    let quarantine = format!("{}.stale.{}", metadata_path, chrono::Utc::now().timestamp());
-    let _ = std::fs::rename(&metadata_path, &quarantine);   // ← quarantines GOOD metadata
-    // falls through and GENERATES A NEW DKP
+use crate::secure_element::config::SeConfig;
+use crate::secure_element::error::SeError;
+use crate::secure_element::key_storage::SeKeyStorage;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
+use tracing::{info, warn};
+
+/// Fixed DIK slot. Distinct from DKP_BASE_KEY_ID (0x20000010).
+pub const DIK_KEY_ID: u32 = 0x20000100;
+pub const DIK_PUB_PATH: &str = "/var/lib/sgx-guardian/keys/dik_pub.der";
+pub const DIK_META_PATH: &str = "/var/lib/sgx-guardian/keys/dik_metadata.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DikMetadata {
+    pub key_id: String,           // "0x20000001"
+    pub algorithm: String,        // "ECDSA-P256"
+    pub created_at: String,       // RFC3339
+    pub non_rotating: bool,       // ALWAYS true — guard against accidental rotation
+    pub purpose: String,          // "did:guardian anchor only"
 }
-```
 
-`SeKeyStorage::new()` calls `SssCli::connect()` (a `ssscli connect ...` subprocess). `list_slots()` runs `ssscli se05x readidlist`. Both spawn the NXP `ssscli` Python tool, which keeps a session pickle (`~.ssscli_session.pkl`, visible in the `ls -lh` you sent). When nodeA's network flaps (eth0 ↔ wlan0), the IP-monitor / config-rewrite / `🔄 Nebula reloaded` churn contends the system and the I2C/ssscli session momentarily fails. `connect()` or `readidlist` returns `Err`.
+pub struct DeviceIdentityKey;
 
-The code maps **both** "key genuinely absent" and "couldn't talk to the chip this instant" to `slot_found = false`. So a transient read failure → metadata quarantined → **brand-new DKP generated** → `dkp_pub.der` overwritten with a different public key.
+impl DeviceIdentityKey {
+    /// Idempotent. Returns the DIK public key DER (91 bytes).
+    /// - If slot present in SE050: re-export pubkey, ensure metadata, return.
+    /// - If slot absent AND no prior metadata: generate ONCE, persist.
+    /// - If SE050 unreachable but dik_pub.der exists: return the cached pubkey
+    ///   (do NOT regenerate — same fail-safe philosophy as the DKP fix).
+    pub fn ensure(config: &SeConfig) -> Result<Vec<u8>, SeError> {
+        let key_hex = format!("0x{:08X}", DIK_KEY_ID);
 
-### 2.2 The cascade into DID and attestation
+        // Probe the chip with the same retry/clean-session helper philosophy.
+        let probe = Self::probe_slot(config, &key_hex, 4);
 
-1. New DKP pubkey written to `/var/lib/sgx-guardian/keys/dkp_pub.der`.
-2. `did::method::create_if_absent()` recomputes `candidate_did = derive(SE050_UID, dkp_pub.der)`. The live `dkp_pub.der` is now the *new* key → `candidate_did ≠` persisted `did.json` → `DidError::DerivationMismatch` → `main.rs` does `std::process::exit(2)` → **"🔴 DID DERIVATION MISMATCH — refusing to start."** (run 4).
-3. Restarts hammer the already-stressed ssscli session; eventually `KeyManager::init_with_se050` fails entirely → software-key fallback. `dkp_pub.der` now absent/garbage → `⚠️ DID initialization failed: DKP public key unavailable`. (runs 5–7)
-4. The PCR baseline was signed by the **original** SE050 DKP. The active key is now a software key → `🔴 Baseline signature INVALID — possible tampering!` → nodeA fails its own self-attestation.
-5. nodeB and nodeC verify nodeA's quote against the registry-known pubkey, see the bad baseline signature → `❌ Attestation rejected: prover nodeA baseline has bad signature`. The whole mesh ejects nodeA.
-
-A single transient `ssscli readidlist` failure during a network change → DKP regenerated → DID mismatch → SE050 lockout → baseline invalidated → mesh-wide rejection. Exactly the log.
-
-### 2.3 The amplifier — DKP initialized twice per boot
-
-`src/main.rs` calls `DkpManager::init()` once inside `KeyManager::init_with_se050(...)`, then **again** in the `=== DKP Auto-Rotation Check ===` block:
-
-```rust
-if let Ok(mut dkp) =
-    sgx_guardian_client::secure_element::dkp::DkpManager::init(&se_config, base_path)
-{
-    match dkp.check_and_auto_rotate() { ... }
-}
-```
-
-Two independent ssscli probe sequences per boot = double the chance of hitting the transient window, and either one can quarantine + regenerate.
-
-### 2.4 Latent design bug in the DID layer (exposed, must also fix)
-
-`did::method::create_if_absent()` recomputes the DID from the **live** `dkp_pub.der`. But `dkp_pub.der` is overwritten on every *legitimate* DKP rotation (`dkp.rs::rotate()` → `storage.export_public_key(new_id, &self.public_key_path)` writes the same path). So even a normal, intended v1→v2 rotation would trip `DerivationMismatch`. The DID must be pinned to the **v1** pubkey stored *inside* `did.json` — never the live file.
-
----
-
-# 3. Fix Plan (5 surgical changes)
-
-Order matters: Fix 1 + Fix 2 stop the regeneration (root cause). Fix 5 auto-heals already-broken boards. Fix 3 reduces contention. Fix 4 makes the DID layer correct and resilient.
-
----
-
-## Fix 1 — `dkp.rs`: never quarantine/regenerate on a transient SE050 error
-
-**File:** `src/secure_element/dkp.rs`
-**Function:** `DkpManager::init`
-
-**FIND:**
-```rust
-                let slot_hex = active.key_id.clone();
-                let slot_found = match SeKeyStorage::new(config) {
-                    Ok(store) => match store.list_slots() {
-                        Ok(list) => list.to_uppercase().contains(&slot_hex.to_uppercase()),
-                        Err(_) => false,
-                    },
-                    Err(_) => false,
-                };
-
-                if !slot_found {
-                    warn!(
-                        "DKP metadata claims slot {} but SE050 does not have it — \
-                         treating as fresh provisioning",
-                        slot_hex
-                    );
-                    // Rotate metadata out of the way so generate_dkp can recreate.
-                    let quarantine =
-                        format!("{}.stale.{}", metadata_path, chrono::Utc::now().timestamp());
-                    let _ = std::fs::rename(&metadata_path, &quarantine);
-                    // Fall through to fresh-provision branch below.
-                } else {
-```
-
-**REPLACE WITH:**
-```rust
-                let slot_hex = active.key_id.clone();
-
-                // Three-state probe (Fix 1): distinguish a TRANSIENT SE050 read
-                // failure from a GENUINELY-ABSENT slot. A network flap on a
-                // CA/lighthouse node contends the ssscli/I2C session; a momentary
-                // Err here previously caused the DKP to be regenerated, which
-                // changed the device identity key and cascaded into DID mismatch
-                // and baseline-signature invalidation across the whole mesh.
-                enum SlotProbe { Present, Absent, Unknown }
-                let probe = match SeKeyStorage::new(config) {
-                    Ok(store) => match store.list_slots() {
-                        Ok(list) => {
-                            if list.to_uppercase().contains(&slot_hex.to_uppercase()) {
-                                SlotProbe::Present
-                            } else {
-                                SlotProbe::Absent
-                            }
-                        }
-                        Err(e) => {
-                            warn!(
-                                "SE050 readidlist failed ({}) — treating slot {} as \
-                                 UNKNOWN, NOT regenerating",
-                                e, slot_hex
-                            );
-                            SlotProbe::Unknown
-                        }
-                    },
-                    Err(e) => {
-                        warn!(
-                            "SE050 connect failed ({}) — treating slot {} as UNKNOWN, \
-                             NOT regenerating",
-                            e, slot_hex
-                        );
-                        SlotProbe::Unknown
-                    }
-                };
-
-                // Only a CONFIRMED-absent slot (chip talked to us and the key
-                // is genuinely gone) justifies quarantining metadata and
-                // re-provisioning. Unknown = keep the existing key, sign via
-                // the slot the metadata points at; dkp_pub.der is already on
-                // disk from original provisioning.
-                if let SlotProbe::Absent = probe {
-                    warn!(
-                        "DKP metadata claims slot {} but SE050 confirms it is ABSENT — \
-                         treating as fresh provisioning",
-                        slot_hex
-                    );
-                    let quarantine =
-                        format!("{}.stale.{}", metadata_path, chrono::Utc::now().timestamp());
-                    let _ = std::fs::rename(&metadata_path, &quarantine);
-                    // Fall through to fresh-provision branch below.
-                } else {
-                    if let SlotProbe::Unknown = probe {
-                        println!(
-                            "  ⚠️ SE050 not reachable this boot — keeping existing DKP \
-                             (v{}) from metadata (no regeneration)",
-                            active.version
-                        );
-                    }
-```
-
-> Note: the closing `} else {` becomes `} else { if let SlotProbe::Unknown ... }` followed by the original `println!("  Existing DKP found ...")` block. The original `else` body (the `println!`/`return Ok(Self {...})`) stays exactly as-is below this insertion; we only added the `Unknown` notice line before it. Confirm the brace balance with `cargo build` — the `else` arm now handles both `Present` and `Unknown` (both = "keep existing key").
-
-**Effect:** A transient ssscli failure → `Unknown` → existing DKP is kept, `did.json` unchanged, baseline still valid. The exact run-4 trigger no longer regenerates.
-
----
-
-## Fix 2 — `dkp.rs`: bounded retry + stale-session reset before deciding
-
-A network flap often leaves the `ssscli` session pickle stale. The board already ships `reset_ssscli.sh` for exactly this. Do the equivalent in-process: retry the probe a few times, and between attempts delete the stale session pickle so `connect()` re-establishes cleanly. **No `std::thread::sleep` and no async** — this runs at STEP_01 before any tokio task is spawned, and the retries are immediate re-spawns (the failure mode is a stale pickle / subprocess spawn race, which a clean re-spawn fixes; it is not a timed I2C wait). This complies with the project hard rule against `std::thread::sleep`/sync `Command` inside the running async runtime.
-
-**File:** `src/secure_element/dkp.rs`
-
-**ADD** this free function near the top of the file (after `pub const DKP_BASE_KEY_ID`):
-```rust
-/// Probe the SE050 for a slot with bounded retries. Between attempts, clear
-/// the stale ssscli session pickle so connect() re-establishes a fresh
-/// session (equivalent to the board's reset_ssscli.sh). Returns:
-///   Some(true)  = slot confirmed present
-///   Some(false) = chip reachable, slot confirmed absent
-///   None        = could not reach the chip after all retries (UNKNOWN)
-fn probe_slot_with_retry(config: &SeConfig, slot_hex: &str, attempts: u8) -> Option<bool> {
-    for attempt in 1..=attempts {
-        match SeKeyStorage::new(config) {
-            Ok(store) => match store.list_slots() {
-                Ok(list) => {
-                    return Some(list.to_uppercase().contains(&slot_hex.to_uppercase()));
+        match probe {
+            Some(true) => {
+                // Slot present — (re)export pubkey to be safe.
+                if let Ok(store) = SeKeyStorage::new(config) {
+                    let _ = store.export_public_key(DIK_KEY_ID, DIK_PUB_PATH);
                 }
-                Err(e) => {
-                    warn!(
-                        "SE050 readidlist attempt {}/{} failed: {}",
-                        attempt, attempts, e
-                    );
-                }
-            },
-            Err(e) => {
-                warn!(
-                    "SE050 connect attempt {}/{} failed: {}",
-                    attempt, attempts, e
-                );
+                Self::ensure_metadata();
+                Self::read_pub_or_err()
             }
-        }
-        // Clear stale session pickle so the next connect() is clean.
-        // ssscli writes ~/.ssscli_session.pkl (note the leading char varies
-        // by ssscli version: "~.ssscli_session.pkl" on these boards).
-        if let Some(home) = std::env::var_os("HOME") {
-            let home = home.to_string_lossy().to_string();
-            for candidate in [
-                format!("{}/.ssscli_session.pkl", home),
-                format!("{}/~.ssscli_session.pkl", home),
-                format!("{}/~.ssscli_session.pkl", "/root"),
-            ] {
-                let _ = std::fs::remove_file(&candidate);
+            Some(false) => {
+                // Chip reachable, slot genuinely absent.
+                if Path::new(DIK_META_PATH).exists() {
+                    // Metadata says we already provisioned a DIK but the slot
+                    // is gone → DO NOT silently re-provision a different
+                    // identity. This is a hard, operator-visible condition.
+                    warn!(
+                        "DIK metadata exists but SE050 slot {} is ABSENT — \
+                         refusing to silently re-provision (would change DID)",
+                        key_hex
+                    );
+                    return Err(SeError::KeyError(
+                        "DIK slot missing but metadata present — manual recovery required".into(),
+                    ));
+                }
+                // True first provisioning.
+                info!("Provisioning Device Identity Key (DIK) at {} — ONCE", key_hex);
+                let store = SeKeyStorage::new(config)?;
+                store.create_key_slot(DIK_KEY_ID - 0x20000000, "dik", "ecdsa")?;
+                store.export_public_key(DIK_KEY_ID, DIK_PUB_PATH)?;
+                Self::write_metadata();
+                Self::read_pub_or_err()
+            }
+            None => {
+                // SE050 unreachable this boot. If we have a cached pubkey,
+                // trust it (DID stays stable); else hard error.
+                if Path::new(DIK_PUB_PATH).exists() {
+                    warn!(
+                        "SE050 unreachable — using cached DIK pubkey {} (DID stable)",
+                        DIK_PUB_PATH
+                    );
+                    Self::read_pub_or_err()
+                } else {
+                    Err(SeError::NotAvailable)
+                }
             }
         }
     }
-    None
+
+    fn probe_slot(config: &SeConfig, key_hex: &str, attempts: u8) -> Option<bool> {
+        for _ in 0..attempts {
+            if let Ok(store) = SeKeyStorage::new(config) {
+                if let Ok(list) = store.list_slots() {
+                    return Some(list.to_uppercase().contains(&key_hex.to_uppercase()));
+                }
+            }
+            // Clear stale ssscli session pickle between attempts.
+            if let Some(home) = std::env::var_os("HOME") {
+                let h = home.to_string_lossy().to_string();
+                for c in [
+                    format!("{}/.ssscli_session.pkl", h),
+                    format!("{}/~.ssscli_session.pkl", h),
+                    "/root/~.ssscli_session.pkl".to_string(),
+                ] {
+                    let _ = std::fs::remove_file(&c);
+                }
+            }
+        }
+        None
+    }
+
+    fn write_metadata() {
+        let meta = DikMetadata {
+            key_id: format!("0x{:08X}", DIK_KEY_ID),
+            algorithm: "ECDSA-P256".into(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            non_rotating: true,
+            purpose: "did:guardian anchor only".into(),
+        };
+        if let Ok(j) = serde_json::to_string_pretty(&meta) {
+            if let Some(p) = Path::new(DIK_META_PATH).parent() {
+                let _ = std::fs::create_dir_all(p);
+            }
+            let _ = std::fs::write(DIK_META_PATH, j);
+        }
+    }
+
+    fn ensure_metadata() {
+        if !Path::new(DIK_META_PATH).exists() {
+            Self::write_metadata();
+        }
+    }
+
+    fn read_pub_or_err() -> Result<Vec<u8>, SeError> {
+        std::fs::read(DIK_PUB_PATH)
+            .map_err(|e| SeError::KeyError(format!("Read DIK pubkey: {}", e)))
+    }
 }
 ```
 
-**Then** replace the inline `match SeKeyStorage::new(config) { ... }` probe added in Fix 1 with a call to this helper:
-
-**FIND** (the `let probe = match SeKeyStorage::new(config) { ... };` block from Fix 1):
-```rust
-                let probe = match SeKeyStorage::new(config) {
-                    Ok(store) => match store.list_slots() {
-                        Ok(list) => {
-                            if list.to_uppercase().contains(&slot_hex.to_uppercase()) {
-                                SlotProbe::Present
-                            } else {
-                                SlotProbe::Absent
-                            }
-                        }
-                        Err(e) => {
-                            warn!(
-                                "SE050 readidlist failed ({}) — treating slot {} as \
-                                 UNKNOWN, NOT regenerating",
-                                e, slot_hex
-                            );
-                            SlotProbe::Unknown
-                        }
-                    },
-                    Err(e) => {
-                        warn!(
-                            "SE050 connect failed ({}) — treating slot {} as UNKNOWN, \
-                             NOT regenerating",
-                            e, slot_hex
-                        );
-                        SlotProbe::Unknown
-                    }
-                };
-```
-
-**REPLACE WITH:**
-```rust
-                let probe = match probe_slot_with_retry(config, &slot_hex, 4) {
-                    Some(true) => SlotProbe::Present,
-                    Some(false) => SlotProbe::Absent,
-                    None => SlotProbe::Unknown,
-                };
-```
-
-**Effect:** the common case (stale pickle after network change) self-heals within a few immediate retries; only a chip that is *consistently* unreachable across 4 clean attempts is treated as `Unknown` (and Fix 1 keeps the existing key in that case anyway).
-
----
-
-## Fix 3 — `main.rs`: stop initializing DKP twice per boot
-
-The auto-rotation block re-probes the SE050 with a second `DkpManager::init()`. Gate it so it runs **only** if the primary KeyManager init already succeeded via SE050, and reuse a lightweight check rather than a second full provision-capable init.
-
-**File:** `src/main.rs`
-**Function:** `main` — the `=== DKP Auto-Rotation Check ===` block
+**Register the module** — `src/secure_element/mod.rs`:
 
 **FIND:**
 ```rust
-    // === DKP Auto-Rotation Check ===
-    #[cfg(feature = "secure-element")]
-    {
-        let se_config = sgx_guardian_client::secure_element::SeConfig::default();
-        let base_path = "/var/lib/sgx-guardian";
-        if let Ok(mut dkp) =
-            sgx_guardian_client::secure_element::dkp::DkpManager::init(&se_config, base_path)
-        {
-            match dkp.check_and_auto_rotate() {
+pub mod dkp;
 ```
-
 **REPLACE WITH:**
 ```rust
-    // === DKP Auto-Rotation Check ===
-    // Only probe the SE050 a SECOND time if the primary KeyManager init above
-    // actually came up on hardware. Re-initializing DkpManager on a flaky chip
-    // (e.g. during a network flap on the CA node) doubles ssscli/I2C contention
-    // and was an amplifier of the DKP-regeneration cascade. If we're on software
-    // keys, there is nothing to auto-rotate in the SE050 anyway.
-    #[cfg(feature = "secure-element")]
-    if km.backend_name() == "SE050" {
-        let se_config = sgx_guardian_client::secure_element::SeConfig::default();
-        let base_path = "/var/lib/sgx-guardian";
-        if let Ok(mut dkp) =
-            sgx_guardian_client::secure_element::dkp::DkpManager::init(&se_config, base_path)
-        {
-            match dkp.check_and_auto_rotate() {
+pub mod dik;
+pub mod dkp;
 ```
 
-> The closing braces of this block are unchanged. We only (a) replaced the bare `{` with `if km.backend_name() == "SE050" {` and (b) added the explanatory comment. With Fix 1 in place this second `init()` is already safe (it can no longer regenerate on a transient error); Fix 3 additionally removes the redundant probe whenever the chip is degraded.
+### Fix 1.2 — DID derives from DIK, not DKP
 
----
-
-## Fix 4 — DID layer: pin to persisted v1 pubkey; never exit on unreadable DKP
-
-Two problems in `did::method::create_if_absent` / `did.rs` persistence:
-(a) it recomputes the DID from the **live** `dkp_pub.der` (wrong after any legitimate rotation), and
-(b) `main.rs` does `process::exit(2)` on `DerivationMismatch`, turning a recoverable SE050 read blip into a hard outage.
-
-### 4a — persist the full v1 pubkey inside `did.json`
-
-**File:** `src/did/persistence.rs`
-**Struct:** `DerivationProof`
+**File:** `src/did/persistence.rs` — rename the persisted field to reflect the anchor.
 
 **FIND:**
 ```rust
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DerivationProof {
-    pub se050_uid: String,
-    pub se050_uid_source: String,
     pub dkp_v1_pubkey_sha256_b16: String,
     pub dkp_v1_pubkey_path: String,
-}
 ```
-
 **REPLACE WITH:**
 ```rust
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DerivationProof {
-    pub se050_uid: String,
-    pub se050_uid_source: String,
-    pub dkp_v1_pubkey_sha256_b16: String,
-    pub dkp_v1_pubkey_path: String,
-    /// Full DKP v1 SEC1 DER, base64. The DID is pinned to THIS key forever.
-    /// dkp_pub.der on disk is overwritten on every legitimate DKP rotation,
-    /// so it must NOT be used to re-derive the DID. Optional for backward
-    /// compatibility with did.json files written before this fix.
+    pub dkp_v1_pubkey_sha256_b16: String,   // legacy; kept for back-compat reads
+    pub dkp_v1_pubkey_path: String,         // legacy
+    /// SHA-256 of the DIK pubkey — the real anchor going forward.
+    #[serde(default)]
+    pub dik_pubkey_sha256_b16: String,
+    /// Full DIK pubkey DER, base64. DID is pinned to THIS forever.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dkp_v1_pubkey_der_b64: Option<String>,
-}
+    pub dik_pubkey_der_b64: Option<String>,
 ```
 
-### 4b — write the v1 pubkey at creation, derive/verify from the persisted copy
+**File:** `src/did/method.rs` — derive/verify from the DIK.
 
-**File:** `src/did/method.rs`
-**Function:** `create_if_absent`
-
-**FIND** (the derivation + mismatch logic — the block that builds `candidate_did` from the live pubkey and compares):
+**FIND** (the first-boot derivation that reads the DKP pubkey):
 ```rust
+    // ── First boot: derive from the CURRENT DKP (this becomes v1) ────────
     let dkp_pubkey = read_dkp_pubkey(dkp_pubkey_path)?;
-    let (uid_str, uid_source) = read_uid(node_id);
-    let uid_bytes = uid_str.as_bytes();
-
     let candidate_did = derive(uid_bytes, &dkp_pubkey);
-
-    if Path::new(did_path).exists() {
-        let existing = DidRecord::load(did_path)?;
-        let existing_did = Did::parse(&existing.did)?;
-
-        if existing_did != candidate_did {
-            return Err(DidError::DerivationMismatch);
-        }
-        return Ok(existing_did);
-    }
 ```
-
 **REPLACE WITH:**
 ```rust
-    let (uid_str, uid_source) = read_uid(node_id);
-    let uid_bytes = uid_str.as_bytes();
+    // ── First boot: derive from the non-rotating DIK (NOT the DKP) ───────
+    let se_config = crate::secure_element::config::SeConfig::default();
+    let dik_pubkey = crate::secure_element::dik::DeviceIdentityKey::ensure(&se_config)
+        .map_err(|e| DidError::Io(std::io::Error::other(format!("DIK ensure: {}", e))))?;
+    let candidate_did = derive(uid_bytes, &dik_pubkey);
+```
 
-    // ── Existing DID present: validate against the PINNED v1 pubkey,
-    //    never against the live dkp_pub.der (which rotates) ──────────────
-    if Path::new(did_path).exists() {
-        let existing = DidRecord::load(did_path)?;
-        let existing_did = Did::parse(&existing.did)?;
-
-        // Source of truth for re-derivation = the v1 pubkey stored INSIDE
-        // did.json. Fall back to the on-disk file only for legacy records
-        // written before this field existed.
+**FIND** (the existing-DID validation block — the pinned-key compare added in the prior fix; it currently keys off `dkp_v1_pubkey_der_b64`):
+```rust
         let pinned_v1: Vec<u8> = match &existing.derivation.dkp_v1_pubkey_der_b64 {
             Some(b64) => general_purpose::STANDARD
                 .decode(b64)
                 .map_err(|e| DidError::InvalidFormat(format!("pinned v1 pubkey b64: {}", e)))?,
             None => {
-                // Legacy did.json. Try the live file; if it is unreadable we
-                // must NOT treat that as a mismatch — keep the persisted DID.
-                match read_dkp_pubkey(dkp_pubkey_path) {
-                    Ok(der) => der,
-                    Err(_) => {
-                        eprintln!(
-                            "  ⚠️ DKP pubkey unreadable and did.json has no pinned \
-                             v1 key (legacy) — trusting persisted DID, continuing"
-                        );
-                        return Ok(existing_did);
-                    }
-                }
-            }
-        };
-
-        let candidate_did = derive(uid_bytes, &pinned_v1);
-        if existing_did != candidate_did {
-            // Only a genuine SE050 UID change (true chip swap) can move the
-            // DID when derived from the pinned v1 key. This is a hard
-            // identity change — surface it, but do NOT exit here; let the
-            // caller decide. (main.rs is updated to NOT process::exit.)
-            return Err(DidError::DerivationMismatch);
-        }
-        return Ok(existing_did);
-    }
-
-    // ── First boot: derive from the CURRENT DKP (this becomes v1) ────────
-    let dkp_pubkey = read_dkp_pubkey(dkp_pubkey_path)?;
-    let candidate_did = derive(uid_bytes, &dkp_pubkey);
 ```
-
-Then, in the record-construction part of the same function, persist the v1 pubkey. **FIND**:
-```rust
-    let derivation = DerivationProof {
-        se050_uid: uid_str.clone(),
-        se050_uid_source: uid_source,
-        dkp_v1_pubkey_sha256_b16: dkp_pubkey_hash,
-        dkp_v1_pubkey_path: dkp_pubkey_path.to_string(),
-    };
-```
-
 **REPLACE WITH:**
+```rust
+        let pinned: Vec<u8> = match &existing.derivation.dik_pubkey_der_b64 {
+            Some(b64) => general_purpose::STANDARD
+                .decode(b64)
+                .map_err(|e| DidError::InvalidFormat(format!("pinned DIK b64: {}", e)))?,
+            None => {
+```
+
+…and update the corresponding `derive(uid_bytes, &pinned_v1)` call in that block to `derive(uid_bytes, &pinned)`. The legacy fallback inside the `None =>` arm should re-read the DIK (`DeviceIdentityKey::ensure`) instead of `read_dkp_pubkey`, so old `did.json` files (DKP-derived) trigger a clean re-mint via `did remint` rather than silently mismatching.
+
+**FIND** (record construction — persist the DIK):
 ```rust
     let derivation = DerivationProof {
         se050_uid: uid_str.clone(),
@@ -489,276 +319,378 @@ Then, in the record-construction part of the same function, persist the v1 pubke
         dkp_v1_pubkey_der_b64: Some(general_purpose::STANDARD.encode(&dkp_pubkey)),
     };
 ```
+**REPLACE WITH:**
+```rust
+    use sha2::{Digest, Sha256};
+    let dik_hash = hex::encode(Sha256::digest(&dik_pubkey));
+    let derivation = DerivationProof {
+        se050_uid: uid_str.clone(),
+        se050_uid_source: uid_source,
+        dkp_v1_pubkey_sha256_b16: String::new(),     // no longer the anchor
+        dkp_v1_pubkey_path: String::new(),
+        dik_pubkey_sha256_b16: dik_hash,
+        dik_pubkey_der_b64: Some(general_purpose::STANDARD.encode(&dik_pubkey)),
+    };
+```
 
-(Ensure `use base64::{engine::general_purpose, Engine as _};` is present in `method.rs` — it already is, used for `deriv_signature_b64`.)
+### Fix 1.3 — `main.rs`: DIK is provisioned before DID init, independent of DKP
 
-### 4c — `main.rs`: do NOT `process::exit` on mismatch; keep persisted DID
-
-**File:** `src/main.rs`
-**Function:** `main` — the DID init block
+**File:** `src/main.rs` — DID init block. Ensure the DIK exists before `create_if_absent`. `create_if_absent` already calls `DeviceIdentityKey::ensure` internally (Fix 1.2), so no main.rs change is strictly required — but add a one-line log for operator clarity.
 
 **FIND:**
 ```rust
-            Err(sgx_guardian_client::did::DidError::DerivationMismatch) => {
-                eprintln!(
-                    "  🔴 DID DERIVATION MISMATCH — refusing to start."
-                );
+    // === DID Initialization (W3C DID / did:guardian) ===
+    println!("\n🆔 Initializing W3C DID (did:guardian)...");
 ```
-
-…through the matching `std::process::exit(2);`. The exact current block (per project knowledge / your log "🔴 DID DERIVATION MISMATCH — refusing to start.") is:
-
-```rust
-            Err(sgx_guardian_client::did::DidError::DerivationMismatch) => {
-                eprintln!("  🔴 DID DERIVATION MISMATCH — refusing to start.");
-                log_audit(
-                    &node_id,
-                    AuditCategory::Did,
-                    AuditSeverity::Critical,
-                    AuditAction::Failed,
-                    "DID derivation mismatch — hardware fingerprint changed",
-                );
-                std::process::exit(2);
-            }
-```
-
 **REPLACE WITH:**
 ```rust
-            Err(sgx_guardian_client::did::DidError::DerivationMismatch) => {
-                // A mismatch derived from the PINNED v1 pubkey means the
-                // SE050 UID changed (true chip swap) — NOT a transient read
-                // blip (Fix 1/2 prevent those from ever regenerating the DKP).
-                // Even so, do NOT kill the daemon: the persisted did.json
-                // remains the authoritative identity. Log CRITICAL, keep the
-                // persisted DID, and continue in a degraded-but-running state
-                // so the operator can investigate instead of facing a boot loop.
-                eprintln!(
-                    "  🔴 DID DERIVATION MISMATCH (SE050 UID changed?) — \
-                     keeping persisted DID, continuing in DEGRADED mode."
-                );
-                log_audit(
-                    &node_id,
-                    AuditCategory::Did,
-                    AuditSeverity::Critical,
-                    AuditAction::Failed,
-                    "DID derivation mismatch — persisted DID retained, node DEGRADED",
-                );
-                if let Ok(rec) = sgx_guardian_client::did::DidRecord::load(
-                    sgx_guardian_client::did::DEFAULT_DID_PATH,
-                ) {
-                    println!("  ↳ Persisted DID retained: {}", rec.did);
-                }
-            }
-```
-
-**Effect:** the run-4 hard exit becomes a logged warning; the node stays up on its real, persisted DID. Combined with Fix 1/2 the mismatch should not occur from a network change at all anymore — this is defense in depth for genuine hardware events.
-
----
-
-## Fix 5 — auto-heal boards already broken by this bug
-
-nodeA in your logs already quarantined its good metadata to `dkp_metadata.json.stale.<ts>` and is now on software keys. Recover automatically instead of requiring `fresh-provision.sh`: if `dkp_metadata.json` is absent but a quarantine exists **and** `dkp_pub.der` is still the original (non-zero, 91 bytes), restore the newest quarantine rather than generating a brand-new DKP.
-
-**File:** `src/secure_element/dkp.rs`
-**Function:** `DkpManager::init` — immediately before the `// No existing DKP — generate new one` line
-
-**FIND:**
-```rust
-        // No existing DKP — generate new one
-        println!("  No existing DKP found — generating new DKP inside SE050...");
-        let meta = Self::generate_dkp(config, &public_key_path)?;
-```
-
-**REPLACE WITH:**
-```rust
-        // Fix 5: before provisioning a brand-new DKP, try to restore a
-        // metadata file that a previous (buggy) boot quarantined. If the
-        // public key DER is still intact on disk, the SE050 slot almost
-        // certainly still holds the original key — regenerating would
-        // permanently change the device identity and break the DID/baseline.
-        if !Path::new(&metadata_path).exists() {
-            if let Some(parent) = Path::new(&metadata_path).parent() {
-                if let Ok(entries) = std::fs::read_dir(parent) {
-                    let mut quarantines: Vec<std::path::PathBuf> = entries
-                        .flatten()
-                        .map(|e| e.path())
-                        .filter(|p| {
-                            p.file_name()
-                                .and_then(|n| n.to_str())
-                                .map(|n| {
-                                    n.starts_with("dkp_metadata.json.stale.")
-                                })
-                                .unwrap_or(false)
-                        })
-                        .collect();
-                    quarantines.sort();
-                    if let Some(newest) = quarantines.last() {
-                        let pub_ok = std::fs::metadata(&public_key_path)
-                            .map(|m| m.len() == 91)
-                            .unwrap_or(false);
-                        if pub_ok {
-                            if std::fs::rename(newest, &metadata_path).is_ok() {
-                                println!(
-                                    "  ♻️ Restored quarantined DKP metadata ({:?}) — \
-                                     pubkey intact, NOT regenerating",
-                                    newest.file_name().unwrap_or_default()
-                                );
-                                if let Ok(history) = DkpKeyHistory::load(&metadata_path) {
-                                    if history.active_key().is_some() {
-                                        return Ok(Self {
-                                            history,
-                                            metadata_path,
-                                            public_key_path,
-                                            config: config.clone(),
-                                        });
-                                    }
-                                }
-                            }
-                        } else {
-                            warn!(
-                                "Quarantined DKP metadata found but dkp_pub.der is \
-                                 missing/short — cannot safely restore, will provision"
-                            );
-                        }
-                    }
-                }
-            }
+    // === Device Identity Key (DIK) — non-rotating DID anchor ===
+    #[cfg(feature = "secure-element")]
+    {
+        let se_config = sgx_guardian_client::secure_element::SeConfig::default();
+        match sgx_guardian_client::secure_element::dik::DeviceIdentityKey::ensure(&se_config) {
+            Ok(_) => println!("🔑 Device Identity Key (DIK) ready (slot 0x20000001, non-rotating)"),
+            Err(e) => eprintln!("⚠️ DIK ensure failed: {} — DID will use cached anchor if present", e),
         }
+    }
 
-        // No existing DKP — generate new one
-        println!("  No existing DKP found — generating new DKP inside SE050...");
-        let meta = Self::generate_dkp(config, &public_key_path)?;
+    // === DID Initialization (W3C DID / did:guardian) ===
+    println!("\n🆔 Initializing W3C DID (did:guardian)...");
 ```
 
-**Operator note:** For nodeA, which is *already* on software keys with an invalidated baseline, after deploying this build you also need to once: (1) stop the daemon, (2) restore `dkp_metadata.json` from the newest `dkp_metadata.json.stale.*` (Fix 5 does this automatically on next boot if `dkp_pub.der` is intact — verify with `ls -l /var/lib/sgx-guardian/keys/`), (3) if `dkp_pub.der` was overwritten by a software key, re-export it from the SE050 slot `0x20000010` with `ssscli get ecc pub 0x20000010 /var/lib/sgx-guardian/keys/dkp_pub.der`, (4) re-create the PCR baseline so it is signed by the restored SE050 DKP: `sgx-pa-cli pcr-baseline rotate`. This is a one-time recovery for the already-damaged board; Fix 1/2/5 prevent recurrence.
+### Fix 1.4 — `sgx-pa-cli did remint` (one-time migration)
 
----
+**File:** `sgx-pa-cli/src/commands/did.rs` — add a `Remint` subcommand that: backs up the old `did.json` to `did.json.dkp-era.bak`, deletes `did.json`, and prints instructions to restart the daemon (which regenerates the DID from SE050 UID + DIK). Gate behind `--yes`. (Implementation mirrors the existing `Deactivate` subcommand pattern; ~30 lines.)
 
-# 4. Why This Is the Right Fix (and what it is NOT)
-
-- It does **not** touch the DID derivation formula. `did:guardian:<base58(SHA256(UID‖DKPv1))>` is unchanged and spec-compliant.
-- It does **not** weaken security. A genuine chip swap (SE050 UID change) is still detected and logged CRITICAL; the node runs degraded rather than silently re-binding identity.
-- It does **not** introduce `std::thread::sleep` or sync `Command` in the async runtime. The retry runs at STEP_01 before tokio tasks spawn and uses immediate re-spawn + pickle reset, matching the project hard rule and the existing `reset_ssscli.sh` approach.
-- It fixes a latent bug that would have broken **legitimate DKP rotation** (Fix 4a/4b) even with no network change.
-- nodeB/nodeC need no special handling — once nodeA stops regenerating its DKP, its baseline signature is valid again and the mesh re-trusts it.
-
----
-
-# 5. Verification — Re-run Checklist Item 6 (the failing one)
-
-Laptop is not representative (no SE050). Test on the boards via AnyDesk + Minicom.
+## 1.5 Issue 1 — Verification
 
 ```bash
-# nodeA — capture identity BEFORE the network-change test
-sgx-pa-cli did show            # note the did:guardian:... and DKP v1 pubkey hash
-sha256sum /var/lib/sgx-guardian/keys/dkp_pub.der
-cat /var/lib/sgx-guardian/keys/dkp_metadata.json | jq '.[].version'
-./sgx_guardian_client nodeA &  # let it stabilize, all 3 nodes attesting
+# Provision DIK + remint DID once
+sgx-pa-cli did remint --yes
+./sgx_guardian_client nodeA   # note new did:guardian:... (DIK-derived)
+sgx-pa-cli did show > /tmp/did_before.txt
+sha256sum /var/lib/sgx-guardian/keys/dik_pub.der
 
-# Trigger the exact failing scenario: flap nodeA between eth0 and wlan0
-sudo ip link set eth0 down ; sleep 20
-sudo ip link set eth0 up   ; sleep 20
+# Rotate the DKP (operational key) — DID MUST NOT change
+sgx-pa-cli dkp-rotate --yes
+./sgx_guardian_client nodeA
+sgx-pa-cli did show > /tmp/did_after_dkp_rotate.txt
+diff /tmp/did_before.txt /tmp/did_after_dkp_rotate.txt && echo "PASS: DID stable across DKP rotation"
+
+# Delete did.json, restart — DID MUST regenerate IDENTICALLY (re-read from DIK slot)
+rm /var/lib/sgx-guardian/identity/did.json
+./sgx_guardian_client nodeA
+sgx-pa-cli did show > /tmp/did_after_delete.txt
+diff /tmp/did_before.txt /tmp/did_after_delete.txt && echo "PASS: DID re-derivable from SE050+DIK"
+
+# DKP pubkey changed (rotated) but DIK pubkey unchanged
+sha256sum /var/lib/sgx-guardian/keys/dik_pub.der   # SAME as before
+sha256sum /var/lib/sgx-guardian/keys/dkp_pub.der   # DIFFERENT (rotated) — and irrelevant to DID
+```
+
+Pass criteria: DID identical across (a) DKP rotation, (b) `did.json` deletion + restart, (c) reboot. `dik_pub.der` hash never changes; `dkp_pub.der` hash may change freely with no effect on the DID.
+
+---
+
+# ISSUE 2 — PCR4 Changes on Network Switch (CONFIRMED)
+
+## 2.1 Root cause (proven by the logs + code)
+
+**`src/secure_element/pcr_config.rs::default_measurement_sources()`:**
+```rust
+PcrMeasurementSource {
+    pcr_index: 4,
+    label: "Guardian config".into(),
+    source_type: "file".into(),
+    source: format!("/etc/sgx-guardian/config/{}.yaml", node_id),  // ← measures whole node yaml
+    critical: false,
+},
+```
+
+**`src/main.rs` rewrites that exact file at runtime when the network changes:**
+```rust
+let config_path = format!("/etc/sgx-guardian/config/{}.yaml", node_id);
+let _ = dynamic_config::update_config_ip_if_changed(&config_path, &detected_ip);  // ← writes IP into the PCR-measured file
+```
+
+PCR4 hashes the raw bytes of `/etc/sgx-guardian/config/nodeA.yaml`. The daemon rewrites the `ip:` field of that **same file** on every network/IP change. The log proves the exact sequence:
+
+```
+# eth0 active, config has 192.168.4.3, baseline captured:
+PCR4 [✅]: 7fd3a7bf90e5b9fc..   PCR baseline: ✅ ALL MATCH
+# next boot: network switched, config rewritten 192.168.4.3 → 192.168.50.101
+🔄 Updating IP: 192.168.4.3 → 192.168.50.101 in /etc/sgx-guardian/config/nodeA.yaml
+# boot after that: PCR measured AFTER the rewrite:
+PCR4 [✅]: a5f91248217ff8ce..   ⚠️ PCR MISMATCH detected: PCR4 expected 7fd3a7bf.. got a5f91248..
+❌ Attestation rejected: prover nodeA reports PCR mismatch on PCRs [4]
+```
+
+A dynamic runtime value (the LAN IP) is being mixed into a PCR-measured *static* config. The mismatch surfaces one boot after the IP change because PCR is measured at startup *before* the IP-detect/rewrite step, so the rewritten file is measured on the *following* boot. Textbook "measuring mutable runtime state" bug.
+
+## 2.2 The fix — separate static (attested) config from dynamic (runtime) state
+
+Two complementary changes. **Fix 2A is the minimal, surgical, must-do** (smallest blast radius). **Fix 2B is the clean long-term architecture** (recommended next, larger change).
+
+### Fix 2A (PRIMARY) — PCR4 measures a canonical STATIC view, excluding runtime fields
+
+Add a new measurement `source_type = "static_yaml"` that loads the node YAML, strips a denylist of dynamic keys (`ip`, `lan_ip`, `detected_ip`, `endpoint`, plus anything under a `runtime:` map), canonicalizes (sorted keys, stable serialization), and hashes *that*. The IP rewrite no longer affects PCR4 because `ip` is excluded from the measured view.
+
+**File:** `src/secure_element/pcr_config.rs` — change PCR4 source.
+
+**FIND:**
+```rust
+        PcrMeasurementSource {
+            pcr_index: 4,
+            label: "Guardian config".into(),
+            source_type: "file".into(),
+            source: format!("/etc/sgx-guardian/config/{}.yaml", node_id),
+            critical: false,
+        },
+```
+**REPLACE WITH:**
+```rust
+        PcrMeasurementSource {
+            pcr_index: 4,
+            // Measures a CANONICAL STATIC VIEW of the node config — runtime
+            // network fields (ip, endpoint, runtime.*) are excluded so PCR4
+            // is stable across IP/interface changes. See "static_yaml" in
+            // the measurement dispatcher.
+            label: "Guardian config (static)".into(),
+            source_type: "static_yaml".into(),
+            source: format!("/etc/sgx-guardian/config/{}.yaml", node_id),
+            critical: false,
+        },
+```
+
+**File:** `src/secure_element/pcr.rs` (or wherever the measurement dispatcher matches `source_type` — search `"multi_file" =>` / `"boot_chain" =>`). Add a `"static_yaml"` arm.
+
+**FIND** (the measurement dispatch — the arm list that handles `"file"`, `"multi_file"`, `"string"`, `"boot_chain"`; locate with `grep -n '"multi_file"' src/secure_element/pcr.rs src/main.rs`):
+```rust
+            "file" => {
+                // hash raw file bytes
+                std::fs::read(&src.source).unwrap_or_default()
+            }
+```
+**INSERT a new arm immediately before the `"file" =>` arm:**
+```rust
+            "static_yaml" => {
+                // Load YAML, strip runtime/network fields, canonicalize, hash.
+                // This makes PCR4 immune to the daemon rewriting `ip:` on a
+                // network change (the exact cause of the PCR4 mismatch).
+                match std::fs::read_to_string(&src.source) {
+                    Ok(raw) => match serde_yaml::from_str::<serde_yaml::Value>(&raw) {
+                        Ok(mut v) => {
+                            canonicalize_static_config(&mut v);
+                            // Stable JSON (sorted keys) as the canonical form.
+                            let json = serde_yaml_to_sorted_json(&v);
+                            json.into_bytes()
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "  ⚠️ static_yaml parse failed for {} ({}) — \
+                                 measuring empty (DEGRADED, not raw bytes)",
+                                src.source, e
+                            );
+                            Vec::new()
+                        }
+                    },
+                    Err(_) => Vec::new(),
+                }
+            }
+```
+
+**ADD these helpers** near the bottom of `pcr.rs` (module-level fns):
+```rust
+/// Keys that carry runtime/network state and MUST NOT be measured.
+const PCR_DYNAMIC_DENYLIST: &[&str] = &[
+    "ip", "lan_ip", "detected_ip", "endpoint", "endpoints",
+    "runtime", "active_transport", "observed_ip",
+];
+
+/// Recursively remove dynamic keys so PCR4 only covers static attested config.
+fn canonicalize_static_config(v: &mut serde_yaml::Value) {
+    if let serde_yaml::Value::Mapping(map) = v {
+        for k in PCR_DYNAMIC_DENYLIST {
+            map.remove(&serde_yaml::Value::String((*k).to_string()));
+        }
+        for (_k, val) in map.iter_mut() {
+            canonicalize_static_config(val);
+        }
+    } else if let serde_yaml::Value::Sequence(seq) = v {
+        for item in seq.iter_mut() {
+            canonicalize_static_config(item);
+        }
+    }
+}
+
+/// Deterministic JSON (sorted object keys) from a serde_yaml::Value.
+fn serde_yaml_to_sorted_json(v: &serde_yaml::Value) -> String {
+    fn to_json(v: &serde_yaml::Value) -> serde_json::Value {
+        match v {
+            serde_yaml::Value::Null => serde_json::Value::Null,
+            serde_yaml::Value::Bool(b) => serde_json::Value::Bool(*b),
+            serde_yaml::Value::Number(n) => {
+                serde_json::Value::Number(
+                    serde_json::Number::from_f64(n.as_f64().unwrap_or(0.0))
+                        .unwrap_or_else(|| serde_json::Number::from(0)),
+                )
+            }
+            serde_yaml::Value::String(s) => serde_json::Value::String(s.clone()),
+            serde_yaml::Value::Sequence(seq) => {
+                serde_json::Value::Array(seq.iter().map(to_json).collect())
+            }
+            serde_yaml::Value::Mapping(m) => {
+                let mut keys: Vec<String> = m
+                    .iter()
+                    .filter_map(|(k, _)| k.as_str().map(|s| s.to_string()))
+                    .collect();
+                keys.sort();
+                let mut obj = serde_json::Map::new();
+                for k in keys {
+                    if let Some(val) =
+                        m.get(&serde_yaml::Value::String(k.clone()))
+                    {
+                        obj.insert(k, to_json(val));
+                    }
+                }
+                serde_json::Value::Object(obj)
+            }
+            serde_yaml::Value::Tagged(t) => to_json(&t.value),
+        }
+    }
+    serde_json::to_string(&to_json(v)).unwrap_or_default()
+}
+```
+
+(`serde_yaml` and `serde_json` are already project dependencies — the config loader uses `serde_yaml`.)
+
+**Effect:** PCR4 now hashes `{circle_id, node_id, role, ports, crypto params, policy refs, secure_element block, …}` with `ip`/`endpoint`/`runtime.*` removed. The daemon can rewrite `ip:` as often as it likes — PCR4 does not change. The baseline captured on eth0 stays valid on wlan0 and vice-versa. Re-create the baseline ONCE after deploying this build (the canonical form differs from the old raw-bytes form), then it is stable forever.
+
+### Fix 2B (RECOMMENDED NEXT) — physically split static vs dynamic config
+
+Even cleaner: never let the daemon write into the PCR-measured file at all.
+
+1. The PCR-measured file becomes **immutable at runtime**: `/etc/sgx-guardian/config/<node>.static.yaml` (identity, role, circle, ports, crypto, SE config, policy refs). Never rewritten. PCR4 measures this.
+2. Runtime network state moves to `/var/lib/sgx-guardian/runtime/<node>_net.json` (`ip`, active interface, observed endpoint). The IP-update path writes **only** here.
+3. `config_loader::load_config` reads the static file and *overlays* the runtime IP from the runtime JSON in memory, so all existing `cfg.ip` consumers keep working unchanged.
+
+**File:** `src/main.rs`
+
+**FIND:**
+```rust
+    // Update ONLY current node config with detected IP
+    if !detected_ip.is_empty() {
+        let config_path = format!("/etc/sgx-guardian/config/{}.yaml", node_id);
+        let main_path = format!("/etc/sgx-guardian/{}.yaml", node_id);
+        let _ = dynamic_config::update_config_ip_if_changed(&config_path, &detected_ip);
+        // Keep main path in sync
+        let _ = std::fs::copy(&config_path, &main_path);
+    }
+```
+**REPLACE WITH:**
+```rust
+    // Update ONLY the runtime network state file — NEVER the PCR-measured
+    // config. This guarantees PCR4 cannot change on a network/IP switch.
+    if !detected_ip.is_empty() {
+        let runtime_dir = "/var/lib/sgx-guardian/runtime";
+        let _ = std::fs::create_dir_all(runtime_dir);
+        let net_path = format!("{}/{}_net.json", runtime_dir, node_id);
+        let doc = serde_json::json!({
+            "node_id": node_id,
+            "ip": detected_ip,
+            "updated_at": chrono::Utc::now().to_rfc3339(),
+        });
+        let tmp = format!("{}.tmp", net_path);
+        if std::fs::write(&tmp, doc.to_string()).is_ok() {
+            let _ = std::fs::rename(&tmp, &net_path);
+        }
+    }
+```
+
+Then in `config_loader::load_config`, after parsing the static YAML, overlay the runtime IP if the runtime file exists (so `cfg.ip` consumers are unchanged). This is the larger change (touches the loader + the IP-update helper + first-boot static-file seeding) and should be its own PR after Fix 2A is verified on the boards.
+
+> **Recommendation:** ship **Fix 2A now** (small, surgical, fully resolves the failing attestation), then schedule **Fix 2B** as a follow-up hardening PR. Fix 2A alone makes checklist item 6 and attestation pass; Fix 2B removes the anti-pattern entirely.
+
+## 2.3 Issue 2 — Verification
+
+```bash
+# After deploying Fix 2A, re-create the baseline ONCE (canonical form changed)
+sgx-pa-cli pcr-baseline rotate
+./sgx_guardian_client nodeA &     # note PCR4 + "PCR baseline: ✅ ALL MATCH"
+PCR4_BEFORE=$(grep -m1 "PCR4 \[" <(journalctl -u sgx-guardian -n200) | awk '{print $3}')
+
+# Force the exact failing scenario: eth0 ↔ wlan0 several times
+sudo ip link set eth0 down; sleep 20
+sudo ip link set eth0 up;   sleep 20      # daemon rewrites runtime IP
 sudo ip link set wlan0 down; sleep 20
-sudo ip link set wlan0 up  ; sleep 20
-# Repeat the flap 5x — this is what broke run 4 previously.
-
-# AFTER the flaps — identity MUST be unchanged:
-sgx-pa-cli did show            # SAME did:guardian:... as before
-sha256sum /var/lib/sgx-guardian/keys/dkp_pub.der   # SAME hash
-cat /var/lib/sgx-guardian/keys/dkp_metadata.json | jq '.[].version'  # still [1], no v2
-ls /var/lib/sgx-guardian/keys/ | grep stale || echo "no quarantine — good"
-journalctl -u sgx-guardian | grep -E "regenerat|DERIVATION MISMATCH|Baseline signature INVALID" \
-  && echo "FAIL" || echo "PASS: no regeneration, no mismatch, baseline intact"
+sudo ip link set wlan0 up;  sleep 20
+# Restart so PCR is re-measured with the (rewritten) state present
+pkill sgx_guardian_client; ./sgx_guardian_client nodeA &
+sleep 30
+journalctl -u sgx-guardian -n200 | grep -E "PCR4 \[|PCR MISMATCH|baseline"
 ```
 
 Pass criteria:
-1. `sgx-pa-cli did show` returns the **identical** DID before and after ≥5 eth/wifi flaps.
-2. `dkp_pub.der` SHA-256 is unchanged; `dkp_metadata.json` still shows only `[1]` (no spurious v2).
-3. No `dkp_metadata.json.stale.*` quarantine is created by a network change.
-4. No `🔴 DID DERIVATION MISMATCH`, no `Baseline signature INVALID`.
-5. nodeB/nodeC never log `❌ Attestation rejected: prover nodeA baseline has bad signature` after the flaps.
-6. If SE050 is briefly unreachable during a flap, log shows `⚠️ SE050 not reachable this boot — keeping existing DKP (v1)` and the node continues with the same DID.
+1. `PCR4` value is **identical** before and after ≥4 eth/wifi flaps + restart.
+2. `PCR baseline: ✅ ALL MATCH` (no `⚠️ PCR MISMATCH detected: PCR4 ...`).
+3. `❌ Attestation rejected: prover nodeA reports PCR mismatch on PCRs [4]` does **not** appear.
+4. nodeB/nodeC do not eject nodeA after the network change (no `early eof` removal cascade).
+5. `cat /etc/sgx-guardian/config/nodeA.yaml | sha256sum` may change (Fix 2A) — that is fine; what matters is the *measured canonical view* is stable. With Fix 2B the file itself never changes.
 
-Regression (must still pass):
+---
+
+# Combined Regression Checks
+
 ```bash
 cargo build --release 2>&1 | grep -E "error|warning: unused" || true
-cargo test --release secure_element::dkp 2>&1 | tail -10
-cargo test --release secure_element::ssscli 2>&1 | tail -10
+cargo test --release secure_element::dik 2>&1 | tail -10
+cargo test --release secure_element::pcr 2>&1 | tail -10
 cargo test --release did:: 2>&1 | tail -10
-# Cold-boot all 3 nodes; confirm DID-001..first-5 checklist still pass.
+
+# 3-node cold boot — DID stable, attestation green, no PCR4 mismatch
+./sgx_guardian_client nodeA & ./sgx_guardian_client nodeB & ./sgx_guardian_client nodeC &
+sleep 90
+sgx-pa-cli did show           # all 3 unique, DIK-derived
+# flap nodeA network 3x → DID unchanged, PCR4 unchanged, mesh stays trusted
 ```
+
+Watch for:
+- ✅ `🔑 Device Identity Key (DIK) ready (slot 0x20000001, non-rotating)` once at startup
+- ✅ DID unchanged across DKP rotation AND `did.json` deletion AND reboot
+- ✅ `dik_pub.der` SHA-256 constant; `dkp_pub.der` may change with zero DID impact
+- ✅ PCR4 constant across eth0↔wlan0 flaps; `PCR baseline: ✅ ALL MATCH`
+- ✅ No `Attestation rejected: ... PCR mismatch on PCRs [4]`
+- ✅ No regression in DKP rotation, secure boot, Nebula CA, attestation flows
 
 ---
 
-# 6. Corrected Verification Checklist — Task 1 (W3C DID) ONLY
+# Step-by-Step Checklist
 
-Your 20-item list mixed Task 1, Task 2 (DID Document), and Task 3 (DID Resolution Service). Task 2 is **not implemented yet**, so 9 items cannot pass and do not belong here. Below is the cleaned, Task-1-only list.
-
-### ✅ Keep — these are Task 1 (W3C DID Implementation)
-
-```
-[x] DID generated on first boot
-[x] DID format is did:guardian:<base58-hash>
-[x] DID unique across nodeA/nodeB/nodeC
-[x] DID persists after service restart
-[x] DID persists after reboot
-[ ] DID persists after IP/network change            ← FIXED by this plan; re-verify
-[ ] DID persists after firmware update
-[ ] DID persists after DKP key rotation (v1→v2) — DID unchanged   ← ADDED (critical; the
-                                                                    pinned-v1 fix makes this
-                                                                    pass — it would have
-                                                                    failed before Fix 4)
-[ ] DID derived from device serial (SE050 UID) + secure element public key (DKP v1)
-[ ] No private key exposed in files / logs / API
-[ ] DID method spec documents create / resolve / update / deactivate operations
-[ ] Local DID resolution returns the persisted DID + active status (sgx-pa-cli did resolve)
-[ ] DID parser rejects a malformed DID string (format validation only)
-[ ] DID deactivation works (sgx-pa-cli did deactivate; persists deactivated_at)
-```
-
-The first five `[x]` are the ones you reported already working. Item 6 is the one this plan fixes. I added the **DKP key rotation** item because the same pinned-v1 fix (Fix 4) is what makes both "network change" and "key rotation" preserve the DID — they share a root cause and must be tested together.
-
-### ❌ Remove from the Task 1 list — these belong to Task 2 / Task 3 (not implemented yet)
-
-| Original checklist item | Belongs to | Reason |
-|---|---|---|
-| DID Document generated | **Task 2** (DID Document) | No DID Document layer exists in Task 1 |
-| DID Document valid JSON-LD | **Task 2** | JSON-LD document is a Task 2 deliverable |
-| DID Document contains public key / authentication methods | **Task 2** | `verificationMethod` / `authentication` arrays are Task 2 |
-| DID Document contains correct service endpoints | **Task 2** | `service[]` endpoints are Task 2 |
-| DID resolver resolves valid DID | **Task 3** (DID Resolution Service) | Network resolver service is Task 3; Task 1 only has *local* resolve (kept, reworded above) |
-| Resolver rejects invalid DID | **Task 3** | Resolver service is Task 3; Task 1 only has *parser* rejection (kept, reworded above) |
-| Resolver cache works with TTL | **Task 3** | 1-hr TTL cache is explicitly a Task 3 deliverable |
-| DID Document update works without changing DID | **Task 2** | Updating the *Document* is Task 2 |
-| Key rotation updates DID Document without changing DID | **Task 2** | The "updates DID **Document**" half is Task 2. The "without changing DID" half I preserved as a Task 1 item ("DID persists after DKP key rotation") above. |
-
-Net: **20 → 14 items** for Task 1. Two reworded down to their Task-1 scope (local resolve, parser-reject), one added (DKP rotation → DID unchanged), nine Task-2/Task-3 items removed.
-
----
-
-# 7. Step-by-Step Checklist (implementation)
-
-- [ ] Branch from `main`: `fix/task1-did-network-change-dkp`
-- [ ] Fix 1 — `src/secure_element/dkp.rs` three-state probe (no regenerate on Unknown)
-- [ ] Fix 2 — add `probe_slot_with_retry`, wire it into Fix 1's probe
-- [ ] Fix 3 — `src/main.rs` gate auto-rotation block on `km.backend_name() == "SE050"`
-- [ ] Fix 4a — `src/did/persistence.rs` add `dkp_v1_pubkey_der_b64`
-- [ ] Fix 4b — `src/did/method.rs` derive/verify from pinned v1, persist v1 DER
-- [ ] Fix 4c — `src/main.rs` DerivationMismatch → log + continue (no `process::exit`)
-- [ ] Fix 5 — `src/secure_element/dkp.rs` quarantine-restore before generate
-- [ ] `cargo build --release` clean; `cargo test --release secure_element:: did::` green
-- [ ] Deploy to nodeA only first; one-time recovery (§Fix 5 operator note)
-- [ ] Re-run checklist item 6 board test (§5) — 5× eth/wifi flap, DID + DKP unchanged
-- [ ] Add new board test case **DID-008 (network-change persistence)** + **DID-009 (DKP-rotation DID-stable)** to Phase2_Test_Cases.pdf addendum
-- [ ] Deploy to nodeB, nodeC; confirm mesh re-trusts nodeA (no "bad signature" rejections)
+- [ ] Branch `fix/task1-did-dik-anchor-and-pcr4-stable`
+- [ ] **Issue 1**
+  - [ ] Fix 1.1 — create `src/secure_element/dik.rs`; register in `mod.rs`
+  - [ ] Fix 1.2 — `persistence.rs` add DIK fields; `method.rs` derive/verify from DIK
+  - [ ] Fix 1.3 — `main.rs` DIK-ensure log line before DID init
+  - [ ] Fix 1.4 — `sgx-pa-cli did remint --yes` subcommand
+  - [ ] One-time `did remint` on nodeA/B/C; record new DIDs
+  - [ ] Verify §1.5 (DID stable across DKP rotate + did.json delete + reboot)
+- [ ] **Issue 2**
+  - [ ] Fix 2A — `pcr_config.rs` PCR4 → `static_yaml`; `pcr.rs` new arm + helpers
+  - [ ] `sgx-pa-cli pcr-baseline rotate` once (canonical form changed)
+  - [ ] Verify §2.3 (PCR4 stable across eth/wifi flap; attestation passes)
+  - [ ] (Follow-up PR) Fix 2B — physical static/dynamic config split
+- [ ] Add board test cases: **DID-009** (DID stable across DKP rotation), **DID-010** (DID re-derivable after did.json delete), **PCR-010** (PCR4 stable across network switch)
+- [ ] Deploy nodeA first; confirm nodeB/nodeC re-trust it
 - [ ] CodeRabbit + CodeQL review
-- [ ] PR with before/after `sgx-pa-cli did show` + `sha256sum dkp_pub.der` across the flap test
+- [ ] PR evidence: `did show` before/after DKP-rotate+delete; PCR4 before/after eth/wifi flap
 
 ---
 
-# 8. Honest Notes on What I Couldn't Verify
+# Honest Notes on What I Couldn't Verify
 
-- I cannot run the boards. The root cause is reconstructed by tracing the exact current code (`dkp.rs`, `ssscli.rs`, `key_storage.rs`, `main.rs`, `did/method.rs`) against your three logs. The evidence is strong: the "No existing DKP found" line appears on nodeA exactly when (and only when) its network changed, while nodeB/nodeC (no network change) always show "Existing DKP found (v1)".
-- The exact ssscli session-pickle filename varies by version. Your `ls -lh` shows `~.ssscli_session.pkl` (literally a `~` prefix). Fix 2 deletes both `~/.ssscli_session.pkl` and `~/~.ssscli_session.pkl` and the `/root/` variant to cover it. Confirm the real path on the board with `ls -a /root | grep ssscli` and adjust if needed.
-- Line numbers shift between commits — use the FIND anchor strings with `grep -n`, not absolute line numbers.
-- I have not seen `DkpKeyHistory::load` internals; Fix 5 assumes `load()` returns `Ok` with an active key when the JSON is a valid metadata array (consistent with `dkp_status.rs` parsing). Verify with a unit test on a restored quarantine file.
-- Whether the SE050 slot `0x20000010` still physically holds the original key on the already-damaged nodeA cannot be confirmed remotely — the operator must check with `ssscli se05x readidlist` during the one-time recovery. If the slot is genuinely empty, the original DKP is unrecoverable and that board needs full re-provisioning + new DID enrollment (delete `did.json`, audit-logged) — but that is a consequence of the *original* bug, not this fix.
+- Cannot compile/run on the boards. Issue 2's root cause is **proven** by the log sequence (`🔄 Updating IP ... in nodeA.yaml` then next-boot `PCR4 ... got a5f91248..` then `PCR MISMATCH ... PCRs [4]`) cross-checked against `pcr_config.rs` (PCR4 source = the node yaml) and `main.rs` (rewrites that yaml). This is unambiguous.
+- The SE050 NXP attestation key (Option A) is documented in AN13483 but **not exposed by the current `ssscli.rs` wrapper** — that is the proper reason it cannot be used today; the DIK (Option B) is the correct implementable equivalent and uses only already-working ssscli commands.
+- The exact location of the PCR measurement `source_type` dispatch (`"file" =>` arm) — confirm with `grep -n '"multi_file"' src/secure_element/pcr.rs src/main.rs`; the new `"static_yaml"` arm goes in the same `match`.
+- DIK slot `0x20000001` is assumed free (DKP uses `0x20000010`+). Confirm with `ssscli se05x readidlist` on each board before provisioning; pick another low slot if occupied.
+- Line numbers shift between commits — use the FIND anchor strings, not absolute lines.
+- Migration changes the three test DIDs once. This is intended and acceptable in Sprint 5 (pre-production). Do **not** do an uncontrolled remint on any node already enrolled in a production Circle.

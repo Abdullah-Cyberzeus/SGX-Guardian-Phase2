@@ -12,14 +12,19 @@ pub const DEFAULT_PEERS_DIR: &str = "/var/lib/sgx-guardian/identity/peers";
 pub struct DerivationProof {
     pub se050_uid: String,
     pub se050_uid_source: String,
+    #[serde(default)]
     pub dkp_v1_pubkey_sha256_b16: String,
+    #[serde(default)]
     pub dkp_v1_pubkey_path: String,
-    /// Full DKP v1 SEC1 DER, base64. The DID is pinned to THIS key forever.
-    /// dkp_pub.der on disk is overwritten on every legitimate DKP rotation,
-    /// so it must NOT be used to re-derive the DID. Optional for backward
-    /// compatibility with did.json files written before this fix.
+    /// Legacy field kept for backward-compatible reads only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dkp_v1_pubkey_der_b64: Option<String>,
+    /// SHA-256 of the DIK pubkey (current anchor).
+    #[serde(default)]
+    pub dik_pubkey_sha256_b16: String,
+    /// Full DIK SEC1 DER (base64). DID is pinned to this forever.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dik_pubkey_der_b64: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +81,9 @@ struct CanonicalDerivation<'a> {
     se050_uid_source: &'a str,
     dkp_v1_pubkey_sha256_b16: &'a str,
     dkp_v1_pubkey_path: &'a str,
+    dkp_v1_pubkey_der_b64: Option<&'a str>,
+    dik_pubkey_sha256_b16: &'a str,
+    dik_pubkey_der_b64: Option<&'a str>,
 }
 
 pub fn derivation_signing_bytes(d: &DerivationProof) -> Vec<u8> {
@@ -84,6 +92,9 @@ pub fn derivation_signing_bytes(d: &DerivationProof) -> Vec<u8> {
         se050_uid_source: &d.se050_uid_source,
         dkp_v1_pubkey_sha256_b16: &d.dkp_v1_pubkey_sha256_b16,
         dkp_v1_pubkey_path: &d.dkp_v1_pubkey_path,
+        dkp_v1_pubkey_der_b64: d.dkp_v1_pubkey_der_b64.as_deref(),
+        dik_pubkey_sha256_b16: &d.dik_pubkey_sha256_b16,
+        dik_pubkey_der_b64: d.dik_pubkey_der_b64.as_deref(),
     };
 
     let mut out = b"sgx-guardian:did:guardian:v1:derivation:".to_vec();
