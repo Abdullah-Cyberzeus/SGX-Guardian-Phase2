@@ -18,6 +18,7 @@ comfy-table = "7.1"
 ring = "0.17"
 hex = "0.4"
 rand = "0.8"
+bs58 = "0.5"
 sgx_guardian_client = { path = ".." }
 
 [dev-dependencies]

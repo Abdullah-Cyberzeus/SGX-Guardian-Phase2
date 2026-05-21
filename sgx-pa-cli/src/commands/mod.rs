@@ -5,6 +5,7 @@
 pub mod attest_quote;
 pub mod attestation;
 pub mod boot_status;
+pub mod did;
 pub mod dkp_revoke;
 pub mod dkp_rotate;
 pub mod dkp_status;

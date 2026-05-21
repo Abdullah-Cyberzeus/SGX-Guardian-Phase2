@@ -10,6 +10,7 @@ pub mod client;
 pub mod cloud;
 pub mod config_loader;
 pub mod cot;
+pub mod did;
 pub mod enforcement;
 pub mod key_manager;
 pub mod logging;

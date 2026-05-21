@@ -79,6 +79,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "/var/lib/sgx-guardian/pcr",
         "/var/lib/sgx-guardian/boot",
         "/var/lib/sgx-guardian/sgx-agent",
+        "/var/lib/sgx-guardian/identity",
+        "/var/lib/sgx-guardian/identity/peers",
         "/var/lib/sgx-guardian/nebula/ca",
         "/var/lib/sgx-guardian/nebula/nodes",
         "/var/lib/sgx-guardian/nebula/requests",
@@ -255,8 +257,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let km = KeyManager::load_or_generate(&node_key_path)?;
 
     // === DKP Auto-Rotation Check ===
+    // Only probe the SE050 a SECOND time if the primary KeyManager init above
+    // actually came up on hardware. Re-initializing DkpManager on a flaky chip
+    // (e.g. during a network flap on the CA node) doubles ssscli/I2C contention
+    // and was an amplifier of the DKP-regeneration cascade. If we're on software
+    // keys, there is nothing to auto-rotate in the SE050 anyway.
     #[cfg(feature = "secure-element")]
-    {
+    if km.backend_name() == "SE050" {
         let se_config = sgx_guardian_client::secure_element::SeConfig::default();
         let base_path = "/var/lib/sgx-guardian";
         if let Ok(mut dkp) =
@@ -265,13 +272,100 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             match dkp.check_and_auto_rotate() {
                 Ok(Some(new_meta)) => {
                     println!("  DKP auto-rotated to v{}", new_meta.version);
-                    // Reinitialize KeyManager with new key
-                    // (daemon restart is safer for now)
+                    if let Err(e) = sgx_guardian_client::did::method::update_dkp_version(
+                        sgx_guardian_client::did::DEFAULT_DID_PATH,
+                        new_meta.version,
+                    ) {
+                        eprintln!("  ⚠️ DID dkp_version update failed: {}", e);
+                    }
                 }
                 Ok(None) => { /* no rotation needed */ }
                 Err(e) => {
                     eprintln!("  Auto-rotation check failed: {}", e);
                 }
+            }
+        }
+    }
+
+    // === Device Identity Key (DIK) — non-rotating DID anchor ===
+    #[cfg(feature = "secure-element")]
+    {
+        let se_config = sgx_guardian_client::secure_element::SeConfig::default();
+        match sgx_guardian_client::secure_element::dik::DeviceIdentityKey::ensure(&se_config) {
+            Ok(_) => println!("🔑 Device Identity Key (DIK) ready (slot 0x20000100, non-rotating)"),
+            Err(e) => eprintln!(
+                "⚠️ DIK ensure failed: {} — DID will use cached anchor if present",
+                e
+            ),
+        }
+    }
+
+    // === DID Initialization (W3C DID / did:guardian) ===
+    println!("\n🆔 Initializing W3C DID (did:guardian)...");
+    {
+        let did_path = sgx_guardian_client::did::DEFAULT_DID_PATH;
+        let dkp_pubkey_path = "/var/lib/sgx-guardian/keys/dkp_pub.der";
+        match sgx_guardian_client::did::method::create_if_absent(
+            &node_id,
+            &km,
+            dkp_pubkey_path,
+            did_path,
+        ) {
+            Ok(did) => {
+                println!("  ✅ DID active: {}", did.as_str());
+                log_audit(
+                    &node_id,
+                    AuditCategory::Did,
+                    AuditSeverity::Info,
+                    AuditAction::Loaded,
+                    &format!("DID resolved: {}", did.as_str()),
+                );
+            }
+            Err(sgx_guardian_client::did::DidError::DerivationMismatch) => {
+                // A mismatch derived from the pinned DIK pubkey means the
+                // SE050 UID changed (true chip swap) — NOT a transient read
+                // blip (Fix 1/2 prevent those from ever regenerating the DKP).
+                // Even so, do NOT kill the daemon: the persisted did.json
+                // remains the authoritative identity. Log CRITICAL, keep the
+                // persisted DID, and continue in a degraded-but-running state
+                // so the operator can investigate instead of facing a boot loop.
+                eprintln!(
+                    "  🔴 DID DERIVATION MISMATCH (SE050 UID changed?) — \
+                     keeping persisted DID, continuing in DEGRADED mode."
+                );
+                log_audit(
+                    &node_id,
+                    AuditCategory::Did,
+                    AuditSeverity::Critical,
+                    AuditAction::Failed,
+                    "DID derivation mismatch — persisted DID retained, node DEGRADED",
+                );
+                if let Ok(rec) = sgx_guardian_client::did::DidRecord::load(
+                    sgx_guardian_client::did::DEFAULT_DID_PATH,
+                ) {
+                    println!("  ↳ Persisted DID retained: {}", rec.did);
+                }
+            }
+            Err(sgx_guardian_client::did::DidError::Deactivated(when)) => {
+                eprintln!("  🔴 DID is deactivated at {} — refusing to start.", when);
+                log_audit(
+                    &node_id,
+                    AuditCategory::Did,
+                    AuditSeverity::Critical,
+                    AuditAction::Rejected,
+                    &format!("DID is deactivated at {}", when),
+                );
+                std::process::exit(3);
+            }
+            Err(e) => {
+                eprintln!("  ⚠️ DID initialization failed: {} — continuing.", e);
+                log_audit(
+                    &node_id,
+                    AuditCategory::Did,
+                    AuditSeverity::Warning,
+                    AuditAction::Failed,
+                    &format!("DID initialization failed: {}", e),
+                );
             }
         }
     }
@@ -397,6 +491,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .collect();
                 let errs = pcr_engine.extend_from_files(src.pcr_index, &files);
                 measurement_errors.extend(errs);
+            } else if src.source_type == "static_yaml" {
+                let canonical = canonical_static_yaml_measurement(&src.source);
+                match pcr_engine.extend_from_string(src.pcr_index, &canonical) {
+                    Ok(hash) => println!(
+                        "    PCR{}: {} → {}...",
+                        src.pcr_index,
+                        src.label,
+                        &hash[..12]
+                    ),
+                    Err(e) => {
+                        let _ =
+                            pcr_engine.extend_from_string(src.pcr_index, &format!("ERROR:{}", e));
+                        measurement_errors.push(PcrMeasurementError {
+                            pcr_index: src.pcr_index,
+                            source: src.source.clone(),
+                            error: e.clone(),
+                        });
+                        println!("    PCR{}: {} → ⚠️ {}", src.pcr_index, src.label, e);
+                    }
+                }
             } else {
                 let result = match src.source_type.as_str() {
                     "file" => pcr_engine.extend_from_file(src.pcr_index, &src.source),

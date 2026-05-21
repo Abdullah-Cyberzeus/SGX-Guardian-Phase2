@@ -400,6 +400,97 @@ pub fn read_dkp_key_version() -> u32 {
     }
 }
 
+/// Keys that carry runtime/network state and must not affect PCR4.
+const PCR_DYNAMIC_DENYLIST: &[&str] = &[
+    "ip",
+    "lan_ip",
+    "detected_ip",
+    "endpoint",
+    "endpoints",
+    "runtime",
+    "active_transport",
+    "observed_ip",
+];
+
+/// Returns canonical static measurement text for a YAML config file.
+/// On read/parse failure this returns an empty string by design, so runtime
+/// rewrites are not accidentally measured as raw bytes.
+pub fn canonical_static_yaml_measurement(path: &str) -> String {
+    match std::fs::read_to_string(path) {
+        Ok(raw) => match serde_yaml::from_str::<serde_yaml::Value>(&raw) {
+            Ok(mut v) => {
+                canonicalize_static_config(&mut v);
+                serde_yaml_to_sorted_json(&v)
+            }
+            Err(e) => {
+                eprintln!(
+                    "  ⚠️ static_yaml parse failed for {} ({}) — measuring empty (degraded)",
+                    path, e
+                );
+                String::new()
+            }
+        },
+        Err(_) => String::new(),
+    }
+}
+
+fn canonicalize_static_config(v: &mut serde_yaml::Value) {
+    if let serde_yaml::Value::Mapping(map) = v {
+        for k in PCR_DYNAMIC_DENYLIST {
+            map.remove(serde_yaml::Value::String((*k).to_string()));
+        }
+        for (_k, val) in map.iter_mut() {
+            canonicalize_static_config(val);
+        }
+    } else if let serde_yaml::Value::Sequence(seq) = v {
+        for item in seq.iter_mut() {
+            canonicalize_static_config(item);
+        }
+    }
+}
+
+fn serde_yaml_to_sorted_json(v: &serde_yaml::Value) -> String {
+    fn to_json(v: &serde_yaml::Value) -> serde_json::Value {
+        match v {
+            serde_yaml::Value::Null => serde_json::Value::Null,
+            serde_yaml::Value::Bool(b) => serde_json::Value::Bool(*b),
+            serde_yaml::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    serde_json::Value::Number(serde_json::Number::from(i))
+                } else if let Some(u) = n.as_u64() {
+                    serde_json::Value::Number(serde_json::Number::from(u))
+                } else {
+                    serde_json::Value::Number(
+                        serde_json::Number::from_f64(n.as_f64().unwrap_or(0.0))
+                            .unwrap_or_else(|| serde_json::Number::from(0)),
+                    )
+                }
+            }
+            serde_yaml::Value::String(s) => serde_json::Value::String(s.clone()),
+            serde_yaml::Value::Sequence(seq) => {
+                serde_json::Value::Array(seq.iter().map(to_json).collect())
+            }
+            serde_yaml::Value::Mapping(m) => {
+                let mut keys: Vec<String> = m
+                    .keys()
+                    .filter_map(|k| k.as_str().map(|s| s.to_string()))
+                    .collect();
+                keys.sort();
+                let mut obj = serde_json::Map::new();
+                for k in keys {
+                    if let Some(val) = m.get(serde_yaml::Value::String(k.clone())) {
+                        obj.insert(k, to_json(val));
+                    }
+                }
+                serde_json::Value::Object(obj)
+            }
+            serde_yaml::Value::Tagged(t) => to_json(&t.value),
+        }
+    }
+
+    serde_json::to_string(&to_json(v)).unwrap_or_default()
+}
+
 // ── Unit Tests (17 tests) ───────────────────────────
 #[cfg(test)]
 mod tests {

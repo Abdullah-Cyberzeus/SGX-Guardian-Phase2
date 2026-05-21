@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub enum AuditCategory {
     Node,
     Identity,
+    Did,
     Attestation,
     Policy,
     Enforcement,

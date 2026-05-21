@@ -7,6 +7,7 @@
 
 pub mod config;
 pub mod crypto;
+pub mod dik;
 pub mod dkp;
 pub mod error;
 pub mod key_meta;

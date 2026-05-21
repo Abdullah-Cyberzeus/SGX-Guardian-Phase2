@@ -34,6 +34,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/logs", get(handlers::logs::tail))
         .route("/api/v1/dkp/status", get(handlers::dkp::status))
         .route("/api/v1/pcr/status", get(handlers::pcr::status))
+        .route("/api/v1/did/status", get(handlers::did::status))
+        .route("/api/v1/did/resolve", get(handlers::did::resolve))
+        .route("/api/v1/transport/list", get(handlers::transport::list))
+        .route("/api/v1/transport/status", get(handlers::transport::status))
+        .route("/api/v1/relay/list", get(handlers::relay::list))
         // Phase 2 - action endpoints
         .route("/api/v1/dkp/rotate", post(handlers::dkp::rotate))
         .route("/api/v1/dkp/revoke", post(handlers::dkp::revoke))
@@ -80,6 +85,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/policy/sign-deploy-current",
             post(handlers::policy::sign_deploy_current),
         )
+        .route("/api/v1/did/deactivate", post(handlers::did::deactivate))
+        .route("/api/v1/relay/limits", post(handlers::relay::limits))
         // Health
         .route("/api/v1/health", get(|| async { "ok" }))
         .layer(cors)
@@ -190,5 +197,26 @@ mod tests {
             "expected multipart validation failure, got {}",
             response.status()
         );
+    }
+
+    #[tokio::test]
+    async fn did_deactivate_route_rejects_unconfirmed_requests() {
+        let (base_url, handle) = spawn_api().await;
+        let url = format!("{}/api/v1/did/deactivate", base_url);
+        let response = reqwest::Client::new()
+            .post(url)
+            .json(&serde_json::json!({
+                "reason": "manual-admin",
+                "confirm": false
+            }))
+            .send()
+            .await
+            .expect("request did deactivate");
+        let status = response.status();
+        let body: Value = response.json().await.expect("json error body");
+        handle.abort();
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "BAD_REQUEST");
     }
 }

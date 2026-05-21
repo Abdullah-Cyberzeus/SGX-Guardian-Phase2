@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 pub struct PcrMeasurementSource {
     pub pcr_index: usize,
     pub label: String,
-    /// "file", "string", or "multi_file" (comma-separated paths)
+    /// "file", "string", "multi_file", or "static_yaml"
     pub source_type: String,
     pub source: String,
     /// true = system won't boot without this, FAIL if missing
@@ -52,8 +52,10 @@ pub fn default_measurement_sources(node_id: &str) -> Vec<PcrMeasurementSource> {
         },
         PcrMeasurementSource {
             pcr_index: 4,
-            label: "Guardian config".into(),
-            source_type: "file".into(),
+            // Canonical static view of node config:
+            // runtime network keys (ip/endpoint/runtime.*) are excluded.
+            label: "Guardian config (static)".into(),
+            source_type: "static_yaml".into(),
             source: format!("/etc/sgx-guardian/config/{}.yaml", node_id),
             critical: false,
         },

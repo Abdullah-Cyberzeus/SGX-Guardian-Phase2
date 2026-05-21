@@ -1,4 +1,5 @@
 pub mod attestation;
+pub mod did;
 pub mod dkp;
 pub mod guardian_keys;
 pub mod logs;
@@ -6,3 +7,5 @@ pub mod node;
 pub mod pcr;
 pub mod peers;
 pub mod policy;
+pub mod relay;
+pub mod transport;
