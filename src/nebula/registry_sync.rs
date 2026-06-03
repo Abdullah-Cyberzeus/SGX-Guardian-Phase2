@@ -29,9 +29,11 @@ fn is_ca_node() -> bool {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RegistryRequest {
-    pub action: String, // "assign" | "query" | "list" | "snapshot" | "snapshot_lh" | "snapshot_relay"
+    pub action: String, // "assign" | "query" | "list" | "snapshot" | "snapshot_lh" | "snapshot_relay" | "publish_did_doc" | "snapshot_did_doc"
     pub node_name: String,
     pub pubkey_prefix: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub did_doc_json: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -41,6 +43,8 @@ pub struct RegistryResponse {
     pub ip: Option<String>,
     pub error: Option<String>,
     pub registry_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub did_doc_aggregate_json: Option<String>,
 }
 
 // ── Directory bootstrap ───────────────────────────────────────
@@ -207,6 +211,17 @@ async fn handle_registry_connection(
     let mut line = String::new();
 
     buf_reader.read_line(&mut line).await?;
+    if line.len() > 8192 {
+        let resp = RegistryResponse {
+            success: false,
+            error: Some("Request too large (>8192 bytes)".into()),
+            ..Default::default()
+        };
+        let mut json = serde_json::to_string(&resp)?;
+        json.push('\n');
+        writer.write_all(json.as_bytes()).await?;
+        return Ok(());
+    }
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return Ok(());
@@ -217,10 +232,8 @@ async fn handle_registry_connection(
         Err(e) => {
             let resp = RegistryResponse {
                 success: false,
-                ip_cidr: None,
-                ip: None,
                 error: Some(format!("Invalid JSON: {}", e)),
-                registry_summary: None,
+                ..Default::default()
             };
             let mut json = serde_json::to_string(&resp)?;
             json.push('\n');
@@ -237,10 +250,8 @@ async fn handle_registry_connection(
         if !is_ca_node() {
             let resp = RegistryResponse {
                 success: false,
-                ip_cidr: None,
-                ip: None,
                 error: Some("Only CA can serve registry snapshots".into()),
-                registry_summary: None,
+                ..Default::default()
             };
             let mut json = serde_json::to_string(&resp)?;
             json.push('\n');
@@ -272,10 +283,8 @@ async fn handle_registry_connection(
             Err(e) => {
                 let resp = RegistryResponse {
                     success: false,
-                    ip_cidr: None,
-                    ip: None,
                     error: Some(e.to_string()),
-                    registry_summary: None,
+                    ..Default::default()
                 };
                 let mut json = serde_json::to_string(&resp)?;
                 json.push('\n');
@@ -309,16 +318,14 @@ async fn handle_registry_connection(
                             success: true,
                             ip_cidr: Some(ip_cidr),
                             ip: Some(ip),
-                            error: None,
                             registry_summary: Some(reg.summary()),
+                            ..Default::default()
                         }
                     }
                     Err(e) => RegistryResponse {
                         success: false,
-                        ip_cidr: None,
-                        ip: None,
                         error: Some(e),
-                        registry_summary: None,
+                        ..Default::default()
                     },
                 }
             }
@@ -333,16 +340,13 @@ async fn handle_registry_connection(
                         success: true,
                         ip_cidr: Some(ip_cidr.to_string()),
                         ip: Some(ip),
-                        error: None,
-                        registry_summary: None,
+                        ..Default::default()
                     }
                 }
                 None => RegistryResponse {
                     success: false,
-                    ip_cidr: None,
-                    ip: None,
                     error: Some(format!("{} not found in registry", request.node_name)),
-                    registry_summary: None,
+                    ..Default::default()
                 },
             }
         }
@@ -351,19 +355,69 @@ async fn handle_registry_connection(
             let reg = registry.read().await;
             RegistryResponse {
                 success: true,
-                ip_cidr: None,
-                ip: None,
-                error: None,
                 registry_summary: Some(reg.summary()),
+                ..Default::default()
+            }
+        }
+
+        "publish_did_doc" => {
+            if !is_ca_node() {
+                RegistryResponse {
+                    success: false,
+                    error: Some("Only CA can ingest DID documents".into()),
+                    ..Default::default()
+                }
+            } else {
+                match request.did_doc_json.as_deref() {
+                    None => RegistryResponse {
+                        success: false,
+                        error: Some("missing did_doc_json".into()),
+                        ..Default::default()
+                    },
+                    Some(payload) => {
+                        match crate::did::doc_distribution::ca_ingest_published(payload).await {
+                            Ok(()) => RegistryResponse {
+                                success: true,
+                                ..Default::default()
+                            },
+                            Err(e) => RegistryResponse {
+                                success: false,
+                                error: Some(format!("did_doc reject: {}", e)),
+                                ..Default::default()
+                            },
+                        }
+                    }
+                }
+            }
+        }
+
+        "snapshot_did_doc" => {
+            if !is_ca_node() {
+                RegistryResponse {
+                    success: false,
+                    error: Some("Only CA can serve DID document snapshots".into()),
+                    ..Default::default()
+                }
+            } else {
+                match crate::did::doc_distribution::ca_export_aggregate().await {
+                    Ok(json) => RegistryResponse {
+                        success: true,
+                        did_doc_aggregate_json: Some(json),
+                        ..Default::default()
+                    },
+                    Err(e) => RegistryResponse {
+                        success: false,
+                        error: Some(format!("did_doc snapshot: {}", e)),
+                        ..Default::default()
+                    },
+                }
             }
         }
 
         _ => RegistryResponse {
             success: false,
-            ip_cidr: None,
-            ip: None,
             error: Some(format!("Unknown action: {}", request.action)),
-            registry_summary: None,
+            ..Default::default()
         },
     };
 
@@ -394,6 +448,7 @@ pub async fn request_ip_from_ca(
         action: "assign".to_string(),
         node_name: node_name.to_string(),
         pubkey_prefix: Some(pubkey_prefix.to_string()),
+        did_doc_json: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| format!("Serialize: {}", e))?;
@@ -445,6 +500,7 @@ pub async fn query_ip_from_ca(node_name: &str, ca_host: &str) -> Result<(String,
         action: "query".to_string(),
         node_name: node_name.to_string(),
         pubkey_prefix: None,
+        did_doc_json: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| format!("Serialize: {}", e))?;
@@ -493,6 +549,7 @@ pub async fn pull_registry_snapshot_from_ca(ca_host: &str) -> Result<String, Str
         action: "snapshot".to_string(),
         node_name: "".to_string(),
         pubkey_prefix: None,
+        did_doc_json: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| e.to_string())?;
@@ -526,6 +583,7 @@ pub async fn pull_lighthouse_snapshot_from_ca(ca_host: &str) -> Result<String, S
         action: "snapshot_lh".to_string(),
         node_name: "".to_string(),
         pubkey_prefix: None,
+        did_doc_json: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| e.to_string())?;
@@ -559,6 +617,7 @@ pub async fn pull_relay_snapshot_from_ca(ca_host: &str) -> Result<String, String
         action: "snapshot_relay".to_string(),
         node_name: "".to_string(),
         pubkey_prefix: None,
+        did_doc_json: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| e.to_string())?;

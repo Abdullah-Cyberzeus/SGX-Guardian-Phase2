@@ -315,6 +315,19 @@ impl KeyManager {
         }
     }
 
+    /// Reload the hardware-backed signer from the currently active DKP slot.
+    /// Software backends remain unchanged and return `None`.
+    pub fn refresh_for_active_dkp(&self) -> Result<Option<Self>> {
+        match &self.backend {
+            SigningBackend::Software => Ok(None),
+            #[cfg(feature = "secure-element")]
+            SigningBackend::Hardware { .. } => {
+                let se_config = crate::secure_element::config::SeConfig::default();
+                Self::init_with_se050(&se_config, "/var/lib/sgx-guardian", &self.key_path).map(Some)
+            }
+        }
+    }
+
     /// Returns the filesystem path where the private key is stored.
     /// Useful for debugging and operational visibility.
     pub fn key_path(&self) -> &str {
@@ -345,6 +358,14 @@ mod tests {
         assert!(!sig.is_empty());
 
         // Cleanup test key file
+        fs::remove_file(test_path).unwrap();
+    }
+
+    #[test]
+    fn test_refresh_for_active_dkp_is_noop_for_software() {
+        let test_path = "/tmp/test_device_refresh.key";
+        let km = KeyManager::load_or_generate(test_path).unwrap();
+        assert!(km.refresh_for_active_dkp().unwrap().is_none());
         fs::remove_file(test_path).unwrap();
     }
 }

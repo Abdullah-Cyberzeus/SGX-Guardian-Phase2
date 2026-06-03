@@ -1,4 +1,6 @@
 use crate::api::{error::ApiError, state::AppState};
+use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use crate::audit::logger::log_audit;
 use axum::{
     extract::{Query, State},
     Json,
@@ -7,6 +9,7 @@ use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::path::Path;
 use std::sync::Arc;
 
 const DEFAULT_SYS_NET_DIR: &str = "/sys/class/net";
@@ -48,6 +51,34 @@ pub struct TransportStatusResponse {
     pub node: String,
     pub active: Option<ActiveTransport>,
     pub lock: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct TransportLockRequest {
+    pub node: Option<String>,
+    #[serde(rename = "interfaceName")]
+    pub interface_name: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct TransportLockResponse {
+    pub ok: bool,
+    pub node: String,
+    pub lock: String,
+    pub message: String,
+}
+
+#[derive(Deserialize)]
+pub struct TransportUnlockRequest {
+    pub node: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct TransportUnlockResponse {
+    pub ok: bool,
+    pub node: String,
+    pub lock: Option<String>,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,6 +146,78 @@ pub async fn status(
     }))
 }
 
+pub async fn lock(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<TransportLockRequest>,
+) -> Result<Json<TransportLockResponse>, ApiError> {
+    let node = normalize_required_node(body.node)?;
+    let interface_name = normalize_interface_name(body.interface_name)?;
+
+    let net_dir = sys_net_dir();
+    let lock_dir = cot_lock_dir();
+    let interfaces = detect_interfaces(&net_dir);
+    if !interfaces.iter().any(|iface| iface.name == interface_name) {
+        return Err(ApiError::NotFound(format!(
+            "interface not found: {}",
+            interface_name
+        )));
+    }
+
+    fs::create_dir_all(&lock_dir)
+        .map_err(|e| ApiError::Internal(format!("create transport lock dir failed: {}", e)))?;
+    fs::write(lock_path(&lock_dir, &node), format!("{}\n", interface_name))
+        .map_err(|e| ApiError::Internal(format!("write transport lock failed: {}", e)))?;
+
+    log_audit(
+        &s.node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Applied,
+        &format!(
+            "Transport locked via API: node={}, interface={}",
+            node, interface_name
+        ),
+    );
+
+    Ok(Json(TransportLockResponse {
+        ok: true,
+        node,
+        lock: interface_name.clone(),
+        message: format!("Transport locked to {}", interface_name),
+    }))
+}
+
+pub async fn unlock(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<TransportUnlockRequest>,
+) -> Result<Json<TransportUnlockResponse>, ApiError> {
+    let node = normalize_required_node(body.node)?;
+    let path = lock_path(&cot_lock_dir(), &node);
+
+    let message = if Path::new(&path).exists() {
+        fs::remove_file(&path)
+            .map_err(|e| ApiError::Internal(format!("remove transport lock failed: {}", e)))?;
+        "Transport unlocked".to_string()
+    } else {
+        format!("Transport already unlocked for {}", node)
+    };
+
+    log_audit(
+        &s.node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Applied,
+        &format!("Transport unlocked via API: node={}", node),
+    );
+
+    Ok(Json(TransportUnlockResponse {
+        ok: true,
+        node,
+        lock: None,
+        message,
+    }))
+}
+
 fn normalize_node(node: Option<String>, fallback: &str) -> Result<String, ApiError> {
     let node = node.unwrap_or_else(|| fallback.to_string());
     if !node
@@ -124,6 +227,31 @@ fn normalize_node(node: Option<String>, fallback: &str) -> Result<String, ApiErr
         return Err(ApiError::BadRequest(format!("invalid node name: {}", node)));
     }
     Ok(node)
+}
+
+fn normalize_required_node(node: Option<String>) -> Result<String, ApiError> {
+    let node = node.ok_or_else(|| ApiError::BadRequest("node field is required".to_string()))?;
+    normalize_node(Some(node), "")
+}
+
+fn normalize_interface_name(interface_name: Option<String>) -> Result<String, ApiError> {
+    let interface_name = interface_name
+        .ok_or_else(|| ApiError::BadRequest("interfaceName field is required".to_string()))?;
+    if interface_name.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "interfaceName field cannot be empty".to_string(),
+        ));
+    }
+    if !interface_name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == ':')
+    {
+        return Err(ApiError::BadRequest(format!(
+            "invalid interfaceName: {}",
+            interface_name
+        )));
+    }
+    Ok(interface_name)
 }
 
 fn snapshot(node: &str, lock_dir: &str, net_dir: &str) -> TransportSnapshot {
@@ -188,9 +316,20 @@ fn determine_active(
     lock: Option<&str>,
 ) -> Option<ActiveTransport> {
     if let Some(locked_iface) = lock {
-        return interfaces
+        if let Some(locked_active) = interfaces
             .iter()
             .find(|iface| iface.name == locked_iface && iface.available)
+            .map(|iface| ActiveTransport {
+                name: iface.name.clone(),
+                transport: iface.transport.clone(),
+            })
+        {
+            return Some(locked_active);
+        }
+
+        return interfaces
+            .iter()
+            .find(|iface| iface.available)
             .map(|iface| ActiveTransport {
                 name: iface.name.clone(),
                 transport: iface.transport.clone(),
@@ -207,11 +346,15 @@ fn determine_active(
 }
 
 fn read_lock(lock_dir: &str, node: &str) -> Option<String> {
-    let path = format!("{}/transport_lock_{}.txt", lock_dir, node);
+    let path = lock_path(lock_dir, node);
     fs::read_to_string(path)
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+fn lock_path(lock_dir: &str, node: &str) -> String {
+    format!("{}/transport_lock_{}.txt", lock_dir, node)
 }
 
 fn detect_ipv4_addrs() -> HashMap<String, String> {
@@ -367,7 +510,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transport_status_route_returns_null_active_for_locked_down_iface() {
+    async fn transport_status_route_returns_lock_value() {
         let _lock = TEST_ENV_LOCK.lock().await;
         let tmp = tempfile::tempdir().expect("tempdir");
         seed_sys_net(&tmp);
@@ -389,6 +532,96 @@ mod tests {
         .expect("status");
 
         assert_eq!(resp.lock.as_deref(), Some("eth0"));
-        assert!(resp.active.is_none());
+    }
+
+    #[test]
+    fn determine_active_prefers_locked_interface_when_available() {
+        let interfaces = vec![
+            TransportInterface {
+                name: "eth0".to_string(),
+                transport: "Ethernet".to_string(),
+                priority: 10,
+                status: "UP".to_string(),
+                ip: Some("10.0.0.1".to_string()),
+                available: true,
+            },
+            TransportInterface {
+                name: "wlan0".to_string(),
+                transport: "WiFi".to_string(),
+                priority: 20,
+                status: "UP".to_string(),
+                ip: Some("192.168.1.2".to_string()),
+                available: true,
+            },
+        ];
+
+        let active = determine_active(&interfaces, Some("eth0"));
+        assert_eq!(active.as_ref().map(|a| a.name.as_str()), Some("eth0"));
+    }
+
+    #[test]
+    fn determine_active_falls_back_when_locked_interface_unavailable() {
+        let interfaces = vec![
+            TransportInterface {
+                name: "eth0".to_string(),
+                transport: "Ethernet".to_string(),
+                priority: 10,
+                status: "DOWN".to_string(),
+                ip: None,
+                available: false,
+            },
+            TransportInterface {
+                name: "wlan0".to_string(),
+                transport: "WiFi".to_string(),
+                priority: 20,
+                status: "UP".to_string(),
+                ip: Some("192.168.1.2".to_string()),
+                available: true,
+            },
+        ];
+
+        let active = determine_active(&interfaces, Some("eth0"));
+        assert_eq!(active.as_ref().map(|a| a.name.as_str()), Some("wlan0"));
+    }
+
+    #[tokio::test]
+    async fn transport_lock_and_unlock_routes_update_lock_file() {
+        let _lock = TEST_ENV_LOCK.lock().await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        seed_sys_net(&tmp);
+        let lock_dir = tmp.path().join("cot");
+        fs::create_dir_all(&lock_dir).expect("lock dir");
+        let _env = EnvGuard::new(
+            &tmp.path().join("sys_net").to_string_lossy(),
+            &lock_dir.to_string_lossy(),
+        );
+
+        let Json(lock_resp) = super::lock(
+            State(test_state()),
+            Json(TransportLockRequest {
+                node: Some("nodeA".into()),
+                interface_name: Some("eth0".into()),
+            }),
+        )
+        .await
+        .expect("lock");
+
+        assert!(lock_resp.ok);
+        assert_eq!(lock_resp.lock, "eth0");
+        let lock_path = lock_dir.join("transport_lock_nodeA.txt");
+        assert!(lock_path.exists());
+
+        let Json(unlock_resp) = super::unlock(
+            State(test_state()),
+            Json(TransportUnlockRequest {
+                node: Some("nodeA".into()),
+            }),
+        )
+        .await
+        .expect("unlock");
+
+        assert!(unlock_resp.ok);
+        assert!(unlock_resp.lock.is_none());
+        assert!(!lock_path.exists());
     }
 }

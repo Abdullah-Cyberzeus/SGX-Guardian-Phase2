@@ -32,27 +32,38 @@
 | 21 | POST | `/did/deactivate` | Deactivate local DID |
 | 22 | GET | `/transport/list` | Enumerate transport interfaces |
 | 23 | GET | `/transport/status` | Active transport and lock state |
-| 24 | GET | `/relay/list` | Relay registry/runtime snapshot |
-| 25 | POST | `/relay/limits` | Update relay runtime limits |
-| 26 | POST | `/policy/sign` | Sign uploaded policy file |
-| 27 | POST | `/policy/verify` | Verify uploaded signed policy |
-| 28 | POST | `/policy/verify-deployed` | Verify deployed on-disk policy signature |
-| 29 | GET | `/policy/current` | Fetch current active policy YAML |
-| 30 | PUT | `/policy/current` | Validate and stage pending policy YAML |
-| 31 | GET | `/policy/backup` | Fetch backup policy YAML |
-| 32 | POST | `/policy/sign-deploy-current` | Sign+deploy staged pending policy |
+| 24 | POST | `/transport/lock` | Lock active transport to a specific interface |
+| 25 | POST | `/transport/unlock` | Remove manual transport lock |
+| 26 | GET | `/relay/list` | Relay registry/runtime snapshot |
+| 27 | POST | `/relay/toggle` | Enable/disable relay role for node |
+| 28 | POST | `/relay/limits` | Update relay runtime limits |
+| 29 | POST | `/policy/sign` | Sign uploaded policy file |
+| 30 | POST | `/policy/verify` | Verify uploaded signed policy |
+| 31 | POST | `/policy/verify-deployed` | Verify deployed on-disk policy signature |
+| 32 | GET | `/policy/current` | Fetch current active policy YAML |
+| 33 | PUT | `/policy/current` | Validate and stage pending policy YAML |
+| 34 | GET | `/policy/backup` | Fetch backup policy YAML |
+| 35 | POST | `/policy/sign-deploy-current` | Sign+deploy staged pending policy |
+| 36 | GET | `/did/document` | Local DID Document summary |
+| 37 | GET | `/did/document/raw` | Raw local DID Document |
+| 38 | POST | `/did/document/verify` | Verify DID Document proof and replay floor |
+| 39 | POST | `/did/document/publish` | Force publish local DID Document to CA registry (maintenance/recovery endpoint) |
+| 40 | GET | `/did/document/peers` | List cached peer DID Documents |
+| 41 | GET | `/did/document/peer` | Fetch cached peer DID Document by DID |
 
 ## 2. NEW Endpoints 
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/did/status` | DID record status |
-| GET | `/did/resolve` | Resolve local DID |
-| POST | `/did/deactivate` | Deactivate local DID |
-| GET | `/transport/list` | Enumerate transport interfaces |
-| GET | `/transport/status` | Active transport and lock state |
-| GET | `/relay/list` | Relay registry/runtime snapshot |
-| POST | `/relay/limits` | Update relay runtime limits |
+| POST | `/transport/lock` | Lock active transport to a specific interface |
+| POST | `/transport/unlock` | Remove manual transport lock |
+| POST | `/relay/toggle` | Enable/disable relay role for node |
+| GET | `/did/document` | Local DID Document summary |
+| GET | `/did/document/raw` | Raw local DID Document |
+| POST | `/did/document/verify` | Verify DID Document proof and replay floor |
+| POST | `/did/document/publish` | Force publish local DID Document to CA registry (maintenance/recovery endpoint and member node side only not Admin) |
+| GET | `/did/document/peers` | List cached peer DID Documents |
+| GET | `/did/document/peer` | Fetch cached peer DID Document by DID |
 
 ---
 
@@ -614,7 +625,7 @@ Field notes:
     "name": "eth0",
     "transport": "Ethernet"
   },
-  "lock": "null"
+  "lock": null
 }
 ```
 
@@ -636,14 +647,77 @@ Field notes:
     "name": "eth0",
     "transport": "Ethernet"
   },
-  "lock": "null"
+  "lock": null
 }
 ```
 
 - Error responses:
   - `400 BAD_REQUEST`: invalid `node` format
 
-### 3.24 GET `/relay/list`
+### 3.24 POST `/transport/lock`
+
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "node": "nodeA",
+  "interfaceName": "eth0"
+}
+```
+
+  - Required fields: `node`, `interfaceName`
+- Success response (`200 OK`):
+
+```json
+{
+  "ok": true,
+  "node": "nodeA",
+  "lock": "eth0",
+  "message": "Transport locked to eth0"
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: missing/invalid `node` or `interfaceName`
+  - `404 NOT_FOUND`: interface not found
+  - `500 INTERNAL_SERVER_ERROR`: lock directory/file write failure
+  - `415`/`422`: invalid JSON body
+
+### 3.25 POST `/transport/unlock`
+
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "node": "nodeA"
+}
+```
+
+  - Required fields: `node`
+- Success response (`200 OK`):
+
+```json
+{
+  "ok": true,
+  "node": "nodeA",
+  "lock": null,
+  "message": "Transport unlocked"
+}
+```
+
+- Notes:
+  - If lock file does not exist, endpoint still returns `200` with:
+    - `message`: `Transport already unlocked for <node>`
+- Error responses:
+  - `400 BAD_REQUEST`: missing/invalid `node`
+  - `500 INTERNAL_SERVER_ERROR`: lock file delete failure
+  - `415`/`422`: invalid JSON body
+
+### 3.26 GET `/relay/list`
 
 - Request:
   - Query params: none
@@ -668,7 +742,38 @@ Field notes:
 - Error responses:
   - `500 INTERNAL_SERVER_ERROR`: relay registry/stats read/parse/write issues
 
-### 3.25 POST `/relay/limits`
+### 3.27 POST `/relay/toggle`
+
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "node": "nodeA",
+  "enabled": true
+}
+```
+
+  - Required fields: `node`, `enabled`
+- Success response (`200 OK`):
+
+```json
+{
+  "ok": true,
+  "node": "nodeA",
+  "enabled": true,
+  "message": "Relay enabled for nodeA"
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: missing/invalid `node` or missing `enabled`
+  - `404 NOT_FOUND`: node config file not found
+  - `500 INTERNAL_SERVER_ERROR`: config YAML or relay registry update failure
+  - `415`/`422`: invalid JSON body
+
+### 3.28 POST `/relay/limits`
 
 - Request:
   - Query params: none
@@ -699,7 +804,7 @@ Field notes:
   - `400 BAD_REQUEST`: invalid `node` format
   - `500 INTERNAL_SERVER_ERROR`: relay registry persistence failure
 
-### 3.26 POST `/policy/sign`
+### 3.29 POST `/policy/sign`
 
 - Request:
   - Query params: none
@@ -723,7 +828,7 @@ Field notes:
   - `500 INTERNAL_SERVER_ERROR`: temp file write / CLI spawn errors
   - `415`/`400`: missing/invalid multipart content-type/body
 
-### 3.27 POST `/policy/verify`
+### 3.30 POST `/policy/verify`
 
 - Request:
   - Query params: none
@@ -746,7 +851,7 @@ Field notes:
   - `500 INTERNAL_SERVER_ERROR`: temp file write / CLI spawn errors
   - `415`/`400`: missing/invalid multipart content-type/body
 
-### 3.28 POST `/policy/verify-deployed`
+### 3.31 POST `/policy/verify-deployed`
 
 - Request:
   - Query params: none
@@ -767,7 +872,7 @@ Field notes:
   - `404 NOT_FOUND`: deployed policy signature file missing
   - `500 INTERNAL_SERVER_ERROR`: CLI spawn errors
 
-### 3.29 GET `/policy/current`
+### 3.32 GET `/policy/current`
 
 - Request:
   - Query params: none
@@ -787,7 +892,7 @@ Field notes:
   - `404 NOT_FOUND`: policy file cannot be read
   - `400 BAD_REQUEST`: policy YAML on disk is invalid
 
-### 3.30 PUT `/policy/current`
+### 3.33 PUT `/policy/current`
 
 - Request:
   - Query params: none
@@ -817,7 +922,7 @@ Field notes:
   - `500 INTERNAL_SERVER_ERROR`: failed to create parent dir or stage pending policy
   - `415`/`422`: invalid JSON body
 
-### 3.31 GET `/policy/backup`
+### 3.34 GET `/policy/backup`
 
 - Request:
   - Query params: none
@@ -827,7 +932,7 @@ Field notes:
   - `404 NOT_FOUND`: backup policy file cannot be read
   - `400 BAD_REQUEST`: backup policy YAML invalid
 
-### 3.32 POST `/policy/sign-deploy-current`
+### 3.35 POST `/policy/sign-deploy-current`
 
 - Request:
   - Query params: none
@@ -855,5 +960,218 @@ Field notes:
 - Error responses:
   - `400 BAD_REQUEST`: pending policy missing or invalid
   - `500 INTERNAL_SERVER_ERROR`: active/backup file handling or CLI spawn failures
+
+### 3.36 GET `/did/document`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "did": "did:guardian:...",
+  "controller": "did:guardian:...",
+  "node_name": "nodeA",
+  "version": 5,
+  "status": "active",
+  "active_vms": 1,
+  "revoked_vms": 2,
+  "services": 3,
+  "proof_vm": "did:guardian:...#dkp-v3"
+}
+```
+
+- Error responses:
+  - `404 NOT_FOUND`: local DID Document file not found
+  - `500 INTERNAL_SERVER_ERROR`: local DID Document load failure
+
+### 3.37 GET `/did/document/raw`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1",
+    "https://w3id.org/security/suites/jws-2020/v1"
+  ],
+  "id": "did:guardian:...",
+  "controller": "did:guardian:...",
+  "verificationMethod": [
+    {
+      "id": "did:guardian:...#dkp-v3",
+      "type": "JsonWebKey2020",
+      "controller": "did:guardian:...",
+      "publicKeyJwk": {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "...",
+        "y": "...",
+        "kid": "dkp-v3"
+      }
+    }
+  ],
+  "authentication": [
+    "did:guardian:...#dkp-v3"
+  ],
+  "assertionMethod": [
+    "did:guardian:...#dkp-v3"
+  ],
+  "service": [
+    {
+      "id": "did:guardian:...#sgx-mesh",
+      "type": "SGXNebulaMesh",
+      "serviceEndpoint": "nebula://10.0.0.2/24"
+    }
+  ],
+  "sgx:nodeName": "nodeA",
+  "sgx:created": "2026-05-20T08:00:00Z",
+  "sgx:updated": "2026-05-21T10:00:00Z",
+  "sgx:versionId": 5,
+  "sgx:methodSpecVersion": "1.0",
+  "sgx:status": "active",
+  "sgx:revokedVerificationMethod": [
+    {
+      "id": "did:guardian:...#dkp-v2",
+      "revokedAt": "2026-05-20T09:00:00Z",
+      "reason": "rotation"
+    }
+  ],
+  "proof": {
+    "type": "DataIntegrityProof",
+    "cryptosuite": "ecdsa-jcs-2019",
+    "verificationMethod": "did:guardian:...#dkp-v3",
+    "created": "2026-05-21T10:00:00Z",
+    "proofPurpose": "assertionMethod",
+    "proofValue": "..."
+  }
+}
+```
+
+- Error responses:
+  - `404 NOT_FOUND`: local DID Document file not found
+  - `500 INTERNAL_SERVER_ERROR`: local DID Document load failure
+
+### 3.38 POST `/did/document/verify`
+
+- Request:
+  - Query params: none
+  - JSON body (optional):
+
+```json
+{
+  "path": "/var/lib/sgx-guardian/identity/did_doc.json"
+}
+```
+
+  - Required fields: none
+- Notes:
+  - If body is omitted, the handler verifies the local DID Document at the configured self-document path.
+- Success response (`200 OK`):
+
+```json
+{
+  "valid": true,
+  "version": 5,
+  "message": "DID Document proof valid"
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: invalid JSON body, empty `path`, invalid DID Document JSON, proof/signature validation failure, or replayed older version
+  - `404 NOT_FOUND`: DID Document file not found at requested path
+  - `500 INTERNAL_SERVER_ERROR`: unexpected DID Document verify I/O failure
+
+### 3.39 POST `/did/document/publish`
+
+- Purpose:
+  - Force publish local DID Document to CA registry (maintenance/recovery endpoint)
+- Important Usage Notes:
+  - Normal DID Document publishing is automatic.
+  - Guardian daemon automatically publishes DID Documents during:
+    - First boot DID Document creation
+    - DID Document refresh/update
+    - DKP rotation
+    - DID deactivation
+    - Circle synchronization events
+  - This endpoint is mainly intended for member nodes (`nodeB`/`nodeC`) to manually republish a DID Document to the CA registry.
+  - Typical use cases:
+    - Recovery
+    - Troubleshooting
+    - Registry repair
+    - Development/testing
+  - Admin Console users normally do not need to call this endpoint.
+
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "ca_host": "127.0.0.1",
+  "node_name": "nodeB"
+}
+```
+
+  - Required fields: `ca_host`, `node_name`
+- Success response (`200 OK`):
+
+```json
+{
+  "success": true,
+  "did": "did:guardian:...",
+  "version": 5,
+  "ca_host": "127.0.0.1",
+  "node_name": "nodeB",
+  "message": "DID Document published to CA registry"
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: missing/invalid JSON body, missing `ca_host`/`node_name`, DID Document verification failure, or CA-side rejection
+  - `404 NOT_FOUND`: local DID Document file not found
+  - `500 INTERNAL_SERVER_ERROR`: publish/connect/read/write timeout or other publish I/O failure
+
+### 3.40 GET `/did/document/peers`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "count": 1,
+  "peers": [
+    {
+      "did": "did:guardian:...",
+      "node_name": "nodeB",
+      "version": 4,
+      "status": "active",
+      "services": 2
+    }
+  ]
+}
+```
+
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: peer DID Document directory read failure
+
+### 3.41 GET `/did/document/peer`
+
+- Request:
+  - Query params:
+    - `did` (required, string, full `did:guardian:...` value)
+  - Body: none
+- Success response (`200 OK`):
+  - Same schema as `GET /did/document/raw`
+- Error responses:
+  - `400 BAD_REQUEST`: missing/empty `did` query parameter or invalid DID format
+  - `404 NOT_FOUND`: peer DID Document file not found
+  - `500 INTERNAL_SERVER_ERROR`: peer DID Document load failure
 
 ---

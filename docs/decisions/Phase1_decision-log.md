@@ -8,8 +8,8 @@
 
 ## Overview
 
-This decision log tracks all significant **architectural, tactical, and procedural decisions** made during Sprint 1 and Sprint 2 of the SG-X Guardian Client development lifecycle.  
-It ensures traceability, justification, and long-term maintainability of core design choices.
+This decision log tracks all significant **architectural, tactical and procedural decisions** made during Sprint 1 and Sprint 2 of the SG-X Guardian Client development lifecycle.  
+It ensures traceability, justification and long-term maintainability of core design choices.
 
 ---
 
@@ -65,6 +65,25 @@ It ensures traceability, justification, and long-term maintainability of core de
 | D044 | Policy Rollback Strategy on Verification Failure | Architecture – Resilience | Accepted | Sprint 3 |
 | D045 | Fail-Closed Policy Enforcement Model | Architecture – Zero Trust | Accepted | Sprint 3 |
 | D046 | Milestone Demo 2 – Admin-Signed Policy Propagation | Process – Demonstration | Accepted | Sprint 3 |
+| D047 | Secure Element as Hardware Root of Trust | Architecture – Hardware Security | Accepted | Sprint 1 |
+| D048 | Secure Element Driver and Cryptographic Subsystem Initialization | Implementation – Secure Element | Accepted | Sprint 1 |
+| D049 | Secure Element Protected Key Storage | Implementation – Secure Element | Accepted | Sprint 1 |
+| D050 | Hardware Key Manager for DKP Lifecycle | Architecture – Identity | Accepted | Sprint 1 |
+| D051 | Non-Exportable DKP Private Key Model | Architecture – Identity | Accepted | Sprint 1 |
+| D052 | Secure Element Signing Boundary | Implementation – Secure Element | Accepted | Sprint 1 |
+| D053 | DKP Rotation and Revocation Workflow | Architecture – Identity | Accepted | Sprint 1 |
+| D054 | Nebula Mesh as Circle Transport Layer | Architecture – Mesh Networking | Accepted | Sprint 1 |
+| D055 | Nebula CA Operations for Circle Certificates | Architecture – Mesh Networking | Accepted | Sprint 1 |
+| D056 | DID-to-Overlay-IP Certificate Binding | Architecture – Identity | Accepted | Sprint 1 |
+| D057 | Verifiable Credential Validation Before Certificate Issuance | Architecture – Identity | Accepted | Sprint 1 |
+| D058 | Time-Limited Nebula Certificates | Architecture – Identity | Accepted | Sprint 1 |
+| D059 | PCR Measurement Collection | Architecture – Hardware Security | Accepted | Sprint 2 |
+| D060 | Golden PCR Baseline Storage | Architecture – Hardware Security | Accepted | Sprint 2 |
+| D061 | PCR Mismatch as Attestation Failure | Architecture – Attestation | Accepted | Sprint 2 |
+| D062 | Secure Boot Chain Validation | Architecture – Hardware Security | Accepted | Sprint 2 |
+| D063 | Fail-Closed Boot Integrity Model | Security – Fail-Closed Enforcement | Accepted | Sprint 2 |
+| D064 | Transport-Agnostic Circle of Trust | Architecture – Multi-Transport CoT | Accepted | Sprint 2 |
+| D065 | LAN and WiFi Auto-Detection | Architecture – Multi-Transport CoT | Accepted | Sprint 2 |
 
 ---
 
@@ -72,12 +91,13 @@ It ensures traceability, justification, and long-term maintainability of core de
 
 | Category | Count | Decisions |
 |---------|--------|----------|
-| **Architecture** | 27 | D001, D002, D003, D004, D005, D008, D009, D012, D014, D016, D017, D018, D019, D020, D027, D028, D029, D030, D031, D034, D037, D038, D039, D040, D041, D042, D043, D044, D046 |
-| **Implementation** | 5 | D006, D007, D021, D024, D032 |
+| **Architecture** | 44 | D001, D002, D003, D004, D005, D008, D009, D012, D014, D016, D017, D018, D019, D020, D027, D028, D029, D030, D031, D034, D037, D038, D039, D040, D041, D042, D043, D044, D046,D047, D059, D060, D062 ,D050, D051, D053, D056, D057, D058 ,D054, D055 , D061 ,D064, D065  |
+| **Implementation** | 8 | D006, D007, D021, D024, D032, D048, D049, D052 |
 | **DevOps** | 2 | D010, D011 |
 | **Quality** | 5 | D013, D015, D025, D026, D033 |
-| **Process** | 2 | D035, D047 |
+| **Process** | 1 | D035 |
 | **Scope** | 1 | D016 |
+| **Security – Fail-Closed Enforcement** | 1 | D063 |
 
 ---
 
@@ -97,7 +117,30 @@ It ensures traceability, justification, and long-term maintainability of core de
 | Transport Security | rustls + tonic mTLS | D037, D039 | Secure gRPC channels with mutual authentication |
 | Node Certificates | X.509 (DER/PEM) | D038 | Persistent cryptographic identity for each node |
 | Policy Distribution | Signed JSON Envelope (Base64 + SHA-256) | D040, D041 | Portable, verifiable policy delivery across nodes |
-
+| Hardware Root of Trust | Secure Element / SE050 abstraction | D047 | Establishes tamper-resistant device trust anchor |
+| Secure Element Driver | Rust wrapper over secure element access layer | D048 | Isolates hardware communication from business logic |
+| Protected Key Storage | Secure element-backed key slots | D049 | Prevents private key exposure to operating system |
+| Hardware Key Manager | DKP lifecycle manager | D050 | Controls generation, rotation and revocation of device keys |
+| Device Key Pair | Secure element-backed DKP | D050, D051 | Ensures device identity is hardware-bound and non-exportable |
+| Signing Boundary | Hardware-backed signing operation | D052 | Keeps private key operations inside secure hardware boundary |
+| PCR Measurement | Platform Configuration Register collection | D059 | Provides integrity fingerprint for firmware, bootloader, kernel and config |
+| Golden Baseline | Known-good PCR reference set | D060 | Enables trusted comparison during attestation |
+| Secure Boot Chain | Verified boot sequence | D062 | Prevents tampered firmware or bootloader execution |
+| Hardware Attestation | Secure element challenge-response protocol | D079 | Provides cryptographic proof of hardware and firmware state |
+| Attestation Quote | Nonce-bound signed quote | D080 | Prevents replay and proves freshness |
+| Nebula Mesh | Encrypted overlay networking | D054 | Provides resilient Circle transport layer |
+| Nebula CA | Circle certificate authority | D055 | Enables certificate-based mesh membership |
+| Overlay Addressing | 192.168.100.0/24 per Circle | D067 | Provides predictable private mesh addressing |
+| Virtual Interface | nebula0 | D068 | Routes peer traffic through encrypted overlay tunnels |
+| Lighthouse | Nebula lighthouse peer discovery | D070, D071 | Enables NAT traversal and endpoint discovery |
+| Redundant Lighthouse | Multiple lighthouse nodes | D072 | Improves availability and failover |
+| Relay Routing | Nebula multi-hop relay | D075 | Maintains connectivity when direct UDP fails |
+| Relay Controls | Bandwidth and usage limits | D076 | Prevents uncontrolled relay resource usage |
+| Multi-Transport CoT | LAN, WiFi, Bluetooth, Cellular, Satellite | D064, D073, D074, D077, D078 | Makes trust independent of physical transport |
+| Runtime Integration | Rust + Tokio-compatible modules | D048, D064, D079 | Preserves existing async architecture |
+| Configuration | YAML / JSON config extensions | D067, D070, D076 | Keeps deployment human-readable and auditable |
+| Logging | Structured logs | D061, D082, D084 | Supports audit, debugging and CLI visibility |
+| Test Environment | 3-node hardware and network test setup | D083, D085 | Validates end-to-end trust behavior |
 ---
 
 # Detailed Decisions
@@ -111,7 +154,7 @@ It ensures traceability, justification, and long-term maintainability of core de
 **Category:** Architecture – Core Technology  
 
 **Context:**  
-SG-X Guardian requires a highly secure, memory-safe, and concurrent runtime for cryptographic operations, distributed networking, and real-time policy enforcement. The language must prevent buffer overflows and race conditions by design.
+SG-X Guardian requires a highly secure, memory-safe and concurrent runtime for cryptographic operations, distributed networking and real time policy enforcement. The language must prevent buffer overflows and race conditions by design.
 
 **Decision:**  
 Use **Rust** for both `sgx-guardian` daemon and `sgx-pa-cli`.
@@ -131,13 +174,13 @@ Use **Rust** for both `sgx-guardian` daemon and `sgx-pa-cli`.
 | Alternative | Pros | Cons |
 |------------|------|------|
 | Go | Easy concurrency | GC pauses, weaker memory safety |
-| C++ | High performance | Manual memory → dangerous for security |
+| C++ | High performance | Manual memory -> dangerous for security |
 | Python | Easy scripting | Too slow & unsafe for edge workloads |
 
 **Implications:**  
 - Slightly higher learning curve  
 - Much stronger long-term stability  
-- Fewer memory-related vulnerabilities  
+- Fewer memory related vulnerabilities  
 
 **Related Decisions:** D002, D003, D011  
 
@@ -149,7 +192,7 @@ Use **Rust** for both `sgx-guardian` daemon and `sgx-pa-cli`.
 **Category:** Architecture – Communication  
 
 **Context:**  
-Nodes need a secure, typed, efficient communication layer for attestation, policy sync, and health checking. Protocol must support mTLS and real-time streaming.
+Nodes need a secure, typed, efficient communication layer for attestation, policy sync and health checking. Protocol must support mTLS and real time streaming.
 
 **Decision:**  
 Adopt **gRPC** with **Protobuf** schemas.
@@ -170,7 +213,7 @@ Adopt **gRPC** with **Protobuf** schemas.
 |-------------|------|------|
 | REST/HTTPS | Simple | No streaming, slower, text-based |
 | Custom TCP protocol | Flexible | Costly to design + insecure |
-| MQTT | Lightweight | Requires broker → not P2P |
+| MQTT | Lightweight | Requires broker -> not P2P |
 
 **Implications:**  
 - All RPC interfaces defined via `.proto`  
@@ -186,7 +229,7 @@ Adopt **gRPC** with **Protobuf** schemas.
 **Category:** Architecture – Security  
 
 **Context:**  
-Guardian nodes exchange sensitive attestation and policy data. Requires modern, secure, and light cryptography.
+Guardian nodes exchange sensitive attestation and policy data. Requires modern, secure and light cryptography.
 
 **Decision:**  
 Use **Ed25519** for signatures and **X25519** for key exchange under **TLS 1.3 mTLS**.
@@ -222,7 +265,7 @@ Use **Ed25519** for signatures and **X25519** for key exchange under **TLS 1.3 m
 **Category:** Architecture – Policy  
 
 **Context:**  
-Policy must be human-readable, easy to sign, and translate into nftables rules.
+Policy must be human-readable, easy to sign and translate into nftables rules.
 
 **Decision:**  
 Define **UEP Policy Schema v1** in **YAML**.
@@ -244,7 +287,7 @@ Define **UEP Policy Schema v1** in **YAML**.
 | TOML | Not suitable for complex rule trees |
 
 **Implications:**  
-- YAML → canonical form required for policy signing  
+- YAML -> canonical form required for policy signing  
 - Must validate input to prevent malformed policies  
 
 **Related Decisions:** D014, D015  
@@ -261,10 +304,10 @@ Nodes must boot with minimal configuration on LAN.
 Store per-node configurations in `nodeA.yaml`, `nodeB.yaml`, `nodeC.yaml`.
 
 **Rationale:**  
-Simple, human-readable, and no DB required.
+Simple, human-readable and no DB required.
 
 **Alternatives Considered:**  
-Database → too heavy for Phase 1.
+Database -> too heavy for Phase 1.
 
 **Implications:**  
 Easy simulation and testing.
@@ -290,7 +333,7 @@ Use **tracing** + JSON with structured fields.
 | Async friendly | Works with Tokio |
 | Integrates with CLI | CLI can parse logs easily |
 
-**Alternatives:** syslog → unstructured.
+**Alternatives:** syslog -> unstructured.
 
 **Implications:**  
 - Enables CLI commands like `peers` & `attestation`.
@@ -399,8 +442,8 @@ Requires secure CI secrets.
 
 **Decision:**  
 CLI provides:  
-- `keygen` → generate P256 keypairs  
-- `sign` → sign YAML UEP policies  
+- `keygen` -> generate P256 keypairs  
+- `sign` -> sign YAML UEP policies  
 
 **Rationale:**
 
@@ -421,7 +464,7 @@ Central to policy lifecycle.
 **Category:** Quality – SAST  
 
 **Context:**  
-Security-critical Rust code must be continuously scanned for vulnerabilities, insecure patterns, dependency issues, and logic flaws. Manual reviews alone are insufficient.
+Security-critical Rust code must be continuously scanned for vulnerabilities, insecure patterns, dependency issues and logic flaws. Manual reviews alone are insufficient.
 
 **Decision:**  
 Integrate **Semgrep** + **GitHub CodeQL** in CI/CD for automated static analysis.
@@ -477,8 +520,8 @@ Define complete **Protobuf v1.0 API** covering:
 | Cross-platform | Future support for other languages |
 
 **Alternatives Considered:**  
-REST JSON → too slow, no typing.  
-Custom binary → insecure, heavy engineering.
+REST JSON -> too slow, no typing.  
+Custom binary -> insecure, heavy engineering.
 
 **Implications:**  
 - Every change requires versioning  
@@ -495,7 +538,7 @@ Custom binary → insecure, heavy engineering.
 **Category:** Quality – Code Hygiene  
 
 **Context:**  
-Large distributed system requires strict coding standards to avoid drift, bugs, and unsafe code patterns.
+Large distributed system requires strict coding standards to avoid drift, bugs and unsafe code patterns.
 
 **Decision:**  
 Enforce:  
@@ -514,7 +557,7 @@ Enforce:
 | deny | License & version compliance |
 
 **Alternatives Considered:**  
-No enforcement → inconsistent, unsafe code.
+No enforcement -> inconsistent, unsafe code.
 
 **Implications:**  
 - All PRs must pass quality gates  
@@ -532,7 +575,7 @@ No enforcement → inconsistent, unsafe code.
 PQC & anomaly-detection ML are future capabilities but not required for Phase 1 MVP.
 
 **Decision:**  
-Defer PQC algorithms, AI inference, and behavioral ML models.
+Defer PQC algorithms, AI inference and behavioral ML models.
 
 **Rationale:**
 
@@ -571,7 +614,7 @@ Implement `key_manager.rs` storing persistent **ECDSA P-256** keypairs.
 | Compatible | Works with future TPM integration |
 
 **Alternatives Considered:**  
-Ephemeral keys → breaks Circle-of-Trust.
+Ephemeral keys -> breaks Circle-of-Trust.
 
 **Implications:**  
 - Nodes must protect private key files  
@@ -600,8 +643,8 @@ Use **mDNS** broadcasting `_sgx-guardian._tcp` with nonce exchange.
 | Standard protocol | Works across systems |
 
 **Alternatives Considered:**  
-Static IP lists → brittle.  
-Consul → too heavy.
+Static IP lists -> brittle.  
+Consul -> too heavy.
 
 **Implications:**  
 - Requires mDNS-open networks  
@@ -629,7 +672,7 @@ Attestation evidence = signature over:
 | Policy binding | Digest ties identity to active rules |
 | Lightweight | Works even on small devices |
 
-**Alternatives:** TPM attestation now → too complex for Phase 1.
+**Alternatives:** TPM attestation now -> too complex for Phase 1.
 
 **Implications:**  
 - Foundation for VirtualID  
@@ -657,7 +700,7 @@ Automatically start attestation upon peer discovery event.
 | Fast | Trust formation within seconds |
 | Consistent | Every peer validates every peer |
 
-**Alternatives:** Manual trigger → slow.
+**Alternatives:** Manual trigger -> slow.
 
 **Implications:**  
 - Needs async concurrency management (Tokio)  
@@ -685,7 +728,7 @@ Use **Tokio**'s async scheduler for tasks.
 | Stable | Industry-trusted runtime |
 
 **Alternatives:**  
-Threads → too heavy; no structured async.
+Threads -> too heavy; no structured async.
 
 **Implications:**  
 - Requires structured cancellation on shutdown  
@@ -715,7 +758,7 @@ Add commands:
 | Zero dependency | CLI works without daemon RPC |
 
 **Alternatives:**  
-Direct gRPC → adds complexity for Phase 1.
+Direct gRPC -> adds complexity for Phase 1.
 
 **Implications:**  
 - Log formats must remain stable  
@@ -742,7 +785,7 @@ Use JSON files (`trusted_peers.json`, `last_attestation.json`) as data sources.
 | Simple parsing | JSON maps cleanly to Rust structs |
 
 **Alternatives:**  
-Direct socket → risk of blocking daemon.
+Direct socket -> risk of blocking daemon.
 
 **Implications:**  
 - Log writers must guarantee atomic writes  
@@ -774,7 +817,7 @@ Add structured JSON logs for:
 | Monitoring | Helps detect unstable peers |
 
 **Alternatives:**  
-Plain text logs → unreadable for tools.
+Plain text logs -> unreadable for tools.
 
 **Implications:**  
 - Must define stable JSON schema  
@@ -788,7 +831,7 @@ Plain text logs → unreadable for tools.
 **Category:** Quality – Testing  
 
 **Context:**  
-Guardian must operate reliably across multiple async subsystems. Tests must cover CLI, discovery, attestation, and basic policy loading.
+Guardian must operate reliably across multiple async subsystems. Tests must cover CLI, discovery, attestation and basic policy loading.
 
 **Decision:**  
 Implement full suite of:  
@@ -805,7 +848,7 @@ Implement full suite of:
 | Realistic behavior | Integration tests simulate multi-node workflow |
 
 **Alternatives Considered:**  
-Manual testing → unreliable, slow.
+Manual testing -> unreliable, slow.
 
 **Implications:**  
 - All features require test coverage  
@@ -825,18 +868,18 @@ Manual testing → unreliable, slow.
 Trust formation is a distributed process. Must verify behavior across multiple nodes on a LAN.
 
 **Decision:**  
-Create **3-node LAN simulation** (A, B, C) with discovery, attestation, and timestamp tracking.
+Create **3-node LAN simulation** (A, B, C) with discovery, attestation and timestamp tracking.
 
 **Rationale:**
 
 | Benefit | Explanation |
 |---------|-------------|
 | Realistic test | Simulates real deployment environment |
-| Validates flow | Discovery → Attestation → Trust storage |
+| Validates flow | Discovery -> Attestation -> Trust storage |
 | Stability check | Peer flapping detection |
 
 **Alternatives:**  
-Single-node mock → cannot validate Circle-of-Trust.
+Single-node mock -> cannot validate Circle-of-Trust.
 
 **Implications:**  
 - Requires orchestration script (`run_three_nodes.sh`)  
@@ -865,7 +908,7 @@ Implement `start_attestation_listener` on **dynamic port = base_port + 100**.
 | Async friendly | Clean handling in Tokio |
 
 **Alternatives:**  
-HTTP-based endpoint → slower, heavier.
+HTTP-based endpoint -> slower, heavier.
 
 **Implications:**  
 - Must update firewall rules if required  
@@ -898,7 +941,7 @@ Write structured logs:
 | Forensics | Allows replay & debugging |
 
 **Alternatives:**  
-In-memory state → lost on restart.
+In-memory state -> lost on restart.
 
 **Implications:**  
 - Must guarantee atomic writes  
@@ -927,7 +970,7 @@ Every node re-attests peers every **60 seconds**.
 | Consistent | Works across entire cluster |
 
 **Alternatives:**  
-Manual re-attest → unreliable.
+Manual re-attest -> unreliable.
 
 **Implications:**  
 - Increased periodic network traffic (minimal)  
@@ -955,7 +998,7 @@ On startup, verify all peers in `trusted_peers.json`.
 | Fast convergence | Node joins existing trust mesh quickly |
 
 **Alternatives:**  
-Wait for next timer → delayed trust restoration.
+Wait for next timer -> delayed trust restoration.
 
 **Implications:**  
 - Startup includes trust-refresh operations  
@@ -983,7 +1026,7 @@ Every successful attestation updates `last_seen` timestamp in `trusted_peers.jso
 | Accuracy | Prevents stale peer entries |
 
 **Alternatives:**  
-Static timestamps → misleading trust state.
+Static timestamps -> misleading trust state.
 
 **Implications:**  
 - CLI displays live trust health  
@@ -1011,7 +1054,7 @@ Add retry loop (3 attempts) + structured `[NetworkError]` logs.
 | Clarity | Clean logging supports debugging |
 
 **Alternatives:**  
-Immediate failure → too fragile.
+Immediate failure -> too fragile.
 
 **Implications:**  
 - Improves reliability in unstable networks  
@@ -1039,7 +1082,7 @@ Validate that `peers` and `attestation` commands reflect updated timestamps and 
 | Transparency | Admins rely on accurate trust data |
 
 **Alternatives:**  
-No validation → risk of stale results.
+No validation -> risk of stale results.
 
 **Implications:**  
 - CLI must parse logs correctly  
@@ -1057,7 +1100,7 @@ No validation → risk of stale results.
 Client demo requires showing automatic peer discovery + mutual attestation forming trust mesh.
 
 **Decision:**  
-Demonstrate nodes A, B, C boot → discover each other → mutually attest → form stable mesh.
+Demonstrate nodes A, B, C boot -> discover each other  ->  mutually attest -> form stable mesh.
 
 **Rationale:**
 
@@ -1067,7 +1110,7 @@ Demonstrate nodes A, B, C boot → discover each other → mutually attest → f
 | Realistic | Matches production topology |
 
 **Alternatives:**  
-Manual scripts → less convincing, less realistic.
+Manual scripts -> less convincing, less realistic.
 
 **Implications:**  
 - Demo scripts must reflect real system behavior  
@@ -1081,7 +1124,7 @@ Manual scripts → less convincing, less realistic.
 **Category:** Process – Automation  
 
 **Context:**  
-Manually starting 3 nodes is error-prone.
+Manually starting 3 nodes is error prone.
 
 **Decision:**  
 Enhance `run_three_nodes.sh` to auto-start, wait, verify, summarize logs.
@@ -1095,7 +1138,7 @@ Enhance `run_three_nodes.sh` to auto-start, wait, verify, summarize logs.
 | Validation | Script checks trust mesh formation |
 
 **Alternatives:**  
-Manual start → slow & inconsistent.
+Manual start -> slow & inconsistent.
 
 **Implications:**  
 - Script becomes mandatory for demo/testing  
@@ -1127,7 +1170,7 @@ to merge all node logs into one consolidated file.
 | Scriptable | Easy integration into tools |
 
 **Alternatives:**  
-Custom merger → requires more code.
+Custom merger -> requires more code.
 
 **Implications:**  
 - Enables centralized trust visualization  
@@ -1142,7 +1185,7 @@ Custom merger → requires more code.
 **Category:** Architecture – Security  
 
 **Context:**  
-System required a transport-security layer for encrypted gRPC communication.  
+System required a transport security layer for encrypted gRPC communication.  
 No centralized TLS module existed in Sprint 1–2.
 
 **Decision:**  
@@ -1174,7 +1217,7 @@ Tonic required PEM, but project assets were DER formatted.
 Implement certificate lifecycle:  
 - Generate or load `sgx-agent/device_cert.der`  
 - Bind certificate to device.key  
-- Convert DER → PEM at runtime  
+- Convert DER -> PEM at runtime  
 - Include SAN hostname + 127.0.0.1  
 - Expose `ensure_node_certificate_or_generate()`  
 
@@ -1198,7 +1241,7 @@ Next step was to fully secure server.rs & client.rs with mTLS.
 **Decision:**  
 Integrate mTLS into gRPC transport layer:  
 - Use ServerTlsConfig + ClientTlsConfig  
-- DER → PEM conversion for Identity  
+- DER -> PEM conversion for Identity  
 - TLS server starts before attestation  
 - Secure Ping/Pong RPC implemented  
 - Add audit-proof logs  
@@ -1254,7 +1297,7 @@ Establishes cryptographic root-of-trust for policy lifecycle.
 **Category:** Architecture – Policy Distribution  
 
 **Context:**  
-Signed policies must be portable, inspectable, and self-contained.
+Signed policies must be portable, inspectable and self-contained.
 
 **Decision:**  
 Define a JSON-based signed policy envelope containing:
@@ -1270,11 +1313,11 @@ Define a JSON-based signed policy envelope containing:
 |-------|---------|
 | JSON | Human-readable |
 | Base64 | Binary-safe |
-| Embedded pubkey | Self-verifying artifact |
+| Embedded pubkey | Self verifying artifact |
 | Versioning | Forward compatibility |
 
 **Alternatives Considered:**  
-Detached signatures, ASN.1 blobs, YAML-based signing.
+Detached signatures, ASN.1 blobs, YAML based signing.
 
 **Implications:**  
 Policy and signature travel as a single trust artifact.
@@ -1437,33 +1480,761 @@ Sprint 3 policy automation is fully complete.
 
 ---
 
-# Decision Template
+### D047: Secure Element as Hardware Root of Trust
 
-```markdown
-### D###: Decision Title
+**Date:** Sprint 1  
+**Status:** Accepted  
+**Category:** Architecture – Hardware Security  
 
-**Date**: Month Year  
-**Status**: Proposed | Accepted | Deprecated | Superseded  
-**Category**: Architecture | Security | Implementation | etc.
+**Context:**  
+Phase 1 used software-based identity and software attestation to validate the Circle of Trust workflow. Phase 2 required stronger device assurance by anchoring identity and cryptographic operations in hardware instead of relying only on operating system protected files.
 
-**Context**:  
-Description of the problem.
+**Decision:**  
+Use an embedded secure element as the hardware root of trust for SG-X Guardian devices.
 
-**Decision**:  
-The chosen solution.
+**Rationale:**
 
-**Rationale**:  
-Why this option was selected.
+| Criterion | Explanation |
+|----------|-------------|
+| Security | Private keys and sensitive cryptographic operations are isolated from the main processor |
+| Tamper resistance | Secure element storage is harder to extract or modify than filesystem keys |
+| Trust foundation | Provides a hardware backed identity anchor for attestation and DKP lifecycle |
+| Phase 2 alignment | Directly supports hardware attestation, PCR validation and secure boot trust chain |
 
-**Alternatives Considered**:  
-- Alternative A  
-- Alternative B  
+**Alternatives Considered:**
 
-**Implications**:  
-Consequences of the decision.
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Software-only keys | Simple and fast to implement | Private keys remain exposed to OS compromise risk |
+| TPM-only design | Strong hardware trust model | Less aligned with current secure element integration work |
+| External HSM | Very secure | Not practical for embedded edge deployment |
+| Cloud key custody | Centralized control | Breaks edge-first and offline trust requirements |
 
-**Related Decisions**:  
-D###, D###
-```
+**Implications:**  
+- Device identity becomes hardware-backed instead of software-only.  
+- Signing and attestation workflows must integrate with secure element APIs.  
+- Future compromise of the host OS should not directly expose device private keys.  
+- Testing must include secure element availability, initialization and failure handling.
+
+**Related Decisions:** D048, D049, D050, D079  
+
+---
+
+### D048: Secure Element Driver and Cryptographic Subsystem Initialization
+
+**Date:** Sprint 1  
+**Status:** Accepted  
+**Category:** Implementation – Secure Element  
+
+**Context:**  
+The secure element cannot be safely used by the Guardian runtime unless communication, initialization and error handling are isolated behind a stable software abstraction. Direct hardware access scattered across the codebase would increase maintenance and security risk.
+
+**Decision:**  
+Implement a dedicated secure element driver layer and initialize the cryptographic subsystem during Guardian startup.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Modularity | Keeps hardware access isolated from attestation and key management logic |
+| Reliability | Centralized initialization allows clear startup validation |
+| Maintainability | Future secure element models can be supported behind the same abstraction |
+| Security | Reduces accidental misuse of low-level secure element commands |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Direct calls from attestation code | Fast initial implementation | Creates tight coupling and fragile code |
+| Shelling out to vendor CLI everywhere | Easy for testing | Hard to secure, parse and control in production |
+| No abstraction layer | Less code initially | Long-term maintenance risk |
+
+**Implications:**  
+- Secure element setup becomes part of the boot/startup path.  
+- Initialization failure must produce clear logs and fail safely.  
+- Higher-level modules should depend on the secure element abstraction, not vendor-specific details.  
+- Enables clean testing with mock secure element behavior.
+
+**Related Decisions:** D047, D049, D052, D079  
+
+---
+
+### D049: Secure Element Protected Key Storage
+
+**Date:** Sprint 1  
+**Status:** Accepted  
+**Category:** Implementation – Secure Element  
+
+**Context:**  
+Phase 2 required moving sensitive device identity material away from plain filesystem storage. The private portion of the Device Key Pair must remain protected even if the Linux userspace is compromised.
+
+**Decision:**  
+Store Guardian device private keys inside secure element protected key slots.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Key protection | Private key material is not written to disk |
+| Attack reduction | Filesystem theft no longer directly exposes the DKP private key |
+| Hardware trust | Key storage becomes bound to the device hardware |
+| Attestation readiness | Hardware-backed keys can sign attestation evidence without export |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Filesystem key files | Easy backup and debugging | High exposure risk if OS is compromised |
+| Encrypted key file | Better than plaintext | Decryption still occurs in software memory |
+| Remote key server | Centralized control | Breaks offline edge operation |
+| Secure element storage | Strong protection | Requires hardware integration and lifecycle tooling |
+
+**Implications:**  
+- Key backup and migration require explicit lifecycle design.  
+- Signing operations must use key handles instead of raw private keys.  
+- Provisioning must verify key slot creation and access permissions.  
+- Hardware failure handling must be documented.
+
+**Related Decisions:** D047, D050, D051, D052  
+
+---
+
+### D050: Hardware Key Manager for DKP Lifecycle
+
+**Date:** Sprint 1  
+**Status:** Accepted  
+**Category:** Architecture – Identity  
+
+**Context:**  
+The Device Key Pair is central to Guardian identity, attestation signing and trust establishment. Phase 2 required lifecycle management beyond simple generation, including rotation and revocation.
+
+**Decision:**  
+Implement a Hardware Key Manager responsible for secure element backed DKP generation, metadata tracking, rotation and revocation.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Identity lifecycle | DKP operations need one controlled authority inside the daemon |
+| Security | Prevents unmanaged key creation and accidental key reuse |
+| Operations | Enables admin-visible key state and rotation readiness |
+| Future readiness | Supports DID, certificate and hardware attestation integration |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Ad hoc key commands | Simple for prototypes | No lifecycle consistency |
+| Manual vendor CLI use | Useful during bring up | Not production grade |
+| Software key manager only | Reuses Phase 1 pattern | Does not satisfy hardware backed identity requirement |
+| Hardware Key Manager | Structured and secure | Requires additional implementation and testing |
+
+**Implications:**  
+- DKP status becomes a first-class operational state.  
+- Rotation and revocation workflows can be tested independently.  
+- CLI and logs should expose key status without exposing secret material.  
+- Future DID and certificate binding can reference DKP public identity.
+
+**Related Decisions:** D049, D051, D053, D056  
+
+---
+
+### D051: Non-Exportable DKP Private Key Model
+
+**Date:** Sprint 1  
+**Status:** Accepted  
+**Category:** Architecture – Identity  
+
+**Context:**  
+A hardware-backed key loses much of its security value if the private key can be exported into software memory. The DKP private key must remain inside the secure element for all lifecycle stages.
+
+**Decision:**  
+Adopt a non-exportable private key model for the Device Key Pair.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Confidentiality | Private key never leaves secure hardware |
+| Compromise resistance | Malware cannot simply read key bytes from disk or process memory |
+| Trust binding | Identity becomes tied to the physical device |
+| Compliance posture | Better aligns with hardware-rooted trust expectations |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Exportable private key | Easier backup and migration | Weakens the root of trust |
+| Encrypted export | Supports recovery | Still creates key material outside hardware boundary |
+| Software-only rotation | Simple | Does not prove hardware possession |
+| Non-exportable DKP | Strong trust model | Requires key handle-based APIs |
+
+**Implications:**  
+- All signing must be performed by requesting the secure element to sign.  
+- Recovery and replacement workflows must use rotation, not private key export.  
+- Device identity becomes strongly bound to hardware presence.  
+- Attestation can prove possession without exposing the key.
+
+**Related Decisions:** D049, D050, D052, D079  
+
+---
+
+### D052: Secure Element Signing Boundary
+
+**Date:** Sprint 1  
+**Status:** Accepted  
+**Category:** Implementation – Secure Element  
+
+**Context:**  
+The Guardian must use private keys for signing attestation quotes, DKP proof and security events. Allowing software to handle raw private keys would violate the Phase 2 hardware security model.
+
+**Decision:**  
+Keep all private-key signing operations inside the secure element boundary.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Security | Prevents private key extraction during signing |
+| Consistency | All DKP signatures follow the same hardware backed path |
+| Auditability | Signing requests can be logged without exposing key material |
+| Attestation strength | Quote signatures prove hardware backed possession |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Software signing | Fast and easy | Private key must exist in software memory |
+| Hybrid software/hardware signing | Flexible | Creates inconsistent trust guarantees |
+| Secure element only signing | Strongest protection | Requires robust error handling and test coverage |
+
+**Implications:**  
+- Signing APIs must accept payloads and return signatures, not keys.  
+- Secure element failure blocks hardware backed attestation.  
+- Signature logs must include key IDs and operation status only.  
+- Performance testing must confirm signing latency is acceptable.
+
+**Related Decisions:** D048, D049, D051, D080  
+
+---
+
+### D053: DKP Rotation and Revocation Workflow
+
+**Date:** Sprint 1  
+**Status:** Accepted  
+**Category:** Architecture – Identity  
+
+**Context:**  
+A production identity system must support key rotation and revocation. If a DKP is suspected stale, compromised, or replaced during maintenance, the system must update trust state without breaking the entire Circle permanently.
+
+**Decision:**  
+Implement DKP lifecycle support for generation, rotation and revocation.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Security hygiene | Keys should not remain valid forever |
+| Incident response | Suspected identity compromise must be recoverable |
+| Operational continuity | Rotation allows controlled transition to a new DKP |
+| Future compatibility | Supports DID document updates and certificate renewal |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Static DKP forever | Simple | Poor security lifecycle |
+| Manual reprovision only | Clean reset | Operationally disruptive |
+| Rotation without revocation | Easier | Does not handle compromise |
+| Full lifecycle workflow | Secure and maintainable | Requires metadata and state tracking |
+
+**Implications:**  
+- DKP metadata must track active, rotated and revoked states.  
+- Certificates and DID bindings must update after rotation.  
+- Revoked keys must not be accepted during attestation.  
+- Tests must verify generation, rotation and revocation behavior.
+
+**Related Decisions:** D050, D051, D056, D058  
+
+---
+
+### D054: Nebula Mesh as Circle Transport Layer
+
+**Date:** Sprint 1  
+**Status:** Accepted  
+**Category:** Architecture – Mesh Networking  
+
+**Context:**  
+Phase 1 focused on Circle of Trust concepts and secure peer communication. Phase 2 required a practical encrypted overlay layer to support real peer-to-peer networking across local and remote environments.
+
+**Decision:**  
+Use Nebula mesh networking as the Circle transport layer for Guardian-to-Guardian communication.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Mesh networking | Supports peer-to-peer encrypted overlay communication |
+| Certificate model | Aligns with Circle membership and CA-based authorization |
+| NAT traversal | Supports lighthouse-assisted peer discovery |
+| Relay support | Enables connectivity when direct peer paths fail |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Static WireGuard tunnels | Secure and fast | Less flexible for dynamic Circle membership |
+| Plain gRPC over public IP | Simple | Weak NAT traversal and network abstraction |
+| Custom overlay protocol | Full control | High engineering and security risk |
+| Nebula mesh | Proven and flexible | Requires config generation and lifecycle management |
+
+**Implications:**  
+- Guardian must generate and manage Nebula configuration.  
+- Circle certificates become part of networking trust.  
+- Overlay IP assignment is required.  
+- Lighthouse and relay features can extend connectivity.
+
+**Related Decisions:** D055, D067, D070, D075  
+
+---
+
+### D055: Nebula CA Operations for Circle Certificates
+
+**Date:** Sprint 1  
+**Status:** Accepted  
+**Category:** Architecture – Mesh Networking  
+
+**Context:**  
+Nebula requires certificate based trust. A Circle owner must be able to issue certificates to approved members and revoke or rotate them when required.
+
+**Decision:**  
+Implement Nebula Certificate Authority operations for Circle-based mesh certificates.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Circle ownership | Circle owner controls certificate issuance |
+| Membership enforcement | Only approved members receive validmesh certificates |
+| Operational control | Certificates can include groups, permissions and expiry |
+| Mesh security | Peers authenticate before joining overlay communication |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Pre-shared static certificates | Simple | Poor lifecycle and poor scalability |
+| Cloud-only CA | Centralized management | Breaks offline Circle operation |
+| Manual certificate generation | Good for lab | Error-prone for production |
+| Nebula CA operations | Aligned with Circle model | Requires secure CA key handling |
+
+**Implications:**  
+
+- Circle owner must protect CA material.  
+- Certificate issuance becomes part of member onboarding.  
+- Certificate renewal and revocation workflows are required.  
+- Mesh trust depends on certificate validity.
+
+**Related Decisions:** D054, D056, D057, D058  
+
+---
+
+### D056: DID to Overlay IP Certificate Binding
+
+**Date:** Sprint 1  
+**Status:** Accepted  
+**Category:** Architecture – Identity  
+
+**Context:**  
+A Nebula certificate must identify not just an IP address but the trusted Guardian identity behind that address. Without identity binding, overlay IPs could become detached from long-term trust anchors.
+
+**Decision:**  
+Bind Guardian identity information, including DID or DID-derived identity metadata, to the assigned Nebula overlay IP in Circle certificates.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Identity continuity | Overlay IP maps back to a known Guardian identity |
+| Auditability | Logs can correlate peer activity with DID and overlay IP |
+| Trust enforcement | Prevents unauthenticated IP-only membership |
+| Future compatibility | Supports DID/VC workflows in later identity phases |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| IP-only certificate | Simple | Weak identity traceability |
+| Hostname only binding | Human readable | Not globally unique enough |
+| DID to IP binding | Strong identity mapping | Requires identity metadata management |
+| Runtime only mapping | Flexible | Easier to desync from certificate state |
+
+**Implications:**  
+- Certificate metadata must include or reference Guardian identity.  
+- Overlay IP allocation must be recorded with identity state.  
+- Certificate renewal must preserve identity mapping.  
+- Trust logs can reference both DID and overlay IP.
+
+**Related Decisions:** D050, D055, D057, D067, D069  
+
+---
+
+### D057: Verifiable Credential Validation Before Certificate Issuance
+
+**Date:** Sprint 1  
+**Status:** Accepted  
+**Category:** Architecture – Identity  
+
+**Context:**  
+Certificate issuance must not rely only on a manual request. A Guardian requesting a Circle certificate should prove membership authorization before receiving mesh access.
+
+**Decision:**  
+Validate Circle membership through Verifiable Credential evidence before issuing Nebula member certificates.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Authorization | Certificate issuance depends on cryptographic membership proof |
+| Decentralization | Membership can be verified without a central online service |
+| Security | Reduces risk of unauthorized certificate issuance |
+| Auditability | Issuance decision can record VC subject, issuer and validity |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Manual approval only | Simple | Human error risk |
+| Static allowlist | Easy to inspect | Hard to scale and maintain |
+| Cloud approval | Centralized control | Breaks offline operation |
+| VC validation | Strong decentralized proof | Requires credential parsing and validation |
+
+**Implications:**  
+- Certificate issuance flow must validate VC issuer and subject.  
+- Expired or revoked credentials must be rejected.  
+- CA logs should record credential validation result.  
+- Future DID/VC work can build on this trust path.
+
+**Related Decisions:** D055, D056, D058  
+
+---
+
+### D058: Time-Limited Nebula Certificates
+
+**Date:** Sprint 1  
+**Status:** Accepted  
+**Category:** Architecture – Identity  
+
+**Context:**  
+Long lived certificates increase the risk window if a device is lost, compromised, or removed from a Circle. Phase 2 required stronger membership hygiene.
+
+**Decision:**  
+Issue time limited Nebula certificates for Circle members.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Reduced exposure | Expired certificates automatically stop being trusted |
+| Lifecycle control | Renewal becomes a natural revalidation point |
+| Incident safety | Limits damage from forgotten or stale certificates |
+| Operational fit | Supports planned renewal and key rotation |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Permanent certificates | No renewal burden | High long term compromise risk |
+| Manual revocation only | Direct control | Depends on operator action |
+| Very short certificates | Strong security | Operationally noisy |
+| Time limited certificates | Balanced security and usability | Requires renewal workflow |
+
+**Implications:**  
+- Certificate renewal must be supported.  
+- Expiry monitoring should be visible in logs or CLI.  
+- Expired certificates must fail mesh authentication.  
+- Key rotation and DID binding must coordinate with certificate updates.
+
+**Related Decisions:** D053, D055, D056, D057  
+
+---
+
+### D059: PCR Measurement Collection
+
+**Date:** Sprint 2  
+**Status:** Accepted  
+**Category:** Architecture – Hardware Security  
+
+**Context:**  
+Hardware attestation requires a measurable device state. The Guardian must collect boot and platform measurements that represent firmware, bootloader, kernel and configuration integrity.
+
+**Decision:**  
+Implement PCR measurement collection during boot and runtime integrity validation.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Integrity evidence | PCRs represent measured platform state |
+| Attestation input | PCR values can be signed in hardware attestation quotes |
+| Tamper detection | Firmware or bootloader changes produce different measurements |
+| Trust binding | PCR values can contribute to VirtualID and attestation decisions |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| No PCR collection | Simpler | Cannot prove platform state |
+| Hash only application binary | Lightweight | Ignores boot chain and firmware |
+| Manual version checks | Easy to read | Not cryptographically strong |
+| PCR measurement | Strong integrity signal | Requires baseline and comparison logic |
+
+**Implications:**  
+- PCR values must be collected consistently.  
+- PCR semantics must be documented.  
+- Attestation depends on PCR availability.  
+- Testing must include known-good and mismatched PCR scenarios.
+
+**Related Decisions:** D060, D061, D062, D081  
+
+---
+
+### D060: Golden PCR Baseline Storage
+
+**Date:** Sprint 2  
+**Status:** Accepted  
+**Category:** Architecture – Hardware Security  
+
+**Context:**  
+PCR values alone are not useful unless the verifier has a known good reference. The system needs a baseline to compare measured device state against expected trusted state.
+
+**Decision:**  
+Store golden reference PCR baselines for known good Guardian firmware, bootloader, kernel and configuration states.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Verification | Baseline enables pass/fail comparison |
+| Repeatability | Same known-good state can be validated repeatedly |
+| Auditability | Baseline record documents trusted configuration |
+| Security | Unexpected platform changes can be detected |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Trust any PCR value | Simple | No integrity protection |
+| Manual visual comparison | Easy in lab | Not scalable or reliable |
+| Cloud only baseline | Centralized | Weak offline support |
+| Local golden baseline | Works offline and supports deterministic validation | Requires secure storage and update control |
+
+**Implications:**  
+- Baseline updates must be controlled and auditable.  
+- Different firmware versions may require different baselines.  
+- PCR mismatch must trigger attestation failure.  
+- Baseline files must be protected from unauthorized modification.
+
+**Related Decisions:** D059, D061, D081, D084  
+
+---
+
+### D061: PCR Mismatch as Attestation Failure
+
+**Date:** Sprint 2  
+**Status:** Accepted  
+**Category:** Architecture – Attestation  
+
+**Context:**  
+If measured PCR values do not match the known good baseline, the device state cannot be considered trusted. Allowing a peer with mismatched PCRs would weaken the entire Circle.
+
+**Decision:**  
+Treat PCR mismatch as hardware attestation failure.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Zero Trust | Trust must be earned through measured evidence |
+| Tamper detection | Modified firmware or bootloader should fail validation |
+| Safety | Prevents compromised nodes from joining trusted state |
+| Clarity | Produces deterministic pass/fail behavior |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Warn only | Less disruptive | Allows potentially compromised peer |
+| Manual override by default | Flexible | Weakens trust model |
+| Ignore selected PCRs | Easier compatibility | Reduces measurement value |
+| Fail attestation on mismatch | Secure and deterministic | Requires correct baseline management |
+
+**Implications:**  
+- Mismatched PCR devices are not trusted.  
+- Logs must show which PCR failed.  
+- CLI and demo output should clearly show attestation failure reason.  
+- Baseline management becomes operationally important.
+
+**Related Decisions:** D059, D060, D081, D082, D084  
+
+---
+
+### D062: Secure Boot Chain Validation
+
+**Date:** Sprint 2  
+**Status:** Accepted  
+**Category:** Architecture – Hardware Security  
+
+**Context:**  
+PCR measurement detects state, but secure boot prevents unauthorized components from executing in the first place. Phase 2 required a boot chain that validates each stage before handing control forward.
+
+**Decision:**  
+Implement secure boot chain validation where each boot stage verifies the next stage before execution.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Boot integrity | Prevents tampered bootloader or firmware execution |
+| Chain of trust | Establishes continuity from hardware root to software runtime |
+| PCR reliability | Measurements become meaningful when tied to verified boot stages |
+| Attack resistance | Reduces risk of persistent firmware level compromise |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Runtime-only validation | Easier | Too late if boot chain is compromised |
+| Manual boot checks | Simple for demos | Not secure or automated |
+| Secure boot validation | Strong protection | Requires platform specific integration |
+| Trust firmware version string | Easy | Not cryptographic proof |
+
+**Implications:**  
+- Boot failure must halt or enter safe mode.  
+- PCR measurements should reflect secure boot stages.  
+- Firmware signing and verification procedures must be managed carefully.  
+- Secure boot status becomes part of trust evaluation.
+
+**Related Decisions:** D059, D060, D063, D079  
+
+---
+
+### D063: Fail-Closed Boot Integrity Model
+
+**Date:** Sprint 2  
+**Status:** Accepted  
+**Category:** Security – Fail-Closed Enforcement  
+
+**Context:**  
+A security device must not continue operating as trusted if boot integrity cannot be verified. If boot verification fails, allowing normal operation would contradict the Zero Trust model.
+
+**Decision:**  
+Adopt a fail closed boot integrity model for secure boot and PCR validation failures.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Security | Unknown boot state is treated as untrusted |
+| Determinism | Failure behavior is predictable |
+| Trust protection | Prevents compromised devices from silently operating |
+| Operational clarity | Operators receive clear failure state instead of hidden risk |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Fail-open | Keeps device online | Unsafe for security critical deployment |
+| Warning-only mode | Less disruptive | Allows untrusted operation |
+| Manual decision every time | Flexible | Slow and inconsistent |
+| Fail-closed | Strongest security posture | Requires recovery workflow |
+
+**Implications:**  
+- Devices with failed boot integrity cannot be treated as trusted peers.  
+- Recovery process must be documented.  
+- Logs must distinguish secure boot failure from network failure.  
+- Demo and tests must validate failure behavior.
+
+**Related Decisions:** D061, D062, D082, D084  
+
+---
+
+### D064: Transport Agnostic Circle of Trust
+
+**Date:** Sprint 2  
+**Status:** Accepted  
+**Category:** Architecture – Multi-Transport CoT  
+
+**Context:**  
+The Circle of Trust should not depend on a single physical network type. Guardian deployments may use Ethernet, WiFi, Bluetooth, cellular, or satellite depending on environment.
+
+**Decision:**  
+Design Circle of Trust membership, trust establishment and policy enforcement to be independent of the underlying transport.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Deployment flexibility | Works across LAN, wireless, remote and mobile environments |
+| Trust consistency | Same trust rules apply regardless of transport |
+| Resilience | Transport changes do not invalidate Circle membership |
+| Future readiness | Supports additional transport types without redesigning trust logic |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| LAN-only CoT | Simple and fast | Not sufficient for real deployments |
+| Separate trust per transport | Flexible | Duplicates logic and increases risk |
+| Manual transport configuration | Predictable | Operationally fragile |
+| Transport-agnostic CoT | Clean architecture | Requires interface detection and failover logic |
+
+**Implications:**  
+- Trust state must be bound to identity, not interface.  
+- Transport modules must feed a common CoT layer.  
+- Failover should preserve peer trust where possible.  
+- Testing must include multiple interface conditions.
+
+**Related Decisions:** D065, D066, D073, D074, D077, D078  
+
+---
+
+### D065: LAN and WiFi Auto-Detection
+
+**Date:** Sprint 2  
+**Status:** Accepted  
+**Category:** Architecture – Multi-Transport CoT  
+
+**Context:**  
+Initial multi-transport work required automatic detection of common local connectivity paths. LAN and WiFi are primary deployment paths for Guardian lab and office setups.
+
+**Decision:**  
+Implement automatic interface detection and adaptation for LAN and WiFi connectivity.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Usability | Reduces manual setup for field users |
+| Reliability | Detects available network paths at runtime |
+| Demo readiness | Supports real 3-node office and lab testing |
+| Foundation | Establishes pattern for cellular, Bluetooth and satellite extensions |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Manual interface selection | Simple implementation | Error-prone for users |
+| LAN only detection | Easier | Ignores WiFi fallback |
+| WiFi-only mode | Useful for mobile | Weak for wired deployments |
+| LAN + WiFi auto detection | Balanced and practical | Requires interface monitoring |
+
+**Implications:**  
+- Runtime must monitor interface availability.  
+- Logs should show selected transport.  
+- Failover logic can build on detection results.  
+- Tests MT-001 to MT-003 validate expected behavior.
+
+**Related Decisions:** D064, D066, D078  
 
 ---

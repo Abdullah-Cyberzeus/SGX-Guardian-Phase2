@@ -45,6 +45,9 @@ use tokio::{signal, task};
 use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
 
 const RELAY_SYNC_INTERVAL_SECS: u64 = 10;
+const DID_DOC_REFRESH_INTERVAL_SECS: u64 = 300;
+const DID_DOC_PULL_INTERVAL_SECS: u64 = 30;
+const DID_DOC_ROTATION_FLAG: &str = "/var/lib/sgx-guardian/identity/.dkp_rotated.flag";
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(" SGX Guardian Client Starting...");
@@ -278,6 +281,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ) {
                         eprintln!("  ⚠️ DID dkp_version update failed: {}", e);
                     }
+                    let _ = std::fs::write(DID_DOC_ROTATION_FLAG, chrono::Utc::now().to_rfc3339());
                 }
                 Ok(None) => { /* no rotation needed */ }
                 Err(e) => {
@@ -368,6 +372,83 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
         }
+    }
+
+    // === DID Document Initialization (W3C DID Document) ===
+    println!("\n📜 Initializing DID Document...");
+    match sgx_guardian_client::did::doc_persistence::load_self() {
+        Ok(Some(existing)) => {
+            println!(
+                "  ✅ Existing DID Document loaded (version v{})",
+                existing.sgx_version_id
+            );
+        }
+        Ok(None) => {
+            let did_path = sgx_guardian_client::did::DEFAULT_DID_PATH;
+            let dkp_pubkey_path = "/var/lib/sgx-guardian/keys/dkp_pub.der";
+            match sgx_guardian_client::did::method::resolve_local(did_path, dkp_pubkey_path) {
+                Ok((did, _anchor_pk, active)) => {
+                    let refreshed_km = match km.refresh_for_active_dkp() {
+                        Ok(km_opt) => km_opt,
+                        Err(e) => {
+                            eprintln!("  ⚠️ DID Document signer refresh failed: {}", e);
+                            None
+                        }
+                    };
+                    let did_doc_km = refreshed_km.as_ref().unwrap_or(&km);
+                    let dkp_pub = did_doc_km
+                        .pubkey_der()
+                        .or_else(|_| std::fs::read(dkp_pubkey_path))
+                        .unwrap_or_default();
+                    if dkp_pub.is_empty() {
+                        eprintln!("  ⚠️ DID Document skipped: DKP pubkey unavailable");
+                    } else {
+                        let input = sgx_guardian_client::did::document::DocBuildInput {
+                            did: did.as_str(),
+                            node_name: Some(&node_id),
+                            current_dkp_version:
+                                sgx_guardian_client::secure_element::pcr::read_dkp_key_version(),
+                            current_dkp_pubkey_der: &dkp_pub,
+                            overlay_ip_cidr: None,
+                            attestation_bind: None,
+                            cert_bootstrap_bind: None,
+                            revoked: vec![],
+                            previous_version_id: 0,
+                            created_at: None,
+                            status: Some(if active {
+                                "active".to_string()
+                            } else {
+                                "deactivated".to_string()
+                            }),
+                        };
+                        match sgx_guardian_client::did::document::DidDocument::build(input) {
+                            Ok(mut doc) => {
+                                let vm_ref = doc.verification_method[0].id.clone();
+                                match sgx_guardian_client::did::doc_sign::sign_in_place(
+                                    &mut doc, did_doc_km, &vm_ref,
+                                ) {
+                                    Ok(()) => {
+                                        if let Err(e) =
+                                            sgx_guardian_client::did::doc_persistence::save_self(
+                                                &doc,
+                                            )
+                                        {
+                                            eprintln!("  ⚠️ DID Document save failed: {}", e);
+                                        } else {
+                                            println!("  ✅ DID Document v1 created");
+                                        }
+                                    }
+                                    Err(e) => eprintln!("  ⚠️ DID Document sign failed: {}", e),
+                                }
+                            }
+                            Err(e) => eprintln!("  ⚠️ DID Document build failed: {}", e),
+                        }
+                    }
+                }
+                Err(e) => eprintln!("  ⚠️ DID Document resolve_local failed: {}", e),
+            }
+        }
+        Err(e) => eprintln!("  ⚠️ DID Document load failed: {}", e),
     }
 
     // === Crypto Provider Status ===
@@ -929,6 +1010,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         m.record_connection();
     }
 
+    let mut did_doc_publish_state: Option<(String, String, bool, String)> = None;
+
     step(9, "nebula subsystem gate");
     if !GATES.disable_nebula {
         // === Nebula Installation Verification ===
@@ -1109,6 +1192,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "✅ Registry sync server started on port {}",
                 registry_sync::REGISTRY_SYNC_PORT
             );
+
+            if let Err(e) =
+                refresh_and_publish_did_doc(&node_id, &km, &ip_cidr, "127.0.0.1", true).await
+            {
+                eprintln!("⚠️ DID Document self-publish failed: {}", e);
+            }
+            did_doc_publish_state = Some((
+                ip_cidr.clone(),
+                "127.0.0.1".to_string(),
+                true,
+                nebula_base_dir.clone(),
+            ));
         } else {
             // ────────────────────────────────────────────────────────────────────
             // nodeB / nodeC — MEMBER NODES
@@ -1150,6 +1245,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("🌐 Overlay IP for {}: {}", node_id, ip_cidr);
 
             nebula_ip = ip_cidr.clone();
+
+            if let Err(e) =
+                refresh_and_publish_did_doc(&node_id, &km, &ip_cidr, &ca_lan_ip, false).await
+            {
+                eprintln!("⚠️ DID Document publish failed: {}", e);
+            }
+            did_doc_publish_state = Some((
+                ip_cidr.clone(),
+                ca_lan_ip.clone(),
+                false,
+                nebula_base_dir.clone(),
+            ));
 
             let ip_only = ip_cidr.split('/').next().unwrap_or("").to_string();
             let mut pool = OverlayPool::new("guardian-circle-alpha", "192.168.100", "nodeA");
@@ -1309,10 +1416,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let pool_for_registry_sync = overlay_pool.clone();
 
         tokio::spawn(async move {
+            let mut did_doc_sync_elapsed = 0u64;
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(RELAY_SYNC_INTERVAL_SECS)).await;
                 let ca_host = resolve_ca_ip_from_config_inner();
                 let mut topology_changed = false;
+                did_doc_sync_elapsed += RELAY_SYNC_INTERVAL_SECS;
 
                 if let Ok(latest_json) =
                     registry_sync::pull_registry_snapshot_from_ca(&ca_host).await
@@ -1360,6 +1469,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .unwrap_or_default();
                         if !json_equivalent(&before, &after) {
                             topology_changed = true;
+                        }
+                    }
+                }
+
+                if did_doc_sync_elapsed >= DID_DOC_PULL_INTERVAL_SECS {
+                    did_doc_sync_elapsed = 0;
+                    match sgx_guardian_client::did::doc_distribution::pull_and_apply_aggregate(
+                        &ca_host,
+                    )
+                    .await
+                    {
+                        Ok(n) if n > 0 => {
+                            tracing::debug!("DID doc snapshot applied: {} docs", n);
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            tracing::warn!("DID doc snapshot pull failed from {}: {}", ca_host, e);
                         }
                     }
                 }
@@ -2448,14 +2574,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     use tokio::select;
-    select! {
-        _ = signal::ctrl_c() => {
-            println!("\n shutting down gracefully...");
-            log_event(&node_id, "Ctrl+C detected — graceful shutdown initiated");
-        },
-        res = server_task => {
-            if let Err(e) = res {
-                log_error(&node_id, &format!("Server task error: {:?}", e));
+    let mut did_doc_refresh_elapsed = 0u64;
+    let mut did_doc_tick = tokio::time::interval(Duration::from_secs(DID_DOC_PULL_INTERVAL_SECS));
+    did_doc_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut server_task = server_task;
+    loop {
+        select! {
+            _ = signal::ctrl_c() => {
+                println!("\n shutting down gracefully...");
+                log_event(&node_id, "Ctrl+C detected — graceful shutdown initiated");
+                break;
+            },
+            res = &mut server_task => {
+                if let Err(e) = res {
+                    log_error(&node_id, &format!("Server task error: {:?}", e));
+                }
+                break;
+            }
+            _ = did_doc_tick.tick(), if did_doc_publish_state.is_some() => {
+                did_doc_refresh_elapsed += DID_DOC_PULL_INTERVAL_SECS;
+                let force_refresh = std::path::Path::new(DID_DOC_ROTATION_FLAG).exists();
+                if !force_refresh && did_doc_refresh_elapsed < DID_DOC_REFRESH_INTERVAL_SECS {
+                    continue;
+                }
+                did_doc_refresh_elapsed = 0;
+
+                let mut publish_args: Option<(String, String, bool)> = None;
+                if let Some((overlay_ip_cidr, ca_host, is_ca, nebula_base)) = did_doc_publish_state.as_mut() {
+                    if let Some(latest_ip_cidr) = read_ip_from_nebula_cert(nebula_base, &node_id) {
+                        *overlay_ip_cidr = latest_ip_cidr;
+                    } else if let Some(cached_ip) = sgx_guardian_client::nebula::registry_sync::load_local_ip_cache(&node_id) {
+                        *overlay_ip_cidr = cached_ip;
+                    }
+                    if !*is_ca {
+                        *ca_host = resolve_ca_ip_from_config_inner();
+                    }
+                    publish_args = Some((overlay_ip_cidr.clone(), ca_host.clone(), *is_ca));
+                }
+                if let Some((overlay_ip_cidr, ca_host, is_ca)) = publish_args {
+                    if let Err(e) = refresh_and_publish_did_doc_inner(
+                        &node_id,
+                        &km,
+                        &overlay_ip_cidr,
+                        &ca_host,
+                        is_ca,
+                        force_refresh,
+                    )
+                    .await
+                    {
+                        eprintln!("⚠️ DID Document periodic publish failed: {}", e);
+                    }
+                }
+                let _ = std::fs::remove_file(DID_DOC_ROTATION_FLAG);
             }
         }
     }
@@ -2473,6 +2643,186 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Ok(())
     }
+}
+
+async fn refresh_and_publish_did_doc(
+    node_id: &str,
+    km: &sgx_guardian_client::key_manager::KeyManager,
+    overlay_ip_cidr: &str,
+    ca_host: &str,
+    is_ca: bool,
+) -> Result<(), String> {
+    refresh_and_publish_did_doc_inner(node_id, km, overlay_ip_cidr, ca_host, is_ca, false).await
+}
+
+async fn refresh_and_publish_did_doc_inner(
+    node_id: &str,
+    km: &sgx_guardian_client::key_manager::KeyManager,
+    overlay_ip_cidr: &str,
+    ca_host: &str,
+    is_ca: bool,
+    force: bool,
+) -> Result<(), String> {
+    use sgx_guardian_client::did::{doc_distribution, doc_persistence, doc_sign, document, method};
+
+    let audit_failed = |message: String| {
+        log_audit(
+            node_id,
+            AuditCategory::Did,
+            AuditSeverity::Warning,
+            AuditAction::Failed,
+            &message,
+        );
+        message
+    };
+
+    let dkp_pubkey_path = "/var/lib/sgx-guardian/keys/dkp_pub.der";
+    let (did, _anchor_pub, active) =
+        method::resolve_local(sgx_guardian_client::did::DEFAULT_DID_PATH, dkp_pubkey_path)
+            .map_err(|e| {
+                audit_failed(format!("DID Document refresh resolve_local failed: {}", e))
+            })?;
+
+    let refreshed_km = km
+        .refresh_for_active_dkp()
+        .map_err(|e| audit_failed(format!("DID Document signer refresh failed: {}", e)))?;
+    let signing_km = refreshed_km.as_ref().unwrap_or(km);
+
+    let dkp_pub = signing_km
+        .pubkey_der()
+        .or_else(|_| std::fs::read(dkp_pubkey_path))
+        .map_err(|e| audit_failed(format!("DID Document refresh DKP pubkey failed: {}", e)))?;
+
+    let prev = doc_persistence::load_self().ok().flatten();
+    if !active
+        && matches!(
+            prev.as_ref().and_then(|doc| doc.sgx_status.as_deref()),
+            Some("deactivated")
+        )
+    {
+        return Ok(());
+    }
+
+    let prev_version = prev.as_ref().map(|d| d.sgx_version_id).unwrap_or(0);
+    let created_at = prev.as_ref().map(|d| d.sgx_created.clone());
+    let mut revoked = prev
+        .as_ref()
+        .map(|d| d.sgx_revoked_vm.clone())
+        .unwrap_or_default();
+    let dkp_version = sgx_guardian_client::secure_element::pcr::read_dkp_key_version();
+    let new_vm_id = format!("{}#dkp-v{}", did.as_str(), dkp_version);
+
+    if let Some(existing) = prev.as_ref().and_then(|d| d.verification_method.first()) {
+        let already_revoked = revoked.iter().any(|rv| rv.id == existing.id);
+        if existing.id != new_vm_id && !already_revoked {
+            revoked.push(document::RevokedVm {
+                id: existing.id.clone(),
+                revoked_at: chrono::Utc::now().to_rfc3339(),
+                reason: "rotation".into(),
+            });
+        }
+    }
+
+    let ip_only = overlay_ip_cidr.split('/').next().unwrap_or(overlay_ip_cidr);
+    let attestation_port = match node_id {
+        "nodeA" => 50051,
+        "nodeB" => 50052,
+        "nodeC" => 50053,
+        _ => 50051,
+    };
+
+    let input = document::DocBuildInput {
+        did: did.as_str(),
+        node_name: Some(node_id),
+        current_dkp_version: dkp_version,
+        current_dkp_pubkey_der: &dkp_pub,
+        overlay_ip_cidr: Some(overlay_ip_cidr),
+        attestation_bind: Some((ip_only, attestation_port)),
+        cert_bootstrap_bind: if is_ca { Some((ip_only, 50061)) } else { None },
+        revoked,
+        previous_version_id: prev_version,
+        created_at,
+        status: Some(if active {
+            "active".to_string()
+        } else {
+            "deactivated".to_string()
+        }),
+    };
+
+    let mut doc = document::DidDocument::build(input)
+        .map_err(|e| audit_failed(format!("DID Document build failed: {}", e)))?;
+    if !force {
+        if let Some(existing) = prev.as_ref() {
+            if existing.substantively_equal(&doc) {
+                return Ok(());
+            }
+        }
+    }
+
+    let vm_ref = doc
+        .verification_method
+        .first()
+        .map(|v| v.id.clone())
+        .ok_or_else(|| audit_failed("DID Document missing verification method".to_string()))?;
+    doc_sign::sign_in_place(&mut doc, signing_km, &vm_ref)
+        .map_err(|e| audit_failed(format!("DID Document signing failed: {}", e)))?;
+    doc_persistence::save_self(&doc)
+        .map_err(|e| audit_failed(format!("DID Document save_self failed: {}", e)))?;
+
+    if is_ca {
+        doc_persistence::save_peer(&doc)
+            .map_err(|e| audit_failed(format!("DID Document save_peer failed: {}", e)))?;
+        let agg = doc_persistence::list_peer_docs()
+            .map_err(|e| audit_failed(format!("DID Document list_peers failed: {}", e)))?;
+        doc_persistence::save_ca_aggregate(&agg)
+            .map_err(|e| audit_failed(format!("DID Document save_aggregate failed: {}", e)))?;
+    } else {
+        doc_distribution::publish_to_ca(ca_host, node_id, &doc)
+            .await
+            .map_err(|e| audit_failed(format!("DID Document publish_to_ca failed: {}", e)))?;
+    }
+
+    if active {
+        let where_published = if is_ca {
+            "CA self-aggregate"
+        } else {
+            "CA registry"
+        };
+        let msg = format!(
+            "DID Document v{} published to {} (DKP v{}, VMs={}, revoked={}, services={})",
+            doc.sgx_version_id,
+            where_published,
+            doc.verification_method
+                .first()
+                .and_then(|vm| vm.public_key_jwk.kid.strip_prefix("dkp-v"))
+                .unwrap_or("?"),
+            doc.verification_method.len(),
+            doc.sgx_revoked_vm.len(),
+            doc.service.len(),
+        );
+        println!("📤 {}", msg);
+        log_audit(
+            node_id,
+            AuditCategory::Did,
+            AuditSeverity::Info,
+            AuditAction::Succeeded,
+            &msg,
+        );
+    } else {
+        let msg = format!(
+            "DID Document v{} published with sgx:status=deactivated (final)",
+            doc.sgx_version_id
+        );
+        println!("📤 {}", msg);
+        log_audit(
+            node_id,
+            AuditCategory::Did,
+            AuditSeverity::Warning,
+            AuditAction::Succeeded,
+            &msg,
+        );
+    }
+    Ok(())
 }
 
 // ── Helper function (add to main.rs as a nested fn or module fn) ─────────

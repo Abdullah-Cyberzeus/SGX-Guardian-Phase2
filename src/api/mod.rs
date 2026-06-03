@@ -36,9 +36,33 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/pcr/status", get(handlers::pcr::status))
         .route("/api/v1/did/status", get(handlers::did::status))
         .route("/api/v1/did/resolve", get(handlers::did::resolve))
+        .route("/api/v1/did/document", get(handlers::did::document))
+        .route("/api/v1/did/document/raw", get(handlers::did::document_raw))
+        .route(
+            "/api/v1/did/document/verify",
+            post(handlers::did::document_verify),
+        )
+        .route(
+            "/api/v1/did/document/publish",
+            post(handlers::did::document_publish),
+        )
+        .route(
+            "/api/v1/did/document/peers",
+            get(handlers::did::document_peers),
+        )
+        .route(
+            "/api/v1/did/document/peer",
+            get(handlers::did::document_peer),
+        )
         .route("/api/v1/transport/list", get(handlers::transport::list))
         .route("/api/v1/transport/status", get(handlers::transport::status))
+        .route("/api/v1/transport/lock", post(handlers::transport::lock))
+        .route(
+            "/api/v1/transport/unlock",
+            post(handlers::transport::unlock),
+        )
         .route("/api/v1/relay/list", get(handlers::relay::list))
+        .route("/api/v1/relay/toggle", post(handlers::relay::toggle))
         // Phase 2 - action endpoints
         .route("/api/v1/dkp/rotate", post(handlers::dkp::rotate))
         .route("/api/v1/dkp/revoke", post(handlers::dkp::revoke))
@@ -106,10 +130,64 @@ pub async fn serve(state: Arc<AppState>, bind: SocketAddr) -> anyhow::Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::did::doc_persistence::{
+        self, CA_AGGREGATE_PATH_ENV, PEERS_DOC_DIR_ENV, SELF_DOC_PATH_ENV,
+    };
+    use crate::did::doc_sign;
+    use crate::did::document::{DidDocument, DocBuildInput, RevokedVm};
+    use crate::did::Did;
+    use crate::key_manager::KeyManager;
+    use crate::nebula::registry_sync::{RegistryRequest, RegistryResponse, REGISTRY_SYNC_PORT};
+    use once_cell::sync::Lazy;
     use reqwest::StatusCode;
     use serde_json::Value;
+    use std::ffi::OsString;
+    use std::path::Path;
+    use tempfile::TempDir;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpListener;
+    use tokio::sync::Mutex;
 
     const DEPLOYED_SIG_PATH: &str = "/etc/sgx-guardian/policies/policy.sig";
+    static TEST_ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+    struct EnvGuard {
+        self_doc_prev: Option<OsString>,
+        peers_dir_prev: Option<OsString>,
+        aggregate_prev: Option<OsString>,
+    }
+
+    impl EnvGuard {
+        fn new(self_doc_path: &Path, peers_dir: &Path, aggregate_path: &Path) -> Self {
+            let self_doc_prev = std::env::var_os(SELF_DOC_PATH_ENV);
+            let peers_dir_prev = std::env::var_os(PEERS_DOC_DIR_ENV);
+            let aggregate_prev = std::env::var_os(CA_AGGREGATE_PATH_ENV);
+            std::env::set_var(SELF_DOC_PATH_ENV, self_doc_path);
+            std::env::set_var(PEERS_DOC_DIR_ENV, peers_dir);
+            std::env::set_var(CA_AGGREGATE_PATH_ENV, aggregate_path);
+            Self {
+                self_doc_prev,
+                peers_dir_prev,
+                aggregate_prev,
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            restore_env(SELF_DOC_PATH_ENV, self.self_doc_prev.take());
+            restore_env(PEERS_DOC_DIR_ENV, self.peers_dir_prev.take());
+            restore_env(CA_AGGREGATE_PATH_ENV, self.aggregate_prev.take());
+        }
+    }
+
+    fn restore_env(key: &str, value: Option<OsString>) {
+        if let Some(value) = value {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
+    }
 
     fn test_state() -> Arc<AppState> {
         Arc::new(AppState {
@@ -134,6 +212,71 @@ mod tests {
             let _ = axum::serve(listener, app.into_make_service()).await;
         });
         (format!("http://{}", addr), handle)
+    }
+
+    fn signed_doc(
+        did: &str,
+        node_name: &str,
+        version: u32,
+        current_dkp_version: u32,
+        status: &str,
+        revoked: Vec<RevokedVm>,
+        include_cert_bootstrap: bool,
+    ) -> DidDocument {
+        let td = TempDir::new().expect("tempdir");
+        let key_path = td.path().join("dkp.key");
+        let km = KeyManager::load_or_generate(key_path.to_str().expect("key path")).expect("key");
+        let der = km.pubkey_der().expect("pubkey der");
+        let mut doc = DidDocument::build(DocBuildInput {
+            did,
+            node_name: Some(node_name),
+            current_dkp_version,
+            current_dkp_pubkey_der: &der,
+            overlay_ip_cidr: Some("192.168.100.10/24"),
+            attestation_bind: Some(("192.168.100.10", 50051)),
+            cert_bootstrap_bind: include_cert_bootstrap.then_some(("192.168.100.10", 50061)),
+            revoked,
+            previous_version_id: version.saturating_sub(1),
+            created_at: Some("2026-05-21T10:00:00Z".to_string()),
+            status: Some(status.to_string()),
+        })
+        .expect("build did doc");
+        let vm_ref = doc.verification_method[0].id.clone();
+        doc_sign::sign_in_place(&mut doc, &km, &vm_ref).expect("sign did doc");
+        doc
+    }
+
+    async fn spawn_mock_ca_publish_server(
+        expected_node_name: &'static str,
+    ) -> tokio::task::JoinHandle<()> {
+        let listener = TcpListener::bind(("127.0.0.1", REGISTRY_SYNC_PORT))
+            .await
+            .expect("bind mock ca");
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept publish");
+            let (reader, mut writer) = stream.into_split();
+            let mut buffered = BufReader::new(reader);
+            let mut line = String::new();
+            buffered.read_line(&mut line).await.expect("read publish");
+            let request: RegistryRequest =
+                serde_json::from_str(line.trim()).expect("publish request json");
+            assert_eq!(request.action, "publish_did_doc");
+            assert_eq!(request.node_name, expected_node_name);
+            let payload = request.did_doc_json.expect("did doc payload");
+            let doc: DidDocument = serde_json::from_str(&payload).expect("publish doc json");
+            assert!(doc.proof.is_some());
+
+            let mut response = serde_json::to_string(&RegistryResponse {
+                success: true,
+                ..RegistryResponse::default()
+            })
+            .expect("publish response");
+            response.push('\n');
+            writer
+                .write_all(response.as_bytes())
+                .await
+                .expect("write publish response");
+        })
     }
 
     #[tokio::test]
@@ -218,5 +361,220 @@ mod tests {
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["error"]["code"], "BAD_REQUEST");
+    }
+
+    #[tokio::test]
+    async fn did_document_routes_work_end_to_end() {
+        let _lock = TEST_ENV_LOCK.lock().await;
+        let td = TempDir::new().expect("tempdir");
+        let self_doc_path = td.path().join("identity").join("did_doc.json");
+        let peers_dir = td.path().join("identity").join("peers");
+        let aggregate_path = td.path().join("identity").join("circle_did_docs.json");
+        let _env = EnvGuard::new(&self_doc_path, &peers_dir, &aggregate_path);
+
+        let self_did = Did::from_id_bytes(&[7u8; 32]).to_string();
+        let peer_did = Did::from_id_bytes(&[8u8; 32]).to_string();
+        let self_doc = signed_doc(
+            &self_did,
+            "nodeA",
+            5,
+            3,
+            "active",
+            vec![
+                RevokedVm {
+                    id: format!("{}#dkp-v1", self_did),
+                    revoked_at: "2026-05-20T08:00:00Z".to_string(),
+                    reason: "rotation".to_string(),
+                },
+                RevokedVm {
+                    id: format!("{}#dkp-v2", self_did),
+                    revoked_at: "2026-05-20T09:00:00Z".to_string(),
+                    reason: "rotation".to_string(),
+                },
+            ],
+            true,
+        );
+        let peer_doc = signed_doc(&peer_did, "nodeB", 4, 4, "active", vec![], false);
+        doc_persistence::save_self(&self_doc).expect("save self doc");
+        doc_persistence::save_peer(&peer_doc).expect("save peer doc");
+
+        let publish_handle = spawn_mock_ca_publish_server("nodeB").await;
+        let (base_url, handle) = spawn_api().await;
+        let client = reqwest::Client::new();
+
+        let summary: Value = client
+            .get(format!("{}/api/v1/did/document", base_url))
+            .send()
+            .await
+            .expect("summary request")
+            .json()
+            .await
+            .expect("summary json");
+        assert_eq!(summary["did"], self_did);
+        assert_eq!(summary["controller"], self_doc.controller);
+        assert_eq!(summary["node_name"], "nodeA");
+        assert_eq!(summary["version"], 5);
+        assert_eq!(summary["status"], "active");
+        assert_eq!(summary["active_vms"], 1);
+        assert_eq!(summary["revoked_vms"], 2);
+        assert_eq!(summary["services"], 3);
+        assert_eq!(summary["proof_vm"], format!("{}#dkp-v3", self_did));
+
+        let raw: Value = client
+            .get(format!("{}/api/v1/did/document/raw", base_url))
+            .send()
+            .await
+            .expect("raw request")
+            .json()
+            .await
+            .expect("raw json");
+        assert_eq!(raw["id"], self_did);
+        assert_eq!(raw["sgx:nodeName"], "nodeA");
+        assert_eq!(raw["sgx:versionId"], 5);
+        assert_eq!(
+            raw["proof"]["verificationMethod"],
+            format!("{}#dkp-v3", self_did)
+        );
+
+        let verify: Value = client
+            .post(format!("{}/api/v1/did/document/verify", base_url))
+            .send()
+            .await
+            .expect("verify request")
+            .json()
+            .await
+            .expect("verify json");
+        assert_eq!(verify["valid"], true);
+        assert_eq!(verify["version"], 5);
+        assert_eq!(verify["message"], "DID Document proof valid");
+
+        let publish: Value = client
+            .post(format!("{}/api/v1/did/document/publish", base_url))
+            .json(&serde_json::json!({
+                "ca_host": "127.0.0.1",
+                "node_name": "nodeB"
+            }))
+            .send()
+            .await
+            .expect("publish request")
+            .json()
+            .await
+            .expect("publish json");
+        assert_eq!(publish["success"], true);
+        assert_eq!(publish["did"], self_did);
+        assert_eq!(publish["version"], 5);
+        assert_eq!(publish["ca_host"], "127.0.0.1");
+        assert_eq!(publish["node_name"], "nodeB");
+
+        let peers: Value = client
+            .get(format!("{}/api/v1/did/document/peers", base_url))
+            .send()
+            .await
+            .expect("peers request")
+            .json()
+            .await
+            .expect("peers json");
+        assert_eq!(peers["count"], 1);
+        assert_eq!(peers["peers"][0]["did"], peer_did);
+        assert_eq!(peers["peers"][0]["node_name"], "nodeB");
+        assert_eq!(peers["peers"][0]["version"], 4);
+        assert_eq!(peers["peers"][0]["status"], "active");
+        assert_eq!(peers["peers"][0]["services"], 2);
+
+        let peer: Value = client
+            .get(format!("{}/api/v1/did/document/peer", base_url))
+            .query(&[("did", peer_did.as_str())])
+            .send()
+            .await
+            .expect("peer request")
+            .json()
+            .await
+            .expect("peer json");
+        assert_eq!(peer["id"], peer_did);
+        assert_eq!(peer["sgx:nodeName"], "nodeB");
+        assert_eq!(peer["sgx:versionId"], 4);
+
+        handle.abort();
+        publish_handle.await.expect("mock ca task");
+    }
+
+    #[tokio::test]
+    async fn did_document_verify_rejects_replayed_lower_version() {
+        let _lock = TEST_ENV_LOCK.lock().await;
+        let td = TempDir::new().expect("tempdir");
+        let self_doc_path = td.path().join("identity").join("did_doc.json");
+        let peers_dir = td.path().join("identity").join("peers");
+        let aggregate_path = td.path().join("identity").join("circle_did_docs.json");
+        let _env = EnvGuard::new(&self_doc_path, &peers_dir, &aggregate_path);
+
+        let did = Did::from_id_bytes(&[9u8; 32]).to_string();
+        let current_doc = signed_doc(&did, "nodeA", 5, 3, "active", vec![], false);
+        let older_doc = signed_doc(&did, "nodeA", 4, 2, "active", vec![], false);
+        doc_persistence::save_self(&current_doc).expect("save self doc");
+        let older_path = td.path().join("older_did_doc.json");
+        std::fs::write(
+            &older_path,
+            serde_json::to_vec_pretty(&older_doc).expect("older doc json"),
+        )
+        .expect("write older doc");
+
+        let (base_url, handle) = spawn_api().await;
+        let response = reqwest::Client::new()
+            .post(format!("{}/api/v1/did/document/verify", base_url))
+            .json(&serde_json::json!({
+                "path": older_path
+            }))
+            .send()
+            .await
+            .expect("verify request");
+        let status = response.status();
+        let body: Value = response.json().await.expect("verify error body");
+        handle.abort();
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "BAD_REQUEST");
+        assert!(body["error"]["message"]
+            .as_str()
+            .expect("verify error message")
+            .contains("older than locally known v5"));
+    }
+
+    #[tokio::test]
+    async fn did_document_routes_validate_inputs() {
+        let (base_url, handle) = spawn_api().await;
+        let client = reqwest::Client::new();
+
+        let publish_response = client
+            .post(format!("{}/api/v1/did/document/publish", base_url))
+            .json(&serde_json::json!({
+                "ca_host": "127.0.0.1",
+                "node_name": ""
+            }))
+            .send()
+            .await
+            .expect("publish validation request");
+        let publish_status = publish_response.status();
+        let publish_body: Value = publish_response
+            .json()
+            .await
+            .expect("publish validation body");
+
+        let peer_response = client
+            .get(format!("{}/api/v1/did/document/peer", base_url))
+            .query(&[("did", "not-a-did")])
+            .send()
+            .await
+            .expect("peer validation request");
+        let peer_status = peer_response.status();
+        let peer_body: Value = peer_response.json().await.expect("peer validation body");
+
+        handle.abort();
+
+        assert_eq!(publish_status, StatusCode::BAD_REQUEST);
+        assert_eq!(publish_body["error"]["code"], "BAD_REQUEST");
+        assert_eq!(publish_body["error"]["message"], "node_name is required");
+
+        assert_eq!(peer_status, StatusCode::BAD_REQUEST);
+        assert_eq!(peer_body["error"]["code"], "BAD_REQUEST");
     }
 }

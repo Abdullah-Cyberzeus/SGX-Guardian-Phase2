@@ -53,6 +53,8 @@ enum Commands {
     DkpRevoke(commands::dkp_revoke::DkpRevokeArgs),
     /// DID lifecycle and registry operations
     Did(commands::did::DidArgs),
+    /// DID Document operations
+    DidDoc(commands::diddoc::DidDocArgs),
     /// Emergency rotation of ALL critical keys
     EmergencyRotate,
     /// Show current PCR measurement values
@@ -126,6 +128,7 @@ fn main() {
         Commands::DkpRotate => commands::dkp_rotate::run(),
         Commands::DkpRevoke(args) => commands::dkp_revoke::run(args),
         Commands::Did(args) => commands::did::run(args),
+        Commands::DidDoc(args) => commands::diddoc::run(args),
         Commands::EmergencyRotate => commands::emergency_rotate::run(),
         Commands::PcrStatus => commands::pcr_status::run(),
         Commands::PcrBaselineCreate => commands::pcr_baseline::run_create(),

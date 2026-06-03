@@ -19,6 +19,7 @@ ring = "0.17"
 hex = "0.4"
 rand = "0.8"
 bs58 = "0.5"
+tokio = { version = "1.37", features = ["rt", "time", "net", "io-util"] }
 sgx_guardian_client = { path = ".." }
 
 [dev-dependencies]

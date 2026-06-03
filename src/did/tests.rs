@@ -253,3 +253,159 @@ fn test_registry_upsert_get_list() {
     assert_eq!(all.len(), 1);
     assert_eq!(all[0].did, did.as_str());
 }
+
+#[test]
+fn test_diddoc_sign_then_verify_roundtrip() {
+    let td = TempDir::new().unwrap();
+    let key_path = td.path().join("dev.key");
+    let km = KeyManager::load_or_generate(key_path.to_str().unwrap()).unwrap();
+    let pk = km.pubkey_der().unwrap();
+
+    let input = super::document::DocBuildInput {
+        did: "did:guardian:11111111111111111111111111111111111111111111",
+        node_name: Some("nodeT"),
+        current_dkp_version: 1,
+        current_dkp_pubkey_der: &pk,
+        overlay_ip_cidr: Some("192.168.100.7/24"),
+        attestation_bind: Some(("192.168.100.7", 50057)),
+        cert_bootstrap_bind: None,
+        revoked: vec![],
+        previous_version_id: 0,
+        created_at: None,
+        status: Some("active".into()),
+    };
+    let mut doc = super::document::DidDocument::build(input).unwrap();
+    let vm_ref = doc.verification_method[0].id.clone();
+    super::doc_sign::sign_in_place(&mut doc, &km, &vm_ref).unwrap();
+    super::doc_sign::verify(&doc).unwrap();
+}
+
+#[test]
+fn test_diddoc_substantively_equal_ignores_publish_metadata() {
+    let td = TempDir::new().unwrap();
+    let key_path = td.path().join("dev.key");
+    let km = KeyManager::load_or_generate(key_path.to_str().unwrap()).unwrap();
+    let pk = km.pubkey_der().unwrap();
+
+    let mut doc = super::document::DidDocument::build(super::document::DocBuildInput {
+        did: "did:guardian:11111111111111111111111111111111111111111111",
+        node_name: Some("nodeT"),
+        current_dkp_version: 1,
+        current_dkp_pubkey_der: &pk,
+        overlay_ip_cidr: Some("192.168.100.7/24"),
+        attestation_bind: Some(("192.168.100.7", 50057)),
+        cert_bootstrap_bind: None,
+        revoked: vec![],
+        previous_version_id: 0,
+        created_at: None,
+        status: Some("active".into()),
+    })
+    .unwrap();
+    let vm_ref = doc.verification_method[0].id.clone();
+    super::doc_sign::sign_in_place(&mut doc, &km, &vm_ref).unwrap();
+
+    let mut other = doc.clone();
+    other.sgx_updated = "2030-01-01T00:00:00Z".into();
+    other.sgx_version_id = 99;
+    other.proof.as_mut().unwrap().created = "2030-01-01T00:00:00Z".into();
+    other.proof.as_mut().unwrap().proof_value = "tampered-proof".into();
+
+    assert!(doc.substantively_equal(&other));
+
+    other.service[0].service_endpoint = "nebula://192.168.100.99/24".into();
+    assert!(!doc.substantively_equal(&other));
+}
+
+#[test]
+fn test_diddoc_tamper_fails_verify() {
+    let td = TempDir::new().unwrap();
+    let key_path = td.path().join("dev.key");
+    let km = KeyManager::load_or_generate(key_path.to_str().unwrap()).unwrap();
+    let pk = km.pubkey_der().unwrap();
+
+    let mut doc = super::document::DidDocument::build(super::document::DocBuildInput {
+        did: "did:guardian:11111111111111111111111111111111111111111111",
+        node_name: None,
+        current_dkp_version: 1,
+        current_dkp_pubkey_der: &pk,
+        overlay_ip_cidr: Some("192.168.100.7/24"),
+        attestation_bind: None,
+        cert_bootstrap_bind: None,
+        revoked: vec![],
+        previous_version_id: 0,
+        created_at: None,
+        status: Some("active".into()),
+    })
+    .unwrap();
+    let vm_ref = doc.verification_method[0].id.clone();
+    super::doc_sign::sign_in_place(&mut doc, &km, &vm_ref).unwrap();
+
+    doc.service[0].service_endpoint = "nebula://192.168.100.99/24".into();
+    assert!(super::doc_sign::verify(&doc).is_err());
+}
+
+#[test]
+fn test_diddoc_malformed_jwk_fails_verify() {
+    let td = TempDir::new().unwrap();
+    let key_path = td.path().join("dev.key");
+    let km = KeyManager::load_or_generate(key_path.to_str().unwrap()).unwrap();
+    let pk = km.pubkey_der().unwrap();
+
+    let mut doc = super::document::DidDocument::build(super::document::DocBuildInput {
+        did: "did:guardian:11111111111111111111111111111111111111111111",
+        node_name: None,
+        current_dkp_version: 1,
+        current_dkp_pubkey_der: &pk,
+        overlay_ip_cidr: Some("192.168.100.7/24"),
+        attestation_bind: None,
+        cert_bootstrap_bind: None,
+        revoked: vec![],
+        previous_version_id: 0,
+        created_at: None,
+        status: Some("active".into()),
+    })
+    .unwrap();
+    let vm_ref = doc.verification_method[0].id.clone();
+    super::doc_sign::sign_in_place(&mut doc, &km, &vm_ref).unwrap();
+
+    doc.verification_method[0].public_key_jwk.crv = "P-384".into();
+    assert!(matches!(
+        super::doc_sign::verify(&doc),
+        Err(DidError::InvalidFormat(message)) if message.contains("Invalid JWK crv")
+    ));
+}
+
+#[test]
+fn test_diddoc_replay_protection_rejects_older_version() {
+    let td = TempDir::new().unwrap();
+    let key_path = td.path().join("dev.key");
+    let km = KeyManager::load_or_generate(key_path.to_str().unwrap()).unwrap();
+    let pk = km.pubkey_der().unwrap();
+
+    let mut doc = super::document::DidDocument::build(super::document::DocBuildInput {
+        did: "did:guardian:11111111111111111111111111111111111111111111",
+        node_name: None,
+        current_dkp_version: 1,
+        current_dkp_pubkey_der: &pk,
+        overlay_ip_cidr: Some("192.168.100.7/24"),
+        attestation_bind: None,
+        cert_bootstrap_bind: None,
+        revoked: vec![],
+        previous_version_id: 0,
+        created_at: None,
+        status: Some("active".into()),
+    })
+    .unwrap();
+    let vm_ref = doc.verification_method[0].id.clone();
+    super::doc_sign::sign_in_place(&mut doc, &km, &vm_ref).unwrap();
+
+    super::doc_sign::verify_with_replay_protection(&doc, 1).unwrap();
+    let err = super::doc_sign::verify_with_replay_protection(&doc, 2).unwrap_err();
+    assert!(matches!(
+        err,
+        DidError::ReplayedOldVersion {
+            incoming: 1,
+            known: 2
+        }
+    ));
+}

@@ -2,6 +2,10 @@
 
 #[path = "did.rs"]
 mod did_impl;
+pub mod doc_distribution;
+pub mod doc_persistence;
+pub mod doc_sign;
+pub mod document;
 pub mod errors;
 pub mod method;
 pub mod persistence;

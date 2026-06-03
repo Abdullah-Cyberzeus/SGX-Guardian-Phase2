@@ -12,6 +12,7 @@ const METADATA_PATH: &str = "/var/lib/sgx-guardian/keys/dkp_metadata.json";
 const PUBKEY_PATH: &str = "/var/lib/sgx-guardian/keys/dkp_pub.der";
 const DKP_BASE_KEY_ID: u32 = 0x20000010;
 const SOFTWARE_KEY_DIR: &str = "/var/lib/sgx-guardian/sgx-agent";
+const DID_DOC_ROTATION_FLAG: &str = "/var/lib/sgx-guardian/identity/.dkp_rotated.flag";
 
 pub fn run() {
     println!("=== DKP Key Rotation ===\n");
@@ -205,8 +206,21 @@ pub fn run() {
         eprintln!("⚠️ DID metadata update skipped: {}", e);
     }
 
+    if let Some(parent) = Path::new(DID_DOC_ROTATION_FLAG).parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Err(e) = fs::write(DID_DOC_ROTATION_FLAG, Utc::now().to_rfc3339()) {
+        eprintln!(
+            "⚠️ Could not write DID-doc rotation flag ({}): {}",
+            DID_DOC_ROTATION_FLAG, e
+        );
+    } else {
+        println!("  🔔 Signaled running daemon to refresh DID Document.");
+    }
+
     println!("\n✅ Rotation complete:");
     println!("  {} (v{}) → Deprecated", current_key_id, current_version);
     println!("  {} (v{}) → Active", new_key_id_hex, new_version);
-    println!("\n  Restart guardian daemon to use the new key.");
+    println!("\n  DID Document will be re-signed on the daemon's next refresh tick");
+    println!("  (within ~30 s). Restart only required if no daemon is running.");
 }
