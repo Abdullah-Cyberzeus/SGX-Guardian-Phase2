@@ -2286,6 +2286,7 @@ dependencies = [
  "sgx_guardian_client",
  "sha2",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

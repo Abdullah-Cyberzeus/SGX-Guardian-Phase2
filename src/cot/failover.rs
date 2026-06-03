@@ -62,12 +62,23 @@ impl FailoverEngine {
     }
 
     pub async fn evaluate_now(&self) {
-        // Admin lock overrides
+        // Admin lock overrides strictly:
+        // if locked interface is unavailable, do not fallback to any other interface.
         if let Some(ref locked) = *self.manual_lock.read().await {
+            let locked_available = match self.registry.get_by_interface(locked).await {
+                Some(transport) => transport.is_available().await,
+                None => false,
+            };
+
             let mut active = self.active_interface.write().await;
-            if active.as_deref() != Some(locked) {
-                *active = Some(locked.clone());
-                set_selected_interface(Some(locked.clone()));
+            if locked_available {
+                if active.as_deref() != Some(locked) {
+                    *active = Some(locked.clone());
+                    set_selected_interface(Some(locked.clone()));
+                }
+            } else if active.is_some() {
+                *active = None;
+                set_selected_interface(None);
             }
             return;
         }
@@ -318,7 +329,7 @@ mod tests {
     use super::*;
     use crate::cot::transport_trait::{Transport, TransportHealth, TransportMessage};
     use crate::cot::types::{CotResult, TransportPriority, TransportType};
-    use crate::network_selector::set_selected_interface;
+    use crate::network_selector::{selected_interface, set_selected_interface};
     use std::sync::atomic::{AtomicBool, Ordering};
 
     struct MockTransport {
@@ -384,5 +395,42 @@ mod tests {
         let failover = FailoverEngine::new(monitor, reg);
         failover.evaluate_now().await;
         assert_eq!(failover.current_interface().await.as_deref(), Some("ens33"));
+    }
+
+    #[tokio::test]
+    async fn test_manual_lock_is_strict_no_fallback_when_locked_interface_down() {
+        set_selected_interface(None);
+        let reg = Arc::new(TransportRegistry::new());
+        let eth_up = Arc::new(AtomicBool::new(false));
+        let wifi_up = Arc::new(AtomicBool::new(true));
+
+        reg.register(Arc::new(MockTransport {
+            name: "eth0".into(),
+            tt: TransportType::Ethernet,
+            pri: TransportPriority::new(10),
+            up: eth_up.clone(),
+        }))
+        .await;
+        reg.register(Arc::new(MockTransport {
+            name: "wlan0".into(),
+            tt: TransportType::WiFi,
+            pri: TransportPriority::new(20),
+            up: wifi_up,
+        }))
+        .await;
+
+        let monitor = LinkMonitor::new(reg.clone());
+        monitor.probe_once_for_test().await;
+        let failover = FailoverEngine::new(monitor, reg);
+        failover.lock_to_interface("eth0").await;
+
+        failover.evaluate_now().await;
+        assert!(failover.current_interface().await.is_none());
+        assert!(selected_interface().is_none());
+
+        eth_up.store(true, Ordering::SeqCst);
+        failover.evaluate_now().await;
+        assert_eq!(failover.current_interface().await.as_deref(), Some("eth0"));
+        assert_eq!(selected_interface().as_deref(), Some("eth0"));
     }
 }

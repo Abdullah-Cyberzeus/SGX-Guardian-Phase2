@@ -1,9 +1,16 @@
 use crate::api::{error::ApiError, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
-use crate::did::{self, DidError};
-use axum::{extract::State, Json};
-use serde::{Deserialize, Serialize};
+use crate::did::{
+    self, doc_distribution, doc_persistence, doc_sign, document::DidDocument, DidError,
+};
+use axum::{
+    body::Bytes,
+    extract::{Query, State},
+    Json,
+};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 const DEFAULT_DKP_PUBKEY_PATH: &str = "/var/lib/sgx-guardian/keys/dkp_pub.der";
@@ -51,6 +58,67 @@ pub struct DeactivateResponse {
     pub message: String,
     #[serde(rename = "restartRequired")]
     pub restart_required: bool,
+}
+
+#[derive(Serialize)]
+pub struct DidDocumentSummaryResponse {
+    pub did: String,
+    pub controller: String,
+    pub node_name: String,
+    pub version: u32,
+    pub status: String,
+    pub active_vms: usize,
+    pub revoked_vms: usize,
+    pub services: usize,
+    pub proof_vm: String,
+}
+
+#[derive(Default, Deserialize)]
+pub struct VerifyDocumentRequest {
+    pub path: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct VerifyDocumentResponse {
+    pub valid: bool,
+    pub version: u32,
+    pub message: String,
+}
+
+#[derive(Deserialize)]
+pub struct PublishDocumentRequest {
+    pub ca_host: String,
+    pub node_name: String,
+}
+
+#[derive(Serialize)]
+pub struct PublishDocumentResponse {
+    pub success: bool,
+    pub did: String,
+    pub version: u32,
+    pub ca_host: String,
+    pub node_name: String,
+    pub message: String,
+}
+
+#[derive(Serialize)]
+pub struct PeerDocumentSummary {
+    pub did: String,
+    pub node_name: String,
+    pub version: u32,
+    pub status: String,
+    pub services: usize,
+}
+
+#[derive(Serialize)]
+pub struct PeerDocumentsResponse {
+    pub count: usize,
+    pub peers: Vec<PeerDocumentSummary>,
+}
+
+#[derive(Deserialize)]
+pub struct PeerDidQuery {
+    pub did: Option<String>,
 }
 
 pub async fn status(_state: State<Arc<AppState>>) -> Result<Json<DidStatusResponse>, ApiError> {
@@ -160,6 +228,103 @@ pub async fn deactivate(
     }))
 }
 
+pub async fn document(
+    _state: State<Arc<AppState>>,
+) -> Result<Json<DidDocumentSummaryResponse>, ApiError> {
+    let doc = load_self_document()?;
+    Ok(Json(summarize_document(&doc)))
+}
+
+pub async fn document_raw(_state: State<Arc<AppState>>) -> Result<Json<DidDocument>, ApiError> {
+    Ok(Json(load_self_document()?))
+}
+
+pub async fn document_verify(
+    _state: State<Arc<AppState>>,
+    body: Bytes,
+) -> Result<Json<VerifyDocumentResponse>, ApiError> {
+    let req: VerifyDocumentRequest = parse_optional_json_body(&body)?;
+    let path = verify_request_path(req.path)?;
+    let doc = doc_persistence::load_doc_at_path(&path)
+        .map_err(|e| did_document_verify_error(e, &path))?;
+    let floor_version = known_floor_version(&doc);
+    doc_sign::verify_with_replay_protection(&doc, floor_version)
+        .map_err(did_document_verify_failure)?;
+
+    Ok(Json(VerifyDocumentResponse {
+        valid: true,
+        version: doc.sgx_version_id,
+        message: "DID Document proof valid".to_string(),
+    }))
+}
+
+pub async fn document_publish(
+    _state: State<Arc<AppState>>,
+    body: Bytes,
+) -> Result<Json<PublishDocumentResponse>, ApiError> {
+    let req: PublishDocumentRequest = parse_required_json_body(&body)?;
+    let ca_host = required_nonempty_field(&req.ca_host, "ca_host")?;
+    let node_name = required_nonempty_field(&req.node_name, "node_name")?;
+    let doc = load_self_document()?;
+    let floor_version = known_floor_version(&doc);
+    doc_sign::verify_with_replay_protection(&doc, floor_version)
+        .map_err(did_document_verify_failure)?;
+    doc_distribution::publish_to_ca(&ca_host, &node_name, &doc)
+        .await
+        .map_err(did_document_publish_error)?;
+
+    Ok(Json(PublishDocumentResponse {
+        success: true,
+        did: doc.id.clone(),
+        version: doc.sgx_version_id,
+        ca_host,
+        node_name,
+        message: "DID Document published to CA registry".to_string(),
+    }))
+}
+
+pub async fn document_peers(
+    _state: State<Arc<AppState>>,
+) -> Result<Json<PeerDocumentsResponse>, ApiError> {
+    let mut peers: Vec<PeerDocumentSummary> = doc_persistence::list_peer_docs()
+        .map_err(did_document_listing_error)?
+        .into_iter()
+        .map(|doc| PeerDocumentSummary {
+            did: doc.id,
+            node_name: doc.sgx_node_name.unwrap_or_default(),
+            version: doc.sgx_version_id,
+            status: doc.sgx_status.unwrap_or_else(|| "active".to_string()),
+            services: doc.service.len(),
+        })
+        .collect();
+    peers.sort_by(|a, b| a.did.cmp(&b.did));
+
+    Ok(Json(PeerDocumentsResponse {
+        count: peers.len(),
+        peers,
+    }))
+}
+
+pub async fn document_peer(
+    _state: State<Arc<AppState>>,
+    Query(q): Query<PeerDidQuery>,
+) -> Result<Json<DidDocument>, ApiError> {
+    let did_value = q
+        .did
+        .as_deref()
+        .map(str::trim)
+        .filter(|did| !did.is_empty())
+        .ok_or_else(|| ApiError::BadRequest("did query parameter is required".to_string()))?;
+    let did = did::Did::parse(did_value).map_err(did_query_error)?;
+    let doc = doc_persistence::load_peer(&did).map_err(|e| did_peer_load_error(e, &did))?;
+    let doc = doc.ok_or_else(|| {
+        let path =
+            doc_persistence::configured_peers_doc_dir().join(format!("did_doc_{}.json", did.msi()));
+        ApiError::NotFound(format!("peer did document not found at {}", path.display()))
+    })?;
+    Ok(Json(doc))
+}
+
 fn did_path() -> String {
     std::env::var(DID_PATH_ENV).unwrap_or_else(|_| did::DEFAULT_DID_PATH.to_string())
 }
@@ -180,6 +345,189 @@ fn did_error(err: DidError, did_path: &str) -> ApiError {
         | DidError::Signing(e)
         | DidError::DkpPubkeyMissing(e) => ApiError::BadRequest(e),
         other => ApiError::Internal(other.to_string()),
+    }
+}
+
+fn summarize_document(doc: &DidDocument) -> DidDocumentSummaryResponse {
+    DidDocumentSummaryResponse {
+        did: doc.id.clone(),
+        controller: doc.controller.clone(),
+        node_name: doc.sgx_node_name.clone().unwrap_or_default(),
+        version: doc.sgx_version_id,
+        status: doc
+            .sgx_status
+            .clone()
+            .unwrap_or_else(|| "active".to_string()),
+        active_vms: doc.verification_method.len(),
+        revoked_vms: doc.sgx_revoked_vm.len(),
+        services: doc.service.len(),
+        proof_vm: doc
+            .proof
+            .as_ref()
+            .map(|proof| proof.verification_method.clone())
+            .unwrap_or_default(),
+    }
+}
+
+fn load_self_document() -> Result<DidDocument, ApiError> {
+    let path = doc_persistence::configured_self_doc_path();
+    match doc_persistence::load_self() {
+        Ok(Some(doc)) => Ok(doc),
+        Ok(None) => Err(ApiError::NotFound(format!(
+            "did document not found at {}",
+            path.display()
+        ))),
+        Err(err) => Err(did_document_load_error(err, &path)),
+    }
+}
+
+fn verify_request_path(path: Option<String>) -> Result<PathBuf, ApiError> {
+    match path {
+        Some(path) => {
+            let trimmed = path.trim();
+            if trimmed.is_empty() {
+                return Err(ApiError::BadRequest(
+                    "path must not be empty when provided".to_string(),
+                ));
+            }
+            Ok(PathBuf::from(trimmed))
+        }
+        None => Ok(doc_persistence::configured_self_doc_path()),
+    }
+}
+
+fn parse_optional_json_body<T>(body: &Bytes) -> Result<T, ApiError>
+where
+    T: Default + DeserializeOwned,
+{
+    if body.is_empty() {
+        return Ok(T::default());
+    }
+    serde_json::from_slice(body)
+        .map_err(|e| ApiError::BadRequest(format!("invalid JSON body: {}", e)))
+}
+
+fn parse_required_json_body<T>(body: &Bytes) -> Result<T, ApiError>
+where
+    T: DeserializeOwned,
+{
+    if body.is_empty() {
+        return Err(ApiError::BadRequest("request body is required".to_string()));
+    }
+    serde_json::from_slice(body)
+        .map_err(|e| ApiError::BadRequest(format!("invalid JSON body: {}", e)))
+}
+
+fn required_nonempty_field(value: &str, field: &str) -> Result<String, ApiError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::BadRequest(format!("{} is required", field)));
+    }
+    Ok(trimmed.to_string())
+}
+
+fn known_floor_version(doc: &DidDocument) -> u32 {
+    if let Ok(Some(self_doc)) = doc_persistence::load_self() {
+        if self_doc.id == doc.id {
+            return self_doc.sgx_version_id;
+        }
+    }
+    doc.did()
+        .ok()
+        .and_then(|did| {
+            doc_persistence::load_peer(&did)
+                .ok()
+                .flatten()
+                .map(|existing| existing.sgx_version_id)
+        })
+        .unwrap_or(0)
+}
+
+fn did_query_error(err: DidError) -> ApiError {
+    match err {
+        DidError::InvalidFormat(e) | DidError::WrongMethod(e) | DidError::Base58(e) => {
+            ApiError::BadRequest(e)
+        }
+        other => ApiError::BadRequest(other.to_string()),
+    }
+}
+
+fn did_document_load_error(err: DidError, path: &Path) -> ApiError {
+    match err {
+        DidError::Io(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            ApiError::NotFound(format!("did document not found at {}", path.display()))
+        }
+        other => ApiError::Internal(format!(
+            "did document load failed at {}: {}",
+            path.display(),
+            other
+        )),
+    }
+}
+
+fn did_document_verify_error(err: DidError, path: &Path) -> ApiError {
+    match err {
+        DidError::Io(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            ApiError::NotFound(format!("did document not found at {}", path.display()))
+        }
+        DidError::Json(e) => ApiError::BadRequest(format!(
+            "invalid DID document JSON at {}: {}",
+            path.display(),
+            e
+        )),
+        DidError::InvalidFormat(e)
+        | DidError::WrongMethod(e)
+        | DidError::Base58(e)
+        | DidError::UidUnavailable(e)
+        | DidError::Signing(e)
+        | DidError::DkpPubkeyMissing(e) => ApiError::BadRequest(e),
+        other => ApiError::BadRequest(other.to_string()),
+    }
+}
+
+fn did_document_verify_failure(err: DidError) -> ApiError {
+    match err {
+        DidError::Io(e) => ApiError::Internal(format!("did document verify I/O failed: {}", e)),
+        DidError::Json(e) => ApiError::BadRequest(format!("invalid DID document JSON: {}", e)),
+        DidError::InvalidFormat(e)
+        | DidError::WrongMethod(e)
+        | DidError::Base58(e)
+        | DidError::UidUnavailable(e)
+        | DidError::Signing(e)
+        | DidError::DkpPubkeyMissing(e) => ApiError::BadRequest(e),
+        other => ApiError::BadRequest(other.to_string()),
+    }
+}
+
+fn did_document_publish_error(err: DidError) -> ApiError {
+    match err {
+        DidError::Io(e) => ApiError::Internal(format!("did document publish failed: {}", e)),
+        DidError::Json(e) => ApiError::BadRequest(format!("invalid DID document JSON: {}", e)),
+        DidError::InvalidFormat(e)
+        | DidError::WrongMethod(e)
+        | DidError::Base58(e)
+        | DidError::UidUnavailable(e)
+        | DidError::Signing(e)
+        | DidError::DkpPubkeyMissing(e) => ApiError::BadRequest(e),
+        other => ApiError::BadRequest(other.to_string()),
+    }
+}
+
+fn did_document_listing_error(err: DidError) -> ApiError {
+    match err {
+        DidError::Io(e) => ApiError::Internal(format!("peer did document listing failed: {}", e)),
+        other => ApiError::Internal(other.to_string()),
+    }
+}
+
+fn did_peer_load_error(err: DidError, did: &did::Did) -> ApiError {
+    match err {
+        DidError::Io(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let path = doc_persistence::configured_peers_doc_dir()
+                .join(format!("did_doc_{}.json", did.msi()));
+            ApiError::NotFound(format!("peer did document not found at {}", path.display()))
+        }
+        other => ApiError::Internal(format!("peer did document load failed: {}", other)),
     }
 }
 

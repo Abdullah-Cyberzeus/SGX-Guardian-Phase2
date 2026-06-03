@@ -11,6 +11,9 @@ use std::sync::Arc;
 
 const DEFAULT_NEBULA_DIR: &str = "/var/lib/sgx-guardian/nebula";
 const NEBULA_DIR_ENV: &str = "SGX_GUARDIAN_NEBULA_DIR";
+const DEFAULT_RELAY_MAX_PEERS: u32 = 5;
+const DEFAULT_RELAY_MAX_BANDWIDTH_MBPS: u32 = 10;
+const DEFAULT_RELAY_ALERT_THRESHOLD_PCT: u8 = 80;
 
 #[derive(Serialize)]
 pub struct RelayListItemResponse {
@@ -52,6 +55,20 @@ pub struct RelayLimitsResponse {
     pub pcr_safe: bool,
 }
 
+#[derive(Deserialize)]
+pub struct RelayToggleRequest {
+    pub node: Option<String>,
+    pub enabled: Option<bool>,
+}
+
+#[derive(Serialize)]
+pub struct RelayToggleResponse {
+    pub ok: bool,
+    pub node: String,
+    pub enabled: bool,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct RelayEntry {
     #[serde(default)]
@@ -86,6 +103,22 @@ struct RelayStatsDoc {
     node_id: String,
     #[serde(default)]
     current_mbps: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct RelaySyncYaml {
+    #[serde(default)]
+    ip: String,
+    #[serde(default)]
+    relay: Option<RelayYamlSection>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct RelayYamlSection {
+    #[serde(default)]
+    max_peers: Option<u32>,
+    #[serde(default)]
+    max_bandwidth_mbps: Option<u32>,
 }
 
 pub async fn list(_state: State<Arc<AppState>>) -> Result<Json<RelayListResponse>, ApiError> {
@@ -181,12 +214,261 @@ pub async fn limits(
     }))
 }
 
+pub async fn toggle(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<RelayToggleRequest>,
+) -> Result<Json<RelayToggleResponse>, ApiError> {
+    let node = body
+        .node
+        .ok_or_else(|| ApiError::BadRequest("node field is required".to_string()))?;
+    if !is_valid_node_name(&node) {
+        return Err(ApiError::BadRequest(format!("invalid node name: {}", node)));
+    }
+
+    let enabled = body
+        .enabled
+        .ok_or_else(|| ApiError::BadRequest("enabled field is required".to_string()))?;
+
+    let cfg_path = Path::new(&s.config_dir).join(format!("{}.yaml", node));
+    if !cfg_path.exists() {
+        return Err(ApiError::NotFound(format!(
+            "config for {} not found; cannot sync relay toggle",
+            node
+        )));
+    }
+
+    mutate_relay_yaml(&cfg_path, enabled)?;
+    sync_registry_from_yaml_toggle(&node, &cfg_path, enabled)?;
+
+    log_audit(
+        &s.node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Applied,
+        &format!(
+            "Relay {} via API for {}",
+            if enabled { "enabled" } else { "disabled" },
+            node
+        ),
+    );
+
+    Ok(Json(RelayToggleResponse {
+        ok: true,
+        node: node.clone(),
+        enabled,
+        message: format!(
+            "Relay {} for {}",
+            if enabled { "enabled" } else { "disabled" },
+            node
+        ),
+    }))
+}
+
+fn is_valid_node_name(node: &str) -> bool {
+    node.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn mutate_relay_yaml(cfg_path: &Path, enabled: bool) -> Result<(), ApiError> {
+    let content = fs::read_to_string(cfg_path)
+        .map_err(|e| ApiError::Internal(format!("read node config failed: {}", e)))?;
+    let mut doc: serde_yaml::Value = serde_yaml::from_str(&content)
+        .map_err(|e| ApiError::Internal(format!("parse node config yaml failed: {}", e)))?;
+
+    if !doc.is_mapping() {
+        return Err(ApiError::Internal(
+            "node config root is not a mapping".to_string(),
+        ));
+    }
+
+    let root = doc
+        .as_mapping_mut()
+        .ok_or_else(|| ApiError::Internal("node config mapping is invalid".to_string()))?;
+    let relay_key = serde_yaml::Value::String("relay".to_string());
+    let relay_val = root
+        .entry(relay_key)
+        .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+
+    if !relay_val.is_mapping() {
+        *relay_val = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+    }
+
+    let relay_map = relay_val
+        .as_mapping_mut()
+        .ok_or_else(|| ApiError::Internal("relay section is not a mapping".to_string()))?;
+
+    relay_map.insert(
+        serde_yaml::Value::String("enabled".to_string()),
+        serde_yaml::Value::Bool(enabled),
+    );
+    relay_map
+        .entry(serde_yaml::Value::String("max_peers".to_string()))
+        .or_insert(serde_yaml::Value::Number(serde_yaml::Number::from(
+            DEFAULT_RELAY_MAX_PEERS,
+        )));
+    relay_map
+        .entry(serde_yaml::Value::String("max_bandwidth_mbps".to_string()))
+        .or_insert(serde_yaml::Value::Number(serde_yaml::Number::from(
+            DEFAULT_RELAY_MAX_BANDWIDTH_MBPS,
+        )));
+    relay_map
+        .entry(serde_yaml::Value::String("alert_threshold_pct".to_string()))
+        .or_insert(serde_yaml::Value::Number(serde_yaml::Number::from(
+            DEFAULT_RELAY_ALERT_THRESHOLD_PCT,
+        )));
+
+    fs::write(
+        cfg_path,
+        serde_yaml::to_string(&doc).map_err(|e| {
+            ApiError::Internal(format!("serialize updated node config yaml failed: {}", e))
+        })?,
+    )
+    .map_err(|e| ApiError::Internal(format!("write node config failed: {}", e)))?;
+
+    Ok(())
+}
+
+fn sync_registry_from_yaml_toggle(
+    node: &str,
+    cfg_path: &Path,
+    enable: bool,
+) -> Result<(), ApiError> {
+    let cfg = load_relay_yaml(cfg_path)?;
+    let max_peers = cfg
+        .relay
+        .as_ref()
+        .and_then(|r| r.max_peers)
+        .unwrap_or(DEFAULT_RELAY_MAX_PEERS);
+    let max_bw = cfg
+        .relay
+        .as_ref()
+        .and_then(|r| r.max_bandwidth_mbps)
+        .unwrap_or(DEFAULT_RELAY_MAX_BANDWIDTH_MBPS);
+
+    let overlay_ip = resolve_overlay_ip(node);
+    let overlay_for_new_entry = overlay_ip
+        .clone()
+        .unwrap_or_else(|| cfg.ip.trim().to_string());
+    let endpoint_ip = if cfg.ip.trim().is_empty() {
+        "0.0.0.0".to_string()
+    } else {
+        cfg.ip.trim().to_string()
+    };
+    let endpoint = format!("{}:4242", endpoint_ip);
+    let now = Utc::now().timestamp();
+
+    let registry_file = registry_path();
+    let mut registry = load_registry(&registry_file)?;
+    if registry.circle_id.trim().is_empty() {
+        registry.circle_id = "guardian-circle-alpha".to_string();
+    }
+
+    if enable {
+        let entry = registry
+            .relays
+            .entry(node.to_string())
+            .or_insert_with(|| RelayEntry {
+                node_name: node.to_string(),
+                overlay_ip: overlay_for_new_entry.clone(),
+                physical_endpoint: endpoint.clone(),
+                is_active: true,
+                is_lighthouse: false,
+                max_peers,
+                max_bandwidth_mbps: max_bw,
+                last_seen: now,
+            });
+
+        if entry.node_name.is_empty() {
+            entry.node_name = node.to_string();
+        }
+        if let Some(overlay_ip) = &overlay_ip {
+            entry.overlay_ip = overlay_ip.clone();
+        }
+        if entry.physical_endpoint.is_empty() || entry.physical_endpoint == "0.0.0.0:4242" {
+            entry.physical_endpoint = endpoint.clone();
+        }
+        if entry.max_peers == 0 {
+            entry.max_peers = max_peers;
+        }
+        if entry.max_bandwidth_mbps == 0 {
+            entry.max_bandwidth_mbps = max_bw;
+        }
+        entry.is_active = true;
+        entry.last_seen = now;
+    } else {
+        registry.relays.remove(node);
+    }
+
+    save_registry(&registry_file, &registry)?;
+    sync_lighthouse_relay_role(node, enable, &overlay_for_new_entry, &endpoint)?;
+    Ok(())
+}
+
+fn load_relay_yaml(path: &Path) -> Result<RelaySyncYaml, ApiError> {
+    let text = fs::read_to_string(path)
+        .map_err(|e| ApiError::Internal(format!("read node config failed: {}", e)))?;
+    serde_yaml::from_str::<RelaySyncYaml>(&text)
+        .map_err(|e| ApiError::Internal(format!("parse node config failed: {}", e)))
+}
+
+fn resolve_overlay_ip(node: &str) -> Option<String> {
+    let path = overlay_registry_path();
+    let registry = crate::nebula::overlay_registry::OverlayRegistry::load(&path).ok()?;
+    registry.get_ip(node).map(|ip| ip.to_string())
+}
+
+fn sync_lighthouse_relay_role(
+    node: &str,
+    enable: bool,
+    overlay_ip: &str,
+    endpoint: &str,
+) -> Result<(), ApiError> {
+    let path = lighthouse_registry_path();
+    if !Path::new(&path).exists() {
+        return Ok(());
+    }
+
+    let mut lh = match crate::nebula::lighthouse::LighthouseRegistry::load(&path) {
+        Ok(v) => v,
+        Err(_) => return Ok(()),
+    };
+
+    let mut changed = false;
+    if enable {
+        if !lh.set_relay_role(node, true) {
+            lh.upsert_node(node, overlay_ip, endpoint, false, true);
+            changed = true;
+        } else {
+            changed = true;
+        }
+        let _ = lh.update_endpoint(node, endpoint);
+        lh.mark_active(node);
+    } else if lh.set_relay_role(node, false) {
+        changed = true;
+    }
+
+    if changed {
+        lh.save(&path)
+            .map_err(|e| ApiError::Internal(format!("save lighthouse registry failed: {}", e)))?;
+    }
+
+    Ok(())
+}
+
 fn registry_path() -> String {
     format!("{}/relay_registry.json", nebula_dir())
 }
 
 fn stats_path() -> String {
     format!("{}/relay_stats.json", nebula_dir())
+}
+
+fn overlay_registry_path() -> String {
+    format!("{}/overlay_registry.json", nebula_dir())
+}
+
+fn lighthouse_registry_path() -> String {
+    format!("{}/lighthouse_registry.json", nebula_dir())
 }
 
 fn nebula_dir() -> String {
@@ -296,10 +578,10 @@ mod tests {
         }
     }
 
-    fn test_state() -> Arc<AppState> {
+    fn test_state_with_config(config_dir: &str) -> Arc<AppState> {
         Arc::new(AppState {
             node_id: "nodeA".into(),
-            config_dir: "/tmp/config".into(),
+            config_dir: config_dir.into(),
             boot_dir: "/tmp/boot".into(),
             keys_dir: "/tmp/keys".into(),
             pcr_dir: "/tmp/pcr".into(),
@@ -307,6 +589,10 @@ mod tests {
             log_dir_primary: "/tmp/logs".into(),
             log_dir_fallback: "/tmp/logs2".into(),
         })
+    }
+
+    fn test_state() -> Arc<AppState> {
+        test_state_with_config("/tmp/config")
     }
 
     fn seed_registry_and_stats(tmp: &TempDir) {
@@ -336,6 +622,25 @@ mod tests {
             r#"{"node_id":"nodeA","current_mbps":4.25}"#,
         )
         .expect("stats");
+    }
+
+    fn write_node_yaml(path: &Path, node: &str, ip: &str, relay_enabled: bool) {
+        let yaml = format!(
+            r#"---
+node_id: "{node}"
+hostname: "{node}-host"
+ip: "{ip}"
+port: 50052
+public_key: "pk-{node}"
+
+relay:
+  enabled: {relay_enabled}
+  max_peers: 9
+  max_bandwidth_mbps: 15
+  alert_threshold_pct: 80
+"#
+        );
+        fs::write(path, yaml).expect("write node yaml");
     }
 
     #[tokio::test]
@@ -377,5 +682,124 @@ mod tests {
             .expect("read updated registry");
         assert!(updated.contains("\"max_peers\": 7"));
         assert!(updated.contains("\"max_bandwidth_mbps\": 15"));
+    }
+
+    #[tokio::test]
+    async fn relay_toggle_route_enable_disable_enable_keeps_single_entry() {
+        let _lock = TEST_ENV_LOCK.lock().await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let nebula_dir = tmp.path().join("nebula");
+        let config_dir = tmp.path().join("config");
+        fs::create_dir_all(&nebula_dir).expect("nebula dir");
+        fs::create_dir_all(&config_dir).expect("config dir");
+        let _env = EnvGuard::new(&nebula_dir.to_string_lossy());
+
+        write_node_yaml(
+            &config_dir.join("nodeB.yaml"),
+            "nodeB",
+            "10.20.30.40",
+            false,
+        );
+
+        let mut overlay = crate::nebula::overlay_registry::OverlayRegistry::new(
+            "guardian-circle-alpha",
+            "192.168.100",
+            "nodeA",
+        );
+        overlay.assign_ip("nodeB").expect("assign overlay");
+        overlay
+            .save(overlay_registry_path().as_str())
+            .expect("save overlay registry");
+
+        let mut lh = crate::nebula::lighthouse::LighthouseRegistry::new(
+            "guardian-circle-alpha",
+            "nodeA",
+            "192.168.100.1",
+            "10.0.0.1:4242",
+        );
+        lh.upsert_node("nodeB", "192.168.100.2", "10.20.30.40:4242", false, false);
+        lh.save(lighthouse_registry_path().as_str())
+            .expect("save lighthouse registry");
+
+        let state = test_state_with_config(&config_dir.to_string_lossy());
+
+        let _ = super::toggle(
+            State(state.clone()),
+            Json(RelayToggleRequest {
+                node: Some("nodeB".to_string()),
+                enabled: Some(true),
+            }),
+        )
+        .await
+        .expect("enable");
+
+        let enabled_once: RelayRegistryDoc =
+            serde_json::from_str(&fs::read_to_string(registry_path()).expect("read registry"))
+                .expect("parse registry");
+        assert!(enabled_once.relays.contains_key("nodeB"));
+
+        let _ = super::toggle(
+            State(state.clone()),
+            Json(RelayToggleRequest {
+                node: Some("nodeB".to_string()),
+                enabled: Some(false),
+            }),
+        )
+        .await
+        .expect("disable");
+
+        let disabled: RelayRegistryDoc =
+            serde_json::from_str(&fs::read_to_string(registry_path()).expect("read registry"))
+                .expect("parse registry");
+        assert!(!disabled.relays.contains_key("nodeB"));
+
+        let Json(resp) = super::toggle(
+            State(state),
+            Json(RelayToggleRequest {
+                node: Some("nodeB".to_string()),
+                enabled: Some(true),
+            }),
+        )
+        .await
+        .expect("enable again");
+
+        assert!(resp.ok);
+        assert!(resp.enabled);
+        assert_eq!(resp.message, "Relay enabled for nodeB");
+
+        let reenabled: RelayRegistryDoc =
+            serde_json::from_str(&fs::read_to_string(registry_path()).expect("read registry"))
+                .expect("parse registry");
+        assert_eq!(reenabled.relays.len(), 1);
+        assert!(reenabled.relays.contains_key("nodeB"));
+    }
+
+    #[tokio::test]
+    async fn relay_toggle_route_rejects_missing_enabled_field() {
+        let _lock = TEST_ENV_LOCK.lock().await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let nebula_dir = tmp.path().join("nebula");
+        let config_dir = tmp.path().join("config");
+        fs::create_dir_all(&nebula_dir).expect("nebula dir");
+        fs::create_dir_all(&config_dir).expect("config dir");
+        let _env = EnvGuard::new(&nebula_dir.to_string_lossy());
+
+        write_node_yaml(
+            &config_dir.join("nodeB.yaml"),
+            "nodeB",
+            "10.20.30.40",
+            false,
+        );
+
+        let result = super::toggle(
+            State(test_state_with_config(&config_dir.to_string_lossy())),
+            Json(RelayToggleRequest {
+                node: Some("nodeB".to_string()),
+                enabled: None,
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ApiError::BadRequest(_))));
     }
 }

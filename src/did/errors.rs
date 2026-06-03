@@ -31,4 +31,12 @@ pub enum DidError {
 
     #[error("DID derivation signature failed: {0}")]
     Signing(String),
+
+    #[error("DID document signature invalid")]
+    DerivSignatureInvalid,
+
+    #[error(
+        "DID Document replay: incoming version v{incoming} is older than locally known v{known}"
+    )]
+    ReplayedOldVersion { incoming: u32, known: u32 },
 }

@@ -2,21 +2,21 @@
 // ============================================================
 // Nebula Overlay IP Registry — Multi-Node, Multi-PC
 //
-// Problem yeh hai ke OverlayPool sirf ek PC par save hoti thi.
-// Agar nodeA PC1 par chale aur baad mein PC2 par, to .1 IP
-// dobara assign ho sakti thi — IP conflict.
+// Problem: OverlayPool state used to be saved on only one PC.
+// If nodeA ran on PC1 and later on PC2, the .1 IP
+// could be assigned again, causing an IP conflict.
 //
-// Yeh file ek JSON-based registry maintain karti hai jis mein:
-//   - Har node ka naam → overlay IP permanently mapped hai
-//   - Circle owner (nodeA) hamesha .1 milta hai
-//   - Ek atomic counter next available IP track karta hai
-//   - File-lock se concurrent writes safe hain
+// This file maintains a JSON-based registry where:
+//   - Each node name is permanently mapped to an overlay IP
+//   - The circle owner (nodeA) always receives .1
+//   - An atomic counter tracks the next available IP
+//   - File locking keeps concurrent writes safe
 //
 // SYNC STRATEGY:
-//   - nodeA (CA) apni registry /var/lib/sgx-guardian/nebula/ mein rakhta hai
-//   - Member nodes cert request ke waqt apni IP bhi register karate hain
-//   - nodeA ki registry hi master hai — wo hi IP assign karta hai
-//   - Member nodes apni assigned IP locally cache karte hain
+//   - nodeA (CA) stores its registry in /var/lib/sgx-guardian/nebula/
+//   - Member nodes also register their IP during certificate requests
+//   - nodeA's registry is the source of truth and performs IP assignment
+//   - Member nodes cache their assigned IP locally
 // ============================================================
 
 use serde::{Deserialize, Serialize};
@@ -26,8 +26,8 @@ use std::path::Path;
 
 pub const REGISTRY_SUBNET_BASE: &str = "192.168.100";
 pub const REGISTRY_CIDR: u8 = 24;
-pub const REGISTRY_OWNER_HOST: u8 = 1; // Circle owner hamesha .1
-pub const REGISTRY_START_HOST: u8 = 2; // Members .2 se shuru
+pub const REGISTRY_OWNER_HOST: u8 = 1; // Circle owner always uses .1
+pub const REGISTRY_START_HOST: u8 = 2; // Members start from .2
 pub const REGISTRY_MAX_HOST: u8 = 254; // Maximum .254
 
 /// Permanent IP allocation record for one node.
@@ -432,8 +432,8 @@ impl OverlayRegistry {
 }
 
 // ── Compat bridge: convert OverlayRegistry → OverlayPool ─────
-// Yeh bridge isliye hai ke main.rs OverlayPool use karta hai.
-// Registry se pool banana easy hai.
+// This bridge exists because main.rs still uses OverlayPool.
+// Building a pool from the registry is straightforward.
 impl From<&OverlayRegistry> for crate::nebula::overlay::OverlayPool {
     fn from(reg: &OverlayRegistry) -> Self {
         let mut pool = crate::nebula::overlay::OverlayPool::new(

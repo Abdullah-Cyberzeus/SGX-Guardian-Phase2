@@ -211,7 +211,14 @@ fn cmd_deactivate(args: DidDeactivateArgs) {
 
     match did::method::deactivate(did::DEFAULT_DID_PATH, &args.reason) {
         Ok(()) => {
-            println!("✅ DID deactivated. Restart daemon to enforce runtime refusal.");
+            const DID_DOC_ROTATION_FLAG: &str = "/var/lib/sgx-guardian/identity/.dkp_rotated.flag";
+            if let Some(parent) = std::path::Path::new(DID_DOC_ROTATION_FLAG).parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(DID_DOC_ROTATION_FLAG, chrono::Utc::now().to_rfc3339());
+            println!("✅ DID deactivated.");
+            println!("  Final DID Document with sgx:status=deactivated will be published");
+            println!("  by the running daemon within ~30 s. Restart not required.");
         }
         Err(DidError::Deactivated(when)) => {
             eprintln!("ℹ️ Already deactivated at {}", when);

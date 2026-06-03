@@ -90,6 +90,32 @@ fn lock_path(node: &str) -> String {
     format!("{}/transport_lock_{}.txt", LOCK_DIR, node)
 }
 
+fn is_interface_available(iface: &InterfaceRecord) -> bool {
+    iface.is_up && iface.ip.is_some()
+}
+
+fn read_transport_lock(node: &str) -> Option<String> {
+    fs::read_to_string(lock_path(node))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn resolve_active_interface<'a>(
+    interfaces: &'a [InterfaceRecord],
+    lock: Option<&str>,
+) -> Option<&'a InterfaceRecord> {
+    if let Some(locked_iface) = lock {
+        return interfaces
+            .iter()
+            .find(|iface| iface.name == locked_iface && is_interface_available(iface));
+    }
+
+    interfaces
+        .iter()
+        .find(|iface| is_interface_available(iface))
+}
+
 fn classify(name: &str) -> Option<TransportType> {
     let lower = name.to_lowercase();
 
@@ -191,10 +217,12 @@ pub fn run(args: TransportArgs) {
 
 fn run_list(args: TransportListArgs) {
     let interfaces = detect_interfaces();
+    let lock = read_transport_lock(&args.node);
+    let active_iface = resolve_active_interface(&interfaces, lock.as_deref());
 
     println!("📡 Detected {} network interfaces:", interfaces.len());
     for iface in &interfaces {
-        let status = if iface.is_up && iface.ip.is_some() {
+        let status = if is_interface_available(iface) {
             "UP"
         } else {
             "DOWN"
@@ -211,7 +239,7 @@ fn run_list(args: TransportListArgs) {
 
     let mut summary = Vec::new();
     for iface in &interfaces {
-        let available = iface.is_up && iface.ip.is_some();
+        let available = is_interface_available(iface);
         summary.push(format!(
             "{}:{}(pri={}, avail={})",
             iface.name,
@@ -223,47 +251,55 @@ fn run_list(args: TransportListArgs) {
     summary.sort();
     println!("🚛 Transport Registry: [{}]", summary.join(", "));
 
-    let path = lock_path(&args.node);
-    if let Ok(locked) = fs::read_to_string(&path) {
-        println!("🔒 Manual lock: {}", locked.trim());
-    } else if let Some(active) = interfaces
-        .iter()
-        .find(|i| i.is_up && i.ip.is_some())
-        .map(|i| i.transport.to_string())
-    {
-        println!("✅ Active: {} (auto)", active);
+    if let Some(locked_iface) = &lock {
+        println!("🔒 Manual lock: {}", locked_iface);
+        if let Some(active) = active_iface {
+            println!("✅ Active: {} ({}) [locked]", active.transport, active.name);
+        } else {
+            println!(
+                "❌ Active: none (locked interface unavailable: {})",
+                locked_iface
+            );
+        }
+    } else if let Some(active) = active_iface {
+        println!("✅ Active: {} ({}) (auto)", active.transport, active.name);
+    } else {
+        println!("❌ Active: none");
     }
 }
 
 fn run_show(args: TransportListArgs) {
     let interfaces = detect_interfaces();
-    let active_iface = interfaces
-        .iter()
-        .find(|i| i.is_up && i.ip.is_some())
-        .map(|i| (i.name.clone(), i.transport.to_string()));
-    let lock = fs::read_to_string(lock_path(&args.node))
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+    let lock = read_transport_lock(&args.node);
+    let active_iface = resolve_active_interface(&interfaces, lock.as_deref());
 
-    match active_iface {
-        Some((iface, transport)) => println!("Active: {} ({})", transport, iface),
-        None => println!("Active: none"),
-    }
-    match lock {
-        Some(lock_iface) => println!("Lock: {}", lock_iface),
-        None => println!("Lock: none"),
+    if let Some(lock_iface) = lock {
+        if let Some(active) = active_iface {
+            println!("Active: {} ({})", active.transport, active.name);
+        } else {
+            println!("Active: none");
+        }
+        println!("Lock: {}", lock_iface);
+    } else {
+        if let Some(active) = active_iface {
+            println!("Active: {} ({})", active.transport, active.name);
+        } else {
+            println!("Active: none");
+        }
+        println!("Lock: none");
     }
 }
 
 fn run_stats(args: TransportListArgs) {
     let interfaces = detect_interfaces();
+    let lock = read_transport_lock(&args.node);
+    let active_iface = resolve_active_interface(&interfaces, lock.as_deref());
     println!(
         "{:<12} {:<8} {:<8} {:<12} {:<12} {:<10}",
         "Transport", "Priority", "Status", "Latency", "Bandwidth", "Interface"
     );
-    for iface in interfaces {
-        let status = if iface.is_up && iface.ip.is_some() {
+    for iface in &interfaces {
+        let status = if is_interface_available(iface) {
             "UP"
         } else {
             "DOWN"
@@ -283,14 +319,20 @@ fn run_stats(args: TransportListArgs) {
             iface.name
         );
     }
-    let lock = fs::read_to_string(lock_path(&args.node))
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
     if let Some(lock_iface) = lock {
         println!("Lock: {}", lock_iface);
+        if let Some(active) = active_iface {
+            println!("Active: {} ({})", active.transport, active.name);
+        } else {
+            println!("Active: none");
+        }
     } else {
         println!("Lock: none");
+        if let Some(active) = active_iface {
+            println!("Active: {} ({})", active.transport, active.name);
+        } else {
+            println!("Active: none");
+        }
     }
 }
 
@@ -334,4 +376,53 @@ fn run_unlock(args: TransportUnlockArgs) {
     }
 
     println!("🔓 Transport lock removed");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn iface(
+        name: &str,
+        transport: TransportType,
+        is_up: bool,
+        ip: Option<&str>,
+    ) -> InterfaceRecord {
+        InterfaceRecord {
+            name: name.to_string(),
+            transport,
+            ip: ip.and_then(|v| v.parse::<IpAddr>().ok()),
+            is_up,
+        }
+    }
+
+    #[test]
+    fn strict_lock_returns_none_when_locked_iface_unavailable() {
+        let interfaces = vec![
+            iface("eth0", TransportType::Ethernet, false, None),
+            iface("wlan0", TransportType::WiFi, true, Some("192.168.1.8")),
+        ];
+        let active = resolve_active_interface(&interfaces, Some("eth0"));
+        assert!(active.is_none());
+    }
+
+    #[test]
+    fn strict_lock_uses_locked_iface_when_available() {
+        let interfaces = vec![
+            iface("eth0", TransportType::Ethernet, true, Some("10.0.0.12")),
+            iface("wlan0", TransportType::WiFi, true, Some("192.168.1.8")),
+        ];
+        let active = resolve_active_interface(&interfaces, Some("eth0"));
+        assert_eq!(active.map(|v| v.name.as_str()), Some("eth0"));
+    }
+
+    #[test]
+    fn no_lock_keeps_auto_selection() {
+        let interfaces = vec![
+            iface("eth0", TransportType::Ethernet, false, None),
+            iface("wlan0", TransportType::WiFi, true, Some("192.168.1.8")),
+        ];
+        let active = resolve_active_interface(&interfaces, None);
+        assert_eq!(active.map(|v| v.name.as_str()), Some("wlan0"));
+    }
 }
