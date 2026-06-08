@@ -12,7 +12,6 @@ User=sgxguardian
 Group=sgxguardian
 
 # ---- Binary ----
-# Node profile loaded from /etc/sgx-guardian/node_profile
 EnvironmentFile=-/etc/sgx-guardian/node_profile
 ExecStart=/usr/bin/sgx-guardian ${SGX_NODE_ID:-nodeA}
 WorkingDirectory=/var/lib/sgx-guardian
@@ -41,9 +40,9 @@ CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_NET_ADMIN
 AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_NET_ADMIN
 
 # ---- Networking ----
-# Network filtering handled by nftables rules in enforcement/executor.rs
-# IPAddressDeny/IPAddressAllow removed — they block Nebula overlay (UDP 4242),
-# registry sync (TCP 50062), and overlay subnet (192.168.100.0/24).
+# Network filtering handled by nftables rules in enforcement/executor.rs and
+# threat/blocker.rs. Do not add IPAddressDeny/IPAddressAllow here or Nebula
+# overlay traffic will break.
 
 # ---- Logging ----
 StandardOutput=journal

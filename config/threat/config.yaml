@@ -1,0 +1,12 @@
+# /etc/sgx-guardian/threat/config.yaml
+# Off by default. Admin opts in.
+enabled: false
+interface: null
+eve_path: "/var/log/suricata/eve.json"
+suricata_yaml: "/etc/suricata/suricata.yaml"
+block_mode: alert_only
+block_ttl_secs: 86400
+rule_update_hours: 24
+block_exempt:
+  - "127.0.0.0/8"
+  - "192.168.100.0/24"

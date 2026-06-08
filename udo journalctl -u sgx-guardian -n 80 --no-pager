@@ -1,0 +1,21 @@
+[0;1;32m●[0m sgx-guardian.service - SGX Guardian Client (Zero-Trust Edge Security Agent)
+     Loaded: loaded (/lib/systemd/system/sgx-guardian.service; enabled; vendor preset: enabled)
+     Active: [0;1;32mactive (running)[0m since Thu 2026-06-04 16:46:11 PKT; 17ms ago
+       Docs: https://github.com/AsadAli-CyberZeus/SGX
+   Main PID: 110772 (sgx-guardian)
+      Tasks: 1 (limit: 9338)
+     Memory: 1.0M
+        CPU: 14ms
+     CGroup: /system.slice/sgx-guardian.service
+             └─110772 /usr/bin/sgx-guardian nodeA
+
+Jun 04 16:46:11 AsadAli sgx-guardian[110772]:  Loading node configurations...
+Jun 04 16:46:11 AsadAli sgx-guardian[110772]: ✅ Loaded Node A: nodeA (guardian-node-A) at 172.25.75.210:50051 | key: BFx+3bFKhHGOCsf90Y2E4qCpEsQHyO6kjMOW86b4ywYW11ogKd2R7ETGFwdlu4ROCaq1tTFHY2FF+t/5ksp45zo=
+Jun 04 16:46:11 AsadAli sgx-guardian[110772]: ✅ Loaded Node B: nodeB (guardian-node-B) at 172.25.75.210:50052 | key: BKNg4dxk96dX1jCslzynbdVgxij+aw/lx8LCchze3vSoRK+6tFqPgfZfkE4Cwu6NzAiHsaH09PKSjJbac+E4tPQ=
+Jun 04 16:46:11 AsadAli sgx-guardian[110772]: ✅ Loaded Node C: nodeC (guardian-node-C) at 172.25.75.210:50053 | key: BL+LvXXKaZNISyOIKRPGuCsADux7B3KIvNgR+jsyrhzwz3nml4wm1/dgAXrp4+bRdWdFizBSph6UMUAbUZSdtX4=
+Jun 04 16:46:11 AsadAli sgx-guardian[110772]:  Starting inter-node mock communication...
+Jun 04 16:46:11 AsadAli sgx-guardian[110772]: thread 'main' panicked at /home/asad/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-appender-0.2.4/src/rolling.rs:154:14:
+Jun 04 16:46:11 AsadAli sgx-guardian[110772]: initializing rolling file appender failed: InitError { context: "failed to create log directory", source: Os { code: 13, kind: PermissionDenied, message: "Permission denied" } }
+Jun 04 16:46:11 AsadAli sgx-guardian[110772]: note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+Jun 04 16:46:11 AsadAli systemd[1]: [0;1;39m[0;1;31m[0;1;39msgx-guardian.service: Main process exited, code=exited, status=101/n/a[0m
+Jun 04 16:46:11 AsadAli systemd[1]: [0;1;38;5;185m[0;1;39m[0;1;38;5;185msgx-guardian.service: Failed with result 'exit-code'.[0m

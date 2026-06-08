@@ -6,13 +6,15 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct AppState {
     pub node_id: String,
-    pub config_dir: String,       // /etc/sgx-guardian/config
-    pub boot_dir: String,         // /var/lib/sgx-guardian/boot
-    pub keys_dir: String,         // /var/lib/sgx-guardian/keys
-    pub pcr_dir: String,          // /var/lib/sgx-guardian/pcr
-    pub pcr_baseline_dir: String, // /etc/sgx-guardian
-    pub log_dir_primary: String,  // /var/log/sgx-guardian
-    pub log_dir_fallback: String, // logs
+    pub config_dir: String,
+    pub boot_dir: String,
+    pub keys_dir: String,
+    pub pcr_dir: String,
+    pub pcr_baseline_dir: String,
+    pub log_dir_primary: String,
+    pub log_dir_fallback: String,
+    pub threat_config_path: String,
+    pub threat_state_dir: String,
 }
 
 impl AppState {
@@ -26,6 +28,8 @@ impl AppState {
             pcr_baseline_dir: "/etc/sgx-guardian".into(),
             log_dir_primary: "/var/log/sgx-guardian".into(),
             log_dir_fallback: "logs".into(),
+            threat_config_path: "/etc/sgx-guardian/threat/config.yaml".into(),
+            threat_state_dir: "/var/lib/sgx-guardian/threat".into(),
         })
     }
 }

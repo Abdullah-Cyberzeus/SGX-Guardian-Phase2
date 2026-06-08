@@ -1,0 +1,5 @@
+alert tcp any any -> $HOME_NET 22 (msg:"GUARDIAN RECON SSH SYN"; flags:S; flow:to_server,stateless; classtype:attempted-recon; sid:9900001; rev:2;)
+alert tcp any any -> $HOME_NET 23 (msg:"GUARDIAN POLICY TELNET ACCESS"; flags:S; flow:to_server,stateless; classtype:policy-violation; sid:9900002; rev:2;)
+alert tcp any any -> any any (msg:"GUARDIAN MALWARE EICAR STRING"; content:"EICAR-STANDARD-ANTIVIRUS-TEST-FILE"; nocase; sid:9900003; rev:1;)
+alert tcp any any -> any any (msg:"GUARDIAN EXPLOIT CMD EXE PROBE"; content:"cmd.exe"; nocase; sid:9900004; rev:1;)
+alert tcp any any -> any any (msg:"GUARDIAN POLICY CURL USER AGENT"; content:"User-Agent|3a| curl/"; nocase; sid:9900005; rev:1;)
