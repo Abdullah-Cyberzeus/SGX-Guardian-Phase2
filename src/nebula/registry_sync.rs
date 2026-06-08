@@ -34,6 +34,8 @@ pub struct RegistryRequest {
     pub pubkey_prefix: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub did_doc_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub did_query: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -43,6 +45,8 @@ pub struct RegistryResponse {
     pub ip: Option<String>,
     pub error: Option<String>,
     pub registry_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub did_doc_json: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub did_doc_aggregate_json: Option<String>,
 }
@@ -414,6 +418,49 @@ async fn handle_registry_connection(
             }
         }
 
+        "resolve_did" => {
+            if !is_ca_node() {
+                RegistryResponse {
+                    success: false,
+                    error: Some("Only CA can serve DID document point lookups".into()),
+                    ..Default::default()
+                }
+            } else {
+                match request.did_query.as_deref() {
+                    Some(raw) if !raw.trim().is_empty() => match crate::did::Did::parse(raw.trim())
+                    {
+                        Ok(did) => match crate::did::doc_persistence::load_peer(&did) {
+                            Ok(Some(doc)) => RegistryResponse {
+                                success: true,
+                                did_doc_json: Some(serde_json::to_string(&doc)?),
+                                ..Default::default()
+                            },
+                            Ok(None) => RegistryResponse {
+                                success: false,
+                                error: Some("not found".into()),
+                                ..Default::default()
+                            },
+                            Err(e) => RegistryResponse {
+                                success: false,
+                                error: Some(format!("resolve_did load failed: {}", e)),
+                                ..Default::default()
+                            },
+                        },
+                        Err(e) => RegistryResponse {
+                            success: false,
+                            error: Some(format!("bad DID: {}", e)),
+                            ..Default::default()
+                        },
+                    },
+                    _ => RegistryResponse {
+                        success: false,
+                        error: Some("missing did_query".into()),
+                        ..Default::default()
+                    },
+                }
+            }
+        }
+
         _ => RegistryResponse {
             success: false,
             error: Some(format!("Unknown action: {}", request.action)),
@@ -449,6 +496,7 @@ pub async fn request_ip_from_ca(
         node_name: node_name.to_string(),
         pubkey_prefix: Some(pubkey_prefix.to_string()),
         did_doc_json: None,
+        did_query: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| format!("Serialize: {}", e))?;
@@ -501,6 +549,7 @@ pub async fn query_ip_from_ca(node_name: &str, ca_host: &str) -> Result<(String,
         node_name: node_name.to_string(),
         pubkey_prefix: None,
         did_doc_json: None,
+        did_query: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| format!("Serialize: {}", e))?;
@@ -550,6 +599,7 @@ pub async fn pull_registry_snapshot_from_ca(ca_host: &str) -> Result<String, Str
         node_name: "".to_string(),
         pubkey_prefix: None,
         did_doc_json: None,
+        did_query: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| e.to_string())?;
@@ -584,6 +634,7 @@ pub async fn pull_lighthouse_snapshot_from_ca(ca_host: &str) -> Result<String, S
         node_name: "".to_string(),
         pubkey_prefix: None,
         did_doc_json: None,
+        did_query: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| e.to_string())?;
@@ -618,6 +669,7 @@ pub async fn pull_relay_snapshot_from_ca(ca_host: &str) -> Result<String, String
         node_name: "".to_string(),
         pubkey_prefix: None,
         did_doc_json: None,
+        did_query: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| e.to_string())?;

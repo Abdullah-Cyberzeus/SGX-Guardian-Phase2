@@ -46,6 +46,13 @@ pub struct DidResolveResponse {
     pub public_key_bytes: usize,
 }
 
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum DidResolveEnvelope {
+    Local(DidResolveResponse),
+    Peer(did::ResolutionResult),
+}
+
 #[derive(Deserialize)]
 pub struct DeactivateRequest {
     pub reason: Option<String>,
@@ -121,6 +128,13 @@ pub struct PeerDidQuery {
     pub did: Option<String>,
 }
 
+#[derive(Default, Deserialize)]
+pub struct ResolveQuery {
+    pub did: Option<String>,
+    #[serde(default)]
+    pub reject_deactivated: bool,
+}
+
 pub async fn status(_state: State<Arc<AppState>>) -> Result<Json<DidStatusResponse>, ApiError> {
     let did_path = did_path();
     let rec = did::DidRecord::load(&did_path).map_err(|e| did_error(e, &did_path))?;
@@ -142,7 +156,39 @@ pub async fn status(_state: State<Arc<AppState>>) -> Result<Json<DidStatusRespon
     }))
 }
 
-pub async fn resolve(_state: State<Arc<AppState>>) -> Result<Json<DidResolveResponse>, ApiError> {
+pub async fn resolve(
+    State(s): State<Arc<AppState>>,
+    Query(q): Query<ResolveQuery>,
+) -> Result<Json<DidResolveEnvelope>, ApiError> {
+    if let Some(raw_did) = q.did {
+        let did_value = raw_did.trim();
+        if did_value.is_empty() {
+            return Err(ApiError::BadRequest(
+                "did query parameter must not be empty".to_string(),
+            ));
+        }
+
+        let resolver = s.did_resolver.with_reject_deactivated(q.reject_deactivated);
+        let result = resolver
+            .resolve(did_value)
+            .await
+            .map_err(did_resolution_error)?;
+        log_audit(
+            &s.node_id,
+            AuditCategory::Did,
+            AuditSeverity::Info,
+            AuditAction::Succeeded,
+            &format!(
+                "DID resolved via {} (status={}, v{}, TTL={}s)",
+                result.source.as_str(),
+                result.status,
+                result.version_id,
+                result.ttl_remaining_sec
+            ),
+        );
+        return Ok(Json(DidResolveEnvelope::Peer(result)));
+    }
+
     let did_path = did_path();
     let dkp_pubkey_path = dkp_pubkey_path();
     let (resolved_did, public_key, active) =
@@ -156,7 +202,7 @@ pub async fn resolve(_state: State<Arc<AppState>>) -> Result<Json<DidResolveResp
         public_key_preview.push_str("...");
     }
 
-    Ok(Json(DidResolveResponse {
+    Ok(Json(DidResolveEnvelope::Local(DidResolveResponse {
         did: resolved_did.as_str().to_string(),
         status: if active {
             "ACTIVE".to_string()
@@ -165,7 +211,7 @@ pub async fn resolve(_state: State<Arc<AppState>>) -> Result<Json<DidResolveResp
         },
         public_key_preview,
         public_key_bytes: public_key.len(),
-    }))
+    })))
 }
 
 pub async fn deactivate(
@@ -429,7 +475,7 @@ fn required_nonempty_field(value: &str, field: &str) -> Result<String, ApiError>
 fn known_floor_version(doc: &DidDocument) -> u32 {
     if let Ok(Some(self_doc)) = doc_persistence::load_self() {
         if self_doc.id == doc.id {
-            return self_doc.sgx_version_id;
+            return doc_persistence::read_self_floor_version();
         }
     }
     doc.did()
@@ -448,6 +494,22 @@ fn did_query_error(err: DidError) -> ApiError {
         DidError::InvalidFormat(e) | DidError::WrongMethod(e) | DidError::Base58(e) => {
             ApiError::BadRequest(e)
         }
+        other => ApiError::BadRequest(other.to_string()),
+    }
+}
+
+fn did_resolution_error(err: DidError) -> ApiError {
+    match err {
+        DidError::Unresolvable(did) => ApiError::NotFound(format!("unresolvable DID: {}", did)),
+        DidError::Io(e) => ApiError::Internal(format!("did resolve failed: {}", e)),
+        DidError::ResolutionFailed(e) => ApiError::Internal(format!("did resolve failed: {}", e)),
+        DidError::InvalidFormat(e)
+        | DidError::WrongMethod(e)
+        | DidError::Base58(e)
+        | DidError::UidUnavailable(e)
+        | DidError::Signing(e)
+        | DidError::DkpPubkeyMissing(e)
+        | DidError::Deactivated(e) => ApiError::BadRequest(e),
         other => ApiError::BadRequest(other.to_string()),
     }
 }
@@ -584,6 +646,7 @@ mod tests {
             pcr_baseline_dir: "/tmp".into(),
             log_dir_primary: "/tmp/logs".into(),
             log_dir_fallback: "/tmp/logs2".into(),
+            did_resolver: crate::did::Resolver::new(Default::default()),
         })
     }
 
@@ -639,9 +702,16 @@ mod tests {
             Some("2026-05-21T09:00:00Z".into()),
         );
 
-        let Json(resp) = super::resolve(State(test_state())).await.expect("resolve");
-        assert_eq!(resp.status, "DEACTIVATED");
-        assert_eq!(resp.public_key_bytes, 64);
+        let Json(resp) = super::resolve(State(test_state()), Query(ResolveQuery::default()))
+            .await
+            .expect("resolve");
+        match resp {
+            DidResolveEnvelope::Local(resp) => {
+                assert_eq!(resp.status, "DEACTIVATED");
+                assert_eq!(resp.public_key_bytes, 64);
+            }
+            DidResolveEnvelope::Peer(_) => panic!("expected local resolve response"),
+        }
     }
 
     #[tokio::test]

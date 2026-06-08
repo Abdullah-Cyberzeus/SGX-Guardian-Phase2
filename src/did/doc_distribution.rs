@@ -21,6 +21,7 @@ pub async fn publish_to_ca(
         node_name: node_name.to_string(),
         pubkey_prefix: None,
         did_doc_json: Some(json),
+        did_query: None,
     };
     let resp = send_request(ca_host, &req).await?;
     if !resp.success {
@@ -32,12 +33,13 @@ pub async fn publish_to_ca(
     Ok(())
 }
 
-pub async fn pull_and_apply_aggregate(ca_host: &str) -> Result<usize, DidError> {
+pub async fn pull_and_apply_aggregate(ca_host: &str) -> Result<Vec<String>, DidError> {
     let req = RegistryRequest {
         action: "snapshot_did_doc".into(),
         node_name: String::new(),
         pubkey_prefix: None,
         did_doc_json: None,
+        did_query: None,
     };
     let resp = send_request(ca_host, &req).await?;
     if !resp.success {
@@ -49,13 +51,13 @@ pub async fn pull_and_apply_aggregate(ca_host: &str) -> Result<usize, DidError> 
 
     let raw = resp.did_doc_aggregate_json.unwrap_or_else(|| "[]".into());
     let docs: Vec<DidDocument> = serde_json::from_str(&raw)?;
-    let mut applied = 0usize;
+    let mut updated_dids = Vec::new();
     for doc in docs {
         let floor = local_floor_version(&doc);
         match verify_with_replay_protection(&doc, floor) {
             Ok(()) => {
                 if save_peer(&doc).is_ok() {
-                    applied += 1;
+                    updated_dids.push(doc.id.clone());
                 }
             }
             Err(e) => {
@@ -63,7 +65,7 @@ pub async fn pull_and_apply_aggregate(ca_host: &str) -> Result<usize, DidError> 
             }
         }
     }
-    Ok(applied)
+    Ok(updated_dids)
 }
 
 pub async fn ca_ingest_published(payload: &str) -> Result<(), DidError> {
@@ -83,7 +85,10 @@ pub async fn ca_export_aggregate() -> Result<String, DidError> {
     Ok(serde_json::to_string(&docs)?)
 }
 
-async fn send_request(ca_host: &str, req: &RegistryRequest) -> Result<RegistryResponse, DidError> {
+pub async fn send_request(
+    ca_host: &str,
+    req: &RegistryRequest,
+) -> Result<RegistryResponse, DidError> {
     let addr = format!("{}:{}", ca_host, REGISTRY_SYNC_PORT);
     let stream = tokio::time::timeout(
         std::time::Duration::from_secs(REQ_TIMEOUT_SECS),
@@ -123,7 +128,7 @@ async fn send_request(ca_host: &str, req: &RegistryRequest) -> Result<RegistryRe
 fn local_floor_version(doc: &DidDocument) -> u32 {
     if let Ok(Some(self_doc)) = crate::did::doc_persistence::load_self() {
         if self_doc.id == doc.id {
-            return self_doc.sgx_version_id;
+            return crate::did::doc_persistence::read_self_floor_version();
         }
     }
     match doc.did() {

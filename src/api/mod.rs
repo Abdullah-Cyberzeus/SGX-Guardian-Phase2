@@ -62,7 +62,20 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(handlers::transport::unlock),
         )
         .route("/api/v1/relay/list", get(handlers::relay::list))
+        .route(
+            "/api/v1/lighthouse/list",
+            get(handlers::relay::lighthouse_list),
+        )
+        .route("/api/v1/member/list", get(handlers::relay::member_list))
+        .route(
+            "/api/v1/relay-lighthouse/list",
+            get(handlers::relay::relay_lighthouse_list),
+        )
         .route("/api/v1/relay/toggle", post(handlers::relay::toggle))
+        .route(
+            "/api/v1/lighthouse/toggle",
+            post(handlers::relay::lighthouse_toggle),
+        )
         // Phase 2 - action endpoints
         .route("/api/v1/dkp/rotate", post(handlers::dkp::rotate))
         .route("/api/v1/dkp/revoke", post(handlers::dkp::revoke))
@@ -131,7 +144,7 @@ pub async fn serve(state: Arc<AppState>, bind: SocketAddr) -> anyhow::Result<()>
 mod tests {
     use super::*;
     use crate::did::doc_persistence::{
-        self, CA_AGGREGATE_PATH_ENV, PEERS_DOC_DIR_ENV, SELF_DOC_PATH_ENV,
+        self, CA_AGGREGATE_PATH_ENV, PEERS_DOC_DIR_ENV, SELF_DOC_PATH_ENV, VERSION_COUNTER_PATH_ENV,
     };
     use crate::did::doc_sign;
     use crate::did::document::{DidDocument, DocBuildInput, RevokedVm};
@@ -155,20 +168,25 @@ mod tests {
         self_doc_prev: Option<OsString>,
         peers_dir_prev: Option<OsString>,
         aggregate_prev: Option<OsString>,
+        counter_prev: Option<OsString>,
     }
 
     impl EnvGuard {
         fn new(self_doc_path: &Path, peers_dir: &Path, aggregate_path: &Path) -> Self {
+            let counter_path = self_doc_path.with_file_name("self_version_counter");
             let self_doc_prev = std::env::var_os(SELF_DOC_PATH_ENV);
             let peers_dir_prev = std::env::var_os(PEERS_DOC_DIR_ENV);
             let aggregate_prev = std::env::var_os(CA_AGGREGATE_PATH_ENV);
+            let counter_prev = std::env::var_os(VERSION_COUNTER_PATH_ENV);
             std::env::set_var(SELF_DOC_PATH_ENV, self_doc_path);
             std::env::set_var(PEERS_DOC_DIR_ENV, peers_dir);
             std::env::set_var(CA_AGGREGATE_PATH_ENV, aggregate_path);
+            std::env::set_var(VERSION_COUNTER_PATH_ENV, counter_path);
             Self {
                 self_doc_prev,
                 peers_dir_prev,
                 aggregate_prev,
+                counter_prev,
             }
         }
     }
@@ -178,6 +196,7 @@ mod tests {
             restore_env(SELF_DOC_PATH_ENV, self.self_doc_prev.take());
             restore_env(PEERS_DOC_DIR_ENV, self.peers_dir_prev.take());
             restore_env(CA_AGGREGATE_PATH_ENV, self.aggregate_prev.take());
+            restore_env(VERSION_COUNTER_PATH_ENV, self.counter_prev.take());
         }
     }
 
@@ -199,6 +218,7 @@ mod tests {
             pcr_baseline_dir: "/tmp".into(),
             log_dir_primary: "/tmp/logs".into(),
             log_dir_fallback: "/tmp/logs-fallback".into(),
+            did_resolver: crate::did::Resolver::new(Default::default()),
         })
     }
 
@@ -396,6 +416,8 @@ mod tests {
         );
         let peer_doc = signed_doc(&peer_did, "nodeB", 4, 4, "active", vec![], false);
         doc_persistence::save_self(&self_doc).expect("save self doc");
+        doc_persistence::write_self_floor_version(self_doc.sgx_version_id)
+            .expect("write self floor version");
         doc_persistence::save_peer(&peer_doc).expect("save peer doc");
 
         let publish_handle = spawn_mock_ca_publish_server("nodeB").await;
@@ -499,6 +521,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn did_resolve_query_returns_peer_resolution_result() {
+        let _lock = TEST_ENV_LOCK.lock().await;
+        let td = TempDir::new().expect("tempdir");
+        let self_doc_path = td.path().join("identity").join("did_doc.json");
+        let peers_dir = td.path().join("identity").join("peers");
+        let aggregate_path = td.path().join("identity").join("circle_did_docs.json");
+        let _env = EnvGuard::new(&self_doc_path, &peers_dir, &aggregate_path);
+
+        let peer_did = Did::from_id_bytes(&[21u8; 32]).to_string();
+        let peer_doc = signed_doc(&peer_did, "nodeB", 7, 4, "active", vec![], false);
+        doc_persistence::save_peer(&peer_doc).expect("save peer doc");
+
+        let (base_url, handle) = spawn_api().await;
+        let response: Value = reqwest::Client::new()
+            .get(format!("{}/api/v1/did/resolve", base_url))
+            .query(&[("did", peer_did.as_str())])
+            .send()
+            .await
+            .expect("resolve request")
+            .json()
+            .await
+            .expect("resolve json");
+        handle.abort();
+
+        assert_eq!(response["did"], peer_did);
+        assert_eq!(response["source"], "local_peer_doc");
+        assert_eq!(response["status"], "active");
+        assert_eq!(response["version_id"], 7);
+        assert_eq!(response["dkp_version"], 4);
+        assert_eq!(response["services"].as_array().map(Vec::len), Some(2));
+    }
+
+    #[tokio::test]
     async fn did_document_verify_rejects_replayed_lower_version() {
         let _lock = TEST_ENV_LOCK.lock().await;
         let td = TempDir::new().expect("tempdir");
@@ -511,6 +566,8 @@ mod tests {
         let current_doc = signed_doc(&did, "nodeA", 5, 3, "active", vec![], false);
         let older_doc = signed_doc(&did, "nodeA", 4, 2, "active", vec![], false);
         doc_persistence::save_self(&current_doc).expect("save self doc");
+        doc_persistence::write_self_floor_version(current_doc.sgx_version_id)
+            .expect("write self floor version");
         let older_path = td.path().join("older_did_doc.json");
         std::fs::write(
             &older_path,

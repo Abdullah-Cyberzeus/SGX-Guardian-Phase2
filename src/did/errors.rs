@@ -39,4 +39,10 @@ pub enum DidError {
         "DID Document replay: incoming version v{incoming} is older than locally known v{known}"
     )]
     ReplayedOldVersion { incoming: u32, known: u32 },
+
+    #[error("DID unresolvable: no source returned a document for {0}")]
+    Unresolvable(String),
+
+    #[error("DID resolution failed: {0}")]
+    ResolutionFailed(String),
 }

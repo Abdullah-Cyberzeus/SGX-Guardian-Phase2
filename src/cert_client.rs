@@ -213,11 +213,18 @@ pub async fn request_certificate_from_ca(
                             }
                             Err(e) => {
                                 eprintln!(
-                                    "❌ Failed to save CA cert: {} — this will break the overlay!",
+                                    "❌ Failed to save CA cert: {} — bootstrap cannot continue!",
                                     e
                                 );
-                                log_error(&node_id, &format!("CA cert save failed: {}", e));
-                                // Don't retry forever — surface the error and continue.
+                                log_error(&node_id, &format!("CA cert save FATAL: {}", e));
+                                log_audit(
+                                    &node_id,
+                                    AuditCategory::Network,
+                                    AuditSeverity::Critical,
+                                    AuditAction::Failed,
+                                    &format!("CA cert save failed — bootstrap aborted: {}", e),
+                                );
+                                return; // Abort — node is half-bootstrapped, operator must fix
                             }
                         }
                     } else {
