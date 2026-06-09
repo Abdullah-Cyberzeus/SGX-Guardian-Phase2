@@ -472,6 +472,7 @@ mod tests {
             pcr_baseline_dir: "/tmp".into(),
             log_dir_primary: "/tmp/logs".into(),
             log_dir_fallback: "/tmp/logs2".into(),
+            did_resolver: crate::did::Resolver::new(Default::default()),
         })
     }
 

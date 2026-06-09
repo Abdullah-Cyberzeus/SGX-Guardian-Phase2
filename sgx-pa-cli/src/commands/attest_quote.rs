@@ -396,44 +396,21 @@ pub fn run_verify(args: VerifyQuoteArgs) {
             }
         };
 
-        // Preferred: verify with signer key shipped in quote envelope (cross-node safe).
-        let embedded_ok = signed["signing_pubkey_b64"]
-            .as_str()
-            .and_then(|b64| base64::engine::general_purpose::STANDARD.decode(b64).ok())
-            .map(|pubkey_der| {
+        // SECURITY: Always verify against the LOCAL trusted DKP key.
+        // Never trust signing_pubkey_b64 from the quote envelope — attacker can embed
+        // their own key and self-sign a forged quote.
+        match std::fs::read(DKP_PUB_DER_PATH) {
+            Ok(pubkey_der) => {
                 let raw_key = normalize_p256_pubkey(&pubkey_der);
                 let key = signature::UnparsedPublicKey::new(algo, raw_key);
                 key.verify(&hash, &sig_bytes).is_ok()
-            });
-
-        match embedded_ok {
-            Some(true) => true,
-            Some(false) => {
-                println!(
-                    "  Signature:   ⚠️ embedded signing key verify failed; trying local DKP key"
-                );
-                match std::fs::read(DKP_PUB_DER_PATH) {
-                    Ok(pubkey_der) => {
-                        let raw_key = normalize_p256_pubkey(&pubkey_der);
-                        let key = signature::UnparsedPublicKey::new(algo, raw_key);
-                        key.verify(&hash, &sig_bytes).is_ok()
-                    }
-                    Err(_) => false,
-                }
             }
-            None => {
-                // Backward compatibility for older quote files without signing_pubkey_b64
-                match std::fs::read(DKP_PUB_DER_PATH) {
-                    Ok(pubkey_der) => {
-                        let raw_key = normalize_p256_pubkey(&pubkey_der);
-                        let key = signature::UnparsedPublicKey::new(algo, raw_key);
-                        key.verify(&hash, &sig_bytes).is_ok()
-                    }
-                    Err(_) => {
-                        println!("  Signature:   ⚠️ no public key available for verification");
-                        false
-                    }
-                }
+            Err(_) => {
+                println!(
+                    "  Signature:   ⚠️ no trusted DKP public key at {}",
+                    DKP_PUB_DER_PATH
+                );
+                false
             }
         }
     } else {

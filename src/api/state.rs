@@ -13,10 +13,11 @@ pub struct AppState {
     pub pcr_baseline_dir: String, // /etc/sgx-guardian
     pub log_dir_primary: String,  // /var/log/sgx-guardian
     pub log_dir_fallback: String, // logs
+    pub did_resolver: crate::did::Resolver,
 }
 
 impl AppState {
-    pub fn from_env(node_id: String) -> Arc<Self> {
+    pub fn from_env(node_id: String, did_resolver: crate::did::Resolver) -> Arc<Self> {
         Arc::new(Self {
             node_id,
             config_dir: "/etc/sgx-guardian/config".into(),
@@ -26,6 +27,7 @@ impl AppState {
             pcr_baseline_dir: "/etc/sgx-guardian".into(),
             log_dir_primary: "/var/log/sgx-guardian".into(),
             log_dir_fallback: "logs".into(),
+            did_resolver,
         })
     }
 }

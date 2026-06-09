@@ -28,42 +28,41 @@
 | 17 | POST | `/pcr/baseline/verify` | Verify PCR baseline |
 | 18 | POST | `/pcr/verify` | Alias of baseline verify |
 | 19 | GET | `/did/status` | DID record status |
-| 20 | GET | `/did/resolve` | Resolve local DID |
+| 20 | GET | `/did/resolve` | Resolve local DID or a peer DID via query |
 | 21 | POST | `/did/deactivate` | Deactivate local DID |
 | 22 | GET | `/transport/list` | Enumerate transport interfaces |
 | 23 | GET | `/transport/status` | Active transport and lock state |
 | 24 | POST | `/transport/lock` | Lock active transport to a specific interface |
 | 25 | POST | `/transport/unlock` | Remove manual transport lock |
-| 26 | GET | `/relay/list` | Relay registry/runtime snapshot |
-| 27 | POST | `/relay/toggle` | Enable/disable relay role for node |
-| 28 | POST | `/relay/limits` | Update relay runtime limits |
-| 29 | POST | `/policy/sign` | Sign uploaded policy file |
-| 30 | POST | `/policy/verify` | Verify uploaded signed policy |
-| 31 | POST | `/policy/verify-deployed` | Verify deployed on-disk policy signature |
-| 32 | GET | `/policy/current` | Fetch current active policy YAML |
-| 33 | PUT | `/policy/current` | Validate and stage pending policy YAML |
-| 34 | GET | `/policy/backup` | Fetch backup policy YAML |
-| 35 | POST | `/policy/sign-deploy-current` | Sign+deploy staged pending policy |
-| 36 | GET | `/did/document` | Local DID Document summary |
-| 37 | GET | `/did/document/raw` | Raw local DID Document |
-| 38 | POST | `/did/document/verify` | Verify DID Document proof and replay floor |
-| 39 | POST | `/did/document/publish` | Force publish local DID Document to CA registry (maintenance/recovery endpoint) |
-| 40 | GET | `/did/document/peers` | List cached peer DID Documents |
-| 41 | GET | `/did/document/peer` | Fetch cached peer DID Document by DID |
+| 26 | GET | `/relay/list` | Relay-role nodes from lighthouse registry plus runtime relay fields |
+| 27 | GET | `/lighthouse/list` | Lighthouse-role nodes from lighthouse registry |
+| 28 | GET | `/member/list` | Pure member nodes from lighthouse registry |
+| 29 | GET | `/relay-lighthouse/list` | Nodes that are both relay and lighthouse |
+| 30 | POST | `/relay/toggle` | Enable/disable relay role for node |
+| 31 | POST | `/lighthouse/toggle` | Enable/disable lighthouse role for node |
+| 32 | POST | `/relay/limits` | Update relay runtime limits |
+| 33 | POST | `/policy/sign` | Sign uploaded policy file |
+| 34 | POST | `/policy/verify` | Verify uploaded signed policy |
+| 35 | POST | `/policy/verify-deployed` | Verify deployed on-disk policy signature |
+| 36 | GET | `/policy/current` | Fetch current active policy YAML |
+| 37 | PUT | `/policy/current` | Validate and stage pending policy YAML |
+| 38 | GET | `/policy/backup` | Fetch backup policy YAML |
+| 39 | POST | `/policy/sign-deploy-current` | Sign+deploy staged pending policy |
+| 40 | GET | `/did/document` | Local DID Document summary |
+| 41 | GET | `/did/document/raw` | Raw local DID Document |
+| 42 | POST | `/did/document/verify` | Verify DID Document proof and replay floor |
+| 43 | POST | `/did/document/publish` | Force publish local DID Document to CA registry (maintenance/recovery endpoint) |
+| 44 | GET | `/did/document/peers` | List cached peer DID Documents |
+| 45 | GET | `/did/document/peer` | Fetch cached peer DID Document by DID |
 
 ## 2. NEW Endpoints 
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/transport/lock` | Lock active transport to a specific interface |
-| POST | `/transport/unlock` | Remove manual transport lock |
-| POST | `/relay/toggle` | Enable/disable relay role for node |
-| GET | `/did/document` | Local DID Document summary |
-| GET | `/did/document/raw` | Raw local DID Document |
-| POST | `/did/document/verify` | Verify DID Document proof and replay floor |
-| POST | `/did/document/publish` | Force publish local DID Document to CA registry (maintenance/recovery endpoint and member node side only not Admin) |
-| GET | `/did/document/peers` | List cached peer DID Documents |
-| GET | `/did/document/peer` | Fetch cached peer DID Document by DID |
+| GET | `/lighthouse/list` | List lighthouse-role nodes from lighthouse registry |
+| GET | `/member/list` | List pure member nodes from lighthouse registry |
+| GET | `/relay-lighthouse/list` | List dual relay+lighthouse nodes |
+| POST | `/lighthouse/toggle` | Enable/disable lighthouse role for node |
 
 ---
 
@@ -553,9 +552,14 @@ Field notes:
 ### 3.20 GET `/did/resolve`
 
 - Request:
-  - Query params: none
+  - Query params:
+    - none for local self resolution
+    - `did` (optional, string) for peer DID resolution
+    - `reject_deactivated` (optional, bool, default `false`) when `did` is provided
   - Body: none
 - Success response (`200 OK`):
+
+Local self resolution response (no `did` query):
 
 ```json
 {
@@ -566,10 +570,32 @@ Field notes:
 }
 ```
 
+Peer DID resolution response (`?did=did:guardian:...`):
+
+```json
+{
+  "did": "did:guardian:...",
+  "public_key_der_b64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE...",
+  "services": [
+    {
+      "id": "did:guardian:...#sgx-attestation",
+      "type": "SGXAttestation",
+      "endpoint": "tcp://192.168.100.10:50051"
+    }
+  ],
+  "source": "local_peer_doc",
+  "fetched_at": "2026-06-03T10:00:00Z",
+  "ttl_remaining_sec": 3599,
+  "status": "active",
+  "version_id": 7,
+  "dkp_version": 4
+}
+```
+
 - Error responses:
-  - `404 NOT_FOUND`: DID record file not found
-  - `400 BAD_REQUEST`: DID record/public key validation errors
-  - `500 INTERNAL_SERVER_ERROR`: internal DID handling failures
+  - `404 NOT_FOUND`: DID record missing for self path, or peer DID is unresolvable
+  - `400 BAD_REQUEST`: malformed DID, empty `did`, deactivated peer rejection, or DID/public key validation errors
+  - `500 INTERNAL_SERVER_ERROR`: internal DID handling or CA/network resolution failures
 
 ### 3.21 POST `/did/deactivate`
 
@@ -731,6 +757,8 @@ Field notes:
       "node": "nodeA",
       "overlayIp": "192.168.100.1",
       "active": true,
+      "relayEnabled": true,
+      "lighthouseEnabled": true,
       "maxPeers": 5,
       "maxBandwidthMbps": 10,
       "currentMbps": 4.25
@@ -739,8 +767,96 @@ Field notes:
 }
 ```
 
+- Notes:
+  - Source of truth: `/var/lib/sgx-guardian/nebula/lighthouse_registry.json`
+  - Only entries with `am_relay == true` are returned
+  - Runtime relay fields come from `relay_registry.json` when present, then node YAML, then defaults
 - Error responses:
-  - `500 INTERNAL_SERVER_ERROR`: relay registry/stats read/parse/write issues
+  - `500 INTERNAL_SERVER_ERROR`: lighthouse registry or relay stats read/parse issues
+
+### 3.26.1 GET `/lighthouse/list`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "lighthouses": [
+    {
+      "node": "nodeB",
+      "overlayIp": "192.168.100.2",
+      "active": true,
+      "relayEnabled": false,
+      "lighthouseEnabled": true
+    }
+  ]
+}
+```
+
+- Notes:
+  - Source of truth: `/var/lib/sgx-guardian/nebula/lighthouse_registry.json`
+  - Only entries with `is_lighthouse == true` are returned
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: lighthouse registry read/parse issues
+
+### 3.26.2 GET `/member/list`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "members": [
+    {
+      "node": "nodeC",
+      "overlayIp": "192.168.100.3",
+      "active": false,
+      "relayEnabled": false,
+      "lighthouseEnabled": false
+    }
+  ]
+}
+```
+
+- Notes:
+  - Source of truth: `/var/lib/sgx-guardian/nebula/lighthouse_registry.json`
+  - Only entries with `am_relay == false && is_lighthouse == false` are returned
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: lighthouse registry read/parse issues
+
+### 3.26.3 GET `/relay-lighthouse/list`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "relayLighthouses": [
+    {
+      "node": "nodeA",
+      "overlayIp": "192.168.100.1",
+      "active": true,
+      "relayEnabled": true,
+      "lighthouseEnabled": true,
+      "maxPeers": 5,
+      "maxBandwidthMbps": 10,
+      "currentMbps": 4.25
+    }
+  ]
+}
+```
+
+- Notes:
+  - Source of truth: `/var/lib/sgx-guardian/nebula/lighthouse_registry.json`
+  - Only entries with `am_relay == true && is_lighthouse == true` are returned
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: lighthouse registry or relay stats read/parse issues
 
 ### 3.27 POST `/relay/toggle`
 
@@ -770,7 +886,42 @@ Field notes:
 - Error responses:
   - `400 BAD_REQUEST`: missing/invalid `node` or missing `enabled`
   - `404 NOT_FOUND`: node config file not found
-  - `500 INTERNAL_SERVER_ERROR`: config YAML or relay registry update failure
+  - `500 INTERNAL_SERVER_ERROR`: config YAML, relay registry, or lighthouse registry update failure
+  - `415`/`422`: invalid JSON body
+
+### 3.27.1 POST `/lighthouse/toggle`
+
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "node": "nodeB",
+  "enabled": true
+}
+```
+
+  - Required fields: `node`, `enabled`
+- Success response (`200 OK`):
+
+```json
+{
+  "ok": true,
+  "node": "nodeB",
+  "enabled": true,
+  "message": "Lighthouse enabled for nodeB"
+}
+```
+
+- Notes:
+  - Updates `<config_dir>/<node>.yaml` so `lighthouse.enabled` matches the request
+  - Updates or upserts the node in `/var/lib/sgx-guardian/nebula/lighthouse_registry.json`
+  - Disabling does not remove the registry entry; it only flips `is_lighthouse` to `false`
+- Error responses:
+  - `400 BAD_REQUEST`: missing/invalid `node` or missing `enabled`
+  - `404 NOT_FOUND`: node config file not found
+  - `500 INTERNAL_SERVER_ERROR`: config YAML or lighthouse registry update failure
   - `415`/`422`: invalid JSON body
 
 ### 3.28 POST `/relay/limits`

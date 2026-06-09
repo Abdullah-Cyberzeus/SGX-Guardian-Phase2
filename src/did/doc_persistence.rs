@@ -7,9 +7,11 @@ use std::path::{Path, PathBuf};
 pub const SELF_DOC_PATH: &str = "/var/lib/sgx-guardian/identity/did_doc.json";
 pub const PEERS_DOC_DIR: &str = "/var/lib/sgx-guardian/identity/peers";
 pub const CA_AGGREGATE_PATH: &str = "/var/lib/sgx-guardian/identity/circle_did_docs.json";
+pub const VERSION_COUNTER_PATH: &str = "/var/lib/sgx-guardian/did/self_version_counter";
 pub const SELF_DOC_PATH_ENV: &str = "SGX_GUARDIAN_DID_DOC_PATH";
 pub const PEERS_DOC_DIR_ENV: &str = "SGX_GUARDIAN_DID_PEERS_DIR";
 pub const CA_AGGREGATE_PATH_ENV: &str = "SGX_GUARDIAN_DID_CA_AGGREGATE_PATH";
+pub const VERSION_COUNTER_PATH_ENV: &str = "SGX_GUARDIAN_DID_SELF_VERSION_COUNTER_PATH";
 
 pub fn configured_self_doc_path() -> PathBuf {
     env::var(SELF_DOC_PATH_ENV)
@@ -27,6 +29,12 @@ pub fn configured_ca_aggregate_path() -> PathBuf {
     env::var(CA_AGGREGATE_PATH_ENV)
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(CA_AGGREGATE_PATH))
+}
+
+pub fn configured_self_version_counter_path() -> PathBuf {
+    env::var(VERSION_COUNTER_PATH_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(VERSION_COUNTER_PATH))
 }
 
 pub fn load_doc_at_path(path: &Path) -> Result<DidDocument, DidError> {
@@ -56,6 +64,24 @@ pub fn load_self() -> Result<Option<DidDocument>, DidError> {
         return Ok(None);
     }
     Ok(Some(load_doc_at_path(&path)?))
+}
+
+/// Read the monotonic floor version from a dedicated counter file.
+/// This is separate from the DID Document itself to prevent rollback bypass.
+pub fn read_self_floor_version() -> u32 {
+    fs::read_to_string(configured_self_version_counter_path())
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(0)
+}
+
+/// Update the monotonic floor after successfully saving a new self document.
+pub fn write_self_floor_version(version: u32) -> Result<(), std::io::Error> {
+    let path = configured_self_version_counter_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, version.to_string())
 }
 
 pub fn save_peer(doc: &DidDocument) -> Result<(), DidError> {

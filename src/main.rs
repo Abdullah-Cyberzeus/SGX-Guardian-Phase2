@@ -434,6 +434,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             )
                                         {
                                             eprintln!("  ⚠️ DID Document save failed: {}", e);
+                                        } else if let Err(e) =
+                                            sgx_guardian_client::did::doc_persistence::write_self_floor_version(
+                                                doc.sgx_version_id,
+                                            )
+                                        {
+                                            eprintln!(
+                                                "  ⚠️ DID Document version counter update failed: {}",
+                                                e
+                                            );
                                         } else {
                                             println!("  ✅ DID Document v1 created");
                                         }
@@ -1011,6 +1020,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mut did_doc_publish_state: Option<(String, String, bool, String)> = None;
+    let mut did_resolver = sgx_guardian_client::did::Resolver::new(
+        sgx_guardian_client::did::ResolverConfig::default(),
+    );
+    let mut resolver_for_flag = did_resolver.clone();
 
     step(9, "nebula subsystem gate");
     if !GATES.disable_nebula {
@@ -1411,6 +1424,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
+        let resolver_ca_host = did_doc_publish_state
+            .as_ref()
+            .map(|(_, ca_host, _, _)| ca_host.clone())
+            .unwrap_or_else(resolve_ca_ip_from_config_inner);
+        did_resolver =
+            sgx_guardian_client::did::Resolver::new(sgx_guardian_client::did::ResolverConfig {
+                ca_host: resolver_ca_host,
+                ..Default::default()
+            });
+        let resolver_for_pull = did_resolver.clone();
+        resolver_for_flag = did_resolver.clone();
+
         let node_for_registry_sync = node_id.clone();
         let nebula_dir_for_registry_sync = nebula_base_dir.clone();
         let pool_for_registry_sync = overlay_pool.clone();
@@ -1480,8 +1505,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     )
                     .await
                     {
-                        Ok(n) if n > 0 => {
-                            tracing::debug!("DID doc snapshot applied: {} docs", n);
+                        Ok(updated_dids) if !updated_dids.is_empty() => {
+                            tracing::debug!(
+                                "DID doc snapshot applied: {} docs",
+                                updated_dids.len()
+                            );
+                            for did in &updated_dids {
+                                resolver_for_pull.invalidate(did).await;
+                            }
                         }
                         Ok(_) => {}
                         Err(e) => {
@@ -2474,7 +2505,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     // === REST Admin API (axum) on :8443 ===
-    let api_state = sgx_guardian_client::api::state::AppState::from_env(node_id.clone());
+    let api_state =
+        sgx_guardian_client::api::state::AppState::from_env(node_id.clone(), did_resolver.clone());
     let api_bind: std::net::SocketAddr = "0.0.0.0:8443".parse().unwrap();
     tokio::spawn({
         let state = api_state.clone();
@@ -2625,6 +2657,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("⚠️ DID Document periodic publish failed: {}", e);
                     }
                 }
+                if force_refresh {
+                    if let Ok(self_did) = sgx_guardian_client::did::DidRecord::load(
+                        sgx_guardian_client::did::DEFAULT_DID_PATH,
+                    ) {
+                        resolver_for_flag.invalidate(&self_did.did).await;
+                    }
+                }
                 let _ = std::fs::remove_file(DID_DOC_ROTATION_FLAG);
             }
         }
@@ -2768,6 +2807,8 @@ async fn refresh_and_publish_did_doc_inner(
         .map_err(|e| audit_failed(format!("DID Document signing failed: {}", e)))?;
     doc_persistence::save_self(&doc)
         .map_err(|e| audit_failed(format!("DID Document save_self failed: {}", e)))?;
+    doc_persistence::write_self_floor_version(doc.sgx_version_id)
+        .map_err(|e| audit_failed(format!("DID Document floor counter update failed: {}", e)))?;
 
     if is_ca {
         doc_persistence::save_peer(&doc)
