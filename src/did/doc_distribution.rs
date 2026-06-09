@@ -22,6 +22,7 @@ pub async fn publish_to_ca(
         pubkey_prefix: None,
         did_doc_json: Some(json),
         did_query: None,
+        status_list_body: None,
     };
     let resp = send_request(ca_host, &req).await?;
     if !resp.success {
@@ -40,6 +41,7 @@ pub async fn pull_and_apply_aggregate(ca_host: &str) -> Result<Vec<String>, DidE
         pubkey_prefix: None,
         did_doc_json: None,
         did_query: None,
+        status_list_body: None,
     };
     let resp = send_request(ca_host, &req).await?;
     if !resp.success {

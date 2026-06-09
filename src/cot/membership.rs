@@ -9,8 +9,12 @@ use crate::cot::types::{CotError, CotResult, PeerEndpoint, TransportType};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+const MEMBERS_PATH: &str = "/var/lib/sgx-guardian/cot/members.json";
+const MEMBERS_PATH_ENV: &str = "SGX_GUARDIAN_COT_MEMBERS_PATH";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MemberRole {
@@ -35,10 +39,17 @@ pub struct CircleMember {
     pub joined_at: DateTime<Utc>,
     pub last_seen: Option<DateTime<Utc>>,
     pub public_key_der: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vc_id: Option<String>,
 }
 
 impl CircleMember {
-    pub fn new(device_id: String, role: MemberRole, public_key_der: Vec<u8>) -> Self {
+    pub fn new(
+        device_id: String,
+        role: MemberRole,
+        public_key_der: Vec<u8>,
+        vc_id: Option<String>,
+    ) -> Self {
         Self {
             device_id,
             display_name: None,
@@ -48,6 +59,7 @@ impl CircleMember {
             joined_at: Utc::now(),
             last_seen: None,
             public_key_der,
+            vc_id,
         }
     }
 
@@ -78,15 +90,28 @@ pub struct CircleMembership {
     members: Arc<RwLock<HashMap<String, CircleMember>>>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct MembershipSnapshot {
+    circle_id: String,
+    members: HashMap<String, CircleMember>,
+}
+
 impl CircleMembership {
     pub fn new(circle_id: String, owner_device_id: String, owner_pubkey: Vec<u8>) -> Self {
         let mut members = HashMap::new();
-        let owner = CircleMember::new(owner_device_id.clone(), MemberRole::Owner, owner_pubkey);
+        let owner = CircleMember::new(
+            owner_device_id.clone(),
+            MemberRole::Owner,
+            owner_pubkey,
+            None,
+        );
         members.insert(owner_device_id, owner);
-        Self {
+        let circle = Self {
             circle_id,
             members: Arc::new(RwLock::new(members)),
-        }
+        };
+        circle.persist_default_background();
+        circle
     }
 
     pub fn circle_id(&self) -> &str {
@@ -94,6 +119,16 @@ impl CircleMembership {
     }
 
     pub async fn add_member(&self, device_id: String, public_key_der: Vec<u8>) -> CotResult<()> {
+        self.add_member_with_vc(device_id, public_key_der, None)
+            .await
+    }
+
+    pub async fn add_member_with_vc(
+        &self,
+        device_id: String,
+        public_key_der: Vec<u8>,
+        vc_id: Option<String>,
+    ) -> CotResult<()> {
         let mut members = self.members.write().await;
         if members.contains_key(&device_id) {
             return Err(CotError::MembershipDenied(format!(
@@ -103,8 +138,10 @@ impl CircleMembership {
         }
         members.insert(
             device_id.clone(),
-            CircleMember::new(device_id, MemberRole::Member, public_key_der),
+            CircleMember::new(device_id, MemberRole::Member, public_key_der, vc_id),
         );
+        drop(members);
+        self.persist_default().await;
         Ok(())
     }
 
@@ -126,6 +163,8 @@ impl CircleMembership {
         match members.get_mut(device_id) {
             Some(m) => {
                 m.trust_level = level;
+                drop(members);
+                self.persist_default().await;
                 Ok(())
             }
             None => Err(CotError::PeerNotFound(device_id.to_string())),
@@ -137,6 +176,8 @@ impl CircleMembership {
         match members.get_mut(device_id) {
             Some(m) => {
                 m.upsert_endpoint(endpoint);
+                drop(members);
+                self.persist_default().await;
                 Ok(())
             }
             None => Err(CotError::PeerNotFound(device_id.to_string())),
@@ -148,6 +189,8 @@ impl CircleMembership {
         if members.remove(device_id).is_none() {
             return Err(CotError::PeerNotFound(device_id.to_string()));
         }
+        drop(members);
+        self.persist_default().await;
         Ok(())
     }
 
@@ -172,6 +215,64 @@ impl CircleMembership {
             verified
         )
     }
+
+    pub async fn save(&self, path: &str) -> std::io::Result<()> {
+        let snapshot = MembershipSnapshot {
+            circle_id: self.circle_id.clone(),
+            members: self.members.read().await.clone(),
+        };
+        let bytes = serde_json::to_vec_pretty(&snapshot)?;
+        let path = PathBuf::from(path);
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let tmp = path.with_extension("tmp");
+        tokio::fs::write(&tmp, bytes).await?;
+        tokio::fs::rename(tmp, path).await
+    }
+
+    pub async fn load(path: &str) -> std::io::Result<Self> {
+        let data = tokio::fs::read(path).await?;
+        let snapshot: MembershipSnapshot = serde_json::from_slice(&data)?;
+        Ok(Self {
+            circle_id: snapshot.circle_id,
+            members: Arc::new(RwLock::new(snapshot.members)),
+        })
+    }
+
+    async fn persist_default(&self) {
+        if let Err(err) = self.save(&default_members_path().to_string_lossy()).await {
+            eprintln!("⚠️ Failed to persist circle membership: {}", err);
+        }
+    }
+
+    fn persist_default_background(&self) {
+        let circle_id = self.circle_id.clone();
+        let members = self.members.clone();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let snapshot = MembershipSnapshot {
+                    circle_id,
+                    members: members.read().await.clone(),
+                };
+                if let Ok(bytes) = serde_json::to_vec_pretty(&snapshot) {
+                    let path = default_members_path();
+                    if let Some(parent) = path.parent() {
+                        let _ = tokio::fs::create_dir_all(parent).await;
+                    }
+                    let tmp = path.with_extension("tmp");
+                    let _ = tokio::fs::write(&tmp, bytes).await;
+                    let _ = tokio::fs::rename(tmp, path).await;
+                }
+            });
+        }
+    }
+}
+
+fn default_members_path() -> PathBuf {
+    std::env::var(MEMBERS_PATH_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(MEMBERS_PATH))
 }
 
 #[cfg(test)]

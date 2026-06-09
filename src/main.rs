@@ -47,6 +47,7 @@ use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
 const RELAY_SYNC_INTERVAL_SECS: u64 = 10;
 const DID_DOC_REFRESH_INTERVAL_SECS: u64 = 300;
 const DID_DOC_PULL_INTERVAL_SECS: u64 = 30;
+const VC_STATUS_LIST_PULL_INTERVAL_SECS: u64 = 300;
 const DID_DOC_ROTATION_FLAG: &str = "/var/lib/sgx-guardian/identity/.dkp_rotated.flag";
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -1442,11 +1443,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         tokio::spawn(async move {
             let mut did_doc_sync_elapsed = 0u64;
+            let mut vc_status_list_sync_elapsed = 0u64;
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(RELAY_SYNC_INTERVAL_SECS)).await;
                 let ca_host = resolve_ca_ip_from_config_inner();
                 let mut topology_changed = false;
                 did_doc_sync_elapsed += RELAY_SYNC_INTERVAL_SECS;
+                vc_status_list_sync_elapsed += RELAY_SYNC_INTERVAL_SECS;
 
                 if let Ok(latest_json) =
                     registry_sync::pull_registry_snapshot_from_ca(&ca_host).await
@@ -1518,6 +1521,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Err(e) => {
                             tracing::warn!("DID doc snapshot pull failed from {}: {}", ca_host, e);
                         }
+                    }
+                }
+
+                if vc_status_list_sync_elapsed >= VC_STATUS_LIST_PULL_INTERVAL_SECS {
+                    vc_status_list_sync_elapsed = 0;
+                    if let Err(e) =
+                        sgx_guardian_client::vc::distribution::pull_status_list(&ca_host).await
+                    {
+                        tracing::warn!("VC status list pull failed from {}: {}", ca_host, e);
                     }
                 }
 
@@ -2817,6 +2829,11 @@ async fn refresh_and_publish_did_doc_inner(
             .map_err(|e| audit_failed(format!("DID Document list_peers failed: {}", e)))?;
         doc_persistence::save_ca_aggregate(&agg)
             .map_err(|e| audit_failed(format!("DID Document save_aggregate failed: {}", e)))?;
+        let issuer =
+            sgx_guardian_client::did::DidRecord::load(sgx_guardian_client::did::DEFAULT_DID_PATH)
+                .map_err(|e| audit_failed(format!("VC issuer DID load failed: {}", e)))?;
+        sgx_guardian_client::vc::issue::ensure_owner_vc(&issuer, signing_km)
+            .map_err(|e| audit_failed(format!("Owner VC ensure failed: {}", e)))?;
     } else {
         doc_distribution::publish_to_ca(ca_host, node_id, &doc)
             .await

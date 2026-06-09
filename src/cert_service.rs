@@ -68,6 +68,53 @@ async fn read_pa_pubkey_or_warn() -> Vec<u8> {
     }
 }
 
+fn issue_member_vc(node_id: &str) -> Result<crate::vc::credential::VerifiableCredential, Status> {
+    let issuer = crate::did::DidRecord::load(crate::did::DEFAULT_DID_PATH)
+        .map_err(|e| Status::internal(format!("CA DID load: {}", e)))?;
+    let km = crate::vc::issue::load_runtime_key_manager("nodeA")
+        .map_err(|e| Status::internal(format!("VC key manager: {}", e)))?;
+    let subject_did = if node_id == "nodeA" {
+        issuer.did.clone()
+    } else {
+        crate::vc::issue::subject_did_for_node(node_id)
+            .map_err(|e| Status::internal(format!("VC subject DID: {}", e)))?
+    };
+
+    match crate::vc::issue::issue_membership_vc_with_outcome(
+        &issuer,
+        &km,
+        crate::vc::issue::IssueRequest {
+            subject_did: &subject_did,
+            role: if node_id == "nodeA" {
+                crate::vc::credential::CredentialRole::Owner
+            } else {
+                crate::vc::credential::CredentialRole::Member
+            },
+            permissions: crate::vc::issue::default_permissions_for_role(if node_id == "nodeA" {
+                crate::vc::credential::CredentialRole::Owner
+            } else {
+                crate::vc::credential::CredentialRole::Member
+            }),
+            circle_id: crate::vc::issue::DEFAULT_CIRCLE_ID,
+            node_hint: Some(node_id.to_string()),
+            duration_days: None,
+        },
+    ) {
+        Ok(crate::vc::issue::IssueMembershipOutcome::ReusedExisting { vc }) => {
+            log_event(
+                "nodeA",
+                &format!(
+                    "VC already exists for subject DID — reused existing credential ({})",
+                    vc.id
+                ),
+            );
+            Ok(vc)
+        }
+        Ok(crate::vc::issue::IssueMembershipOutcome::IssuedNew { vc, .. }) => Ok(vc),
+        Err(e) => Err(Status::internal(format!("VC issue: {}", e))),
+    }
+}
+
 fn cert_contains_overlay_ip(cert_path: &str, expected_ip_cidr: &str) -> bool {
     let output = std::process::Command::new("nebula-cert")
         .args(["print", "-path", cert_path])
@@ -232,6 +279,10 @@ impl CertService for MyCertService {
                     .await
                     .unwrap_or_default();
                 let signing_pubkey_der = read_pa_pubkey_or_warn().await;
+                let member_vc_json = issue_member_vc(&node_id)
+                    .ok()
+                    .and_then(|vc| serde_json::to_string(&vc).ok())
+                    .unwrap_or_default();
 
                 return Ok(Response::new(CertSignResponse {
                     status: "approved".into(),
@@ -246,6 +297,7 @@ impl CertService for MyCertService {
                     assigned_relay,
                     relay_registry_json,
                     signing_pubkey_der,
+                    member_vc_json,
                 }));
             } else {
                 eprintln!(
@@ -385,6 +437,7 @@ impl CertService for MyCertService {
                     assigned_relay: false,
                     relay_registry_json: String::new(),
                     signing_pubkey_der: Vec::new(),
+                    member_vc_json: String::new(),
                 }));
             }
 
@@ -465,10 +518,14 @@ impl CertService for MyCertService {
 
         println!("📋 CA assigned overlay IP: {} → {}", node_id, overlay_ip);
 
+        let issued_vc = issue_member_vc(&node_id)?;
+        let member_vc_json = serde_json::to_string(&issued_vc)
+            .map_err(|e| Status::internal(format!("VC serialize: {}", e)))?;
+
         let membership = CircleMembership {
             node_name: node_id.clone(),
             circle_id: "guardian-circle-alpha".to_string(),
-            vc_hash: "manual-approval-verified".to_string(),
+            vc_hash: issued_vc.id.clone(),
             is_valid: true,
         };
 
@@ -611,6 +668,7 @@ impl CertService for MyCertService {
             assigned_relay,
             relay_registry_json,
             signing_pubkey_der,
+            member_vc_json,
         }))
     }
 }

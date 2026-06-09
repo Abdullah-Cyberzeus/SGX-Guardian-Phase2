@@ -14,18 +14,41 @@ pub fn sign_in_place(doc: &mut DidDocument, km: &KeyManager, vm_ref: &str) -> Re
     to_sign.extend_from_slice(DOMAIN_SEPARATOR);
     to_sign.extend_from_slice(&canonical);
     let digest = Sha256::digest(&to_sign);
-    let sig = km
-        .sign(&digest)
-        .map_err(|e| DidError::Signing(format!("DKP sign: {}", e)))?;
+    sign_proof_from_digest(
+        doc.proof.get_or_insert_with(Proof::default),
+        &digest,
+        km,
+        vm_ref,
+    )
+}
 
-    doc.proof = Some(Proof {
+pub fn sign_in_place_generic(
+    proof: &mut Proof,
+    canonical_bytes: &[u8],
+    km: &KeyManager,
+    vm_ref: &str,
+) -> Result<(), DidError> {
+    let digest = Sha256::digest(canonical_bytes);
+    sign_proof_from_digest(proof, &digest, km, vm_ref)
+}
+
+fn sign_proof_from_digest(
+    proof: &mut Proof,
+    digest: &[u8],
+    km: &KeyManager,
+    vm_ref: &str,
+) -> Result<(), DidError> {
+    let sig = km
+        .sign(digest)
+        .map_err(|e| DidError::Signing(format!("DKP sign: {}", e)))?;
+    *proof = Proof {
         proof_type: "DataIntegrityProof".into(),
         cryptosuite: "ecdsa-2019".into(),
         verification_method: vm_ref.to_string(),
         created: Utc::now().to_rfc3339(),
         proof_purpose: "assertionMethod".into(),
         proof_value: general_purpose::STANDARD.encode(sig),
-    });
+    };
     Ok(())
 }
 

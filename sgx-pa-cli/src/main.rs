@@ -90,6 +90,8 @@ enum Commands {
     /// Alias for `transport show`
     #[command(name = "transport-show")]
     TransportShow(commands::transport::TransportListArgs),
+    /// Verifiable Credential operations
+    Vc(commands::vc::VcArgs),
 }
 /// Entry point for the SGX Policy Authority CLI.
 /// Dispatches the selected subcommand and routes execution
@@ -189,6 +191,7 @@ fn main() {
                 command: commands::transport::TransportCommand::Show(args),
             })
         }
+        Commands::Vc(args) => commands::vc::run(args),
     }
 }
 
@@ -229,5 +232,29 @@ mod tests {
         assert!(Cli::try_parse_from(["sgx-pa-cli", "transport-show"]).is_ok());
         assert!(Cli::try_parse_from(["sgx-pa-cli", "transport-lock", "ens33"]).is_ok());
         assert!(Cli::try_parse_from(["sgx-pa-cli", "transport-unlock"]).is_ok());
+    }
+
+    #[test]
+    fn test_vc_renew_commands_parse() {
+        assert!(Cli::try_parse_from([
+            "sgx-pa-cli",
+            "vc",
+            "renew",
+            "--id",
+            "vc-123",
+            "--days",
+            "30"
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "sgx-pa-cli",
+            "vc",
+            "renew",
+            "--to",
+            "did:guardian:test",
+            "--days",
+            "30"
+        ])
+        .is_ok());
     }
 }

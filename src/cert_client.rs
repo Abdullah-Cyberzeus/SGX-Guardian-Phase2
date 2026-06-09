@@ -100,14 +100,21 @@ pub async fn request_certificate_from_ca(
 
     let cert_path = format!("{}/nodes/{}.crt", NEBULA_BASE_DIR, node_id);
     let key_path = format!("{}/nodes/{}.key", NEBULA_BASE_DIR, node_id);
+    let has_vc = crate::vc::persistence::load_own_any()
+        .ok()
+        .flatten()
+        .is_some();
+    let has_status_list = crate::vc::persistence::status_list_path().exists();
 
     // Idempotent: cert AND CA cert both present
     if Path::new(&cert_path).exists()
         && Path::new(&key_path).exists()
         && NebulaCA::ca_cert_exists(NEBULA_BASE_DIR)
+        && has_vc
+        && has_status_list
     {
         println!(
-            "ℹ️  Cert + CA cert already present for {} — skipping bootstrap.",
+            "ℹ️  Cert + CA cert + VC already present for {} — skipping bootstrap.",
             node_id
         );
         return;
@@ -149,9 +156,14 @@ pub async fn request_certificate_from_ca(
         if Path::new(&cert_path).exists()
             && Path::new(&key_path).exists()
             && NebulaCA::ca_cert_exists(NEBULA_BASE_DIR)
+            && crate::vc::persistence::load_own_any()
+                .ok()
+                .flatten()
+                .is_some()
+            && crate::vc::persistence::status_list_path().exists()
         {
-            println!("✅ Cert + CA cert detected on filesystem — done.");
-            log_event(&node_id, "Cert + CA cert detected on filesystem");
+            println!("✅ Cert + CA cert + VC detected on filesystem — done.");
+            log_event(&node_id, "Cert + CA cert + VC detected on filesystem");
             return;
         }
 
@@ -319,6 +331,40 @@ pub async fn request_certificate_from_ca(
                                 eprintln!("⚠️  Save PA pubkey failed: {}", e);
                                 log_error(&node_id, &format!("PA pubkey save: {}", e));
                             }
+                        }
+                    }
+
+                    if !resp.member_vc_json.is_empty() {
+                        match serde_json::from_str::<crate::vc::credential::VerifiableCredential>(
+                            &resp.member_vc_json,
+                        ) {
+                            Ok(vc) => {
+                                if let Err(e) = crate::vc::persistence::save_own(&vc) {
+                                    log_error(&node_id, &format!("VC save failed: {}", e));
+                                } else {
+                                    log_audit(
+                                        &node_id,
+                                        AuditCategory::Vc,
+                                        AuditSeverity::Info,
+                                        AuditAction::Succeeded,
+                                        &format!("VC received and stored: {}", vc.id),
+                                    );
+                                }
+                            }
+                            Err(e) => log_error(&node_id, &format!("VC parse failed: {}", e)),
+                        }
+                    }
+
+                    let (ca_host, _) = split_host_port(&current_ca_addr);
+                    match crate::vc::distribution::pull_status_list(&ca_host).await {
+                        Ok(true) => {
+                            println!("📋 VC status list pulled from CA");
+                            log_event(&node_id, "VC status list pulled from CA");
+                        }
+                        Ok(false) => {}
+                        Err(e) => {
+                            eprintln!("⚠️  VC status list pull failed: {}", e);
+                            log_error(&node_id, &format!("VC status list pull: {}", e));
                         }
                     }
 
