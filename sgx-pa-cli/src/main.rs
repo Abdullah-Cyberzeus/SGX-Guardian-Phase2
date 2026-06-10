@@ -92,6 +92,8 @@ enum Commands {
     TransportShow(commands::transport::TransportListArgs),
     /// Verifiable Credential operations
     Vc(commands::vc::VcArgs),
+    /// VirtualID inspection and recomputation
+    Vid(commands::vid::VidArgs),
 }
 /// Entry point for the SGX Policy Authority CLI.
 /// Dispatches the selected subcommand and routes execution
@@ -192,6 +194,7 @@ fn main() {
             })
         }
         Commands::Vc(args) => commands::vc::run(args),
+        Commands::Vid(args) => commands::vid::run(args),
     }
 }
 

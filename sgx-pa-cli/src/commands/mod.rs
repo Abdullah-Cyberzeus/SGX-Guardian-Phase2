@@ -23,3 +23,4 @@ pub mod status;
 pub mod transport;
 pub mod vc;
 pub mod verify;
+pub mod vid;

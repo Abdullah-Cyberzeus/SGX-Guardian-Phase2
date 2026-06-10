@@ -136,6 +136,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/vc/files/issued", get(handlers::vc::files_issued))
         .route("/api/v1/vc/files/own", get(handlers::vc::files_own))
         .route("/api/v1/vc/files/peers", get(handlers::vc::files_peers))
+        .route("/api/v1/vid/peers", get(handlers::vid::peers))
         .route(
             "/api/v1/vc/files/issued/:vc_id",
             get(handlers::vc::file_issued),
@@ -306,6 +307,7 @@ mod tests {
                 log_dir_primary: self.log_dir.to_string_lossy().to_string(),
                 log_dir_fallback: self.log_dir.to_string_lossy().to_string(),
                 did_resolver: crate::did::Resolver::new(Default::default()),
+                vid_cache: crate::virtual_id_cache::VirtualIdCache::new(),
             })
         }
     }
@@ -338,6 +340,7 @@ mod tests {
             log_dir_primary: "/tmp/logs".into(),
             log_dir_fallback: "/tmp/logs-fallback".into(),
             did_resolver: crate::did::Resolver::new(Default::default()),
+            vid_cache: crate::virtual_id_cache::VirtualIdCache::new(),
         })
     }
 
