@@ -21,6 +21,7 @@ rand = "0.8"
 bs58 = "0.5"
 tokio = { version = "1.37", features = ["rt", "time", "net", "io-util"] }
 sgx_guardian_client = { path = ".." }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 
 [dev-dependencies]
 assert_cmd = "2.1.1"

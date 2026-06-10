@@ -16,7 +16,7 @@ use std::io::ErrorKind;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{self, Receiver};
 use tokio::time::Duration;
 
 // ---- Attestation identity key base path (single source of truth) ----
@@ -29,6 +29,10 @@ const MAX_ATTEST_EVIDENCE_BYTES: u32 = 256 * 1024;
 static LIGHTHOUSE_WARNING_PRINTED: AtomicBool = AtomicBool::new(false);
 static OVERLAY_WAIT_LOGGED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static LAST_ATTEST_REQUEST_LOGGED: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+pub static VID_CACHE: once_cell::sync::OnceCell<crate::virtual_id_cache::VirtualIdCache> =
+    once_cell::sync::OnceCell::new();
+pub static REATTEST_TX: once_cell::sync::OnceCell<mpsc::UnboundedSender<String>> =
+    once_cell::sync::OnceCell::new();
 const DEFAULT_ATTEST_POLICY_YAML: &str = r#"---
 policy_id: "123e4567-e89b-12d3-a456-426614174000"
 version: "1.0.0"
@@ -46,6 +50,20 @@ rules:
     dst: "10.0.0.10"
     protocol: "UDP"
 "#;
+
+pub fn set_vid_cache(c: crate::virtual_id_cache::VirtualIdCache) {
+    let _ = VID_CACHE.set(c);
+}
+
+pub fn set_reattest_sender(tx: mpsc::UnboundedSender<String>) {
+    let _ = REATTEST_TX.set(tx);
+}
+
+pub fn trigger_reattestation_for(peer_did: &str) {
+    if let Some(tx) = REATTEST_TX.get() {
+        let _ = tx.send(peer_did.to_string());
+    }
+}
 
 // Trusted Peer JSON Logging Helpers ===
 use chrono::Utc;
@@ -524,17 +542,27 @@ fn build_evidence_signing_message(
     nonce: &str,
     policy_digest: &str,
     baseline_status: Option<&BaselineStatus>,
+    virtual_id_hex: &str,
 ) -> Vec<u8> {
     let mut msg = Vec::new();
-    msg.extend_from_slice(nonce.as_bytes());
-    msg.extend_from_slice(policy_digest.as_bytes());
+    write_lp(&mut msg, nonce.as_bytes());
+    write_lp(&mut msg, policy_digest.as_bytes());
     if let Some(bs) = baseline_status {
-        msg.extend_from_slice(b"|");
         if let Ok(json) = serde_json::to_string(bs) {
-            msg.extend_from_slice(json.as_bytes());
+            write_lp(&mut msg, json.as_bytes());
+        } else {
+            write_lp(&mut msg, b"");
         }
+    } else {
+        write_lp(&mut msg, b"");
     }
+    write_lp(&mut msg, virtual_id_hex.as_bytes());
     msg
+}
+
+fn write_lp(buf: &mut Vec<u8>, b: &[u8]) {
+    buf.extend_from_slice(&(b.len() as u32).to_be_bytes());
+    buf.extend_from_slice(b);
 }
 
 fn normalize_p256_pubkey(mut key: Vec<u8>) -> Option<Vec<u8>> {
@@ -639,6 +667,36 @@ fn subject_did_from_attestation_pubkey(pubkey_der_b64: &str) -> Option<String> {
     None
 }
 
+fn observe_verified_virtual_id(ev: &AttestationEvidence) {
+    if let Some(cache) = VID_CACHE.get() {
+        match cache.observe_sync(&ev.subject_did, &ev.virtual_id) {
+            crate::virtual_id_cache::VidObservation::FirstSeen => {
+                log_audit(
+                    &std::env::args().nth(1).unwrap_or_else(|| "unknown".into()),
+                    AuditCategory::Attestation,
+                    AuditSeverity::Info,
+                    AuditAction::Started,
+                    &format!("First VID seen for {}: {}", ev.subject_did, ev.virtual_id),
+                );
+            }
+            crate::virtual_id_cache::VidObservation::Unchanged => {}
+            crate::virtual_id_cache::VidObservation::Rotated { previous } => {
+                log_audit(
+                    &std::env::args().nth(1).unwrap_or_else(|| "unknown".into()),
+                    AuditCategory::Attestation,
+                    AuditSeverity::Warning,
+                    AuditAction::Started,
+                    &format!(
+                        "VID rotation for {}: {} -> {} (forcing re-attestation)",
+                        ev.subject_did, previous, ev.virtual_id
+                    ),
+                );
+                trigger_reattestation_for(&ev.subject_did);
+            }
+        }
+    }
+}
+
 async fn verify_peer_vc_for_attestation(
     peer_ev: &AttestationEvidence,
     peer_label: &str,
@@ -703,6 +761,10 @@ pub struct AttestationEvidence {
     pub subject_did: String,
     pub nonce: String,
     pub policy_digest: String,
+    /// VirtualID computed at evidence-creation time. Hex-encoded 32 bytes.
+    /// Verifier recomputes and compares; signature covers this field.
+    #[serde(default)]
+    pub virtual_id: String,
     pub signature: String,
     pub pubkey_der_b64: String,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -1111,22 +1173,47 @@ impl AttestationService {
         let nonce = hex::encode(nonce_bytes);
         let policy_digest = hex::encode(Sha256::digest(policy_yaml.as_bytes()));
         let baseline_status = Some(compute_local_baseline_status(&node_id, km));
-        let msg = build_evidence_signing_message(&nonce, &policy_digest, baseline_status.as_ref());
+        let dkp_pub = km.pubkey_der()?;
+        let pcr_digest_bytes = baseline_status
+            .as_ref()
+            .and_then(|b| hex::decode(&b.composite_digest).ok())
+            .unwrap_or_default();
+        let policy_digest_bytes = hex::decode(&policy_digest).unwrap_or_default();
+        let nonce_i_bytes = hex::decode(&nonce).unwrap_or_default();
+        let nonce_r_bytes: Vec<u8> = Vec::new();
+        let subject_did = crate::did::DidRecord::load(crate::did::DEFAULT_DID_PATH)
+            .map(|record| record.did)
+            .unwrap_or_default();
+        let vid = crate::virtual_id::VirtualIdInputs {
+            did: &subject_did,
+            dkp_pubkey_der: &dkp_pub,
+            pcr_composite_digest: &pcr_digest_bytes,
+            policy_digest: &policy_digest_bytes,
+            nonce_i: &nonce_i_bytes,
+            nonce_r: &nonce_r_bytes,
+        }
+        .compute();
+        let virtual_id_hex = hex::encode(vid);
+
+        let msg = build_evidence_signing_message(
+            &nonce,
+            &policy_digest,
+            baseline_status.as_ref(),
+            &virtual_id_hex,
+        );
         let sig_bytes = km.sign(&msg)?;
         let signature_b64 = general_purpose::STANDARD.encode(sig_bytes);
-        let pubkey_b64 = base64::engine::general_purpose::STANDARD.encode(km.pubkey_der()?);
+        let pubkey_b64 = base64::engine::general_purpose::STANDARD.encode(dkp_pub);
         // Load PCR snapshot if available
         let pcr_load_path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node_id);
         let pcr_values = crate::secure_element::pcr::PcrSnapshot::load(&pcr_load_path).ok();
         let key_version = Some(crate::secure_element::pcr::read_dkp_key_version());
-        let subject_did = crate::did::DidRecord::load(crate::did::DEFAULT_DID_PATH)
-            .map(|record| record.did)
-            .unwrap_or_default();
         Ok(AttestationEvidence {
             node_id,
             subject_did,
             nonce,
             policy_digest,
+            virtual_id: virtual_id_hex,
             signature: signature_b64,
             pubkey_der_b64: pubkey_b64,
             presented_vc_json: None,
@@ -1178,11 +1265,55 @@ impl AttestationService {
                 return Ok(false);
             }
         }
+        let pcr_dig_bytes = ev
+            .baseline_status
+            .as_ref()
+            .and_then(|b| hex::decode(&b.composite_digest).ok())
+            .unwrap_or_default();
+        let policy_dig_bytes = hex::decode(&ev.policy_digest).unwrap_or_default();
+        let nonce_i_bytes = hex::decode(&ev.nonce).unwrap_or_default();
+        let peer_dkp_bytes = match general_purpose::STANDARD.decode(&ev.pubkey_der_b64) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                eprintln!("⚠️ Attestation rejected: invalid pubkey base64: {}", e);
+                return Ok(false);
+            }
+        };
+        let recomputed_vid = crate::virtual_id::VirtualIdInputs {
+            did: &ev.subject_did,
+            dkp_pubkey_der: &peer_dkp_bytes,
+            pcr_composite_digest: &pcr_dig_bytes,
+            policy_digest: &policy_dig_bytes,
+            nonce_i: &nonce_i_bytes,
+            nonce_r: &[],
+        }
+        .compute();
+        let recomputed_hex = hex::encode(recomputed_vid);
+        if recomputed_hex != ev.virtual_id {
+            let hint = if ev.virtual_id.is_empty() {
+                " (peer is likely on the pre-VID protocol)"
+            } else {
+                ""
+            };
+            log_audit(
+                &std::env::args().nth(1).unwrap_or_else(|| "unknown".into()),
+                AuditCategory::Attestation,
+                AuditSeverity::Critical,
+                AuditAction::Rejected,
+                &format!(
+                    "VirtualID mismatch: claimed {} but recomputed {} for DID {}{}",
+                    ev.virtual_id, recomputed_hex, ev.subject_did, hint
+                ),
+            );
+            return Ok(false);
+        }
+
         // Step 4: Build same message bytes as during signing
         let msg = build_evidence_signing_message(
             &ev.nonce,
             &ev.policy_digest,
             ev.baseline_status.as_ref(),
+            &ev.virtual_id,
         );
         // Step 5: Decode Base64 safely
         let sig_bytes = match general_purpose::STANDARD.decode(&ev.signature) {
@@ -1193,14 +1324,7 @@ impl AttestationService {
             }
         };
         // Step 6: Prepare verification key
-        let peer_pubkey_raw =
-            match base64::engine::general_purpose::STANDARD.decode(&ev.pubkey_der_b64) {
-                Ok(bytes) => bytes,
-                Err(e) => {
-                    eprintln!("⚠️ Attestation rejected: invalid pubkey base64: {}", e);
-                    return Ok(false);
-                }
-            };
+        let peer_pubkey_raw = peer_dkp_bytes;
 
         // Handle both raw EC point (65 bytes from software/hardware)
         // and full SubjectPublicKeyInfo DER (91 bytes legacy)
@@ -1270,6 +1394,7 @@ impl AttestationService {
                          Upgrade all peers to enforce."
                     );
                 }
+                observe_verified_virtual_id(ev);
                 println!("✅ Attestation verified successfully.");
                 Ok(true)
             }
@@ -1941,7 +2066,25 @@ mod tests {
             mismatched_pcrs: vec![],
             composite_digest: String::new(),
         };
-        let msg = build_evidence_signing_message(nonce, &policy_digest, Some(&baseline_status));
+        let policy_digest_bytes = hex::decode(&policy_digest).unwrap();
+        let nonce_i_bytes = hex::decode(nonce).unwrap();
+        let virtual_id = hex::encode(
+            crate::virtual_id::VirtualIdInputs {
+                did: "did:guardian:test-subject",
+                dkp_pubkey_der: &spki,
+                pcr_composite_digest: &[],
+                policy_digest: &policy_digest_bytes,
+                nonce_i: &nonce_i_bytes,
+                nonce_r: &[],
+            }
+            .compute(),
+        );
+        let msg = build_evidence_signing_message(
+            nonce,
+            &policy_digest,
+            Some(&baseline_status),
+            &virtual_id,
+        );
 
         let signature: Signature = signing_key.sign(&msg);
         let sig_der = signature.to_der();
@@ -1951,6 +2094,7 @@ mod tests {
             subject_did: "did:guardian:test-subject".to_string(),
             nonce: nonce.to_string(),
             policy_digest,
+            virtual_id,
             signature: general_purpose::STANDARD.encode(sig_der.as_bytes()),
             pubkey_der_b64: general_purpose::STANDARD.encode(spki),
             presented_vc_json: None,
