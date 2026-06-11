@@ -26,6 +26,7 @@ message CertSignResponse {
   string relay_registry_json = 11; // serialized relay registry
   // Policy Authority signing public key (DER, raw bytes)
   bytes signing_pubkey_der = 12;
+  string member_vc_json = 13;      // signed VC issued by circle owner
 }
 
 service CertService {

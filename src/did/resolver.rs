@@ -235,6 +235,7 @@ impl Resolver {
             pubkey_prefix: None,
             did_doc_json: None,
             did_query: Some(did.as_str().to_string()),
+            status_list_body: None,
         };
 
         let response = tokio::time::timeout(
