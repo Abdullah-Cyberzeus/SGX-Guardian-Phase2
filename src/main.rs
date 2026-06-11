@@ -1572,8 +1572,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 if vc_status_list_sync_elapsed >= VC_STATUS_LIST_PULL_INTERVAL_SECS {
                     vc_status_list_sync_elapsed = 0;
+                    let expected_issuer = sgx_guardian_client::vc::issue::known_ca_did().ok();
                     if let Err(e) =
-                        sgx_guardian_client::vc::distribution::pull_status_list(&ca_host).await
+                        sgx_guardian_client::vc::distribution::pull_status_list_verified(
+                            &resolver_for_pull,
+                            &ca_host,
+                            expected_issuer.as_deref(),
+                        )
+                        .await
                     {
                         tracing::warn!("VC status list pull failed from {}: {}", ca_host, e);
                     }
@@ -2821,12 +2827,8 @@ async fn refresh_and_publish_did_doc_inner(
     }
 
     let ip_only = overlay_ip_cidr.split('/').next().unwrap_or(overlay_ip_cidr);
-    let attestation_port = match node_id {
-        "nodeA" => 50051,
-        "nodeB" => 50052,
-        "nodeC" => 50053,
-        _ => 50051,
-    };
+    let attestation_port =
+        sgx_guardian_client::attestation_service::attestation_listener_port_for_node(node_id);
 
     let input = document::DocBuildInput {
         did: did.as_str(),

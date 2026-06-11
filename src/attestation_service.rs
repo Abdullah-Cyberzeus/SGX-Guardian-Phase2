@@ -65,6 +65,19 @@ pub fn trigger_reattestation_for(peer_did: &str) {
     }
 }
 
+pub fn attestation_listener_port_for_base(base_port: u16) -> u16 {
+    base_port.saturating_add(100)
+}
+
+pub fn attestation_listener_port_for_node(node_id: &str) -> u16 {
+    match node_id {
+        "nodeA" => attestation_listener_port_for_base(50051),
+        "nodeB" => attestation_listener_port_for_base(50052),
+        "nodeC" => attestation_listener_port_for_base(50053),
+        _ => attestation_listener_port_for_base(50051),
+    }
+}
+
 // Trusted Peer JSON Logging Helpers ===
 use chrono::Utc;
 use std::fs;
@@ -276,10 +289,18 @@ fn allowed_attestation_targets(local_node_id: &str) -> HashSet<String> {
         }
         if let Ok(conf) = load_node_config_for_attestation(node) {
             if crate::dynamic_config::is_routable_ip(&conf.ip) {
-                targets.insert(format!("{}:{}", conf.ip, conf.port + 100));
+                targets.insert(format!(
+                    "{}:{}",
+                    conf.ip,
+                    attestation_listener_port_for_base(conf.port)
+                ));
             }
             if let Some(overlay_ip) = overlay_ip_from_local_registry(node) {
-                targets.insert(format!("{}:{}", overlay_ip, conf.port + 100));
+                targets.insert(format!(
+                    "{}:{}",
+                    overlay_ip,
+                    attestation_listener_port_for_base(conf.port)
+                ));
             }
         }
     }
@@ -435,7 +456,7 @@ async fn resolve_attestation_target(
 ) -> Option<(String, u16, String)> {
     let peer_node_id =
         infer_node_id_from_peer(peer_ip, base_port).unwrap_or_else(|| "unknown".into());
-    let attest_port = base_port.saturating_add(100);
+    let attest_port = attestation_listener_port_for_base(base_port);
 
     if let Some(overlay_ip) = resolve_overlay_ip_for_node(&peer_node_id).await {
         return Some((overlay_ip, attest_port, peer_node_id));
@@ -1593,7 +1614,7 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
         .nth(1)
         .unwrap_or_else(|| "nodeA".to_string());
     let node_conf = load_node_config_for_attestation(&node_id_env)?;
-    let listen_port: u16 = node_conf.port + 100;
+    let listen_port: u16 = attestation_listener_port_for_base(node_conf.port);
     let local_ip = node_conf.ip.clone();
     let overlay_only = parse_bool_env("SGX_ATTEST_OVERLAY_ONLY", true);
     if overlay_only {
@@ -1693,7 +1714,7 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
             }
         };
         let local_ip = local_conf.ip;
-        let local_attest_port = local_conf.port + 100;
+        let local_attest_port = attestation_listener_port_for_base(local_conf.port);
         loop {
             tokio::time::sleep(Duration::from_secs(60)).await;
             let allowed_targets = allowed_attestation_targets(&node_id);
@@ -2168,5 +2189,38 @@ mod tests {
         };
         assert!(!result.verified);
         assert_eq!(result.reason, "test");
+    }
+
+    #[test]
+    fn test_attestation_listener_ports_are_not_grpc_ports() {
+        assert_eq!(attestation_listener_port_for_node("nodeA"), 50151);
+        assert_eq!(attestation_listener_port_for_node("nodeB"), 50152);
+        assert_eq!(attestation_listener_port_for_node("nodeC"), 50153);
+        assert_ne!(attestation_listener_port_for_node("nodeA"), 50051);
+        assert_ne!(attestation_listener_port_for_node("nodeB"), 50052);
+        assert_ne!(attestation_listener_port_for_node("nodeC"), 50053);
+    }
+
+    #[tokio::test]
+    async fn test_framed_reader_rejects_grpc_preface_length_cleanly() {
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::{TcpListener, TcpStream};
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            socket
+                .write_all(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+                .await
+                .unwrap();
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let err = read_evidence_framed(&mut client).await.unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("Invalid attestation payload length"));
+        server.await.unwrap();
     }
 }

@@ -730,6 +730,11 @@ mod tests {
             .as_str()
             .expect("old proof value")
             .to_string();
+        let issued_vc: crate::vc::credential::VerifiableCredential =
+            serde_json::from_value(issued["vc"].clone()).expect("issued vc");
+        persistence::save_peer(&subject, &issued_vc).expect("seed peer cached vc");
+        let next_index_before =
+            std::fs::read_to_string(persistence::status_list_index_path()).expect("next index");
 
         tokio::time::sleep(Duration::from_millis(20)).await;
 
@@ -755,6 +760,46 @@ mod tests {
         assert_eq!(
             renewed["vc"]["credentialStatus"]["statusListIndex"],
             issued["vc"]["credentialStatus"]["statusListIndex"]
+        );
+        let renewed_issued_file: Value = client
+            .get(format!("{}/api/v1/vc/files/issued/{}", base_url, vc_id))
+            .send()
+            .await
+            .expect("issued vc file")
+            .json()
+            .await
+            .expect("issued vc file body");
+        let renewed_peer_file: Value = client
+            .get(format!("{}/api/v1/vc/files/peer/{}", base_url, subject))
+            .send()
+            .await
+            .expect("peer vc file")
+            .json()
+            .await
+            .expect("peer vc file body");
+        assert_eq!(
+            renewed_issued_file["expirationDate"],
+            renewed_peer_file["expirationDate"]
+        );
+        assert_eq!(
+            renewed_issued_file["proof"]["created"],
+            renewed_peer_file["proof"]["created"]
+        );
+        assert_eq!(
+            renewed_issued_file["proof"]["proofValue"],
+            renewed_peer_file["proof"]["proofValue"]
+        );
+        assert_eq!(
+            renewed_issued_file["issuanceDate"],
+            issued["vc"]["issuanceDate"]
+        );
+        assert_eq!(
+            renewed_issued_file["credentialStatus"]["statusListIndex"],
+            issued["vc"]["credentialStatus"]["statusListIndex"]
+        );
+        assert_eq!(
+            next_index_before,
+            std::fs::read_to_string(persistence::status_list_index_path()).expect("next index")
         );
 
         let verify_ok: Value = client
@@ -911,6 +956,97 @@ mod tests {
             .await
             .expect("status list index body");
         assert_eq!(index_file["next_index"], 2);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn vc_verify_uses_same_resolver_cache_as_did_resolve_api() {
+        let _lock = TEST_ENV_LOCK.lock().await;
+        let env = VcEnvGuard::new();
+        let (km_dir, _km, issuer, doc) = make_vc_material("nodeA", 31, "192.168.100.1/24");
+        install_vc_runtime_material(&env, &km_dir, &issuer, &doc);
+        let state = env.state();
+
+        let (base_url, handle) = spawn_api_with_state(state.clone()).await;
+        let client = reqwest::Client::new();
+        let subject = Did::from_id_bytes(&[32u8; 32]).to_string();
+
+        let issued: Value = client
+            .post(format!("{}/api/v1/vc/issue", base_url))
+            .json(&serde_json::json!({
+                "to": subject,
+                "role": "member",
+                "days": 30
+            }))
+            .send()
+            .await
+            .expect("issue vc")
+            .json()
+            .await
+            .expect("issue vc body");
+        let vc_id = issued["vc_id"].as_str().expect("vc id").to_string();
+
+        let warm_resolve: Value = client
+            .get(format!("{}/api/v1/did/resolve", base_url))
+            .query(&[("did", issuer.did.as_str())])
+            .send()
+            .await
+            .expect("warm did resolve")
+            .json()
+            .await
+            .expect("warm did resolve body");
+        assert_eq!(warm_resolve["did"], issuer.did);
+        assert!(matches!(
+            warm_resolve["source"].as_str(),
+            Some("local_peer_doc" | "local_aggregate" | "mem_cache")
+        ));
+
+        let issuer_did = Did::parse(&issuer.did).expect("issuer did");
+        let peer_path = doc_persistence::configured_peers_doc_dir()
+            .join(format!("did_doc_{}.json", issuer_did.msi()));
+        std::fs::remove_file(peer_path).expect("remove issuer peer doc");
+        std::fs::write(doc_persistence::configured_ca_aggregate_path(), "[]")
+            .expect("clear issuer aggregate doc");
+
+        let cached_resolve: Value = client
+            .get(format!("{}/api/v1/did/resolve", base_url))
+            .query(&[("did", issuer.did.as_str())])
+            .send()
+            .await
+            .expect("cached did resolve")
+            .json()
+            .await
+            .expect("cached did resolve body");
+        assert_eq!(cached_resolve["did"], issuer.did);
+        assert_eq!(cached_resolve["source"], "mem_cache");
+
+        let verify_ok: Value = client
+            .post(format!("{}/api/v1/vc/verify", base_url))
+            .json(&serde_json::json!({ "id": vc_id }))
+            .send()
+            .await
+            .expect("verify vc with cached resolver")
+            .json()
+            .await
+            .expect("verify vc with cached resolver body");
+        assert_eq!(verify_ok["valid"], true);
+
+        state.did_resolver.invalidate_all().await;
+        let verify_unresolved: Value = client
+            .post(format!("{}/api/v1/vc/verify", base_url))
+            .json(&serde_json::json!({ "id": issued["vc_id"] }))
+            .send()
+            .await
+            .expect("verify vc without issuer doc")
+            .json()
+            .await
+            .expect("verify vc without issuer doc body");
+        assert_eq!(verify_unresolved["valid"], false);
+        assert!(verify_unresolved["reason"]
+            .as_str()
+            .expect("unresolved reason")
+            .contains("VC issuer DID not resolvable"));
 
         handle.abort();
     }
