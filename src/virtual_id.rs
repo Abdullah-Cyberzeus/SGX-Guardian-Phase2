@@ -63,6 +63,36 @@ impl<'a> VirtualIdInputs<'a> {
         id.copy_from_slice(&out[..32]);
         id
     }
+
+    /// Domain-separation tag for the stable (no-nonce) component.
+    /// MUST be different from VID_DOMAIN_TAG to prevent overlap.
+    pub const STABLE_DOMAIN_TAG: &'static [u8] = b"SGX-VID-STABLE-v1\0";
+
+    /// Compute the 32-byte stable component of this VID. Excludes nonces.
+    /// Used by `VirtualIdCache` to classify rotations as nonce-only vs
+    /// security-state (DKP/PCR/policy) changes.
+    pub fn stable_component(&self) -> [u8; 32] {
+        let mut buf = Vec::with_capacity(
+            Self::STABLE_DOMAIN_TAG.len()
+                + 4
+                + self.did.len()
+                + 4
+                + self.dkp_pubkey_der.len()
+                + 4
+                + self.pcr_composite_digest.len()
+                + 4
+                + self.policy_digest.len(),
+        );
+        buf.extend_from_slice(Self::STABLE_DOMAIN_TAG);
+        write_lp(&mut buf, self.did.as_bytes());
+        write_lp(&mut buf, self.dkp_pubkey_der);
+        write_lp(&mut buf, self.pcr_composite_digest);
+        write_lp(&mut buf, self.policy_digest);
+        let out = Sha256::digest(&buf);
+        let mut id = [0u8; 32];
+        id.copy_from_slice(&out[..32]);
+        id
+    }
 }
 
 /// Length-prefixed write: 4-byte big-endian length, then bytes.

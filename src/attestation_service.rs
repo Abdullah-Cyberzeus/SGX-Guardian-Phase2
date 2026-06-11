@@ -88,21 +88,56 @@ struct TrustedPeer {
     peer_id: String,
     ip: String,
     status: String,
+    /// Legacy field. Equal to `last_attested_at` after Fix 3. Retained for
+    /// pre-Fix-3 readers (ops dashboard, merge logic).
     timestamp: String,
+    // Fix 3: identity + state metadata captured at the moment of last
+    // successful attestation. All optional with serde defaults so files
+    // written before this fix continue to parse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    did: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    virtual_id: Option<String>,
+    /// RFC3339 of last successful attestation (mirrors `timestamp` for
+    /// new writes; lets future tooling phase `timestamp` out cleanly).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_attested_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dkp_pubkey_sha256_b16: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pcr_composite_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    policy_digest: Option<String>,
 }
-/// Stores the most recent attestation result for a peer,
-/// including digest, result (success/fail), and timestamp.
+/// Stores the most recent attestation result for a peer with full identity +
+/// state evidence so post-mortems can reconstruct WHAT was verified.
 #[derive(Serialize, Deserialize)]
 struct LastAttestation {
     peer_id: String,
     policy_digest: String,
     result: String,
     timestamp: String,
+    // Fix 2: peer identity at the moment of attestation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    peer_did: Option<String>,
+    // Session-scoped VID actually verified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    virtual_id: Option<String>,
+    // SHA-256 fingerprint of peer's DKP pubkey (12-byte hex prefix for
+    // human readability; the cache still stores the full digest).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dkp_pubkey_sha256_b16: Option<String>,
+    // PCR composite digest at time of attestation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pcr_composite_digest: Option<String>,
+    // Initiator nonce used (already covered by the signed evidence; kept
+    // here for ops correlation with peer logs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    nonce: Option<String>,
 }
 /// Writes or updates trusted peer info into the per-node JSON file
 /// and then merges all peer files into a global combined view.
-fn write_trusted_peer(peer_id: &str, ip: &str) {
-    // Identify node name (nodeA / nodeB / nodeC)
+fn write_trusted_peer(peer_id: &str, ip: &str, ev: &AttestationEvidence) {
     let node = std::env::args().nth(1).unwrap_or("nodeX".into());
     let prod_file = format!("/var/log/sgx-guardian/trusted_peers_{}.json", node);
     let dev_file = format!(
@@ -110,11 +145,28 @@ fn write_trusted_peer(peer_id: &str, ip: &str) {
         std::env::var("SGX_GUARDIAN_HOME").unwrap_or_else(|_| "/var/lib/sgx-guardian".into()),
         node
     );
+
+    let now = Utc::now().to_rfc3339();
+    let dkp_fp = general_purpose::STANDARD
+        .decode(&ev.pubkey_der_b64)
+        .ok()
+        .map(|b| hex::encode(Sha256::digest(&b)));
+    let pcr_digest = ev
+        .baseline_status
+        .as_ref()
+        .map(|b| b.composite_digest.clone());
+
     let entry = TrustedPeer {
         peer_id: peer_id.to_string(),
         ip: ip.to_string(),
         status: "verified".to_string(),
-        timestamp: Utc::now().to_rfc3339(),
+        timestamp: now.clone(),
+        did: Some(ev.subject_did.clone()).filter(|s| !s.is_empty()),
+        virtual_id: Some(ev.virtual_id.clone()).filter(|s| !s.is_empty()),
+        last_attested_at: Some(now.clone()),
+        dkp_pubkey_sha256_b16: dkp_fp,
+        pcr_composite_digest: pcr_digest,
+        policy_digest: Some(ev.policy_digest.clone()).filter(|s| !s.is_empty()),
     };
 
     // Load existing per-node file (NOT global file)
@@ -127,12 +179,20 @@ fn write_trusted_peer(peer_id: &str, ip: &str) {
         }
     }
 
-    // Update or insert
+    // Update or insert by peer_id. Update path now also refreshes ALL
+    // identity/state fields, not just timestamp+status — so a peer's
+    // record stays current as their VID/DKP/PCR/policy evolve.
     let mut updated = false;
     for p in data.iter_mut() {
         if p.peer_id == peer_id {
             p.timestamp = entry.timestamp.clone();
-            p.status = "verified".to_string();
+            p.status = "verified".into();
+            p.did = entry.did.clone();
+            p.virtual_id = entry.virtual_id.clone();
+            p.last_attested_at = entry.last_attested_at.clone();
+            p.dkp_pubkey_sha256_b16 = entry.dkp_pubkey_sha256_b16.clone();
+            p.pcr_composite_digest = entry.pcr_composite_digest.clone();
+            p.policy_digest = entry.policy_digest.clone();
             updated = true;
             break;
         }
@@ -189,14 +249,47 @@ fn remove_trusted_peer(peer_id: &str) {
     }
     merge_parent_peer_file();
 }
-/// Saves the latest attestation result for a peer into
-/// `/var/log/sgx-guardian/last_attestation.json` for debugging & audit visibility.
-fn write_last_attestation(peer_id: &str, policy_digest: &str, result: &str) {
+/// Writes the most recent attestation outcome for a peer.
+/// `ev` is the *peer's* evidence (so DID/VID/DKP/PCR reflect THEM, not us).
+/// Pass `None` only when we couldn't decode the evidence (e.g. connect
+/// failed); in that case only the (peer_id, result, timestamp) shape survives.
+fn write_last_attestation(
+    peer_id: &str,
+    policy_digest: &str,
+    result: &str,
+    ev: Option<&AttestationEvidence>,
+) {
+    let (peer_did, virtual_id, dkp_fp, pcr_digest, nonce) = match ev {
+        None => (None, None, None, None, None),
+        Some(ev) => {
+            let dkp_fp = general_purpose::STANDARD
+                .decode(&ev.pubkey_der_b64)
+                .ok()
+                .map(|b| hex::encode(Sha256::digest(&b)));
+            let pcr_digest = ev
+                .baseline_status
+                .as_ref()
+                .map(|b| b.composite_digest.clone());
+            (
+                Some(ev.subject_did.clone()).filter(|s| !s.is_empty()),
+                Some(ev.virtual_id.clone()).filter(|s| !s.is_empty()),
+                dkp_fp,
+                pcr_digest,
+                Some(ev.nonce.clone()).filter(|s| !s.is_empty()),
+            )
+        }
+    };
+
     let record = LastAttestation {
         peer_id: peer_id.to_string(),
         policy_digest: policy_digest.to_string(),
         result: result.to_string(),
         timestamp: Utc::now().to_rfc3339(),
+        peer_did,
+        virtual_id,
+        dkp_pubkey_sha256_b16: dkp_fp,
+        pcr_composite_digest: pcr_digest,
+        nonce,
     };
 
     if let Ok(json) = serde_json::to_string_pretty(&record) {
@@ -689,30 +782,110 @@ fn subject_did_from_attestation_pubkey(pubkey_der_b64: &str) -> Option<String> {
 }
 
 fn observe_verified_virtual_id(ev: &AttestationEvidence) {
-    if let Some(cache) = VID_CACHE.get() {
-        match cache.observe_sync(&ev.subject_did, &ev.virtual_id) {
-            crate::virtual_id_cache::VidObservation::FirstSeen => {
+    let Some(cache) = VID_CACHE.get() else {
+        return;
+    };
+
+    // Build the ObservationContext from the evidence we just verified.
+    // Every input is already in scope — no extra computation cost.
+    let peer_dkp_bytes = general_purpose::STANDARD
+        .decode(&ev.pubkey_der_b64)
+        .unwrap_or_default();
+    let dkp_fp = hex::encode(Sha256::digest(&peer_dkp_bytes));
+    let pcr_digest = ev
+        .baseline_status
+        .as_ref()
+        .map(|b| b.composite_digest.clone())
+        .unwrap_or_default();
+    let policy_digest = ev.policy_digest.clone();
+
+    // Recompute the stable component the same way the cache will.
+    let pcr_bytes = hex::decode(&pcr_digest).unwrap_or_default();
+    let policy_bytes = hex::decode(&policy_digest).unwrap_or_default();
+    let stable_hex = hex::encode(
+        crate::virtual_id::VirtualIdInputs {
+            did: &ev.subject_did,
+            dkp_pubkey_der: &peer_dkp_bytes,
+            pcr_composite_digest: &pcr_bytes,
+            policy_digest: &policy_bytes,
+            nonce_i: &[],
+            nonce_r: &[],
+        }
+        .stable_component(),
+    );
+
+    let ctx = crate::virtual_id_cache::ObservationContext {
+        peer_did: &ev.subject_did,
+        new_vid_hex: &ev.virtual_id,
+        new_stable_hex: &stable_hex,
+        new_dkp_fp: &dkp_fp,
+        new_pcr_digest: &pcr_digest,
+        new_policy_digest: &policy_digest,
+    };
+
+    let node_id = std::env::args().nth(1).unwrap_or_else(|| "unknown".into());
+    match cache.observe_rich(&ctx) {
+        crate::virtual_id_cache::VidObservation::FirstSeen => {
+            log_audit(
+                &node_id,
+                AuditCategory::Attestation,
+                AuditSeverity::Info,
+                AuditAction::Started,
+                &format!("First VID seen for {}: {}", ev.subject_did, ev.virtual_id),
+            );
+        }
+        crate::virtual_id_cache::VidObservation::Unchanged => {}
+        crate::virtual_id_cache::VidObservation::Rotated {
+            previous,
+            reason,
+            cooldown_allows_reattest,
+        } => {
+            if !reason.is_security_event() {
                 log_audit(
-                    &std::env::args().nth(1).unwrap_or_else(|| "unknown".into()),
+                    &node_id,
                     AuditCategory::Attestation,
                     AuditSeverity::Info,
                     AuditAction::Started,
-                    &format!("First VID seen for {}: {}", ev.subject_did, ev.virtual_id),
-                );
-            }
-            crate::virtual_id_cache::VidObservation::Unchanged => {}
-            crate::virtual_id_cache::VidObservation::Rotated { previous } => {
-                log_audit(
-                    &std::env::args().nth(1).unwrap_or_else(|| "unknown".into()),
-                    AuditCategory::Attestation,
-                    AuditSeverity::Warning,
-                    AuditAction::Started,
                     &format!(
-                        "VID rotation for {}: {} -> {} (forcing re-attestation)",
-                        ev.subject_did, previous, ev.virtual_id
+                        "VID session refresh for {} (reason={}): {} -> {}",
+                        ev.subject_did,
+                        reason.as_str(),
+                        previous,
+                        ev.virtual_id
                     ),
                 );
+                return;
+            }
+
+            let severity = AuditSeverity::Warning;
+            log_audit(
+                &node_id,
+                AuditCategory::Attestation,
+                severity,
+                AuditAction::Started,
+                &format!(
+                    "VID rotation for {} (reason={}): {} -> {}",
+                    ev.subject_did,
+                    reason.as_str(),
+                    previous,
+                    ev.virtual_id
+                ),
+            );
+
+            if cooldown_allows_reattest {
                 trigger_reattestation_for(&ev.subject_did);
+            } else {
+                log_audit(
+                    &node_id,
+                    AuditCategory::Attestation,
+                    AuditSeverity::Info,
+                    AuditAction::Started,
+                    &format!(
+                        "Re-attest suppressed by cooldown for {} (reason={})",
+                        ev.subject_did,
+                        reason.as_str()
+                    ),
+                );
             }
         }
     }
@@ -1558,7 +1731,7 @@ impl AttestationService {
                 &format!("Attestation verification failed for peer {}", addr),
             );
 
-            write_last_attestation(&addr, &peer_ev.policy_digest, "failed");
+            write_last_attestation(&addr, &peer_ev.policy_digest, "failed", Some(&peer_ev));
             remove_trusted_peer(&addr);
             println!("❌ Peer attestation verification failed for {}", addr);
             return Ok(false);
@@ -1583,7 +1756,7 @@ impl AttestationService {
                     AuditAction::Rejected,
                     &format!("Peer {} VC rejected: {}", addr, e),
                 );
-                write_last_attestation(&addr, &peer_ev.policy_digest, "failed");
+                write_last_attestation(&addr, &peer_ev.policy_digest, "failed", Some(&peer_ev));
                 remove_trusted_peer(&addr);
                 return Ok(false);
             }
@@ -1601,8 +1774,8 @@ impl AttestationService {
         );
 
         println!("Peer {} successfully attested and trusted", addr);
-        write_trusted_peer(&addr, &peer_ip);
-        write_last_attestation(&addr, &peer_ev.policy_digest, "success");
+        write_trusted_peer(&addr, &peer_ip, &peer_ev);
+        write_last_attestation(&addr, &peer_ev.policy_digest, "success", Some(&peer_ev));
         Ok(true)
     }
 }
