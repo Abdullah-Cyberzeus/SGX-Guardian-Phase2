@@ -952,6 +952,7 @@ fn vc_renew_by_id_updates_expiration_and_proof_but_preserves_identity_fields() {
     .expect("issue vc");
     persistence::save_own(&vc).expect("save own copy");
     persistence::save_peer(&subject_did, &vc).expect("save peer copy");
+    let next_index_before = read_file(&persistence::status_list_index_path());
 
     std::thread::sleep(std::time::Duration::from_millis(10));
     let renewed = issue::renew_membership_vc(
@@ -990,6 +991,10 @@ fn vc_renew_by_id_updates_expiration_and_proof_but_preserves_identity_fields() {
     )
     .expect("load peer copy");
     assert_eq!(peer_copy, renewed);
+    assert_eq!(
+        next_index_before,
+        read_file(&persistence::status_list_index_path())
+    );
 }
 
 #[test]
