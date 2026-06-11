@@ -40,18 +40,25 @@ fn spki_from_raw_p256_pubkey(raw_pubkey: &[u8]) -> Vec<u8> {
     spki
 }
 
+fn write_lp(buf: &mut Vec<u8>, b: &[u8]) {
+    buf.extend_from_slice(&(b.len() as u32).to_be_bytes());
+    buf.extend_from_slice(b);
+}
+
+fn evidence_signing_message(nonce: &str, policy_digest: &str, virtual_id: &str) -> Vec<u8> {
+    let mut msg = Vec::new();
+    write_lp(&mut msg, nonce.as_bytes());
+    write_lp(&mut msg, policy_digest.as_bytes());
+    write_lp(&mut msg, b"");
+    write_lp(&mut msg, virtual_id.as_bytes());
+    msg
+}
+
 fn make_evidence(policy: &str, nonce: &str, use_spki_der: bool) -> AttestationEvidence {
     let signing_key = fixed_signing_key();
     let verify_key = signing_key.verifying_key();
     let raw_pubkey = verify_key.to_encoded_point(false).as_bytes().to_vec();
     assert_eq!(raw_pubkey.len(), 65);
-
-    let digest = policy_digest_hex(policy);
-    let msg = format!("{}{}", nonce, digest);
-
-    // Current attestation verification expects ASN.1 DER ECDSA signature.
-    let signature: Signature = signing_key.sign(msg.as_bytes());
-    let sig_der = signature.to_der();
 
     let pubkey_bytes = if use_spki_der {
         let spki = spki_from_raw_p256_pubkey(&raw_pubkey);
@@ -60,12 +67,32 @@ fn make_evidence(policy: &str, nonce: &str, use_spki_der: bool) -> AttestationEv
     } else {
         raw_pubkey
     };
+    let digest = policy_digest_hex(policy);
+    let policy_digest_bytes = hex::decode(&digest).unwrap();
+    let nonce_i_bytes = hex::decode(nonce).unwrap();
+    let virtual_id = hex::encode(
+        sgx_guardian_client::virtual_id::VirtualIdInputs {
+            did: "did:guardian:test-subject",
+            dkp_pubkey_der: &pubkey_bytes,
+            pcr_composite_digest: &[],
+            policy_digest: &policy_digest_bytes,
+            nonce_i: &nonce_i_bytes,
+            nonce_r: &[],
+        }
+        .compute(),
+    );
+    let msg = evidence_signing_message(nonce, &digest, &virtual_id);
+
+    // Current attestation verification expects ASN.1 DER ECDSA signature.
+    let signature: Signature = signing_key.sign(&msg);
+    let sig_der = signature.to_der();
 
     AttestationEvidence {
         node_id: "nodeA".to_string(),
         subject_did: "did:guardian:test-subject".to_string(),
         nonce: nonce.to_string(),
         policy_digest: digest,
+        virtual_id,
         signature: general_purpose::STANDARD.encode(sig_der.as_bytes()),
         pubkey_der_b64: general_purpose::STANDARD.encode(pubkey_bytes),
         presented_vc_json: None,

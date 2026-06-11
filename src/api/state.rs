@@ -14,6 +14,7 @@ pub struct AppState {
     pub log_dir_primary: String,  // /var/log/sgx-guardian
     pub log_dir_fallback: String, // logs
     pub did_resolver: crate::did::Resolver,
+    pub vid_cache: crate::virtual_id_cache::VirtualIdCache,
 }
 
 impl AppState {
@@ -28,6 +29,10 @@ impl AppState {
             log_dir_primary: "/var/log/sgx-guardian".into(),
             log_dir_fallback: "logs".into(),
             did_resolver,
+            vid_cache: crate::attestation_service::VID_CACHE
+                .get()
+                .cloned()
+                .unwrap_or_default(),
         })
     }
 }
