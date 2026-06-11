@@ -352,8 +352,8 @@ pub async fn lighthouse_toggle(
 impl RoleListKind {
     fn matches(self, entry: &crate::nebula::lighthouse::LighthouseEntry) -> bool {
         match self {
-            Self::Relay => entry.am_relay,
-            Self::Lighthouse => entry.is_lighthouse,
+            Self::Relay => entry.am_relay && !entry.is_lighthouse,
+            Self::Lighthouse => !entry.am_relay && entry.is_lighthouse,
             Self::Member => !entry.am_relay && !entry.is_lighthouse,
             Self::RelayLighthouse => entry.am_relay && entry.is_lighthouse,
         }
@@ -1000,7 +1000,7 @@ relay:
     }
 
     #[tokio::test]
-    async fn relay_list_route_filters_only_relays_and_resolves_runtime_fields() {
+    async fn relay_list_route_filters_only_relay_only_nodes_and_resolves_runtime_fields() {
         let _lock = TEST_ENV_LOCK.lock().await;
         let tmp = tempfile::tempdir().expect("tempdir");
         let config_dir = tmp.path().join("config");
@@ -1016,29 +1016,21 @@ relay:
             .await
             .expect("relay list");
 
-        assert_eq!(resp.relays.len(), 2);
+        assert_eq!(resp.relays.len(), 1);
+        assert!(resp.relays.iter().all(|entry| entry.node != "nodeA"));
 
-        assert_eq!(resp.relays[0].node, "nodeA");
-        assert_eq!(resp.relays[0].overlay_ip, "192.168.100.1");
+        assert_eq!(resp.relays[0].node, "nodeD");
+        assert_eq!(resp.relays[0].overlay_ip, "192.168.100.4");
         assert!(resp.relays[0].active);
         assert!(resp.relays[0].relay_enabled);
-        assert!(resp.relays[0].lighthouse_enabled);
-        assert_eq!(resp.relays[0].max_peers, Some(7));
-        assert_eq!(resp.relays[0].max_bandwidth_mbps, Some(11));
-        assert_eq!(resp.relays[0].current_mbps, Some(4.25));
-
-        assert_eq!(resp.relays[1].node, "nodeD");
-        assert_eq!(resp.relays[1].overlay_ip, "192.168.100.4");
-        assert!(resp.relays[1].active);
-        assert!(resp.relays[1].relay_enabled);
-        assert!(!resp.relays[1].lighthouse_enabled);
-        assert_eq!(resp.relays[1].max_peers, Some(9));
-        assert_eq!(resp.relays[1].max_bandwidth_mbps, Some(15));
-        assert_eq!(resp.relays[1].current_mbps, Some(1.5));
+        assert!(!resp.relays[0].lighthouse_enabled);
+        assert_eq!(resp.relays[0].max_peers, Some(9));
+        assert_eq!(resp.relays[0].max_bandwidth_mbps, Some(15));
+        assert_eq!(resp.relays[0].current_mbps, Some(1.5));
     }
 
     #[tokio::test]
-    async fn lighthouse_list_route_filters_only_lighthouses() {
+    async fn lighthouse_list_route_filters_only_lighthouse_only_nodes() {
         let _lock = TEST_ENV_LOCK.lock().await;
         let tmp = tempfile::tempdir().expect("tempdir");
 
@@ -1050,16 +1042,14 @@ relay:
             .await
             .expect("lighthouse list");
 
-        assert_eq!(resp.lighthouses.len(), 2);
-        assert_eq!(resp.lighthouses[0].node, "nodeA");
-        assert!(resp.lighthouses[0].relay_enabled);
+        assert_eq!(resp.lighthouses.len(), 1);
+        assert!(resp.lighthouses.iter().all(|entry| entry.node != "nodeA"));
+
+        assert_eq!(resp.lighthouses[0].node, "nodeB");
+        assert!(!resp.lighthouses[0].relay_enabled);
         assert!(resp.lighthouses[0].lighthouse_enabled);
         assert_eq!(resp.lighthouses[0].max_peers, None);
         assert_eq!(resp.lighthouses[0].current_mbps, None);
-
-        assert_eq!(resp.lighthouses[1].node, "nodeB");
-        assert!(!resp.lighthouses[1].relay_enabled);
-        assert!(resp.lighthouses[1].lighthouse_enabled);
     }
 
     #[tokio::test]
