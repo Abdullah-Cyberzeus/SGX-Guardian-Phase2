@@ -27,6 +27,8 @@ pub mod secure_element;
 pub mod server;
 pub mod tls;
 pub mod vc;
+pub mod virtual_id;
+pub mod virtual_id_cache;
 // WiFi + Ethernet discovery modules
 pub mod dynamic_config;
 pub mod network_selector;

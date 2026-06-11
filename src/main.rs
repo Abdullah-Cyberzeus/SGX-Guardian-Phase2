@@ -1025,6 +1025,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sgx_guardian_client::did::ResolverConfig::default(),
     );
     let mut resolver_for_flag = did_resolver.clone();
+    let vid_cache = sgx_guardian_client::virtual_id_cache::VirtualIdCache::new();
+    sgx_guardian_client::attestation_service::set_vid_cache(vid_cache.clone());
+
+    let (reattest_tx, mut reattest_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    sgx_guardian_client::attestation_service::set_reattest_sender(reattest_tx);
+    let node_key_path_for_reattest = node_key_path.clone();
+    tokio::spawn(async move {
+        while let Some(peer_did) = reattest_rx.recv().await {
+            let resolver = sgx_guardian_client::did::Resolver::new(Default::default());
+            let res = match resolver.resolve(&peer_did).await {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("Re-attest: cannot resolve {}: {}", peer_did, e);
+                    continue;
+                }
+            };
+            let attest_endpoint = res.services.iter().find(|s| s.r#type == "SGXAttestation");
+            let Some(endpoint) = attest_endpoint else {
+                tracing::warn!("Re-attest: peer {} has no SGXAttestation service", peer_did);
+                continue;
+            };
+            let url = endpoint.endpoint.trim_start_matches("tcp://");
+            let Some((ip, port_str)) = url.rsplit_once(':') else {
+                tracing::warn!("Re-attest: cannot parse endpoint {}", endpoint.endpoint);
+                continue;
+            };
+            let Ok(port) = port_str.parse::<u16>() else {
+                tracing::warn!("Re-attest: cannot parse port in {}", endpoint.endpoint);
+                continue;
+            };
+            let km_for_reattest = match KeyManager::load_or_generate(&node_key_path_for_reattest) {
+                Ok(km) => km,
+                Err(e) => {
+                    tracing::warn!("Re-attest: cannot load local key: {}", e);
+                    continue;
+                }
+            };
+            tracing::info!("Re-attesting with peer {} at {}:{}", peer_did, ip, port);
+            let _ = sgx_guardian_client::attestation_service::AttestationService::mutual_attest(
+                ip.to_string(),
+                port,
+                &km_for_reattest,
+            )
+            .await;
+        }
+    });
 
     step(9, "nebula subsystem gate");
     if !GATES.disable_nebula {
