@@ -26,6 +26,7 @@ pub mod runtime_gates;
 pub mod secure_element;
 pub mod server;
 pub mod tls;
+pub mod vc;
 // WiFi + Ethernet discovery modules
 pub mod dynamic_config;
 pub mod network_selector;

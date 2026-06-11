@@ -568,6 +568,129 @@ fn local_dkp_pubkey_candidates(km: &KeyManager) -> Vec<Vec<u8>> {
     out
 }
 
+fn resolve_ca_host_for_vc() -> String {
+    if let Ok(host) = std::env::var("SGX_CA_HOST") {
+        if !host.trim().is_empty() && host != "0.0.0.0" {
+            return host;
+        }
+    }
+    if let Some(host) = crate::dynamic_config::latest_known_ca_ip() {
+        if crate::dynamic_config::is_routable_ip(&host) {
+            return host;
+        }
+    }
+    load_node_config_for_attestation("nodeA")
+        .ok()
+        .map(|cfg| cfg.ip)
+        .filter(|ip| crate::dynamic_config::is_routable_ip(ip))
+        .unwrap_or_default()
+}
+
+fn vc_required() -> bool {
+    std::env::var("SGX_REQUIRE_VC").as_deref() != Ok("0")
+}
+
+fn jwk_raw_pubkey(doc: &crate::did::document::DidDocument) -> Option<Vec<u8>> {
+    let vm = doc.verification_method.first()?;
+    let x = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(&vm.public_key_jwk.x)
+        .ok()?;
+    let y = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(&vm.public_key_jwk.y)
+        .ok()?;
+    if x.len() != 32 || y.len() != 32 {
+        return None;
+    }
+    let mut raw = Vec::with_capacity(65);
+    raw.push(0x04);
+    raw.extend_from_slice(&x);
+    raw.extend_from_slice(&y);
+    Some(raw)
+}
+
+fn subject_did_from_attestation_pubkey(pubkey_der_b64: &str) -> Option<String> {
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(pubkey_der_b64)
+        .ok()
+        .and_then(normalize_p256_pubkey)?;
+
+    if let Ok(Some(doc)) = crate::did::doc_persistence::load_self() {
+        if jwk_raw_pubkey(&doc).as_deref() == Some(raw.as_slice()) {
+            return Some(doc.id);
+        }
+    }
+
+    if let Ok(docs) = crate::did::doc_persistence::list_peer_docs() {
+        for doc in docs {
+            if jwk_raw_pubkey(&doc).as_deref() == Some(raw.as_slice()) {
+                return Some(doc.id);
+            }
+        }
+    }
+
+    if let Ok(docs) = crate::did::doc_persistence::load_ca_aggregate() {
+        for doc in docs {
+            if jwk_raw_pubkey(&doc).as_deref() == Some(raw.as_slice()) {
+                return Some(doc.id);
+            }
+        }
+    }
+
+    None
+}
+
+async fn verify_peer_vc_for_attestation(
+    peer_ev: &AttestationEvidence,
+    peer_label: &str,
+) -> Result<Option<String>> {
+    let expected_subject_did = subject_did_from_attestation_pubkey(&peer_ev.pubkey_der_b64);
+    let Some(vc_json) = peer_ev.presented_vc_json.as_deref() else {
+        if vc_required() {
+            anyhow::bail!("Peer {} presented no VC", peer_label);
+        }
+        return Ok(expected_subject_did);
+    };
+
+    let expected_subject_did = expected_subject_did
+        .or_else(|| (!peer_ev.subject_did.is_empty()).then(|| peer_ev.subject_did.clone()))
+        .ok_or_else(|| anyhow::anyhow!("subject DID unavailable for {}", peer_label))?;
+
+    let vc: crate::vc::credential::VerifiableCredential =
+        serde_json::from_str(vc_json).map_err(|e| anyhow::anyhow!("VC parse: {}", e))?;
+    let ca_did =
+        crate::vc::issue::known_ca_did().map_err(|e| anyhow::anyhow!("known CA DID: {}", e))?;
+    let resolver = crate::did::Resolver::new(crate::did::ResolverConfig {
+        ca_host: resolve_ca_host_for_vc(),
+        ..Default::default()
+    });
+    let status_list_credential = crate::vc::persistence::load_status_list_credential()
+        .map_err(|e| anyhow::anyhow!("status list load: {}", e))?;
+    let status_list = crate::vc::status_list::verify_status_list_credential(
+        &status_list_credential,
+        &resolver,
+        Some(&ca_did),
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("status list verify: {}", e))?;
+
+    crate::vc::verify::verify_vc(
+        &vc,
+        &resolver,
+        crate::vc::verify::VerifyOptions {
+            expected_subject_did: Some(&expected_subject_did),
+            expected_circle_id: Some(crate::vc::issue::DEFAULT_CIRCLE_ID),
+            expected_issuer_did: Some(&ca_did),
+            check_status_list: true,
+            status_list: Some(&status_list),
+        },
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("VC verify: {}", e))?;
+
+    let _ = crate::vc::persistence::save_peer(&expected_subject_did, &vc);
+    Ok(Some(expected_subject_did))
+}
+
 /// Main service responsible for generating, verifying,
 /// and coordinating SG-X attestation workflows.
 pub struct AttestationService;
@@ -576,10 +699,14 @@ pub struct AttestationService;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttestationEvidence {
     pub node_id: String,
+    #[serde(default)]
+    pub subject_did: String,
     pub nonce: String,
     pub policy_digest: String,
     pub signature: String,
     pub pubkey_der_b64: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub presented_vc_json: Option<String>,
     /// PCR snapshot (when available)
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub pcr_values: Option<crate::secure_element::pcr::PcrSnapshot>,
@@ -992,12 +1119,17 @@ impl AttestationService {
         let pcr_load_path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node_id);
         let pcr_values = crate::secure_element::pcr::PcrSnapshot::load(&pcr_load_path).ok();
         let key_version = Some(crate::secure_element::pcr::read_dkp_key_version());
+        let subject_did = crate::did::DidRecord::load(crate::did::DEFAULT_DID_PATH)
+            .map(|record| record.did)
+            .unwrap_or_default();
         Ok(AttestationEvidence {
             node_id,
+            subject_did,
             nonce,
             policy_digest,
             signature: signature_b64,
             pubkey_der_b64: pubkey_b64,
+            presented_vc_json: None,
             pcr_values,
             key_version,
             baseline_status,
@@ -1248,7 +1380,10 @@ impl AttestationService {
 
         // Step 2: send our attestation evidence
         let policy = load_attestation_policy_material();
-        let evidence = Self::create_signed_evidence(km, &policy.yaml)?;
+        let mut evidence = Self::create_signed_evidence(km, &policy.yaml)?;
+        if let Ok(Some(vc)) = crate::vc::persistence::load_own_any() {
+            evidence.presented_vc_json = serde_json::to_string(&vc).ok();
+        }
         if let Err(e) = write_evidence_framed(&mut stream, &evidence).await {
             eprintln!(
                 "❌ Failed to send attestation evidence to {}: {:?}",
@@ -1281,6 +1416,31 @@ impl AttestationService {
             remove_trusted_peer(&addr);
             println!("❌ Peer attestation verification failed for {}", addr);
             return Ok(false);
+        }
+
+        match verify_peer_vc_for_attestation(&peer_ev, &addr).await {
+            Ok(Some(subject_did)) => {
+                log_audit(
+                    &node_id,
+                    AuditCategory::Vc,
+                    AuditSeverity::Info,
+                    AuditAction::Succeeded,
+                    &format!("Peer {} VC verified for {}", addr, subject_did),
+                );
+            }
+            Ok(None) => {}
+            Err(e) => {
+                log_audit(
+                    &node_id,
+                    AuditCategory::Vc,
+                    AuditSeverity::Critical,
+                    AuditAction::Rejected,
+                    &format!("Peer {} VC rejected: {}", addr, e),
+                );
+                write_last_attestation(&addr, &peer_ev.policy_digest, "failed");
+                remove_trusted_peer(&addr);
+                return Ok(false);
+            }
         }
 
         // Step 5: on success → add to trusted_peers.json
@@ -1689,7 +1849,35 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
                         );
 
                         // Send our own evidence back
-                        let reply = AttestationService::create_signed_evidence(&km, &policy.yaml)?;
+                        match verify_peer_vc_for_attestation(&incoming, &remote.to_string()).await {
+                            Ok(Some(subject_did)) => {
+                                log_audit(
+                                    &node_id,
+                                    AuditCategory::Vc,
+                                    AuditSeverity::Info,
+                                    AuditAction::Succeeded,
+                                    &format!("Incoming peer VC verified for {}", subject_did),
+                                );
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                log_audit(
+                                    &node_id,
+                                    AuditCategory::Vc,
+                                    AuditSeverity::Critical,
+                                    AuditAction::Rejected,
+                                    &format!("Incoming peer VC rejected from {}: {}", remote, e),
+                                );
+                                remove_trusted_peer(&incoming.node_id);
+                                continue;
+                            }
+                        }
+
+                        let mut reply =
+                            AttestationService::create_signed_evidence(&km, &policy.yaml)?;
+                        if let Ok(Some(vc)) = crate::vc::persistence::load_own_any() {
+                            reply.presented_vc_json = serde_json::to_string(&vc).ok();
+                        }
                         if let Err(e) = write_evidence_framed(&mut socket, &reply).await {
                             eprintln!(
                                 "⚠️ Failed to send attestation reply to {} : {:?}",
@@ -1760,10 +1948,12 @@ mod tests {
 
         AttestationEvidence {
             node_id: "nodeA".to_string(),
+            subject_did: "did:guardian:test-subject".to_string(),
             nonce: nonce.to_string(),
             policy_digest,
             signature: general_purpose::STANDARD.encode(sig_der.as_bytes()),
             pubkey_der_b64: general_purpose::STANDARD.encode(spki),
+            presented_vc_json: None,
             pcr_values: None,
             key_version: None,
             baseline_status: Some(baseline_status),

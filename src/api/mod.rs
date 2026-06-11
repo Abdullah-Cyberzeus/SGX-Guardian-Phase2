@@ -124,6 +124,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/did/deactivate", post(handlers::did::deactivate))
         .route("/api/v1/relay/limits", post(handlers::relay::limits))
+        .route("/api/v1/vc/issue", post(handlers::vc::issue))
+        .route("/api/v1/vc/list", get(handlers::vc::list))
+        .route("/api/v1/vc/peers", get(handlers::vc::peers))
+        .route("/api/v1/vc/revoke", post(handlers::vc::revoke))
+        .route("/api/v1/vc/status", get(handlers::vc::status))
+        .route("/api/v1/vc/pull-status", post(handlers::vc::pull_status))
         // Health
         .route("/api/v1/health", get(|| async { "ok" }))
         .layer(cors)

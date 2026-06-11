@@ -29,13 +29,15 @@ fn is_ca_node() -> bool {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RegistryRequest {
-    pub action: String, // "assign" | "query" | "list" | "snapshot" | "snapshot_lh" | "snapshot_relay" | "publish_did_doc" | "snapshot_did_doc"
+    pub action: String, // "assign" | "query" | "list" | "snapshot" | "snapshot_lh" | "snapshot_relay" | "publish_did_doc" | "snapshot_did_doc" | "status_list_snapshot"
     pub node_name: String,
     pub pubkey_prefix: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub did_doc_json: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub did_query: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_list_body: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -49,6 +51,8 @@ pub struct RegistryResponse {
     pub did_doc_json: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub did_doc_aggregate_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_list_body: Option<String>,
 }
 
 // ── Directory bootstrap ───────────────────────────────────────
@@ -249,6 +253,7 @@ async fn handle_registry_connection(
     if request.action == "snapshot"
         || request.action == "snapshot_lh"
         || request.action == "snapshot_relay"
+        || request.action == "status_list_snapshot"
     {
         // ✅ Only CA serves registry snapshots
         if !is_ca_node() {
@@ -267,6 +272,31 @@ async fn handle_registry_connection(
             LIGHTHOUSE_REGISTRY_PATH
         } else if request.action == "snapshot_relay" {
             RELAY_REGISTRY_PATH
+        } else if request.action == "status_list_snapshot" {
+            match std::fs::read_to_string(crate::vc::persistence::status_list_path()) {
+                Ok(content) => {
+                    let resp = RegistryResponse {
+                        success: true,
+                        status_list_body: Some(content),
+                        ..Default::default()
+                    };
+                    let mut json = serde_json::to_string(&resp)?;
+                    json.push('\n');
+                    writer.write_all(json.as_bytes()).await?;
+                    return Ok(());
+                }
+                Err(e) => {
+                    let resp = RegistryResponse {
+                        success: false,
+                        error: Some(e.to_string()),
+                        ..Default::default()
+                    };
+                    let mut json = serde_json::to_string(&resp)?;
+                    json.push('\n');
+                    writer.write_all(json.as_bytes()).await?;
+                    return Ok(());
+                }
+            }
         } else {
             REGISTRY_PATH
         };
@@ -497,6 +527,7 @@ pub async fn request_ip_from_ca(
         pubkey_prefix: Some(pubkey_prefix.to_string()),
         did_doc_json: None,
         did_query: None,
+        status_list_body: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| format!("Serialize: {}", e))?;
@@ -550,6 +581,7 @@ pub async fn query_ip_from_ca(node_name: &str, ca_host: &str) -> Result<(String,
         pubkey_prefix: None,
         did_doc_json: None,
         did_query: None,
+        status_list_body: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| format!("Serialize: {}", e))?;
@@ -600,6 +632,7 @@ pub async fn pull_registry_snapshot_from_ca(ca_host: &str) -> Result<String, Str
         pubkey_prefix: None,
         did_doc_json: None,
         did_query: None,
+        status_list_body: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| e.to_string())?;
@@ -635,6 +668,7 @@ pub async fn pull_lighthouse_snapshot_from_ca(ca_host: &str) -> Result<String, S
         pubkey_prefix: None,
         did_doc_json: None,
         did_query: None,
+        status_list_body: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| e.to_string())?;
@@ -670,6 +704,7 @@ pub async fn pull_relay_snapshot_from_ca(ca_host: &str) -> Result<String, String
         pubkey_prefix: None,
         did_doc_json: None,
         did_query: None,
+        status_list_body: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| e.to_string())?;
@@ -689,6 +724,42 @@ pub async fn pull_relay_snapshot_from_ca(ca_host: &str) -> Result<String, String
         .map_err(|e| e.to_string())?;
 
     Ok(response_line)
+}
+
+pub async fn pull_status_list_snapshot_from_ca(ca_host: &str) -> Result<RegistryResponse, String> {
+    let addr = format!("{}:{}", ca_host, REGISTRY_SYNC_PORT);
+
+    let stream = tokio::time::timeout(std::time::Duration::from_secs(5), TcpStream::connect(&addr))
+        .await
+        .map_err(|_| "timeout".to_string())?
+        .map_err(|e| format!("connect: {}", e))?;
+
+    let request = RegistryRequest {
+        action: "status_list_snapshot".to_string(),
+        node_name: String::new(),
+        pubkey_prefix: None,
+        did_doc_json: None,
+        did_query: None,
+        status_list_body: None,
+    };
+
+    let mut json = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+    json.push('\n');
+
+    let (reader, mut writer) = stream.into_split();
+    writer
+        .write_all(json.as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut buf_reader = BufReader::new(reader);
+    let mut response_line = String::new();
+    buf_reader
+        .read_line(&mut response_line)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    serde_json::from_str(response_line.trim()).map_err(|e| e.to_string())
 }
 
 async fn request_or_query_ip_from_registry(

@@ -21,4 +21,5 @@ pub mod sign;
 pub mod sign_and_deploy;
 pub mod status;
 pub mod transport;
+pub mod vc;
 pub mod verify;
