@@ -29,7 +29,9 @@ pub async fn peers(State(state): State<Arc<AppState>>) -> Result<Json<VidPeersRe
             did,
             virtual_id: cached.vid_hex,
             observed_at: cached.observed_at.to_rfc3339(),
-            last_rotation_reason: cached.last_rotation_reason,
+            last_rotation_reason: cached
+                .last_rotation_reason
+                .map(|reason| reason.as_str().to_string()),
         })
         .collect();
     peers.sort_by(|a, b| a.did.cmp(&b.did));
