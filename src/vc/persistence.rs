@@ -3,7 +3,8 @@ use crate::vc::credential::VerifiableCredential;
 use crate::vc::errors::VcError;
 use crate::vc::status_list::StatusListCredential;
 use std::env;
-use std::fs;
+use std::fs::{self, File};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub const VC_BASE: &str = "/var/lib/sgx-guardian/identity/vc";
@@ -35,13 +36,18 @@ pub fn status_list_index_path() -> PathBuf {
     base_dir().join("status_list_index.json")
 }
 
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), VcError> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), VcError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     let tmp = path.with_extension("tmp");
-    fs::write(&tmp, bytes)?;
-    fs::rename(tmp, path)?;
+    {
+        let mut file = File::create(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    fs::rename(&tmp, path)?;
+    sync_parent_dir(path)?;
     Ok(())
 }
 
@@ -94,8 +100,26 @@ pub fn load_issued(id: &str) -> Result<VerifiableCredential, VcError> {
     Ok(serde_json::from_slice(&fs::read(path)?)?)
 }
 
+pub fn load_own(id: &str) -> Result<VerifiableCredential, VcError> {
+    let path = own_path_for_id(id);
+    Ok(serde_json::from_slice(&fs::read(path)?)?)
+}
+
+pub fn load_peer(peer_did: &str) -> Result<VerifiableCredential, VcError> {
+    let path = peer_path_for_subject(peer_did);
+    Ok(serde_json::from_slice(&fs::read(path)?)?)
+}
+
 pub fn load_status_list_credential() -> Result<StatusListCredential, VcError> {
     Ok(serde_json::from_slice(&fs::read(status_list_path())?)?)
+}
+
+pub fn load_status_list_raw() -> Result<String, VcError> {
+    Ok(fs::read_to_string(status_list_path())?)
+}
+
+pub fn load_status_list_index_raw() -> Result<String, VcError> {
+    Ok(fs::read_to_string(status_list_index_path())?)
 }
 
 pub fn load_own_any() -> Result<Option<VerifiableCredential>, VcError> {
@@ -200,4 +224,14 @@ fn list_from_dir(dir: &Path) -> Result<Vec<VerifiableCredential>, VcError> {
     }
     out.sort_by(|a, b| a.issuance_date.cmp(&b.issuance_date));
     Ok(out)
+}
+
+fn sync_parent_dir(path: &Path) -> Result<(), VcError> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    if let Ok(dir) = File::open(parent) {
+        let _ = dir.sync_all();
+    }
+    Ok(())
 }

@@ -12,10 +12,12 @@ use crate::vc::status_list::StatusListManager;
 use chrono::{Duration, Utc};
 use std::collections::BTreeSet;
 use std::fs;
+use std::path::PathBuf;
 use uuid::Uuid;
 
 pub const DEFAULT_VC_DURATION_DAYS: i64 = 365;
 pub const DEFAULT_CIRCLE_ID: &str = "guardian-circle-alpha";
+pub const DEVICE_KEY_DIR_ENV: &str = "SGX_GUARDIAN_DEVICE_KEY_DIR";
 pub const OWNER_DEFAULT_PERMISSIONS: &[&str] = &[
     "mesh:join",
     "cert:issue",
@@ -198,6 +200,11 @@ pub fn issue_membership_vc_with_outcome(
     let canonical = vc.canonical_bytes_for_sign()?;
     crate::did::doc_sign::sign_in_place_generic(&mut vc.proof, &canonical, km, &vm_ref)?;
     persistence::save_issued(&vc)?;
+    if vc.subject_did() == issuer_did.did {
+        persistence::save_own(&vc)?;
+    } else {
+        persistence::save_peer(vc.subject_did(), &vc)?;
+    }
     status_list.commit(km, &vm_ref)?;
 
     crate::audit::logger::log_audit(
@@ -439,6 +446,7 @@ pub fn resolve_runtime_node_id() -> Option<String> {
     }
 
     let mut matches = fs::read_dir("/var/lib/sgx-guardian/sgx-agent")
+        .or_else(|_| fs::read_dir(runtime_device_key_dir()))
         .ok()?
         .filter_map(|entry| {
             let entry = entry.ok()?;
@@ -454,7 +462,8 @@ pub fn resolve_runtime_node_id() -> Option<String> {
 }
 
 pub fn load_runtime_key_manager(node_id: &str) -> anyhow::Result<KeyManager> {
-    let key_path = format!("/var/lib/sgx-guardian/sgx-agent/device_{}.key", node_id);
+    let key_path = runtime_device_key_dir().join(format!("device_{}.key", node_id));
+    let key_path = key_path.to_string_lossy().to_string();
     #[cfg(feature = "secure-element")]
     {
         KeyManager::init_with_se050(
@@ -468,6 +477,12 @@ pub fn load_runtime_key_manager(node_id: &str) -> anyhow::Result<KeyManager> {
     {
         KeyManager::load_or_generate(&key_path)
     }
+}
+
+fn runtime_device_key_dir() -> PathBuf {
+    std::env::var(DEVICE_KEY_DIR_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/var/lib/sgx-guardian/sgx-agent"))
 }
 
 fn ensure_circle_owner(
