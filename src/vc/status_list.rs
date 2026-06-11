@@ -242,16 +242,10 @@ fn load_next_index() -> Option<u64> {
 
 fn save_next_index(next_index: u64) -> Result<(), VcError> {
     let path = persistence::status_list_index_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension("tmp");
-    fs::write(
-        &tmp,
-        serde_json::to_vec_pretty(&StatusListIndexState { next_index })?,
-    )?;
-    fs::rename(tmp, path)?;
-    Ok(())
+    persistence::write_atomic(
+        &path,
+        &serde_json::to_vec_pretty(&StatusListIndexState { next_index })?,
+    )
 }
 
 fn bit_position(index: u64, size_bytes: usize) -> Result<(usize, u8), VcError> {

@@ -125,6 +125,30 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/did/deactivate", post(handlers::did::deactivate))
         .route("/api/v1/relay/limits", post(handlers::relay::limits))
         .route("/api/v1/vc/issue", post(handlers::vc::issue))
+        .route("/api/v1/vc/renew", post(handlers::vc::renew))
+        .route("/api/v1/vc/verify", post(handlers::vc::verify))
+        .route("/api/v1/vc/show", get(handlers::vc::show))
+        .route("/api/v1/vc/status/:vc_id", get(handlers::vc::status_by_id))
+        .route(
+            "/api/v1/vc/status-list/pull",
+            post(handlers::vc::pull_status),
+        )
+        .route("/api/v1/vc/files/issued", get(handlers::vc::files_issued))
+        .route("/api/v1/vc/files/own", get(handlers::vc::files_own))
+        .route("/api/v1/vc/files/peers", get(handlers::vc::files_peers))
+        .route(
+            "/api/v1/vc/files/issued/:vc_id",
+            get(handlers::vc::file_issued),
+        )
+        .route("/api/v1/vc/files/own/:vc_id", get(handlers::vc::file_own))
+        .route("/api/v1/vc/files/peer/:did", get(handlers::vc::file_peer))
+        .route("/api/v1/vc/status-list", get(handlers::vc::status_list_get))
+        .route(
+            "/api/v1/vc/status-list-index",
+            get(handlers::vc::status_list_index_get),
+        )
+        .route("/api/v1/vc/summary", get(handlers::vc::summary))
+        .route("/api/v1/vc/audit", get(handlers::vc::audit))
         .route("/api/v1/vc/list", get(handlers::vc::list))
         .route("/api/v1/vc/peers", get(handlers::vc::peers))
         .route("/api/v1/vc/revoke", post(handlers::vc::revoke))
@@ -154,14 +178,18 @@ mod tests {
     };
     use crate::did::doc_sign;
     use crate::did::document::{DidDocument, DocBuildInput, RevokedVm};
+    use crate::did::persistence::{DerivationProof, DidRecord};
     use crate::did::Did;
     use crate::key_manager::KeyManager;
     use crate::nebula::registry_sync::{RegistryRequest, RegistryResponse, REGISTRY_SYNC_PORT};
+    use crate::vc::{issue, persistence};
+    use chrono::Utc;
     use once_cell::sync::Lazy;
     use reqwest::StatusCode;
     use serde_json::Value;
     use std::ffi::OsString;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
     use tempfile::TempDir;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
@@ -214,6 +242,91 @@ mod tests {
         }
     }
 
+    struct VcEnvGuard {
+        doc_env: EnvGuard,
+        did_path_prev: Option<OsString>,
+        vc_base_prev: Option<OsString>,
+        key_dir_prev: Option<OsString>,
+        node_id_prev: Option<OsString>,
+        audit_path_prev: Option<OsString>,
+        did_path: PathBuf,
+        key_dir: PathBuf,
+        log_dir: PathBuf,
+        audit_log_path: PathBuf,
+        _td: TempDir,
+    }
+
+    impl VcEnvGuard {
+        fn new() -> Self {
+            let td = TempDir::new().expect("vc tempdir");
+            let self_doc_path = td.path().join("identity").join("did_doc.json");
+            let peers_dir = td.path().join("identity").join("peers");
+            let aggregate_path = td.path().join("identity").join("circle_did_docs.json");
+            let did_path = td.path().join("identity").join("did.json");
+            let vc_base = td.path().join("identity").join("vc");
+            let key_dir = td.path().join("sgx-agent");
+            let log_dir = td.path().join("logs");
+            let audit_log_path = log_dir.join("audit-vc-test.log");
+            let doc_env = EnvGuard::new(&self_doc_path, &peers_dir, &aggregate_path);
+            let did_path_prev = std::env::var_os("SGX_GUARDIAN_DID_PATH");
+            let vc_base_prev = std::env::var_os(crate::vc::persistence::VC_BASE_ENV);
+            let key_dir_prev = std::env::var_os(crate::vc::issue::DEVICE_KEY_DIR_ENV);
+            let node_id_prev = std::env::var_os("SGX_NODE_ID");
+            let audit_path_prev = std::env::var_os("SGX_GUARDIAN_AUDIT_LOG_PATH");
+            std::env::set_var("SGX_GUARDIAN_DID_PATH", &did_path);
+            std::env::set_var(crate::vc::persistence::VC_BASE_ENV, &vc_base);
+            std::env::set_var(crate::vc::issue::DEVICE_KEY_DIR_ENV, &key_dir);
+            std::env::set_var("SGX_NODE_ID", "nodeA");
+            std::env::set_var("SGX_GUARDIAN_AUDIT_LOG_PATH", &audit_log_path);
+            std::fs::create_dir_all(&key_dir).expect("create key dir");
+            std::fs::create_dir_all(&log_dir).expect("create log dir");
+            Self {
+                doc_env,
+                did_path_prev,
+                vc_base_prev,
+                key_dir_prev,
+                node_id_prev,
+                audit_path_prev,
+                did_path,
+                key_dir,
+                log_dir,
+                audit_log_path,
+                _td: td,
+            }
+        }
+
+        fn state(&self) -> Arc<AppState> {
+            Arc::new(AppState {
+                node_id: "nodeA".into(),
+                config_dir: "/tmp/config".into(),
+                boot_dir: "/tmp/boot".into(),
+                keys_dir: self.key_dir.to_string_lossy().to_string(),
+                pcr_dir: "/tmp/pcr".into(),
+                pcr_baseline_dir: "/tmp".into(),
+                log_dir_primary: self.log_dir.to_string_lossy().to_string(),
+                log_dir_fallback: self.log_dir.to_string_lossy().to_string(),
+                did_resolver: crate::did::Resolver::new(Default::default()),
+            })
+        }
+    }
+
+    impl Drop for VcEnvGuard {
+        fn drop(&mut self) {
+            restore_env("SGX_GUARDIAN_DID_PATH", self.did_path_prev.take());
+            restore_env(
+                crate::vc::persistence::VC_BASE_ENV,
+                self.vc_base_prev.take(),
+            );
+            restore_env(
+                crate::vc::issue::DEVICE_KEY_DIR_ENV,
+                self.key_dir_prev.take(),
+            );
+            restore_env("SGX_NODE_ID", self.node_id_prev.take());
+            restore_env("SGX_GUARDIAN_AUDIT_LOG_PATH", self.audit_path_prev.take());
+            let _ = &self.doc_env;
+        }
+    }
+
     fn test_state() -> Arc<AppState> {
         Arc::new(AppState {
             node_id: "test-nodeA".into(),
@@ -229,7 +342,11 @@ mod tests {
     }
 
     async fn spawn_api() -> (String, tokio::task::JoinHandle<()>) {
-        let app = build_router(test_state());
+        spawn_api_with_state(test_state()).await
+    }
+
+    async fn spawn_api_with_state(state: Arc<AppState>) -> (String, tokio::task::JoinHandle<()>) {
+        let app = build_router(state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test listener");
@@ -238,6 +355,107 @@ mod tests {
             let _ = axum::serve(listener, app.into_make_service()).await;
         });
         (format!("http://{}", addr), handle)
+    }
+
+    fn make_vc_material(
+        node_name: &str,
+        seed: u8,
+        overlay_ip_cidr: &str,
+    ) -> (TempDir, KeyManager, DidRecord, DidDocument) {
+        let td = TempDir::new().expect("vc key tempdir");
+        let key_path = td.path().join(format!("device_{}.key", node_name));
+        let km = KeyManager::load_or_generate(key_path.to_str().expect("key path")).expect("key");
+        let pubkey = km.pubkey_der().expect("pubkey");
+        let did = Did::from_id_bytes(&[seed; 32]);
+        let did_str = did.to_string();
+        let now = Utc::now().to_rfc3339();
+        let record = DidRecord {
+            did: did_str.clone(),
+            method: "guardian".into(),
+            method_version: "1.0".into(),
+            did_id_b58: did.msi().to_string(),
+            did_id_hex: hex::encode(did.id_bytes()),
+            created_at: now.clone(),
+            deactivated_at: None,
+            derivation: DerivationProof {
+                se050_uid: "01".into(),
+                se050_uid_source: "test".into(),
+                dkp_v1_pubkey_sha256_b16: "01".into(),
+                dkp_v1_pubkey_path: "test".into(),
+                dkp_v1_pubkey_der_b64: None,
+                dik_pubkey_sha256_b16: "01".into(),
+                dik_pubkey_der_b64: None,
+            },
+            current_dkp_version: 1,
+            deriv_signature_b64: String::new(),
+        };
+        let mut doc = DidDocument::build(DocBuildInput {
+            did: &did_str,
+            node_name: Some(node_name),
+            current_dkp_version: 1,
+            current_dkp_pubkey_der: &pubkey,
+            overlay_ip_cidr: Some(overlay_ip_cidr),
+            attestation_bind: None,
+            cert_bootstrap_bind: Some((
+                overlay_ip_cidr.split('/').next().unwrap_or("127.0.0.1"),
+                50061,
+            )),
+            revoked: vec![],
+            previous_version_id: 0,
+            created_at: Some(now),
+            status: Some("active".into()),
+        })
+        .expect("build vc did doc");
+        let vm_ref = doc.verification_method.first().expect("vm").id.clone();
+        doc_sign::sign_in_place(&mut doc, &km, &vm_ref).expect("sign vc did doc");
+        (td, km, record, doc)
+    }
+
+    fn install_vc_runtime_material(
+        env: &VcEnvGuard,
+        km_dir: &TempDir,
+        record: &DidRecord,
+        doc: &DidDocument,
+    ) {
+        record
+            .save(env.did_path.to_str().expect("did path"))
+            .expect("save did record");
+        doc_persistence::save_self(doc).expect("save self doc");
+        doc_persistence::save_peer(doc).expect("save self peer doc");
+        doc_persistence::save_ca_aggregate(std::slice::from_ref(doc)).expect("save aggregate");
+        std::fs::copy(
+            km_dir.path().join("device_nodeA.key"),
+            env.key_dir.join("device_nodeA.key"),
+        )
+        .expect("copy runtime key");
+    }
+
+    fn write_audit_record(
+        path: &Path,
+        timestamp: u64,
+        severity: &str,
+        action: &str,
+        message: &str,
+    ) {
+        let record = serde_json::json!({
+            "previous_hash": "prev",
+            "hash": "hash",
+            "event": {
+                "timestamp": timestamp,
+                "node_id": "nodeA",
+                "category": "Vc",
+                "severity": severity,
+                "action": action,
+                "message": message
+            }
+        });
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .expect("open audit log");
+        use std::io::Write;
+        writeln!(file, "{}", record).expect("write audit record");
     }
 
     fn signed_doc(
@@ -366,6 +584,332 @@ mod tests {
             "expected multipart validation failure, got {}",
             response.status()
         );
+    }
+
+    #[tokio::test]
+    async fn vc_issue_reuse_status_and_safe_file_reads_work() {
+        let _lock = TEST_ENV_LOCK.lock().await;
+        let env = VcEnvGuard::new();
+        let (km_dir, _km, issuer, doc) = make_vc_material("nodeA", 7, "192.168.100.1/24");
+        install_vc_runtime_material(&env, &km_dir, &issuer, &doc);
+
+        let (base_url, handle) = spawn_api_with_state(env.state()).await;
+        let client = reqwest::Client::new();
+        let subject = Did::from_id_bytes(&[8u8; 32]).to_string();
+
+        let first = client
+            .post(format!("{}/api/v1/vc/issue", base_url))
+            .json(&serde_json::json!({
+                "to": subject,
+                "role": "member",
+                "days": 30
+            }))
+            .send()
+            .await
+            .expect("first vc issue");
+        assert_eq!(first.status(), StatusCode::CREATED);
+        let first_body: Value = first.json().await.expect("first vc issue body");
+        let vc_id = first_body["vc_id"].as_str().expect("vc id").to_string();
+        assert_eq!(first_body["reused"], false);
+
+        let issued_path = persistence::issued_path_for_id(&vc_id);
+        let modified_before = std::fs::metadata(&issued_path)
+            .expect("issued metadata")
+            .modified()
+            .expect("issued mtime");
+        let next_index_before =
+            std::fs::read_to_string(persistence::status_list_index_path()).expect("next index");
+
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+
+        let second = client
+            .post(format!("{}/api/v1/vc/issue", base_url))
+            .json(&serde_json::json!({
+                "to": first_body["subject"].as_str().expect("subject"),
+                "role": "member",
+                "days": 365
+            }))
+            .send()
+            .await
+            .expect("second vc issue");
+        assert_eq!(second.status(), StatusCode::OK);
+        let second_body: Value = second.json().await.expect("second vc issue body");
+        assert_eq!(second_body["reused"], true);
+        assert_eq!(
+            second_body["message"],
+            "Existing active VC found — no changes made"
+        );
+        assert_eq!(second_body["vc_id"], vc_id);
+
+        let modified_after = std::fs::metadata(&issued_path)
+            .expect("issued metadata after")
+            .modified()
+            .expect("issued mtime after");
+        let next_index_after =
+            std::fs::read_to_string(persistence::status_list_index_path()).expect("next index");
+        assert_eq!(modified_before, modified_after);
+        assert_eq!(next_index_before, next_index_after);
+
+        let show: Value = client
+            .get(format!("{}/api/v1/vc/show", base_url))
+            .query(&[("scope", "issued"), ("status", "active")])
+            .send()
+            .await
+            .expect("vc show request")
+            .json()
+            .await
+            .expect("vc show body");
+        assert_eq!(show["status"], "success");
+        assert_eq!(show["count"], 1);
+        assert_eq!(show["items"][0]["vc_id"], vc_id);
+        assert_eq!(show["items"][0]["source_scope"], "issued");
+
+        let status: Value = client
+            .get(format!("{}/api/v1/vc/status/{}", base_url, vc_id))
+            .send()
+            .await
+            .expect("vc status request")
+            .json()
+            .await
+            .expect("vc status body");
+        assert_eq!(status["active"], true);
+        assert_eq!(status["revoked"], false);
+        assert_eq!(status["expired"], false);
+
+        let full_vc: Value = client
+            .get(format!("{}/api/v1/vc/files/issued/{}", base_url, vc_id))
+            .send()
+            .await
+            .expect("vc file request")
+            .json()
+            .await
+            .expect("vc file body");
+        assert_eq!(full_vc["id"], vc_id);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn vc_renew_verify_revoke_summary_and_audit_routes_work() {
+        let _lock = TEST_ENV_LOCK.lock().await;
+        let env = VcEnvGuard::new();
+        let (km_dir, km, issuer, doc) = make_vc_material("nodeA", 9, "192.168.100.1/24");
+        install_vc_runtime_material(&env, &km_dir, &issuer, &doc);
+        let _owner_vc = issue::ensure_owner_vc(&issuer, &km).expect("ensure owner vc");
+
+        let (base_url, handle) = spawn_api_with_state(env.state()).await;
+        let client = reqwest::Client::new();
+        let subject = Did::from_id_bytes(&[10u8; 32]).to_string();
+
+        let issued: Value = client
+            .post(format!("{}/api/v1/vc/issue", base_url))
+            .json(&serde_json::json!({
+                "to": subject,
+                "role": "member",
+                "days": 30
+            }))
+            .send()
+            .await
+            .expect("issue member vc")
+            .json()
+            .await
+            .expect("issue member vc body");
+        let vc_id = issued["vc_id"].as_str().expect("issued vc id").to_string();
+        let old_expiration = issued["vc"]["expirationDate"]
+            .as_str()
+            .expect("old expiration")
+            .to_string();
+        let old_proof_created = issued["vc"]["proof"]["created"]
+            .as_str()
+            .expect("old proof created")
+            .to_string();
+        let old_proof_value = issued["vc"]["proof"]["proofValue"]
+            .as_str()
+            .expect("old proof value")
+            .to_string();
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let renewed: Value = client
+            .post(format!("{}/api/v1/vc/renew", base_url))
+            .json(&serde_json::json!({
+                "id": vc_id,
+                "days": 90
+            }))
+            .send()
+            .await
+            .expect("renew vc")
+            .json()
+            .await
+            .expect("renew vc body");
+        assert_eq!(renewed["status"], "success");
+        assert_eq!(renewed["vc_id"], issued["vc_id"]);
+        assert_eq!(renewed["old_expiration"], old_expiration);
+        assert_ne!(renewed["new_expiration"], old_expiration);
+        assert_ne!(renewed["vc"]["proof"]["created"], old_proof_created);
+        assert_ne!(renewed["vc"]["proof"]["proofValue"], old_proof_value);
+        assert_eq!(renewed["vc"]["issuanceDate"], issued["vc"]["issuanceDate"]);
+        assert_eq!(
+            renewed["vc"]["credentialStatus"]["statusListIndex"],
+            issued["vc"]["credentialStatus"]["statusListIndex"]
+        );
+
+        let verify_ok: Value = client
+            .post(format!("{}/api/v1/vc/verify", base_url))
+            .json(&serde_json::json!({ "id": issued["vc_id"] }))
+            .send()
+            .await
+            .expect("verify vc")
+            .json()
+            .await
+            .expect("verify vc body");
+        assert_eq!(verify_ok["valid"], true);
+
+        let revoke: Value = client
+            .post(format!("{}/api/v1/vc/revoke", base_url))
+            .json(&serde_json::json!({
+                "id": issued["vc_id"],
+                "reason": "member removed from circle"
+            }))
+            .send()
+            .await
+            .expect("revoke vc")
+            .json()
+            .await
+            .expect("revoke vc body");
+        assert_eq!(revoke["revoked"], true);
+
+        let verify_revoked: Value = client
+            .post(format!("{}/api/v1/vc/verify", base_url))
+            .json(&serde_json::json!({ "id": issued["vc_id"] }))
+            .send()
+            .await
+            .expect("verify revoked vc")
+            .json()
+            .await
+            .expect("verify revoked vc body");
+        assert_eq!(verify_revoked["valid"], false);
+        assert!(verify_revoked["reason"]
+            .as_str()
+            .expect("revoked reason")
+            .contains("revoked"));
+
+        let status: Value = client
+            .get(format!("{}/api/v1/vc/status/{}", base_url, vc_id))
+            .send()
+            .await
+            .expect("status after revoke")
+            .json()
+            .await
+            .expect("status after revoke body");
+        assert_eq!(status["revoked"], true);
+        assert_eq!(status["active"], false);
+
+        let own_files: Value = client
+            .get(format!("{}/api/v1/vc/files/own", base_url))
+            .send()
+            .await
+            .expect("own files")
+            .json()
+            .await
+            .expect("own files body");
+        assert_eq!(own_files["count"], 1);
+
+        let peer_files: Value = client
+            .get(format!("{}/api/v1/vc/files/peers", base_url))
+            .send()
+            .await
+            .expect("peer files")
+            .json()
+            .await
+            .expect("peer files body");
+        assert_eq!(peer_files["count"], 1);
+
+        let summary: Value = client
+            .get(format!("{}/api/v1/vc/summary", base_url))
+            .send()
+            .await
+            .expect("vc summary")
+            .json()
+            .await
+            .expect("vc summary body");
+        assert_eq!(summary["issued_total"], 2);
+        assert_eq!(summary["own_total"], 1);
+        assert_eq!(summary["peer_total"], 1);
+        assert_eq!(summary["active_total"], 1);
+        assert_eq!(summary["revoked_total"], 1);
+        assert_eq!(summary["expired_total"], 0);
+        assert_eq!(summary["next_index"], 2);
+
+        write_audit_record(
+            &env.audit_log_path,
+            1,
+            "Info",
+            "Loaded",
+            "VC_FILE_READ: issued/test",
+        );
+        write_audit_record(
+            &env.audit_log_path,
+            2,
+            "Info",
+            "Loaded",
+            "VC_SUMMARY_READ: summary requested",
+        );
+        write_audit_record(
+            &env.audit_log_path,
+            3,
+            "Info",
+            "Succeeded",
+            "Issued VC urn:uuid:test to did:guardian:test (role=Member, idx=1)",
+        );
+
+        let audit_filtered: Value = client
+            .get(format!("{}/api/v1/vc/audit", base_url))
+            .query(&[("action", "VC_FILE_READ"), ("limit", "10")])
+            .send()
+            .await
+            .expect("vc audit")
+            .json()
+            .await
+            .expect("vc audit body");
+        assert_eq!(audit_filtered["count"], 1);
+        assert_eq!(audit_filtered["items"][0]["action"], "VC_FILE_READ");
+
+        let audit_all: Value = client
+            .get(format!("{}/api/v1/vc/audit", base_url))
+            .query(&[("limit", "10")])
+            .send()
+            .await
+            .expect("vc audit all")
+            .json()
+            .await
+            .expect("vc audit all body");
+        assert_eq!(audit_all["count"], 3);
+
+        let status_list: Value = client
+            .get(format!("{}/api/v1/vc/status-list", base_url))
+            .send()
+            .await
+            .expect("status list")
+            .json()
+            .await
+            .expect("status list body");
+        assert_eq!(
+            status_list["issuer"].as_str().expect("status list issuer"),
+            issuer.did
+        );
+
+        let index_file: Value = client
+            .get(format!("{}/api/v1/vc/status-list-index", base_url))
+            .send()
+            .await
+            .expect("status list index")
+            .json()
+            .await
+            .expect("status list index body");
+        assert_eq!(index_file["next_index"], 2);
+
+        handle.abort();
     }
 
     #[tokio::test]
