@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -9,12 +10,17 @@ use std::time::Duration;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedVid {
     pub vid_hex: String,
-    /// Stable component (no nonces) — used to classify rotations.
-    /// SHA256(STABLE_TAG ‖ DID ‖ DKP_pub ‖ PCR_digest ‖ policy_digest), hex.
+    /// Stable security-state component (no nonces) — used to classify
+    /// rotations. Includes the peer DID, active DKP verificationMethod id,
+    /// active DKP kid, DKP pubkey fingerprint, PCR digest, and policy digest.
     #[serde(default)]
     pub stable_component_hex: String,
     /// Individual inputs at last observation. Hex-encoded for diagnostics
     /// and used to identify which input changed on the next rotation.
+    #[serde(default)]
+    pub dkp_verification_method_id: String,
+    #[serde(default)]
+    pub dkp_kid: String,
     #[serde(default)]
     pub dkp_pubkey_sha256_b16: String,
     #[serde(default)]
@@ -113,6 +119,8 @@ impl VirtualIdCache {
                     CachedVid {
                         vid_hex: ctx.new_vid_hex.to_string(),
                         stable_component_hex: ctx.new_stable_hex.to_string(),
+                        dkp_verification_method_id: ctx.new_dkp_verification_method_id.to_string(),
+                        dkp_kid: ctx.new_dkp_kid.to_string(),
                         dkp_pubkey_sha256_b16: ctx.new_dkp_fp.to_string(),
                         pcr_composite_digest: ctx.new_pcr_digest.to_string(),
                         policy_digest: ctx.new_policy_digest.to_string(),
@@ -152,11 +160,17 @@ impl VirtualIdCache {
                     CachedVid {
                         vid_hex: ctx.new_vid_hex.to_string(),
                         stable_component_hex: ctx.new_stable_hex.to_string(),
+                        dkp_verification_method_id: ctx.new_dkp_verification_method_id.to_string(),
+                        dkp_kid: ctx.new_dkp_kid.to_string(),
                         dkp_pubkey_sha256_b16: ctx.new_dkp_fp.to_string(),
                         pcr_composite_digest: ctx.new_pcr_digest.to_string(),
                         policy_digest: ctx.new_policy_digest.to_string(),
                         observed_at: now,
-                        last_rotation_reason: Some(reason),
+                        last_rotation_reason: if reason.is_security_event() {
+                            Some(reason)
+                        } else {
+                            prev.last_rotation_reason.or(Some(reason))
+                        },
                         last_reattest_triggered_at: if cooldown_allows {
                             Some(now)
                         } else {
@@ -182,6 +196,8 @@ impl VirtualIdCache {
             peer_did,
             new_vid_hex,
             new_stable_hex: "",
+            new_dkp_verification_method_id: "",
+            new_dkp_kid: "",
             new_dkp_fp: "",
             new_pcr_digest: "",
             new_policy_digest: "",
@@ -236,9 +252,32 @@ pub struct ObservationContext<'a> {
     pub peer_did: &'a str,
     pub new_vid_hex: &'a str,
     pub new_stable_hex: &'a str,
+    pub new_dkp_verification_method_id: &'a str,
+    pub new_dkp_kid: &'a str,
     pub new_dkp_fp: &'a str,
     pub new_pcr_digest: &'a str,
     pub new_policy_digest: &'a str,
+}
+
+const STABLE_SECURITY_STATE_TAG: &[u8] = b"SGX-VID-CLASSIFIER-v2\0";
+
+pub fn compute_stable_security_state_hex(
+    peer_did: &str,
+    dkp_verification_method_id: &str,
+    dkp_kid: &str,
+    dkp_pubkey_sha256_b16: &str,
+    pcr_digest: &str,
+    policy_digest: &str,
+) -> String {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(STABLE_SECURITY_STATE_TAG);
+    crate::virtual_id::write_lp(&mut buf, peer_did.as_bytes());
+    crate::virtual_id::write_lp(&mut buf, dkp_verification_method_id.as_bytes());
+    crate::virtual_id::write_lp(&mut buf, dkp_kid.as_bytes());
+    crate::virtual_id::write_lp(&mut buf, dkp_pubkey_sha256_b16.as_bytes());
+    crate::virtual_id::write_lp(&mut buf, pcr_digest.as_bytes());
+    crate::virtual_id::write_lp(&mut buf, policy_digest.as_bytes());
+    hex::encode(Sha256::digest(&buf))
 }
 
 fn classify_rotation(prev: &CachedVid, ctx: &ObservationContext<'_>) -> RotationReason {
@@ -248,22 +287,47 @@ fn classify_rotation(prev: &CachedVid, ctx: &ObservationContext<'_>) -> Rotation
     }
 
     // Otherwise diff the individual security inputs.
-    let dkp_changed =
-        !prev.dkp_pubkey_sha256_b16.is_empty() && prev.dkp_pubkey_sha256_b16 != ctx.new_dkp_fp;
-    let pcr_changed =
-        !prev.pcr_composite_digest.is_empty() && prev.pcr_composite_digest != ctx.new_pcr_digest;
-    let policy_changed =
-        !prev.policy_digest.is_empty() && prev.policy_digest != ctx.new_policy_digest;
+    let dkp_changed = classify_dkp_change(prev, ctx);
+    let pcr_changed = classify_optional_change(&prev.pcr_composite_digest, ctx.new_pcr_digest);
+    let policy_changed = classify_optional_change(&prev.policy_digest, ctx.new_policy_digest);
 
     match (dkp_changed, pcr_changed, policy_changed) {
-        (true, false, false) => RotationReason::DkpRotated,
-        (false, true, false) => RotationReason::PcrChanged,
-        (false, false, true) => RotationReason::PolicyChanged,
+        (Some(false), Some(false), Some(false)) => RotationReason::NonceOnly,
+        (Some(true), Some(false), Some(false)) => RotationReason::DkpRotated,
+        (Some(false), Some(true), Some(false)) => RotationReason::PcrChanged,
+        (Some(false), Some(false), Some(true)) => RotationReason::PolicyChanged,
         // If two or more changed, OR if we have no prev metadata to diff
         // (legacy cache entry from before this fix), conservatively classify
         // as a multi-input rotation. Better safe than missing a real event.
         _ => RotationReason::MultipleSecurityInputs,
     }
+}
+
+fn classify_optional_change(previous: &str, current: &str) -> Option<bool> {
+    if previous.is_empty() || current.is_empty() {
+        None
+    } else {
+        Some(previous != current)
+    }
+}
+
+fn classify_dkp_change(prev: &CachedVid, ctx: &ObservationContext<'_>) -> Option<bool> {
+    if prev.dkp_pubkey_sha256_b16.is_empty() || ctx.new_dkp_fp.is_empty() {
+        return None;
+    }
+    if !ctx.new_dkp_verification_method_id.is_empty() && prev.dkp_verification_method_id.is_empty()
+    {
+        return None;
+    }
+    if !ctx.new_dkp_kid.is_empty() && prev.dkp_kid.is_empty() {
+        return None;
+    }
+
+    let vm_changed = !ctx.new_dkp_verification_method_id.is_empty()
+        && prev.dkp_verification_method_id != ctx.new_dkp_verification_method_id;
+    let kid_changed = !ctx.new_dkp_kid.is_empty() && prev.dkp_kid != ctx.new_dkp_kid;
+    let fp_changed = prev.dkp_pubkey_sha256_b16 != ctx.new_dkp_fp;
+    Some(vm_changed || kid_changed || fp_changed)
 }
 
 #[cfg(test)]
@@ -275,6 +339,8 @@ mod tests {
         peer_did: &'a str,
         new_vid_hex: &'a str,
         new_stable_hex: &'a str,
+        new_dkp_verification_method_id: &'a str,
+        new_dkp_kid: &'a str,
         new_dkp_fp: &'a str,
         new_pcr_digest: &'a str,
         new_policy_digest: &'a str,
@@ -283,6 +349,8 @@ mod tests {
             peer_did,
             new_vid_hex,
             new_stable_hex,
+            new_dkp_verification_method_id,
+            new_dkp_kid,
             new_dkp_fp,
             new_pcr_digest,
             new_policy_digest,
@@ -318,6 +386,8 @@ mod tests {
                 "did:guardian:a",
                 "vid-1",
                 "stable-1",
+                "did:guardian:a#dkp-v1",
+                "dkp-v1",
                 "dkp-1",
                 "pcr-1",
                 "policy-1"
@@ -329,6 +399,8 @@ mod tests {
                 "did:guardian:a",
                 "vid-2",
                 "stable-1",
+                "did:guardian:a#dkp-v1",
+                "dkp-v1",
                 "dkp-1",
                 "pcr-1",
                 "policy-1"
@@ -348,6 +420,8 @@ mod tests {
             "did:guardian:a",
             "vid-1",
             "stable-1",
+            "did:guardian:a#dkp-v1",
+            "dkp-v1",
             "dkp-1",
             "pcr-1",
             "policy-1",
@@ -357,7 +431,58 @@ mod tests {
                 "did:guardian:a",
                 "vid-2",
                 "stable-2",
+                "did:guardian:a#dkp-v2",
+                "dkp-v2",
                 "dkp-2",
+                "pcr-1",
+                "policy-1"
+            )),
+            VidObservation::Rotated {
+                previous: "vid-1".to_string(),
+                reason: RotationReason::DkpRotated,
+                cooldown_allows_reattest: true,
+            }
+        );
+    }
+
+    #[test]
+    fn classify_dkp_rotation_when_vm_changes_but_fingerprint_stays_same() {
+        let cache = VirtualIdCache::new();
+        let stable_v1 = compute_stable_security_state_hex(
+            "did:guardian:a",
+            "did:guardian:a#dkp-v1",
+            "dkp-v1",
+            "dkp-fp",
+            "pcr-1",
+            "policy-1",
+        );
+        let stable_v2 = compute_stable_security_state_hex(
+            "did:guardian:a",
+            "did:guardian:a#dkp-v2",
+            "dkp-v2",
+            "dkp-fp",
+            "pcr-1",
+            "policy-1",
+        );
+
+        let _ = cache.observe_rich(&ctx(
+            "did:guardian:a",
+            "vid-1",
+            &stable_v1,
+            "did:guardian:a#dkp-v1",
+            "dkp-v1",
+            "dkp-fp",
+            "pcr-1",
+            "policy-1",
+        ));
+        assert_eq!(
+            cache.observe_rich(&ctx(
+                "did:guardian:a",
+                "vid-2",
+                &stable_v2,
+                "did:guardian:a#dkp-v2",
+                "dkp-v2",
+                "dkp-fp",
                 "pcr-1",
                 "policy-1"
             )),
@@ -376,6 +501,8 @@ mod tests {
             "did:guardian:a",
             "vid-1",
             "stable-1",
+            "did:guardian:a#dkp-v1",
+            "dkp-v1",
             "dkp-1",
             "pcr-1",
             "policy-1",
@@ -385,6 +512,8 @@ mod tests {
                 "did:guardian:a",
                 "vid-2",
                 "stable-2",
+                "did:guardian:a#dkp-v1",
+                "dkp-v1",
                 "dkp-1",
                 "pcr-2",
                 "policy-1"
@@ -404,6 +533,8 @@ mod tests {
             "did:guardian:a",
             "vid-1",
             "stable-1",
+            "did:guardian:a#dkp-v1",
+            "dkp-v1",
             "dkp-1",
             "pcr-1",
             "policy-1",
@@ -413,6 +544,8 @@ mod tests {
                 "did:guardian:a",
                 "vid-2",
                 "stable-2",
+                "did:guardian:a#dkp-v1",
+                "dkp-v1",
                 "dkp-1",
                 "pcr-1",
                 "policy-2"
@@ -432,6 +565,8 @@ mod tests {
             "did:guardian:a",
             "vid-1",
             "stable-1",
+            "did:guardian:a#dkp-v1",
+            "dkp-v1",
             "dkp-1",
             "pcr-1",
             "policy-1",
@@ -440,6 +575,8 @@ mod tests {
             "did:guardian:a",
             "vid-2",
             "stable-2",
+            "did:guardian:a#dkp-v2",
+            "dkp-v2",
             "dkp-2",
             "pcr-1",
             "policy-1",
@@ -449,6 +586,8 @@ mod tests {
                 "did:guardian:a",
                 "vid-3",
                 "stable-3",
+                "did:guardian:a#dkp-v3",
+                "dkp-v3",
                 "dkp-3",
                 "pcr-1",
                 "policy-1"
@@ -468,6 +607,8 @@ mod tests {
             "did:guardian:a",
             "vid-1",
             "stable-1",
+            "did:guardian:a#dkp-v1",
+            "dkp-v1",
             "dkp-1",
             "pcr-1",
             "policy-1",
@@ -476,6 +617,8 @@ mod tests {
             "did:guardian:a",
             "vid-2",
             "stable-2",
+            "did:guardian:a#dkp-v2",
+            "dkp-v2",
             "dkp-2",
             "pcr-1",
             "policy-1",
@@ -492,6 +635,8 @@ mod tests {
                 "did:guardian:a",
                 "vid-3",
                 "stable-3",
+                "did:guardian:a#dkp-v3",
+                "dkp-v3",
                 "dkp-3",
                 "pcr-1",
                 "policy-1"
@@ -501,6 +646,57 @@ mod tests {
                 reason: RotationReason::DkpRotated,
                 cooldown_allows_reattest: true,
             }
+        );
+    }
+
+    #[test]
+    fn nonce_refresh_does_not_erase_last_security_reason() {
+        let cache = VirtualIdCache::new();
+        let _ = cache.observe_rich(&ctx(
+            "did:guardian:a",
+            "vid-1",
+            "stable-1",
+            "did:guardian:a#dkp-v1",
+            "dkp-v1",
+            "dkp-1",
+            "pcr-1",
+            "policy-1",
+        ));
+        let _ = cache.observe_rich(&ctx(
+            "did:guardian:a",
+            "vid-2",
+            "stable-2",
+            "did:guardian:a#dkp-v2",
+            "dkp-v2",
+            "dkp-2",
+            "pcr-1",
+            "policy-1",
+        ));
+
+        assert_eq!(
+            cache.observe_rich(&ctx(
+                "did:guardian:a",
+                "vid-3",
+                "stable-2",
+                "did:guardian:a#dkp-v2",
+                "dkp-v2",
+                "dkp-2",
+                "pcr-1",
+                "policy-1"
+            )),
+            VidObservation::Rotated {
+                previous: "vid-2".to_string(),
+                reason: RotationReason::NonceOnly,
+                cooldown_allows_reattest: false,
+            }
+        );
+
+        let cached = cache
+            .current_for_sync("did:guardian:a")
+            .expect("cached peer missing");
+        assert_eq!(
+            cached.last_rotation_reason,
+            Some(RotationReason::DkpRotated)
         );
     }
 }
