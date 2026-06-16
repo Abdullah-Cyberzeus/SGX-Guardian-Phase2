@@ -111,6 +111,10 @@ struct TrustedPeer {
     policy_digest: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     rotation_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    nonce_i: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    nonce_r: Option<String>,
 }
 /// Stores the most recent attestation result for a peer with full identity +
 /// state evidence so post-mortems can reconstruct WHAT was verified.
@@ -292,6 +296,19 @@ fn current_rotation_reason_for_peer(peer_did: &str) -> Option<String> {
         .and_then(|cached| cached.last_rotation_reason)
         .map(|reason| reason.as_str().to_string())
 }
+
+fn peer_ip_hint_from_addr(peer_addr: &str) -> String {
+    peer_addr
+        .parse::<std::net::SocketAddr>()
+        .map(|addr| addr.ip().to_string())
+        .unwrap_or_else(|_| {
+            peer_addr
+                .rsplit_once(':')
+                .map(|(ip, _)| ip.to_string())
+                .unwrap_or_else(|| peer_addr.to_string())
+        })
+}
+
 /// Writes or updates trusted peer info into the per-node JSON file
 /// and then merges all peer files into a global combined view.
 fn write_trusted_peer(
@@ -330,6 +347,8 @@ fn write_trusted_peer_with_dirs(
         .as_ref()
         .map(|b| b.composite_digest.clone())
         .filter(|digest| !digest.is_empty());
+    let rotation_reason =
+        rotation_reason.or_else(|| current_rotation_reason_for_peer(&ev.subject_did));
 
     let entry = TrustedPeer {
         peer_id: peer_id.to_string(),
@@ -343,6 +362,8 @@ fn write_trusted_peer_with_dirs(
         pcr_composite_digest: pcr_digest,
         policy_digest: Some(ev.policy_digest.clone()).filter(|s| !s.is_empty()),
         rotation_reason,
+        nonce_i: Some(ev.nonce.clone()).filter(|s| !s.is_empty()),
+        nonce_r: None,
     };
 
     // Load existing per-node file (NOT global file)
@@ -355,39 +376,52 @@ fn write_trusted_peer_with_dirs(
         }
     }
 
-    // Update or insert by peer_id. Update path now also refreshes ALL
-    // identity/state fields, not just timestamp+status — so a peer's
-    // record stays current as their VID/DKP/PCR/policy evolve.
+    // Upsert by DID first, then fall back to peer_id for legacy records
+    // that predate DID persistence.
     let mut updated = false;
-    for p in data.iter_mut() {
-        if p.peer_id == peer_id {
-            p.timestamp = entry.timestamp.clone();
-            p.status = "verified".into();
-            if entry.did.is_some() {
+    if let Some(ref new_did) = entry.did {
+        for p in data.iter_mut() {
+            if p.did.as_deref() == Some(new_did.as_str()) {
+                p.peer_id = entry.peer_id.clone();
+                p.ip = entry.ip.clone();
+                p.status = "verified".into();
+                p.timestamp = entry.timestamp.clone();
                 p.did = entry.did.clone();
-            }
-            if entry.virtual_id.is_some() {
                 p.virtual_id = entry.virtual_id.clone();
-            }
-            if entry.last_attested_at.is_some() {
                 p.last_attested_at = entry.last_attested_at.clone();
-            }
-            if entry.dkp_pubkey_sha256_b16.is_some() {
                 p.dkp_pubkey_sha256_b16 = entry.dkp_pubkey_sha256_b16.clone();
-            }
-            if entry.pcr_composite_digest.is_some() {
                 p.pcr_composite_digest = entry.pcr_composite_digest.clone();
-            }
-            if entry.policy_digest.is_some() {
                 p.policy_digest = entry.policy_digest.clone();
-            }
-            if entry.rotation_reason.is_some() {
                 p.rotation_reason = entry.rotation_reason.clone();
+                p.nonce_i = entry.nonce_i.clone();
+                p.nonce_r = entry.nonce_r.clone();
+                updated = true;
+                break;
             }
-            updated = true;
-            break;
         }
     }
+
+    if !updated {
+        for p in data.iter_mut() {
+            if p.did.is_none() && p.peer_id == peer_id {
+                p.ip = entry.ip.clone();
+                p.status = "verified".into();
+                p.timestamp = entry.timestamp.clone();
+                p.did = entry.did.clone();
+                p.virtual_id = entry.virtual_id.clone();
+                p.last_attested_at = entry.last_attested_at.clone();
+                p.dkp_pubkey_sha256_b16 = entry.dkp_pubkey_sha256_b16.clone();
+                p.pcr_composite_digest = entry.pcr_composite_digest.clone();
+                p.policy_digest = entry.policy_digest.clone();
+                p.rotation_reason = entry.rotation_reason.clone();
+                p.nonce_i = entry.nonce_i.clone();
+                p.nonce_r = entry.nonce_r.clone();
+                updated = true;
+                break;
+            }
+        }
+    }
+
     if !updated {
         data.push(entry);
     }
@@ -512,10 +546,25 @@ fn merge_parent_peer_file_with_dirs(primary_dir: &Path, fallback_dir: &Path) {
                 if peer.peer_id.is_empty() {
                     continue;
                 }
-                match merged.get_mut(&peer.peer_id) {
+                let candidate_did = peer.did.as_deref().filter(|did| !did.is_empty());
+                let merge_key = merged
+                    .iter()
+                    .find(|(_, existing)| {
+                        existing.peer_id == peer.peer_id
+                            || candidate_did
+                                .map(|did| existing.did.as_deref() == Some(did))
+                                .unwrap_or(false)
+                    })
+                    .map(|(key, _)| key.clone())
+                    .unwrap_or_else(|| {
+                        candidate_did
+                            .map(str::to_string)
+                            .unwrap_or_else(|| peer.peer_id.clone())
+                    });
+                match merged.get_mut(&merge_key) {
                     Some(existing) => merge_trusted_peer(existing, peer),
                     None => {
-                        merged.insert(peer.peer_id.clone(), peer);
+                        merged.insert(merge_key, peer);
                     }
                 }
             }
@@ -553,6 +602,7 @@ fn merge_trusted_peer(existing: &mut TrustedPeer, candidate: TrustedPeer) {
     };
 
     if candidate_is_newer {
+        existing.peer_id = candidate.peer_id.clone();
         existing.ip = candidate.ip.clone();
         existing.status = candidate.status.clone();
         existing.timestamp = candidate.timestamp.clone();
@@ -577,6 +627,12 @@ fn merge_trusted_peer(existing: &mut TrustedPeer, candidate: TrustedPeer) {
     }
     if candidate.rotation_reason.is_some() {
         existing.rotation_reason = candidate.rotation_reason.clone();
+    }
+    if candidate.nonce_i.is_some() {
+        existing.nonce_i = candidate.nonce_i.clone();
+    }
+    if candidate.nonce_r.is_some() {
+        existing.nonce_r = candidate.nonce_r.clone();
     }
 }
 
@@ -1015,13 +1071,12 @@ fn subject_did_from_attestation_pubkey(pubkey_der_b64: &str) -> Option<String> {
     None
 }
 
-fn observe_verified_virtual_id(ev: &AttestationEvidence) {
+fn observe_verified_virtual_id(ev: &AttestationEvidence, peer_addr: &str) {
     let Some(cache) = VID_CACHE.get() else {
         return;
     };
 
-    // Build the ObservationContext from the evidence we just verified.
-    // Every input is already in scope — no extra computation cost.
+    let previous_snapshot = cache.current_for_sync(&ev.subject_did);
     let dkp_state = stable_dkp_state_for_attestation(ev);
     let pcr_digest = ev
         .baseline_status
@@ -1029,9 +1084,8 @@ fn observe_verified_virtual_id(ev: &AttestationEvidence) {
         .map(|b| b.composite_digest.clone())
         .unwrap_or_default();
     let policy_digest = ev.policy_digest.clone();
+    let peer_ip_hint = peer_ip_hint_from_addr(peer_addr);
 
-    // Recompute the classifier's stable security-state component the same
-    // way the cache will: DID + active DKP VM/kid/fingerprint + PCR + policy.
     let stable_hex = crate::virtual_id_cache::compute_stable_security_state_hex(
         &ev.subject_did,
         &dkp_state.verification_method_id,
@@ -1050,6 +1104,7 @@ fn observe_verified_virtual_id(ev: &AttestationEvidence) {
         new_dkp_fp: &dkp_state.pubkey_sha256_b16,
         new_pcr_digest: &pcr_digest,
         new_policy_digest: &policy_digest,
+        peer_ip_hint: &peer_ip_hint,
     };
 
     let node_id = std::env::args().nth(1).unwrap_or_else(|| "unknown".into());
@@ -1060,7 +1115,10 @@ fn observe_verified_virtual_id(ev: &AttestationEvidence) {
                 AuditCategory::Attestation,
                 AuditSeverity::Info,
                 AuditAction::Started,
-                &format!("First VID seen for {}: {}", ev.subject_did, ev.virtual_id),
+                &format!(
+                    "VID rotation reason=initial_observation did={} vid={}",
+                    ev.subject_did, ev.virtual_id
+                ),
             );
         }
         crate::virtual_id_cache::VidObservation::Unchanged => {}
@@ -1069,48 +1127,82 @@ fn observe_verified_virtual_id(ev: &AttestationEvidence) {
             reason,
             cooldown_allows_reattest,
         } => {
-            if !reason.is_security_event() {
+            let diff_suffix = match (reason, previous_snapshot.as_ref()) {
+                (crate::virtual_id_cache::RotationReason::DkpRotated, Some(prev)) => format!(
+                    "old_dkp={} new_dkp={}",
+                    prev.dkp_pubkey_sha256_b16, dkp_state.pubkey_sha256_b16
+                ),
+                (crate::virtual_id_cache::RotationReason::PcrChanged, Some(prev)) => format!(
+                    "old_pcr={} new_pcr={}",
+                    prev.pcr_composite_digest, pcr_digest
+                ),
+                (crate::virtual_id_cache::RotationReason::PolicyChanged, Some(prev)) => format!(
+                    "old_policy={} new_policy={}",
+                    prev.policy_digest, policy_digest
+                ),
+                (crate::virtual_id_cache::RotationReason::DidChanged, _) => {
+                    format!("old_did={} new_did={}", previous, ev.subject_did)
+                }
+                (crate::virtual_id_cache::RotationReason::MultipleSecurityInputs, Some(prev)) => {
+                    let mut changed = Vec::new();
+                    if prev.dkp_pubkey_sha256_b16 != dkp_state.pubkey_sha256_b16 {
+                        changed.push("dkp");
+                    }
+                    if prev.pcr_composite_digest != pcr_digest {
+                        changed.push("pcr");
+                    }
+                    if prev.policy_digest != policy_digest {
+                        changed.push("policy");
+                    }
+                    format!("changed={}", changed.join(","))
+                }
+                _ => format!("vid_old={} vid_new={}", previous, ev.virtual_id),
+            };
+
+            if matches!(reason, crate::virtual_id_cache::RotationReason::NonceOnly) {
                 log_audit(
                     &node_id,
                     AuditCategory::Attestation,
                     AuditSeverity::Info,
                     AuditAction::Started,
                     &format!(
-                        "VID session refresh for {} (reason={}): {} -> {}",
-                        ev.subject_did,
+                        "VID session refresh reason={} did={}",
                         reason.as_str(),
-                        previous,
-                        ev.virtual_id
+                        ev.subject_did
                     ),
                 );
                 return;
             }
 
-            let severity = AuditSeverity::Warning;
+            let severity = if matches!(reason, crate::virtual_id_cache::RotationReason::DidChanged)
+            {
+                AuditSeverity::Critical
+            } else {
+                AuditSeverity::Warning
+            };
             log_audit(
                 &node_id,
                 AuditCategory::Attestation,
                 severity,
                 AuditAction::Started,
                 &format!(
-                    "VID rotation for {} (reason={}): {} -> {}",
-                    ev.subject_did,
+                    "VID rotation reason={} did={} {}",
                     reason.as_str(),
-                    previous,
-                    ev.virtual_id
+                    ev.subject_did,
+                    diff_suffix
                 ),
             );
 
             if cooldown_allows_reattest {
                 trigger_reattestation_for(&ev.subject_did);
-            } else {
+            } else if reason.is_security_event() {
                 log_audit(
                     &node_id,
                     AuditCategory::Attestation,
                     AuditSeverity::Info,
                     AuditAction::Started,
                     &format!(
-                        "Re-attest suppressed by cooldown for {} (reason={})",
+                        "Re-attest suppressed by cooldown for did={} reason={}",
                         ev.subject_did,
                         reason.as_str()
                     ),
@@ -1649,6 +1741,14 @@ impl AttestationService {
     /// reconstructing the signed message, and validating the signature using
     /// the peer’s public key.
     pub fn verify_signed_evidence(ev: &AttestationEvidence, policy_yaml: &str) -> Result<bool> {
+        Self::verify_signed_evidence_with_peer_addr(ev, policy_yaml, "")
+    }
+
+    fn verify_signed_evidence_with_peer_addr(
+        ev: &AttestationEvidence,
+        policy_yaml: &str,
+        peer_addr: &str,
+    ) -> Result<bool> {
         if !is_hex_digest_64(&ev.policy_digest) {
             eprintln!(
                 "⚠️ Attestation rejected: malformed policy digest '{}' (len={})",
@@ -1817,7 +1917,7 @@ impl AttestationService {
                          Upgrade all peers to enforce."
                     );
                 }
-                observe_verified_virtual_id(ev);
+                observe_verified_virtual_id(ev, peer_addr);
                 println!("✅ Attestation verified successfully.");
                 Ok(true)
             }
@@ -1948,7 +2048,7 @@ impl AttestationService {
             }
         };
         // Step 4: verify peer evidence (using peer's embedded public key)
-        let verified = Self::verify_signed_evidence(&peer_ev, &policy.yaml)?;
+        let verified = Self::verify_signed_evidence_with_peer_addr(&peer_ev, &policy.yaml, &addr)?;
         if !verified {
             let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
 
@@ -2372,7 +2472,11 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
                 let key_path = format!("{}/device_{}.key", ATTESTATION_KEY_DIR, node_id);
                 let km = KeyManager::load_or_generate(&key_path)?;
                 let policy = load_attestation_policy_material();
-                match AttestationService::verify_signed_evidence(&incoming, &policy.yaml) {
+                match AttestationService::verify_signed_evidence_with_peer_addr(
+                    &incoming,
+                    &policy.yaml,
+                    &remote.to_string(),
+                ) {
                     Ok(true) => {
                         println!("✅ Verified attestation from peer");
                         let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
@@ -2562,6 +2666,8 @@ mod tests {
         assert_eq!(peers[0].peer_id, "10.0.0.2:50152");
         assert!(peers[0].did.is_none());
         assert!(peers[0].rotation_reason.is_none());
+        assert!(peers[0].nonce_i.is_none());
+        assert!(peers[0].nonce_r.is_none());
     }
 
     #[test]
@@ -2623,6 +2729,8 @@ mod tests {
             Some(RotationReason::DkpRotated.as_str())
         );
         assert!(peer.last_attested_at.is_some());
+        assert_eq!(peer.nonce_i.as_deref(), Some(nonce.as_str()));
+        assert!(peer.nonce_r.is_none());
         assert_eq!(
             peer.policy_digest.as_deref(),
             Some(ev.policy_digest.as_str())
@@ -2632,6 +2740,84 @@ mod tests {
             Some("a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1")
         );
         assert!(peer.dkp_pubkey_sha256_b16.is_some());
+
+        fs::remove_dir_all(base).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn trusted_peer_upsert_by_did_survives_port_change() {
+        let base = temp_test_dir("trusted-peer-did-upsert");
+        let primary_dir = base.join("primary");
+        let fallback_dir = base.join("logs");
+        fs::create_dir_all(&primary_dir).expect("create primary dir");
+        fs::create_dir_all(&fallback_dir).expect("create fallback dir");
+
+        let policy = "allow: all";
+        let nonce_one = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::did-upsert-1");
+            hex::encode(&hash[..16])
+        };
+        let nonce_two = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::did-upsert-2");
+            hex::encode(&hash[..16])
+        };
+
+        let mut ev_one = make_test_evidence(policy, &nonce_one);
+        ev_one.node_id = "nodeB".into();
+        ev_one.subject_did = "did:guardian:peer-b".into();
+        ev_one.key_version = Some(2);
+        if let Some(status) = ev_one.baseline_status.as_mut() {
+            status.composite_digest = "b2".repeat(32);
+        }
+
+        let mut ev_two = make_test_evidence(policy, &nonce_two);
+        ev_two.node_id = "nodeB".into();
+        ev_two.subject_did = "did:guardian:peer-b".into();
+        ev_two.key_version = Some(2);
+        if let Some(status) = ev_two.baseline_status.as_mut() {
+            status.composite_digest = "b2".repeat(32);
+        }
+
+        write_trusted_peer_with_dirs(
+            "nodeA",
+            &primary_dir,
+            &fallback_dir,
+            "10.0.0.2:50152",
+            "10.0.0.2",
+            &ev_one,
+            Some(RotationReason::InitialObservation.as_str().to_string()),
+        );
+        write_trusted_peer_with_dirs(
+            "nodeA",
+            &primary_dir,
+            &fallback_dir,
+            "10.0.0.2:52341",
+            "10.0.0.2",
+            &ev_two,
+            Some(RotationReason::NonceOnly.as_str().to_string()),
+        );
+
+        let node_file = fs::read_to_string(primary_dir.join("trusted_peers_nodeA.json"))
+            .expect("read per-node trusted peers");
+        let node_peers: Vec<TrustedPeer> =
+            serde_json::from_str(&node_file).expect("parse per-node trusted peers");
+        assert_eq!(node_peers.len(), 1);
+        let node_peer = &node_peers[0];
+        assert_eq!(node_peer.peer_id, "10.0.0.2:52341");
+        assert_eq!(node_peer.did.as_deref(), Some("did:guardian:peer-b"));
+        assert_eq!(
+            node_peer.rotation_reason.as_deref(),
+            Some(RotationReason::NonceOnly.as_str())
+        );
+        assert_eq!(node_peer.nonce_i.as_deref(), Some(nonce_two.as_str()));
+
+        let merged = fs::read_to_string(fallback_dir.join("trusted_peers.json"))
+            .expect("read merged trusted peers");
+        let peers: Vec<TrustedPeer> =
+            serde_json::from_str(&merged).expect("parse merged trusted peers");
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].peer_id, "10.0.0.2:52341");
+        assert_eq!(peers[0].did.as_deref(), Some("did:guardian:peer-b"));
 
         fs::remove_dir_all(base).expect("cleanup temp dir");
     }

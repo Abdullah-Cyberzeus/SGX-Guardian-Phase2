@@ -40,30 +40,56 @@ pub struct CachedVid {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RotationReason {
+    /// First time we've ever observed this DID. Not a rotation; recorded
+    /// in trusted_peers so the lifecycle is auditable end-to-end.
+    InitialObservation,
     /// Only the session nonces changed. NOT a security event.
     NonceOnly,
+    /// Peer identity changed (same connection origin, different DID).
+    /// Security-relevant: may indicate impersonation or re-provisioning.
+    DidChanged,
     /// DKP public key changed (manual rotation or HKM lifecycle event).
     DkpRotated,
     /// PCR composite digest changed (firmware/boot state drift).
     PcrChanged,
     /// Policy digest changed (policy update applied).
     PolicyChanged,
-    /// More than one security input changed simultaneously.
+    /// More than one stable security input changed at the same time.
     MultipleSecurityInputs,
+    /// VID changed but every known stable input matched. Most likely an
+    /// encoding skew or a missing field in our diff. Logged as Warning for
+    /// investigation; not silently re-attested.
+    UnknownInputChange,
 }
 
 impl RotationReason {
+    /// Should this reason trigger a fresh attestation handshake?
+    /// InitialObservation: false (the attestation itself just succeeded).
+    /// NonceOnly: false (expected per-session refresh).
+    /// UnknownInputChange: false (we don't know what changed; log and
+    /// investigate — don't cause an attestation storm on an unknown).
+    /// Everything else: true.
     pub fn is_security_event(self) -> bool {
-        !matches!(self, RotationReason::NonceOnly)
+        matches!(
+            self,
+            RotationReason::DidChanged
+                | RotationReason::DkpRotated
+                | RotationReason::PcrChanged
+                | RotationReason::PolicyChanged
+                | RotationReason::MultipleSecurityInputs
+        )
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
+            RotationReason::InitialObservation => "initial_observation",
             RotationReason::NonceOnly => "nonce_only",
+            RotationReason::DidChanged => "did_changed",
             RotationReason::DkpRotated => "dkp_rotated",
             RotationReason::PcrChanged => "pcr_changed",
             RotationReason::PolicyChanged => "policy_changed",
             RotationReason::MultipleSecurityInputs => "multiple_security_inputs",
+            RotationReason::UnknownInputChange => "unknown_input_change",
         }
     }
 }
@@ -88,6 +114,12 @@ pub enum VidObservation {
 #[derive(Clone)]
 pub struct VirtualIdCache {
     inner: Arc<RwLock<HashMap<String, CachedVid>>>,
+    /// Secondary index: peer IP (no port) → most recently seen DID.
+    /// NOT a primary identity key — used only to detect `DidChanged`
+    /// when the same originating IP presents a different DID than before.
+    /// Strip the port from "ip:port" before inserting so port churn
+    /// doesn't break the hint.
+    ip_to_did: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl VirtualIdCache {
@@ -97,6 +129,7 @@ impl VirtualIdCache {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(RwLock::new(HashMap::new())),
+            ip_to_did: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -109,11 +142,31 @@ impl VirtualIdCache {
     /// New rich observation: callers pass full identity+state context, not
     /// just the VID hex. Lets us classify the rotation type.
     pub fn observe_rich(&self, ctx: &ObservationContext<'_>) -> VidObservation {
-        let mut cache = self.inner.write().expect("VID cache poisoned");
         let now = Utc::now();
+        let did_changed_hint: Option<String> = if !ctx.peer_ip_hint.is_empty() {
+            self.ip_to_did
+                .read()
+                .expect("ip_to_did map poisoned")
+                .get(ctx.peer_ip_hint)
+                .filter(|prev_did| prev_did.as_str() != ctx.peer_did)
+                .cloned()
+        } else {
+            None
+        };
 
-        match cache.get(ctx.peer_did).cloned() {
+        let mut cache = self.inner.write().expect("VID cache poisoned");
+        let observation = match cache.get(ctx.peer_did).cloned() {
             None => {
+                let did_changed = did_changed_hint.is_some();
+                let observation = match did_changed_hint.clone() {
+                    Some(previous_did) => VidObservation::Rotated {
+                        previous: previous_did,
+                        reason: RotationReason::DidChanged,
+                        cooldown_allows_reattest: true,
+                    },
+                    None => VidObservation::FirstSeen,
+                };
+
                 cache.insert(
                     ctx.peer_did.to_string(),
                     CachedVid {
@@ -125,11 +178,15 @@ impl VirtualIdCache {
                         pcr_composite_digest: ctx.new_pcr_digest.to_string(),
                         policy_digest: ctx.new_policy_digest.to_string(),
                         observed_at: now,
-                        last_rotation_reason: None,
-                        last_reattest_triggered_at: None,
+                        last_rotation_reason: Some(if did_changed {
+                            RotationReason::DidChanged
+                        } else {
+                            RotationReason::InitialObservation
+                        }),
+                        last_reattest_triggered_at: if did_changed { Some(now) } else { None },
                     },
                 );
-                VidObservation::FirstSeen
+                observation
             }
             Some(prev) if prev.vid_hex == ctx.new_vid_hex => {
                 // Touch observed_at so dashboards know we're seeing fresh
@@ -166,10 +223,10 @@ impl VirtualIdCache {
                         pcr_composite_digest: ctx.new_pcr_digest.to_string(),
                         policy_digest: ctx.new_policy_digest.to_string(),
                         observed_at: now,
-                        last_rotation_reason: if reason.is_security_event() {
-                            Some(reason)
-                        } else {
+                        last_rotation_reason: if matches!(reason, RotationReason::NonceOnly) {
                             prev.last_rotation_reason.or(Some(reason))
+                        } else {
+                            Some(reason)
                         },
                         last_reattest_triggered_at: if cooldown_allows {
                             Some(now)
@@ -184,24 +241,87 @@ impl VirtualIdCache {
                     cooldown_allows_reattest: cooldown_allows,
                 }
             }
+        };
+        drop(cache);
+
+        if !ctx.peer_ip_hint.is_empty() {
+            self.ip_to_did
+                .write()
+                .expect("ip_to_did map poisoned")
+                .insert(ctx.peer_ip_hint.to_string(), ctx.peer_did.to_string());
         }
+
+        observation
     }
 
     /// Back-compat wrapper for tests / call sites that only have the VID
-    /// hex (e.g. unit tests). Treats the rotation as `MultipleSecurityInputs`
-    /// if it can't determine specifics. Real production caller is
-    /// `observe_rich`.
+    /// hex (e.g. unit tests). Preserve the historical conservative
+    /// `MultipleSecurityInputs` classification for legacy callers that do
+    /// not provide the richer stable-input context.
     pub fn observe_sync(&self, peer_did: &str, new_vid_hex: &str) -> VidObservation {
-        self.observe_rich(&ObservationContext {
-            peer_did,
-            new_vid_hex,
-            new_stable_hex: "",
-            new_dkp_verification_method_id: "",
-            new_dkp_kid: "",
-            new_dkp_fp: "",
-            new_pcr_digest: "",
-            new_policy_digest: "",
-        })
+        let mut cache = self.inner.write().expect("VID cache poisoned");
+        let now = Utc::now();
+
+        match cache.get(peer_did).cloned() {
+            None => {
+                cache.insert(
+                    peer_did.to_string(),
+                    CachedVid {
+                        vid_hex: new_vid_hex.to_string(),
+                        stable_component_hex: String::new(),
+                        dkp_verification_method_id: String::new(),
+                        dkp_kid: String::new(),
+                        dkp_pubkey_sha256_b16: String::new(),
+                        pcr_composite_digest: String::new(),
+                        policy_digest: String::new(),
+                        observed_at: now,
+                        last_rotation_reason: Some(RotationReason::InitialObservation),
+                        last_reattest_triggered_at: None,
+                    },
+                );
+                VidObservation::FirstSeen
+            }
+            Some(prev) if prev.vid_hex == new_vid_hex => {
+                if let Some(slot) = cache.get_mut(peer_did) {
+                    slot.observed_at = now;
+                }
+                VidObservation::Unchanged
+            }
+            Some(prev) => {
+                let cooldown_allows = prev
+                    .last_reattest_triggered_at
+                    .map(|t| {
+                        (now - t).to_std().unwrap_or(Duration::from_secs(0))
+                            >= Self::REATTEST_COOLDOWN
+                    })
+                    .unwrap_or(true);
+
+                cache.insert(
+                    peer_did.to_string(),
+                    CachedVid {
+                        vid_hex: new_vid_hex.to_string(),
+                        stable_component_hex: String::new(),
+                        dkp_verification_method_id: String::new(),
+                        dkp_kid: String::new(),
+                        dkp_pubkey_sha256_b16: String::new(),
+                        pcr_composite_digest: String::new(),
+                        policy_digest: String::new(),
+                        observed_at: now,
+                        last_rotation_reason: Some(RotationReason::MultipleSecurityInputs),
+                        last_reattest_triggered_at: if cooldown_allows {
+                            Some(now)
+                        } else {
+                            prev.last_reattest_triggered_at
+                        },
+                    },
+                );
+                VidObservation::Rotated {
+                    previous: prev.vid_hex,
+                    reason: RotationReason::MultipleSecurityInputs,
+                    cooldown_allows_reattest: cooldown_allows,
+                }
+            }
+        }
     }
 
     pub async fn current_for(&self, peer_did: &str) -> Option<CachedVid> {
@@ -229,6 +349,10 @@ impl VirtualIdCache {
 
     pub fn clear_sync(&self) {
         self.inner.write().expect("VID cache poisoned").clear();
+        self.ip_to_did
+            .write()
+            .expect("ip_to_did map poisoned")
+            .clear();
     }
 
     pub async fn snapshot(&self) -> HashMap<String, CachedVid> {
@@ -257,6 +381,9 @@ pub struct ObservationContext<'a> {
     pub new_dkp_fp: &'a str,
     pub new_pcr_digest: &'a str,
     pub new_policy_digest: &'a str,
+    /// Peer IP (no port) used as a hint for `DidChanged` detection.
+    /// Empty string disables the hint (fall through to FirstSeen for new DIDs).
+    pub peer_ip_hint: &'a str,
 }
 
 const STABLE_SECURITY_STATE_TAG: &[u8] = b"SGX-VID-CLASSIFIER-v2\0";
@@ -280,27 +407,56 @@ pub fn compute_stable_security_state_hex(
     hex::encode(Sha256::digest(&buf))
 }
 
+/// Classify a VID rotation per the spec precedence:
+///
+///   1. DID changed (handled at the caller before this function — we never
+///      reach `classify_rotation` for a DID change because the cache is
+///      DID-keyed and DID changes appear as a missing primary key here).
+///   2. Count of changed stable fields among (DKP, PCR, policy):
+///        > 1  → MultipleSecurityInputs
+///        = 1  → that specific input's reason
+///        = 0  → NonceOnly
+///   3. VID changed but no diffable input differs (every input is `None`
+///      because we have no previous data, OR every `Some` value matched):
+///      UnknownInputChange.
 fn classify_rotation(prev: &CachedVid, ctx: &ObservationContext<'_>) -> RotationReason {
-    // If the stable component matches, only the nonces changed.
-    if !prev.stable_component_hex.is_empty() && prev.stable_component_hex == ctx.new_stable_hex {
+    // Fast path: stable component matches → it was just the nonces.
+    if !prev.stable_component_hex.is_empty()
+        && !ctx.new_stable_hex.is_empty()
+        && prev.stable_component_hex == ctx.new_stable_hex
+    {
         return RotationReason::NonceOnly;
     }
 
-    // Otherwise diff the individual security inputs.
     let dkp_changed = classify_dkp_change(prev, ctx);
     let pcr_changed = classify_optional_change(&prev.pcr_composite_digest, ctx.new_pcr_digest);
     let policy_changed = classify_optional_change(&prev.policy_digest, ctx.new_policy_digest);
 
-    match (dkp_changed, pcr_changed, policy_changed) {
-        (Some(false), Some(false), Some(false)) => RotationReason::NonceOnly,
-        (Some(true), Some(false), Some(false)) => RotationReason::DkpRotated,
-        (Some(false), Some(true), Some(false)) => RotationReason::PcrChanged,
-        (Some(false), Some(false), Some(true)) => RotationReason::PolicyChanged,
-        // If two or more changed, OR if we have no prev metadata to diff
-        // (legacy cache entry from before this fix), conservatively classify
-        // as a multi-input rotation. Better safe than missing a real event.
-        _ => RotationReason::MultipleSecurityInputs,
+    let confirmed_changes = [dkp_changed, pcr_changed, policy_changed]
+        .iter()
+        .filter(|change| **change == Some(true))
+        .count();
+
+    if confirmed_changes >= 2 {
+        return RotationReason::MultipleSecurityInputs;
     }
+    if dkp_changed == Some(true) {
+        return RotationReason::DkpRotated;
+    }
+    if pcr_changed == Some(true) {
+        return RotationReason::PcrChanged;
+    }
+    if policy_changed == Some(true) {
+        return RotationReason::PolicyChanged;
+    }
+
+    let any_field_compared =
+        dkp_changed.is_some() || pcr_changed.is_some() || policy_changed.is_some();
+    if any_field_compared {
+        return RotationReason::NonceOnly;
+    }
+
+    RotationReason::UnknownInputChange
 }
 
 fn classify_optional_change(previous: &str, current: &str) -> Option<bool> {
@@ -354,6 +510,31 @@ mod tests {
             new_dkp_fp,
             new_pcr_digest,
             new_policy_digest,
+            peer_ip_hint: "",
+        }
+    }
+
+    fn ctx_with_ip<'a>(
+        peer_did: &'a str,
+        new_vid_hex: &'a str,
+        new_stable_hex: &'a str,
+        new_dkp_verification_method_id: &'a str,
+        new_dkp_kid: &'a str,
+        new_dkp_fp: &'a str,
+        new_pcr_digest: &'a str,
+        new_policy_digest: &'a str,
+        peer_ip_hint: &'a str,
+    ) -> ObservationContext<'a> {
+        ObservationContext {
+            peer_did,
+            new_vid_hex,
+            new_stable_hex,
+            new_dkp_verification_method_id,
+            new_dkp_kid,
+            new_dkp_fp,
+            new_pcr_digest,
+            new_policy_digest,
+            peer_ip_hint,
         }
     }
 
@@ -647,6 +828,126 @@ mod tests {
                 cooldown_allows_reattest: true,
             }
         );
+    }
+
+    #[test]
+    fn classify_initial_observation() {
+        let cache = VirtualIdCache::new();
+        let result = cache.observe_rich(&ctx_with_ip(
+            "did:guardian:a",
+            "vid-1",
+            "stable-1",
+            "did:guardian:a#dkp-v1",
+            "dkp-v1",
+            "dkp-1",
+            "pcr-1",
+            "policy-1",
+            "192.168.50.115",
+        ));
+        assert_eq!(result, VidObservation::FirstSeen);
+        let cached = cache.current_for_sync("did:guardian:a").unwrap();
+        assert_eq!(
+            cached.last_rotation_reason,
+            Some(RotationReason::InitialObservation)
+        );
+        assert_eq!(
+            cached.last_rotation_reason.unwrap().as_str(),
+            "initial_observation"
+        );
+    }
+
+    #[test]
+    fn classify_did_change_via_ip_hint() {
+        let cache = VirtualIdCache::new();
+        let _ = cache.observe_rich(&ctx_with_ip(
+            "did:guardian:a",
+            "vid-1",
+            "stable-1",
+            "did:guardian:a#dkp-v1",
+            "dkp-v1",
+            "dkp-1",
+            "pcr-1",
+            "policy-1",
+            "192.168.50.115",
+        ));
+        let result = cache.observe_rich(&ctx_with_ip(
+            "did:guardian:b",
+            "vid-2",
+            "stable-2",
+            "did:guardian:b#dkp-v1",
+            "dkp-v1",
+            "dkp-9",
+            "pcr-9",
+            "policy-9",
+            "192.168.50.115",
+        ));
+        assert!(matches!(
+            result,
+            VidObservation::Rotated {
+                reason: RotationReason::DidChanged,
+                ..
+            }
+        ));
+        let cached = cache.current_for_sync("did:guardian:b").unwrap();
+        assert_eq!(
+            cached.last_rotation_reason,
+            Some(RotationReason::DidChanged)
+        );
+    }
+
+    #[test]
+    fn classify_unknown_input_change() {
+        let cache = VirtualIdCache::new();
+        let _ = cache.observe_rich(&ctx(
+            "did:guardian:a",
+            "vid-1",
+            "stable-1",
+            "did:guardian:a#dkp-v1",
+            "dkp-v1",
+            "dkp-1",
+            "pcr-1",
+            "policy-1",
+        ));
+        let result = cache.observe_rich(&ctx("did:guardian:a", "vid-2", "", "", "", "", "", ""));
+        assert!(matches!(
+            result,
+            VidObservation::Rotated {
+                reason: RotationReason::UnknownInputChange,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn classify_dkp_only_when_other_inputs_unknown() {
+        let cache = VirtualIdCache::new();
+        let _ = cache.observe_rich(&ctx(
+            "did:guardian:a",
+            "vid-1",
+            "stable-1",
+            "did:guardian:a#dkp-v1",
+            "dkp-v1",
+            "dkp-1",
+            "pcr-1",
+            "policy-1",
+        ));
+        let result = cache.observe_rich(&ctx(
+            "did:guardian:a",
+            "vid-2",
+            "stable-2",
+            "did:guardian:a#dkp-v2",
+            "dkp-v2",
+            "dkp-2",
+            "",
+            "",
+        ));
+        assert!(matches!(
+            result,
+            VidObservation::Rotated {
+                reason: RotationReason::DkpRotated,
+                ..
+            }
+        ));
     }
 
     #[test]
