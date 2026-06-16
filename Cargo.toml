@@ -18,6 +18,7 @@ tracing-appender = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
+thiserror = "1"
 windows-sys = { version = "0.52", features = ["Win32_System_Console"] }
 anyhow = "1"
 ring = "0.17.14"
@@ -41,6 +42,8 @@ uuid = { version = "1", features = ["v4","serde"] }
 libc = "0.2"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 tempfile = "3.8"
+quick-xml = { version = "0.31", features = ["serialize"] }
+which = "6"
 
 [build-dependencies]
 tonic-prost-build = "0.14.2"

@@ -5,3 +5,5 @@ pub mod node;
 pub mod pcr;
 pub mod peers;
 pub mod policy;
+
+pub mod discovery;

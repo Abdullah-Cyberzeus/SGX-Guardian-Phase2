@@ -69,6 +69,8 @@ enum Commands {
     RelaySetLimit(commands::relay::RelaySetLimitArgs),
     /// Enable/disable relay for a node
     RelayToggle(commands::relay::RelayToggleArgs),
+    /// NMAP-based network discovery commands
+    Discovery(commands::discovery::DiscoveryArgs),
     /// CoT transport management commands
     Transport(commands::transport::TransportArgs),
     /// Alias for `transport list`
@@ -153,6 +155,12 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        Commands::Discovery(args) => {
+            if let Err(e) = commands::discovery::run(args) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         Commands::Transport(args) => commands::transport::run(args),
         Commands::TransportList(args) => {
             commands::transport::run(commands::transport::TransportArgs {
@@ -219,5 +227,57 @@ mod tests {
         assert!(Cli::try_parse_from(["sgx-pa-cli", "transport-show"]).is_ok());
         assert!(Cli::try_parse_from(["sgx-pa-cli", "transport-lock", "ens33"]).is_ok());
         assert!(Cli::try_parse_from(["sgx-pa-cli", "transport-unlock"]).is_ok());
+    }
+    #[test]
+    fn test_discovery_commands_parse() {
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "discovery", "config-show"]).is_ok());
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "discovery", "schedule-show"]).is_ok());
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "discovery", "list"]).is_ok());
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "discovery", "unauthorized"]).is_ok());
+        assert!(Cli::try_parse_from([
+            "sgx-pa-cli",
+            "discovery",
+            "approve",
+            "AA:BB:CC:11:22:33",
+            "--label",
+            "Office printer",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "sgx-pa-cli",
+            "discovery",
+            "scan",
+            "--target",
+            "127.0.0.1/32",
+            "--intensity",
+            "stealth",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "sgx-pa-cli",
+            "discovery",
+            "schedule-set",
+            "--enabled",
+            "true",
+            "--target",
+            "192.168.50.0/24",
+            "--hourly",
+            "standard",
+            "--daily",
+            "aggressive",
+            "--timeout",
+            "600",
+            "--exclude",
+            "192.168.50.1",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "sgx-pa-cli",
+            "discovery",
+            "schedule-set",
+            "--enabled",
+            "false",
+        ])
+        .is_ok());
     }
 }

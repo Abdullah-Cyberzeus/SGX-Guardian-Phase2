@@ -711,16 +711,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(prod_log_dir).ok();
     std::fs::create_dir_all(dev_log_dir).ok();
 
-    let audit_log_path_prod = format!("{}/audit.log", prod_log_dir);
-    let audit_log_path_dev = "logs/audit.log";
+    // === FIX #8: use per-node log file, matching what the writer produces. ===
+    // Writer initialised below as `audit-<node>.log`; pre-init verifier must
+    // check the SAME file, otherwise it verifies a stale/empty/wrong artefact.
+    let audit_log_path_prod = format!("{}/audit-{}.log", prod_log_dir, node_id);
+    let audit_log_path_dev = format!("logs/audit-{}.log", node_id);
     let audit_check_path = if std::path::Path::new(&audit_log_path_prod).exists() {
-        &audit_log_path_prod
+        audit_log_path_prod.clone()
     } else {
-        audit_log_path_dev
+        audit_log_path_dev.clone()
     };
 
-    if std::path::Path::new(audit_check_path).exists() {
-        if let Err(e) = AuditVerifier::verify(audit_check_path) {
+    if std::path::Path::new(&audit_check_path).exists() {
+        if let Err(e) = AuditVerifier::verify(&audit_check_path) {
             log_error(
                 &node_id,
                 &format!("Audit log integrity warning (non-fatal): {}", e),
@@ -2242,6 +2245,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     println!("✅ REST admin API listening on http://{}/api/v1", api_bind);
+
+    // === Sprint 6: NMAP Discovery Scheduler ===
+    {
+        use sgx_guardian_client::discovery::{DiscoveryScheduler, Inventory};
+        use std::path::PathBuf;
+
+        let cfg_path = PathBuf::from("/etc/sgx-guardian/discovery/nmap.yaml");
+        let wl_path = PathBuf::from("/etc/sgx-guardian/discovery/whitelist.yaml");
+        let inv_path = PathBuf::from("/var/lib/sgx-guardian/discovery/inventory.json");
+
+        let _ = std::fs::create_dir_all("/var/lib/sgx-guardian/discovery");
+        let _ = std::fs::create_dir_all("/etc/sgx-guardian/discovery");
+
+        let scheduler = DiscoveryScheduler {
+            node_id: node_id.clone(),
+            config_path: cfg_path,
+            whitelist_path: wl_path,
+            inventory_path: inv_path,
+            state: std::sync::Arc::new(tokio::sync::Mutex::new(Inventory::default())),
+        };
+        scheduler.start();
+        println!("✅ Discovery scheduler spawned (NMP-series, Sprint 6)");
+    }
+
     // === CERT BOOTSTRAP SERVER (nodeA only, plaintext port 50061) ===
     if node_id == "nodeA" {
         tokio::spawn(async move {
