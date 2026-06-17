@@ -74,12 +74,9 @@ fn resolve_log_dir() -> Option<PathBuf> {
     candidates.push(PathBuf::from("/var/lib/sgx-guardian/logs"));
     candidates.push(PathBuf::from("logs"));
 
-    for dir in candidates {
-        if fs::create_dir_all(&dir).is_ok() {
-            return Some(dir);
-        }
-    }
-    None
+    candidates
+        .into_iter()
+        .find(|dir| fs::create_dir_all(dir).is_ok())
 }
 /// Logs a normal information-level event for the given node,
 /// automatically attaching timestamp and structured JSON fields.

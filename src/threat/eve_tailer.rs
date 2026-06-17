@@ -65,7 +65,7 @@ impl EveTailer {
                     Err(err) => tracing::warn!("eve parse error: {}", err),
                 }
 
-                if line_no % 50 == 0 {
+                if line_no.is_multiple_of(50) {
                     let _ = persist_offset(&self.offset_file, offset).await;
                 }
             }

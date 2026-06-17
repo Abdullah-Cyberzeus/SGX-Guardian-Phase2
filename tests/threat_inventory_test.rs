@@ -1,6 +1,6 @@
 use chrono::Utc;
 use sgx_guardian_client::threat::{
-    inventory::{AlertInventory, DEDUP_WINDOW, MAX_ALERTS},
+    inventory::{AlertInventory, MAX_ALERTS},
     threat_alert::{Severity, ThreatAlert, ThreatCategory},
 };
 use tempfile::tempdir;
@@ -32,7 +32,6 @@ fn inventory_dedups_recent_alerts() {
     assert!(inventory.ingest(alert.clone()));
     assert!(!inventory.ingest(alert));
     assert_eq!(inventory.snapshot().len(), 1);
-    assert!(DEDUP_WINDOW >= 1);
 }
 
 #[test]
