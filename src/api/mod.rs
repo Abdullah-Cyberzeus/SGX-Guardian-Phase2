@@ -76,6 +76,62 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/lighthouse/toggle",
             post(handlers::relay::lighthouse_toggle),
         )
+        .route(
+            "/api/v1/discovery/devices",
+            get(handlers::discovery::list_devices),
+        )
+        .route(
+            "/api/v1/discovery/list",
+            get(handlers::discovery::list_devices),
+        )
+        .route(
+            "/api/v1/discovery/inventory/list",
+            get(handlers::discovery::list_devices),
+        )
+        .route(
+            "/api/v1/discovery/devices/unauthorized",
+            get(handlers::discovery::list_unauthorized),
+        )
+        .route(
+            "/api/v1/discovery/unauthorized",
+            get(handlers::discovery::list_unauthorized),
+        )
+        .route(
+            "/api/v1/discovery/scan",
+            post(handlers::discovery::scan_now),
+        )
+        .route(
+            "/api/v1/discovery/scan/stealth",
+            post(handlers::discovery::scan_stealth),
+        )
+        .route(
+            "/api/v1/discovery/scan/standard",
+            post(handlers::discovery::scan_standard),
+        )
+        .route(
+            "/api/v1/discovery/scan/aggressive",
+            post(handlers::discovery::scan_aggressive),
+        )
+        .route(
+            "/api/v1/discovery/approve",
+            post(handlers::discovery::approve_device),
+        )
+        .route(
+            "/api/v1/discovery/whitelist",
+            get(handlers::discovery::get_whitelist),
+        )
+        .route(
+            "/api/v1/discovery/whitelist",
+            axum::routing::put(handlers::discovery::put_whitelist),
+        )
+        .route(
+            "/api/v1/discovery/schedule",
+            get(handlers::discovery::get_schedule),
+        )
+        .route(
+            "/api/v1/discovery/schedule",
+            axum::routing::put(handlers::discovery::put_schedule),
+        )
         // Phase 2 - action endpoints
         .route("/api/v1/dkp/rotate", post(handlers::dkp::rotate))
         .route("/api/v1/dkp/revoke", post(handlers::dkp::revoke))
@@ -308,6 +364,8 @@ mod tests {
                 log_dir_fallback: self.log_dir.to_string_lossy().to_string(),
                 did_resolver: crate::did::Resolver::new(Default::default()),
                 vid_cache: crate::virtual_id_cache::VirtualIdCache::new(),
+                discovery_config_dir: "/tmp/discovery-config".into(),
+                discovery_state_dir: "/tmp/discovery-state".into(),
             })
         }
     }
@@ -341,6 +399,8 @@ mod tests {
             log_dir_fallback: "/tmp/logs-fallback".into(),
             did_resolver: crate::did::Resolver::new(Default::default()),
             vid_cache: crate::virtual_id_cache::VirtualIdCache::new(),
+            discovery_config_dir: "/tmp/discovery-config".into(),
+            discovery_state_dir: "/tmp/discovery-state".into(),
         })
     }
 

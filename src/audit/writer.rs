@@ -62,6 +62,10 @@ impl AuditWriter {
         file.write_all(record.as_bytes())?;
         file.write_all(b"\n")?;
         file.flush()?;
+        // FIX #8 (defence-in-depth): fsync after every append so a power-loss
+        // mid-write can't leave a partial last line that breaks the next boot's
+        // chain anchor. Cost: ~10ms on the boards; acceptable for audit writes.
+        file.sync_all()?;
         Ok(())
     }
 }

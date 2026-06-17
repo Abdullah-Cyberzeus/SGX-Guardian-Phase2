@@ -62,6 +62,20 @@
 | 51 | GET | `/vc/status/{vc_id}` | Fetch computed active/revoked/expired status for one VC |
 | 52 | POST | `/vc/status-list/pull` | Pull and verify the latest VC status list from the CA |
 | 53 | GET | `/vc/files/issued` | List metadata for VCs stored in the issued-file cache |
+| 54 | GET | `/discovery/devices` | Full NMAP device inventory |
+| 55 | GET | `/discovery/list` | Alias of discovery inventory list |
+| 56 | GET | `/discovery/inventory/list` | Alias of discovery inventory list |
+| 57 | GET | `/discovery/devices/unauthorized` | Unauthorized or drifted discovered devices |
+| 58 | GET | `/discovery/unauthorized` | Alias of unauthorized discovery list |
+| 59 | POST | `/discovery/scan` | Run discovery scan using default ad-hoc intensity |
+| 60 | POST | `/discovery/scan/stealth` | Run one stealth NMAP discovery scan |
+| 61 | POST | `/discovery/scan/standard` | Run one standard NMAP discovery scan |
+| 62 | POST | `/discovery/scan/aggressive` | Run one aggressive NMAP discovery scan |
+| 63 | POST | `/discovery/approve` | Authorize a discovered device by MAC and add it to whitelist |
+| 64 | GET | `/discovery/whitelist` | Fetch discovery whitelist YAML content as JSON |
+| 65 | PUT | `/discovery/whitelist` | Replace discovery whitelist and refresh inventory statuses |
+| 66 | GET | `/discovery/schedule` | Fetch scheduled NMAP discovery configuration |
+| 67 | PUT | `/discovery/schedule` | Update scheduled NMAP discovery configuration |
 
 ## 2. NEW Endpoints 
 
@@ -75,6 +89,20 @@
 | GET | `/vc/status/{vc_id}` | Query computed status for a specific VC id |
 | POST | `/vc/status-list/pull` | Pull and verify the latest CA status list snapshot |
 | GET | `/vc/files/issued` | List issued-VC file metadata |
+| GET | `/discovery/devices` | Full NMAP device inventory |
+| GET | `/discovery/list` | Alias of discovery inventory list |
+| GET | `/discovery/inventory/list` | Alias of discovery inventory list |
+| GET | `/discovery/devices/unauthorized` | Unauthorized or drifted discovered devices |
+| GET | `/discovery/unauthorized` | Alias of unauthorized discovery list |
+| POST | `/discovery/scan` | Run discovery scan using default ad-hoc intensity |
+| POST | `/discovery/scan/stealth` | Run one stealth NMAP discovery scan |
+| POST | `/discovery/scan/standard` | Run one standard NMAP discovery scan |
+| POST | `/discovery/scan/aggressive` | Run one aggressive NMAP discovery scan |
+| POST | `/discovery/approve` | Authorize a discovered device by MAC and add it to whitelist |
+| GET | `/discovery/whitelist` | Fetch discovery whitelist YAML content as JSON |
+| PUT | `/discovery/whitelist` | Replace discovery whitelist and refresh inventory statuses |
+| GET | `/discovery/schedule` | Fetch scheduled NMAP discovery configuration |
+| PUT | `/discovery/schedule` | Update scheduled NMAP discovery configuration |
 
 ---
 
@@ -1719,5 +1747,337 @@ Peer DID resolution response (`?did=did:guardian:...`):
 - Error responses:
   - None expected when the issued directory is absent; the handler returns an empty list
   - `500 INTERNAL_SERVER_ERROR`: issued-cache directory scan failure
+
+---
+
+## 4. NMAP Network Discovery Endpoints (Sprint 6, NMP-series)
+
+These endpoints expose the NMAP-based network discovery subsystem. All paths are relative to the base URL `/api/v1`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/discovery/devices` | Full NMAP device inventory |
+| GET | `/discovery/list` | Alias of discovery inventory list |
+| GET | `/discovery/inventory/list` | Alias of discovery inventory list |
+| GET | `/discovery/devices/unauthorized` | Unauthorized or drifted discovered devices |
+| GET | `/discovery/unauthorized` | Alias of unauthorized discovery list |
+| POST | `/discovery/scan` | Run discovery scan using default ad-hoc intensity |
+| POST | `/discovery/scan/stealth` | Run one stealth NMAP discovery scan |
+| POST | `/discovery/scan/standard` | Run one standard NMAP discovery scan |
+| POST | `/discovery/scan/aggressive` | Run one aggressive NMAP discovery scan |
+| POST | `/discovery/approve` | Authorize a discovered device by MAC and add it to whitelist |
+| GET | `/discovery/whitelist` | Fetch discovery whitelist YAML content as JSON |
+| PUT | `/discovery/whitelist` | Replace discovery whitelist and refresh inventory statuses |
+| GET | `/discovery/schedule` | Fetch scheduled NMAP discovery configuration |
+| PUT | `/discovery/schedule` | Update scheduled NMAP discovery configuration |
+
+### Endpoint Contracts
+
+### 3.50 GET `/discovery/devices`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+[
+  {
+    "device_id": "7f2c5b1a3d4e90c1",
+    "ip": "192.168.50.103",
+    "mac": "AA:BB:CC:11:22:33",
+    "vendor": "Acme",
+    "hostname": "printer",
+    "os_fingerprint": "Linux 5.x",
+    "os_cpe": [
+      "cpe:/o:linux:linux_kernel:5"
+    ],
+    "open_ports": [
+      {
+        "port": 22,
+        "protocol": "tcp",
+        "service": "ssh",
+        "product_version": "OpenSSH 9.0",
+        "cpe": [
+          "cpe:/a:openbsd:openssh:9.0"
+        ],
+        "scripts": []
+      }
+    ],
+    "host_scripts": [],
+    "status": "approved",
+    "first_seen": "2026-06-12T08:00:00Z",
+    "last_seen": "2026-06-12T08:15:00Z",
+    "vuln_triaged": false
+  }
+]
+```
+
+- Notes:
+  - Reads `/var/lib/sgx-guardian/discovery/inventory.json`
+  - Response is a raw JSON array of `ConnectedDevice`
+- Error responses:
+  - `404 NOT_FOUND`: no discovery inventory exists yet
+  - `500 INTERNAL_SERVER_ERROR`: inventory JSON parse failure
+
+### 3.51 GET `/discovery/list`
+
+- Same request/response/errors as `GET /discovery/devices`
+
+### 3.52 GET `/discovery/inventory/list`
+
+- Same request/response/errors as `GET /discovery/devices`
+
+### 3.53 GET `/discovery/devices/unauthorized`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+  - Same JSON array schema as `GET /discovery/devices`
+- Notes:
+  - Filters inventory to devices whose `status` is `unauthorized` or `drifted`
+- Error responses:
+  - `404 NOT_FOUND`: no discovery inventory exists yet
+  - `500 INTERNAL_SERVER_ERROR`: inventory JSON parse failure
+
+### 3.54 GET `/discovery/unauthorized`
+
+- Same request/response/errors as `GET /discovery/devices/unauthorized`
+
+### 3.55 POST `/discovery/scan`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "success": true,
+  "stdout": "✅ Discovery scan completed\ntarget: 192.168.50.0/24\nintensity: standard\nnew_devices: 1\nupdated_devices: 2\ninventory: /var/lib/sgx-guardian/discovery/inventory.json\n",
+  "stderr": "",
+  "timestamp": "2026-06-12T08:15:00+00:00"
+}
+```
+
+- Notes:
+  - Executes `sgx-pa-cli discovery scan`
+  - If the CLI process exits non-zero, endpoint still returns `200 OK` with `success=false`
+  - Ad-hoc scan intensity follows the current discovery config's effective manual/default intensity
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: `sgx-pa-cli` not found or command spawn failed
+
+### 3.56 POST `/discovery/scan/stealth`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+  - Same schema as `POST /discovery/scan`
+- Notes:
+  - Executes `sgx-pa-cli discovery scan --intensity stealth`
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: `sgx-pa-cli` not found or command spawn failed
+
+### 3.57 POST `/discovery/scan/standard`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+  - Same schema as `POST /discovery/scan`
+- Notes:
+  - Executes `sgx-pa-cli discovery scan --intensity standard`
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: `sgx-pa-cli` not found or command spawn failed
+
+### 3.58 POST `/discovery/scan/aggressive`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+  - Same schema as `POST /discovery/scan`
+- Notes:
+  - Executes `sgx-pa-cli discovery scan --intensity aggressive`
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: `sgx-pa-cli` not found or command spawn failed
+
+### 3.59 POST `/discovery/approve`
+
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "mac": "AA:BB:CC:11:22:33",
+  "label": "Office printer"
+}
+```
+
+  - Required fields: `mac`
+- Success response (`200 OK`):
+
+```json
+{
+  "success": true,
+  "created": true,
+  "inventory_updated": 1,
+  "entry": {
+    "mac": "AA:BB:CC:11:22:33",
+    "label": "Office printer",
+    "expected_os": null,
+    "expected_ports": [],
+    "expected_ips": []
+  }
+}
+```
+
+- Notes:
+  - Adds or updates the MAC inside `/etc/sgx-guardian/discovery/whitelist.yaml`
+  - Immediately reclassifies matching non-stale inventory records so approved devices become authorized without waiting for the next scan
+- Error responses:
+  - `400 BAD_REQUEST`: invalid or empty MAC address
+  - `500 INTERNAL_SERVER_ERROR`: whitelist read/write or inventory refresh failure
+  - `415`/`422`: invalid JSON body
+
+### 3.60 GET `/discovery/whitelist`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "version": "1.0",
+  "devices": [
+    {
+      "mac": "AA:BB:CC:11:22:33",
+      "label": "Office printer",
+      "expected_os": "Linux",
+      "expected_ports": [
+        22,
+        9100
+      ],
+      "expected_ips": [
+        "192.168.50.103/32"
+      ]
+    }
+  ]
+}
+```
+
+- Notes:
+  - Missing or empty whitelist file returns the default empty document
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: whitelist YAML parse failure or file I/O error
+
+### 3.61 PUT `/discovery/whitelist`
+
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "version": "1.0",
+  "devices": [
+    {
+      "mac": "AA:BB:CC:11:22:33",
+      "label": "Office printer",
+      "expected_os": "Linux",
+      "expected_ports": [
+        22,
+        9100
+      ],
+      "expected_ips": [
+        "192.168.50.103/32"
+      ]
+    }
+  ]
+}
+```
+
+  - Required fields: none (`version` defaults to `"1.0"` when empty)
+- Success response (`200 OK`):
+  - Same schema as `GET /discovery/whitelist`
+- Notes:
+  - Writes `/etc/sgx-guardian/discovery/whitelist.yaml` atomically
+  - Refreshes matching non-stale inventory statuses after the whitelist update
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: whitelist serialization/write or inventory refresh failure
+  - `415`/`422`: invalid JSON body
+
+### 3.62 GET `/discovery/schedule`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "enabled": false,
+  "target_cidr": null,
+  "timeout_secs": 600,
+  "exclude": [],
+  "schedules": {
+    "hourly": {
+      "intensity": "standard"
+    },
+    "daily": {
+      "intensity": "aggressive"
+    }
+  }
+}
+```
+
+- Notes:
+  - `target_cidr: null` means the scheduler auto-detects the device's active LAN CIDR at runtime
+  - For legacy YAML files, an additional optional field may appear:
+    - `legacy_schedule_mode`
+- Error responses:
+  - `400 BAD_REQUEST`: existing `nmap.yaml` is invalid
+
+### 3.63 PUT `/discovery/schedule`
+
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "enabled": true,
+  "target_cidr": "192.168.50.0/24",
+  "timeout_secs": 600,
+  "exclude": [
+    "192.168.50.1"
+  ],
+  "schedules": {
+    "hourly": {
+      "intensity": "standard"
+    },
+    "daily": {
+      "intensity": "aggressive"
+    }
+  }
+}
+```
+
+  - Required fields: none. Any omitted field keeps its current value.
+- Success response (`200 OK`):
+  - Same schema as `GET /discovery/schedule`
+- Notes:
+  - `target_cidr: null`, `"auto"`, or `"none"` clears the override and restores runtime LAN auto-detection
+  - `exclude: []` clears all exclusions
+  - Flat compatibility fields `hourly_intensity` and `daily_intensity` are also accepted
+  - Writes `/etc/sgx-guardian/discovery/nmap.yaml` atomically
+- Error responses:
+  - `400 BAD_REQUEST`: invalid intensity, invalid CIDR/IP, invalid timeout, or invalid discovery config
+  - `500 INTERNAL_SERVER_ERROR`: schedule serialization or write failure
+  - `415`/`422`: invalid JSON body
 
 ---

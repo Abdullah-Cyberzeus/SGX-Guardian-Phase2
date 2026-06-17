@@ -1,4 +1,7 @@
 /target
+build/artifacts/
+__pycache__/
+*.pyc
 .vscode/
 logs/
 sgx-agent/

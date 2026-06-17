@@ -1,0 +1,7 @@
+version: "1.0"
+devices:
+  - mac: "AA:BB:CC:11:22:33"
+    label: "Office printer"
+    expected_os: "Linux"
+    expected_ports: [9100]
+    expected_ips: ["10.0.0.50/32"]

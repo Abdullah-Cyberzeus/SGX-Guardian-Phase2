@@ -6,15 +6,17 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct AppState {
     pub node_id: String,
-    pub config_dir: String,       // /etc/sgx-guardian/config
-    pub boot_dir: String,         // /var/lib/sgx-guardian/boot
-    pub keys_dir: String,         // /var/lib/sgx-guardian/keys
-    pub pcr_dir: String,          // /var/lib/sgx-guardian/pcr
-    pub pcr_baseline_dir: String, // /etc/sgx-guardian
-    pub log_dir_primary: String,  // /var/log/sgx-guardian
-    pub log_dir_fallback: String, // logs
+    pub config_dir: String,           // /etc/sgx-guardian/config
+    pub boot_dir: String,             // /var/lib/sgx-guardian/boot
+    pub keys_dir: String,             // /var/lib/sgx-guardian/keys
+    pub pcr_dir: String,              // /var/lib/sgx-guardian/pcr
+    pub pcr_baseline_dir: String,     // /etc/sgx-guardian
+    pub log_dir_primary: String,      // /var/log/sgx-guardian
+    pub log_dir_fallback: String,     // logs
     pub did_resolver: crate::did::Resolver,
     pub vid_cache: crate::virtual_id_cache::VirtualIdCache,
+    pub discovery_config_dir: String, // /etc/sgx-guardian/discovery
+    pub discovery_state_dir: String,  // /var/lib/sgx-guardian/discovery
 }
 
 impl AppState {
@@ -33,6 +35,8 @@ impl AppState {
                 .get()
                 .cloned()
                 .unwrap_or_default(),
+            discovery_config_dir: "/etc/sgx-guardian/discovery".into(),
+            discovery_state_dir: "/var/lib/sgx-guardian/discovery".into(),
         })
     }
 }
