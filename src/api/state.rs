@@ -14,6 +14,9 @@ pub struct AppState {
     pub log_dir_primary: String,  // /var/log/sgx-guardian
     pub log_dir_fallback: String, // logs
     pub did_resolver: crate::did::Resolver,
+    pub vid_cache: crate::virtual_id_cache::VirtualIdCache,
+    pub discovery_config_dir: String, // /etc/sgx-guardian/discovery
+    pub discovery_state_dir: String,  // /var/lib/sgx-guardian/discovery
 }
 
 impl AppState {
@@ -28,6 +31,12 @@ impl AppState {
             log_dir_primary: "/var/log/sgx-guardian".into(),
             log_dir_fallback: "logs".into(),
             did_resolver,
+            vid_cache: crate::attestation_service::VID_CACHE
+                .get()
+                .cloned()
+                .unwrap_or_default(),
+            discovery_config_dir: "/etc/sgx-guardian/discovery".into(),
+            discovery_state_dir: "/var/lib/sgx-guardian/discovery".into(),
         })
     }
 }

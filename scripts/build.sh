@@ -5,8 +5,8 @@ set -euo pipefail
 # It installs missing dependencies automatically and builds BOTH ARM64 binaries.
 #
 # Usage:
-#   bash scripts/build_fresh_arm64.sh
-#   CLEAN=1 bash scripts/build_fresh_arm64.sh
+#   bash scripts/build.sh
+#   CLEAN=1 bash scripts/build.sh
 
 TARGET_TRIPLE="aarch64-unknown-linux-gnu"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

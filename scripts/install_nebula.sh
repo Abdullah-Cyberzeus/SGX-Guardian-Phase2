@@ -2,6 +2,7 @@
 
 set -e
 
+# Download and install Nebula binaries from official release artifacts.
 echo "[*] Downloading Nebula..."
 
 NEBULA_VERSION="1.10.3"
@@ -16,6 +17,7 @@ BASE_URL="https://github.com/slackhq/nebula/releases/download/v${NEBULA_VERSION}
 wget "${BASE_URL}/nebula-${ARCH}.tar.gz"
 wget "${BASE_URL}/SHASUM256.txt"
 
+# Verify downloaded archive integrity before extraction.
 echo "[*] Verifying checksum..."
 grep "nebula-${ARCH}.tar.gz" SHASUM256.txt | sha256sum -c - || {
     echo "[!] Checksum verification failed"; exit 1;
@@ -24,6 +26,7 @@ grep "nebula-${ARCH}.tar.gz" SHASUM256.txt | sha256sum -c - || {
 echo "[*] Extracting..."
 tar -xzf nebula-${ARCH}.tar.gz
 
+# Install binaries into a standard executable path.
 echo "[*] Moving binaries to /usr/local/bin"
 sudo mv nebula /usr/local/bin/
 sudo mv nebula-cert /usr/local/bin/

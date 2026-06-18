@@ -1,5 +1,6 @@
 use crate::did::doc_distribution;
-use crate::did::Resolver;
+use crate::did::resolver::{DEFAULT_TTL, NETWORK_TIMEOUT};
+use crate::did::{Resolver, ResolverConfig};
 use crate::nebula::registry_sync::RegistryRequest;
 use crate::vc::errors::VcError;
 use crate::vc::persistence;
@@ -8,7 +9,12 @@ use crate::vc::status_list::StatusListCredential;
 use std::time::Duration;
 
 pub async fn pull_status_list(ca_host: &str) -> Result<bool, VcError> {
-    let resolver = Resolver::new(Default::default());
+    let resolver = Resolver::new(ResolverConfig {
+        ttl: DEFAULT_TTL,
+        ca_host: ca_host.to_string(),
+        network_timeout: NETWORK_TIMEOUT,
+        reject_deactivated: false,
+    });
     let expected_issuer = crate::vc::issue::known_ca_did().ok();
     pull_status_list_verified(&resolver, ca_host, expected_issuer.as_deref()).await?;
     Ok(true)

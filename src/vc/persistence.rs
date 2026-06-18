@@ -52,7 +52,7 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), VcError> {
 }
 
 fn safe_id(id: &str) -> String {
-    id.replace(':', "_").replace('/', "_")
+    id.replace([':', '/'], "_")
 }
 
 pub fn issued_path_for_id(id: &str) -> PathBuf {

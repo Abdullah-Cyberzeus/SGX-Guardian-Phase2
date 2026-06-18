@@ -221,7 +221,7 @@ impl VerifiableCredential {
         let mut copy = self.clone();
         copy.proof = Proof::default();
         let value = serde_json::to_value(&copy)?;
-        Ok(serde_json::to_vec(&sort_json_keys(&value))?)
+        serde_json::to_vec(&sort_json_keys(&value))
     }
 }
 
