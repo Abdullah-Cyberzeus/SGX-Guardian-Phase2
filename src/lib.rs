@@ -11,6 +11,7 @@ pub mod cloud;
 pub mod config_loader;
 pub mod cot;
 pub mod did;
+pub mod discovery; // NEW - Sprint 6 NMP-series
 pub mod enforcement;
 pub mod key_manager;
 pub mod logging;
@@ -27,6 +28,8 @@ pub mod secure_element;
 pub mod server;
 pub mod tls;
 pub mod vc;
+pub mod virtual_id;
+pub mod virtual_id_cache;
 // WiFi + Ethernet discovery modules
 pub mod dynamic_config;
 pub mod network_selector;

@@ -81,7 +81,7 @@ pub struct RevokedVm {
     pub reason: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct Proof {
     #[serde(rename = "type")]
     pub proof_type: String,
@@ -93,19 +93,6 @@ pub struct Proof {
     pub proof_purpose: String,
     #[serde(rename = "proofValue")]
     pub proof_value: String,
-}
-
-impl Default for Proof {
-    fn default() -> Self {
-        Self {
-            proof_type: String::new(),
-            cryptosuite: String::new(),
-            verification_method: String::new(),
-            created: String::new(),
-            proof_purpose: String::new(),
-            proof_value: String::new(),
-        }
-    }
 }
 
 pub struct DocBuildInput<'a> {

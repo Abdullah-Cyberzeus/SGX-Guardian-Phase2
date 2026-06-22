@@ -10,3 +10,6 @@ pub mod policy;
 pub mod relay;
 pub mod transport;
 pub mod vc;
+pub mod vid;
+
+pub mod discovery;

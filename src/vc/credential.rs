@@ -18,18 +18,13 @@ pub enum CredentialRole {
     Member,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum MembershipStatus {
+    #[default]
     Active,
     Suspended,
     Revoked,
-}
-
-impl Default for MembershipStatus {
-    fn default() -> Self {
-        Self::Active
-    }
 }
 
 impl MembershipStatus {
@@ -221,7 +216,7 @@ impl VerifiableCredential {
         let mut copy = self.clone();
         copy.proof = Proof::default();
         let value = serde_json::to_value(&copy)?;
-        Ok(serde_json::to_vec(&sort_json_keys(&value))?)
+        serde_json::to_vec(&sort_json_keys(&value))
     }
 }
 

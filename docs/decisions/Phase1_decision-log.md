@@ -84,6 +84,16 @@ It ensures traceability, justification and long-term maintainability of core des
 | D063 | Fail-Closed Boot Integrity Model | Security – Fail-Closed Enforcement | Accepted | Sprint 2 |
 | D064 | Transport-Agnostic Circle of Trust | Architecture – Multi-Transport CoT | Accepted | Sprint 2 |
 | D065 | LAN and WiFi Auto-Detection | Architecture – Multi-Transport CoT | Accepted | Sprint 2 |
+| D066 | Transport Preference and Failover Model | Architecture – Multi-Transport CoT | Accepted | Sprint 2 |
+| D067 | Nebula Overlay Network CIDR 192.168.100.0/24 | Architecture – Mesh Networking | Accepted | Sprint 3 |
+| D068 | nebula0 Virtual Interface Creation | Architecture – Mesh Networking | Accepted | Sprint 3 |
+| D069 | Overlay IP Allocation Tracking | Architecture – Mesh Networking | Accepted | Sprint 3 |
+| D070 | Lighthouse-Based Peer Discovery | Architecture – Mesh Networking | Accepted | Sprint 3 |
+| D071 | Lighthouse Registry and Endpoint Updates | Architecture – Mesh Networking | Accepted | Sprint 3 |
+| D072 | Redundant Lighthouse Support | Architecture – Mesh Networking | Accepted | Sprint 3 |
+| D073 | Cellular CoT Extension | Architecture – Multi-Transport CoT | Accepted | Sprint 3 |
+| D074 | Bluetooth CoT Extension | Architecture – Multi-Transport CoT | Accepted | Sprint 3 |
+| D075 | Multi-Hop Relay Routing | Architecture – Mesh Networking | Accepted | Sprint 4 |
 
 ---
 
@@ -91,7 +101,7 @@ It ensures traceability, justification and long-term maintainability of core des
 
 | Category | Count | Decisions |
 |---------|--------|----------|
-| **Architecture** | 44 | D001, D002, D003, D004, D005, D008, D009, D012, D014, D016, D017, D018, D019, D020, D027, D028, D029, D030, D031, D034, D037, D038, D039, D040, D041, D042, D043, D044, D046,D047, D059, D060, D062 ,D050, D051, D053, D056, D057, D058 ,D054, D055 , D061 ,D064, D065  |
+| **Architecture** | 51 | D001, D002, D003, D004, D005, D008, D009, D012, D014, D016, D017, D018, D019, D020, D027, D028, D029, D030, D031, D034, D037, D038, D039, D040, D041, D042, D043, D044, D046,D047, D059, D060, D062 ,D050, D051, D053, D056, D057, D058 ,D054, D055 , D061 ,D064, D065 , D067, D068, D069, D070, D071, D072, D075, |
 | **Implementation** | 8 | D006, D007, D021, D024, D032, D048, D049, D052 |
 | **DevOps** | 2 | D010, D011 |
 | **Quality** | 5 | D013, D015, D025, D026, D033 |
@@ -2236,5 +2246,405 @@ Implement automatic interface detection and adaptation for LAN and WiFi connecti
 - Tests MT-001 to MT-003 validate expected behavior.
 
 **Related Decisions:** D064, D066, D078  
+
+---
+
+### D066: Transport Preference and Failover Model
+
+**Date:** Sprint 2  
+**Status:** Accepted  
+**Category:** Architecture – Multi-Transport CoT  
+
+**Context:**  
+When multiple transports are available, Guardian needs a deterministic selection model. Without preference and failover rules, nodes may choose unstable or expensive paths unpredictably.
+
+**Decision:**  
+Implement a transport preference and failover model for available network interfaces.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Predictability | Operators can understand why a transport was selected |
+| Resilience | Automatic failover keeps Circle connectivity alive |
+| Cost control | Lower-cost and lower-latency transports can be preferred |
+| Operational clarity | Logs can explain transport transitions |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Random available transport | Simple | Unpredictable behavior |
+| Manual failover only | Operator control | Slow during outages |
+| Always prefer latest connected | Simple | Can flap frequently |
+| Defined preference model | Stable and explainable | Requires monitoring and state logic |
+
+**Implications:**  
+- Transport state must be tracked continuously.  
+- Failover events must be logged.  
+- Connection recovery should not reset trust unnecessarily.  
+- Future AI routing can use this baseline.
+
+**Related Decisions:** D064, D065, D073, D077, D078  
+
+---
+
+### D067: Nebula Overlay Network CIDR 192.168.100.0/24
+
+**Date:** Sprint 3  
+**Status:** Accepted  
+**Category:** Architecture – Mesh Networking  
+
+**Context:**  
+Nebula mesh requires a predictable private overlay address range per Circle. Phase 2 required a standard CIDR for local testing and consistent configuration.
+
+**Decision:**  
+Use `192.168.100.0/24` as the default Nebula overlay network CIDR per Circle.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Simplicity | Easy to understand and configure |
+| Lab consistency | Supports repeatable 3-node testing |
+| Routing clarity | Separates overlay traffic from physical network addresses |
+| Operational fit | Matches planned node overlay IP assignments |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Random CIDR per Circle | Reduces conflicts | Harder to debug |
+| Use physical LAN IPs | No overlay mapping | Breaks mesh abstraction |
+| Large `/16` overlay | More capacity | Overkill for Phase 2 |
+| `192.168.100.0/24` | Simple and sufficient | Requires conflict awareness |
+
+**Implications:**  
+- Node overlay IPs can follow predictable patterns.  
+- Circle owner must track assigned addresses.  
+- Future deployments may override CIDR if conflicts exist.  
+- Documentation and scripts can use consistent examples.
+
+**Related Decisions:** D054, D056, D068, D069  
+
+---
+
+### D068: nebula0 Virtual Interface Creation
+
+**Date:** Sprint 3  
+**Status:** Accepted  
+**Category:** Architecture – Mesh Networking  
+
+**Context:**  
+Nebula routes encrypted overlay traffic through a virtual network interface. Guardian needs a consistent interface target for peer communication, routing, monitoring, and troubleshooting.
+
+**Decision:**  
+Create and use the `nebula0` virtual interface for Circle overlay communication.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Isolation | Overlay traffic is separated from physical network interfaces |
+| Observability | Operators can inspect a known interface |
+| Routing | Peer-to-peer traffic can be routed consistently |
+| Integration | Firewall and monitoring rules can target `nebula0` |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Use physical interface directly | Simpler | No overlay isolation |
+| Dynamic interface names | Flexible | Hard to script and troubleshoot |
+| Multiple interfaces per peer | Granular | Too complex for Phase 2 |
+| Standard `nebula0` | Clear and operationally simple | Requires name consistency |
+
+**Implications:**  
+- Startup scripts must verify `nebula0` creation.  
+- Troubleshooting commands can check `nebula0` status.  
+- Logs and metrics can report overlay interface health.  
+- Firewall rules can separate overlay and physical traffic.
+
+**Related Decisions:** D054, D067, D069  
+
+---
+
+### D069: Overlay IP Allocation Tracking
+
+**Date:** Sprint 3  
+**Status:** Accepted  
+**Category:** Architecture – Mesh Networking  
+
+**Context:**  
+Every Guardian in a Circle requires a unique overlay IP. Manual assignment risks collisions, inconsistent certificates, and broken peer routing.
+
+**Decision:**  
+Track overlay IP allocations in Circle state using a next-overlay-IP counter and member assignment records.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Collision prevention | Ensures each Guardian receives a unique overlay IP |
+| Certificate consistency | Assigned IP can be embedded in member certificate |
+| Auditability | Circle owner can trace which device received which IP |
+| Automation | Supports repeatable onboarding and renewal |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Manual IP assignment | Simple in small labs | Error-prone |
+| Random IP assignment | Easy automation | Collision handling required |
+| DHCP inside overlay | Familiar model | Adds moving parts |
+| Tracked allocation counter | Deterministic and simple | Requires persistent Circle state |
+
+**Implications:**  
+- Circle state must persist overlay allocation data.  
+- Certificate issuance depends on allocation state.  
+- Revoked or removed members require IP reuse policy.  
+- Tests should verify no duplicate overlay IP assignment.
+
+**Related Decisions:** D056, D067, D068  
+
+---
+
+### D070: Lighthouse-Based Peer Discovery
+
+**Date:** Sprint 3  
+**Status:** Accepted  
+**Category:** Architecture – Mesh Networking  
+
+**Context:**  
+Guardians may run behind NAT, cellular networks, or restrictive firewalls. Direct peer discovery may fail without a stable discovery point.
+
+**Decision:**  
+Use Nebula lighthouse nodes for peer discovery and NAT traversal support.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| NAT traversal | Helps peers discover reachable endpoints |
+| Mesh scalability | Reduces need for static peer configuration |
+| Dynamic networks | Supports endpoint changes over time |
+| Operational fit | Aligns with Nebula mesh design |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Static peer IPs | Simple in lab | Breaks with NAT and mobile networks |
+| Central cloud broker | Easy coordination | Weakens self-hosted/offline model |
+| Broadcast discovery only | Works on LAN | Not enough across WAN/cellular |
+| Nebula lighthouse | Built for this use case | Requires lighthouse deployment and monitoring |
+
+**Implications:**  
+- At least one reachable lighthouse is needed for non-LAN peer discovery.  
+- Lighthouse configuration must be generated and distributed.  
+- Endpoint registration must update on network changes.  
+- Lighthouse health affects mesh convergence.
+
+**Related Decisions:** D054, D071, D072, D075  
+
+---
+
+### D071: Lighthouse Registry and Endpoint Updates
+
+**Date:** Sprint 3  
+**Status:** Accepted  
+**Category:** Architecture – Mesh Networking  
+
+**Context:**  
+A lighthouse is only useful if it maintains current peer endpoint information. Guardians may change IP addresses when switching Wi-Fi, cellular, or satellite links.
+
+**Decision:**  
+Maintain lighthouse registry updates for peer public endpoint mappings during startup and network changes.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Freshness | Peers receive current public IP and port mappings |
+| Failover support | Endpoint changes can be reflected after transport switch |
+| NAT traversal | UDP hole punching depends on accurate endpoint data |
+| Reliability | Reduces stale connection attempts |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Register once at install | Simple | Stale after network changes |
+| Manual endpoint updates | Operator control | Not practical |
+| Polling-only discovery | Simple | Slower convergence |
+| Automatic registry updates | Accurate and resilient | Requires network event handling |
+
+**Implications:**  
+- Transport changes must trigger endpoint update logic.  
+- Logs should capture registration and update status.  
+- Lighthouse state must reject malformed or unauthorized updates.  
+- Peer connection reliability improves across dynamic networks.
+
+**Related Decisions:** D070, D072, D078  
+
+---
+
+### D072: Redundant Lighthouse Support
+
+**Date:** Sprint 3  
+**Status:** Accepted  
+**Category:** Architecture – Mesh Networking  
+
+**Context:**  
+A single lighthouse can become a discovery bottleneck or availability risk. Circle connectivity should continue even if one lighthouse is unavailable.
+
+**Decision:**  
+Support multiple redundant lighthouses per Circle.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Availability | Peer discovery survives lighthouse failure |
+| Resilience | Multiple lighthouses reduce single point of failure |
+| Geographic flexibility | Different deployments can place lighthouses near peers |
+| Operational safety | Maintenance can occur without full discovery outage |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Single lighthouse | Simple | Single point of failure |
+| No lighthouse | Fully peer-based | Weak NAT traversal |
+| Cloud-only discovery | Reliable if cloud available | Not self-hosted-first |
+| Redundant lighthouses | Robust and aligned with mesh | Requires configuration management |
+
+**Implications:**  
+- Config must support multiple lighthouse entries.  
+- Health checks should identify unreachable lighthouses.  
+- Peer startup should try alternatives if primary fails.  
+- Circle deployment docs must define lighthouse selection criteria.
+
+**Related Decisions:** D070, D071, D075  
+
+---
+
+### D073: Cellular CoT Extension
+
+**Date:** Sprint 3  
+**Status:** Accepted  
+**Category:** Architecture – Multi-Transport CoT  
+
+**Context:**  
+Guardian devices may operate in mobile or remote environments where Ethernet and Wi-Fi are unavailable. Cellular LTE/5G support is required for resilient field connectivity.
+
+**Decision:**  
+Extend Circle of Trust transport support to cellular LTE/5G interfaces.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Mobility | Supports moving or remote Guardian devices |
+| Resilience | Provides fallback when LAN/Wi-Fi is unavailable |
+| Deployment reach | Enables wider field and tactical usage |
+| Mesh continuity | CoT trust can remain active across cellular paths |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| LAN/Wi-Fi only | Simpler | Not enough for remote deployment |
+| Manual cellular VPN | Familiar | Adds external dependency and config overhead |
+| Cellular as separate trust mode | Isolated | Duplicates CoT logic |
+| Cellular CoT extension | Unified trust model | Requires transport detection and cost awareness |
+
+**Implications:**  
+- Cellular transport may need different timeout and retry behavior.  
+- Bandwidth and latency should be monitored.  
+- Lighthouse and relay support become more important.  
+- Logs must show cellular transport selection.
+
+**Related Decisions:** D064, D066, D071, D075, D078  
+
+---
+
+### D074: Bluetooth CoT Extension
+
+**Date:** Sprint 3  
+**Status:** Accepted  
+**Category:** Architecture – Multi-Transport CoT  
+
+**Context:**  
+Certain local or constrained deployments may require short-range peer connectivity without relying on LAN or Wi-Fi infrastructure.
+
+**Decision:**  
+Extend Circle of Trust transport support to Bluetooth interfaces where applicable.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Local fallback | Supports short-range trusted communication |
+| Infrastructure independence | Useful when LAN/Wi-Fi is unavailable |
+| Device onboarding | Can support nearby-device workflows |
+| Transport diversity | Expands CoT beyond IP-first assumptions |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Ignore Bluetooth | Simpler | Reduces local fallback options |
+| Bluetooth-only trust flow | Specific optimization | Duplicates trust logic |
+| Manual pairing only | Familiar | Weak automation |
+| Bluetooth CoT extension | Adds local resilience | Requires careful pairing and interface handling |
+
+**Implications:**  
+- Bluetooth should use same identity and trust validation model.  
+- Range and bandwidth limitations must be considered.  
+- Logs should clearly identify Bluetooth transport use.  
+- Security must avoid trusting Bluetooth pairing alone.
+
+**Related Decisions:** D064, D066, D078  
+
+---
+
+### D075: Multi-Hop Relay Routing
+
+**Date:** Sprint 4  
+**Status:** Accepted  
+**Category:** Architecture – Mesh Networking  
+
+**Context:**  
+Some Guardians cannot establish direct UDP connections because of symmetric NAT, restrictive firewalls, cellular carrier NAT, or satellite constraints. Mesh connectivity must still function when direct paths fail.
+
+**Decision:**  
+Enable Nebula multi-hop relay routing through trusted intermediate peers.
+
+**Rationale:**
+
+| Criterion | Explanation |
+|----------|-------------|
+| Connectivity | Maintains peer communication when direct UDP fails |
+| Resilience | Supports restrictive networks and remote deployments |
+| Privacy | Relay forwards encrypted packets without decrypting content |
+| Mesh continuity | Keeps Circle communication alive under network constraints |
+
+**Alternatives Considered:**
+
+| Alternative | Pros | Cons |
+|------------|------|------|
+| Direct-only connections | Lowest latency | Fails behind restrictive NAT |
+| Central relay server only | Predictable | Adds central dependency |
+| Manual SSH tunnels | Useful for debugging | Not production-grade |
+| Multi-hop relay | Mesh-native and resilient | Adds latency and resource usage |
+
+**Implications:**  
+- Relay-capable peers must be configured and monitored.  
+- Relay path selection must avoid loops and excessive hops.  
+- Relay metadata and bandwidth use should be logged.  
+- Relay traffic remains encrypted end-to-end.
+
+**Related Decisions:** D054, D070, D072, D076, D077  
 
 ---

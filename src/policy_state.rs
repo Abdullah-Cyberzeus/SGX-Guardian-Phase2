@@ -26,6 +26,10 @@ fn active_policy_path() -> PathBuf {
     policy_dir_path().join("active_policy.yaml")
 }
 
+pub fn active_policy_file_path() -> PathBuf {
+    active_policy_path()
+}
+
 fn backup_policy_path() -> PathBuf {
     policy_dir_path().join("backup_policy.yaml")
 }

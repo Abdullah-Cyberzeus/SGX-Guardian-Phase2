@@ -52,7 +52,7 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), VcError> {
 }
 
 fn safe_id(id: &str) -> String {
-    id.replace(':', "_").replace('/', "_")
+    id.replace([':', '/'], "_")
 }
 
 pub fn issued_path_for_id(id: &str) -> PathBuf {
@@ -194,8 +194,8 @@ pub fn find_issued_for_subject_and_role(
 pub fn find_vc_by_id(id: &str) -> Result<Option<VerifiableCredential>, VcError> {
     for vc in list_issued()?
         .into_iter()
-        .chain(list_own()?.into_iter())
-        .chain(list_peers()?.into_iter())
+        .chain(list_own()?)
+        .chain(list_peers()?)
     {
         if vc.id == id {
             return Ok(Some(vc));

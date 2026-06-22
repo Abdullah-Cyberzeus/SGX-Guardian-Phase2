@@ -647,6 +647,9 @@ mod tests {
             log_dir_primary: "/tmp/logs".into(),
             log_dir_fallback: "/tmp/logs2".into(),
             did_resolver: crate::did::Resolver::new(Default::default()),
+            vid_cache: crate::virtual_id_cache::VirtualIdCache::new(),
+            discovery_config_dir: "/tmp/discovery-config".into(),
+            discovery_state_dir: "/tmp/discovery-state".into(),
         })
     }
 

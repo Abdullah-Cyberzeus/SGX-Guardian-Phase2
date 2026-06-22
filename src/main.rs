@@ -742,24 +742,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Generate and log attestation evidence for this node
     use sgx_guardian_client::attestation_service::AttestationService;
 
-    let sample_policy_path = "/etc/sgx-guardian/schemas/uep_policy_v1.yaml";
+    let sample_policy = sgx_guardian_client::policy::load_effective_policy_material();
 
-    let sample_policy = fs::read_to_string(sample_policy_path).unwrap_or_else(|e| {
-        eprintln!(
-            "⚠️ Policy schema not found: {} — using empty default",
-            e
-        );
-        String::from(
-            "---\npolicy_id: \"default\"\nversion: \"0.0.0\"\ndescription: \"Empty default\"\nrules: []\n",
-        )
-    });
-
-    let evidence = AttestationService::create_signed_evidence(&km, &sample_policy)?;
+    let evidence = AttestationService::create_signed_evidence(&km, &sample_policy.yaml)?;
     println!(
         "Created local attestation evidence (nonce={}..)",
         &evidence.nonce[..8]
     );
-    let evidence_verified = AttestationService::verify_signed_evidence(&evidence, &sample_policy)?;
+    let evidence_verified =
+        AttestationService::verify_signed_evidence(&evidence, &sample_policy.yaml)?;
     let verified = evidence_verified && local_pcr_trusted;
     if verified {
         println!("✅ Local attestation evidence verified successfully.");
@@ -919,16 +910,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(prod_log_dir).ok();
     std::fs::create_dir_all(dev_log_dir).ok();
 
-    let audit_log_path_prod = format!("{}/audit.log", prod_log_dir);
-    let audit_log_path_dev = "logs/audit.log";
+    // === FIX #8: use per-node log file, matching what the writer produces. ===
+    // Writer initialised below as `audit-<node>.log`; pre-init verifier must
+    // check the SAME file, otherwise it verifies a stale/empty/wrong artefact.
+    let audit_log_path_prod = format!("{}/audit-{}.log", prod_log_dir, node_id);
+    let audit_log_path_dev = format!("logs/audit-{}.log", node_id);
     let audit_check_path = if std::path::Path::new(&audit_log_path_prod).exists() {
-        &audit_log_path_prod
+        audit_log_path_prod.clone()
     } else {
-        audit_log_path_dev
+        audit_log_path_dev.clone()
     };
 
-    if std::path::Path::new(audit_check_path).exists() {
-        if let Err(e) = AuditVerifier::verify(audit_check_path) {
+    if std::path::Path::new(&audit_check_path).exists() {
+        if let Err(e) = AuditVerifier::verify(&audit_check_path) {
             log_error(
                 &node_id,
                 &format!("Audit log integrity warning (non-fatal): {}", e),
@@ -1025,6 +1019,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sgx_guardian_client::did::ResolverConfig::default(),
     );
     let mut resolver_for_flag = did_resolver.clone();
+    let vid_cache = sgx_guardian_client::virtual_id_cache::VirtualIdCache::new();
+    sgx_guardian_client::attestation_service::set_vid_cache(vid_cache.clone());
+
+    let (reattest_tx, mut reattest_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    sgx_guardian_client::attestation_service::set_reattest_sender(reattest_tx);
+    let node_key_path_for_reattest = node_key_path.clone();
+    tokio::spawn(async move {
+        while let Some(peer_did) = reattest_rx.recv().await {
+            let resolver = sgx_guardian_client::did::Resolver::new(Default::default());
+            let res = match resolver.resolve(&peer_did).await {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("Re-attest: cannot resolve {}: {}", peer_did, e);
+                    continue;
+                }
+            };
+            let attest_endpoint = res.services.iter().find(|s| s.r#type == "SGXAttestation");
+            let Some(endpoint) = attest_endpoint else {
+                tracing::warn!("Re-attest: peer {} has no SGXAttestation service", peer_did);
+                continue;
+            };
+            let url = endpoint.endpoint.trim_start_matches("tcp://");
+            let Some((ip, port_str)) = url.rsplit_once(':') else {
+                tracing::warn!("Re-attest: cannot parse endpoint {}", endpoint.endpoint);
+                continue;
+            };
+            let Ok(port) = port_str.parse::<u16>() else {
+                tracing::warn!("Re-attest: cannot parse port in {}", endpoint.endpoint);
+                continue;
+            };
+            let km_for_reattest = match KeyManager::load_or_generate(&node_key_path_for_reattest) {
+                Ok(km) => km,
+                Err(e) => {
+                    tracing::warn!("Re-attest: cannot load local key: {}", e);
+                    continue;
+                }
+            };
+            tracing::info!("Re-attesting with peer {} at {}:{}", peer_did, ip, port);
+            let _ = sgx_guardian_client::attestation_service::AttestationService::mutual_attest(
+                ip.to_string(),
+                port,
+                &km_for_reattest,
+            )
+            .await;
+        }
+    });
 
     step(9, "nebula subsystem gate");
     if !GATES.disable_nebula {
@@ -1526,8 +1566,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 if vc_status_list_sync_elapsed >= VC_STATUS_LIST_PULL_INTERVAL_SECS {
                     vc_status_list_sync_elapsed = 0;
+                    let expected_issuer = sgx_guardian_client::vc::issue::known_ca_did().ok();
                     if let Err(e) =
-                        sgx_guardian_client::vc::distribution::pull_status_list(&ca_host).await
+                        sgx_guardian_client::vc::distribution::pull_status_list_verified(
+                            &resolver_for_pull,
+                            &ca_host,
+                            expected_issuer.as_deref(),
+                        )
+                        .await
                     {
                         tracing::warn!("VC status list pull failed from {}: {}", ca_host, e);
                     }
@@ -2529,6 +2575,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     println!("✅ REST admin API listening on http://{}/api/v1", api_bind);
+
+    // === Sprint 6: NMAP Discovery Scheduler ===
+    {
+        use sgx_guardian_client::discovery::{DiscoveryScheduler, Inventory};
+        use std::path::PathBuf;
+
+        let cfg_path = PathBuf::from("/etc/sgx-guardian/discovery/nmap.yaml");
+        let wl_path = PathBuf::from("/etc/sgx-guardian/discovery/whitelist.yaml");
+        let inv_path = PathBuf::from("/var/lib/sgx-guardian/discovery/inventory.json");
+
+        let _ = std::fs::create_dir_all("/var/lib/sgx-guardian/discovery");
+        let _ = std::fs::create_dir_all("/etc/sgx-guardian/discovery");
+
+        let scheduler = DiscoveryScheduler {
+            node_id: node_id.clone(),
+            config_path: cfg_path,
+            whitelist_path: wl_path,
+            inventory_path: inv_path,
+            state: std::sync::Arc::new(tokio::sync::Mutex::new(Inventory::default())),
+        };
+        scheduler.start();
+        println!("✅ Discovery scheduler spawned (NMP-series, Sprint 6)");
+    }
+
     // === CERT BOOTSTRAP SERVER (nodeA only, plaintext port 50061) ===
     if node_id == "nodeA" {
         tokio::spawn(async move {
@@ -2775,12 +2845,8 @@ async fn refresh_and_publish_did_doc_inner(
     }
 
     let ip_only = overlay_ip_cidr.split('/').next().unwrap_or(overlay_ip_cidr);
-    let attestation_port = match node_id {
-        "nodeA" => 50051,
-        "nodeB" => 50052,
-        "nodeC" => 50053,
-        _ => 50051,
-    };
+    let attestation_port =
+        sgx_guardian_client::attestation_service::attestation_listener_port_for_node(node_id);
 
     let input = document::DocBuildInput {
         did: did.as_str(),

@@ -62,19 +62,43 @@
 | 51 | GET | `/vc/status/{vc_id}` | Fetch computed active/revoked/expired status for one VC |
 | 52 | POST | `/vc/status-list/pull` | Pull and verify the latest VC status list from the CA |
 | 53 | GET | `/vc/files/issued` | List metadata for VCs stored in the issued-file cache |
+| 54 | GET | `/vc/files/own` | List metadata for VCs stored in the local own-credential cache |
+| 55 | GET | `/vc/files/peers` | List metadata for VCs stored in the peer VC cache |
+| 56 | GET | `/vc/files/issued/{vc_id}` | Fetch full issued VC JSON by VC ID |
+| 57 | GET | `/vc/files/own/{vc_id}` | Fetch full own VC JSON by VC ID |
+| 58 | GET | `/vc/files/peer/{did}` | Fetch full peer VC JSON by peer DID |
+| 59 | GET | `/vc/status-list` | Fetch the local VC status-list credential |
+| 60 | GET | `/vc/status-list-index` | Fetch the local VC status-list index counter |
+| 61 | GET | `/vc/summary` | Return dashboard summary of issued, own, peer, active, revoked, and expired VC counts |
+| 62 | GET | `/vc/audit` | Return VC-related audit events with optional filters |
+| 63 | GET | `/discovery/devices` | Full NMAP device inventory |
+| 64 | GET | `/discovery/list` | Alias of discovery inventory list |
+| 65 | GET | `/discovery/inventory/list` | Alias of discovery inventory list |
+| 66 | GET | `/discovery/devices/unauthorized` | Unauthorized or drifted discovered devices |
+| 67 | GET | `/discovery/unauthorized` | Alias of unauthorized discovery list |
+| 68 | POST | `/discovery/scan` | Run discovery scan using default ad-hoc intensity |
+| 69 | POST | `/discovery/scan/stealth` | Run one stealth NMAP discovery scan |
+| 70 | POST | `/discovery/scan/standard` | Run one standard NMAP discovery scan |
+| 71 | POST | `/discovery/scan/aggressive` | Run one aggressive NMAP discovery scan |
+| 72 | POST | `/discovery/approve` | Authorize a discovered device by MAC and add it to whitelist |
+| 73 | GET | `/discovery/whitelist` | Fetch discovery whitelist YAML content as JSON |
+| 74 | PUT | `/discovery/whitelist` | Replace discovery whitelist and refresh inventory statuses |
+| 75 | GET | `/discovery/schedule` | Fetch scheduled NMAP discovery configuration |
+| 76 | PUT | `/discovery/schedule` | Update scheduled NMAP discovery configuration |
 
 ## 2. NEW Endpoints 
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/vc/issue` | Issue a circle-membership VC for a subject DID |
-| POST | `/vc/renew` | Renew an existing VC expiration |
-| POST | `/vc/revoke` | Revoke an existing VC |
-| POST | `/vc/verify` | Verify a cached VC and report validity |
-| GET | `/vc/show` | List VC metadata with scope/role/status filters |
-| GET | `/vc/status/{vc_id}` | Query computed status for a specific VC id |
-| POST | `/vc/status-list/pull` | Pull and verify the latest CA status list snapshot |
-| GET | `/vc/files/issued` | List issued-VC file metadata |
+| GET | `/vc/files/own` | List local own-VC file metadata |
+| GET | `/vc/files/peers` | List peer-VC file metadata |
+| GET | `/vc/files/issued/{vc_id}` | Fetch the stored issued VC JSON document |
+| GET | `/vc/files/own/{vc_id}` | Fetch the stored own VC JSON document |
+| GET | `/vc/files/peer/{did}` | Fetch the stored peer VC JSON document by DID |
+| GET | `/vc/status-list` | Fetch the stored VC status-list credential JSON |
+| GET | `/vc/status-list-index` | Fetch the stored status-list next-index JSON |
+| GET | `/vc/summary` | Return aggregate VC cache and lifecycle counts |
+| GET | `/vc/audit` | Return VC audit-log entries with optional filtering |
 
 ---
 
@@ -1719,5 +1743,662 @@ Peer DID resolution response (`?did=did:guardian:...`):
 - Error responses:
   - None expected when the issued directory is absent; the handler returns an empty list
   - `500 INTERNAL_SERVER_ERROR`: issued-cache directory scan failure
+
+---
+
+### 3.50 GET `/vc/files/own`
+
+- Purpose:
+  - List metadata for VCs stored under the local own-credential cache.
+- Request:
+  - Query params: none
+  - Body: none
+- Notes:
+  - This endpoint returns the same `items` metadata shape as `GET /vc/show`, but only for the own cache.
+  - To fetch the full JSON document for a specific own VC, use `GET /vc/files/own/{vc_id}`.
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "count": 1,
+  "items": [
+    {
+      "vc_id": "urn:uuid:81fc34d3-0d9e-4e88-8e3f-a3f9202a3e54",
+      "subject": "did:guardian:z6Mklocalmember123",
+      "issuer": "did:guardian:z6Mkowner456",
+      "role": "member",
+      "circle_id": "guardian-circle-alpha",
+      "membership_status": "active",
+      "issuance_date": "2026-06-12T09:05:00Z",
+      "expiration_date": "2026-07-12T09:05:00Z",
+      "status_list_index": "13",
+      "revoked": false,
+      "source_scope": "own"
+    }
+  ]
+}
+```
+
+- Error responses:
+  - None expected when the own directory is absent; the handler returns an empty list
+  - `500 INTERNAL_SERVER_ERROR`: own-cache directory scan failure
+
+### 3.51 GET `/vc/files/peers`
+
+- Purpose:
+  - List metadata for VCs stored under the local peer-credential cache.
+- Request:
+  - Query params: none
+  - Body: none
+- Notes:
+  - This endpoint returns the same `items` metadata shape as `GET /vc/show`, but only for the peer cache.
+  - To fetch the full JSON document for a specific peer VC, use `GET /vc/files/peer/{did}`.
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "count": 1,
+  "items": [
+    {
+      "vc_id": "urn:uuid:ba4692a0-0a63-44fd-b5db-e81c7abda6af",
+      "subject": "did:guardian:z6Mkpeer789",
+      "issuer": "did:guardian:z6Mkowner456",
+      "role": "member",
+      "circle_id": "guardian-circle-alpha",
+      "membership_status": "active",
+      "issuance_date": "2026-06-11T15:30:00Z",
+      "expiration_date": "2026-07-11T15:30:00Z",
+      "status_list_index": "9",
+      "revoked": false,
+      "source_scope": "peers"
+    }
+  ]
+}
+```
+
+- Error responses:
+  - None expected when the peers directory is absent; the handler returns an empty list
+  - `500 INTERNAL_SERVER_ERROR`: peer-cache directory scan failure
+
+### 3.52 GET `/vc/files/issued/{vc_id}`
+
+- Purpose:
+  - Fetch the full stored issued VC JSON document by VC id.
+- Request:
+  - Path params:
+    - `vc_id` (`string`): VC identifier. Must start with `urn:uuid:`.
+  - Query params: none
+  - Body: none
+- Notes:
+  - Returns the persisted issued-credential JSON exactly as stored on disk.
+  - This is the document-level companion to `GET /vc/files/issued`.
+- Success response (`200 OK`):
+
+```json
+{
+  "@context": [
+    "https://www.w3.org/2018/credentials/v1",
+    "https://w3id.org/security/suites/jws-2020/v1",
+    "https://w3id.org/vc/status-list/2021/v1",
+    "https://schemas.cyberzeus.io/sgx/v1/circle-membership"
+  ],
+  "id": "urn:uuid:6c36a672-b4d5-432d-a440-0eb90ce8d6d8",
+  "type": [
+    "VerifiableCredential",
+    "CircleMembershipCredential"
+  ],
+  "issuer": "did:guardian:z6Mkowner456",
+  "issuanceDate": "2026-06-12T09:00:00Z",
+  "expirationDate": "2026-07-12T09:00:00Z",
+  "credentialSubject": {
+    "id": "did:guardian:z6Mkmember123",
+    "role": "member",
+    "permissions": [
+      "mesh:join",
+      "cert:request",
+      "cert:renew",
+      "attest:peer",
+      "did:resolve",
+      "status:read"
+    ],
+    "joinDate": "2026-06-12T09:00:00Z",
+    "circleId": "guardian-circle-alpha",
+    "membershipStatus": "active"
+  },
+  "credentialStatus": {
+    "id": "did:guardian:z6Mkowner456/status-list#12",
+    "type": "StatusList2021Entry",
+    "statusPurpose": "revocation",
+    "statusListIndex": "12",
+    "statusListCredential": "did:guardian:z6Mkowner456/status-list"
+  },
+  "proof": {
+    "type": "DataIntegrityProof",
+    "verificationMethod": "did:guardian:z6Mkowner456#dkp-v3",
+    "created": "2026-06-12T09:00:00Z",
+    "proofValue": "..."
+  }
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: malformed `vc_id`
+  - `404 NOT_FOUND`: no issued VC file exists for that id
+  - `500 INTERNAL_SERVER_ERROR`: stored JSON is unreadable/invalid
+
+### 3.53 GET `/vc/files/own/{vc_id}`
+
+- Purpose:
+  - Fetch the full stored own VC JSON document by VC id.
+- Request:
+  - Path params:
+    - `vc_id` (`string`): VC identifier. Must start with `urn:uuid:`.
+  - Query params: none
+  - Body: none
+- Notes:
+  - Returns the persisted own-credential JSON exactly as stored on disk.
+  - The success body has the same raw VC JSON shape as `GET /vc/files/issued/{vc_id}`.
+- Success response (`200 OK`):
+  - Same raw VC JSON shape shown in `GET /vc/files/issued/{vc_id}`.
+- Error responses:
+  - `400 BAD_REQUEST`: malformed `vc_id`
+  - `404 NOT_FOUND`: no own VC file exists for that id
+  - `500 INTERNAL_SERVER_ERROR`: stored JSON is unreadable/invalid
+
+### 3.54 GET `/vc/files/peer/{did}`
+
+- Purpose:
+  - Fetch the full stored peer VC JSON document by peer DID.
+- Request:
+  - Path params:
+    - `did` (`string`): peer DID used as the peer-cache lookup key.
+  - Query params: none
+  - Body: none
+- Notes:
+  - Returns the persisted peer-credential JSON exactly as stored on disk.
+  - URL-encode the DID if your client/framework does not allow raw `:` characters in the path segment.
+  - The success body has the same raw VC JSON shape as `GET /vc/files/issued/{vc_id}`.
+- Success response (`200 OK`):
+  - Same raw VC JSON shape shown in `GET /vc/files/issued/{vc_id}`.
+- Error responses:
+  - `400 BAD_REQUEST`: malformed DID
+  - `404 NOT_FOUND`: no peer VC file exists for that DID
+  - `500 INTERNAL_SERVER_ERROR`: stored JSON is unreadable/invalid
+
+### 3.55 GET `/vc/status-list`
+
+- Purpose:
+  - Fetch the locally stored VC status-list credential JSON.
+- Request:
+  - Query params: none
+  - Body: none
+- Notes:
+  - This returns the raw `status_list.json` document as stored on disk.
+  - The JSON field name for the local allocator hint is `sgxNextIndex` because this endpoint returns the stored credential, not the REST wrapper used by `POST /vc/status-list/pull`.
+- Success response (`200 OK`):
+
+```json
+{
+  "@context": [
+    "https://www.w3.org/2018/credentials/v1",
+    "https://w3id.org/vc/status-list/2021/v1"
+  ],
+  "id": "did:guardian:z6Mkowner456/status-list",
+  "type": [
+    "VerifiableCredential",
+    "StatusList2021Credential"
+  ],
+  "issuer": "did:guardian:z6Mkowner456",
+  "issuanceDate": "2026-06-12T09:00:00Z",
+  "credentialSubject": {
+    "id": "did:guardian:z6Mkowner456/status-list#list",
+    "type": "StatusList2021",
+    "statusPurpose": "revocation",
+    "encodedList": "H4sIAAAAA..."
+  },
+  "proof": {
+    "type": "DataIntegrityProof",
+    "verificationMethod": "did:guardian:z6Mkowner456#dkp-v3",
+    "created": "2026-06-12T09:00:00Z",
+    "proofValue": "..."
+  },
+  "sgxNextIndex": 13
+}
+```
+
+- Error responses:
+  - `404 NOT_FOUND`: local status-list credential file is missing
+  - `500 INTERNAL_SERVER_ERROR`: stored JSON is unreadable/invalid
+
+### 3.56 GET `/vc/status-list-index`
+
+- Purpose:
+  - Fetch the locally stored status-list next-index counter JSON.
+- Request:
+  - Query params: none
+  - Body: none
+- Notes:
+  - This returns the raw `status_list_index.json` file as stored on disk.
+  - Use this endpoint when you need the allocator counter alone without the full status-list credential payload.
+- Success response (`200 OK`):
+
+```json
+{
+  "next_index": 13
+}
+```
+
+- Error responses:
+  - `404 NOT_FOUND`: local status-list index file is missing
+  - `500 INTERNAL_SERVER_ERROR`: stored JSON is unreadable/invalid
+
+### 3.57 GET `/vc/summary`
+
+- Purpose:
+  - Return dashboard-style VC counts across issued, own, and peer caches.
+- Request:
+  - Query params: none
+  - Body: none
+- Notes:
+  - `issued_total`, `own_total`, and `peer_total` are per-cache totals.
+  - `active_total`, `revoked_total`, and `expired_total` are computed across unique VC ids to avoid double-counting the same credential if it appears in multiple caches.
+  - `next_index` falls back to `0` if the local index file is unavailable.
+  - `owner_did` falls back to the local issuer DID, then `"unknown"`, if a configured CA DID is not available.
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "issued_total": 2,
+  "own_total": 1,
+  "peer_total": 1,
+  "active_total": 1,
+  "revoked_total": 1,
+  "expired_total": 0,
+  "next_index": 2,
+  "owner_did": "did:guardian:z6Mkowner456",
+  "circle_id": "guardian-circle-alpha"
+}
+```
+
+- Error responses:
+  - None expected when VC cache directories are absent; totals simply return `0`
+  - `500 INTERNAL_SERVER_ERROR`: cache directory scan failure
+
+### 3.58 GET `/vc/audit`
+
+- Purpose:
+  - Return VC-related audit events with optional filters.
+- Request:
+  - Query params:
+    - `limit` (optional, integer): maximum number of items to return. Default `100`; capped at `1000`.
+    - `action` (optional, string): exact-match action filter.
+  - Body: none
+- Notes:
+  - Returns newest events first.
+  - Only VC-category audit records are included.
+  - Known derived `action` values include `VC_ISSUED`, `VC_REUSED_NO_CHANGE`, `VC_RENEWED`, `VC_REVOKED`, `VC_VERIFY_SUCCESS`, `VC_VERIFY_FAILED`, `VC_FILE_READ`, `VC_SUMMARY_READ`, and `VC_STATUS_LIST_PULLED`.
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "count": 2,
+  "items": [
+    {
+      "timestamp": 3,
+      "node_id": "nodeA",
+      "severity": "Info",
+      "action": "VC_ISSUED",
+      "message": "Issued VC urn:uuid:test to did:guardian:test (role=Member, idx=1)"
+    },
+    {
+      "timestamp": 2,
+      "node_id": "nodeA",
+      "severity": "Info",
+      "action": "VC_SUMMARY_READ",
+      "message": "VC_SUMMARY_READ: summary requested"
+    }
+  ]
+}
+```
+
+- Error responses:
+  - `404 NOT_FOUND`: no audit log file could be discovered
+  - `500 INTERNAL_SERVER_ERROR`: audit log read failure
+
+---
+
+## 4. NMAP Network Discovery Endpoints (Sprint 6, NMP-series)
+
+These endpoints expose the NMAP-based network discovery subsystem. All paths are relative to the base URL `/api/v1`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/discovery/devices` | Full NMAP device inventory |
+| GET | `/discovery/list` | Alias of discovery inventory list |
+| GET | `/discovery/inventory/list` | Alias of discovery inventory list |
+| GET | `/discovery/devices/unauthorized` | Unauthorized or drifted discovered devices |
+| GET | `/discovery/unauthorized` | Alias of unauthorized discovery list |
+| POST | `/discovery/scan` | Run discovery scan using default ad-hoc intensity |
+| POST | `/discovery/scan/stealth` | Run one stealth NMAP discovery scan |
+| POST | `/discovery/scan/standard` | Run one standard NMAP discovery scan |
+| POST | `/discovery/scan/aggressive` | Run one aggressive NMAP discovery scan |
+| POST | `/discovery/approve` | Authorize a discovered device by MAC and add it to whitelist |
+| GET | `/discovery/whitelist` | Fetch discovery whitelist YAML content as JSON |
+| PUT | `/discovery/whitelist` | Replace discovery whitelist and refresh inventory statuses |
+| GET | `/discovery/schedule` | Fetch scheduled NMAP discovery configuration |
+| PUT | `/discovery/schedule` | Update scheduled NMAP discovery configuration |
+
+### Endpoint Contracts
+
+### 3.59 GET `/discovery/devices`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+[
+  {
+    "device_id": "7f2c5b1a3d4e90c1",
+    "ip": "192.168.50.103",
+    "mac": "AA:BB:CC:11:22:33",
+    "vendor": "Acme",
+    "hostname": "printer",
+    "os_fingerprint": "Linux 5.x",
+    "os_cpe": [
+      "cpe:/o:linux:linux_kernel:5"
+    ],
+    "open_ports": [
+      {
+        "port": 22,
+        "protocol": "tcp",
+        "service": "ssh",
+        "product_version": "OpenSSH 9.0",
+        "cpe": [
+          "cpe:/a:openbsd:openssh:9.0"
+        ],
+        "scripts": []
+      }
+    ],
+    "host_scripts": [],
+    "status": "approved",
+    "first_seen": "2026-06-12T08:00:00Z",
+    "last_seen": "2026-06-12T08:15:00Z",
+    "vuln_triaged": false
+  }
+]
+```
+
+- Notes:
+  - Reads `/var/lib/sgx-guardian/discovery/inventory.json`
+  - Response is a raw JSON array of `ConnectedDevice`
+- Error responses:
+  - `404 NOT_FOUND`: no discovery inventory exists yet
+  - `500 INTERNAL_SERVER_ERROR`: inventory JSON parse failure
+
+### 3.60 GET `/discovery/list`
+
+- Same request/response/errors as `GET /discovery/devices`
+
+### 3.61 GET `/discovery/inventory/list`
+
+- Same request/response/errors as `GET /discovery/devices`
+
+### 3.62 GET `/discovery/devices/unauthorized`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+  - Same JSON array schema as `GET /discovery/devices`
+- Notes:
+  - Filters inventory to devices whose `status` is `unauthorized` or `drifted`
+- Error responses:
+  - `404 NOT_FOUND`: no discovery inventory exists yet
+  - `500 INTERNAL_SERVER_ERROR`: inventory JSON parse failure
+
+### 3.63 GET `/discovery/unauthorized`
+
+- Same request/response/errors as `GET /discovery/devices/unauthorized`
+
+### 3.64 POST `/discovery/scan`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "success": true,
+  "stdout": "✅ Discovery scan completed\ntarget: 192.168.50.0/24\nintensity: standard\nnew_devices: 1\nupdated_devices: 2\ninventory: /var/lib/sgx-guardian/discovery/inventory.json\n",
+  "stderr": "",
+  "timestamp": "2026-06-12T08:15:00+00:00"
+}
+```
+
+- Notes:
+  - Executes `sgx-pa-cli discovery scan`
+  - If the CLI process exits non-zero, endpoint still returns `200 OK` with `success=false`
+  - Ad-hoc scan intensity follows the current discovery config's effective manual/default intensity
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: `sgx-pa-cli` not found or command spawn failed
+
+### 3.65 POST `/discovery/scan/stealth`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+  - Same schema as `POST /discovery/scan`
+- Notes:
+  - Executes `sgx-pa-cli discovery scan --intensity stealth`
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: `sgx-pa-cli` not found or command spawn failed
+
+### 3.66 POST `/discovery/scan/standard`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+  - Same schema as `POST /discovery/scan`
+- Notes:
+  - Executes `sgx-pa-cli discovery scan --intensity standard`
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: `sgx-pa-cli` not found or command spawn failed
+
+### 3.67 POST `/discovery/scan/aggressive`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+  - Same schema as `POST /discovery/scan`
+- Notes:
+  - Executes `sgx-pa-cli discovery scan --intensity aggressive`
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: `sgx-pa-cli` not found or command spawn failed
+
+### 3.68 POST `/discovery/approve`
+
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "mac": "AA:BB:CC:11:22:33",
+  "label": "Office printer"
+}
+```
+
+  - Required fields: `mac`
+- Success response (`200 OK`):
+
+```json
+{
+  "success": true,
+  "created": true,
+  "inventory_updated": 1,
+  "entry": {
+    "mac": "AA:BB:CC:11:22:33",
+    "label": "Office printer",
+    "expected_os": null,
+    "expected_ports": [],
+    "expected_ips": []
+  }
+}
+```
+
+- Notes:
+  - Adds or updates the MAC inside `/etc/sgx-guardian/discovery/whitelist.yaml`
+  - Immediately reclassifies matching non-stale inventory records so approved devices become authorized without waiting for the next scan
+- Error responses:
+  - `400 BAD_REQUEST`: invalid or empty MAC address
+  - `500 INTERNAL_SERVER_ERROR`: whitelist read/write or inventory refresh failure
+  - `415`/`422`: invalid JSON body
+
+### 3.69 GET `/discovery/whitelist`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "version": "1.0",
+  "devices": [
+    {
+      "mac": "AA:BB:CC:11:22:33",
+      "label": "Office printer",
+      "expected_os": "Linux",
+      "expected_ports": [
+        22,
+        9100
+      ],
+      "expected_ips": [
+        "192.168.50.103/32"
+      ]
+    }
+  ]
+}
+```
+
+- Notes:
+  - Missing or empty whitelist file returns the default empty document
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: whitelist YAML parse failure or file I/O error
+
+### 3.70 PUT `/discovery/whitelist`
+
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "version": "1.0",
+  "devices": [
+    {
+      "mac": "AA:BB:CC:11:22:33",
+      "label": "Office printer",
+      "expected_os": "Linux",
+      "expected_ports": [
+        22,
+        9100
+      ],
+      "expected_ips": [
+        "192.168.50.103/32"
+      ]
+    }
+  ]
+}
+```
+
+  - Required fields: none (`version` defaults to `"1.0"` when empty)
+- Success response (`200 OK`):
+  - Same schema as `GET /discovery/whitelist`
+- Notes:
+  - Writes `/etc/sgx-guardian/discovery/whitelist.yaml` atomically
+  - Refreshes matching non-stale inventory statuses after the whitelist update
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: whitelist serialization/write or inventory refresh failure
+  - `415`/`422`: invalid JSON body
+
+### 3.71 GET `/discovery/schedule`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "enabled": false,
+  "target_cidr": null,
+  "timeout_secs": 600,
+  "exclude": [],
+  "schedules": {
+    "hourly": {
+      "intensity": "standard"
+    },
+    "daily": {
+      "intensity": "aggressive"
+    }
+  }
+}
+```
+
+- Notes:
+  - `target_cidr: null` means the scheduler auto-detects the device's active LAN CIDR at runtime
+  - For legacy YAML files, an additional optional field may appear:
+    - `legacy_schedule_mode`
+- Error responses:
+  - `400 BAD_REQUEST`: existing `nmap.yaml` is invalid
+
+### 3.72 PUT `/discovery/schedule`
+
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "enabled": true,
+  "target_cidr": "192.168.50.0/24",
+  "timeout_secs": 600,
+  "exclude": [
+    "192.168.50.1"
+  ],
+  "schedules": {
+    "hourly": {
+      "intensity": "standard"
+    },
+    "daily": {
+      "intensity": "aggressive"
+    }
+  }
+}
+```
+
+  - Required fields: none. Any omitted field keeps its current value.
+- Success response (`200 OK`):
+  - Same schema as `GET /discovery/schedule`
+- Notes:
+  - `target_cidr: null`, `"auto"`, or `"none"` clears the override and restores runtime LAN auto-detection
+  - `exclude: []` clears all exclusions
+  - Flat compatibility fields `hourly_intensity` and `daily_intensity` are also accepted
+  - Writes `/etc/sgx-guardian/discovery/nmap.yaml` atomically
+- Error responses:
+  - `400 BAD_REQUEST`: invalid intensity, invalid CIDR/IP, invalid timeout, or invalid discovery config
+  - `500 INTERNAL_SERVER_ERROR`: schedule serialization or write failure
+  - `415`/`422`: invalid JSON body
 
 ---

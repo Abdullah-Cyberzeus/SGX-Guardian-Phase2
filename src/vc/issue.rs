@@ -491,7 +491,7 @@ fn ensure_circle_owner(
     action: VcAdminAction,
     allow_bootstrap: bool,
 ) -> Result<(), VcError> {
-    if let Some(_) = find_local_self_authorizing_vc(&issuer_did.did, circle_id, action)? {
+    if find_local_self_authorizing_vc(&issuer_did.did, circle_id, action)?.is_some() {
         return Ok(());
     }
 
