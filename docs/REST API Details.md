@@ -2093,7 +2093,7 @@ Peer DID resolution response (`?did=did:guardian:...`):
   - VirtualID is computed as `SHA256(DID || CurrentDKP_PubKey || PCR_values || policy_digest || Nonce_I || Nonce_R)`
   - There is only one VirtualID. It is session-bound and rotates when the nonce pair refreshes or when DID/DKP/PCR/policy inputs change
   - The current nonce refresh interval is 60 seconds
-  - `changeReason` is one of `initial_observation`, `nonce_refreshed`, `did_changed`, `dkp_rotated`, `pcr_changed`, or `policy_changed`
+  - `changeReason` is one of `initial_observation`, `dkp_rotated`, `pcr_changed`, `policy_changed`, `nonce_refreshed`, or `unchanged`
 - Error responses:
   - `500 INTERNAL_SERVER_ERROR`: current VirtualID state could not be loaded or refreshed
 

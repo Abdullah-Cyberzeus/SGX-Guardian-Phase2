@@ -59,36 +59,39 @@ pub struct RuntimeVirtualIdStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct PersistedRuntimeVirtualIdState {
-    did_sha256: String,
-    dkp_pubkey_sha256: String,
+    #[serde(alias = "dkp_pubkey_sha256")]
+    dkp_pubkey_hash: String,
     dkp_version: u32,
     pcr_digest: String,
     policy_digest: String,
     nonce_i: String,
     nonce_r: String,
+    #[serde(default)]
+    virtual_id: String,
     session_expires_at: String,
+    #[serde(default = "default_runtime_change_reason")]
     change_reason: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RuntimeVirtualIdChangeReason {
     InitialObservation,
-    NonceRefreshed,
-    DidChanged,
     DkpRotated,
-    PolicyChanged,
     PcrChanged,
+    PolicyChanged,
+    NonceRefreshed,
+    Unchanged,
 }
 
 impl RuntimeVirtualIdChangeReason {
     fn as_str(self) -> &'static str {
         match self {
             RuntimeVirtualIdChangeReason::InitialObservation => "initial_observation",
-            RuntimeVirtualIdChangeReason::NonceRefreshed => "nonce_refreshed",
-            RuntimeVirtualIdChangeReason::DidChanged => "did_changed",
             RuntimeVirtualIdChangeReason::DkpRotated => "dkp_rotated",
-            RuntimeVirtualIdChangeReason::PolicyChanged => "policy_changed",
             RuntimeVirtualIdChangeReason::PcrChanged => "pcr_changed",
+            RuntimeVirtualIdChangeReason::PolicyChanged => "policy_changed",
+            RuntimeVirtualIdChangeReason::NonceRefreshed => "nonce_refreshed",
+            RuntimeVirtualIdChangeReason::Unchanged => "unchanged",
         }
     }
 }
@@ -98,9 +101,8 @@ struct PreparedRuntimeVirtualIdInputs {
     node: String,
     state_path: Option<String>,
     did: String,
-    did_sha256: String,
     dkp_pubkey_bytes: Vec<u8>,
-    dkp_pubkey_sha256: String,
+    dkp_pubkey_hash: String,
     dkp_version: u32,
     pcr_material: Vec<u8>,
     pcr_digest: String,
@@ -195,14 +197,17 @@ pub fn observe_runtime_virtual_id(
         .lock()
         .expect("runtime VID state lock poisoned");
     let state_path = runtime_vid_state_path(&prepared.node, prepared.state_path.as_deref());
-    let existing = load_runtime_vid_state(&state_path)?;
-    let (state, persist) = reconcile_runtime_vid_state(existing, &prepared, now)?;
+    let previous = load_runtime_vid_state(&state_path)?;
+    let mut current = derive_runtime_vid_state(previous.as_ref(), &prepared, now)?;
+    current.change_reason = classify_runtime_change(previous.as_ref(), &current)
+        .as_str()
+        .to_string();
 
-    if persist {
-        save_runtime_vid_state(&state_path, &state)?;
+    if previous.as_ref() != Some(&current) {
+        save_runtime_vid_state(&state_path, &current)?;
     }
 
-    build_runtime_virtual_id_status(&prepared, &state, now)
+    build_runtime_virtual_id_status(&prepared, &current, now)
 }
 
 pub fn pcr_values_material(pcr_values: &[String], pcr_digest: &str) -> Vec<u8> {
@@ -236,9 +241,8 @@ impl TryFrom<RuntimeVirtualIdInputs> for PreparedRuntimeVirtualIdInputs {
         Ok(Self {
             node: inputs.node,
             state_path: inputs.state_path,
-            did_sha256: hex::encode(Sha256::digest(inputs.did.as_bytes())),
             did: inputs.did,
-            dkp_pubkey_sha256: hex::encode(Sha256::digest(&dkp_pubkey_bytes)),
+            dkp_pubkey_hash: hex::encode(Sha256::digest(&dkp_pubkey_bytes)),
             dkp_pubkey_bytes,
             dkp_version: inputs.dkp_version,
             pcr_material: pcr_values_material(&inputs.pcr_values, &inputs.pcr_digest),
@@ -249,81 +253,30 @@ impl TryFrom<RuntimeVirtualIdInputs> for PreparedRuntimeVirtualIdInputs {
     }
 }
 
-fn reconcile_runtime_vid_state(
-    existing: Option<PersistedRuntimeVirtualIdState>,
-    inputs: &PreparedRuntimeVirtualIdInputs,
-    now: DateTime<Utc>,
-) -> Result<(PersistedRuntimeVirtualIdState, bool)> {
-    let Some(mut state) = existing else {
-        return Ok((
-            new_runtime_vid_state(
-                inputs,
-                RuntimeVirtualIdChangeReason::InitialObservation,
-                now,
-            )?,
-            true,
-        ));
+fn classify_runtime_change(
+    previous: Option<&PersistedRuntimeVirtualIdState>,
+    current: &PersistedRuntimeVirtualIdState,
+) -> RuntimeVirtualIdChangeReason {
+    let Some(previous) = previous else {
+        return RuntimeVirtualIdChangeReason::InitialObservation;
     };
 
-    if runtime_vid_session_expired(&state, now) {
-        return Ok((
-            new_runtime_vid_state(inputs, RuntimeVirtualIdChangeReason::NonceRefreshed, now)?,
-            true,
-        ));
-    }
-
-    let reason = classify_runtime_change(&state, inputs);
-    if let Some(reason) = reason {
-        state.did_sha256 = inputs.did_sha256.clone();
-        state.dkp_pubkey_sha256 = inputs.dkp_pubkey_sha256.clone();
-        state.dkp_version = inputs.dkp_version;
-        state.pcr_digest = inputs.pcr_digest.clone();
-        state.policy_digest = inputs.policy_digest.clone();
-        state.change_reason = reason.as_str().to_string();
-        return Ok((state, true));
-    }
-
-    Ok((state, false))
-}
-
-fn new_runtime_vid_state(
-    inputs: &PreparedRuntimeVirtualIdInputs,
-    reason: RuntimeVirtualIdChangeReason,
-    now: DateTime<Utc>,
-) -> Result<PersistedRuntimeVirtualIdState> {
-    Ok(PersistedRuntimeVirtualIdState {
-        did_sha256: inputs.did_sha256.clone(),
-        dkp_pubkey_sha256: inputs.dkp_pubkey_sha256.clone(),
-        dkp_version: inputs.dkp_version,
-        pcr_digest: inputs.pcr_digest.clone(),
-        policy_digest: inputs.policy_digest.clone(),
-        nonce_i: random_nonce_hex()?,
-        nonce_r: random_nonce_hex()?,
-        session_expires_at: (now + Duration::seconds(VID_NONCE_REFRESH_SECS)).to_rfc3339(),
-        change_reason: reason.as_str().to_string(),
-    })
-}
-
-fn classify_runtime_change(
-    existing: &PersistedRuntimeVirtualIdState,
-    inputs: &PreparedRuntimeVirtualIdInputs,
-) -> Option<RuntimeVirtualIdChangeReason> {
-    if existing.did_sha256 != inputs.did_sha256 {
-        return Some(RuntimeVirtualIdChangeReason::DidChanged);
-    }
-    if existing.dkp_pubkey_sha256 != inputs.dkp_pubkey_sha256
-        || existing.dkp_version != inputs.dkp_version
+    if previous.dkp_version != current.dkp_version
+        || previous.dkp_pubkey_hash != current.dkp_pubkey_hash
     {
-        return Some(RuntimeVirtualIdChangeReason::DkpRotated);
+        return RuntimeVirtualIdChangeReason::DkpRotated;
     }
-    if existing.policy_digest != inputs.policy_digest {
-        return Some(RuntimeVirtualIdChangeReason::PolicyChanged);
+    if previous.pcr_digest != current.pcr_digest {
+        return RuntimeVirtualIdChangeReason::PcrChanged;
     }
-    if existing.pcr_digest != inputs.pcr_digest {
-        return Some(RuntimeVirtualIdChangeReason::PcrChanged);
+    if previous.policy_digest != current.policy_digest {
+        return RuntimeVirtualIdChangeReason::PolicyChanged;
+    }
+    if previous.nonce_i != current.nonce_i || previous.nonce_r != current.nonce_r {
+        return RuntimeVirtualIdChangeReason::NonceRefreshed;
     }
 
-    None
+    RuntimeVirtualIdChangeReason::Unchanged
 }
 
 fn build_runtime_virtual_id_status(
@@ -331,9 +284,45 @@ fn build_runtime_virtual_id_status(
     state: &PersistedRuntimeVirtualIdState,
     now: DateTime<Utc>,
 ) -> Result<RuntimeVirtualIdStatus> {
-    let nonce_i_bytes = hex::decode(&state.nonce_i).context("invalid persisted nonce_i hex")?;
-    let nonce_r_bytes = hex::decode(&state.nonce_r).context("invalid persisted nonce_r hex")?;
+    Ok(RuntimeVirtualIdStatus {
+        node: inputs.node.clone(),
+        did: inputs.did.clone(),
+        dkp_bytes: inputs.dkp_pubkey_bytes.len(),
+        dkp_version: inputs.dkp_version,
+        pcr_digest: inputs.pcr_digest.clone(),
+        policy_digest: inputs.policy_digest.clone(),
+        nonce_i: state.nonce_i.clone(),
+        nonce_r: state.nonce_r.clone(),
+        virtual_id: state.virtual_id.clone(),
+        change_reason: state.change_reason.clone(),
+        session_expires_at: state.session_expires_at.clone(),
+        session_ttl: session_ttl(state, now),
+    })
+}
 
+fn derive_runtime_vid_state(
+    previous: Option<&PersistedRuntimeVirtualIdState>,
+    inputs: &PreparedRuntimeVirtualIdInputs,
+    now: DateTime<Utc>,
+) -> Result<PersistedRuntimeVirtualIdState> {
+    let session_expired = previous
+        .map(|state| runtime_vid_session_expired(state, now))
+        .unwrap_or(true);
+    let (nonce_i, nonce_r, session_expires_at) = match previous {
+        Some(previous) if !session_expired => (
+            previous.nonce_i.clone(),
+            previous.nonce_r.clone(),
+            previous.session_expires_at.clone(),
+        ),
+        _ => (
+            random_nonce_hex()?,
+            random_nonce_hex()?,
+            (now + Duration::seconds(VID_NONCE_REFRESH_SECS)).to_rfc3339(),
+        ),
+    };
+
+    let nonce_i_bytes = hex::decode(&nonce_i).context("invalid current nonce_i hex")?;
+    let nonce_r_bytes = hex::decode(&nonce_r).context("invalid current nonce_r hex")?;
     let virtual_id = hex::encode(
         VirtualIdInputs {
             did: &inputs.did,
@@ -346,19 +335,18 @@ fn build_runtime_virtual_id_status(
         .compute(),
     );
 
-    Ok(RuntimeVirtualIdStatus {
-        node: inputs.node.clone(),
-        did: inputs.did.clone(),
-        dkp_bytes: inputs.dkp_pubkey_bytes.len(),
+    Ok(PersistedRuntimeVirtualIdState {
+        dkp_pubkey_hash: inputs.dkp_pubkey_hash.clone(),
         dkp_version: inputs.dkp_version,
         pcr_digest: inputs.pcr_digest.clone(),
         policy_digest: inputs.policy_digest.clone(),
-        nonce_i: state.nonce_i.clone(),
-        nonce_r: state.nonce_r.clone(),
+        nonce_i,
+        nonce_r,
         virtual_id,
-        change_reason: state.change_reason.clone(),
-        session_expires_at: state.session_expires_at.clone(),
-        session_ttl: session_ttl(state, now),
+        session_expires_at,
+        change_reason: previous
+            .map(|state| state.change_reason.clone())
+            .unwrap_or_else(default_runtime_change_reason),
     })
 }
 
@@ -389,6 +377,12 @@ fn parse_rfc3339_utc(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .ok()
         .map(|dt| dt.with_timezone(&Utc))
+}
+
+fn default_runtime_change_reason() -> String {
+    RuntimeVirtualIdChangeReason::InitialObservation
+        .as_str()
+        .to_string()
 }
 
 fn runtime_vid_state_path(node: &str, explicit: Option<&str>) -> PathBuf {
@@ -606,13 +600,21 @@ mod tests {
         assert_eq!(first.change_reason, "initial_observation");
         assert_eq!(first.session_ttl, VID_NONCE_REFRESH_SECS);
 
+        let persisted = load_runtime_vid_state(Path::new(&state_path))
+            .expect("load persisted VID state")
+            .expect("persisted state should exist");
+        assert_eq!(persisted.dkp_version, 1);
+        assert_eq!(persisted.pcr_digest, "cc".repeat(32));
+        assert_eq!(persisted.policy_digest, "dd".repeat(32));
+        assert_eq!(persisted.virtual_id, first.virtual_id);
+
         let second = observe_runtime_virtual_id(runtime_inputs(node, &state_path))
             .expect("second runtime VID");
         assert_eq!(second.virtual_id, first.virtual_id);
         assert_eq!(second.nonce_i, first.nonce_i);
         assert_eq!(second.nonce_r, first.nonce_r);
         assert_eq!(second.session_expires_at, first.session_expires_at);
-        assert_eq!(second.change_reason, "initial_observation");
+        assert_eq!(second.change_reason, "unchanged");
 
         let mut persisted = load_runtime_vid_state(Path::new(&state_path))
             .expect("load persisted VID state")
@@ -628,6 +630,11 @@ mod tests {
         assert_ne!(refreshed.nonce_r, first.nonce_r);
         assert_ne!(refreshed.session_expires_at, first.session_expires_at);
         assert_eq!(refreshed.session_ttl, VID_NONCE_REFRESH_SECS);
+
+        let unchanged = observe_runtime_virtual_id(runtime_inputs(node, &state_path))
+            .expect("unchanged runtime VID");
+        assert_eq!(unchanged.change_reason, "unchanged");
+        assert_eq!(unchanged.virtual_id, refreshed.virtual_id);
     }
 
     #[test]
@@ -691,11 +698,36 @@ mod tests {
         raw_inputs.dkp_pubkey_der = raw_pubkey;
         let second = observe_runtime_virtual_id(raw_inputs).expect("raw runtime VID");
 
-        assert_eq!(second.change_reason, "initial_observation");
+        assert_eq!(second.change_reason, "unchanged");
         assert_eq!(second.virtual_id, first.virtual_id);
         assert_eq!(second.nonce_i, first.nonce_i);
         assert_eq!(second.nonce_r, first.nonce_r);
         assert_eq!(second.session_expires_at, first.session_expires_at);
         assert_eq!(second.dkp_bytes, 65);
+    }
+
+    #[test]
+    fn runtime_virtual_id_prefers_security_change_over_expired_nonce() {
+        let td = tempdir().expect("create temp dir");
+        let node = "vid-runtime-priority";
+        let state_path = state_path(td.path(), node);
+        let first = observe_runtime_virtual_id(runtime_inputs(node, &state_path))
+            .expect("seed runtime VID");
+
+        let mut persisted = load_runtime_vid_state(Path::new(&state_path))
+            .expect("load persisted VID state")
+            .expect("persisted state should exist");
+        persisted.session_expires_at = (Utc::now() - ChronoDuration::seconds(1)).to_rfc3339();
+        save_runtime_vid_state(Path::new(&state_path), &persisted).expect("save expired state");
+
+        let mut dkp_changed = runtime_inputs(node, &state_path);
+        dkp_changed.dkp_version = 2;
+        dkp_changed.dkp_pubkey_der = vec![8, 7, 6, 5];
+        let refreshed = observe_runtime_virtual_id(dkp_changed).expect("priority runtime VID");
+
+        assert_eq!(refreshed.change_reason, "dkp_rotated");
+        assert_ne!(refreshed.nonce_i, first.nonce_i);
+        assert_ne!(refreshed.nonce_r, first.nonce_r);
+        assert_ne!(refreshed.session_expires_at, first.session_expires_at);
     }
 }
