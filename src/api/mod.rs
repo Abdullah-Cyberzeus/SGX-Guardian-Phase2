@@ -192,6 +192,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/vc/files/issued", get(handlers::vc::files_issued))
         .route("/api/v1/vc/files/own", get(handlers::vc::files_own))
         .route("/api/v1/vc/files/peers", get(handlers::vc::files_peers))
+        .route("/api/v1/vid/show", get(handlers::vid::show))
         .route("/api/v1/vid/peers", get(handlers::vid::peers))
         .route(
             "/api/v1/vc/files/issued/:vc_id",

@@ -83,7 +83,7 @@ impl RotationReason {
     pub fn as_str(self) -> &'static str {
         match self {
             RotationReason::InitialObservation => "initial_observation",
-            RotationReason::NonceOnly => "session_refreshed",
+            RotationReason::NonceOnly => "nonce_refreshed",
             RotationReason::DidChanged => "did_changed",
             RotationReason::DkpRotated => "dkp_rotated",
             RotationReason::PcrChanged => "pcr_changed",
@@ -96,8 +96,8 @@ impl RotationReason {
     pub fn parse_label(value: &str) -> Option<Self> {
         match value {
             "initial_observation" => Some(RotationReason::InitialObservation),
-            "session_refreshed" => Some(RotationReason::NonceOnly),
             "nonce_refreshed" => Some(RotationReason::NonceOnly),
+            "session_refreshed" => Some(RotationReason::NonceOnly),
             "nonce_only" => Some(RotationReason::NonceOnly),
             "did_changed" => Some(RotationReason::DidChanged),
             "dkp_rotated" => Some(RotationReason::DkpRotated),
@@ -1072,7 +1072,7 @@ mod tests {
         assert_eq!(cached.last_rotation_reason, Some(RotationReason::NonceOnly));
         assert_eq!(
             cached.last_rotation_reason.unwrap().as_str(),
-            "session_refreshed"
+            "nonce_refreshed"
         );
     }
 
