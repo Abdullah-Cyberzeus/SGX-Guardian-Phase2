@@ -275,6 +275,11 @@ impl CertService for MyCertService {
                 let assigned_relay = RelayRegistry::load(RELAY_REGISTRY_PATH)
                     .map(|r| r.is_relay(&node_id))
                     .unwrap_or(false);
+                let assigned_lighthouse = crate::nebula::lighthouse::LighthouseRegistry::load(
+                    &format!("{}/lighthouse_registry.json", NEBULA_BASE_DIR),
+                )
+                .map(|r| r.is_lighthouse(&node_id))
+                .unwrap_or(false);
                 let signed_policy_bytes = tokio::fs::read("/etc/sgx-guardian/policies/policy.sig")
                     .await
                     .unwrap_or_default();
@@ -290,7 +295,7 @@ impl CertService for MyCertService {
                     node_key_pem: node_key,
                     ca_cert_pem,
                     message: format!("Certificate already exists for {}", node_id),
-                    assigned_lighthouse: false,
+                    assigned_lighthouse,
                     lighthouse_registry_json,
                     overlay_registry_json,
                     signed_policy_bytes,

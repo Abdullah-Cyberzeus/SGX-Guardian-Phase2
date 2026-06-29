@@ -172,25 +172,17 @@ fn detect_interfaces() -> Vec<InterfaceRecord> {
             .map(|s| s.trim() == "up")
             .unwrap_or(false);
 
-        let ip = std::process::Command::new("bash")
-            .args([
-                "-lc",
-                &format!(
-                    "ip -4 addr show dev {} | awk '/inet / {{print $2}}' | head -n1",
-                    name
-                ),
-            ])
+        let ip = std::process::Command::new("ip")
+            .args(["-4", "addr", "show", "dev", &name])
             .output()
             .ok()
             .and_then(|o| {
-                let out = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                if out.is_empty() {
-                    None
-                } else {
-                    out.split('/')
-                        .next()
-                        .and_then(|ip| ip.parse::<IpAddr>().ok())
-                }
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .find(|l| l.contains("inet "))
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .and_then(|cidr| cidr.split('/').next())
+                    .and_then(|s| s.parse::<IpAddr>().ok())
             });
 
         records.push(InterfaceRecord {

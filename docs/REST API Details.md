@@ -71,20 +71,23 @@
 | 60 | GET | `/vc/status-list-index` | Fetch the local VC status-list index counter |
 | 61 | GET | `/vc/summary` | Return dashboard summary of issued, own, peer, active, revoked, and expired VC counts |
 | 62 | GET | `/vc/audit` | Return VC-related audit events with optional filters |
-| 63 | GET | `/discovery/devices` | Full NMAP device inventory |
-| 64 | GET | `/discovery/list` | Alias of discovery inventory list |
-| 65 | GET | `/discovery/inventory/list` | Alias of discovery inventory list |
-| 66 | GET | `/discovery/devices/unauthorized` | Unauthorized or drifted discovered devices |
-| 67 | GET | `/discovery/unauthorized` | Alias of unauthorized discovery list |
-| 68 | POST | `/discovery/scan` | Run discovery scan using default ad-hoc intensity |
-| 69 | POST | `/discovery/scan/stealth` | Run one stealth NMAP discovery scan |
-| 70 | POST | `/discovery/scan/standard` | Run one standard NMAP discovery scan |
-| 71 | POST | `/discovery/scan/aggressive` | Run one aggressive NMAP discovery scan |
-| 72 | POST | `/discovery/approve` | Authorize a discovered device by MAC and add it to whitelist |
-| 73 | GET | `/discovery/whitelist` | Fetch discovery whitelist YAML content as JSON |
-| 74 | PUT | `/discovery/whitelist` | Replace discovery whitelist and refresh inventory statuses |
-| 75 | GET | `/discovery/schedule` | Fetch scheduled NMAP discovery configuration |
-| 76 | PUT | `/discovery/schedule` | Update scheduled NMAP discovery configuration |
+| 63 | GET | `/vid/show` | Show the single current nonce-bound VirtualID and its input digests |
+| 64 | GET | `/vid/peers` | List cached peer VirtualIDs and last observed rotation reasons |
+| 65 | GET | `/discovery/devices` | Full NMAP device inventory |
+| 66 | GET | `/discovery/list` | Alias of discovery inventory list |
+| 67 | GET | `/discovery/inventory/list` | Alias of discovery inventory list |
+| 68 | GET | `/discovery/devices/unauthorized` | Unauthorized or drifted discovered devices |
+| 69 | GET | `/discovery/unauthorized` | Alias of unauthorized discovery list |
+| 70 | POST | `/discovery/scan` | Run discovery scan using default ad-hoc intensity |
+| 71 | POST | `/discovery/scan/stealth` | Run one stealth NMAP discovery scan |
+| 72 | POST | `/discovery/scan/standard` | Run one standard NMAP discovery scan |
+| 73 | POST | `/discovery/scan/aggressive` | Run one aggressive NMAP discovery scan |
+| 74 | POST | `/discovery/approve` | Authorize a discovered device by MAC and add it to whitelist |
+| 75 | GET | `/discovery/whitelist` | Fetch discovery whitelist YAML content as JSON |
+| 76 | PUT | `/discovery/whitelist` | Replace discovery whitelist and refresh inventory statuses |
+| 77 | GET | `/discovery/schedule` | Fetch scheduled NMAP discovery configuration |
+| 78 | PUT | `/discovery/schedule` | Update scheduled NMAP discovery configuration |
+
 
 ## 2. NEW Endpoints 
 
@@ -99,7 +102,8 @@
 | GET | `/vc/status-list-index` | Fetch the stored status-list next-index JSON |
 | GET | `/vc/summary` | Return aggregate VC cache and lifecycle counts |
 | GET | `/vc/audit` | Return VC audit-log entries with optional filtering |
-
+| GET | `/vid/show` | Show the single current nonce-bound VirtualID and its input digests |
+| GET | `/vid/peers` | List cached peer VirtualIDs and last observed rotation reasons |
 ---
 
 ## 2. Standard Error Envelope
@@ -2070,31 +2074,62 @@ Peer DID resolution response (`?did=did:guardian:...`):
   - `500 INTERNAL_SERVER_ERROR`: audit log read failure
 
 ---
+### 3.59 GET `/vid/show`
 
-## 4. NMAP Network Discovery Endpoints (Sprint 6, NMP-series)
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
 
-These endpoints expose the NMAP-based network discovery subsystem. All paths are relative to the base URL `/api/v1`.
+```json
+{
+  "node": "nodeA",
+  "did": "did:guardian:abc123...",
+  "dkpBytes": 91,
+  "dkpVersion": 3,
+  "pcrDigest": "3c0d...f9",
+  "policyDigest": "9b71...42",
+  "nonceI": "6b7d1c8e5f0a1b2c3d4e5f60718293a4",
+  "nonceR": "3a29181706f5e4d3c2b1a0f5e8c1d7b6",
+  "virtualId": "0f8f3f8f0f1f8c8b6a5d4c3b2a1908076e5d4c3b2a1908076e5d4c3b2a190807",
+  "changeReason": "nonce_refreshed",
+  "sessionExpiresAt": "2026-06-22T12:01:00Z",
+  "sessionTtl": 60
+}
+```
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/discovery/devices` | Full NMAP device inventory |
-| GET | `/discovery/list` | Alias of discovery inventory list |
-| GET | `/discovery/inventory/list` | Alias of discovery inventory list |
-| GET | `/discovery/devices/unauthorized` | Unauthorized or drifted discovered devices |
-| GET | `/discovery/unauthorized` | Alias of unauthorized discovery list |
-| POST | `/discovery/scan` | Run discovery scan using default ad-hoc intensity |
-| POST | `/discovery/scan/stealth` | Run one stealth NMAP discovery scan |
-| POST | `/discovery/scan/standard` | Run one standard NMAP discovery scan |
-| POST | `/discovery/scan/aggressive` | Run one aggressive NMAP discovery scan |
-| POST | `/discovery/approve` | Authorize a discovered device by MAC and add it to whitelist |
-| GET | `/discovery/whitelist` | Fetch discovery whitelist YAML content as JSON |
-| PUT | `/discovery/whitelist` | Replace discovery whitelist and refresh inventory statuses |
-| GET | `/discovery/schedule` | Fetch scheduled NMAP discovery configuration |
-| PUT | `/discovery/schedule` | Update scheduled NMAP discovery configuration |
+- Notes:
+  - VirtualID is computed as `SHA256(DID || CurrentDKP_PubKey || PCR_values || policy_digest || Nonce_I || Nonce_R)`
+  - There is only one VirtualID. It is session-bound and rotates when the daemon refreshes the nonce pair or when DID/DKP/PCR/policy inputs change
+  - The current nonce refresh interval is 60 seconds
+  - The daemon initializes and maintains this session in the background; this endpoint is a read-only snapshot of the daemon-maintained state
+  - `changeReason` is one of `initial_observation`, `dkp_rotated`, `pcr_changed`, `policy_changed`, or `nonce_refreshed`
+  - `changeReason` remains the last real reason the current VirtualID changed; steady-state reads do not replace it with `unchanged`
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: current VirtualID state could not be loaded
 
-### Endpoint Contracts
+### 3.60 GET `/vid/peers`
 
-### 3.59 GET `/discovery/devices`
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "peers": [
+    {
+      "did": "did:guardian:peer-b",
+      "virtualId": "9f0e...1c",
+      "observedAt": "2026-06-22T12:00:30Z",
+      "lastRotationReason": "nonce_refreshed"
+    }
+  ]
+}
+```
+---
+
+### 3.61 GET `/discovery/devices`
 
 - Request:
   - Query params: none
@@ -2141,15 +2176,15 @@ These endpoints expose the NMAP-based network discovery subsystem. All paths are
   - `404 NOT_FOUND`: no discovery inventory exists yet
   - `500 INTERNAL_SERVER_ERROR`: inventory JSON parse failure
 
-### 3.60 GET `/discovery/list`
+### 3.62 GET `/discovery/list`
 
 - Same request/response/errors as `GET /discovery/devices`
 
-### 3.61 GET `/discovery/inventory/list`
+### 3.63 GET `/discovery/inventory/list`
 
 - Same request/response/errors as `GET /discovery/devices`
 
-### 3.62 GET `/discovery/devices/unauthorized`
+### 3.64 GET `/discovery/devices/unauthorized`
 
 - Request:
   - Query params: none
@@ -2162,11 +2197,11 @@ These endpoints expose the NMAP-based network discovery subsystem. All paths are
   - `404 NOT_FOUND`: no discovery inventory exists yet
   - `500 INTERNAL_SERVER_ERROR`: inventory JSON parse failure
 
-### 3.63 GET `/discovery/unauthorized`
+### 3.65 GET `/discovery/unauthorized`
 
 - Same request/response/errors as `GET /discovery/devices/unauthorized`
 
-### 3.64 POST `/discovery/scan`
+### 3.66 POST `/discovery/scan`
 
 - Request:
   - Query params: none
@@ -2189,7 +2224,7 @@ These endpoints expose the NMAP-based network discovery subsystem. All paths are
 - Error responses:
   - `500 INTERNAL_SERVER_ERROR`: `sgx-pa-cli` not found or command spawn failed
 
-### 3.65 POST `/discovery/scan/stealth`
+### 3.67 POST `/discovery/scan/stealth`
 
 - Request:
   - Query params: none
@@ -2201,7 +2236,7 @@ These endpoints expose the NMAP-based network discovery subsystem. All paths are
 - Error responses:
   - `500 INTERNAL_SERVER_ERROR`: `sgx-pa-cli` not found or command spawn failed
 
-### 3.66 POST `/discovery/scan/standard`
+### 3.68 POST `/discovery/scan/standard`
 
 - Request:
   - Query params: none
@@ -2213,7 +2248,7 @@ These endpoints expose the NMAP-based network discovery subsystem. All paths are
 - Error responses:
   - `500 INTERNAL_SERVER_ERROR`: `sgx-pa-cli` not found or command spawn failed
 
-### 3.67 POST `/discovery/scan/aggressive`
+### 3.69 POST `/discovery/scan/aggressive`
 
 - Request:
   - Query params: none
@@ -2225,7 +2260,7 @@ These endpoints expose the NMAP-based network discovery subsystem. All paths are
 - Error responses:
   - `500 INTERNAL_SERVER_ERROR`: `sgx-pa-cli` not found or command spawn failed
 
-### 3.68 POST `/discovery/approve`
+### 3.70 POST `/discovery/approve`
 
 - Request:
   - Query params: none
@@ -2264,7 +2299,7 @@ These endpoints expose the NMAP-based network discovery subsystem. All paths are
   - `500 INTERNAL_SERVER_ERROR`: whitelist read/write or inventory refresh failure
   - `415`/`422`: invalid JSON body
 
-### 3.69 GET `/discovery/whitelist`
+### 3.71 GET `/discovery/whitelist`
 
 - Request:
   - Query params: none
@@ -2296,7 +2331,7 @@ These endpoints expose the NMAP-based network discovery subsystem. All paths are
 - Error responses:
   - `500 INTERNAL_SERVER_ERROR`: whitelist YAML parse failure or file I/O error
 
-### 3.70 PUT `/discovery/whitelist`
+### 3.72 PUT `/discovery/whitelist`
 
 - Request:
   - Query params: none
@@ -2332,7 +2367,7 @@ These endpoints expose the NMAP-based network discovery subsystem. All paths are
   - `500 INTERNAL_SERVER_ERROR`: whitelist serialization/write or inventory refresh failure
   - `415`/`422`: invalid JSON body
 
-### 3.71 GET `/discovery/schedule`
+### 3.73 GET `/discovery/schedule`
 
 - Request:
   - Query params: none
@@ -2363,7 +2398,7 @@ These endpoints expose the NMAP-based network discovery subsystem. All paths are
 - Error responses:
   - `400 BAD_REQUEST`: existing `nmap.yaml` is invalid
 
-### 3.72 PUT `/discovery/schedule`
+### 3.74 PUT `/discovery/schedule`
 
 - Request:
   - Query params: none
@@ -2387,18 +2422,3 @@ These endpoints expose the NMAP-based network discovery subsystem. All paths are
   }
 }
 ```
-
-  - Required fields: none. Any omitted field keeps its current value.
-- Success response (`200 OK`):
-  - Same schema as `GET /discovery/schedule`
-- Notes:
-  - `target_cidr: null`, `"auto"`, or `"none"` clears the override and restores runtime LAN auto-detection
-  - `exclude: []` clears all exclusions
-  - Flat compatibility fields `hourly_intensity` and `daily_intensity` are also accepted
-  - Writes `/etc/sgx-guardian/discovery/nmap.yaml` atomically
-- Error responses:
-  - `400 BAD_REQUEST`: invalid intensity, invalid CIDR/IP, invalid timeout, or invalid discovery config
-  - `500 INTERNAL_SERVER_ERROR`: schedule serialization or write failure
-  - `415`/`422`: invalid JSON body
-
----

@@ -63,13 +63,35 @@ pub fn run_create() {
         }
     };
 
-    let composite = snap["composite_digest"].as_str().unwrap_or("").to_string();
-    let device_uid = snap["device_uid"].as_str().unwrap_or("unknown").to_string();
+    let composite = match snap["composite_digest"].as_str() {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => {
+            eprintln!("❌ composite_digest missing from PCR snapshot");
+            return;
+        }
+    };
+    let device_uid = match snap["device_uid"].as_str() {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => {
+            eprintln!("❌ device_uid missing from PCR snapshot");
+            return;
+        }
+    };
     let key_version = snap["key_version"].as_u64().unwrap_or(1) as u32;
     let created_at = chrono::Utc::now().to_rfc3339();
 
     // Build the signing input (MUST match what PcrBaseline::verify_signature expects)
-    let composite_bytes = hex::decode(&composite).unwrap_or_else(|_| vec![0u8; 32]);
+    let composite_bytes = match hex::decode(&composite) {
+        Ok(b) if b.len() == 32 => b,
+        Ok(b) => {
+            eprintln!("❌ composite_digest must be 32 bytes, got {}", b.len());
+            return;
+        }
+        Err(e) => {
+            eprintln!("❌ Invalid composite_digest hex: {}", e);
+            return;
+        }
+    };
     let mut sign_input = Vec::new();
     sign_input.extend_from_slice(&composite_bytes);
     sign_input.extend_from_slice(created_at.as_bytes());
@@ -222,7 +244,7 @@ pub fn run_verify() {
     if sig.is_empty() {
         println!("  ⚠️ Baseline is NOT SIGNED — tamper protection not active");
     } else {
-        println!("  Baseline signature: present");
+        println!("  ⚠️ Baseline signature: present but NOT VERIFIED (requires DKP key at runtime)");
         // Note: Full signature verification requires the DKP public key,
         // which the daemon provides at runtime. CLI can only check signature exists.
     }

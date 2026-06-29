@@ -19,16 +19,36 @@ pub enum ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let (status, code, message) = match self {
-            ApiError::NotFound(m) => (StatusCode::NOT_FOUND, "NOT_FOUND", m),
-            ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, "BAD_REQUEST", m),
-            ApiError::Unauthorized(m) => (StatusCode::UNAUTHORIZED, "UNAUTHORIZED", m),
-            ApiError::Forbidden(m) => (StatusCode::FORBIDDEN, "FORBIDDEN", m),
-            ApiError::Conflict(m) => (StatusCode::CONFLICT, "CONFLICT", m),
-            ApiError::Internal(m) => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", m),
-        };
-        let body = Json(json!({ "error": { "code": code, "message": message } }));
-        (status, body).into_response()
+        match self {
+            ApiError::NotFound(m) => {
+                let body = Json(json!({ "error": { "code": "NOT_FOUND", "message": m } }));
+                (StatusCode::NOT_FOUND, body).into_response()
+            }
+            ApiError::BadRequest(m) => {
+                let body = Json(json!({ "error": { "code": "BAD_REQUEST", "message": m } }));
+                (StatusCode::BAD_REQUEST, body).into_response()
+            }
+            ApiError::Unauthorized(m) => {
+                let body = Json(json!({ "error": { "code": "UNAUTHORIZED", "message": m } }));
+                (StatusCode::UNAUTHORIZED, body).into_response()
+            }
+            ApiError::Forbidden(m) => {
+                let body = Json(json!({ "error": { "code": "FORBIDDEN", "message": m } }));
+                (StatusCode::FORBIDDEN, body).into_response()
+            }
+            ApiError::Conflict(m) => {
+                let body = Json(json!({ "error": { "code": "CONFLICT", "message": m } }));
+                (StatusCode::CONFLICT, body).into_response()
+            }
+            ApiError::Internal(ref msg) => {
+                eprintln!("API Internal Error: {}", msg);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "internal server error", "code": "INTERNAL"})),
+                )
+                    .into_response()
+            }
+        }
     }
 }
 

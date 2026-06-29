@@ -8,7 +8,7 @@ use axum::{
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 pub mod error;
@@ -20,9 +20,18 @@ use state::AppState;
 /// Build the full axum router with all v1 routes.
 pub fn build_router(state: Arc<AppState>) -> Router {
     let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_origin(tower_http::cors::AllowOrigin::exact(
+            "http://localhost:3000".parse().unwrap(),
+        ))
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::PUT,
+        ])
+        .allow_headers([
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::AUTHORIZATION,
+        ]);
 
     Router::new()
         // Phase 1 - read endpoints
@@ -192,6 +201,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/vc/files/issued", get(handlers::vc::files_issued))
         .route("/api/v1/vc/files/own", get(handlers::vc::files_own))
         .route("/api/v1/vc/files/peers", get(handlers::vc::files_peers))
+        .route("/api/v1/vid/show", get(handlers::vid::show))
         .route("/api/v1/vid/peers", get(handlers::vid::peers))
         .route(
             "/api/v1/vc/files/issued/:vc_id",

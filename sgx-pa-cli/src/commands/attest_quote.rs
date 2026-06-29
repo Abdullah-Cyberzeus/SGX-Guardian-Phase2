@@ -225,9 +225,12 @@ pub fn run_verify(args: VerifyQuoteArgs) {
     let no_events = !quote["boot_chain"]["hab_events_found"]
         .as_bool()
         .unwrap_or(true);
-    let chain_ok = !quote["boot_chain"]["hab_events_found"]
+    let chain_ok = quote["boot_chain"]["boot_chain_intact"]
         .as_bool()
-        .unwrap_or(true);
+        .unwrap_or(false)
+        && !quote["boot_chain"]["hab_events_found"]
+            .as_bool()
+            .unwrap_or(true);
     println!(
         "  HAB:         {}",
         if hab {
@@ -290,7 +293,14 @@ pub fn run_verify(args: VerifyQuoteArgs) {
                     let q_pcrs = quote["pcr_values"].as_array();
                     let names = ["BIOS", "DTB", "Kernel", "RootFS", "Config"];
                     if let (Some(bp), Some(qp)) = (bl_pcrs, q_pcrs) {
-                        let mut all_match = true;
+                        let mut all_match = bp.len() == qp.len();
+                        if bp.len() != qp.len() {
+                            println!(
+                                "  PCR count:   ❌ MISMATCH (expected {} got {})",
+                                bp.len(),
+                                qp.len()
+                            );
+                        }
                         for i in 0..bp.len().min(qp.len()) {
                             let m = bp[i] == qp[i];
                             if !m {

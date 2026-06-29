@@ -4,7 +4,7 @@
 
 secure_element:
   enabled: true
-  scp_key_path: "~/se05x_mw_v04.05.01/simw-top/scripts/se050F_scp_keys.txt"
+  scp_key_path: "/etc/sgx-guardian/secure-element/scp_keys.txt"
   interface: "t1oi2c"
   auth_type: "PlatformSCP"
   connection_type: "se05x"

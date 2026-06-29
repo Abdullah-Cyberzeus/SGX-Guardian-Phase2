@@ -13,8 +13,9 @@ Group=sgxguardian
 
 # ---- Binary ----
 # Node profile loaded from /etc/sgx-guardian/node_profile
+Environment=SGX_NODE_ID=nodeA
 EnvironmentFile=-/etc/sgx-guardian/node_profile
-ExecStart=/usr/bin/sgx-guardian ${SGX_NODE_ID:-nodeA}
+ExecStart=/usr/bin/sgx-guardian ${SGX_NODE_ID}
 WorkingDirectory=/var/lib/sgx-guardian
 
 # ---- Restart Policy ----

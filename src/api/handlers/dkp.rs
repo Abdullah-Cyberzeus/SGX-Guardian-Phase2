@@ -92,11 +92,17 @@ pub async fn status(State(s): State<Arc<AppState>>) -> Result<Json<DkpStatus>, A
         .iter()
         .find(|k| k.status == "Active")
         .map(|k| k.version);
-    let se050_available = std::process::Command::new("ssscli")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    let se050_available = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        tokio::process::Command::new("ssscli")
+            .arg("--version")
+            .output(),
+    )
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .map(|o| o.status.success())
+    .unwrap_or(false);
     let active_pub_size = tokio::fs::metadata(&pub_path).await.ok().map(|m| m.len());
     let active_pub_path = if active_pub_size.is_some() {
         Some(pub_path.to_string_lossy().to_string())

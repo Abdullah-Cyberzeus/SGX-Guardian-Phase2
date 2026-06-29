@@ -75,7 +75,7 @@ impl NodeConfig {
         if ip.is_empty() {
             return Err("ip field cannot be empty".into());
         }
-        if ip.parse::<std::net::IpAddr>().is_err() {
+        if ip.parse::<std::net::Ipv4Addr>().is_err() {
             return Err(format!("Invalid node IP format: '{}'", self.ip));
         }
 

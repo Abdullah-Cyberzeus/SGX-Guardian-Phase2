@@ -335,6 +335,10 @@ pub async fn document_peers(
     let mut peers: Vec<PeerDocumentSummary> = doc_persistence::list_peer_docs()
         .map_err(did_document_listing_error)?
         .into_iter()
+        .filter(|doc| {
+            let floor = known_floor_version(doc);
+            doc_sign::verify_with_replay_protection(doc, floor).is_ok()
+        })
         .map(|doc| PeerDocumentSummary {
             did: doc.id,
             node_name: doc.sgx_node_name.unwrap_or_default(),
@@ -368,6 +372,9 @@ pub async fn document_peer(
             doc_persistence::configured_peers_doc_dir().join(format!("did_doc_{}.json", did.msi()));
         ApiError::NotFound(format!("peer did document not found at {}", path.display()))
     })?;
+    let floor = known_floor_version(&doc);
+    doc_sign::verify_with_replay_protection(&doc, floor)
+        .map_err(|e| ApiError::BadRequest(format!("peer DID doc verification failed: {}", e)))?;
     Ok(Json(doc))
 }
 

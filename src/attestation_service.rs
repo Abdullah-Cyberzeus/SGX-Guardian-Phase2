@@ -124,6 +124,10 @@ struct LastAttestation {
     // here for ops correlation with peer logs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     nonce: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    nonce_i: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    nonce_r: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -423,8 +427,8 @@ fn write_trusted_peer_with_dirs(
         pcr_composite_digest: pcr_digest,
         policy_digest: Some(ev.policy_digest.clone()).filter(|s| !s.is_empty()),
         rotation_reason,
-        nonce_i: Some(ev.nonce.clone()).filter(|s| !s.is_empty()),
-        nonce_r: None,
+        nonce_i: Some(attestation_nonce_i(ev).to_string()).filter(|s| !s.is_empty()),
+        nonce_r: Some(attestation_nonce_r(ev).to_string()).filter(|s| !s.is_empty()),
     };
 
     // Load existing per-node file (NOT global file)
@@ -539,8 +543,8 @@ fn write_last_attestation(
     result: &str,
     ev: Option<&AttestationEvidence>,
 ) {
-    let (peer_did, virtual_id, dkp_fp, pcr_digest, nonce) = match ev {
-        None => (None, None, None, None, None),
+    let (peer_did, virtual_id, dkp_fp, pcr_digest, nonce, nonce_i, nonce_r) = match ev {
+        None => (None, None, None, None, None, None, None),
         Some(ev) => {
             let dkp_fp = general_purpose::STANDARD
                 .decode(&ev.pubkey_der_b64)
@@ -555,7 +559,9 @@ fn write_last_attestation(
                 Some(ev.virtual_id.clone()).filter(|s| !s.is_empty()),
                 dkp_fp,
                 pcr_digest,
-                Some(ev.nonce.clone()).filter(|s| !s.is_empty()),
+                Some(attestation_nonce_i(ev).to_string()).filter(|s| !s.is_empty()),
+                Some(attestation_nonce_i(ev).to_string()).filter(|s| !s.is_empty()),
+                Some(attestation_nonce_r(ev).to_string()).filter(|s| !s.is_empty()),
             )
         }
     };
@@ -570,6 +576,8 @@ fn write_last_attestation(
         dkp_pubkey_sha256_b16: dkp_fp,
         pcr_composite_digest: pcr_digest,
         nonce,
+        nonce_i,
+        nonce_r,
     };
 
     if let Ok(json) = serde_json::to_string_pretty(&record) {
@@ -944,6 +952,30 @@ fn should_attempt_persisted_peer(
 }
 
 fn build_evidence_signing_message(
+    nonce_i: &str,
+    nonce_r: &str,
+    policy_digest: &str,
+    baseline_status: Option<&BaselineStatus>,
+    virtual_id_hex: &str,
+) -> Vec<u8> {
+    let mut msg = Vec::new();
+    write_lp(&mut msg, nonce_i.as_bytes());
+    write_lp(&mut msg, nonce_r.as_bytes());
+    write_lp(&mut msg, policy_digest.as_bytes());
+    if let Some(bs) = baseline_status {
+        if let Ok(json) = serde_json::to_string(bs) {
+            write_lp(&mut msg, json.as_bytes());
+        } else {
+            write_lp(&mut msg, b"");
+        }
+    } else {
+        write_lp(&mut msg, b"");
+    }
+    write_lp(&mut msg, virtual_id_hex.as_bytes());
+    msg
+}
+
+fn build_evidence_signing_message_legacy(
     nonce: &str,
     policy_digest: &str,
     baseline_status: Option<&BaselineStatus>,
@@ -963,6 +995,49 @@ fn build_evidence_signing_message(
     }
     write_lp(&mut msg, virtual_id_hex.as_bytes());
     msg
+}
+
+fn attestation_nonce_i(ev: &AttestationEvidence) -> &str {
+    ev.nonce_i
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .unwrap_or(ev.nonce.as_str())
+}
+
+fn attestation_nonce_r(ev: &AttestationEvidence) -> &str {
+    ev.nonce_r
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("")
+}
+
+fn build_evidence_signing_message_from_evidence(ev: &AttestationEvidence) -> Vec<u8> {
+    if ev
+        .nonce_i
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .is_none()
+        && ev
+            .nonce_r
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .is_none()
+    {
+        build_evidence_signing_message_legacy(
+            &ev.nonce,
+            &ev.policy_digest,
+            ev.baseline_status.as_ref(),
+            &ev.virtual_id,
+        )
+    } else {
+        build_evidence_signing_message(
+            attestation_nonce_i(ev),
+            attestation_nonce_r(ev),
+            &ev.policy_digest,
+            ev.baseline_status.as_ref(),
+            &ev.virtual_id,
+        )
+    }
 }
 
 fn write_lp(buf: &mut Vec<u8>, b: &[u8]) {
@@ -1277,7 +1352,13 @@ pub struct AttestationEvidence {
     pub node_id: String,
     #[serde(default)]
     pub subject_did: String,
+    /// Legacy nonce field retained for older readers. Mirrors `nonce_i`.
+    #[serde(default)]
     pub nonce: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce_i: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce_r: Option<String>,
     pub policy_digest: String,
     /// VirtualID computed at evidence-creation time. Hex-encoded 32 bytes.
     /// Verifier recomputes and compares; signature covers this field.
@@ -1684,59 +1765,64 @@ impl AttestationService {
         policy_yaml: &str,
     ) -> Result<AttestationEvidence> {
         let node_id = std::env::args().nth(1).unwrap_or_else(|| "nodeA".into());
-        let mut nonce_bytes = [0u8; 16];
-        let rng = SystemRandom::new();
-        rng.fill(&mut nonce_bytes)
-            .map_err(|_| anyhow::anyhow!("Failed to generate attestation nonce"))?;
-        let nonce = hex::encode(nonce_bytes);
         let policy_digest = hex::encode(Sha256::digest(policy_yaml.as_bytes()));
         let baseline_status = Some(compute_local_baseline_status(&node_id, km));
         let dkp_pub = km.pubkey_der()?;
-        let pcr_digest_bytes = baseline_status
-            .as_ref()
-            .and_then(|b| hex::decode(&b.composite_digest).ok())
-            .unwrap_or_default();
-        let policy_digest_bytes = hex::decode(&policy_digest).unwrap_or_default();
-        let nonce_i_bytes = hex::decode(&nonce).unwrap_or_default();
-        let nonce_r_bytes: Vec<u8> = Vec::new();
         let subject_did = crate::did::DidRecord::load(crate::did::DEFAULT_DID_PATH)
             .map(|record| record.did)
             .unwrap_or_default();
-        let vid = crate::virtual_id::VirtualIdInputs {
-            did: &subject_did,
-            dkp_pubkey_der: &dkp_pub,
-            pcr_composite_digest: &pcr_digest_bytes,
-            policy_digest: &policy_digest_bytes,
-            nonce_i: &nonce_i_bytes,
-            nonce_r: &nonce_r_bytes,
-        }
-        .compute();
-        let virtual_id_hex = hex::encode(vid);
-
+        // Load PCR snapshot if available
+        let pcr_load_path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node_id);
+        let pcr_values = crate::secure_element::pcr::PcrSnapshot::load(&pcr_load_path).ok();
+        let key_version = crate::secure_element::pcr::read_dkp_key_version();
+        let current_vid = crate::virtual_id::observe_runtime_virtual_id(
+            crate::virtual_id::RuntimeVirtualIdInputs {
+                node: node_id.clone(),
+                state_path: None,
+                did: subject_did.clone(),
+                dkp_pubkey_der: dkp_pub.clone(),
+                dkp_version: key_version,
+                pcr_values: pcr_values
+                    .as_ref()
+                    .map(|snapshot| snapshot.pcr_values.clone())
+                    .unwrap_or_default(),
+                pcr_digest: baseline_status
+                    .as_ref()
+                    .map(|status| status.composite_digest.clone())
+                    .filter(|digest| !digest.is_empty())
+                    .or_else(|| {
+                        pcr_values
+                            .as_ref()
+                            .map(|snapshot| snapshot.composite_digest.clone())
+                    })
+                    .unwrap_or_default(),
+                policy_digest: policy_digest.clone(),
+            },
+        )?;
         let msg = build_evidence_signing_message(
-            &nonce,
+            &current_vid.nonce_i,
+            &current_vid.nonce_r,
             &policy_digest,
             baseline_status.as_ref(),
-            &virtual_id_hex,
+            &current_vid.virtual_id,
         );
         let sig_bytes = km.sign(&msg)?;
         let signature_b64 = general_purpose::STANDARD.encode(sig_bytes);
         let pubkey_b64 = base64::engine::general_purpose::STANDARD.encode(dkp_pub);
-        // Load PCR snapshot if available
-        let pcr_load_path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node_id);
-        let pcr_values = crate::secure_element::pcr::PcrSnapshot::load(&pcr_load_path).ok();
-        let key_version = Some(crate::secure_element::pcr::read_dkp_key_version());
+
         Ok(AttestationEvidence {
             node_id,
             subject_did,
-            nonce,
+            nonce: current_vid.nonce_i.clone(),
+            nonce_i: Some(current_vid.nonce_i.clone()),
+            nonce_r: Some(current_vid.nonce_r.clone()),
             policy_digest,
-            virtual_id: virtual_id_hex,
+            virtual_id: current_vid.virtual_id,
             signature: signature_b64,
             pubkey_der_b64: pubkey_b64,
             presented_vc_json: None,
             pcr_values,
-            key_version,
+            key_version: Some(key_version),
             baseline_status,
         })
     }
@@ -1779,12 +1865,14 @@ impl AttestationService {
                     pcr.schema_version,
                     crate::secure_element::pcr::PCR_SCHEMA_VERSION
                 );
+                return Ok(false);
             }
             if !pcr.is_fresh() {
                 println!(
                     "⚠️ PCR snapshot is stale (older than {} seconds)",
                     crate::secure_element::pcr::MAX_PCR_SNAPSHOT_AGE_SECS
                 );
+                return Ok(false);
             }
             if pcr.integrity_status == "FAIL" {
                 println!("🔴 Peer PCR integrity FAILED — rejecting attestation");
@@ -1792,12 +1880,25 @@ impl AttestationService {
             }
         }
         let pcr_dig_bytes = ev
-            .baseline_status
+            .pcr_values
             .as_ref()
-            .and_then(|b| hex::decode(&b.composite_digest).ok())
-            .unwrap_or_default();
+            .map(|snapshot| {
+                crate::virtual_id::pcr_values_material(
+                    &snapshot.pcr_values,
+                    &snapshot.composite_digest,
+                )
+            })
+            .unwrap_or_else(|| {
+                ev.baseline_status
+                    .as_ref()
+                    .map(|status| {
+                        crate::virtual_id::pcr_values_material(&[], &status.composite_digest)
+                    })
+                    .unwrap_or_default()
+            });
         let policy_dig_bytes = hex::decode(&ev.policy_digest).unwrap_or_default();
-        let nonce_i_bytes = hex::decode(&ev.nonce).unwrap_or_default();
+        let nonce_i_bytes = hex::decode(attestation_nonce_i(ev)).unwrap_or_default();
+        let nonce_r_bytes = hex::decode(attestation_nonce_r(ev)).unwrap_or_default();
         let peer_dkp_bytes = match general_purpose::STANDARD.decode(&ev.pubkey_der_b64) {
             Ok(bytes) => bytes,
             Err(e) => {
@@ -1808,10 +1909,10 @@ impl AttestationService {
         let recomputed_vid = crate::virtual_id::VirtualIdInputs {
             did: &ev.subject_did,
             dkp_pubkey_der: &peer_dkp_bytes,
-            pcr_composite_digest: &pcr_dig_bytes,
+            pcr_values: &pcr_dig_bytes,
             policy_digest: &policy_dig_bytes,
             nonce_i: &nonce_i_bytes,
-            nonce_r: &[],
+            nonce_r: &nonce_r_bytes,
         }
         .compute();
         let recomputed_hex = hex::encode(recomputed_vid);
@@ -1835,12 +1936,7 @@ impl AttestationService {
         }
 
         // Step 4: Build same message bytes as during signing
-        let msg = build_evidence_signing_message(
-            &ev.nonce,
-            &ev.policy_digest,
-            ev.baseline_status.as_ref(),
-            &ev.virtual_id,
-        );
+        let msg = build_evidence_signing_message_from_evidence(ev);
         // Step 5: Decode Base64 safely
         let sig_bytes = match general_purpose::STANDARD.decode(&ev.signature) {
             Ok(b) => b,
@@ -2117,7 +2213,8 @@ impl AttestationService {
     }
 }
 /// Background task that processes discovered peers, re-attests persisted peers,
-/// spawns the attestation listener, and runs periodic re-attestation every 60 seconds.
+/// spawns the attestation listener, and runs periodic re-attestation on the
+/// same 60-second cadence as current VID nonce rotation.
 pub async fn run(mut rx: Receiver<String>) -> Result<()> {
     println!("🛰️ Attestation Service background task started (listening for new peers)");
     let node_id_env = std::env::args()
@@ -2219,7 +2316,10 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
         let local_ip = local_conf.ip;
         let local_attest_port = attestation_listener_port_for_base(local_conf.port);
         loop {
-            tokio::time::sleep(Duration::from_secs(60)).await;
+            tokio::time::sleep(Duration::from_secs(
+                crate::virtual_id::VID_NONCE_REFRESH_SECS as u64,
+            ))
+            .await;
             let allowed_targets = allowed_attestation_targets(&node_id);
             let peers_list = load_trusted_peers_from_global();
             if !peers_list.is_empty() {
@@ -2601,7 +2701,7 @@ mod tests {
             crate::virtual_id::VirtualIdInputs {
                 did: "did:guardian:test-subject",
                 dkp_pubkey_der: &spki,
-                pcr_composite_digest: &[],
+                pcr_values: &[],
                 policy_digest: &policy_digest_bytes,
                 nonce_i: &nonce_i_bytes,
                 nonce_r: &[],
@@ -2610,6 +2710,7 @@ mod tests {
         );
         let msg = build_evidence_signing_message(
             nonce,
+            "",
             &policy_digest,
             Some(&baseline_status),
             &virtual_id,
@@ -2622,6 +2723,8 @@ mod tests {
             node_id: "nodeA".to_string(),
             subject_did: "did:guardian:test-subject".to_string(),
             nonce: nonce.to_string(),
+            nonce_i: Some(nonce.to_string()),
+            nonce_r: Some(String::new()),
             policy_digest,
             virtual_id,
             signature: general_purpose::STANDARD.encode(sig_der.as_bytes()),

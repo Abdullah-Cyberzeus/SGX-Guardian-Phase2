@@ -45,9 +45,15 @@ fn write_lp(buf: &mut Vec<u8>, b: &[u8]) {
     buf.extend_from_slice(b);
 }
 
-fn evidence_signing_message(nonce: &str, policy_digest: &str, virtual_id: &str) -> Vec<u8> {
+fn evidence_signing_message(
+    nonce_i: &str,
+    nonce_r: &str,
+    policy_digest: &str,
+    virtual_id: &str,
+) -> Vec<u8> {
     let mut msg = Vec::new();
-    write_lp(&mut msg, nonce.as_bytes());
+    write_lp(&mut msg, nonce_i.as_bytes());
+    write_lp(&mut msg, nonce_r.as_bytes());
     write_lp(&mut msg, policy_digest.as_bytes());
     write_lp(&mut msg, b"");
     write_lp(&mut msg, virtual_id.as_bytes());
@@ -74,14 +80,14 @@ fn make_evidence(policy: &str, nonce: &str, use_spki_der: bool) -> AttestationEv
         sgx_guardian_client::virtual_id::VirtualIdInputs {
             did: "did:guardian:test-subject",
             dkp_pubkey_der: &pubkey_bytes,
-            pcr_composite_digest: &[],
+            pcr_values: &[],
             policy_digest: &policy_digest_bytes,
             nonce_i: &nonce_i_bytes,
             nonce_r: &[],
         }
         .compute(),
     );
-    let msg = evidence_signing_message(nonce, &digest, &virtual_id);
+    let msg = evidence_signing_message(nonce, "", &digest, &virtual_id);
 
     // Current attestation verification expects ASN.1 DER ECDSA signature.
     let signature: Signature = signing_key.sign(&msg);
@@ -91,6 +97,8 @@ fn make_evidence(policy: &str, nonce: &str, use_spki_der: bool) -> AttestationEv
         node_id: "nodeA".to_string(),
         subject_did: "did:guardian:test-subject".to_string(),
         nonce: nonce.to_string(),
+        nonce_i: Some(nonce.to_string()),
+        nonce_r: Some(String::new()),
         policy_digest: digest,
         virtual_id,
         signature: general_purpose::STANDARD.encode(sig_der.as_bytes()),

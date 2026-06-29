@@ -261,7 +261,7 @@ where
             .map_err(|e| ApiError::Internal(format!("active policy validation failed: {}", e)))?;
         let active_digest = policy::canonical_policy_digest(&parsed_active);
 
-        if active_digest.eq_ignore_ascii_case(&pending_digest) {
+        if active_digest == pending_digest {
             if let Err(e) = tokio::fs::remove_file(pending_path).await {
                 if e.kind() != std::io::ErrorKind::NotFound {
                     return Err(ApiError::Internal(format!(

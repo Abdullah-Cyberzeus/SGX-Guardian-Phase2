@@ -186,28 +186,6 @@ pub async fn request_certificate_from_ca(
         {
             Ok(resp) => match resp.status.as_str() {
                 "approved" => {
-                    // ── Save node cert ────────────────────────────────
-                    if !Path::new(&cert_path).exists() && !resp.signed_cert_pem.is_empty() {
-                        if let Err(e) = write_file(&cert_path, &resp.signed_cert_pem).await {
-                            eprintln!("❌ Save cert failed: {} — retrying", e);
-                            log_error(&node_id, &format!("Save cert: {}", e));
-                            tokio::time::sleep(std::time::Duration::from_secs(RETRY_INTERVAL_SECS))
-                                .await;
-                            continue;
-                        }
-                    }
-
-                    // ── Save node key ─────────────────────────────────
-                    if !Path::new(&key_path).exists() && !resp.node_key_pem.is_empty() {
-                        if let Err(e) = write_file(&key_path, &resp.node_key_pem).await {
-                            eprintln!("❌ Save key failed: {} — retrying", e);
-                            log_error(&node_id, &format!("Save key: {}", e));
-                            tokio::time::sleep(std::time::Duration::from_secs(RETRY_INTERVAL_SECS))
-                                .await;
-                            continue;
-                        }
-                    }
-
                     // ── Save CA cert (CRITICAL FIX) ───────────────────
                     // We always save the CA cert from nodeA to ensure all nodes
                     // share the same CA.  NebulaCA::save_ca_cert() handles the
@@ -244,6 +222,28 @@ pub async fn request_certificate_from_ca(
                             "⚠️  CertSignResponse.ca_cert_pem is empty! \
                              Check cert_service.rs on nodeA is populating this field."
                         );
+                    }
+
+                    // ── Save node cert ────────────────────────────────
+                    if !Path::new(&cert_path).exists() && !resp.signed_cert_pem.is_empty() {
+                        if let Err(e) = write_file(&cert_path, &resp.signed_cert_pem).await {
+                            eprintln!("❌ Save cert failed: {} — retrying", e);
+                            log_error(&node_id, &format!("Save cert: {}", e));
+                            tokio::time::sleep(std::time::Duration::from_secs(RETRY_INTERVAL_SECS))
+                                .await;
+                            continue;
+                        }
+                    }
+
+                    // ── Save node key ─────────────────────────────────
+                    if !Path::new(&key_path).exists() && !resp.node_key_pem.is_empty() {
+                        if let Err(e) = write_file(&key_path, &resp.node_key_pem).await {
+                            eprintln!("❌ Save key failed: {} — retrying", e);
+                            log_error(&node_id, &format!("Save key: {}", e));
+                            tokio::time::sleep(std::time::Duration::from_secs(RETRY_INTERVAL_SECS))
+                                .await;
+                            continue;
+                        }
                     }
 
                     if !resp.overlay_registry_json.is_empty() {
