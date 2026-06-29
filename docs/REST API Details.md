@@ -2091,11 +2091,13 @@ Peer DID resolution response (`?did=did:guardian:...`):
 
 - Notes:
   - VirtualID is computed as `SHA256(DID || CurrentDKP_PubKey || PCR_values || policy_digest || Nonce_I || Nonce_R)`
-  - There is only one VirtualID. It is session-bound and rotates when the nonce pair refreshes or when DID/DKP/PCR/policy inputs change
+  - There is only one VirtualID. It is session-bound and rotates when the daemon refreshes the nonce pair or when DID/DKP/PCR/policy inputs change
   - The current nonce refresh interval is 60 seconds
-  - `changeReason` is one of `initial_observation`, `dkp_rotated`, `pcr_changed`, `policy_changed`, `nonce_refreshed`, or `unchanged`
+  - The daemon initializes and maintains this session in the background; this endpoint is a read-only snapshot of the daemon-maintained state
+  - `changeReason` is one of `initial_observation`, `dkp_rotated`, `pcr_changed`, `policy_changed`, or `nonce_refreshed`
+  - `changeReason` remains the last real reason the current VirtualID changed; steady-state reads do not replace it with `unchanged`
 - Error responses:
-  - `500 INTERNAL_SERVER_ERROR`: current VirtualID state could not be loaded or refreshed
+  - `500 INTERNAL_SERVER_ERROR`: current VirtualID state could not be loaded
 
 ### 3.60 GET `/vid/peers`
 

@@ -1,7 +1,6 @@
 use clap::{Args, Subcommand};
 use comfy_table::{Cell, Table};
 use serde::Deserialize;
-use std::fs;
 
 #[derive(Args)]
 #[command(about = "VirtualID inspection and recomputation")]
@@ -12,7 +11,7 @@ pub struct VidArgs {
 
 #[derive(Subcommand)]
 pub enum VidCommand {
-    /// Show the VirtualID this node would currently produce.
+    /// Show the daemon-maintained current VirtualID session state.
     Show(VidShowArgs),
     /// Show cached VirtualIDs for known peers.
     Peers(VidPeersArgs),
@@ -111,91 +110,21 @@ fn cmd_show(args: VidShowArgs) -> anyhow::Result<()> {
         args.node
     );
     let status: VidShowResponse = reqwest::blocking::get(url)?.error_for_status()?.json()?;
-    let did = sgx_guardian_client::did::DidRecord::load(sgx_guardian_client::did::DEFAULT_DID_PATH)
-        .map(|record| record.did)
-        .unwrap_or_default();
-    let dkp_pub = sgx_guardian_client::virtual_id::canonical_dkp_pubkey_bytes(
-        &fs::read("/var/lib/sgx-guardian/keys/dkp_pub.der").unwrap_or_default(),
-    );
-    let dkp_version = sgx_guardian_client::secure_element::pcr::read_dkp_key_version();
-    let pcr_snapshot = read_current_pcr_snapshot(&status.node);
-    let pcr_digest = pcr_snapshot
-        .as_ref()
-        .map(|snapshot| snapshot.composite_digest.clone())
-        .unwrap_or_default();
-    let pcr_material = sgx_guardian_client::virtual_id::pcr_values_material(
-        &pcr_snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.pcr_values.clone())
-            .unwrap_or_default(),
-        &pcr_digest,
-    );
-    let policy_digest = read_policy_digest()?;
-    let policy_digest_hex = hex::encode(&policy_digest);
-    let nonce_i = hex::decode(&status.nonce_i)?;
-    let nonce_r = hex::decode(&status.nonce_r)?;
-    let computed_virtual_id = hex::encode(
-        sgx_guardian_client::virtual_id::VirtualIdInputs {
-            did: &did,
-            dkp_pubkey_der: &dkp_pub,
-            pcr_values: &pcr_material,
-            policy_digest: &policy_digest,
-            nonce_i: &nonce_i,
-            nonce_r: &nonce_r,
-        }
-        .compute(),
-    );
-    anyhow::ensure!(
-        computed_virtual_id == status.virtual_id,
-        "daemon VID mismatch: API reported {} but local recomputation produced {}",
-        status.virtual_id,
-        computed_virtual_id
-    );
-    anyhow::ensure!(
-        status.did == did,
-        "daemon DID mismatch: API reported {} but local DID is {}",
-        status.did,
-        did
-    );
-    anyhow::ensure!(
-        status.dkp_bytes == dkp_pub.len(),
-        "daemon DKP byte-count mismatch: API reported {} but local DKP is {} bytes",
-        status.dkp_bytes,
-        dkp_pub.len()
-    );
-    anyhow::ensure!(
-        status.dkp_version == dkp_version,
-        "daemon DKP version mismatch: API reported {} but local DKP version is {}",
-        status.dkp_version,
-        dkp_version
-    );
-    anyhow::ensure!(
-        status.pcr_digest == pcr_digest,
-        "daemon PCR digest mismatch: API reported {} but local PCR digest is {}",
-        status.pcr_digest,
-        pcr_digest
-    );
-    anyhow::ensure!(
-        status.policy_digest == policy_digest_hex,
-        "daemon policy digest mismatch: API reported {} but local policy digest is {}",
-        status.policy_digest,
-        policy_digest_hex
-    );
 
     let mut table = Table::new();
     table.set_header(vec!["Field", "Value"]);
     table.add_row(vec![Cell::new("Node"), Cell::new(status.node)]);
-    table.add_row(vec![Cell::new("DID"), Cell::new(did)]);
-    table.add_row(vec![Cell::new("DKP bytes"), Cell::new(dkp_pub.len())]);
-    table.add_row(vec![Cell::new("DKP version"), Cell::new(dkp_version)]);
-    table.add_row(vec![Cell::new("PCR digest"), Cell::new(pcr_digest)]);
+    table.add_row(vec![Cell::new("DID"), Cell::new(status.did)]);
+    table.add_row(vec![Cell::new("DKP bytes"), Cell::new(status.dkp_bytes)]);
+    table.add_row(vec![Cell::new("DKP version"), Cell::new(status.dkp_version)]);
+    table.add_row(vec![Cell::new("PCR digest"), Cell::new(status.pcr_digest)]);
     table.add_row(vec![
         Cell::new("Policy digest"),
-        Cell::new(policy_digest_hex),
+        Cell::new(status.policy_digest),
     ]);
     table.add_row(vec![Cell::new("Nonce_I"), Cell::new(status.nonce_i)]);
     table.add_row(vec![Cell::new("Nonce_R"), Cell::new(status.nonce_r)]);
-    table.add_row(vec![Cell::new("VirtualID"), Cell::new(computed_virtual_id)]);
+    table.add_row(vec![Cell::new("VirtualID"), Cell::new(status.virtual_id)]);
     table.add_row(vec![
         Cell::new("change_reason"),
         Cell::new(status.change_reason),
@@ -250,13 +179,7 @@ fn cmd_recompute(args: VidRecomputeArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn read_current_pcr_snapshot(
-    node: &str,
-) -> Option<sgx_guardian_client::secure_element::pcr::PcrSnapshot> {
-    let path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node);
-    sgx_guardian_client::secure_element::pcr::PcrSnapshot::load(&path).ok()
-}
-
+#[cfg(test)]
 fn read_policy_digest() -> anyhow::Result<Vec<u8>> {
     Ok(hex::decode(
         &sgx_guardian_client::policy::load_effective_policy_material().digest_hex,

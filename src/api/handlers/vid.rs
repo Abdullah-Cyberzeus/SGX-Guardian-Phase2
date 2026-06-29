@@ -1,11 +1,7 @@
 use crate::api::{error::ApiError, state::AppState};
-use crate::did::{DidRecord, DEFAULT_DID_PATH};
-use crate::policy;
-use crate::secure_element::pcr::{read_dkp_key_version, PcrSnapshot};
-use crate::virtual_id::{observe_runtime_virtual_id, RuntimeVirtualIdInputs};
+use crate::virtual_id::read_runtime_virtual_id_status;
 use axum::{extract::State, Json};
 use serde::Serialize;
-use std::path::Path;
 use std::sync::Arc;
 
 #[derive(Debug, Serialize)]
@@ -51,27 +47,8 @@ pub struct VidPeer {
 }
 
 pub async fn show(State(state): State<Arc<AppState>>) -> Result<Json<VidShowResponse>, ApiError> {
-    let pcr_snapshot = read_pcr_snapshot(&state);
-    let status = observe_runtime_virtual_id(RuntimeVirtualIdInputs {
-        node: state.node_id.clone(),
-        state_path: None,
-        did: DidRecord::load(DEFAULT_DID_PATH)
-            .map(|record| record.did)
-            .unwrap_or_default(),
-        dkp_pubkey_der: std::fs::read(Path::new(&state.keys_dir).join("dkp_pub.der"))
-            .unwrap_or_default(),
-        dkp_version: read_dkp_key_version(),
-        pcr_values: pcr_snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.pcr_values.clone())
-            .unwrap_or_default(),
-        pcr_digest: pcr_snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.composite_digest.clone())
-            .unwrap_or_default(),
-        policy_digest: policy::load_effective_policy_material().digest_hex,
-    })
-    .map_err(|e| ApiError::Internal(format!("VID show: {}", e)))?;
+    let status = read_runtime_virtual_id_status(&state.node_id, None)
+        .map_err(|e| ApiError::Internal(format!("VID show: {}", e)))?;
 
     Ok(Json(VidShowResponse {
         node: status.node,
@@ -88,12 +65,6 @@ pub async fn show(State(state): State<Arc<AppState>>) -> Result<Json<VidShowResp
         session_ttl: status.session_ttl,
     }))
 }
-
-fn read_pcr_snapshot(state: &AppState) -> Option<PcrSnapshot> {
-    let path = Path::new(&state.pcr_dir).join(format!("{}_current.json", state.node_id));
-    PcrSnapshot::load(path.to_string_lossy().as_ref()).ok()
-}
-
 pub async fn peers(State(state): State<Arc<AppState>>) -> Result<Json<VidPeersResponse>, ApiError> {
     let mut peers: Vec<VidPeer> = state
         .vid_cache

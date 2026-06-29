@@ -2562,6 +2562,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
+    if let Err(e) = refresh_runtime_virtual_id_session(&node_id) {
+        log_error(
+            &node_id,
+            &format!("Runtime VirtualID initial refresh failed: {}", e),
+        );
+    }
+    tokio::spawn({
+        let node_id = node_id.clone();
+        async move {
+            let mut vid_tick = tokio::time::interval(Duration::from_secs(1));
+            vid_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            vid_tick.tick().await;
+            loop {
+                vid_tick.tick().await;
+                if let Err(e) = refresh_runtime_virtual_id_session(&node_id) {
+                    tracing::warn!(
+                        "Runtime VirtualID background refresh failed for {}: {}",
+                        node_id,
+                        e
+                    );
+                }
+            }
+        }
+    });
     // === REST Admin API (axum) on :8443 ===
     let api_state =
         sgx_guardian_client::api::state::AppState::from_env(node_id.clone(), did_resolver.clone());
@@ -2764,6 +2788,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Ok(())
     }
+}
+
+fn refresh_runtime_virtual_id_session(node_id: &str) -> anyhow::Result<()> {
+    let pcr_snapshot = read_runtime_virtual_id_pcr_snapshot(node_id);
+    sgx_guardian_client::virtual_id::observe_runtime_virtual_id(
+        sgx_guardian_client::virtual_id::RuntimeVirtualIdInputs {
+            node: node_id.to_string(),
+            state_path: None,
+            did: sgx_guardian_client::did::DidRecord::load(
+                sgx_guardian_client::did::DEFAULT_DID_PATH,
+            )
+            .map(|record| record.did)
+            .unwrap_or_default(),
+            dkp_pubkey_der: std::fs::read("/var/lib/sgx-guardian/keys/dkp_pub.der")
+                .unwrap_or_default(),
+            dkp_version: sgx_guardian_client::secure_element::pcr::read_dkp_key_version(),
+            pcr_values: pcr_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.pcr_values.clone())
+                .unwrap_or_default(),
+            pcr_digest: pcr_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.composite_digest.clone())
+                .unwrap_or_default(),
+            policy_digest: policy::load_effective_policy_material().digest_hex,
+        },
+    )?;
+    Ok(())
+}
+
+fn read_runtime_virtual_id_pcr_snapshot(
+    node_id: &str,
+) -> Option<sgx_guardian_client::secure_element::pcr::PcrSnapshot> {
+    let path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node_id);
+    sgx_guardian_client::secure_element::pcr::PcrSnapshot::load(&path).ok()
 }
 
 async fn refresh_and_publish_did_doc(
