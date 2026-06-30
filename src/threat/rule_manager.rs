@@ -3,18 +3,38 @@ use crate::audit::logger::log_audit;
 use crate::threat::error::{ThreatError, ThreatResult};
 use std::io::ErrorKind;
 use tokio::process::Command;
+use tokio::time::{timeout, Duration};
+
+/// Bundled Suricata install prefix.  All sub-commands use paths relative to
+/// this so the host Python installation is never touched.
+const OPT_SURICATA: &str = "/opt/suricata";
 
 pub struct RuleManager;
 
 impl RuleManager {
     pub async fn update_rules(node_id: &str) -> ThreatResult<String> {
-        if which::which("suricata-update").is_err() {
+        let binary = format!("{}/bin/suricata-update", OPT_SURICATA);
+        if !std::path::Path::new(&binary).exists() {
             return Err(ThreatError::BinaryMissing);
         }
 
-        let output = Command::new("suricata-update")
-            .output()
+        // Env vars scoped to this Command only — never set globally via profile.d.
+        // The suricata package lives at /opt/suricata/lib/python3/dist-packages/
+        // (confirmed on board via find), NOT python3.10/site-packages.
+        // LD_LIBRARY_PATH is also scoped here — setting it globally segfaulted
+        // system tools board-wide in a prior incident.
+        let python_lib = format!("{}/lib", OPT_SURICATA);
+        let pythonpath = format!("{}/lib/python3/dist-packages", OPT_SURICATA);
+
+        let fut = Command::new(&binary)
+            .env("PYTHONPATH", &pythonpath)
+            .env("LD_LIBRARY_PATH", &python_lib)
+            .kill_on_drop(true)
+            .output();
+
+        let output = timeout(Duration::from_secs(300), fut)
             .await
+            .map_err(|_| ThreatError::ServiceStart("suricata-update timed out (300s)".into()))?
             .map_err(map_spawn_error)?;
 
         if !output.status.success() {
@@ -35,6 +55,7 @@ impl RuleManager {
 
         let _ = Command::new("systemctl")
             .args(["reload", "suricata"])
+            .kill_on_drop(true)
             .output()
             .await;
 
@@ -50,10 +71,16 @@ impl RuleManager {
     }
 
     pub async fn validate_config(yaml_path: &str) -> ThreatResult<()> {
-        let output = Command::new("suricata")
+        let binary = format!("{}/bin/suricata", OPT_SURICATA);
+
+        let fut = Command::new(&binary)
             .args(["-T", "-c", yaml_path])
-            .output()
+            .kill_on_drop(true)
+            .output();
+
+        let output = timeout(Duration::from_secs(60), fut)
             .await
+            .map_err(|_| ThreatError::BadConfig("suricata config-test timed out (60s)".into()))?
             .map_err(map_spawn_error)?;
 
         if output.status.success() {

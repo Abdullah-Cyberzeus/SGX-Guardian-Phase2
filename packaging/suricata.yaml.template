@@ -33,10 +33,20 @@ stats:
   enabled: yes
   interval: 60
 
+# Fix 4: capture on all three board interfaces.
+# Drop "-i wlan0" from ExecStart — interface selection is done here, not on the CLI.
 af-packet:
-  - interface: __INTERFACE__
+  - interface: wlan0
     threads: 4
     cluster-id: 99
+    cluster-type: cluster_flow
+    defrag: yes
+  - interface: nebula0
+    cluster-id: 98
+    cluster-type: cluster_flow
+    defrag: yes
+  - interface: uap0
+    cluster-id: 97
     cluster-type: cluster_flow
     defrag: yes
 
@@ -77,6 +87,12 @@ default-rule-path: /var/lib/suricata/rules
 rule-files:
   - /var/lib/suricata/rules/suricata.rules
   - /etc/suricata/rules/guardian-custom.rules
+
+# Fix 3: bundled libmagic 5.41 expects DB v16; system magic.mgc is v18 → mismatch.
+# Set to "" to disable file-type detection cleanly and silence magic_load errors.
+# To re-enable: build v16 DB with /opt/suricata/bin/file -C -m /opt/suricata/share/misc/magic
+# then set: magic-file: /opt/suricata/share/misc/magic.mgc
+magic-file: ""
 
 stream:
   memcap: 256mb

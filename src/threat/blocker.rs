@@ -9,6 +9,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::ErrorKind;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::process::Command;
@@ -103,6 +104,21 @@ impl Blocker {
         let cfg = self.cfg.lock().await.clone();
         if !Self::should_block(&cfg, alert) {
             return Ok(false);
+        }
+
+        // Runtime guard: never block self, default gateway, or Circle peers.
+        // This catches IPs that pass the config-level CIDR exempts but are still
+        // system-critical (e.g. board IP changed, gateway changed since last deploy).
+        if let Ok(ip) = alert.src_ip.parse::<IpAddr>() {
+            let protected = collect_protected_ips().await;
+            if protected.contains(&ip) {
+                tracing::warn!(
+                    ip = %alert.src_ip,
+                    sid = alert.signature_id,
+                    "suppressed block: IP is local interface or default gateway"
+                );
+                return Ok(false);
+            }
         }
 
         let mut active = self.active.lock().await;
@@ -269,6 +285,53 @@ impl Blocker {
             Err(err) => Err(err),
         }
     }
+}
+
+/// Enumerate IPs that must never be auto-blocked regardless of alert severity:
+/// every local interface address and the default-route gateway.
+/// Runs `ip addr show` and `ip route show default` each time it is called so
+/// the result reflects the current network state (board IP / gateway may change).
+async fn collect_protected_ips() -> Vec<IpAddr> {
+    let mut protected: Vec<IpAddr> = Vec::new();
+
+    // Local interface addresses
+    if let Ok(out) = Command::new("ip").args(["addr", "show"]).output().await {
+        let text = String::from_utf8_lossy(&out.stdout);
+        for line in text.lines() {
+            let line = line.trim();
+            // "inet 192.168.50.103/24 brd …" or "inet6 fe80::…/64 …"
+            if line.starts_with("inet ") || line.starts_with("inet6 ") {
+                if let Some(cidr) = line.split_whitespace().nth(1) {
+                    if let Some(addr_str) = cidr.split('/').next() {
+                        if let Ok(addr) = addr_str.parse::<IpAddr>() {
+                            protected.push(addr);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Default gateway ("default via 192.168.50.1 dev wlan0 …")
+    if let Ok(out) = Command::new("ip")
+        .args(["route", "show", "default"])
+        .output()
+        .await
+    {
+        let text = String::from_utf8_lossy(&out.stdout);
+        for line in text.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if let Some(via_pos) = parts.iter().position(|&p| p == "via") {
+                if let Some(gw_str) = parts.get(via_pos + 1) {
+                    if let Ok(gw) = gw_str.parse::<IpAddr>() {
+                        protected.push(gw);
+                    }
+                }
+            }
+        }
+    }
+
+    protected
 }
 
 pub fn load_block_records(path: &Path) -> ThreatResult<Vec<BlockRecord>> {
