@@ -87,6 +87,12 @@
 | 76 | PUT | `/discovery/whitelist` | Replace discovery whitelist and refresh inventory statuses |
 | 77 | GET | `/discovery/schedule` | Fetch scheduled NMAP discovery configuration |
 | 78 | PUT | `/discovery/schedule` | Update scheduled NMAP discovery configuration |
+| 79 | POST | `/crl/revoke` | Issue a DID revocation entry and rebuild the signed CRL |
+| 80 | GET | `/crl/list` | List all locally persisted CRL entries |
+| 81 | GET | `/crl/entry` | Fetch one CRL entry by entry ID |
+| 82 | GET | `/crl/check` | Check whether a DID is currently revoked |
+| 83 | POST | `/crl/verify` | Verify CRL entry signatures and aggregate root |
+| 84 | GET | `/crl/root` | Return current CRL sequence and Merkle root |
 
 
 ## 2. NEW Endpoints 
@@ -104,6 +110,12 @@
 | GET | `/vc/audit` | Return VC audit-log entries with optional filtering |
 | GET | `/vid/show` | Show the single current nonce-bound VirtualID and its input digests |
 | GET | `/vid/peers` | List cached peer VirtualIDs and last observed rotation reasons |
+| POST | `/crl/revoke` | Issue a CRL revocation entry for a DID |
+| GET | `/crl/list` | Return all CRL entries |
+| GET | `/crl/entry` | Return one CRL entry by `id` |
+| GET | `/crl/check` | Return `{ revoked, entry }` for a DID |
+| POST | `/crl/verify` | Verify CRL signatures, role rules, and Merkle root |
+| GET | `/crl/root` | Return CRL sequence and Merkle root |
 ---
 
 ## 2. Standard Error Envelope
@@ -2422,3 +2434,189 @@ Peer DID resolution response (`?did=did:guardian:...`):
   }
 }
 ```
+
+- Success response (`200 OK`):
+  - Same schema as `GET /discovery/schedule`
+- Error responses:
+  - `400 BAD_REQUEST`: invalid `target_cidr`, `timeout_secs`, or schedule intensity
+  - `500 INTERNAL_SERVER_ERROR`: schedule serialization/write failure
+
+### 3.75 POST `/crl/revoke`
+
+- Full path: `/api/v1/crl/revoke`
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "did": "did:guardian:TARGET",
+  "reason": "compromised",
+  "severity": "critical",
+  "device_id": "device-001",
+  "user_id": "user-001",
+  "note": "reported key compromise",
+  "audit_ref": "audit:123",
+  "attestation_ref": "attestation:456",
+  "evidence_digest": "sha256:..."
+}
+```
+
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "message": "CRL entry issued",
+  "entry": {
+    "id": "urn:uuid:...",
+    "revoked_did": "did:guardian:TARGET",
+    "circle_id": "guardian-circle-alpha",
+    "reason": "compromised",
+    "severity": "critical",
+    "revoker_did": "did:guardian:OWNER",
+    "revoker_role": "owner",
+    "timestamp": "2026-06-30T10:00:00Z"
+  },
+  "sequence": 1,
+  "merkle_root": "hex-sha256-root"
+}
+```
+
+- Notes:
+  - Owner revokers can issue any reason/severity.
+  - Member revokers are limited to security-critical reasons and `critical` or `high` severity.
+  - Owner-issued revocations also flip VC status-list bits for VCs issued to the revoked DID.
+- Error responses:
+  - `400 BAD_REQUEST`: invalid reason, severity, circle, or local membership state
+  - `403 FORBIDDEN`: self-revocation, invalid proof, or member policy violation
+  - `409 CONFLICT`: DID already revoked
+  - `500 INTERNAL_SERVER_ERROR`: local DID/key/audit/persistence failure
+
+### 3.76 GET `/crl/list`
+
+- Full path: `/api/v1/crl/list`
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "count": 1,
+  "entries": [
+    {
+      "id": "urn:uuid:...",
+      "revoked_did": "did:guardian:TARGET",
+      "reason": "compromised",
+      "severity": "critical",
+      "revoker_did": "did:guardian:OWNER"
+    }
+  ]
+}
+```
+
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: CRL persistence load failure
+
+### 3.77 GET `/crl/entry`
+
+- Full path: `/api/v1/crl/entry?id=urn:uuid:...`
+- Request:
+  - Query params:
+    - `id` (required, string): CRL entry ID.
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "id": "urn:uuid:...",
+  "revoked_did": "did:guardian:TARGET",
+  "reason": "compromised",
+  "severity": "critical",
+  "revoker_did": "did:guardian:OWNER"
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: missing or empty `id`
+  - `404 NOT_FOUND`: CRL entry not found
+  - `500 INTERNAL_SERVER_ERROR`: CRL persistence load failure
+
+### 3.78 GET `/crl/check`
+
+- Full path: `/api/v1/crl/check?did=did:guardian:TARGET`
+- Request:
+  - Query params:
+    - `did` (required, string): DID to check.
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "did": "did:guardian:TARGET",
+  "revoked": true,
+  "entry": {
+    "id": "urn:uuid:...",
+    "reason": "compromised",
+    "severity": "critical"
+  }
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: missing or empty `did`
+  - `500 INTERNAL_SERVER_ERROR`: CRL persistence load failure
+
+### 3.79 POST `/crl/verify`
+
+- Full path: `/api/v1/crl/verify`
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "ok": true,
+  "errors": []
+}
+```
+
+- Failure response (`200 OK` with verification details):
+
+```json
+{
+  "ok": false,
+  "errors": [
+    "invalid signature on CRL entry urn:uuid:..."
+  ]
+}
+```
+
+- Notes:
+  - Verifies each entry signature against resolved DID public keys.
+  - Recomputes the CRL Merkle root and rejects mismatches.
+  - Re-applies member role restrictions and circle checks.
+
+### 3.80 GET `/crl/root`
+
+- Full path: `/api/v1/crl/root`
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "sequence": 1,
+  "merkle_root": "hex-sha256-root"
+}
+```
+
+- Notes:
+  - Empty local CRL state returns `sequence: 0` and an empty `merkle_root`.
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: CRL persistence load failure
