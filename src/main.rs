@@ -927,6 +927,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &node_id,
                 &format!("Audit log integrity warning (non-fatal): {}", e),
             );
+            eprintln!("🚨 [SECURITY WARNING]: Audit log integrity warning (non-fatal): {}", e);
         }
     }
 
