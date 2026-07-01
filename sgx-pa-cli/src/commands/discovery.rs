@@ -5,7 +5,9 @@ use sgx_guardian_client::discovery::{
     nmap_parser,
     nmap_runner::NmapRunner,
     run_history::{self, ScanRunSource},
-    whitelist::{Whitelist, WhitelistEntry},
+    whitelist::{
+        enrich_entries, infer_label_for_mac, Whitelist, WhitelistEntry, WhitelistEntryView,
+    },
     ConnectedDevice, DeviceStatus, NmapConfig, ScanIntensity, ScanSchedule, ScheduledScans,
 };
 use std::io::Write;
@@ -34,6 +36,9 @@ pub enum DiscoveryCommand {
 
     /// Add a MAC to the whitelist.
     Approve(ApproveArgs),
+
+    /// Show whitelist entries enriched with current inventory matches.
+    Whitelist,
 
     /// Show scheduled discovery config.
     #[command(alias = "config-show")]
@@ -110,6 +115,12 @@ struct ScheduleShowOutput {
     legacy_schedule_mode: Option<ScanSchedule>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct WhitelistShowOutput {
+    version: String,
+    devices: Vec<WhitelistEntryView>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct WhitelistFile {
     #[serde(default = "default_whitelist_version")]
@@ -132,6 +143,7 @@ pub fn run(args: DiscoveryArgs) -> Result<(), Box<dyn std::error::Error>> {
         DiscoveryCommand::Unauthorized => list_devices(true)?,
         DiscoveryCommand::Runs(args) => list_runs(args)?,
         DiscoveryCommand::Approve(approve_args) => approve_mac(approve_args)?,
+        DiscoveryCommand::Whitelist => show_whitelist()?,
         DiscoveryCommand::ScheduleShow => schedule_show()?,
         DiscoveryCommand::ScheduleSet(set_args) => schedule_set(set_args)?,
     }
@@ -247,6 +259,17 @@ fn list_runs(args: RunsArgs) -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", serde_json::to_string(&run)?);
     }
 
+    Ok(())
+}
+
+fn show_whitelist() -> Result<(), Box<dyn std::error::Error>> {
+    let whitelist = load_whitelist_file(Path::new(WHITELIST_PATH))?;
+    let inventory = load_inventory_file(Path::new(INVENTORY_PATH))?;
+    let output = WhitelistShowOutput {
+        version: whitelist.version,
+        devices: enrich_entries(&whitelist.devices, &inventory),
+    };
+    println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
 }
 
@@ -435,6 +458,11 @@ fn approve_mac(args: ApproveArgs) -> Result<(), Box<dyn std::error::Error>> {
         return Err("mac must not be empty".into());
     }
 
+    let inventory = load_inventory_file(Path::new(INVENTORY_PATH)).unwrap_or_default();
+    let requested_label = normalize_optional_label(args.label);
+    let resolved_label = requested_label
+        .clone()
+        .or_else(|| infer_label_for_mac(&mac, &inventory));
     let mut whitelist = load_whitelist_file(Path::new(WHITELIST_PATH))?;
     let mut inserted = false;
 
@@ -444,14 +472,16 @@ fn approve_mac(args: ApproveArgs) -> Result<(), Box<dyn std::error::Error>> {
         .find(|entry| normalize_mac(&entry.mac) == mac)
     {
         Some(existing) => {
-            if let Some(label) = args.label {
+            if let Some(label) = resolved_label.clone().filter(|_| {
+                requested_label.is_some() || existing.label.as_deref().unwrap_or("").is_empty()
+            }) {
                 existing.label = Some(label);
             }
         }
         None => {
             whitelist.devices.push(WhitelistEntry {
                 mac: mac.clone(),
-                label: args.label,
+                label: resolved_label,
                 expected_os: None,
                 expected_ports: Vec::new(),
                 expected_ips: Vec::new(),
@@ -477,6 +507,26 @@ fn approve_mac(args: ApproveArgs) -> Result<(), Box<dyn std::error::Error>> {
 
 fn normalize_mac(mac: &str) -> String {
     mac.trim().to_uppercase()
+}
+
+fn normalize_optional_label(label: Option<String>) -> Option<String> {
+    label
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn load_inventory_file(path: &Path) -> Result<Vec<ConnectedDevice>, Box<dyn std::error::Error>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let bytes = std::fs::read(path)?;
+    if bytes.iter().all(|byte| byte.is_ascii_whitespace()) {
+        return Ok(Vec::new());
+    }
+
+    let devices = serde_json::from_slice(&bytes)?;
+    Ok(devices)
 }
 
 fn load_whitelist_file(path: &Path) -> Result<WhitelistFile, Box<dyn std::error::Error>> {

@@ -84,7 +84,7 @@
 | 72 | POST | `/discovery/scan/standard` | Run one standard NMAP discovery scan |
 | 73 | POST | `/discovery/scan/aggressive` | Run one aggressive NMAP discovery scan |
 | 74 | POST | `/discovery/approve` | Authorize a discovered device by MAC and add it to whitelist |
-| 75 | GET | `/discovery/whitelist` | Fetch discovery whitelist YAML content as JSON |
+| 75 | GET | `/discovery/whitelist` | Fetch whitelist policy enriched with current inventory matches |
 | 76 | PUT | `/discovery/whitelist` | Replace discovery whitelist and refresh inventory statuses |
 | 77 | GET | `/discovery/schedule` | Fetch scheduled NMAP discovery configuration |
 | 78 | PUT | `/discovery/schedule` | Update scheduled NMAP discovery configuration |
@@ -2332,13 +2332,31 @@ Peer DID resolution response (`?did=did:guardian:...`):
     "expected_os": null,
     "expected_ports": [],
     "expected_ips": []
-  }
+  },
+  "current_devices": [
+    {
+      "device_id": "a1b2c3d4e5f60708",
+      "ip": "192.168.50.103",
+      "vendor": "Acme",
+      "hostname": "printer.local",
+      "status": "approved",
+      "os_fingerprint": "Linux 5.x",
+      "open_ports": [
+        "22/tcp ssh"
+      ],
+      "first_seen": "2026-06-30T10:00:00Z",
+      "last_seen": "2026-06-30T11:00:00Z",
+      "vuln_triaged": false
+    }
+  ]
 }
 ```
 
 - Notes:
   - Adds or updates the MAC inside `/etc/sgx-guardian/discovery/whitelist.yaml`
+  - If `label` is omitted, the API attempts to infer a readable label from the matching inventory vendor or hostname
   - Immediately reclassifies matching non-stale inventory records so approved devices become authorized without waiting for the next scan
+  - Returns current inventory matches for that MAC in `current_devices`
 - Error responses:
   - `400 BAD_REQUEST`: invalid or empty MAC address
   - `500 INTERNAL_SERVER_ERROR`: whitelist read/write or inventory refresh failure
@@ -2365,6 +2383,24 @@ Peer DID resolution response (`?did=did:guardian:...`):
       ],
       "expected_ips": [
         "192.168.50.103/32"
+      ],
+      "inventory_match": true,
+      "current_devices": [
+        {
+          "device_id": "a1b2c3d4e5f60708",
+          "ip": "192.168.50.103",
+          "vendor": "Acme",
+          "hostname": "printer.local",
+          "status": "approved",
+          "os_fingerprint": "Linux 5.x",
+          "open_ports": [
+            "22/tcp ssh",
+            "9100/tcp jetdirect"
+          ],
+          "first_seen": "2026-06-30T10:00:00Z",
+          "last_seen": "2026-06-30T11:00:00Z",
+          "vuln_triaged": false
+        }
       ]
     }
   ]
@@ -2373,6 +2409,7 @@ Peer DID resolution response (`?did=did:guardian:...`):
 
 - Notes:
   - Missing or empty whitelist file returns the default empty document
+  - Stored whitelist remains policy-only; `inventory_match` and `current_devices` are read-only fields joined from `/var/lib/sgx-guardian/discovery/inventory.json`
 - Error responses:
   - `500 INTERNAL_SERVER_ERROR`: whitelist YAML parse failure or file I/O error
 
@@ -2404,7 +2441,7 @@ Peer DID resolution response (`?did=did:guardian:...`):
 
   - Required fields: none (`version` defaults to `"1.0"` when empty)
 - Success response (`200 OK`):
-  - Same schema as `GET /discovery/whitelist`
+  - Same policy schema as the request body
 - Notes:
   - Writes `/etc/sgx-guardian/discovery/whitelist.yaml` atomically
   - Refreshes matching non-stale inventory statuses after the whitelist update

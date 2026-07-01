@@ -1,5 +1,5 @@
 use crate::discovery::{
-    connected_device::{ConnectedDevice, DeviceStatus},
+    connected_device::{ConnectedDevice, DeviceStatus, OpenPort},
     error::DiscoveryResult,
 };
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,28 @@ pub struct WhitelistEntry {
     /// where NMAP may report the gateway MAC for off-link IPs.
     #[serde(default)]
     pub expected_ips: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct WhitelistInventoryDevice {
+    pub device_id: String,
+    pub ip: String,
+    pub vendor: Option<String>,
+    pub hostname: Option<String>,
+    pub status: DeviceStatus,
+    pub os_fingerprint: Option<String>,
+    pub open_ports: Vec<String>,
+    pub first_seen: String,
+    pub last_seen: String,
+    pub vuln_triaged: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct WhitelistEntryView {
+    #[serde(flatten)]
+    pub entry: WhitelistEntry,
+    pub inventory_match: bool,
+    pub current_devices: Vec<WhitelistInventoryDevice>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -110,6 +132,118 @@ impl Whitelist {
     }
 }
 
+pub fn enrich_entries(
+    entries: &[WhitelistEntry],
+    inventory: &[ConnectedDevice],
+) -> Vec<WhitelistEntryView> {
+    entries
+        .iter()
+        .cloned()
+        .map(|entry| {
+            let mut current_devices = inventory
+                .iter()
+                .filter(|device| device_matches_entry(&entry, device))
+                .map(inventory_device_view)
+                .collect::<Vec<_>>();
+
+            current_devices.sort_by(|left, right| {
+                right
+                    .last_seen
+                    .cmp(&left.last_seen)
+                    .then_with(|| left.ip.cmp(&right.ip))
+            });
+
+            WhitelistEntryView {
+                entry,
+                inventory_match: !current_devices.is_empty(),
+                current_devices,
+            }
+        })
+        .collect()
+}
+
+pub fn infer_label_for_mac(mac: &str, inventory: &[ConnectedDevice]) -> Option<String> {
+    let entry = WhitelistEntry {
+        mac: mac.to_string(),
+        label: None,
+        expected_os: None,
+        expected_ports: Vec::new(),
+        expected_ips: Vec::new(),
+    };
+
+    let mut matches = inventory
+        .iter()
+        .filter(|device| device_matches_entry(&entry, device))
+        .collect::<Vec<_>>();
+
+    matches.sort_by(|left, right| {
+        let left_stale = matches!(left.status, DeviceStatus::Stale);
+        let right_stale = matches!(right.status, DeviceStatus::Stale);
+        left_stale
+            .cmp(&right_stale)
+            .then_with(|| right.last_seen.cmp(&left.last_seen))
+    });
+
+    matches.into_iter().find_map(|device| {
+        non_empty_clone(&device.vendor)
+            .or_else(|| non_empty_clone(&device.hostname))
+            .or_else(|| Some(device.ip.clone()))
+    })
+}
+
+fn device_matches_entry(entry: &WhitelistEntry, device: &ConnectedDevice) -> bool {
+    let Some(device_mac) = device.mac.as_deref() else {
+        return false;
+    };
+
+    normalize_mac(device_mac) == normalize_mac(&entry.mac)
+}
+
+fn inventory_device_view(device: &ConnectedDevice) -> WhitelistInventoryDevice {
+    WhitelistInventoryDevice {
+        device_id: device.device_id.clone(),
+        ip: device.ip.clone(),
+        vendor: device.vendor.clone(),
+        hostname: device.hostname.clone(),
+        status: device.status,
+        os_fingerprint: device.os_fingerprint.clone(),
+        open_ports: device.open_ports.iter().map(format_open_port).collect(),
+        first_seen: device.first_seen.clone(),
+        last_seen: device.last_seen.clone(),
+        vuln_triaged: device.vuln_triaged,
+    }
+}
+
+fn format_open_port(port: &OpenPort) -> String {
+    let mut out = format!("{}/{}", port.port, port.protocol);
+    if let Some(service) = port
+        .service
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        out.push(' ');
+        out.push_str(service);
+    }
+    if let Some(version) = port
+        .product_version
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        out.push_str(" (");
+        out.push_str(version);
+        out.push(')');
+    }
+    out
+}
+
+fn non_empty_clone(value: &Option<String>) -> Option<String> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 fn normalize_mac(mac: &str) -> String {
     mac.trim().to_uppercase()
 }
@@ -152,5 +286,64 @@ fn cidr_or_ip_contains(cidr_or_ip: &str, target_ip: &str) -> bool {
         net_u32 == tgt_u32
     } else {
         cidr_or_ip == target_ip
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{enrich_entries, infer_label_for_mac, WhitelistEntry};
+    use crate::discovery::{ConnectedDevice, DeviceStatus, OpenPort};
+
+    fn device() -> ConnectedDevice {
+        ConnectedDevice {
+            device_id: "dev-1".into(),
+            ip: "192.168.50.103".into(),
+            mac: Some("AA:BB:CC:11:22:33".into()),
+            vendor: Some("Acme".into()),
+            hostname: Some("printer".into()),
+            os_fingerprint: Some("Linux 5.x".into()),
+            os_cpe: Vec::new(),
+            open_ports: vec![OpenPort {
+                port: 22,
+                protocol: "tcp".into(),
+                service: Some("ssh".into()),
+                product_version: Some("OpenSSH".into()),
+                cpe: Vec::new(),
+                scripts: Vec::new(),
+            }],
+            host_scripts: Vec::new(),
+            status: DeviceStatus::Approved,
+            first_seen: "2026-06-12T00:00:00Z".into(),
+            last_seen: "2026-06-12T01:00:00Z".into(),
+            vuln_triaged: false,
+        }
+    }
+
+    #[test]
+    fn enrich_entries_attaches_current_inventory_snapshot() {
+        let entries = vec![WhitelistEntry {
+            mac: "AA:BB:CC:11:22:33".into(),
+            label: Some("Printer".into()),
+            expected_os: None,
+            expected_ports: Vec::new(),
+            expected_ips: Vec::new(),
+        }];
+
+        let views = enrich_entries(&entries, &[device()]);
+
+        assert!(views[0].inventory_match);
+        assert_eq!(views[0].current_devices[0].ip, "192.168.50.103");
+        assert_eq!(
+            views[0].current_devices[0].open_ports,
+            vec!["22/tcp ssh (OpenSSH)"]
+        );
+    }
+
+    #[test]
+    fn infer_label_prefers_inventory_vendor() {
+        assert_eq!(
+            infer_label_for_mac("AA:BB:CC:11:22:33", &[device()]),
+            Some("Acme".into())
+        );
     }
 }
