@@ -1,10 +1,11 @@
 use crate::api::{error::ApiError, state::AppState};
 use crate::discovery::whitelist::{Whitelist, WhitelistEntry};
 use crate::discovery::{
+    run_history::{self, ScanRunRecord},
     ConnectedDevice, DeviceStatus, NmapConfig, ScanIntensity, ScanSchedule, ScheduleProfile,
     ScheduledScans,
 };
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
@@ -37,6 +38,22 @@ pub async fn list_unauthorized(
         .collect();
 
     Ok(Json(filtered))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RunsQuery {
+    pub limit: Option<usize>,
+}
+
+pub async fn list_runs(
+    State(s): State<Arc<AppState>>,
+    Query(query): Query<RunsQuery>,
+) -> Result<Json<Vec<ScanRunRecord>>, ApiError> {
+    let path = run_history::history_path(Path::new(&s.discovery_state_dir));
+    let limit = query.limit.unwrap_or(50).min(500);
+    let runs = run_history::list_recent(&path, Some(limit))
+        .map_err(|e| ApiError::Internal(format!("run history read: {}", e)))?;
+    Ok(Json(runs))
 }
 
 #[derive(Debug, Serialize)]

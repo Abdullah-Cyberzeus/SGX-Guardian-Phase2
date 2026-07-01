@@ -107,6 +107,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(handlers::discovery::list_unauthorized),
         )
         .route(
+            "/api/v1/discovery/runs",
+            get(handlers::discovery::list_runs),
+        )
+        .route(
             "/api/v1/discovery/scan",
             post(handlers::discovery::scan_now),
         )

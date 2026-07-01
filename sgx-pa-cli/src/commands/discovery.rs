@@ -4,6 +4,7 @@ use sgx_guardian_client::discovery::{
     inventory::Inventory,
     nmap_parser,
     nmap_runner::NmapRunner,
+    run_history::{self, ScanRunSource},
     whitelist::{Whitelist, WhitelistEntry},
     ConnectedDevice, DeviceStatus, NmapConfig, ScanIntensity, ScanSchedule, ScheduledScans,
 };
@@ -27,6 +28,9 @@ pub enum DiscoveryCommand {
 
     /// Show unauthorized or drifted devices only
     Unauthorized,
+
+    /// Show discovery scan run history.
+    Runs(RunsArgs),
 
     /// Add a MAC to the whitelist.
     Approve(ApproveArgs),
@@ -58,6 +62,13 @@ pub struct ApproveArgs {
     /// Optional label for operator readability
     #[arg(long)]
     pub label: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RunsArgs {
+    /// Maximum number of recent scan runs to print.
+    #[arg(long, default_value_t = 20)]
+    pub limit: usize,
 }
 
 #[derive(Debug, Args)]
@@ -119,6 +130,7 @@ pub fn run(args: DiscoveryArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
         DiscoveryCommand::List => list_devices(false)?,
         DiscoveryCommand::Unauthorized => list_devices(true)?,
+        DiscoveryCommand::Runs(args) => list_runs(args)?,
         DiscoveryCommand::Approve(approve_args) => approve_mac(approve_args)?,
         DiscoveryCommand::ScheduleShow => schedule_show()?,
         DiscoveryCommand::ScheduleSet(set_args) => schedule_set(set_args)?,
@@ -129,6 +141,7 @@ pub fn run(args: DiscoveryArgs) -> Result<(), Box<dyn std::error::Error>> {
 
 async fn scan_now(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
     ensure_dirs()?;
+    let started_at = chrono::Utc::now();
 
     let cfg = NmapConfig::load(Path::new(CONFIG_PATH)).unwrap_or_default();
     let intensity = match args.intensity.as_deref() {
@@ -143,16 +156,47 @@ async fn scan_now(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
         None => cfg.resolved_target_cidr(),
     };
 
-    let xml = NmapRunner::run_with_intensity(&cfg, &target, intensity).await?;
+    let xml = match NmapRunner::run_with_intensity(&cfg, &target, intensity).await {
+        Ok(xml) => xml,
+        Err(err) => {
+            append_manual_history(
+                started_at,
+                chrono::Utc::now(),
+                intensity,
+                target.clone(),
+                false,
+                Some(err.to_string()),
+                None,
+                None,
+            );
+            return Err(err.into());
+        }
+    };
 
     // CLI scan also persists raw XML so manual runs aren't invisible.
     let state_dir = std::path::Path::new(INVENTORY_PATH)
         .parent()
         .unwrap_or_else(|| std::path::Path::new("/var/lib/sgx-guardian/discovery"));
-    let _ = sgx_guardian_client::discovery::raw_store::RawXmlStore::persist(state_dir, &xml);
+    let raw_xml_path =
+        sgx_guardian_client::discovery::raw_store::RawXmlStore::persist(state_dir, &xml).ok();
 
     let whitelist = Whitelist::load(Path::new(WHITELIST_PATH)).unwrap_or_default();
-    let devices = nmap_parser::parse(&xml)?;
+    let devices = match nmap_parser::parse(&xml) {
+        Ok(devices) => devices,
+        Err(err) => {
+            append_manual_history(
+                started_at,
+                chrono::Utc::now(),
+                intensity,
+                target.clone(),
+                false,
+                Some(err.to_string()),
+                raw_xml_path,
+                None,
+            );
+            return Err(err.into());
+        }
+    };
     let semantics = cfg.scan_semantics_for_intensity(&target, intensity);
 
     let inv_path = PathBuf::from(INVENTORY_PATH);
@@ -163,7 +207,23 @@ async fn scan_now(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
             whitelist.classify(device);
         }
     }
+    let counts = run_history::status_counts(&inventory);
     inventory.save_atomic(&inv_path)?;
+    let record = run_history::build_record(
+        started_at,
+        chrono::Utc::now(),
+        ScanRunSource::Manual,
+        None,
+        intensity,
+        target.clone(),
+        true,
+        None,
+        Some(&delta),
+        counts,
+        raw_xml_path,
+        &inv_path,
+    );
+    append_history_record(&record);
 
     println!("✅ Discovery scan completed");
     println!("target: {}", target);
@@ -171,6 +231,21 @@ async fn scan_now(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
     println!("new_devices: {}", delta.newly_seen.len());
     println!("updated_devices: {}", delta.updated.len());
     println!("inventory: {}", INVENTORY_PATH);
+
+    Ok(())
+}
+
+fn list_runs(args: RunsArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let path = run_history_path();
+    let runs = run_history::list_recent(&path, Some(args.limit))?;
+    if runs.is_empty() {
+        println!("No discovery scan history found.");
+        return Ok(());
+    }
+
+    for run in runs {
+        println!("{}", serde_json::to_string(&run)?);
+    }
 
     Ok(())
 }
@@ -451,6 +526,51 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn std::error::Err
     }
 
     Ok(())
+}
+
+fn append_manual_history(
+    started_at: chrono::DateTime<chrono::Utc>,
+    completed_at: chrono::DateTime<chrono::Utc>,
+    intensity: ScanIntensity,
+    target: String,
+    success: bool,
+    error: Option<String>,
+    raw_xml_path: Option<PathBuf>,
+    delta: Option<&sgx_guardian_client::discovery::inventory::InventoryDelta>,
+) {
+    let inv_path = PathBuf::from(INVENTORY_PATH);
+    let counts = Inventory::load(&inv_path)
+        .map(|inventory| run_history::status_counts(&inventory))
+        .unwrap_or_default();
+    let record = run_history::build_record(
+        started_at,
+        completed_at,
+        ScanRunSource::Manual,
+        None,
+        intensity,
+        target,
+        success,
+        error,
+        delta,
+        counts,
+        raw_xml_path,
+        &inv_path,
+    );
+    append_history_record(&record);
+}
+
+fn append_history_record(record: &run_history::ScanRunRecord) {
+    let path = run_history_path();
+    if let Err(err) = run_history::append_record(&path, record) {
+        eprintln!("⚠️ discovery run history persist failed: {}", err);
+    }
+}
+
+fn run_history_path() -> PathBuf {
+    PathBuf::from(INVENTORY_PATH)
+        .parent()
+        .map(run_history::history_path)
+        .unwrap_or_else(|| PathBuf::from("/var/lib/sgx-guardian/discovery/runs.jsonl"))
 }
 
 fn parse_intensity(value: &str) -> Result<ScanIntensity, Box<dyn std::error::Error>> {

@@ -278,6 +278,7 @@ mod tests {
         assert!(Cli::try_parse_from(["sgx-pa-cli", "discovery", "schedule-show"]).is_ok());
         assert!(Cli::try_parse_from(["sgx-pa-cli", "discovery", "list"]).is_ok());
         assert!(Cli::try_parse_from(["sgx-pa-cli", "discovery", "unauthorized"]).is_ok());
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "discovery", "runs", "--limit", "10"]).is_ok());
         assert!(Cli::try_parse_from([
             "sgx-pa-cli",
             "discovery",

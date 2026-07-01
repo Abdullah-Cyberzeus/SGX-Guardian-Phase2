@@ -78,6 +78,7 @@
 | 67 | GET | `/discovery/inventory/list` | Alias of discovery inventory list |
 | 68 | GET | `/discovery/devices/unauthorized` | Unauthorized or drifted discovered devices |
 | 69 | GET | `/discovery/unauthorized` | Alias of unauthorized discovery list |
+| 69a | GET | `/discovery/runs` | List persisted NMAP discovery scan run history |
 | 70 | POST | `/discovery/scan` | Run discovery scan using default ad-hoc intensity |
 | 71 | POST | `/discovery/scan/stealth` | Run one stealth NMAP discovery scan |
 | 72 | POST | `/discovery/scan/standard` | Run one standard NMAP discovery scan |
@@ -99,17 +100,7 @@
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/vc/files/own` | List local own-VC file metadata |
-| GET | `/vc/files/peers` | List peer-VC file metadata |
-| GET | `/vc/files/issued/{vc_id}` | Fetch the stored issued VC JSON document |
-| GET | `/vc/files/own/{vc_id}` | Fetch the stored own VC JSON document |
-| GET | `/vc/files/peer/{did}` | Fetch the stored peer VC JSON document by DID |
-| GET | `/vc/status-list` | Fetch the stored VC status-list credential JSON |
-| GET | `/vc/status-list-index` | Fetch the stored status-list next-index JSON |
-| GET | `/vc/summary` | Return aggregate VC cache and lifecycle counts |
-| GET | `/vc/audit` | Return VC audit-log entries with optional filtering |
-| GET | `/vid/show` | Show the single current nonce-bound VirtualID and its input digests |
-| GET | `/vid/peers` | List cached peer VirtualIDs and last observed rotation reasons |
+| GET | `/discovery/runs` | List persisted NMAP discovery scan run history |
 | POST | `/crl/revoke` | Issue a CRL revocation entry for a DID |
 | GET | `/crl/list` | Return all CRL entries |
 | GET | `/crl/entry` | Return one CRL entry by `id` |
@@ -2271,6 +2262,48 @@ Peer DID resolution response (`?did=did:guardian:...`):
   - Executes `sgx-pa-cli discovery scan --intensity aggressive`
 - Error responses:
   - `500 INTERNAL_SERVER_ERROR`: `sgx-pa-cli` not found or command spawn failed
+
+### 3.69a GET `/discovery/runs`
+
+- Request:
+  - Query params:
+    - `limit` (optional, default `50`, max `500`)
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+[
+  {
+    "run_id": "20260701T050842Z-standard-550e8400-e29b-41d4-a716-446655440000",
+    "started_at": "2026-07-01T05:08:42Z",
+    "completed_at": "2026-07-01T05:09:12Z",
+    "duration_ms": 30000,
+    "source": "manual",
+    "schedule_kind": null,
+    "intensity": "standard",
+    "target": "192.168.50.0/24",
+    "success": true,
+    "error": null,
+    "new_devices": 1,
+    "updated_devices": 27,
+    "marked_stale": 0,
+    "total_devices": 28,
+    "approved": 2,
+    "unauthorized": 26,
+    "drifted": 0,
+    "stale": 0,
+    "raw_xml_path": "/var/lib/sgx-guardian/discovery/raw/1782911322.xml",
+    "inventory_path": "/var/lib/sgx-guardian/discovery/inventory.json"
+  }
+]
+```
+
+- Notes:
+  - Reads `/var/lib/sgx-guardian/discovery/runs.jsonl`
+  - Returns newest scan runs first
+  - History records are written by manual scan commands and scheduled discovery scans
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: run history read/parse failure
 
 ### 3.70 POST `/discovery/approve`
 
