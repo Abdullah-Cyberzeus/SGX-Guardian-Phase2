@@ -11,7 +11,7 @@ serde_json = "1.0"
 p256 = { version = "0.13", features = ["ecdsa"] }
 sha2 = "0.10"
 rand_core = "0.6"
-base64 = { version = "0.21", features = ["alloc"] }
+base64 = { version = "0.22", features = ["alloc"] }
 anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 comfy-table = "7.1"

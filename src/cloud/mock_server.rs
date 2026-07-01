@@ -1,16 +1,10 @@
+use axum::{routing::post, Json, Router};
 use serde_json::Value;
-use warp::Filter;
+use std::net::SocketAddr;
+use tokio::net::TcpListener;
 
 pub async fn run_mock_cloud(addr: ([u8; 4], u16)) {
-    let route = warp::post()
-        .and(warp::path("uplink"))
-        .and(warp::body::json())
-        .map(|body: Value| {
-            println!("[MOCK CLOUD] Received uplink payload:\n{}", body);
-            warp::reply::json(&serde_json::json!({
-                "status": "ok"
-            }))
-        });
+    let app = Router::new().route("/uplink", post(handle_uplink));
 
     println!(
         "[MOCK CLOUD] Listening on http://{}.{}",
@@ -22,5 +16,18 @@ pub async fn run_mock_cloud(addr: ([u8; 4], u16)) {
         addr.1
     );
 
-    warp::serve(route).run(addr).await;
+    let listener = TcpListener::bind(SocketAddr::from(addr))
+        .await
+        .expect("bind mock cloud listener");
+
+    axum::serve(listener, app)
+        .await
+        .expect("mock cloud server failed");
+}
+
+async fn handle_uplink(Json(body): Json<Value>) -> Json<Value> {
+    println!("[MOCK CLOUD] Received uplink payload:\n{}", body);
+    Json(serde_json::json!({
+        "status": "ok"
+    }))
 }

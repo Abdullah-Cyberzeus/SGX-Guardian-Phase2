@@ -193,7 +193,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/vc/renew", post(handlers::vc::renew))
         .route("/api/v1/vc/verify", post(handlers::vc::verify))
         .route("/api/v1/vc/show", get(handlers::vc::show))
-        .route("/api/v1/vc/status/:vc_id", get(handlers::vc::status_by_id))
+        .route("/api/v1/vc/status/{vc_id}", get(handlers::vc::status_by_id))
         .route(
             "/api/v1/vc/status-list/pull",
             post(handlers::vc::pull_status),
@@ -204,11 +204,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/vid/show", get(handlers::vid::show))
         .route("/api/v1/vid/peers", get(handlers::vid::peers))
         .route(
-            "/api/v1/vc/files/issued/:vc_id",
+            "/api/v1/vc/files/issued/{vc_id}",
             get(handlers::vc::file_issued),
         )
-        .route("/api/v1/vc/files/own/:vc_id", get(handlers::vc::file_own))
-        .route("/api/v1/vc/files/peer/:did", get(handlers::vc::file_peer))
+        .route("/api/v1/vc/files/own/{vc_id}", get(handlers::vc::file_own))
+        .route("/api/v1/vc/files/peer/{did}", get(handlers::vc::file_peer))
         .route("/api/v1/vc/status-list", get(handlers::vc::status_list_get))
         .route(
             "/api/v1/vc/status-list-index",
