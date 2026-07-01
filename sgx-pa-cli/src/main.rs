@@ -4,7 +4,7 @@
 mod commands;
 mod config;
 use clap::{Parser, Subcommand};
-use commands::{logs::LogsArgs, sign::SignArgs};
+use commands::{audit_logs::AuditLogsArgs, logs::LogsArgs, sign::SignArgs};
 /// Top-level CLI definition for the SGX Policy Authority tool.
 /// Parses subcommands for key generation, policy signing, logs,
 /// peer inspection, and attestation status.
@@ -28,6 +28,8 @@ enum Commands {
     BootStatus,
     /// Show recent logs for a specific node
     Logs(LogsArgs),
+    /// Show recent secure audit logs for a specific node
+    AuditLogs(AuditLogsArgs),
     /// Generate a new ECDSA-P256 keypair
     Keygen,
     /// Sign a UEP policy file (YAML or JSON) — laptop/legacy flow
@@ -106,6 +108,7 @@ fn main() {
         Commands::Status(args) => commands::status::run(args),
         Commands::BootStatus => commands::boot_status::run(),
         Commands::Logs(args) => commands::logs::run(args),
+        Commands::AuditLogs(args) => commands::audit_logs::run(args),
         Commands::Keygen => commands::keygen::execute(),
         Commands::Sign(args) => {
             if !commands::sign::execute(args) {
@@ -210,6 +213,20 @@ fn main() {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn test_audit_logs_commands_parse() {
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "audit-logs", "--tail", "5"]).is_ok());
+        assert!(Cli::try_parse_from([
+            "sgx-pa-cli",
+            "audit-logs",
+            "--category",
+            "Network",
+            "--severity",
+            "error"
+        ])
+        .is_ok());
+    }
 
     #[test]
     fn test_relay_commands_parse() {

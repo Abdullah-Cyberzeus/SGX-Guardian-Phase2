@@ -1,10 +1,10 @@
+use serde_json::json;
 use sgx_guardian_client::api::build_router;
 use sgx_guardian_client::api::state::AppState;
-use std::sync::Arc;
 use std::fs::File;
 use std::io::Write;
+use std::sync::Arc;
 use tempfile::TempDir;
-use serde_json::json;
 
 #[tokio::test]
 async fn test_audit_logs_api() {
@@ -52,11 +52,11 @@ async fn test_audit_logs_api() {
             },
             "hash": "hash3",
             "previous_hash": "hash2"
-        })
+        }),
     ];
 
     for entry in entries {
-        writeln!(file, "{}", entry.to_string()).expect("write log line");
+        writeln!(file, "{}", entry).expect("write log line");
     }
     drop(file);
 
@@ -85,9 +85,11 @@ async fn test_audit_logs_api() {
         .await
         .expect("bind listener");
     let addr = listener.local_addr().expect("local addr");
-    
+
     tokio::spawn(async move {
-        axum::serve(listener, app.into_make_service()).await.unwrap();
+        axum::serve(listener, app.into_make_service())
+            .await
+            .unwrap();
     });
 
     let client = reqwest::Client::new();
@@ -95,7 +97,7 @@ async fn test_audit_logs_api() {
 
     // 5. Test basic query (returns all in reverse chronological order)
     let resp: serde_json::Value = client
-        .get(&format!("{}/api/v1/audit/logs", base_url))
+        .get(format!("{}/api/v1/audit/logs", base_url))
         .send()
         .await
         .expect("send request")
@@ -110,7 +112,7 @@ async fn test_audit_logs_api() {
 
     // 6. Test category filtering
     let resp: serde_json::Value = client
-        .get(&format!("{}/api/v1/audit/logs?category=network", base_url))
+        .get(format!("{}/api/v1/audit/logs?category=network", base_url))
         .send()
         .await
         .expect("send request")
@@ -122,7 +124,7 @@ async fn test_audit_logs_api() {
 
     // 7. Test severity filtering
     let resp: serde_json::Value = client
-        .get(&format!("{}/api/v1/audit/logs?severity=warn", base_url))
+        .get(format!("{}/api/v1/audit/logs?severity=warn", base_url))
         .send()
         .await
         .expect("send request")
@@ -134,7 +136,7 @@ async fn test_audit_logs_api() {
 
     // 8. Test search filtering
     let resp: serde_json::Value = client
-        .get(&format!("{}/api/v1/audit/logs?search=dkp", base_url))
+        .get(format!("{}/api/v1/audit/logs?search=dkp", base_url))
         .send()
         .await
         .expect("send request")
@@ -142,11 +144,14 @@ async fn test_audit_logs_api() {
         .await
         .expect("parse json");
     assert_eq!(resp["count"], 1);
-    assert!(resp["items"][0]["event"]["message"].as_str().unwrap().contains("DKP"));
+    assert!(resp["items"][0]["event"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("DKP"));
 
     // 9. Test tail filtering
     let resp: serde_json::Value = client
-        .get(&format!("{}/api/v1/audit/logs?tail=2", base_url))
+        .get(format!("{}/api/v1/audit/logs?tail=2", base_url))
         .send()
         .await
         .expect("send request")

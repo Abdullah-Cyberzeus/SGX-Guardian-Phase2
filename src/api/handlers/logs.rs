@@ -172,7 +172,10 @@ pub struct AuditLogsResponse {
     pub items: Vec<AuditLogEntry>,
 }
 
-fn resolve_audit_log_path_for_node(node: &str, state: &AppState) -> Result<std::path::PathBuf, ApiError> {
+fn resolve_audit_log_path_for_node(
+    node: &str,
+    state: &AppState,
+) -> Result<std::path::PathBuf, ApiError> {
     if let Ok(path) = std::env::var("SGX_GUARDIAN_AUDIT_LOG_PATH") {
         let explicit = std::path::PathBuf::from(path);
         if explicit.exists() {
@@ -203,7 +206,10 @@ fn resolve_audit_log_path_for_node(node: &str, state: &AppState) -> Result<std::
         }
     }
 
-    Err(ApiError::NotFound(format!("no audit log file found for node {}", node)))
+    Err(ApiError::NotFound(format!(
+        "no audit log file found for node {}",
+        node
+    )))
 }
 
 fn category_matches(category_enum: &crate::audit::event::AuditCategory, query: &str) -> bool {
@@ -219,8 +225,12 @@ fn severity_matches(severity_enum: &crate::audit::event::AuditSeverity, query: &
     let query_lower = query.to_lowercase();
     match severity_enum {
         crate::audit::event::AuditSeverity::Info => query_lower == "info",
-        crate::audit::event::AuditSeverity::Warning => query_lower == "warn" || query_lower == "warning",
-        crate::audit::event::AuditSeverity::Critical => query_lower == "error" || query_lower == "critical",
+        crate::audit::event::AuditSeverity::Warning => {
+            query_lower == "warn" || query_lower == "warning"
+        }
+        crate::audit::event::AuditSeverity::Critical => {
+            query_lower == "error" || query_lower == "critical"
+        }
     }
 }
 
@@ -278,4 +288,3 @@ pub async fn audit_logs(
         items: all_entries,
     }))
 }
-

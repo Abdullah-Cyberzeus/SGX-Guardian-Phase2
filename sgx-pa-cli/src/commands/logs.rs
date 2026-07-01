@@ -1,4 +1,6 @@
 use clap::Args;
+use comfy_table::{Attribute, Cell, Color, Table};
+use serde_json::Value;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
@@ -60,11 +62,67 @@ pub fn run(args: LogsArgs) {
     } else {
         0
     };
-    println!(
-        "Showing last {} log entries for {}:\n",
-        args.tail, args.node
-    );
+
+    let mut table = Table::new();
+    table.set_header(vec![
+        Cell::new("Time").add_attribute(Attribute::Bold),
+        Cell::new("Level").add_attribute(Attribute::Bold),
+        Cell::new("Node").add_attribute(Attribute::Bold),
+        Cell::new("Message").add_attribute(Attribute::Bold),
+    ]);
+
     for line in &lines[start..] {
-        println!("{}", line);
+        if let Ok(v) = serde_json::from_str::<Value>(line) {
+            let time = v
+                .get("time")
+                .and_then(|x| x.as_str())
+                .or_else(|| v.get("timestamp").and_then(|x| x.as_str()))
+                .unwrap_or("")
+                .chars()
+                .take(19) // Truncate fractional seconds
+                .collect::<String>();
+
+            let raw_level = v.get("level").and_then(|x| x.as_str()).unwrap_or("INFO");
+            let mut level_cell = Cell::new(raw_level);
+            match raw_level.to_uppercase().as_str() {
+                "ERROR" | "CRITICAL" => {
+                    level_cell = level_cell.fg(Color::Red).add_attribute(Attribute::Bold);
+                }
+                "WARN" | "WARNING" => {
+                    level_cell = level_cell.fg(Color::Yellow).add_attribute(Attribute::Bold);
+                }
+                "INFO" => {
+                    level_cell = level_cell.fg(Color::Green);
+                }
+                _ => {}
+            }
+
+            let node = v.get("node").and_then(|x| x.as_str()).unwrap_or(&args.node);
+
+            let message = v
+                .get("fields")
+                .and_then(|f| f.get("message"))
+                .and_then(|x| x.as_str())
+                .or_else(|| v.get("event").and_then(|x| x.as_str()))
+                .or_else(|| v.get("message").and_then(|x| x.as_str()))
+                .or_else(|| v.get("error").and_then(|x| x.as_str()))
+                .unwrap_or(line);
+
+            table.add_row(vec![
+                Cell::new(time),
+                level_cell,
+                Cell::new(node),
+                Cell::new(message),
+            ]);
+        } else {
+            table.add_row(vec![
+                Cell::new("—"),
+                Cell::new("RAW").fg(Color::DarkCyan),
+                Cell::new(&args.node),
+                Cell::new(line),
+            ]);
+        }
     }
+
+    println!("{}", table);
 }
