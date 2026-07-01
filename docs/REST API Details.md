@@ -104,6 +104,7 @@
 | GET | `/vc/audit` | Return VC audit-log entries with optional filtering |
 | GET | `/vid/show` | Show the single current nonce-bound VirtualID and its input digests |
 | GET | `/vid/peers` | List cached peer VirtualIDs and last observed rotation reasons |
+| GET | `/audit/logs` | Fetch secure tamper-evident audit logs with filters |
 ---
 
 ## 2. Standard Error Envelope
@@ -2422,3 +2423,44 @@ Peer DID resolution response (`?did=did:guardian:...`):
   }
 }
 ```
+
+### 3.75 GET `/audit/logs`
+
+- Request:
+  - Query params:
+    - `node` (string, optional): Node ID to query (e.g. `nodeA`, `nodeB`). Defaults to the local node.
+    - `tail` (integer, optional): Number of recent log lines to fetch from the end of the file.
+    - `category` (string, optional): Filter by event category (e.g. `Node`, `Network`, `Tls`, `Attestation`). Case-insensitive.
+    - `severity` (string, optional): Filter by severity level (`info`, `warn` / `warning`, `error` / `critical`, or `all` to disable filtering). Case-insensitive.
+    - `search` (string, optional): Search keyword to filter messages containing this string. Case-insensitive.
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "count": 1,
+  "items": [
+    {
+      "event": {
+        "timestamp": 1782890986,
+        "node_id": "nodeA",
+        "category": "Network",
+        "severity": "Info",
+        "action": "Started",
+        "message": "Outbound TLS ping attempt to 127.0.0.1:50053"
+      },
+      "hash": "15bf4c872ab11b791f441e30048be704769c94fd2f635d18f03312d7ea768063",
+      "previous_hash": "ab349eda70ce23a12db7293365bccf6f4adcfd3649fb0ece1e23b30425642777"
+    }
+  ]
+}
+```
+
+- Notes:
+  - Reads secure tamper-evident audit logs from `/var/log/sgx-guardian/audit-{node}.log` (production) or `logs/audit-{node}.log` (development).
+  - Returns entries in reverse chronological order (newest first).
+- Error responses:
+  - `404 NOT_FOUND`: no audit log file found for node `{node}`
+  - `500 INTERNAL_SERVER_ERROR`: failed to open, read, or parse audit log file
+
