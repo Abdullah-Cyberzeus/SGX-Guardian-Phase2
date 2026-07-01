@@ -266,17 +266,26 @@ Field notes:
 ### 3.6 GET `/attestation`
 
 - Request:
-  - Query params: none
+  - Query params:
+    - `peer_did` (optional, string): Filter by peer DID.
+    - `result` (optional, string: `success`, `failed`): Filter by attestation status.
   - Body: none
 - Success response (`200 OK`):
 
 ```json
-{
-  "peerId": "nodeB",
-  "policyDigest": "sha256:...",
-  "result": "PASS",
-  "timestamp": "2026-05-21T09:58:00Z"
-}
+[
+  {
+    "peerId": "192.168.134.129:50051",
+    "policyDigest": "10b2dc837e9a2a766d57edc1be6676b79f24828d5745ef0fb9930306766e8a26",
+    "result": "success",
+    "timestamp": "2026-07-01T15:30:46.123456+00:00",
+    "peerDid": "did:guardian:nodeB",
+    "virtualId": "vid:94f4a30e8c899c72e61a6c11db84e9d564fa78cb103f6ebc9a3d4632c02741ab",
+    "dkpPubkeySha256B16": "a3b9d07fbc16b8e3a241ee83d9876251b5c9288f61c3608104dfc8091a18274d",
+    "pcrCompositeDigest": "a9deb3227421cb1b3c990264b3ef81c81ef40d89280d84a7e937dbeab10372df",
+    "count": 5
+  }
+]
 ```
 
 - Error responses:

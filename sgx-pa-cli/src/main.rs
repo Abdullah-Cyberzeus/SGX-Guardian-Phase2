@@ -44,7 +44,7 @@ enum Commands {
     /// List all discovered and attested peers
     Peers,
     /// Show the last attestation result
-    Attestation,
+    Attestation(commands::attestation::AttestationArgs),
     /// Generate a signed attestation quote
     AttestGenerate(commands::attest_quote::GenerateQuoteArgs),
     /// Verify a signed attestation quote
@@ -131,8 +131,8 @@ fn main() {
                 eprintln!("Error: {}", e);
             }
         }
-        Commands::Attestation => {
-            if let Err(e) = commands::attestation::run() {
+        Commands::Attestation(args) => {
+            if let Err(e) = commands::attestation::run(args) {
                 eprintln!("Error: {}", e);
             }
         }
@@ -223,6 +223,15 @@ mod tests {
     fn test_audit_logs_commands_parse() {
         assert!(Cli::try_parse_from(["sgx-pa-cli", "audit-logs", "--tail", "5"]).is_ok());
         assert!(Cli::try_parse_from(["sgx-pa-cli", "audit-verify", "--node", "nodeA"]).is_ok());
+        assert!(Cli::try_parse_from([
+            "sgx-pa-cli",
+            "attestation",
+            "--peer-did",
+            "did:test",
+            "--result",
+            "success"
+        ])
+        .is_ok());
         assert!(Cli::try_parse_from([
             "sgx-pa-cli",
             "audit-logs",
