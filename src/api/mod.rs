@@ -41,6 +41,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/peers", get(handlers::peers::list))
         .route("/api/v1/attestation", get(handlers::attestation::last))
         .route("/api/v1/logs", get(handlers::logs::tail))
+        .route("/api/v1/audit/logs", get(handlers::logs::audit_logs))
         .route("/api/v1/dkp/status", get(handlers::dkp::status))
         .route("/api/v1/pcr/status", get(handlers::pcr::status))
         .route("/api/v1/did/status", get(handlers::did::status))
