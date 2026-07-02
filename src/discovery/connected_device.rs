@@ -41,6 +41,11 @@ pub struct ConnectedDevice {
     /// Set to `true` after the AI / vuln pipeline has triaged this device.
     #[serde(default)]
     pub vuln_triaged: bool,
+
+    /// Intensity of the last scan that updated this device's ports/OS data.
+    /// One of "stealth" | "standard" | "aggressive". `None` for legacy records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_scan_intensity: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

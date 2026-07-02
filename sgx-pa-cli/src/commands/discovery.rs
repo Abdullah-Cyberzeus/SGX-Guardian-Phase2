@@ -157,9 +157,11 @@ async fn scan_now(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     let inv_path = PathBuf::from(INVENTORY_PATH);
     let mut inventory = Inventory::load(&inv_path).unwrap_or_default();
+    let intensity_label = intensity_name(intensity);
     let delta = inventory.merge(devices, semantics);
     for id in delta.updated.iter().chain(delta.newly_seen.iter()) {
         if let Some(device) = inventory.by_id.get_mut(id) {
+            device.last_scan_intensity = Some(intensity_label.to_string());
             whitelist.classify(device);
         }
     }
@@ -564,6 +566,7 @@ mod tests {
             first_seen: "2026-06-01T00:00:00Z".to_string(),
             last_seen: "2026-06-09T00:00:00Z".to_string(),
             vuln_triaged: false,
+            last_scan_intensity: None,
         }
     }
 

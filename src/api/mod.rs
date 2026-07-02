@@ -86,8 +86,20 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(handlers::relay::lighthouse_toggle),
         )
         .route(
+            "/api/v1/discovery/summary",
+            get(handlers::discovery::get_summary),
+        )
+        .route(
+            "/api/v1/discovery/runs",
+            get(handlers::discovery::get_runs),
+        )
+        .route(
             "/api/v1/discovery/devices",
             get(handlers::discovery::list_devices),
+        )
+        .route(
+            "/api/v1/discovery/devices/{device_id}",
+            get(handlers::discovery::get_device),
         )
         .route(
             "/api/v1/discovery/list",
