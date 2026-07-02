@@ -2,7 +2,8 @@ use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::threat::{
     ai_bridge, blocker::Blocker, config::SuricataConfig, eve_tailer::EveTailer,
-    inventory::AlertInventory, rule_manager::RuleManager,
+    inventory::{AlertInventory, IngestOutcome},
+    rule_manager::RuleManager,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -130,9 +131,15 @@ impl ThreatService {
                         }
 
                         let mut inventory = self.inventory.lock().await;
-                        if inventory.ingest(alert.clone()) {
-                            dirty = true;
-                            ai_bridge::forward_to_ai(&self.node_id, &alert);
+                        match inventory.ingest(alert.clone()) {
+                            IngestOutcome::Inserted => {
+                                dirty = true;
+                                ai_bridge::forward_to_ai(&self.node_id, &alert);
+                            }
+                            IngestOutcome::Updated => {
+                                dirty = true;
+                            }
+                            IngestOutcome::Duplicate => {}
                         }
                     }
                     _ = persist_tick.tick() => {

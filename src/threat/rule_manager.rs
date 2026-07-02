@@ -38,9 +38,12 @@ impl RuleManager {
             .map_err(map_spawn_error)?;
 
         if !output.status.success() {
-            return Err(ThreatError::ServiceStart(
-                String::from_utf8_lossy(&output.stderr).trim().to_string(),
-            ));
+            return Err(ThreatError::ServiceStart(command_failure_detail(
+                output.status.code(),
+                &output.stdout,
+                &output.stderr,
+                "suricata-update exited without any diagnostic output",
+            )));
         }
 
         Self::validate_config("/etc/suricata/suricata.yaml").await?;
@@ -87,17 +90,51 @@ impl RuleManager {
             return Ok(());
         }
 
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let detail = stderr
-            .lines()
-            .chain(stdout.lines())
-            .take(3)
-            .collect::<Vec<_>>()
-            .join(" | ");
-
-        Err(ThreatError::BadConfig(detail))
+        Err(ThreatError::BadConfig(command_failure_detail(
+            output.status.code(),
+            &output.stdout,
+            &output.stderr,
+            "suricata config validation failed without diagnostic output",
+        )))
     }
+}
+
+fn command_failure_detail(
+    status_code: Option<i32>,
+    stdout: &[u8],
+    stderr: &[u8],
+    fallback: &str,
+) -> String {
+    let mut details = vec![match status_code {
+        Some(code) => format!("exit {}", code),
+        None => "terminated by signal".to_string(),
+    }];
+
+    let stderr = summarized_output(stderr);
+    if !stderr.is_empty() {
+        details.push(format!("stderr: {}", stderr));
+    }
+
+    let stdout = summarized_output(stdout);
+    if !stdout.is_empty() {
+        details.push(format!("stdout: {}", stdout));
+    }
+
+    if details.len() == 1 {
+        details.push(fallback.to_string());
+    }
+
+    details.join(" | ")
+}
+
+fn summarized_output(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .take(3)
+        .collect::<Vec<_>>()
+        .join(" | ")
 }
 
 fn map_spawn_error(err: std::io::Error) -> ThreatError {
@@ -105,5 +142,29 @@ fn map_spawn_error(err: std::io::Error) -> ThreatError {
         ThreatError::BinaryMissing
     } else {
         ThreatError::Io(err)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::command_failure_detail;
+
+    #[test]
+    fn command_failure_detail_includes_exit_and_streams() {
+        let detail = command_failure_detail(
+            Some(2),
+            b"line one\nline two\n",
+            b"bad config\n",
+            "fallback",
+        );
+        assert!(detail.contains("exit 2"));
+        assert!(detail.contains("stderr: bad config"));
+        assert!(detail.contains("stdout: line one | line two"));
+    }
+
+    #[test]
+    fn command_failure_detail_uses_fallback_for_blank_output() {
+        let detail = command_failure_detail(Some(1), b"", b"\n", "fallback detail");
+        assert_eq!(detail, "exit 1 | fallback detail");
     }
 }

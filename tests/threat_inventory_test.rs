@@ -1,6 +1,6 @@
 use chrono::Utc;
 use sgx_guardian_client::threat::{
-    inventory::{AlertInventory, MAX_ALERTS},
+    inventory::{AlertInventory, IngestOutcome, MAX_ALERTS},
     threat_alert::{Severity, ThreatAlert, ThreatCategory},
 };
 use tempfile::tempdir;
@@ -29,8 +29,8 @@ fn sample_alert(id_suffix: usize) -> ThreatAlert {
 fn inventory_dedups_recent_alerts() {
     let mut inventory = AlertInventory::default();
     let alert = sample_alert(1);
-    assert!(inventory.ingest(alert.clone()));
-    assert!(!inventory.ingest(alert));
+    assert_eq!(inventory.ingest(alert.clone()), IngestOutcome::Inserted);
+    assert_eq!(inventory.ingest(alert), IngestOutcome::Duplicate);
     assert_eq!(inventory.snapshot().len(), 1);
 }
 
@@ -38,7 +38,7 @@ fn inventory_dedups_recent_alerts() {
 fn inventory_evicts_when_ring_is_full() {
     let mut inventory = AlertInventory::default();
     for idx in 0..(MAX_ALERTS + 5) {
-        assert!(inventory.ingest(sample_alert(idx)));
+        assert_eq!(inventory.ingest(sample_alert(idx)), IngestOutcome::Inserted);
     }
     let snapshot = inventory.snapshot();
     assert_eq!(snapshot.len(), MAX_ALERTS);
@@ -48,8 +48,8 @@ fn inventory_evicts_when_ring_is_full() {
 #[test]
 fn inventory_save_atomic_round_trip() {
     let mut inventory = AlertInventory::default();
-    inventory.ingest(sample_alert(10));
-    inventory.ingest(sample_alert(11));
+    assert_eq!(inventory.ingest(sample_alert(10)), IngestOutcome::Inserted);
+    assert_eq!(inventory.ingest(sample_alert(11)), IngestOutcome::Inserted);
 
     let dir = tempdir().expect("tempdir");
     let path = dir.path().join("alerts.jsonl");
@@ -60,4 +60,23 @@ fn inventory_save_atomic_round_trip() {
     assert_eq!(snapshot.len(), 2);
     assert_eq!(snapshot[0].alert_id, "alert-10");
     assert_eq!(snapshot[1].alert_id, "alert-11");
+}
+
+#[test]
+fn inventory_updates_recent_alert_when_block_state_changes() {
+    let mut inventory = AlertInventory::default();
+    let mut alert = sample_alert(7);
+    assert_eq!(inventory.ingest(alert.clone()), IngestOutcome::Inserted);
+
+    alert.blocked = true;
+    alert.severity = Severity::Critical;
+    alert.category = ThreatCategory::Malware;
+
+    assert_eq!(inventory.ingest(alert), IngestOutcome::Updated);
+
+    let snapshot = inventory.snapshot();
+    assert_eq!(snapshot.len(), 1);
+    assert!(snapshot[0].blocked);
+    assert_eq!(snapshot[0].severity, Severity::Critical);
+    assert_eq!(snapshot[0].category, ThreatCategory::Malware);
 }
