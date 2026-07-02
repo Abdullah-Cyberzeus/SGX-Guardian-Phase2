@@ -22,7 +22,13 @@ pub struct NebulaStats;
 
 impl NebulaStats {
     pub async fn fetch() -> Result<RelayStats, String> {
-        let body = reqwest::get("http://127.0.0.1:8625/metrics")
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .map_err(|e| e.to_string())?;
+
+        let body = client.get("http://127.0.0.1:8625/metrics")
+            .send()
             .await
             .map_err(|e| e.to_string())?
             .text()

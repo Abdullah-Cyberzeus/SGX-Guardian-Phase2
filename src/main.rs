@@ -1586,30 +1586,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if topology_changed {
                     match LighthouseRegistry::load(registry_sync::LIGHTHOUSE_REGISTRY_PATH) {
                         Ok(lh) => {
-                            if let Err(e) = NebulaConfig::generate_config_with_lighthouse(
+                            match NebulaConfig::generate_config_with_lighthouse(
                                 &node_for_registry_sync,
                                 &pool_for_registry_sync,
                                 &lh,
                                 &nebula_dir_for_registry_sync,
                             ) {
-                                eprintln!(
-                                "⚠️  Failed to regenerate Nebula config after registry sync: {:?}",
-                                e
-                            );
-                                continue;
-                            }
-
-                            let config_path =
-                                format!("{}/nebula.yaml", nebula_dir_for_registry_sync);
-                            if let Err(e) = NebulaDaemon::start(&config_path).await {
-                                eprintln!(
-                                "⚠️  Failed to restart Nebula after relay/lighthouse update: {}",
-                                e
-                            );
-                            } else {
-                                println!(
-                                    "🔄 Nebula reloaded after relay/lighthouse registry update"
-                                );
+                                Ok(changed) => {
+                                    if changed {
+                                        let config_path =
+                                            format!("{}/nebula.yaml", nebula_dir_for_registry_sync);
+                                        if let Err(e) = NebulaDaemon::start(&config_path).await {
+                                            eprintln!(
+                                                "⚠️  Failed to restart Nebula after relay/lighthouse update: {}",
+                                                e
+                                            );
+                                        } else {
+                                            println!(
+                                                "🔄 Nebula reloaded after relay/lighthouse registry update"
+                                            );
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "⚠️  Failed to regenerate Nebula config after registry sync: {:?}",
+                                        e
+                                    );
+                                }
                             }
                         }
                         Err(e) => {
@@ -1678,27 +1682,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     match LighthouseRegistry::load(&lh_path) {
                         Ok(lh) => {
-                            if let Err(e) = NebulaConfig::generate_config_with_lighthouse(
+                            match NebulaConfig::generate_config_with_lighthouse(
                                 &node_for_local_reload,
                                 &pool_for_local_reload,
                                 &lh,
                                 &nebula_dir_for_local_reload,
                             ) {
-                                eprintln!(
-                                "⚠️ nodeA failed to regenerate Nebula config on local registry update: {:?}",
-                                e
-                            );
-                                continue;
-                            }
-                            let config_path =
-                                format!("{}/nebula.yaml", nebula_dir_for_local_reload);
-                            if let Err(e) = NebulaDaemon::start(&config_path).await {
-                                eprintln!(
-                                "⚠️ nodeA failed to reload Nebula after local registry update: {}",
-                                e
-                            );
-                            } else {
-                                // println!("🔄 nodeA reloaded Nebula after local registry update");
+                                Ok(changed) => {
+                                    if changed {
+                                        let config_path =
+                                            format!("{}/nebula.yaml", nebula_dir_for_local_reload);
+                                        if let Err(e) = NebulaDaemon::start(&config_path).await {
+                                            eprintln!(
+                                                "⚠️ nodeA failed to reload Nebula after local registry update: {}",
+                                                e
+                                            );
+                                        } else {
+                                            println!("🔄 nodeA reloaded Nebula after local registry update");
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "⚠️ nodeA failed to regenerate Nebula config on local registry update: {:?}",
+                                        e
+                                    );
+                                }
                             }
                         }
                         Err(e) => {
