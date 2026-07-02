@@ -1125,12 +1125,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // ── Kill any stale nebula daemon from a previous run ────────────────────
-        // (Prevents "address already in use" on UDP 4242)
-        let _ = std::process::Command::new("pkill")
-            .args(["-f", "nebula -config"])
-            .output();
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        // ── Kill any stale nebula daemon from a previous run for this config ────
+        // (Prevents "address already in use" on UDP 4242 without killing other nodes)
+        let config_path = format!("{}/nebula.yaml", nebula_base_dir);
+        NebulaDaemon::kill_existing_for_config(&config_path).await;
 
         println!("\n🗺️  Resolving overlay IP and CA assignment...");
 
