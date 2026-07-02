@@ -50,20 +50,21 @@
 | 39 | POST | `/did/document/publish` | Force publish local DID Document to CA registry (maintenance/recovery endpoint) |
 | 40 | GET | `/did/document/peers` | List cached peer DID Documents |
 | 41 | GET | `/did/document/peer` | Fetch cached peer DID Document by DID |
+| 42 | GET | `/threat/alerts` | List parsed Suricata alerts from Guardian threat inventory |
+| 43 | GET | `/threat/blocks` | List currently blocked IPs from the threat blocker |
+| 44 | POST | `/threat/blocks/unblock` | Remove one IP from the active threat block list |
+| 45 | POST | `/threat/rules/update` | Trigger `suricata-update` and reload validated rules |
+| 46 | POST | `/threat/validate` | Validate Guardian threat config and Suricata YAML |
 
 ## 2. NEW Endpoints 
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/transport/lock` | Lock active transport to a specific interface |
-| POST | `/transport/unlock` | Remove manual transport lock |
-| POST | `/relay/toggle` | Enable/disable relay role for node |
-| GET | `/did/document` | Local DID Document summary |
-| GET | `/did/document/raw` | Raw local DID Document |
-| POST | `/did/document/verify` | Verify DID Document proof and replay floor |
-| POST | `/did/document/publish` | Force publish local DID Document to CA registry (maintenance/recovery endpoint and member node side only not Admin) |
-| GET | `/did/document/peers` | List cached peer DID Documents |
-| GET | `/did/document/peer` | Fetch cached peer DID Document by DID |
+| GET | `/threat/alerts` | Read recent Suricata alerts parsed from `alerts.jsonl`, with optional `limit` and `severity` filters |
+| GET | `/threat/blocks` | Return the currently blocked IP list from nftables or persisted block records |
+| POST | `/threat/blocks/unblock` | Remove a blocked IP and rebuild the `inet sgx_threat` chain |
+| POST | `/threat/rules/update` | Run `sgx-pa-cli threat rules-update` and return command output |
+| POST | `/threat/validate` | Run `sgx-pa-cli threat validate` to validate threat + Suricata configuration |
 
 ---
 
@@ -1173,5 +1174,144 @@ Field notes:
   - `400 BAD_REQUEST`: missing/empty `did` query parameter or invalid DID format
   - `404 NOT_FOUND`: peer DID Document file not found
   - `500 INTERNAL_SERVER_ERROR`: peer DID Document load failure
+
+### 3.42 GET `/threat/alerts`
+
+- Request:
+  - Query params:
+    - `limit` (optional, integer, default `500`, max `10000`)
+    - `severity` (optional, string, case-insensitive: `info`, `low`, `medium`, `high`, `critical`)
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+[
+  {
+    "alert_id": "838deb6e032238c8",
+    "timestamp": "2026-07-02T06:01:25.533459328Z",
+    "src_ip": "fe80::1d23:97c0:76be:19d9",
+    "src_port": 0,
+    "dst_ip": "ff02::16",
+    "dst_port": 0,
+    "protocol": "IPv6-ICMP",
+    "signature_id": 10000131,
+    "signature": "SGX MALWARE TEST TROJAN",
+    "category": "malware",
+    "severity": "critical",
+    "rev": 1,
+    "gid": 1,
+    "event_type": "alert",
+    "blocked": false
+  }
+]
+```
+
+- Notes:
+  - Reads newline-delimited JSON alerts from `alerts.jsonl` in `threat_state_dir`.
+  - Returns the most recent matching alerts when `limit` is smaller than the stored inventory.
+  - `category` values are snake_case enum strings such as `malware`, `exploit`, `policy_violation`, `reconnaissance`, `anomaly`, `other`.
+- Error responses:
+  - `404 NOT_FOUND`: no alert inventory exists yet (`"no alerts yet - has Suricata produced events?"`)
+  - `500 INTERNAL_SERVER_ERROR`: storage read failure or malformed runtime state
+
+### 3.43 GET `/threat/blocks`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "blocked": [
+    "192.168.50.115",
+    "fe80::3fab:243d:7d08:e3c8"
+  ]
+}
+```
+
+- Notes:
+  - Reads active block IPs from nftables chain `inet sgx_threat input`.
+  - Falls back to persisted `blocked_ips.json` when nftables returns no active entries.
+  - Output is sorted and deduplicated before response.
+- Error responses:
+  - None expected from handler; empty list is returned when no active blocks are present
+
+### 3.44 POST `/threat/blocks/unblock`
+
+- Request:
+  - Query params: none
+  - Body:
+
+```json
+{
+  "ip": "192.168.50.115"
+}
+```
+
+- Success response (`200 OK`):
+
+```json
+{
+  "success": true,
+  "stdout": "unblocked 192.168.50.115\n",
+  "stderr": "",
+  "restartRequired": false,
+  "timestamp": "2026-07-02T07:10:00Z"
+}
+```
+
+- Notes:
+  - Delegates to `sgx-pa-cli threat unblock <ip>`.
+  - Removes the IP from persisted block records, flushes the threat nftables chain, then restores any remaining blocks.
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: CLI command failed, IP was not blocked, or nftables restore failed
+
+### 3.45 POST `/threat/rules/update`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "success": true,
+  "stdout": "suricata-update completed ...",
+  "stderr": "",
+  "restartRequired": true,
+  "timestamp": "2026-07-02T07:10:00Z"
+}
+```
+
+- Notes:
+  - Delegates to `sgx-pa-cli threat rules-update`.
+  - Runs Suricata rule update workflow and validates/reloads the updated ruleset.
+  - Uses the standard action envelope shown in `2.1`.
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: CLI command failed, Suricata validation failed, or service restart/reload failed
+
+### 3.46 POST `/threat/validate`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "success": true,
+  "stdout": "ok\n",
+  "stderr": "",
+  "restartRequired": false,
+  "timestamp": "2026-07-02T07:10:00Z"
+}
+```
+
+- Notes:
+  - Delegates to `sgx-pa-cli threat validate`.
+  - Loads `/etc/sgx-guardian/threat/config.yaml`, then validates the configured Suricata YAML.
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: CLI command failed, threat config is invalid, or Suricata config test failed
 
 ---

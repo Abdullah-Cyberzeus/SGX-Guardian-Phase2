@@ -1,7 +1,10 @@
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::threat::{
-    ai_bridge, blocker::Blocker, config::SuricataConfig, eve_tailer::EveTailer,
+    ai_bridge,
+    blocker::Blocker,
+    config::SuricataConfig,
+    eve_tailer::EveTailer,
     inventory::{AlertInventory, IngestOutcome},
     rule_manager::RuleManager,
 };
