@@ -142,6 +142,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/discovery/schedule",
             axum::routing::put(handlers::discovery::put_schedule),
         )
+        // Cert request & approval endpoints
+        .route("/api/v1/cert/requests", get(handlers::cert::list_requests))
+        .route(
+            "/api/v1/cert/approve",
+            post(handlers::cert::approve_request),
+        )
         // Phase 2 - action endpoints
         .route("/api/v1/dkp/rotate", post(handlers::dkp::rotate))
         .route("/api/v1/dkp/revoke", post(handlers::dkp::revoke))

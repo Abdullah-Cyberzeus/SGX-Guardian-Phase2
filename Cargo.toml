@@ -44,7 +44,7 @@ uuid = { version = "1", features = ["v4","serde"] }
 libc = "0.2"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 tempfile = "3.8"
-quick-xml = { version = "0.31", features = ["serialize"] }
+quick-xml = { version = "0.41.0", features = ["serialize"] }
 which = "6"
 
 [build-dependencies]

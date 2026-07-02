@@ -27,7 +27,8 @@ impl NebulaStats {
             .build()
             .map_err(|e| e.to_string())?;
 
-        let body = client.get("http://127.0.0.1:8625/metrics")
+        let body = client
+            .get("http://127.0.0.1:8625/metrics")
             .send()
             .await
             .map_err(|e| e.to_string())?

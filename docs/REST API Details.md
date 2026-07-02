@@ -87,6 +87,8 @@
 | 76 | PUT | `/discovery/whitelist` | Replace discovery whitelist and refresh inventory statuses |
 | 77 | GET | `/discovery/schedule` | Fetch scheduled NMAP discovery configuration |
 | 78 | PUT | `/discovery/schedule` | Update scheduled NMAP discovery configuration |
+| 79 | GET | `/cert/requests` | List all active/pending node certificate requests |
+| 80 | POST | `/cert/approve` | Approve or reject a pending certificate request |
 
 
 ## 2. NEW Endpoints 
@@ -2472,4 +2474,56 @@ Peer DID resolution response (`?did=did:guardian:...`):
 - Error responses:
   - `404 NOT_FOUND`: no audit log file found for node `{node}`
   - `500 INTERNAL_SERVER_ERROR`: failed to open, read, or parse audit log file
+
+### 3.76 GET `/cert/requests`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+[
+  {
+    "node_id": "nodeB",
+    "requested_at": "2026-07-02T12:00:00.000Z",
+    "overlay_ip": "192.168.100.2/24",
+    "public_key_fingerprint": "ca8594035f65f328",
+    "requested_role": "member",
+    "approve": "false"
+  }
+]
+```
+
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: Failed to read requests directory or files.
+
+### 3.77 POST `/cert/approve`
+
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "node_id": "nodeB",
+  "decision": "member"
+}
+```
+
+  - Required fields: `node_id`, `decision`
+  - Valid `decision` values: `"false"`, `"reject"`, `"deny"`, `"member"`, `"lighthouse"`, `"relay"`, `"lh_relay"`.
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "message": "Request for node nodeB set to Member"
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: Invalid `node_id` path traversal or invalid `decision` value.
+  - `404 NOT_FOUND`: Request YAML file not found for specified `node_id`.
+  - `500 INTERNAL_SERVER_ERROR`: Failed to read/write/parse request file on disk.
 
