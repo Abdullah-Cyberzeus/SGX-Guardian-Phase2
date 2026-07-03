@@ -165,3 +165,88 @@ async fn test_audit_logs_api() {
     // Clean up
     std::env::remove_var("SGX_GUARDIAN_AUDIT_LOG_PATH");
 }
+
+#[tokio::test]
+async fn test_raw_logs_api() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+    let log_dir_primary = temp_dir.path().to_string_lossy().to_string();
+
+    // Setup state
+    let state = Arc::new(AppState {
+        node_id: "nodeA".into(),
+        config_dir: "/tmp/config".into(),
+        boot_dir: "/tmp/boot".into(),
+        keys_dir: "/tmp/keys".into(),
+        pcr_dir: "/tmp/pcr".into(),
+        pcr_baseline_dir: "/tmp/pcr_baseline".into(),
+        log_dir_primary: log_dir_primary.clone(),
+        log_dir_fallback: "logs-fallback".into(),
+        did_resolver: sgx_guardian_client::did::Resolver::new(Default::default()),
+        vid_cache: sgx_guardian_client::virtual_id_cache::VirtualIdCache::new(),
+        discovery_config_dir: "/tmp/discovery_config".into(),
+        discovery_state_dir: "/tmp/discovery_state".into(),
+    });
+
+    let app = build_router(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app.into_make_service()).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    let base_url = format!("http://{}", addr);
+
+    // 1. Test empty log dir (should return 404)
+    let res = client.get(format!("{}/api/v1/logs", base_url)).send().await.unwrap();
+    assert_eq!(res.status(), 404);
+
+    // 2. Write mock raw logs
+    let raw_log_path = temp_dir.path().join("nodeA-2026-07-03.log");
+    let mut file = File::create(&raw_log_path).unwrap();
+    writeln!(file, r#"{{"timestamp":"2026-07-03T10:00:00Z","level":"info","message":"started"}}"#).unwrap();
+    writeln!(file, r#"{{"timestamp":"2026-07-03T10:01:00Z","level":"warn","message":"low memory"}}"#).unwrap();
+    writeln!(file, r#"{{"timestamp":"2026-07-03T10:02:00Z","level":"error","message":"crash"}}"#).unwrap();
+    writeln!(file, "plain text log line without json").unwrap();
+    drop(file);
+
+    // 3. Test raw logs query (tail, level, search)
+    let resp: serde_json::Value = client
+        .get(format!("{}/api/v1/logs?tail=2", base_url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    
+    assert_eq!(resp["total"], 2);
+    assert_eq!(resp["entries"][0]["level"], "error"); // 3rd line
+    assert_eq!(resp["entries"][1]["level"], "info"); // 4th line parsed as info
+
+    let resp_warn: serde_json::Value = client
+        .get(format!("{}/api/v1/logs?level=warn", base_url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    
+    assert_eq!(resp_warn["total"], 1);
+    assert_eq!(resp_warn["entries"][0]["message"], "low memory");
+
+    let resp_search: serde_json::Value = client
+        .get(format!("{}/api/v1/logs?search=crash", base_url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    
+    assert_eq!(resp_search["total"], 1);
+    assert_eq!(resp_search["entries"][0]["message"], "crash");
+}
+

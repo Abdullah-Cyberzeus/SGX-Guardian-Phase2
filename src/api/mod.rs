@@ -258,7 +258,6 @@ mod tests {
     use crate::nebula::registry_sync::{RegistryRequest, RegistryResponse, REGISTRY_SYNC_PORT};
     use crate::vc::{issue, persistence};
     use chrono::Utc;
-    use once_cell::sync::Lazy;
     use reqwest::StatusCode;
     use serde_json::Value;
     use std::ffi::OsString;
@@ -267,10 +266,9 @@ mod tests {
     use tempfile::TempDir;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
-    use tokio::sync::Mutex;
 
     const DEPLOYED_SIG_PATH: &str = "/etc/sgx-guardian/policies/policy.sig";
-    static TEST_ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+    use crate::test_utils::TEST_ENV_LOCK;
 
     struct EnvGuard {
         self_doc_prev: Option<OsString>,

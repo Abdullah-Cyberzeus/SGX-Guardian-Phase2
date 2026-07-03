@@ -7,15 +7,13 @@ use crate::did::{Did, DidError, ResolutionSource, Resolver, ResolverConfig};
 use crate::key_manager::KeyManager;
 use crate::nebula::registry_sync::{RegistryRequest, RegistryResponse, REGISTRY_SYNC_PORT};
 use base64::Engine as _;
-use once_cell::sync::Lazy;
 use std::ffi::OsString;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
 
-static TEST_ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+use crate::test_utils::TEST_ENV_LOCK;
 
 struct EnvGuard {
     self_doc_prev: Option<OsString>,

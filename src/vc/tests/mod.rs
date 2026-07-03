@@ -10,12 +10,9 @@ use crate::vc::credential::{CredentialRole, MembershipStatus};
 use crate::vc::issue::{self, IssueMembershipOutcome, IssueRequest, RenewRequest};
 use crate::vc::{persistence, status_list, verify, VcError};
 use chrono::Utc;
-use once_cell::sync::Lazy;
 use std::ffi::OsString;
-use std::sync::Mutex;
 use tempfile::TempDir;
 
-static ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 struct EnvGuard {
     self_doc_prev: Option<OsString>,
@@ -148,8 +145,8 @@ fn build_resolver() -> Resolver {
     Resolver::new(Default::default())
 }
 
-fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner())
+fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    crate::test_utils::TEST_ENV_LOCK.blocking_lock()
 }
 
 fn save_owner_context(doc: &DidDocument) {
