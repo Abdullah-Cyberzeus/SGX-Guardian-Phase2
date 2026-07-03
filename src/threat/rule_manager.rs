@@ -9,6 +9,7 @@ use tokio::time::{timeout, Duration};
 /// Bundled Suricata install prefix.  All sub-commands use paths relative to
 /// this so the host Python installation is never touched.
 const OPT_SURICATA: &str = "/opt/suricata";
+const CONFIG_TEST_TIMEOUT_SECS: u64 = 180;
 
 pub struct RuleManager;
 
@@ -79,9 +80,14 @@ impl RuleManager {
             .kill_on_drop(true)
             .output();
 
-        let output = timeout(Duration::from_secs(60), fut)
+        let output = timeout(Duration::from_secs(CONFIG_TEST_TIMEOUT_SECS), fut)
             .await
-            .map_err(|_| ThreatError::BadConfig("suricata config-test timed out (60s)".into()))?
+            .map_err(|_| {
+                ThreatError::BadConfig(format!(
+                    "suricata config-test timed out ({}s)",
+                    CONFIG_TEST_TIMEOUT_SECS
+                ))
+            })?
             .map_err(map_spawn_error)?;
 
         if output.status.success() {
