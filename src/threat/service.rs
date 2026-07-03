@@ -106,6 +106,7 @@ impl ThreatService {
             }
 
             let mut persist_tick = interval(Duration::from_secs(30));
+            let mut config_refresh_tick = interval(Duration::from_secs(5));
             let mut dirty = false;
 
             loop {
@@ -145,6 +146,16 @@ impl ThreatService {
                             IngestOutcome::Duplicate => {}
                         }
                     }
+                    _ = config_refresh_tick.tick() => {
+                        if let Err(err) = refresh_runtime_config(
+                            &self.config_path,
+                            &cfg_shared,
+                            &blocker,
+                            &self.node_id,
+                        ).await {
+                            tracing::warn!("threat config refresh failed: {}", err);
+                        }
+                    }
                     _ = persist_tick.tick() => {
                         if dirty {
                             let inventory = self.inventory.lock().await;
@@ -159,4 +170,41 @@ impl ThreatService {
             }
         });
     }
+}
+
+async fn refresh_runtime_config(
+    config_path: &PathBuf,
+    cfg_shared: &Arc<Mutex<SuricataConfig>>,
+    blocker: &Arc<Blocker>,
+    node_id: &str,
+) -> crate::threat::ThreatResult<()> {
+    let next = SuricataConfig::load(config_path)?;
+    let mut guard = cfg_shared.lock().await;
+    if *guard == next {
+        return Ok(());
+    }
+
+    let previous_mode = guard.block_mode;
+    let next_mode = next.block_mode;
+    let next_enabled = next.enabled;
+    *guard = next;
+    drop(guard);
+
+    if next_enabled {
+        blocker.ensure_runtime_table().await?;
+    }
+
+    log_audit(
+        node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Updated,
+        &format!(
+            "threat config reloaded (block_mode={} -> {})",
+            previous_mode.as_str(),
+            next_mode.as_str()
+        ),
+    );
+
+    Ok(())
 }

@@ -2,6 +2,7 @@ use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::threat::error::{ThreatError, ThreatResult};
 use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 
@@ -19,16 +20,17 @@ impl RuleManager {
         }
 
         // Env vars scoped to this Command only — never set globally via profile.d.
-        // The suricata package lives at /opt/suricata/lib/python3/dist-packages/
-        // (confirmed on board via find), NOT python3.10/site-packages.
-        // LD_LIBRARY_PATH is also scoped here — setting it globally segfaulted
-        // system tools board-wide in a prior incident.
-        let python_lib = format!("{}/lib", OPT_SURICATA);
-        let pythonpath = format!("{}/lib/python3/dist-packages", OPT_SURICATA);
+        // The bundle layout has varied across board images (`dist-packages`,
+        // `site-packages`, versioned python dirs). Discover it dynamically so
+        // rule updates do not depend on one exact packaging layout.
+        //
+        // Intentionally DO NOT set LD_LIBRARY_PATH here: on the boards it can
+        // make `/usr/bin/python3` load incompatible bundled libraries and die
+        // with `Illegal instruction` / signal exits before any stderr appears.
+        let pythonpath = suricata_pythonpath();
 
         let fut = Command::new(&binary)
             .env("PYTHONPATH", &pythonpath)
-            .env("LD_LIBRARY_PATH", &python_lib)
             .kill_on_drop(true)
             .output();
 
@@ -56,11 +58,7 @@ impl RuleManager {
             .unwrap_or("rules updated")
             .to_string();
 
-        let _ = Command::new("systemctl")
-            .args(["reload", "suricata"])
-            .kill_on_drop(true)
-            .output()
-            .await;
+        reload_or_restart_suricata().await?;
 
         log_audit(
             node_id,
@@ -97,6 +95,84 @@ impl RuleManager {
             "suricata config validation failed without diagnostic output",
         )))
     }
+}
+
+fn suricata_pythonpath() -> String {
+    discover_python_paths(Path::new(OPT_SURICATA)).join(":")
+}
+
+fn discover_python_paths(root: &Path) -> Vec<String> {
+    let lib_dir = root.join("lib");
+    let mut paths = Vec::new();
+
+    push_python_path(&mut paths, lib_dir.join("python3").join("dist-packages"));
+    push_python_path(&mut paths, lib_dir.join("python3").join("site-packages"));
+    push_python_path(&mut paths, lib_dir.join("python3"));
+
+    if let Ok(entries) = std::fs::read_dir(&lib_dir) {
+        let mut dirs = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_dir()
+                    && path
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .map(|name| name.starts_with("python3"))
+                        .unwrap_or(false)
+            })
+            .collect::<Vec<PathBuf>>();
+        dirs.sort();
+
+        for dir in dirs {
+            push_python_path(&mut paths, dir.join("dist-packages"));
+            push_python_path(&mut paths, dir.join("site-packages"));
+            push_python_path(&mut paths, dir);
+        }
+    }
+
+    if paths.is_empty() {
+        paths.push(lib_dir.join("python3").join("dist-packages"));
+    }
+
+    paths
+        .into_iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect()
+}
+
+fn push_python_path(paths: &mut Vec<PathBuf>, candidate: PathBuf) {
+    if candidate.is_dir() && !paths.iter().any(|seen| seen == &candidate) {
+        paths.push(candidate);
+    }
+}
+
+async fn reload_or_restart_suricata() -> ThreatResult<()> {
+    let mut last_error = None;
+
+    for args in [["reload", "suricata"], ["restart", "suricata"]] {
+        let output = Command::new("systemctl")
+            .args(args)
+            .kill_on_drop(true)
+            .output()
+            .await
+            .map_err(map_spawn_error)?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        last_error = Some(command_failure_detail(
+            output.status.code(),
+            &output.stdout,
+            &output.stderr,
+            "systemctl reload/restart suricata failed without diagnostic output",
+        ));
+    }
+
+    Err(ThreatError::ServiceStart(last_error.unwrap_or_else(|| {
+        "systemctl reload/restart suricata failed".to_string()
+    })))
 }
 
 fn command_failure_detail(
@@ -147,7 +223,8 @@ fn map_spawn_error(err: std::io::Error) -> ThreatError {
 
 #[cfg(test)]
 mod tests {
-    use super::command_failure_detail;
+    use super::{command_failure_detail, discover_python_paths};
+    use tempfile::tempdir;
 
     #[test]
     fn command_failure_detail_includes_exit_and_streams() {
@@ -166,5 +243,32 @@ mod tests {
     fn command_failure_detail_uses_fallback_for_blank_output() {
         let detail = command_failure_detail(Some(1), b"", b"\n", "fallback detail");
         assert_eq!(detail, "exit 1 | fallback detail");
+    }
+
+    #[test]
+    fn discover_python_paths_supports_dist_and_versioned_layouts() {
+        let dir = tempdir().expect("tempdir");
+        let lib = dir.path().join("lib");
+        std::fs::create_dir_all(lib.join("python3").join("dist-packages")).expect("python3 dist");
+        std::fs::create_dir_all(lib.join("python3.11").join("site-packages"))
+            .expect("python3.11 site");
+
+        let paths = discover_python_paths(dir.path());
+
+        assert_eq!(
+            paths,
+            vec![
+                lib.join("python3")
+                    .join("dist-packages")
+                    .to_string_lossy()
+                    .to_string(),
+                lib.join("python3").to_string_lossy().to_string(),
+                lib.join("python3.11")
+                    .join("site-packages")
+                    .to_string_lossy()
+                    .to_string(),
+                lib.join("python3.11").to_string_lossy().to_string(),
+            ]
+        );
     }
 }

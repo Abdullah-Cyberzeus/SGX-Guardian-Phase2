@@ -32,6 +32,11 @@ fn blocker_should_block_matrix() {
         block_mode: BlockMode::InlineBlock,
         ..SuricataConfig::default()
     };
+    let disabled_inline_cfg = SuricataConfig {
+        enabled: false,
+        block_mode: BlockMode::InlineBlock,
+        ..SuricataConfig::default()
+    };
     let alert_only_cfg = SuricataConfig {
         enabled: true,
         block_mode: BlockMode::AlertOnly,
@@ -53,6 +58,10 @@ fn blocker_should_block_matrix() {
     assert!(!Blocker::should_block(
         &alert_only_cfg,
         &alert("203.0.113.13", Severity::High)
+    ));
+    assert!(!Blocker::should_block(
+        &disabled_inline_cfg,
+        &alert("203.0.113.14", Severity::Critical)
     ));
     assert!(!Blocker::should_block(
         &inline_cfg,

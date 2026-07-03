@@ -20,7 +20,7 @@ impl BlockMode {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SuricataConfig {
     #[serde(default)]
     pub enabled: bool,

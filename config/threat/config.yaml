@@ -4,11 +4,9 @@ enabled: false
 interface: null
 eve_path: "/var/log/suricata/eve.json"
 suricata_yaml: "/etc/suricata/suricata.yaml"
-block_mode: alert_only
-block_ttl_secs: 86400
+block_mode: alert_only          # alert_only | inline_block
+block_ttl_secs: 86400           # 24 h
 rule_update_hours: 24
 block_exempt:
-  - "127.0.0.0/8"          # loopback
-  - "192.168.100.0/24"     # nebula0 overlay
-  - "192.168.200.0/24"     # uap0 AP clients
-  - "192.168.50.0/24"      # management LAN stopgap — Fix 1B narrows this to self+gw+peers
+  - "127.0.0.0/8"
+  - "192.168.100.0/24"          # Nebula overlay

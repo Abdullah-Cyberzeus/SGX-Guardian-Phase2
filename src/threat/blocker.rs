@@ -41,6 +41,9 @@ impl Blocker {
 
     /// Pure decision function - safe to unit test without nftables.
     pub fn should_block(cfg: &SuricataConfig, alert: &ThreatAlert) -> bool {
+        if !cfg.enabled {
+            return false;
+        }
         if !matches!(cfg.block_mode, BlockMode::InlineBlock) {
             return false;
         }
