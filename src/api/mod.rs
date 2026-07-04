@@ -111,6 +111,25 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/did/deactivate", post(handlers::did::deactivate))
         .route("/api/v1/relay/limits", post(handlers::relay::limits))
+        .route("/api/v1/threat/status", get(handlers::threat::status))
+        .route("/api/v1/threat/alerts", get(handlers::threat::list_alerts))
+        .route("/api/v1/threat/blocks", get(handlers::threat::list_blocks))
+        .route("/api/v1/threat/blocks", post(handlers::threat::block_ip))
+        .route(
+            "/api/v1/threat/blocks/unblock",
+            post(handlers::threat::unblock),
+        )
+        .route(
+            "/api/v1/threat/rules/update",
+            post(handlers::threat::update_rules),
+        )
+        .route(
+            "/api/v1/threat/validate",
+            post(handlers::threat::validate_config),
+        )
+        .route("/api/v1/threat/config", get(handlers::threat::get_config))
+        .route("/api/v1/threat/config", post(handlers::threat::set_config))
+        .route("/api/v1/threat/start", post(handlers::threat::start))
         // Health
         .route("/api/v1/health", get(|| async { "ok" }))
         .layer(cors)
@@ -199,6 +218,8 @@ mod tests {
             pcr_baseline_dir: "/tmp".into(),
             log_dir_primary: "/tmp/logs".into(),
             log_dir_fallback: "/tmp/logs-fallback".into(),
+            threat_config_path: "/tmp/threat-config.yaml".into(),
+            threat_state_dir: "/tmp/threat-state".into(),
         })
     }
 

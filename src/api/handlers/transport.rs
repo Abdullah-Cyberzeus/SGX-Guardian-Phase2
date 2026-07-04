@@ -472,6 +472,8 @@ mod tests {
             pcr_baseline_dir: "/tmp".into(),
             log_dir_primary: "/tmp/logs".into(),
             log_dir_fallback: "/tmp/logs2".into(),
+            threat_config_path: "/tmp/threat-config.yaml".into(),
+            threat_state_dir: "/tmp/threat-state".into(),
         })
     }
 

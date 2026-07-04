@@ -90,6 +90,8 @@ enum Commands {
     /// Alias for `transport show`
     #[command(name = "transport-show")]
     TransportShow(commands::transport::TransportListArgs),
+    /// Sprint 8 - Suricata IDS/IPS administration
+    Threat(commands::threat::ThreatArgs),
 }
 /// Entry point for the SGX Policy Authority CLI.
 /// Dispatches the selected subcommand and routes execution
@@ -189,6 +191,12 @@ fn main() {
                 command: commands::transport::TransportCommand::Show(args),
             })
         }
+        Commands::Threat(args) => {
+            if let Err(e) = commands::threat::run(args) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
     }
 }
 
@@ -229,5 +237,12 @@ mod tests {
         assert!(Cli::try_parse_from(["sgx-pa-cli", "transport-show"]).is_ok());
         assert!(Cli::try_parse_from(["sgx-pa-cli", "transport-lock", "ens33"]).is_ok());
         assert!(Cli::try_parse_from(["sgx-pa-cli", "transport-unlock"]).is_ok());
+    }
+
+    #[test]
+    fn test_threat_commands_parse() {
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "threat", "status"]).is_ok());
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "threat", "alerts", "--limit", "10"]).is_ok());
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "threat", "rules-update"]).is_ok());
     }
 }

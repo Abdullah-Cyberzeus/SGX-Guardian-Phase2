@@ -42,6 +42,12 @@ pub enum AuditAction {
     Loaded,
     Exported,
     Used,
+    /// Sprint 8 - IDS detected a new threat.
+    Detected,
+    /// Sprint 8 - source IP added to the active block list.
+    Blocked,
+    /// Sprint 8 - rule set or signature database updated.
+    Updated,
 }
 
 #[derive(Debug, Clone, Serialize)]
