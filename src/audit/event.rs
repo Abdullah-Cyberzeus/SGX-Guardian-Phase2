@@ -49,6 +49,10 @@ pub enum AuditAction {
     Queued,
     /// New device / event detected during a scan.
     Detected,
+    /// Sprint 8 - source IP added to the active block list.
+    Blocked,
+    /// Sprint 8 - rule set or signature database updated.
+    Updated,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

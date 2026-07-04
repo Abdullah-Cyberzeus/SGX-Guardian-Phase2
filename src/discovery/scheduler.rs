@@ -124,10 +124,16 @@ impl DiscoveryScheduler {
         let devices = nmap_parser::parse(&xml)?;
         let semantics = cfg.scan_semantics_for_intensity(&target, intensity);
 
+        let intensity_label = match intensity {
+            ScanIntensity::Stealth => "stealth",
+            ScanIntensity::Standard => "standard",
+            ScanIntensity::Aggressive => "aggressive",
+        };
         let mut inv = self.state.lock().await;
         let delta = inv.merge(devices, semantics);
         for id in delta.updated.iter().chain(delta.newly_seen.iter()) {
             if let Some(device) = inv.by_id.get_mut(id) {
+                device.last_scan_intensity = Some(intensity_label.to_string());
                 wl.classify(device);
             }
         }

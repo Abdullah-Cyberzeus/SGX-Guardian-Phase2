@@ -27,6 +27,7 @@ fn test_device(id: &str, ip: &str, status: DeviceStatus) -> ConnectedDevice {
         first_seen: "2026-05-11T00:00:00Z".to_string(),
         last_seen: "2026-05-11T00:00:00Z".to_string(),
         vuln_triaged: false,
+        last_scan_intensity: None,
     }
 }
 

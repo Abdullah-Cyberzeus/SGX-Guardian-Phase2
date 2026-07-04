@@ -87,8 +87,8 @@ pub fn run_create() {
             eprintln!("❌ composite_digest must be 32 bytes, got {}", b.len());
             return;
         }
-        Err(e) => {
-            eprintln!("❌ Invalid composite_digest hex: {}", e);
+        Err(_) => {
+            eprintln!("❌ Invalid composite_digest");
             return;
         }
     };
@@ -167,6 +167,10 @@ fn sign_baseline_hash(hash: &[u8], key_version: u32) -> Option<String> {
     use std::process::Command;
 
     // Method 1: Try ssscli (hardware board)
+    if key_version == 0 {
+        eprintln!("❌ key_version must be >= 1");
+        return None;
+    }
     let key_id = format!("0x{:08X}", 0x20000010 + key_version - 1);
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -234,10 +238,26 @@ pub fn run_verify() {
         return;
     }
 
-    let baseline: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&bl_path).unwrap()).unwrap();
-    let snapshot: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&pcr_path).unwrap()).unwrap();
+    let baseline: serde_json::Value = match fs::read_to_string(&bl_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+    {
+        Some(v) => v,
+        None => {
+            eprintln!("❌ Failed to load baseline from {}", bl_path);
+            return;
+        }
+    };
+    let snapshot: serde_json::Value = match fs::read_to_string(&pcr_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+    {
+        Some(v) => v,
+        None => {
+            eprintln!("❌ Failed to load snapshot from {}", pcr_path);
+            return;
+        }
+    };
 
     // Verify baseline signature first
     let sig = baseline["baseline_signature"].as_str().unwrap_or("");

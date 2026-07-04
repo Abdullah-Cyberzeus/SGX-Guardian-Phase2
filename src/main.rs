@@ -88,6 +88,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "/var/lib/sgx-guardian/nebula/ca",
         "/var/lib/sgx-guardian/nebula/nodes",
         "/var/lib/sgx-guardian/nebula/requests",
+        "/var/lib/sgx-guardian/threat",
+        "/etc/sgx-guardian/threat",
         "/var/log/sgx-guardian",
     ] {
         if let Err(e) = std::fs::create_dir_all(dir) {
@@ -2623,6 +2625,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("✅ Discovery scheduler spawned (NMP-series, Sprint 6)");
     }
 
+    // === Sprint 8: Suricata IDS/IPS Threat Service ===
+    {
+        use sgx_guardian_client::threat::{AlertInventory, ThreatService};
+        use std::path::PathBuf;
+
+        let cfg_path = PathBuf::from("/etc/sgx-guardian/threat/config.yaml");
+        let state_dir = PathBuf::from("/var/lib/sgx-guardian/threat");
+        let _ = std::fs::create_dir_all(&state_dir);
+        let _ = std::fs::create_dir_all("/etc/sgx-guardian/threat");
+
+        let service = ThreatService {
+            node_id: node_id.clone(),
+            config_path: cfg_path,
+            state_dir,
+            inventory: std::sync::Arc::new(tokio::sync::Mutex::new(AlertInventory::default())),
+        };
+        service.start();
+        println!("✅ Threat service spawned (SUR-series, Sprint 8)");
+    }
     // === CERT BOOTSTRAP SERVER (nodeA only, plaintext port 50061) ===
     if node_id == "nodeA" {
         tokio::spawn(async move {

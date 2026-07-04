@@ -324,6 +324,7 @@ mod tests {
             first_seen: first_seen.to_string(),
             last_seen: last_seen.to_string(),
             vuln_triaged: false,
+            last_scan_intensity: None,
         }
     }
 

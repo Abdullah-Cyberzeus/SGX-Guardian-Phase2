@@ -245,7 +245,9 @@ fn rotate_dkp(has_ssscli: bool) -> bool {
         sgx_guardian_client::did::DEFAULT_DID_PATH,
         new_version,
     ) {
-        eprintln!("│  DID metadata update skipped: {}", e);
+        eprintln!("│  ❌ DID metadata update FAILED: {}", e);
+        eprintln!("│  DKP and DID are now out of sync — manual fix required");
+        return false;
     }
     true
 }
@@ -269,6 +271,11 @@ fn rotate_software_key() -> bool {
                 );
                 match fs::rename(&old_path, &backup) {
                     Ok(_) => {
+                        // Zero-fill backup to prevent key recovery
+                        if let Ok(meta) = fs::metadata(&backup) {
+                            let _ = fs::write(&backup, vec![0u8; meta.len() as usize]);
+                        }
+                        let _ = fs::remove_file(&backup);
                         println!(
                             "│  Backed up: {} → {}",
                             name,
@@ -305,6 +312,11 @@ fn rotate_tls_cert() -> bool {
                 );
                 match fs::rename(&path, &backup) {
                     Ok(_) => {
+                        // Zero-fill backup to prevent key recovery
+                        if let Ok(meta) = fs::metadata(&backup) {
+                            let _ = fs::write(&backup, vec![0u8; meta.len() as usize]);
+                        }
+                        let _ = fs::remove_file(&backup);
                         println!("│  Backed up: {}", name);
                         found = true;
                     }

@@ -96,6 +96,8 @@ enum Commands {
     Vc(commands::vc::VcArgs),
     /// VirtualID inspection and recomputation
     Vid(commands::vid::VidArgs),
+    /// Sprint 8 - Suricata IDS/IPS administration
+    Threat(commands::threat::ThreatArgs),
 }
 /// Entry point for the SGX Policy Authority CLI.
 /// Dispatches the selected subcommand and routes execution
@@ -203,6 +205,12 @@ fn main() {
         }
         Commands::Vc(args) => commands::vc::run(args),
         Commands::Vid(args) => commands::vid::run(args),
+        Commands::Threat(args) => {
+            if let Err(e) = commands::threat::run(args) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
     }
 }
 
@@ -320,5 +328,12 @@ mod tests {
             "false",
         ])
         .is_ok());
+    }
+
+    #[test]
+    fn test_threat_commands_parse() {
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "threat", "status"]).is_ok());
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "threat", "alerts", "--limit", "10"]).is_ok());
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "threat", "rules-update"]).is_ok());
     }
 }

@@ -26,6 +26,7 @@ fn sample_device(mac: Option<&str>, os: Option<&str>, ports: Vec<u16>) -> Connec
         first_seen: "2026-05-01T00:00:00Z".to_string(),
         last_seen: "2026-05-01T00:00:00Z".to_string(),
         vuln_triaged: false,
+        last_scan_intensity: None,
     }
 }
 

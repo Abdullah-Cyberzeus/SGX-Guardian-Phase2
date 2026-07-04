@@ -34,7 +34,9 @@ chmod 755 "$CONFIG_DIR"
 # ---- Sprint 6 NMAP Network Discovery ----
 if command -v nmap >/dev/null && command -v setcap >/dev/null; then
     echo "Configuring nmap capabilities for Sprint 6 NMP-series..."
-    setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip "$(command -v nmap)" || true
+    if ! setcap cap_net_raw,cap_net_admin+eip "$(command -v nmap)"; then
+        echo "WARNING: Failed to set nmap capabilities; discovery scans may be limited." >&2
+    fi
 fi
 
 # ---- systemd reload ----

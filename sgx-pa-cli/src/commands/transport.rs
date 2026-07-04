@@ -87,6 +87,13 @@ struct InterfaceRecord {
 }
 
 fn lock_path(node: &str) -> String {
+    if !node
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        eprintln!("❌ Invalid node name: {}", node);
+        std::process::exit(1);
+    }
     format!("{}/transport_lock_{}.txt", LOCK_DIR, node)
 }
 

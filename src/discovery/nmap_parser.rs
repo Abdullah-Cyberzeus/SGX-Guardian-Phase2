@@ -223,6 +223,7 @@ pub fn parse(xml: &str) -> DiscoveryResult<Vec<ConnectedDevice>> {
             first_seen: now.clone(),
             last_seen: now.clone(),
             vuln_triaged: false,
+            last_scan_intensity: None, // set by the caller after merge
         });
     }
 

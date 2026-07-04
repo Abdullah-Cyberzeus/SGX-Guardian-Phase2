@@ -184,7 +184,8 @@ fn cmd_verify(path: &str) {
 
 fn cmd_revoke(id: &str, reason: &str) {
     let (issuer, km) = load_runtime_issuer_and_km();
-    match issue::revoke_vc(&issuer, &km, id, reason) {
+    let node_id = issue::resolve_runtime_node_id().unwrap_or_else(|| "nodeA".to_string());
+    match issue::revoke_vc(&issuer, &km, id, reason, &node_id) {
         Ok(()) => println!("✅ Revoked VC {}", id),
         Err(e) => {
             eprintln!("❌ {}", e);
@@ -204,6 +205,7 @@ fn cmd_renew(id: Option<&str>, to: Option<&str>, days: i64, allow_expired: bool)
     }
 
     let (issuer, km) = load_runtime_issuer_and_km();
+    let node_id = issue::resolve_runtime_node_id().unwrap_or_else(|| "nodeA".to_string());
     match issue::renew_membership_vc(
         &issuer,
         &km,
@@ -214,6 +216,7 @@ fn cmd_renew(id: Option<&str>, to: Option<&str>, days: i64, allow_expired: bool)
             duration_days: days,
             allow_expired,
         },
+        &node_id,
     ) {
         Ok(vc) => print_vc_table("Renewed VC", &[vc]),
         Err(sgx_guardian_client::vc::VcError::CannotRenewRevokedVc) => {

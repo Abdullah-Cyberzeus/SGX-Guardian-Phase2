@@ -17,6 +17,8 @@ pub struct AppState {
     pub vid_cache: crate::virtual_id_cache::VirtualIdCache,
     pub discovery_config_dir: String, // /etc/sgx-guardian/discovery
     pub discovery_state_dir: String,  // /var/lib/sgx-guardian/discovery
+    pub threat_config_path: String,   // /etc/sgx-guardian/threat/config.yaml
+    pub threat_state_dir: String,     // /var/lib/sgx-guardian/threat
 }
 
 impl AppState {
@@ -37,6 +39,8 @@ impl AppState {
                 .unwrap_or_default(),
             discovery_config_dir: "/etc/sgx-guardian/discovery".into(),
             discovery_state_dir: "/var/lib/sgx-guardian/discovery".into(),
+            threat_config_path: "/etc/sgx-guardian/threat/config.yaml".into(),
+            threat_state_dir: "/var/lib/sgx-guardian/threat".into(),
         })
     }
 }
