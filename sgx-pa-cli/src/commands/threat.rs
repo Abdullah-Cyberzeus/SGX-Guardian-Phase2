@@ -28,6 +28,8 @@ pub enum ThreatCommand {
     Alerts(AlertsArgs),
     /// Print the active block list.
     Blocks,
+    /// Manually block an IP address (adds nft drop rule + persists to blocked_ips.json).
+    Block(BlockArgs),
     /// Remove an IP from the active block list.
     Unblock(UnblockArgs),
     /// Force a suricata-update run.
@@ -45,6 +47,11 @@ pub struct AlertsArgs {
 }
 
 #[derive(Args)]
+pub struct BlockArgs {
+    pub ip: String,
+}
+
+#[derive(Args)]
 pub struct UnblockArgs {
     pub ip: String,
 }
@@ -54,6 +61,7 @@ pub fn run(args: ThreatArgs) -> Result<()> {
         ThreatCommand::Status => cmd_status(),
         ThreatCommand::Alerts(args) => cmd_alerts(args),
         ThreatCommand::Blocks => cmd_blocks(),
+        ThreatCommand::Block(args) => cmd_block(args),
         ThreatCommand::Unblock(args) => cmd_unblock(args),
         ThreatCommand::RulesUpdate => cmd_rules_update(),
         ThreatCommand::Validate => cmd_validate(),
@@ -109,6 +117,34 @@ fn cmd_blocks() -> Result<()> {
     for block in blocks {
         println!("{} {}", block.ip, block.expires_at);
     }
+    Ok(())
+}
+
+fn cmd_block(args: BlockArgs) -> Result<()> {
+    let ip = args.ip.trim();
+    ip.parse::<std::net::IpAddr>()
+        .map_err(|_| anyhow!("{} is not a valid IP address", ip))?;
+
+    let path = PathBuf::from(BLOCKS_PATH);
+    let mut blocks = load_block_records(&path).unwrap_or_default();
+
+    if blocks.iter().any(|r| r.ip == ip) {
+        println!("{} is already blocked", ip);
+        return Ok(());
+    }
+
+    let cfg = SuricataConfig::load(Path::new(THREAT_CFG_PATH)).unwrap_or_default();
+    let expires_at = chrono::Utc::now().timestamp() + cfg.block_ttl_secs as i64;
+
+    blocks.push(BlockRecord {
+        ip: ip.to_string(),
+        expires_at,
+    });
+    save_block_records(&path, &blocks)?;
+    ensure_threat_table()?;
+    insert_drop(ip)?;
+
+    println!("blocked {} (ttl={}s)", ip, cfg.block_ttl_secs);
     Ok(())
 }
 
@@ -184,6 +220,20 @@ fn save_block_records(path: &Path, blocks: &[BlockRecord]) -> Result<()> {
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, serde_json::to_vec_pretty(&ordered)?)?;
     fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+fn ensure_threat_table() -> Result<()> {
+    let _ = std::process::Command::new("nft")
+        .args(["add", "table", "inet", "sgx_threat"])
+        .status();
+    let _ = std::process::Command::new("nft")
+        .args([
+            "add", "chain", "inet", "sgx_threat", "input", "{",
+            "type", "filter", "hook", "input", "priority", "-10", ";",
+            "policy", "accept", ";", "}",
+        ])
+        .status();
     Ok(())
 }
 

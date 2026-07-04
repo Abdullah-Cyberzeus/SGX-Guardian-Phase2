@@ -113,12 +113,12 @@ impl Blocker {
         // This catches IPs that pass the config-level CIDR exempts but are still
         // system-critical (e.g. board IP changed, gateway changed since last deploy).
         if let Ok(ip) = alert.src_ip.parse::<IpAddr>() {
-            let protected = collect_protected_ips().await;
-            if protected.contains(&ip) {
+            let protected_nets = collect_protected_networks().await;
+            if protected_nets.iter().any(|net| net.contains(&ip)) {
                 tracing::warn!(
                     ip = %alert.src_ip,
                     sid = alert.signature_id,
-                    "suppressed block: IP is local interface or default gateway"
+                    "suppressed block: IP is within a local interface subnet"
                 );
                 return Ok(false);
             }
@@ -290,32 +290,30 @@ impl Blocker {
     }
 }
 
-/// Enumerate IPs that must never be auto-blocked regardless of alert severity:
-/// every local interface address and the default-route gateway.
-/// Runs `ip addr show` and `ip route show default` each time it is called so
-/// the result reflects the current network state (board IP / gateway may change).
-async fn collect_protected_ips() -> Vec<IpAddr> {
-    let mut protected: Vec<IpAddr> = Vec::new();
+/// Enumerate networks that must never be auto-blocked: every local interface
+/// subnet and the default-route gateway. Subnets are derived live from
+/// `ip addr show` so DHCP renewals and interface changes are handled automatically
+/// without any manual configuration per board.
+async fn collect_protected_networks() -> Vec<ipnet::IpNet> {
+    let mut nets: Vec<ipnet::IpNet> = Vec::new();
 
-    // Local interface addresses
+    // "inet 192.168.50.103/24 brd …" → 192.168.50.0/24
+    // "inet6 fe80::xx/64 …"          → fe80::/64
     if let Ok(out) = Command::new("ip").args(["addr", "show"]).output().await {
         let text = String::from_utf8_lossy(&out.stdout);
         for line in text.lines() {
             let line = line.trim();
-            // "inet 192.168.50.103/24 brd …" or "inet6 fe80::…/64 …"
             if line.starts_with("inet ") || line.starts_with("inet6 ") {
                 if let Some(cidr) = line.split_whitespace().nth(1) {
-                    if let Some(addr_str) = cidr.split('/').next() {
-                        if let Ok(addr) = addr_str.parse::<IpAddr>() {
-                            protected.push(addr);
-                        }
+                    if let Ok(net) = cidr.parse::<ipnet::IpNet>() {
+                        nets.push(net.trunc());
                     }
                 }
             }
         }
     }
 
-    // Default gateway ("default via 192.168.50.1 dev wlan0 …")
+    // "default via 192.168.50.1 dev wlan0 …" → 192.168.50.1/32
     if let Ok(out) = Command::new("ip")
         .args(["route", "show", "default"])
         .output()
@@ -327,14 +325,17 @@ async fn collect_protected_ips() -> Vec<IpAddr> {
             if let Some(via_pos) = parts.iter().position(|&p| p == "via") {
                 if let Some(gw_str) = parts.get(via_pos + 1) {
                     if let Ok(gw) = gw_str.parse::<IpAddr>() {
-                        protected.push(gw);
+                        let prefix = if gw.is_ipv4() { 32 } else { 128 };
+                        if let Ok(gw_net) = ipnet::IpNet::new(gw, prefix) {
+                            nets.push(gw_net);
+                        }
                     }
                 }
             }
         }
     }
 
-    protected
+    nets
 }
 
 pub fn load_block_records(path: &Path) -> ThreatResult<Vec<BlockRecord>> {

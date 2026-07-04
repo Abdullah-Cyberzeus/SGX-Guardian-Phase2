@@ -111,8 +111,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/did/deactivate", post(handlers::did::deactivate))
         .route("/api/v1/relay/limits", post(handlers::relay::limits))
+        .route("/api/v1/threat/status", get(handlers::threat::status))
         .route("/api/v1/threat/alerts", get(handlers::threat::list_alerts))
         .route("/api/v1/threat/blocks", get(handlers::threat::list_blocks))
+        .route("/api/v1/threat/blocks", post(handlers::threat::block_ip))
         .route(
             "/api/v1/threat/blocks/unblock",
             post(handlers::threat::unblock),
@@ -125,6 +127,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/threat/validate",
             post(handlers::threat::validate_config),
         )
+        .route("/api/v1/threat/config", get(handlers::threat::get_config))
+        .route("/api/v1/threat/config", post(handlers::threat::set_config))
+        .route("/api/v1/threat/start", post(handlers::threat::start))
         // Health
         .route("/api/v1/health", get(|| async { "ok" }))
         .layer(cors)
