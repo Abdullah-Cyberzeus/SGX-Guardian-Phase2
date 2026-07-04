@@ -8,7 +8,7 @@ use crate::threat::{
     inventory::{AlertInventory, IngestOutcome},
     rule_manager::RuleManager,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{interval, Duration};
@@ -173,7 +173,7 @@ impl ThreatService {
 }
 
 async fn refresh_runtime_config(
-    config_path: &PathBuf,
+    config_path: &Path,
     cfg_shared: &Arc<Mutex<SuricataConfig>>,
     blocker: &Arc<Blocker>,
     node_id: &str,

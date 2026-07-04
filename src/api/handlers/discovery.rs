@@ -703,13 +703,11 @@ fn risk_level(device: &ConnectedDevice) -> (&'static str, Vec<String>, Vec<u16>)
 }
 
 fn unix_ts_to_rfc3339(unix_ts: u64) -> String {
-    use chrono::{DateTime, TimeZone, Utc};
-    DateTime::<Utc>::from(
-        Utc.timestamp_opt(unix_ts as i64, 0)
-            .single()
-            .unwrap_or_else(Utc::now),
-    )
-    .to_rfc3339()
+    use chrono::{TimeZone, Utc};
+    Utc.timestamp_opt(unix_ts as i64, 0)
+        .single()
+        .unwrap_or_else(Utc::now)
+        .to_rfc3339()
 }
 
 #[cfg(test)]
