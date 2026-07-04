@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n '^```bash' -A3 /home/asad/SGX/docs/CRL_Verification_Log.md)",
+      "Bash(grep -B3 \"^--$\\\\|^[0-9]*-#\")",
+      "Bash(awk '/^```bash/{flag=1; next} /^```$/{flag=0} flag && /^#/{print NR\": \"$0}' /home/asad/SGX/docs/CRL_Verification_Log.md)",
+      "Bash(awk '/^```bash/{flag=1; next} /^```$/{flag=0} flag && /#/{print NR\": \"$0}' /home/asad/SGX/docs/CRL_Verification_Log.md)"
+    ]
+  }
+}

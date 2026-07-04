@@ -94,6 +94,8 @@ enum Commands {
     TransportShow(commands::transport::TransportListArgs),
     /// Verifiable Credential operations
     Vc(commands::vc::VcArgs),
+    /// Certificate Revocation List operations
+    Crl(commands::crl::CrlArgs),
     /// VirtualID inspection and recomputation
     Vid(commands::vid::VidArgs),
 }
@@ -202,6 +204,7 @@ fn main() {
             })
         }
         Commands::Vc(args) => commands::vc::run(args),
+        Commands::Crl(args) => commands::crl::run(args),
         Commands::Vid(args) => commands::vid::run(args),
     }
 }
@@ -275,6 +278,8 @@ mod tests {
         assert!(Cli::try_parse_from(["sgx-pa-cli", "discovery", "schedule-show"]).is_ok());
         assert!(Cli::try_parse_from(["sgx-pa-cli", "discovery", "list"]).is_ok());
         assert!(Cli::try_parse_from(["sgx-pa-cli", "discovery", "unauthorized"]).is_ok());
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "discovery", "whitelist"]).is_ok());
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "discovery", "runs", "--limit", "10"]).is_ok());
         assert!(Cli::try_parse_from([
             "sgx-pa-cli",
             "discovery",

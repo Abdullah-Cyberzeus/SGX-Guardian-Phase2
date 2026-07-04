@@ -78,32 +78,37 @@
 | 67 | GET | `/discovery/inventory/list` | Alias of discovery inventory list |
 | 68 | GET | `/discovery/devices/unauthorized` | Unauthorized or drifted discovered devices |
 | 69 | GET | `/discovery/unauthorized` | Alias of unauthorized discovery list |
+| 69a | GET | `/discovery/runs` | List persisted NMAP discovery scan run history |
 | 70 | POST | `/discovery/scan` | Run discovery scan using default ad-hoc intensity |
 | 71 | POST | `/discovery/scan/stealth` | Run one stealth NMAP discovery scan |
 | 72 | POST | `/discovery/scan/standard` | Run one standard NMAP discovery scan |
 | 73 | POST | `/discovery/scan/aggressive` | Run one aggressive NMAP discovery scan |
 | 74 | POST | `/discovery/approve` | Authorize a discovered device by MAC and add it to whitelist |
-| 75 | GET | `/discovery/whitelist` | Fetch discovery whitelist YAML content as JSON |
+| 75 | GET | `/discovery/whitelist` | Fetch whitelist policy enriched with current inventory matches |
 | 76 | PUT | `/discovery/whitelist` | Replace discovery whitelist and refresh inventory statuses |
 | 77 | GET | `/discovery/schedule` | Fetch scheduled NMAP discovery configuration |
 | 78 | PUT | `/discovery/schedule` | Update scheduled NMAP discovery configuration |
+| 79 | POST | `/crl/revoke` | Issue a DID revocation entry and rebuild the signed CRL |
+| 80 | GET | `/crl/list` | List all locally persisted CRL entries |
+| 81 | GET | `/crl/entry` | Fetch one CRL entry by entry ID |
+| 82 | GET | `/crl/check` | Check whether a DID is currently revoked |
+| 83 | POST | `/crl/verify` | Verify CRL entry signatures and aggregate root |
+| 84 | GET | `/crl/root` | Return current CRL sequence and Merkle root |
+| 85 | POST | `/crl/unrevoke` | Reverse a mistaken revocation (Circle Owner only) |
 
 
 ## 2. NEW Endpoints 
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/vc/files/own` | List local own-VC file metadata |
-| GET | `/vc/files/peers` | List peer-VC file metadata |
-| GET | `/vc/files/issued/{vc_id}` | Fetch the stored issued VC JSON document |
-| GET | `/vc/files/own/{vc_id}` | Fetch the stored own VC JSON document |
-| GET | `/vc/files/peer/{did}` | Fetch the stored peer VC JSON document by DID |
-| GET | `/vc/status-list` | Fetch the stored VC status-list credential JSON |
-| GET | `/vc/status-list-index` | Fetch the stored status-list next-index JSON |
-| GET | `/vc/summary` | Return aggregate VC cache and lifecycle counts |
-| GET | `/vc/audit` | Return VC audit-log entries with optional filtering |
-| GET | `/vid/show` | Show the single current nonce-bound VirtualID and its input digests |
-| GET | `/vid/peers` | List cached peer VirtualIDs and last observed rotation reasons |
+| GET | `/discovery/runs` | List persisted NMAP discovery scan run history |
+| POST | `/crl/revoke` | Issue a CRL revocation entry for a DID |
+| GET | `/crl/list` | Return all CRL entries |
+| GET | `/crl/entry` | Return one CRL entry by `id` |
+| GET | `/crl/check` | Return `{ revoked, entry }` for a DID |
+| POST | `/crl/verify` | Verify CRL signatures, role rules, and Merkle root |
+| GET | `/crl/root` | Return CRL sequence and Merkle root |
+| POST | `/crl/unrevoke` | Reverse a mistaken revocation (Circle Owner only) |
 ---
 
 ## 2. Standard Error Envelope
@@ -2260,6 +2265,48 @@ Peer DID resolution response (`?did=did:guardian:...`):
 - Error responses:
   - `500 INTERNAL_SERVER_ERROR`: `sgx-pa-cli` not found or command spawn failed
 
+### 3.69a GET `/discovery/runs`
+
+- Request:
+  - Query params:
+    - `limit` (optional, default `50`, max `500`)
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+[
+  {
+    "run_id": "20260701T050842Z-standard-550e8400-e29b-41d4-a716-446655440000",
+    "started_at": "2026-07-01T05:08:42Z",
+    "completed_at": "2026-07-01T05:09:12Z",
+    "duration_ms": 30000,
+    "source": "manual",
+    "schedule_kind": null,
+    "intensity": "standard",
+    "target": "192.168.50.0/24",
+    "success": true,
+    "error": null,
+    "new_devices": 1,
+    "updated_devices": 27,
+    "marked_stale": 0,
+    "total_devices": 28,
+    "approved": 2,
+    "unauthorized": 26,
+    "drifted": 0,
+    "stale": 0,
+    "raw_xml_path": "/var/lib/sgx-guardian/discovery/raw/1782911322.xml",
+    "inventory_path": "/var/lib/sgx-guardian/discovery/inventory.json"
+  }
+]
+```
+
+- Notes:
+  - Reads `/var/lib/sgx-guardian/discovery/runs.jsonl`
+  - Returns newest scan runs first
+  - History records are written by manual scan commands and scheduled discovery scans
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: run history read/parse failure
+
 ### 3.70 POST `/discovery/approve`
 
 - Request:
@@ -2287,13 +2334,31 @@ Peer DID resolution response (`?did=did:guardian:...`):
     "expected_os": null,
     "expected_ports": [],
     "expected_ips": []
-  }
+  },
+  "current_devices": [
+    {
+      "device_id": "a1b2c3d4e5f60708",
+      "ip": "192.168.50.103",
+      "vendor": "Acme",
+      "hostname": "printer.local",
+      "status": "approved",
+      "os_fingerprint": "Linux 5.x",
+      "open_ports": [
+        "22/tcp ssh"
+      ],
+      "first_seen": "2026-06-30T10:00:00Z",
+      "last_seen": "2026-06-30T11:00:00Z",
+      "vuln_triaged": false
+    }
+  ]
 }
 ```
 
 - Notes:
   - Adds or updates the MAC inside `/etc/sgx-guardian/discovery/whitelist.yaml`
+  - If `label` is omitted, the API attempts to infer a readable label from the matching inventory vendor or hostname
   - Immediately reclassifies matching non-stale inventory records so approved devices become authorized without waiting for the next scan
+  - Returns current inventory matches for that MAC in `current_devices`
 - Error responses:
   - `400 BAD_REQUEST`: invalid or empty MAC address
   - `500 INTERNAL_SERVER_ERROR`: whitelist read/write or inventory refresh failure
@@ -2320,6 +2385,24 @@ Peer DID resolution response (`?did=did:guardian:...`):
       ],
       "expected_ips": [
         "192.168.50.103/32"
+      ],
+      "inventory_match": true,
+      "current_devices": [
+        {
+          "device_id": "a1b2c3d4e5f60708",
+          "ip": "192.168.50.103",
+          "vendor": "Acme",
+          "hostname": "printer.local",
+          "status": "approved",
+          "os_fingerprint": "Linux 5.x",
+          "open_ports": [
+            "22/tcp ssh",
+            "9100/tcp jetdirect"
+          ],
+          "first_seen": "2026-06-30T10:00:00Z",
+          "last_seen": "2026-06-30T11:00:00Z",
+          "vuln_triaged": false
+        }
       ]
     }
   ]
@@ -2328,6 +2411,7 @@ Peer DID resolution response (`?did=did:guardian:...`):
 
 - Notes:
   - Missing or empty whitelist file returns the default empty document
+  - Stored whitelist remains policy-only; `inventory_match` and `current_devices` are read-only fields joined from `/var/lib/sgx-guardian/discovery/inventory.json`
 - Error responses:
   - `500 INTERNAL_SERVER_ERROR`: whitelist YAML parse failure or file I/O error
 
@@ -2359,7 +2443,7 @@ Peer DID resolution response (`?did=did:guardian:...`):
 
   - Required fields: none (`version` defaults to `"1.0"` when empty)
 - Success response (`200 OK`):
-  - Same schema as `GET /discovery/whitelist`
+  - Same policy schema as the request body
 - Notes:
   - Writes `/etc/sgx-guardian/discovery/whitelist.yaml` atomically
   - Refreshes matching non-stale inventory statuses after the whitelist update
@@ -2422,3 +2506,225 @@ Peer DID resolution response (`?did=did:guardian:...`):
   }
 }
 ```
+
+- Success response (`200 OK`):
+  - Same schema as `GET /discovery/schedule`
+- Error responses:
+  - `400 BAD_REQUEST`: invalid `target_cidr`, `timeout_secs`, or schedule intensity
+  - `500 INTERNAL_SERVER_ERROR`: schedule serialization/write failure
+
+### 3.75 POST `/crl/revoke`
+
+- Full path: `/api/v1/crl/revoke`
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "did": "did:guardian:TARGET",
+  "reason": "compromised",
+  "severity": "critical",
+  "device_id": "device-001",
+  "user_id": "user-001",
+  "note": "reported key compromise",
+  "audit_ref": "audit:123",
+  "attestation_ref": "attestation:456",
+  "evidence_digest": "sha256:..."
+}
+```
+
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "message": "CRL entry issued",
+  "entry": {
+    "id": "urn:uuid:...",
+    "revoked_did": "did:guardian:TARGET",
+    "circle_id": "guardian-circle-alpha",
+    "reason": "compromised",
+    "severity": "critical",
+    "revoker_did": "did:guardian:OWNER",
+    "revoker_role": "owner",
+    "timestamp": "2026-06-30T10:00:00Z"
+  },
+  "sequence": 1,
+  "merkle_root": "hex-sha256-root"
+}
+```
+
+- Notes:
+  - Owner revokers can issue any reason/severity.
+  - Member revokers are limited to security-critical reasons and `critical` or `high` severity.
+  - Owner-issued revocations also flip VC status-list bits for VCs issued to the revoked DID.
+- Error responses:
+  - `400 BAD_REQUEST`: invalid reason, severity, circle, or local membership state
+  - `403 FORBIDDEN`: self-revocation, invalid proof, or member policy violation
+  - `409 CONFLICT`: DID already revoked
+  - `500 INTERNAL_SERVER_ERROR`: local DID/key/audit/persistence failure
+
+### 3.76 GET `/crl/list`
+
+- Full path: `/api/v1/crl/list`
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "count": 1,
+  "entries": [
+    {
+      "id": "urn:uuid:...",
+      "revoked_did": "did:guardian:TARGET",
+      "reason": "compromised",
+      "severity": "critical",
+      "revoker_did": "did:guardian:OWNER"
+    }
+  ]
+}
+```
+
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: CRL persistence load failure
+
+### 3.77 GET `/crl/entry`
+
+- Full path: `/api/v1/crl/entry?id=urn:uuid:...`
+- Request:
+  - Query params:
+    - `id` (required, string): CRL entry ID.
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "id": "urn:uuid:...",
+  "revoked_did": "did:guardian:TARGET",
+  "reason": "compromised",
+  "severity": "critical",
+  "revoker_did": "did:guardian:OWNER"
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: missing or empty `id`
+  - `404 NOT_FOUND`: CRL entry not found
+  - `500 INTERNAL_SERVER_ERROR`: CRL persistence load failure
+
+### 3.78 GET `/crl/check`
+
+- Full path: `/api/v1/crl/check?did=did:guardian:TARGET`
+- Request:
+  - Query params:
+    - `did` (required, string): DID to check.
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "did": "did:guardian:TARGET",
+  "revoked": true,
+  "entry": {
+    "id": "urn:uuid:...",
+    "reason": "compromised",
+    "severity": "critical"
+  }
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: missing or empty `did`
+  - `500 INTERNAL_SERVER_ERROR`: CRL persistence load failure
+
+### 3.79 POST `/crl/verify`
+
+- Full path: `/api/v1/crl/verify`
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "ok": true,
+  "errors": []
+}
+```
+
+- Failure response (`200 OK` with verification details):
+
+```json
+{
+  "ok": false,
+  "errors": [
+    "invalid signature on CRL entry urn:uuid:..."
+  ]
+}
+```
+
+- Notes:
+  - Verifies each entry signature against resolved DID public keys.
+  - Recomputes the CRL Merkle root and rejects mismatches.
+  - Re-applies member role restrictions and circle checks.
+
+### 3.80 GET `/crl/root`
+
+- Full path: `/api/v1/crl/root`
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "sequence": 1,
+  "merkle_root": "hex-sha256-root"
+}
+```
+
+- Notes:
+  - Empty local CRL state returns `sequence: 0` and an empty `merkle_root`.
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: CRL persistence load failure
+
+### 3.81 POST `/crl/unrevoke`
+
+- Full path: `/api/v1/crl/unrevoke`
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "did": "did:guardian:TARGET"
+}
+```
+
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "message": "CRL entry unrevoked",
+  "did": "did:guardian:TARGET",
+  "sequence": 2,
+  "merkle_root": "hex-sha256-root"
+}
+```
+
+- Notes:
+  - Admin-only rollback for a mistakenly-issued revocation — reverses `POST /crl/revoke`.
+  - Only the Circle **Owner** may call this, regardless of which role originally issued the revocation.
+  - Removes the entry from the live `entries` list (`sequence` bumps, `merkle_root` recomputes and re-signs); the original per-entry file under `entries/<id>.json` is left untouched as append-only history.
+  - If the original revocation flipped VC status-list bits for the revoked DID (owner-issued revocations only), those bits are restored (unset) as well.
+- Error responses:
+  - `400 BAD_REQUEST`: empty `did`, or other local CRL/DID state error
+  - `403 FORBIDDEN`: caller's local role is Member, not Owner
+  - `404 NOT_FOUND`: DID is not currently revoked
+  - `500 INTERNAL_SERVER_ERROR`: local DID/key/audit/persistence failure

@@ -18,6 +18,7 @@ pub mod inventory;
 pub mod nmap_parser;
 pub mod nmap_runner;
 pub mod raw_store;
+pub mod run_history;
 pub mod scheduler;
 pub mod vuln_trigger;
 pub mod whitelist;

@@ -13,6 +13,7 @@ use tower_http::trace::TraceLayer;
 
 pub mod error;
 pub mod handlers;
+pub mod routes;
 pub mod state;
 
 use state::AppState;
@@ -104,6 +105,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/discovery/unauthorized",
             get(handlers::discovery::list_unauthorized),
+        )
+        .route(
+            "/api/v1/discovery/runs",
+            get(handlers::discovery::list_runs),
         )
         .route(
             "/api/v1/discovery/scan",
@@ -221,6 +226,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/vc/revoke", post(handlers::vc::revoke))
         .route("/api/v1/vc/status", get(handlers::vc::status))
         .route("/api/v1/vc/pull-status", post(handlers::vc::pull_status))
+        .merge(routes::crl_router())
         // Health
         .route("/api/v1/health", get(|| async { "ok" }))
         .layer(cors)
