@@ -90,6 +90,16 @@
 | 79 | GET | `/discovery/summary` | Aggregate inventory stats: totals, open ports, risk counts, last_seen_at |
 | 80 | GET | `/discovery/devices/{device_id}` | Full device detail with risk_level, risk_reasons, and flagged_ports |
 | 81 | GET | `/discovery/runs` | Actual scan run history from raw XML archive (not inferred) |
+| 82 | GET | `/threat/status` | Suricata service state, block mode, alert and block counts |
+| 83 | GET | `/threat/alerts` | List parsed Suricata alerts from Guardian threat inventory |
+| 84 | GET | `/threat/blocks` | List currently blocked IPs from the threat blocker |
+| 85 | POST | `/threat/blocks` | Manually block an IP and persist the block record |
+| 86 | POST | `/threat/blocks/unblock` | Remove one IP from the active threat block list |
+| 87 | POST | `/threat/rules/update` | Trigger `suricata-update` and reload validated rules |
+| 88 | POST | `/threat/validate` | Validate Guardian threat config and Suricata YAML |
+| 89 | GET | `/threat/config` | Read current Guardian threat config |
+| 90 | POST | `/threat/config` | Patch threat config fields; effective within 5 seconds |
+| 91 | POST | `/threat/start` | Start Suricata via `systemctl start suricata` when offline |
 
 
 ## 2. NEW Endpoints 
@@ -99,6 +109,16 @@
 | GET | `/discovery/summary` | Aggregate inventory stats: totals, open ports, risk counts, last_seen_at |
 | GET | `/discovery/devices/{device_id}` | Full device detail with risk_level, risk_reasons, and flagged_ports |
 | GET | `/discovery/runs` | Actual scan run history from raw XML archive (not inferred) |
+| GET | `/threat/status` | Suricata service state, block mode, alert and block counts |
+| GET | `/threat/alerts` | Read recent Suricata alerts with optional `limit` and `severity` filters |
+| GET | `/threat/blocks` | Return the currently blocked IP list from nftables or persisted state |
+| POST | `/threat/blocks` | Manually block an IP with nftables + persisted TTL |
+| POST | `/threat/blocks/unblock` | Remove a blocked IP and rebuild the threat nftables chain |
+| POST | `/threat/rules/update` | Run `sgx-pa-cli threat rules-update` and return command output |
+| POST | `/threat/validate` | Run `sgx-pa-cli threat validate` to validate threat + Suricata config |
+| GET | `/threat/config` | Read full Guardian threat config as JSON |
+| POST | `/threat/config` | Patch threat config fields; live-reloaded within 5 seconds |
+| POST | `/threat/start` | Start Suricata if offline via `systemctl start suricata` |
 ---
 
 ## 2. Standard Error Envelope
@@ -2589,3 +2609,286 @@ Peer DID resolution response (`?did=did:guardian:...`):
   }
 }
 ```
+
+## 4. Threat Endpoint Contracts
+
+### GET `/threat/alerts`
+
+- Request:
+  - Query params:
+    - `limit` (optional, integer, default `500`, max `10000`)
+    - `severity` (optional, string, case-insensitive: `info`, `low`, `medium`, `high`, `critical`)
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+[
+  {
+    "alert_id": "838deb6e032238c8",
+    "timestamp": "2026-07-02T06:01:25.533459328Z",
+    "src_ip": "fe80::1d23:97c0:76be:19d9",
+    "src_port": 0,
+    "dst_ip": "ff02::16",
+    "dst_port": 0,
+    "protocol": "IPv6-ICMP",
+    "signature_id": 10000131,
+    "signature": "SGX MALWARE TEST TROJAN",
+    "category": "malware",
+    "severity": "critical",
+    "rev": 1,
+    "gid": 1,
+    "event_type": "alert",
+    "blocked": false
+  }
+]
+```
+
+- Notes:
+  - Reads newline-delimited JSON alerts from `alerts.jsonl` in `threat_state_dir`.
+  - Returns the most recent matching alerts when `limit` is smaller than the stored inventory.
+  - `category` values are snake_case enum strings such as `malware`, `exploit`, `policy_violation`, `reconnaissance`, `anomaly`, `other`.
+- Error responses:
+  - `404 NOT_FOUND`: no alert inventory exists yet (`"no alerts yet - has Suricata produced events?"`)
+  - `500 INTERNAL_SERVER_ERROR`: storage read failure or malformed runtime state
+
+### GET `/threat/blocks`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "blocked": [
+    "192.168.50.115",
+    "fe80::3fab:243d:7d08:e3c8"
+  ]
+}
+```
+
+- Notes:
+  - Reads active block IPs from nftables chain `inet sgx_threat input`.
+  - Falls back to persisted `blocked_ips.json` when nftables returns no active entries.
+  - Output is sorted and deduplicated before response.
+- Error responses:
+  - None expected from handler; empty list is returned when no active blocks are present
+
+### POST `/threat/blocks/unblock`
+
+- Request:
+  - Query params: none
+  - Body:
+
+```json
+{
+  "ip": "192.168.50.115"
+}
+```
+
+- Success response (`200 OK`):
+
+```json
+{
+  "success": true,
+  "stdout": "unblocked 192.168.50.115\n",
+  "stderr": "",
+  "restartRequired": false,
+  "timestamp": "2026-07-02T07:10:00Z"
+}
+```
+
+- Notes:
+  - Delegates to `sgx-pa-cli threat unblock <ip>`.
+  - Removes the IP from persisted block records, flushes the threat nftables chain, then restores any remaining blocks.
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: CLI command failed, IP was not blocked, or nftables restore failed
+
+### POST `/threat/rules/update`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "success": true,
+  "stdout": "suricata-update completed ...",
+  "stderr": "",
+  "restartRequired": true,
+  "timestamp": "2026-07-02T07:10:00Z"
+}
+```
+
+- Notes:
+  - Delegates to `sgx-pa-cli threat rules-update`.
+  - Runs Suricata rule update workflow and validates/reloads the updated ruleset.
+  - Uses the standard action envelope shown in `2.1`.
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: CLI command failed, Suricata validation failed, or service restart/reload failed
+
+### POST `/threat/validate`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "success": true,
+  "stdout": "ok\n",
+  "stderr": "",
+  "restartRequired": false,
+  "timestamp": "2026-07-02T07:10:00Z"
+}
+```
+
+- Notes:
+  - Delegates to `sgx-pa-cli threat validate`.
+  - Loads `/etc/sgx-guardian/threat/config.yaml`, then validates the configured Suricata YAML.
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: CLI command failed, threat config is invalid, or Suricata config test failed
+
+### GET `/threat/status`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "suricata": "active",
+  "enabled": true,
+  "block_mode": "inline_block",
+  "alert_count": 124,
+  "block_count": 3
+}
+```
+
+- Field notes:
+  - `suricata` (`string`): output of `systemctl is-active suricata` - `"active"`, `"inactive"`, or `"unknown"`.
+  - `enabled` (`boolean`): whether Guardian's threat integration is enabled in config.
+  - `block_mode` (`string`): `"alert_only"` or `"inline_block"`.
+  - `alert_count` (`integer`): number of alerts in `alerts.jsonl`.
+  - `block_count` (`integer`): number of entries in `blocked_ips.json`.
+- Error responses:
+  - None expected; config load failures fall back to defaults silently.
+
+### GET `/threat/config`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "enabled": true,
+  "interface": "wlan0",
+  "eve_path": "/var/log/suricata/eve.json",
+  "suricata_yaml": "/etc/suricata/suricata.yaml",
+  "block_mode": "inline_block",
+  "block_ttl_secs": 86400,
+  "block_exempt": ["127.0.0.0/8", "192.168.100.0/24"],
+  "rule_update_hours": 24
+}
+```
+
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: config file exists but is invalid YAML or fails validation
+
+### POST `/threat/config`
+
+- Request:
+  - Query params: none
+  - JSON body (all fields optional - only supplied fields are patched):
+
+```json
+{
+  "enabled": true,
+  "block_mode": "inline_block",
+  "rule_update_hours": 12,
+  "block_ttl_secs": 43200,
+  "block_exempt": ["127.0.0.0/8", "10.0.0.0/8"]
+}
+```
+
+- `block_mode` accepted values: `"alert_only"`, `"inline_block"`
+- Success response (`200 OK`):
+
+```json
+{
+  "success": true,
+  "stdout": "config updated - effective within 5 seconds",
+  "stderr": "",
+  "restartRequired": false,
+  "timestamp": "2026-07-03T17:10:00Z"
+}
+```
+
+- Notes:
+  - Loads existing config, applies only the provided fields, validates, and writes back to `/etc/sgx-guardian/threat/config.yaml`.
+  - Guardian's `config_refresh_tick` (every 5 seconds) picks up the change automatically - no restart required.
+  - `block_ttl_secs` must be between 1 and 604800 (7 days).
+  - Each entry in `block_exempt` must be a valid CIDR or IP address.
+- Error responses:
+  - `400 BAD_REQUEST`: config validation failed (invalid TTL, invalid CIDR in exempt list)
+  - `500 INTERNAL_SERVER_ERROR`: config file write failure
+
+### POST `/threat/blocks`
+
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "ip": "192.168.50.115"
+}
+```
+
+  - Required fields: `ip` (valid IPv4 or IPv6 address)
+- Success response (`200 OK`):
+
+```json
+{
+  "success": true,
+  "stdout": "blocked 192.168.50.115 (ttl=86400s)",
+  "stderr": "",
+  "restartRequired": false,
+  "timestamp": "2026-07-03T17:10:00Z"
+}
+```
+
+- Notes:
+  - Delegates to `sgx-pa-cli threat block <ip>`.
+  - Adds an nft drop rule to `inet sgx_threat input` and persists to `blocked_ips.json` with TTL from current config.
+  - If the IP is already blocked, returns `success=true` with `stdout: "<ip> is already blocked"`.
+  - Block expires automatically after `block_ttl_secs`; Blocker's sweep task cleans it up.
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: invalid IP format, nft command failure, or file write error
+
+### POST `/threat/start`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "success": true,
+  "stdout": "suricata started",
+  "stderr": "",
+  "restartRequired": false,
+  "timestamp": "2026-07-03T17:10:00Z"
+}
+```
+
+- Notes:
+  - Runs `systemctl start suricata`.
+  - If Suricata is already active, `systemctl start` is a no-op and returns success.
+  - Use `GET /threat/status` to confirm `suricata` field becomes `"active"` after calling this endpoint.

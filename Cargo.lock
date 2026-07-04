@@ -2138,6 +2138,7 @@ dependencies = [
  "dashmap",
  "flate2",
  "hex",
+ "ipnet",
  "libc",
  "libmdns",
  "network-interface",

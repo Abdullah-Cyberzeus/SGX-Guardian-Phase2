@@ -89,10 +89,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/discovery/summary",
             get(handlers::discovery::get_summary),
         )
-        .route(
-            "/api/v1/discovery/runs",
-            get(handlers::discovery::get_runs),
-        )
+        .route("/api/v1/discovery/runs", get(handlers::discovery::get_runs))
         .route(
             "/api/v1/discovery/devices",
             get(handlers::discovery::list_devices),
@@ -233,6 +230,25 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/vc/revoke", post(handlers::vc::revoke))
         .route("/api/v1/vc/status", get(handlers::vc::status))
         .route("/api/v1/vc/pull-status", post(handlers::vc::pull_status))
+        .route("/api/v1/threat/status", get(handlers::threat::status))
+        .route("/api/v1/threat/alerts", get(handlers::threat::list_alerts))
+        .route("/api/v1/threat/blocks", get(handlers::threat::list_blocks))
+        .route("/api/v1/threat/blocks", post(handlers::threat::block_ip))
+        .route(
+            "/api/v1/threat/blocks/unblock",
+            post(handlers::threat::unblock),
+        )
+        .route(
+            "/api/v1/threat/rules/update",
+            post(handlers::threat::update_rules),
+        )
+        .route(
+            "/api/v1/threat/validate",
+            post(handlers::threat::validate_config),
+        )
+        .route("/api/v1/threat/config", get(handlers::threat::get_config))
+        .route("/api/v1/threat/config", post(handlers::threat::set_config))
+        .route("/api/v1/threat/start", post(handlers::threat::start))
         // Health
         .route("/api/v1/health", get(|| async { "ok" }))
         .layer(cors)
@@ -388,6 +404,8 @@ mod tests {
                 vid_cache: crate::virtual_id_cache::VirtualIdCache::new(),
                 discovery_config_dir: "/tmp/discovery-config".into(),
                 discovery_state_dir: "/tmp/discovery-state".into(),
+                threat_config_path: "/tmp/threat-config.yaml".into(),
+                threat_state_dir: "/tmp/threat-state".into(),
             })
         }
     }
@@ -423,6 +441,8 @@ mod tests {
             vid_cache: crate::virtual_id_cache::VirtualIdCache::new(),
             discovery_config_dir: "/tmp/discovery-config".into(),
             discovery_state_dir: "/tmp/discovery-state".into(),
+            threat_config_path: "/tmp/threat-config.yaml".into(),
+            threat_state_dir: "/tmp/threat-state".into(),
         })
     }
 

@@ -12,7 +12,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 // Ports that are considered risky when exposed on an unauthorized device.
-const HIGH_RISK_PORTS: &[u16] = &[21, 22, 23, 25, 111, 135, 139, 443, 445, 1433, 3306, 3389, 5432, 8000, 8080, 8443];
+const HIGH_RISK_PORTS: &[u16] = &[
+    21, 22, 23, 25, 111, 135, 139, 443, 445, 1433, 3306, 3389, 5432, 8000, 8080, 8443,
+];
 
 pub async fn list_devices(
     State(s): State<Arc<AppState>>,
@@ -596,14 +598,13 @@ pub struct RunsResponse {
     pub total_in_inventory: usize,
 }
 
-pub async fn get_runs(
-    State(s): State<Arc<AppState>>,
-) -> Result<Json<RunsResponse>, ApiError> {
+pub async fn get_runs(State(s): State<Arc<AppState>>) -> Result<Json<RunsResponse>, ApiError> {
     let state_dir = PathBuf::from(&s.discovery_state_dir);
 
     // Device count from inventory for context.
     let inv_path = inventory_path(&s);
-    let total_in_inventory = tokio::fs::read(&inv_path).await
+    let total_in_inventory = tokio::fs::read(&inv_path)
+        .await
         .ok()
         .and_then(|b| serde_json::from_slice::<Vec<ConnectedDevice>>(&b).ok())
         .map(|d| d.len())
@@ -632,7 +633,10 @@ pub async fn get_runs(
     }
 
     runs.sort_by(|a, b| b.unix_ts.cmp(&a.unix_ts)); // newest first
-    Ok(Json(RunsResponse { runs, total_in_inventory }))
+    Ok(Json(RunsResponse {
+        runs,
+        total_in_inventory,
+    }))
 }
 
 // ── Risk computation ──────────────────────────────────────────────────────────
@@ -647,14 +651,14 @@ fn risk_level(device: &ConnectedDevice) -> (&'static str, Vec<String>, Vec<u16>)
         DeviceStatus::Unauthorized | DeviceStatus::Drifted
     );
 
-    let has_vulns = device
-        .open_ports
-        .iter()
-        .any(|p| p.scripts.iter().any(|s| s.id == "vulners" && !s.output.trim().is_empty()))
-        || device
-            .host_scripts
+    let has_vulns = device.open_ports.iter().any(|p| {
+        p.scripts
             .iter()
-            .any(|s| s.id == "vulners" && !s.output.trim().is_empty());
+            .any(|s| s.id == "vulners" && !s.output.trim().is_empty())
+    }) || device
+        .host_scripts
+        .iter()
+        .any(|s| s.id == "vulners" && !s.output.trim().is_empty());
 
     let risky: Vec<u16> = device
         .open_ports
@@ -672,7 +676,11 @@ fn risk_level(device: &ConnectedDevice) -> (&'static str, Vec<String>, Vec<u16>)
     if !risky.is_empty() {
         reasons.push(format!(
             "risky ports exposed: {}",
-            risky.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", ")
+            risky
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
         flagged.extend_from_slice(&risky);
     }

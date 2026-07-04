@@ -26,6 +26,7 @@ pub mod policy_state;
 pub mod runtime_gates;
 pub mod secure_element;
 pub mod server;
+pub mod threat;
 pub mod tls;
 pub mod vc;
 pub mod virtual_id;
