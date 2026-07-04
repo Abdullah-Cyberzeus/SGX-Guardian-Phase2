@@ -12,6 +12,7 @@ pub enum AuditCategory {
     Identity,
     Did,
     Vc,
+    Crl,
     Attestation,
     Policy,
     Enforcement,

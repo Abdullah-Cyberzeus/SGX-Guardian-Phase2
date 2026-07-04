@@ -1,4 +1,5 @@
 pub mod attestation;
+pub mod crl;
 pub mod did;
 pub mod dkp;
 pub mod guardian_keys;

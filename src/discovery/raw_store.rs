@@ -12,7 +12,7 @@ impl RawXmlStore {
     /// Write XML to `<state_dir>/raw/<unix_timestamp>.xml` then prune to last N.
     /// Best-effort: failures are returned but the caller can choose to log+ignore
     /// rather than fail the whole scan.
-    pub fn persist(state_dir: &Path, xml: &str) -> DiscoveryResult<()> {
+    pub fn persist(state_dir: &Path, xml: &str) -> DiscoveryResult<std::path::PathBuf> {
         let raw_dir = state_dir.join("raw");
         std::fs::create_dir_all(&raw_dir)?;
 
@@ -48,7 +48,7 @@ impl RawXmlStore {
             let _ = std::fs::remove_file(p);
         }
 
-        Ok(())
+        Ok(path)
     }
 
     pub fn list(state_dir: &Path) -> DiscoveryResult<Vec<std::path::PathBuf>> {

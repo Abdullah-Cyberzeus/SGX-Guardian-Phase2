@@ -1,10 +1,13 @@
 use crate::api::{error::ApiError, state::AppState};
-use crate::discovery::whitelist::{Whitelist, WhitelistEntry};
+use crate::discovery::whitelist::{
+    enrich_entries, infer_label_for_mac, Whitelist, WhitelistEntry, WhitelistEntryView,
+};
 use crate::discovery::{
+    run_history::{self, ScanRunRecord},
     ConnectedDevice, DeviceStatus, NmapConfig, ScanIntensity, ScanSchedule, ScheduleProfile,
     ScheduledScans,
 };
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::{Path as AxumPath, Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
@@ -44,6 +47,37 @@ pub async fn list_unauthorized(
     Ok(Json(filtered))
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RunsView {
+    Raw,
+    History,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct RunsQuery {
+    pub limit: Option<usize>,
+    pub view: Option<RunsView>,
+}
+
+fn load_run_history(
+    state: &AppState,
+    limit: Option<usize>,
+) -> Result<Vec<ScanRunRecord>, ApiError> {
+    let path = run_history::history_path(Path::new(&state.discovery_state_dir));
+    let limit = limit.unwrap_or(50).min(500);
+    let runs = run_history::list_recent(&path, Some(limit))
+        .map_err(|e| ApiError::Internal(format!("run history read: {}", e)))?;
+    Ok(runs)
+}
+
+pub async fn list_runs(
+    State(s): State<Arc<AppState>>,
+    Query(query): Query<RunsQuery>,
+) -> Result<Json<Vec<ScanRunRecord>>, ApiError> {
+    Ok(Json(load_run_history(s.as_ref(), query.limit)?))
+}
+
 #[derive(Debug, Serialize)]
 pub struct ScanResponse {
     pub success: bool,
@@ -80,6 +114,12 @@ pub struct WhitelistDoc {
     pub devices: Vec<WhitelistEntry>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct WhitelistViewDoc {
+    pub version: String,
+    pub devices: Vec<WhitelistEntryView>,
+}
+
 fn default_version() -> String {
     "1.0".to_string()
 }
@@ -106,6 +146,7 @@ pub struct ApproveResponse {
     pub created: bool,
     pub inventory_updated: usize,
     pub entry: WhitelistEntry,
+    pub current_devices: Vec<crate::discovery::whitelist::WhitelistInventoryDevice>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -142,8 +183,12 @@ pub struct ScheduleProfilePatch {
     pub intensity: Option<ScanIntensity>,
 }
 
-pub async fn get_whitelist(State(s): State<Arc<AppState>>) -> Result<Json<WhitelistDoc>, ApiError> {
-    Ok(Json(load_whitelist_doc(&whitelist_path(&s))?))
+pub async fn get_whitelist(
+    State(s): State<Arc<AppState>>,
+) -> Result<Json<WhitelistViewDoc>, ApiError> {
+    let doc = load_whitelist_doc(&whitelist_path(&s))?;
+    let inventory = load_inventory_devices(&inventory_path(&s))?;
+    Ok(Json(enrich_whitelist_doc(doc, &inventory)))
 }
 
 pub async fn put_whitelist(
@@ -168,6 +213,11 @@ pub async fn approve_device(
     Json(body): Json<ApproveRequest>,
 ) -> Result<Json<ApproveResponse>, ApiError> {
     let normalized_mac = normalize_mac(&body.mac)?;
+    let inventory_before = load_inventory_devices(&inventory_path(&s))?;
+    let requested_label = normalize_optional_label(body.label);
+    let resolved_label = requested_label
+        .clone()
+        .or_else(|| infer_label_for_mac(&normalized_mac, &inventory_before));
     let whitelist_file = whitelist_path(&s);
     let mut doc = load_whitelist_doc(&whitelist_file)?;
     let mut created = false;
@@ -177,7 +227,9 @@ pub async fn approve_device(
         .find(|entry| normalize_mac_lossy(&entry.mac) == normalized_mac)
     {
         Some(existing) => {
-            if let Some(label) = body.label {
+            if let Some(label) = resolved_label.clone().filter(|_| {
+                requested_label.is_some() || existing.label.as_deref().unwrap_or("").is_empty()
+            }) {
                 existing.label = Some(label);
             }
             existing.clone()
@@ -185,7 +237,7 @@ pub async fn approve_device(
         None => {
             let entry = WhitelistEntry {
                 mac: normalized_mac,
-                label: body.label,
+                label: resolved_label,
                 expected_os: None,
                 expected_ports: Vec::new(),
                 expected_ips: Vec::new(),
@@ -205,12 +257,19 @@ pub async fn approve_device(
 
     let inventory_updated =
         refresh_inventory_statuses(&inventory_path(&s), &runtime_whitelist(&doc))?;
+    let refreshed_inventory = load_inventory_devices(&inventory_path(&s))?;
+    let current_devices = enrich_entries(std::slice::from_ref(&entry), &refreshed_inventory)
+        .into_iter()
+        .next()
+        .map(|view| view.current_devices)
+        .unwrap_or_default();
 
     Ok(Json(ApproveResponse {
         success: true,
         created,
         inventory_updated,
         entry,
+        current_devices,
     }))
 }
 
@@ -263,9 +322,36 @@ fn load_whitelist_doc(path: &Path) -> Result<WhitelistDoc, ApiError> {
         .map_err(|e| ApiError::Internal(format!("whitelist parse error: {}", e)))
 }
 
+fn load_inventory_devices(path: &Path) -> Result<Vec<ConnectedDevice>, ApiError> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let bytes = std::fs::read(path)?;
+    if bytes.iter().all(|byte| byte.is_ascii_whitespace()) {
+        return Ok(Vec::new());
+    }
+
+    serde_json::from_slice(&bytes)
+        .map_err(|e| ApiError::Internal(format!("inventory parse: {}", e)))
+}
+
+fn enrich_whitelist_doc(doc: WhitelistDoc, inventory: &[ConnectedDevice]) -> WhitelistViewDoc {
+    WhitelistViewDoc {
+        version: doc.version,
+        devices: enrich_entries(&doc.devices, inventory),
+    }
+}
+
 fn load_nmap_config(path: &Path) -> Result<NmapConfig, ApiError> {
     NmapConfig::load(path)
         .map_err(|e| ApiError::BadRequest(format!("discovery config load error: {}", e)))
+}
+
+fn normalize_optional_label(label: Option<String>) -> Option<String> {
+    label
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn schedule_doc_from_config(cfg: &NmapConfig) -> ScheduleDoc {
@@ -598,7 +684,24 @@ pub struct RunsResponse {
     pub total_in_inventory: usize,
 }
 
-pub async fn get_runs(State(s): State<Arc<AppState>>) -> Result<Json<RunsResponse>, ApiError> {
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum RunsApiResponse {
+    Raw(RunsResponse),
+    History(Vec<ScanRunRecord>),
+}
+
+pub async fn get_runs(
+    State(s): State<Arc<AppState>>,
+    Query(query): Query<RunsQuery>,
+) -> Result<Json<RunsApiResponse>, ApiError> {
+    if matches!(query.view, Some(RunsView::History)) || query.limit.is_some() {
+        return Ok(Json(RunsApiResponse::History(load_run_history(
+            s.as_ref(),
+            query.limit,
+        )?)));
+    }
+
     let state_dir = PathBuf::from(&s.discovery_state_dir);
 
     // Device count from inventory for context.
@@ -633,10 +736,10 @@ pub async fn get_runs(State(s): State<Arc<AppState>>) -> Result<Json<RunsRespons
     }
 
     runs.sort_by(|a, b| b.unix_ts.cmp(&a.unix_ts)); // newest first
-    Ok(Json(RunsResponse {
+    Ok(Json(RunsApiResponse::Raw(RunsResponse {
         runs,
         total_in_inventory,
-    }))
+    })))
 }
 
 // ── Risk computation ──────────────────────────────────────────────────────────
