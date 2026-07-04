@@ -138,10 +138,9 @@ pub fn run_generate(args: GenerateQuoteArgs) {
                             "Software"
                         }
                     );
-                    println!(
-                        "  PCR composite: {}...",
-                        &snap["composite_digest"].as_str().unwrap_or("?")[..16]
-                    );
+                    let composite = snap["composite_digest"].as_str().unwrap_or("?");
+                    let preview: String = composite.chars().take(16).collect();
+                    println!("  PCR composite: {}...", preview);
                     println!("  Boot chain intact: {}", boot["boot_chain_intact"]);
                     // Don't write generated quote to RESULTS_PATH — that file stores
                     // verification results (different schema). Quote already saved to QUOTE_PATH.
