@@ -337,6 +337,25 @@ mod tests {
         }
     }
 
+    struct ScopedEnvVar {
+        key: &'static str,
+        prev: Option<OsString>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            restore_env(self.key, self.prev.take());
+        }
+    }
+
     struct VcEnvGuard {
         doc_env: EnvGuard,
         did_path_prev: Option<OsString>,
@@ -1182,6 +1201,7 @@ mod tests {
         let peers_dir = td.path().join("identity").join("peers");
         let aggregate_path = td.path().join("identity").join("circle_did_docs.json");
         let _env = EnvGuard::new(&self_doc_path, &peers_dir, &aggregate_path);
+        let _ca_host = ScopedEnvVar::set("SGX_CA_HOST", "127.0.0.1");
 
         let self_did = Did::from_id_bytes(&[7u8; 32]).to_string();
         let peer_did = Did::from_id_bytes(&[8u8; 32]).to_string();

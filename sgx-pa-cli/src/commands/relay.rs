@@ -326,7 +326,9 @@ where
         .ok_or_else(|| anyhow!("relay section is not mapping"))?;
 
     mutator(relay_map);
-    fs::write(path, serde_yaml::to_string(&doc)?)?;
+    let tmp = format!("{}.tmp", path);
+    fs::write(&tmp, serde_yaml::to_string(&doc)?)?;
+    fs::rename(&tmp, path)?;
     Ok(())
 }
 
@@ -479,7 +481,12 @@ fn load_registry() -> Result<RelayRegistryDoc> {
         return Ok(RelayRegistryDoc::default());
     }
     let data = fs::read_to_string(path)?;
-    Ok(serde_json::from_str::<RelayRegistryDoc>(&data).unwrap_or_default())
+    Ok(
+        serde_json::from_str::<RelayRegistryDoc>(&data).unwrap_or_else(|e| {
+            eprintln!("⚠️ Relay registry JSON corrupted: {}", e);
+            Default::default()
+        }),
+    )
 }
 
 fn save_registry(reg: &RelayRegistryDoc) -> Result<()> {
@@ -487,7 +494,10 @@ fn save_registry(reg: &RelayRegistryDoc) -> Result<()> {
     if let Some(parent) = Path::new(&path).parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, serde_json::to_string_pretty(reg)?)?;
+    let json = serde_json::to_string_pretty(reg)?;
+    let tmp = format!("{}.tmp", path);
+    fs::write(&tmp, json)?;
+    fs::rename(&tmp, path)?;
     Ok(())
 }
 
@@ -497,7 +507,12 @@ fn load_stats() -> Result<RelayStatsDoc> {
         return Ok(RelayStatsDoc::default());
     }
     let data = fs::read_to_string(path)?;
-    Ok(serde_json::from_str::<RelayStatsDoc>(&data).unwrap_or_default())
+    Ok(
+        serde_json::from_str::<RelayStatsDoc>(&data).unwrap_or_else(|e| {
+            eprintln!("⚠️ Relay registry JSON corrupted: {}", e);
+            Default::default()
+        }),
+    )
 }
 
 #[cfg(test)]

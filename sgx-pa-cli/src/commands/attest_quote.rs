@@ -282,7 +282,7 @@ pub fn run_verify(args: VerifyQuoteArgs) {
     let mut baseline_skipped = false;
     let mut baseline_load_err: Option<String> = None;
 
-    if args.no_baseline {
+    if args.no_baseline && resolved_baseline_path.is_some() {
         baseline_skipped = true;
         println!("  Baseline:    ⚠️ skipped (--no-baseline)");
     } else if let Some(bl_path) = resolved_baseline_path.as_deref() {
@@ -373,15 +373,14 @@ pub fn run_verify(args: VerifyQuoteArgs) {
                 &claimed[..16.min(claimed.len())]
             );
         }
-        baseline_ok = self_ok;
-        println!(
-            "  Baseline:    {} (peer baseline not local — used quote self-consistency)",
-            if self_ok {
-                "✅ self-consistent"
-            } else {
-                "❌ self-inconsistent"
-            }
-        );
+        if args.no_baseline {
+            baseline_ok = self_ok;
+            println!("  ⚠️  --no-baseline: accepting self-consistency (NOT production-safe)");
+        } else {
+            baseline_ok = false;
+            println!("  ❌ No baseline file — cannot verify PCR integrity");
+            println!("     Use --baseline <path> or --no-baseline to override");
+        }
     }
 
     if let Some(err) = &baseline_load_err {
@@ -493,24 +492,28 @@ fn sign_quote_hash(hash: &[u8], key_version: u32) -> Option<String> {
 
     // Method 1: SE050 hardware
     let key_id = format!("0x{:08X}", 0x20000010 + key_version - 1);
-    let tmp_in = "/tmp/guardian_quote_hash.bin";
-    let tmp_out = "/tmp/guardian_quote_sig.bin";
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let tmp_in = format!("/tmp/guardian_quote_hash_{}.bin", ts);
+    let tmp_out = format!("/tmp/guardian_quote_sig_{}.bin", ts);
 
-    if fs::write(tmp_in, hash).is_ok() {
+    if fs::write(&tmp_in, hash).is_ok() {
         if let Ok(output) = Command::new("ssscli")
-            .args(["sign", &key_id, tmp_in, tmp_out])
+            .args(["sign", &key_id, &tmp_in, &tmp_out])
             .output()
         {
             if output.status.success() {
-                if let Ok(sig) = fs::read(tmp_out) {
-                    let _ = fs::remove_file(tmp_in);
-                    let _ = fs::remove_file(tmp_out);
+                if let Ok(sig) = fs::read(&tmp_out) {
+                    let _ = fs::remove_file(&tmp_in);
+                    let _ = fs::remove_file(&tmp_out);
                     return Some(base64::engine::general_purpose::STANDARD.encode(&sig));
                 }
             }
         }
-        let _ = fs::remove_file(tmp_in);
-        let _ = fs::remove_file(tmp_out);
+        let _ = fs::remove_file(&tmp_in);
+        let _ = fs::remove_file(&tmp_out);
     }
 
     // Method 2: Software key

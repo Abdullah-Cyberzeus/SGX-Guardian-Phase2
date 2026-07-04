@@ -171,7 +171,7 @@ pub fn run() {
         "label": new_label,
         "algorithm": "ECDSA-P256",
         "version": new_version,
-        "status": "Active",
+        "status": if has_ssscli { "Active" } else { "Pending" },
         "created_at": Utc::now().to_rfc3339(),
         "rotated_from": current_key_id,
         "revoked_at": null,
@@ -198,6 +198,14 @@ pub fn run() {
     if let Err(e) = fs::rename(&tmp_path, METADATA_PATH) {
         eprintln!("❌ Failed to atomically replace metadata: {}", e);
         return;
+    }
+    if !has_ssscli {
+        // Verify the daemon will regenerate — mark pending, not Active
+        println!("⚠️  Software key scheduled for regeneration on next daemon start");
+        println!(
+            "   Key v{} is NOT active until daemon regenerates it",
+            new_version
+        );
     }
     if let Err(e) = sgx_guardian_client::did::method::update_dkp_version(
         sgx_guardian_client::did::DEFAULT_DID_PATH,

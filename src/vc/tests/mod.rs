@@ -259,7 +259,7 @@ fn vc_revocation_is_enforced() {
         },
     )
     .expect("issue vc");
-    issue::revoke_vc(&issuer, &km, &vc.id, "test").expect("revoke vc");
+    issue::revoke_vc(&issuer, &km, &vc.id, "test", "nodeA").expect("revoke vc");
 
     let resolver = build_resolver();
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -450,7 +450,7 @@ fn owner_authorization_ignores_newer_self_member_vc() {
     .expect("owner should still issue vc");
     assert_eq!(target_vc.subject_did(), subject_did);
 
-    issue::revoke_vc(&issuer, &km, &target_vc.id, "owner regression")
+    issue::revoke_vc(&issuer, &km, &target_vc.id, "owner regression", "nodeA")
         .expect("owner should still revoke vc");
 }
 
@@ -616,7 +616,7 @@ fn member_cannot_revoke_vc() {
     )
     .expect("issue target vc");
 
-    let err = issue::revoke_vc(&member, &member_km, &target_vc.id, "not owner")
+    let err = issue::revoke_vc(&member, &member_km, &target_vc.id, "not owner", "nodeA")
         .expect_err("member must not revoke vc");
     assert!(matches!(err, VcError::NotCircleOwnerForRevoke));
 }
@@ -965,6 +965,7 @@ fn vc_renew_by_id_updates_expiration_and_proof_but_preserves_identity_fields() {
             duration_days: 90,
             allow_expired: false,
         },
+        "nodeA",
     )
     .expect("renew vc");
 
@@ -1018,7 +1019,7 @@ fn revoked_vc_cannot_be_renewed() {
         },
     )
     .expect("issue vc");
-    issue::revoke_vc(&issuer, &km, &vc.id, "test revoke").expect("revoke vc");
+    issue::revoke_vc(&issuer, &km, &vc.id, "test revoke", "nodeA").expect("revoke vc");
 
     let err = issue::renew_membership_vc(
         &issuer,
@@ -1030,6 +1031,7 @@ fn revoked_vc_cannot_be_renewed() {
             duration_days: 30,
             allow_expired: false,
         },
+        "nodeA",
     )
     .expect_err("revoked vc must not renew");
     assert!(matches!(err, VcError::CannotRenewRevokedVc));
@@ -1067,6 +1069,7 @@ fn expired_vc_renewal_requires_allow_expired() {
             duration_days: 30,
             allow_expired: false,
         },
+        "nodeA",
     )
     .expect_err("expired renewal without override must fail");
     assert!(matches!(err, VcError::CannotRenewExpiredVc(_)));
@@ -1081,6 +1084,7 @@ fn expired_vc_renewal_requires_allow_expired() {
             duration_days: 30,
             allow_expired: true,
         },
+        "nodeA",
     )
     .expect("expired renewal with override should succeed");
     assert_eq!(expired.id, renewed.id);
