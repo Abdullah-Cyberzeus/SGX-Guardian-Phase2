@@ -31,6 +31,11 @@
    - Exact error message jo aaya
    - Kya try kiya aur kya nahi chala
 
+**Requirements count ke baare mein:**
+- Requirements ki count task description se derive hoti hai — fixed count number nahi hony chiya
+- Jitne distinct verifiable claims task description mein hain utni hi requirements banani hain
+- Artificially pad mat karo aur koi genuine requirement miss bhi mat karo
+
 **Symbols:**
 - `✅` = Verified and passed
 - `❌` = Confirmed code-side failure (command side fully ruled out)
@@ -38,7 +43,7 @@
 
 ---
 
-## 📊 Requirements Checklist
+## 📊 Requirements Checklist (7 Requirements)
 
 - [ ] Requirement 1 — CRL data structure with all spec-required fields
 - [ ] Requirement 2 — Revocation reasons (compromised / lost / stolen / policy_violation)
@@ -47,7 +52,6 @@
 - [ ] Requirement 5 — Distributed CRL storage with Merkle root integrity
 - [ ] Requirement 6 — Peer-to-peer gossip propagation support
 - [ ] Requirement 7 — Issuer authorization (owner vs member roles)
-- [ ] Requirement 8 — CRL integrity verification end-to-end
 
 ---
 
@@ -192,25 +196,6 @@ cat /var/lib/sgx-guardian/crl/crl.json | python3 -m json.tool | grep -E "peers_n
 sgx-pa-cli crl revoke --did did:guardian:peer1 --reason compromised --severity critical
 # Check revoker_role in entry
 cat /var/lib/sgx-guardian/crl/crl.json | python3 -m json.tool | grep -E "revoker_role|revoker_did"
-```
-
-**Result:**
-```
-(pending)
-```
-
-**Verdict:** ⏳ Not yet verified
-
----
-
-## ⏳ Requirement 8 — CRL integrity verification end-to-end
-
-> `crl verify` command checks: (1) all entry signatures valid against issuer DID, (2) Merkle root matches recomputed root from current entries, (3) sequence is monotonically increasing. REST API `/crl/verify` exposes this pipeline.
-
-**Commands:**
-```bash
-sgx-pa-cli crl verify
-curl -s -X POST http://localhost:8443/api/v1/crl/verify | python3 -m json.tool
 ```
 
 **Result:**

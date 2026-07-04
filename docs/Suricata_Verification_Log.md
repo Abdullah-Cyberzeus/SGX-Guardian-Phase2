@@ -9,6 +9,38 @@
 
 ---
 
+## 📋 How to Use This File
+
+**Jab bhi koi Requirement ya API verify ho jaye (PASS):**
+1. `[ ]` ko `[x]` karo aur `## ⏳` ko `## ✅` kar do
+2. **Commands:** section mein woh exact command likhna jo run kiya
+3. **Result:** section mein terminal output paste karna
+4. **Verdict:** ek line mein confirm karna — kya pass hua
+
+**Jab koi Requirement ya API FAIL ho:**
+1. **Pehle command side verify karo** — command galat bhi ho sakti hai, code galat nahi bhi ho sakta:
+   - Kya command ka syntax theek hai?
+   - Kya required service chal rahi hai (Guardian on 8443)?
+   - Kya test input valid format mein hai?
+   - Alternate command se dobara try karo
+2. **Sirf tab `❌` lagao** jab fully confirm ho jaye ke issue code side ka hai, command side ka nahi
+3. **`❌` lagane ke saath ye bhi likho:**
+   - Konsi file/function mein likely issue hai (e.g. `src/threat/blocker.rs:45`) (cross-check khud bhi karo — issue doosri file mein bhi ho sakta hai)
+   - Exact error message jo aaya
+   - Kya try kiya aur kya nahi chala
+
+**Requirements count ke baare mein:**
+- Requirements ki count task description se derive hoti hai — fixed count number nahi hony chiya
+- Jitne distinct verifiable claims task description mein hain utni hi requirements banani hain
+- Artificially pad mat karo aur koi genuine requirement miss bhi mat karo
+
+**Symbols:**
+- `✅` = Verified and passed
+- `❌` = Confirmed code-side failure (command side fully ruled out)
+- `⏳` = Not yet tested
+
+---
+
 ## ✅ Requirement 1 — Real-time traffic analysis
 
 > Suricata IDS/IPS engine is integrated and performing real-time network traffic analysis on the board.
