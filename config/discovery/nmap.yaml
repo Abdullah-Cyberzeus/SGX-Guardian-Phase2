@@ -4,6 +4,6 @@ timeout_secs: 600
 exclude: []
 schedules:
   hourly:
-    intensity: standard
+    intensity: stealth
   daily:
     intensity: aggressive

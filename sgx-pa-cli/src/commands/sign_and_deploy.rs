@@ -19,13 +19,25 @@ pub struct SignAndDeployArgs {
 }
 
 pub fn execute(args: SignAndDeployArgs) {
+    let resolved = std::path::Path::new(&args.file)
+        .canonicalize()
+        .unwrap_or_else(|e| {
+            eprintln!("❌ Invalid policy path: {}", e);
+            std::process::exit(1);
+        });
+    if !resolved.to_string_lossy().starts_with("/etc/sgx-guardian/") {
+        eprintln!("❌ Policy file must be under /etc/sgx-guardian/");
+        std::process::exit(1);
+    }
+    let file_str = resolved.to_string_lossy().to_string();
+
     // We delegate to the daemon's policy_authority module so the signing
     // logic and on-disk envelope format are guaranteed identical.
     match sgx_guardian_client::policy_authority::PaKey::load_or_generate() {
-        Ok(pa) => match pa.sign_policy_to_disk(&args.file) {
+        Ok(pa) => match pa.sign_policy_to_disk(&file_str) {
             Ok(digest_hex) => {
                 println!("✅ Policy signed and deployed.");
-                println!("   YAML  : {}", args.file);
+                println!("   YAML  : {}", file_str);
                 println!("   Digest: {}", digest_hex);
                 println!("   Output: /etc/sgx-guardian/policies/policy.sig");
                 println!(

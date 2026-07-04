@@ -311,6 +311,13 @@ pub async fn document_publish(
     let req: PublishDocumentRequest = parse_required_json_body(&body)?;
     let ca_host = required_nonempty_field(&req.ca_host, "ca_host")?;
     let node_name = required_nonempty_field(&req.node_name, "node_name")?;
+    let allowed_ca = std::env::var("SGX_CA_HOST").unwrap_or_else(|_| "192.168.50.101".to_string());
+    if ca_host != allowed_ca {
+        return Err(ApiError::BadRequest(format!(
+            "ca_host must be {}",
+            allowed_ca
+        )));
+    }
     let doc = load_self_document()?;
     let floor_version = known_floor_version(&doc);
     doc_sign::verify_with_replay_protection(&doc, floor_version)
@@ -657,6 +664,8 @@ mod tests {
             vid_cache: crate::virtual_id_cache::VirtualIdCache::new(),
             discovery_config_dir: "/tmp/discovery-config".into(),
             discovery_state_dir: "/tmp/discovery-state".into(),
+            threat_config_path: "/tmp/threat-config.yaml".into(),
+            threat_state_dir: "/tmp/threat-state".into(),
         })
     }
 

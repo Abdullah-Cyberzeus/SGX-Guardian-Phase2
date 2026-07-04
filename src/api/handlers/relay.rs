@@ -895,6 +895,8 @@ mod tests {
             vid_cache: crate::virtual_id_cache::VirtualIdCache::new(),
             discovery_config_dir: "/tmp/discovery-config".into(),
             discovery_state_dir: "/tmp/discovery-state".into(),
+            threat_config_path: "/tmp/threat-config.yaml".into(),
+            threat_state_dir: "/tmp/threat-state".into(),
         })
     }
 

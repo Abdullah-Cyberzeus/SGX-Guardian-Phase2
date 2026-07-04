@@ -148,6 +148,7 @@ pub fn run_list() -> Result<()> {
 }
 
 pub fn run_stats(args: RelayStatsArgs) -> Result<()> {
+    validate_node_name(&args.node)?;
     let node = args.node;
     let reg = load_registry().unwrap_or_default();
     let stats = load_stats().unwrap_or_default();
@@ -208,6 +209,7 @@ pub fn run_stats(args: RelayStatsArgs) -> Result<()> {
 }
 
 pub fn run_set_limit(args: RelaySetLimitArgs) -> Result<()> {
+    validate_node_name(&args.node)?;
     if args.max_peers.is_none() && args.max_bandwidth_mbps.is_none() {
         return Err(anyhow!(
             "set-limit requires at least one of --max-peers or --max-bandwidth-mbps"
@@ -256,6 +258,7 @@ pub fn run_set_limit(args: RelaySetLimitArgs) -> Result<()> {
 }
 
 pub fn run_toggle(args: RelayToggleArgs) -> Result<()> {
+    validate_node_name(&args.node)?;
     let enable = if args.enable {
         true
     } else if args.disable {
@@ -300,6 +303,17 @@ pub fn run_toggle(args: RelayToggleArgs) -> Result<()> {
     Ok(())
 }
 
+fn validate_node_name(node: &str) -> Result<()> {
+    if node
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        Ok(())
+    } else {
+        Err(anyhow!("invalid node name '{}'", node))
+    }
+}
+
 fn mutate_relay_yaml<F>(path: &str, mutator: F) -> Result<()>
 where
     F: FnOnce(&mut serde_yaml::Mapping),
@@ -326,7 +340,9 @@ where
         .ok_or_else(|| anyhow!("relay section is not mapping"))?;
 
     mutator(relay_map);
-    fs::write(path, serde_yaml::to_string(&doc)?)?;
+    let tmp = format!("{}.tmp", path);
+    fs::write(&tmp, serde_yaml::to_string(&doc)?)?;
+    fs::rename(&tmp, path)?;
     Ok(())
 }
 
@@ -479,7 +495,12 @@ fn load_registry() -> Result<RelayRegistryDoc> {
         return Ok(RelayRegistryDoc::default());
     }
     let data = fs::read_to_string(path)?;
-    Ok(serde_json::from_str::<RelayRegistryDoc>(&data).unwrap_or_default())
+    Ok(
+        serde_json::from_str::<RelayRegistryDoc>(&data).unwrap_or_else(|e| {
+            eprintln!("⚠️ Relay registry JSON corrupted: {}", e);
+            Default::default()
+        }),
+    )
 }
 
 fn save_registry(reg: &RelayRegistryDoc) -> Result<()> {
@@ -487,7 +508,10 @@ fn save_registry(reg: &RelayRegistryDoc) -> Result<()> {
     if let Some(parent) = Path::new(&path).parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, serde_json::to_string_pretty(reg)?)?;
+    let json = serde_json::to_string_pretty(reg)?;
+    let tmp = format!("{}.tmp", path);
+    fs::write(&tmp, json)?;
+    fs::rename(&tmp, path)?;
     Ok(())
 }
 
@@ -497,7 +521,12 @@ fn load_stats() -> Result<RelayStatsDoc> {
         return Ok(RelayStatsDoc::default());
     }
     let data = fs::read_to_string(path)?;
-    Ok(serde_json::from_str::<RelayStatsDoc>(&data).unwrap_or_default())
+    Ok(
+        serde_json::from_str::<RelayStatsDoc>(&data).unwrap_or_else(|e| {
+            eprintln!("⚠️ Relay registry JSON corrupted: {}", e);
+            Default::default()
+        }),
+    )
 }
 
 #[cfg(test)]

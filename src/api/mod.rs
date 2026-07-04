@@ -86,8 +86,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(handlers::relay::lighthouse_toggle),
         )
         .route(
+            "/api/v1/discovery/summary",
+            get(handlers::discovery::get_summary),
+        )
+        .route("/api/v1/discovery/runs", get(handlers::discovery::get_runs))
+        .route(
             "/api/v1/discovery/devices",
             get(handlers::discovery::list_devices),
+        )
+        .route(
+            "/api/v1/discovery/devices/{device_id}",
+            get(handlers::discovery::get_device),
         )
         .route(
             "/api/v1/discovery/list",
@@ -221,6 +230,25 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/vc/revoke", post(handlers::vc::revoke))
         .route("/api/v1/vc/status", get(handlers::vc::status))
         .route("/api/v1/vc/pull-status", post(handlers::vc::pull_status))
+        .route("/api/v1/threat/status", get(handlers::threat::status))
+        .route("/api/v1/threat/alerts", get(handlers::threat::list_alerts))
+        .route("/api/v1/threat/blocks", get(handlers::threat::list_blocks))
+        .route("/api/v1/threat/blocks", post(handlers::threat::block_ip))
+        .route(
+            "/api/v1/threat/blocks/unblock",
+            post(handlers::threat::unblock),
+        )
+        .route(
+            "/api/v1/threat/rules/update",
+            post(handlers::threat::update_rules),
+        )
+        .route(
+            "/api/v1/threat/validate",
+            post(handlers::threat::validate_config),
+        )
+        .route("/api/v1/threat/config", get(handlers::threat::get_config))
+        .route("/api/v1/threat/config", post(handlers::threat::set_config))
+        .route("/api/v1/threat/start", post(handlers::threat::start))
         // Health
         .route("/api/v1/health", get(|| async { "ok" }))
         .layer(cors)
@@ -309,6 +337,25 @@ mod tests {
         }
     }
 
+    struct ScopedEnvVar {
+        key: &'static str,
+        prev: Option<OsString>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            restore_env(self.key, self.prev.take());
+        }
+    }
+
     struct VcEnvGuard {
         doc_env: EnvGuard,
         did_path_prev: Option<OsString>,
@@ -376,6 +423,8 @@ mod tests {
                 vid_cache: crate::virtual_id_cache::VirtualIdCache::new(),
                 discovery_config_dir: "/tmp/discovery-config".into(),
                 discovery_state_dir: "/tmp/discovery-state".into(),
+                threat_config_path: "/tmp/threat-config.yaml".into(),
+                threat_state_dir: "/tmp/threat-state".into(),
             })
         }
     }
@@ -411,6 +460,8 @@ mod tests {
             vid_cache: crate::virtual_id_cache::VirtualIdCache::new(),
             discovery_config_dir: "/tmp/discovery-config".into(),
             discovery_state_dir: "/tmp/discovery-state".into(),
+            threat_config_path: "/tmp/threat-config.yaml".into(),
+            threat_state_dir: "/tmp/threat-state".into(),
         })
     }
 
@@ -1150,6 +1201,7 @@ mod tests {
         let peers_dir = td.path().join("identity").join("peers");
         let aggregate_path = td.path().join("identity").join("circle_did_docs.json");
         let _env = EnvGuard::new(&self_doc_path, &peers_dir, &aggregate_path);
+        let _ca_host = ScopedEnvVar::set("SGX_CA_HOST", "127.0.0.1");
 
         let self_did = Did::from_id_bytes(&[7u8; 32]).to_string();
         let peer_did = Did::from_id_bytes(&[8u8; 32]).to_string();

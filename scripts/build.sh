@@ -74,6 +74,10 @@ retry_forever() {
   local delay="${RETRY_INITIAL_DELAY}"
 
   while true; do
+    if (( attempt >= ${RETRY_MAX_ATTEMPTS:-20} )); then
+      die "${what} failed after ${attempt} attempts"
+    fi
+
     if "$@"; then
       if (( attempt > 1 )); then
         log "${what} succeeded on attempt ${attempt}"
@@ -222,9 +226,6 @@ install_apt_prereqs() {
   fi
 
   verify_required_commands
-
-  # Keep behavior aligned with existing project install flow.
-  as_root setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip "$(command -v nmap)" || true
 }
 
 load_cargo_env() {
@@ -313,12 +314,16 @@ build_workspace() {
       continue
     fi
 
-    warn "Build with --locked failed for non-network reason. Trying once without --locked..."
-    CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
-    CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
-    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
-    cargo build --release --workspace --target "${TARGET_TRIPLE}" --features secure-element
-    return 0
+    if [[ "${ALLOW_UNLOCKED_FALLBACK:-0}" == "1" ]]; then
+      warn "Retrying without --locked (ALLOW_UNLOCKED_FALLBACK=1)..."
+      CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
+      CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+      cargo build --release --workspace --target "${TARGET_TRIPLE}" --features secure-element
+      return 0
+    else
+      die "Build with --locked failed."
+    fi
   done
 }
 

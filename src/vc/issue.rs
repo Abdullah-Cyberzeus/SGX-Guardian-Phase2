@@ -234,6 +234,7 @@ pub fn renew_membership_vc(
     issuer_did: &DidRecord,
     km: &KeyManager,
     req: RenewRequest<'_>,
+    node_id: &str,
 ) -> Result<VerifiableCredential, VcError> {
     if req.duration_days <= 0 {
         return Err(VcError::InvalidStructure(
@@ -297,10 +298,7 @@ pub fn renew_membership_vc(
     persist_renewed_copies(&renewed)?;
 
     crate::audit::logger::log_audit(
-        std::env::args()
-            .nth(1)
-            .unwrap_or_else(|| "nodeA".to_string())
-            .as_str(),
+        node_id,
         crate::audit::event::AuditCategory::Vc,
         crate::audit::event::AuditSeverity::Info,
         crate::audit::event::AuditAction::Succeeded,
@@ -320,6 +318,7 @@ pub fn revoke_vc(
     km: &KeyManager,
     vc_id: &str,
     reason: &str,
+    node_id: &str,
 ) -> Result<(), VcError> {
     let vc = persistence::load_issued(vc_id)?;
     ensure_circle_owner(
@@ -342,10 +341,7 @@ pub fn revoke_vc(
     );
     status_list.commit(km, &vm_ref)?;
     crate::audit::logger::log_audit(
-        std::env::args()
-            .nth(1)
-            .unwrap_or_else(|| "nodeA".to_string())
-            .as_str(),
+        node_id,
         crate::audit::event::AuditCategory::Vc,
         crate::audit::event::AuditSeverity::Warning,
         crate::audit::event::AuditAction::Revoked,
