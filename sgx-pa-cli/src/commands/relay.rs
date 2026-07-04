@@ -148,6 +148,7 @@ pub fn run_list() -> Result<()> {
 }
 
 pub fn run_stats(args: RelayStatsArgs) -> Result<()> {
+    validate_node_name(&args.node)?;
     let node = args.node;
     let reg = load_registry().unwrap_or_default();
     let stats = load_stats().unwrap_or_default();
@@ -208,6 +209,7 @@ pub fn run_stats(args: RelayStatsArgs) -> Result<()> {
 }
 
 pub fn run_set_limit(args: RelaySetLimitArgs) -> Result<()> {
+    validate_node_name(&args.node)?;
     if args.max_peers.is_none() && args.max_bandwidth_mbps.is_none() {
         return Err(anyhow!(
             "set-limit requires at least one of --max-peers or --max-bandwidth-mbps"
@@ -256,6 +258,7 @@ pub fn run_set_limit(args: RelaySetLimitArgs) -> Result<()> {
 }
 
 pub fn run_toggle(args: RelayToggleArgs) -> Result<()> {
+    validate_node_name(&args.node)?;
     let enable = if args.enable {
         true
     } else if args.disable {
@@ -298,6 +301,17 @@ pub fn run_toggle(args: RelayToggleArgs) -> Result<()> {
         args.node
     );
     Ok(())
+}
+
+fn validate_node_name(node: &str) -> Result<()> {
+    if node
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        Ok(())
+    } else {
+        Err(anyhow!("invalid node name '{}'", node))
+    }
 }
 
 fn mutate_relay_yaml<F>(path: &str, mutator: F) -> Result<()>

@@ -25,14 +25,14 @@ pub fn run(args: DkpRevokeArgs) {
 
     if !Path::new(METADATA_PATH).exists() {
         eprintln!("No DKP metadata found.");
-        return;
+        std::process::exit(1);
     }
 
     let json = match fs::read_to_string(METADATA_PATH) {
         Ok(j) => j,
         Err(e) => {
             eprintln!("Read error: {}", e);
-            return;
+            std::process::exit(1);
         }
     };
 
@@ -45,7 +45,7 @@ pub fn run(args: DkpRevokeArgs) {
                 Err(e) => {
                     eprintln!("❌ Failed to parse DKP metadata: {}", e);
                     eprintln!("   File may be corrupted: {}", METADATA_PATH);
-                    return;
+                    std::process::exit(1);
                 }
             }
         } else {
@@ -54,16 +54,19 @@ pub fn run(args: DkpRevokeArgs) {
                 Err(e) => {
                     eprintln!("❌ Failed to parse DKP metadata: {}", e);
                     eprintln!("   File may be corrupted: {}", METADATA_PATH);
-                    return;
+                    std::process::exit(1);
                 }
             }
         }
     };
 
     // Find the target version
-    let target_idx = keys
-        .iter()
-        .position(|k| k["version"].as_u64().unwrap_or(0) as u32 == args.version);
+    let target_idx = keys.iter().position(|k| {
+        k.get("version")
+            .and_then(|v| v.as_u64())
+            .and_then(|v| u32::try_from(v).ok())
+            == Some(args.version)
+    });
 
     let target_idx = match target_idx {
         Some(i) => i,
@@ -77,7 +80,7 @@ pub fn run(args: DkpRevokeArgs) {
                     k["status"].as_str().unwrap_or("?")
                 );
             }
-            return;
+            std::process::exit(1);
         }
     };
 
@@ -87,7 +90,7 @@ pub fn run(args: DkpRevokeArgs) {
     if status == "Active" {
         eprintln!("Cannot revoke active key (v{}).", args.version);
         eprintln!("You must rotate first: sgx-pa-cli dkp-rotate");
-        return;
+        std::process::exit(1);
     }
 
     // Already revoked
@@ -105,17 +108,17 @@ pub fn run(args: DkpRevokeArgs) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("❌ Failed to serialize DKP metadata: {}", e);
-            return;
+            std::process::exit(1);
         }
     };
     let tmp_path = format!("{}.tmp", METADATA_PATH);
     if let Err(e) = fs::write(&tmp_path, &serialized) {
         eprintln!("❌ Failed to write temp metadata: {}", e);
-        return;
+        std::process::exit(1);
     }
     if let Err(e) = fs::rename(&tmp_path, METADATA_PATH) {
         eprintln!("❌ Failed to atomically replace metadata: {}", e);
-        return;
+        std::process::exit(1);
     }
 
     println!("✅ Key v{} revoked.", args.version);

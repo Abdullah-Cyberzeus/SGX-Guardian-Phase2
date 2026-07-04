@@ -127,7 +127,9 @@ configure_suricata() {
   fi
 }
 
-install_nmap
+if ! install_nmap; then
+    echo "⚠ nmap install failed. Continuing without hard-fail."
+fi
 configure_nmap
 install_suricata
 configure_suricata

@@ -87,8 +87,8 @@ pub fn run_create() {
             eprintln!("❌ composite_digest must be 32 bytes, got {}", b.len());
             return;
         }
-        Err(e) => {
-            eprintln!("❌ Invalid composite_digest hex: {}", e);
+        Err(_) => {
+            eprintln!("❌ Invalid composite_digest");
             return;
         }
     };

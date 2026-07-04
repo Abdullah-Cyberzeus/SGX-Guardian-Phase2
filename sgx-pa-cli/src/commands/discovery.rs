@@ -130,7 +130,14 @@ pub fn run(args: DiscoveryArgs) -> Result<(), Box<dyn std::error::Error>> {
 async fn scan_now(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
     ensure_dirs()?;
 
-    let cfg = NmapConfig::load(Path::new(CONFIG_PATH)).unwrap_or_default();
+    let cfg = match NmapConfig::load(Path::new(CONFIG_PATH)) {
+        Ok(cfg) => cfg,
+        Err(_) if !Path::new(CONFIG_PATH).exists() => NmapConfig::default(),
+        Err(e) => {
+            eprintln!("❌ Failed to load {}: {}", CONFIG_PATH, e);
+            return Ok(());
+        }
+    };
     let intensity = match args.intensity.as_deref() {
         Some(value) => parse_intensity(value)?,
         None => cfg.ad_hoc_intensity(),
@@ -178,15 +185,14 @@ async fn scan_now(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn list_devices(only_unauthorized: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = match std::fs::read(INVENTORY_PATH) {
-        Ok(b) => b,
-        Err(_) => {
-            println!("No inventory found. Run discovery scan first.");
-            return Ok(());
-        }
-    };
-
-    let mut devices: Vec<ConnectedDevice> = serde_json::from_slice(&bytes)?;
+    let inv_path = PathBuf::from(INVENTORY_PATH);
+    if !inv_path.exists() {
+        println!("No inventory found. Run discovery scan first.");
+        return Ok(());
+    }
+    let inv = Inventory::load(&PathBuf::from(INVENTORY_PATH))?;
+    let mut devices: Vec<ConnectedDevice> = inv.by_id.into_values().collect();
+    devices.sort_by(|a, b| a.device_id.cmp(&b.device_id));
 
     if only_unauthorized {
         devices.retain(|d| matches!(d.status, DeviceStatus::Unauthorized | DeviceStatus::Drifted));
@@ -290,7 +296,14 @@ fn push_script_lines(out: &mut Vec<String>, indent: usize, id: &str, output: &st
 }
 
 fn schedule_show() -> Result<(), Box<dyn std::error::Error>> {
-    let cfg = NmapConfig::load(Path::new(CONFIG_PATH)).unwrap_or_default();
+    let cfg = match NmapConfig::load(Path::new(CONFIG_PATH)) {
+        Ok(cfg) => cfg,
+        Err(_) if !Path::new(CONFIG_PATH).exists() => NmapConfig::default(),
+        Err(e) => {
+            eprintln!("❌ Failed to load {}: {}", CONFIG_PATH, e);
+            return Ok(());
+        }
+    };
     let show = ScheduleShowOutput {
         enabled: cfg.enabled,
         target_cidr: cfg.target_cidr.clone(),
@@ -306,7 +319,14 @@ fn schedule_show() -> Result<(), Box<dyn std::error::Error>> {
 fn schedule_set(args: ScheduleSetArgs) -> Result<(), Box<dyn std::error::Error>> {
     ensure_dirs()?;
 
-    let mut cfg = NmapConfig::load(Path::new(CONFIG_PATH)).unwrap_or_default();
+    let mut cfg = match NmapConfig::load(Path::new(CONFIG_PATH)) {
+        Ok(cfg) => cfg,
+        Err(_) if !Path::new(CONFIG_PATH).exists() => NmapConfig::default(),
+        Err(e) => {
+            eprintln!("❌ Failed to load {}: {}", CONFIG_PATH, e);
+            return Ok(());
+        }
+    };
 
     if let Some(enabled) = args.enabled {
         cfg.enabled = enabled;
