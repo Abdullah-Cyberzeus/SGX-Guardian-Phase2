@@ -3,6 +3,14 @@
 
 ---
 
+## 📌 Task Description
+
+> **CRL Gossip — CRL Data Structure**
+>
+> Design Certificate Revocation List (CRL) data structure for peer-to-peer revocation propagation. CRL entry contains: revoked DID, device_id, user_id, Circle_id, revocation reason (compromised/lost/stolen/policy violation), severity level, timestamp, revoker's DID, cryptographic signature. CRL stored in distributed, Certificate Revocation List entity. Each entry cryptographically signed by issuer (Circle owner or member reporting compromise).
+
+---
+
 ## 📋 How to Use This File
 
 **Jab bhi koi Requirement ya API verify ho jaye (PASS):**

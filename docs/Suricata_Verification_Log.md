@@ -3,6 +3,12 @@
 
 ---
 
+## 📌 Task Description
+
+> Integrate Suricata IDS/IPS engine for real-time network traffic analysis and threat detection. Install Suricata binaries on Guardian, configure rule sets (Emerging Threats, custom signatures). Implement packet capture integration with Guardian network interfaces. Parse Suricata EVE JSON logs, extract alerts (malware, exploits, policy violations). Feed Suricata alerts to AI anomaly detection engine for correlation with behavioral patterns. Support inline blocking mode — Suricata drops malicious packets before reaching applications. Configure signature auto-updates and rule management. Provides deep packet inspection complementing Guardian's AI-based detection.
+
+---
+
 ## ✅ Requirement 1 — Real-time traffic analysis
 
 > Suricata IDS/IPS engine is integrated and performing real-time network traffic analysis on the board.
