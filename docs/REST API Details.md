@@ -93,21 +93,22 @@
 | 81 | GET | `/discovery/runs?view=raw` | Actual scan run history from raw XML archive (default mode) |
 | 82 | GET | `/threat/status` | Suricata service state, block mode, alert and block counts |
 | 83 | GET | `/threat/alerts` | List parsed Suricata alerts from Guardian threat inventory |
-| 84 | GET | `/threat/blocks` | List currently blocked IPs from the threat blocker |
-| 85 | POST | `/threat/blocks` | Manually block an IP and persist the block record |
-| 86 | POST | `/threat/blocks/unblock` | Remove one IP from the active threat block list |
-| 87 | POST | `/threat/rules/update` | Trigger `suricata-update` and reload validated rules |
-| 88 | POST | `/threat/validate` | Validate Guardian threat config and Suricata YAML |
-| 89 | GET | `/threat/config` | Read current Guardian threat config |
-| 90 | POST | `/threat/config` | Patch threat config fields; effective within 5 seconds |
-| 91 | POST | `/threat/start` | Start Suricata via `systemctl start suricata` when offline |
-| 92 | POST | `/crl/revoke` | Issue a DID revocation entry and rebuild the signed CRL |
-| 93 | GET | `/crl/list` | List all locally persisted CRL entries |
-| 94 | GET | `/crl/entry` | Fetch one CRL entry by entry ID |
-| 95 | GET | `/crl/check` | Check whether a DID is currently revoked |
-| 96 | POST | `/crl/verify` | Verify CRL entry signatures and aggregate root |
-| 97 | GET | `/crl/root` | Return current CRL sequence and Merkle root |
-| 98 | POST | `/crl/unrevoke` | Reverse a mistaken revocation (Circle Owner only) |
+| 84 | GET | `/threat/modbus` | Group recent Modbus alerts into the 5 Guardian Modbus rule buckets |
+| 85 | GET | `/threat/blocks` | List currently blocked IPs from the threat blocker |
+| 86 | POST | `/threat/blocks` | Manually block an IP and persist the block record |
+| 87 | POST | `/threat/blocks/unblock` | Remove one IP from the active threat block list |
+| 88 | POST | `/threat/rules/update` | Trigger `suricata-update` and reload validated rules |
+| 89 | POST | `/threat/validate` | Validate Guardian threat config and Suricata YAML |
+| 90 | GET | `/threat/config` | Read current Guardian threat config |
+| 91 | POST | `/threat/config` | Patch threat config fields; effective within 5 seconds |
+| 92 | POST | `/threat/start` | Start Suricata via `systemctl start suricata` when offline |
+| 93 | POST | `/crl/revoke` | Issue a DID revocation entry and rebuild the signed CRL |
+| 94 | GET | `/crl/list` | List all locally persisted CRL entries |
+| 95 | GET | `/crl/entry` | Fetch one CRL entry by entry ID |
+| 96 | GET | `/crl/check` | Check whether a DID is currently revoked |
+| 97 | POST | `/crl/verify` | Verify CRL entry signatures and aggregate root |
+| 98 | GET | `/crl/root` | Return current CRL sequence and Merkle root |
+| 99 | POST | `/crl/unrevoke` | Reverse a mistaken revocation (Circle Owner only) |
 
 
 ## 2. NEW Endpoints 
@@ -120,6 +121,7 @@
 | GET | `/discovery/runs?view=history` | Persisted NMAP discovery scan run history |
 | GET | `/threat/status` | Suricata service state, block mode, alert and block counts |
 | GET | `/threat/alerts` | Read recent Suricata alerts with optional `limit` and `severity` filters |
+| GET | `/threat/modbus` | Group recent Modbus alerts into the 5 Guardian Modbus rule buckets |
 | GET | `/threat/blocks` | Return the currently blocked IP list from nftables or persisted state |
 | POST | `/threat/blocks` | Manually block an IP with nftables + persisted TTL |
 | POST | `/threat/blocks/unblock` | Remove a blocked IP and rebuild the threat nftables chain |
@@ -2799,6 +2801,68 @@ Peer DID resolution response (`?did=did:guardian:...`):
   - `category` values are snake_case enum strings such as `malware`, `exploit`, `policy_violation`, `reconnaissance`, `anomaly`, `other`.
 - Error responses:
   - `404 NOT_FOUND`: no alert inventory exists yet (`"no alerts yet - has Suricata produced events?"`)
+  - `500 INTERNAL_SERVER_ERROR`: storage read failure or malformed runtime state
+
+### GET `/threat/modbus`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "total_matches": 5,
+  "rules": [
+    {
+      "rule_id": 1,
+      "name": "Unauthorized Write to PLC Coils",
+      "function_codes": ["FC5", "FC15"],
+      "matched": true,
+      "match_count": 2,
+      "matched_signatures": [
+        "SGX OT Modbus Unauthorized Write Single Coil FC5",
+        "SGX OT Modbus Unauthorized Write Multiple Coils FC15"
+      ],
+      "recent_alerts": [
+        {
+          "alert_id": "8c9dd2bfa6a6fd71",
+          "timestamp": "2026-07-05T12:14:11Z",
+          "src_ip": "192.168.50.115",
+          "src_port": 43000,
+          "dst_ip": "192.168.50.248",
+          "dst_port": 502,
+          "protocol": "TCP",
+          "signature_id": 10000201,
+          "signature": "SGX OT Modbus Unauthorized Write Single Coil FC5",
+          "category": "policy_violation",
+          "severity": "high",
+          "rev": 1,
+          "gid": 1,
+          "event_type": "alert",
+          "blocked": false
+        }
+      ]
+    }
+  ]
+}
+```
+
+- Notes:
+  - Reads the same `alerts.jsonl` threat inventory used by `GET /threat/alerts`.
+  - Groups matching alerts into the 5 logical Guardian Modbus rule buckets:
+    - Rule 1: FC5 / FC15
+    - Rule 2: FC6 / FC16
+    - Rule 3: FC65 / FC66 / FC67 / FC68
+    - Rule 4: FC129
+    - Rule 5: FC5 audit
+  - Each rule bucket includes:
+    - `matched` (`boolean`): whether at least one matching alert exists
+    - `match_count` (`integer`): total number of matching alerts for that logical rule
+    - `matched_signatures` (`string[]`): distinct Suricata signatures seen for that rule
+    - `recent_alerts` (`ThreatAlert[]`): up to 5 most recent matching alerts
+  - Unlike `GET /threat/alerts`, this endpoint returns an empty summary instead of `404` when no alert inventory exists yet.
+- Error responses:
   - `500 INTERNAL_SERVER_ERROR`: storage read failure or malformed runtime state
 
 ### GET `/threat/blocks`
