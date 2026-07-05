@@ -2235,8 +2235,17 @@ Peer DID resolution response (`?did=did:guardian:...`):
 ### 3.66 POST `/discovery/scan`
 
 - Request:
-  - Query params: none
-  - Body: none
+  - Query params:
+    - `target` (optional, string): one-off override for this scan's target CIDR, host IP, `/32`, or hostname
+  - JSON body (optional):
+
+```json
+{
+  "target": "192.168.50.248/32"
+}
+```
+
+  - When both query and body specify `target`, the JSON body wins
 - Success response (`200 OK`):
 
 ```json
@@ -2250,6 +2259,7 @@ Peer DID resolution response (`?did=did:guardian:...`):
 
 - Notes:
   - Executes `sgx-pa-cli discovery scan`
+  - Supports both subnet scans and single-host scans through the optional `target` override
   - If the CLI process exits non-zero, endpoint still returns `200 OK` with `success=false`
   - Ad-hoc scan intensity follows the current discovery config's effective manual/default intensity
 - Error responses:
@@ -2258,8 +2268,7 @@ Peer DID resolution response (`?did=did:guardian:...`):
 ### 3.67 POST `/discovery/scan/stealth`
 
 - Request:
-  - Query params: none
-  - Body: none
+  - Same optional `target` query param / JSON body as `POST /discovery/scan`
 - Success response (`200 OK`):
   - Same schema as `POST /discovery/scan`
 - Notes:
@@ -2270,8 +2279,7 @@ Peer DID resolution response (`?did=did:guardian:...`):
 ### 3.68 POST `/discovery/scan/standard`
 
 - Request:
-  - Query params: none
-  - Body: none
+  - Same optional `target` query param / JSON body as `POST /discovery/scan`
 - Success response (`200 OK`):
   - Same schema as `POST /discovery/scan`
 - Notes:
@@ -2282,8 +2290,7 @@ Peer DID resolution response (`?did=did:guardian:...`):
 ### 3.69 POST `/discovery/scan/aggressive`
 
 - Request:
-  - Query params: none
-  - Body: none
+  - Same optional `target` query param / JSON body as `POST /discovery/scan`
 - Success response (`200 OK`):
   - Same schema as `POST /discovery/scan`
 - Notes:
