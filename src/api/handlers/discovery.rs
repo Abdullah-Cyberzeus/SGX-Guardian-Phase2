@@ -1,10 +1,14 @@
 use crate::api::{error::ApiError, state::AppState};
-use crate::discovery::whitelist::{Whitelist, WhitelistEntry};
+use crate::discovery::whitelist::{
+    enrich_entries, infer_label_for_mac, Whitelist, WhitelistEntry, WhitelistEntryView,
+};
 use crate::discovery::{
+    nmap_parser,
+    run_history::{self, ScanRunRecord},
     ConnectedDevice, DeviceStatus, NmapConfig, ScanIntensity, ScanSchedule, ScheduleProfile,
     ScheduledScans,
 };
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::{Path as AxumPath, Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
@@ -44,6 +48,119 @@ pub async fn list_unauthorized(
     Ok(Json(filtered))
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RunsView {
+    Raw,
+    History,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct RunsQuery {
+    pub limit: Option<usize>,
+    pub view: Option<RunsView>,
+}
+
+fn load_run_history(
+    state: &AppState,
+    limit: Option<usize>,
+) -> Result<Vec<ScanRunRecord>, ApiError> {
+    let path = run_history::history_path(Path::new(&state.discovery_state_dir));
+    let limit = limit.unwrap_or(50).min(500);
+    let runs = run_history::list_recent(&path, Some(limit))
+        .map_err(|e| ApiError::Internal(format!("run history read: {}", e)))?;
+    Ok(runs)
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HistoryRunDetail {
+    #[serde(flatten)]
+    pub run: ScanRunRecord,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub devices: Option<Vec<ConnectedDevice>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub devices_error: Option<String>,
+}
+
+fn enrich_run_history(
+    state: &AppState,
+    runs: Vec<ScanRunRecord>,
+) -> Result<Vec<HistoryRunDetail>, ApiError> {
+    let whitelist = Whitelist::load(&whitelist_path(state)).unwrap_or_default();
+    runs.into_iter()
+        .map(|run| {
+            let (devices, devices_error) = historical_run_devices(&run, &whitelist);
+            Ok(HistoryRunDetail {
+                run,
+                devices,
+                devices_error,
+            })
+        })
+        .collect()
+}
+
+fn historical_run_devices(
+    run: &ScanRunRecord,
+    whitelist: &Whitelist,
+) -> (Option<Vec<ConnectedDevice>>, Option<String>) {
+    let Some(raw_xml_path) = run.raw_xml_path.as_deref() else {
+        return (None, Some("raw xml not recorded for this run".into()));
+    };
+
+    let path = Path::new(raw_xml_path);
+    if !path.exists() {
+        return (
+            None,
+            Some(format!("raw xml not available at {}", raw_xml_path)),
+        );
+    }
+
+    let xml = match std::fs::read_to_string(path) {
+        Ok(xml) => xml,
+        Err(err) => {
+            return (
+                None,
+                Some(format!("read raw xml '{}': {}", raw_xml_path, err)),
+            );
+        }
+    };
+    let mut devices = match nmap_parser::parse(&xml) {
+        Ok(devices) => devices,
+        Err(err) => {
+            return (
+                None,
+                Some(format!("parse raw xml '{}': {}", raw_xml_path, err)),
+            );
+        }
+    };
+
+    let observed_at = run.completed_at.to_rfc3339();
+    let intensity = intensity_name(run.intensity).to_string();
+
+    for device in &mut devices {
+        device.first_seen = observed_at.clone();
+        device.last_seen = observed_at.clone();
+        device.last_scan_intensity = Some(intensity.clone());
+        whitelist.classify(device);
+    }
+
+    devices.sort_by(|left, right| {
+        left.ip
+            .cmp(&right.ip)
+            .then(left.device_id.cmp(&right.device_id))
+    });
+
+    (Some(devices), None)
+}
+
+pub async fn list_runs(
+    State(s): State<Arc<AppState>>,
+    Query(query): Query<RunsQuery>,
+) -> Result<Json<Vec<HistoryRunDetail>>, ApiError> {
+    let runs = load_run_history(s.as_ref(), query.limit)?;
+    Ok(Json(enrich_run_history(s.as_ref(), runs)?))
+}
+
 #[derive(Debug, Serialize)]
 pub struct ScanResponse {
     pub success: bool,
@@ -80,6 +197,12 @@ pub struct WhitelistDoc {
     pub devices: Vec<WhitelistEntry>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct WhitelistViewDoc {
+    pub version: String,
+    pub devices: Vec<WhitelistEntryView>,
+}
+
 fn default_version() -> String {
     "1.0".to_string()
 }
@@ -106,6 +229,7 @@ pub struct ApproveResponse {
     pub created: bool,
     pub inventory_updated: usize,
     pub entry: WhitelistEntry,
+    pub current_devices: Vec<crate::discovery::whitelist::WhitelistInventoryDevice>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -142,8 +266,12 @@ pub struct ScheduleProfilePatch {
     pub intensity: Option<ScanIntensity>,
 }
 
-pub async fn get_whitelist(State(s): State<Arc<AppState>>) -> Result<Json<WhitelistDoc>, ApiError> {
-    Ok(Json(load_whitelist_doc(&whitelist_path(&s))?))
+pub async fn get_whitelist(
+    State(s): State<Arc<AppState>>,
+) -> Result<Json<WhitelistViewDoc>, ApiError> {
+    let doc = load_whitelist_doc(&whitelist_path(&s))?;
+    let inventory = load_inventory_devices(&inventory_path(&s))?;
+    Ok(Json(enrich_whitelist_doc(doc, &inventory)))
 }
 
 pub async fn put_whitelist(
@@ -168,6 +296,11 @@ pub async fn approve_device(
     Json(body): Json<ApproveRequest>,
 ) -> Result<Json<ApproveResponse>, ApiError> {
     let normalized_mac = normalize_mac(&body.mac)?;
+    let inventory_before = load_inventory_devices(&inventory_path(&s))?;
+    let requested_label = normalize_optional_label(body.label);
+    let resolved_label = requested_label
+        .clone()
+        .or_else(|| infer_label_for_mac(&normalized_mac, &inventory_before));
     let whitelist_file = whitelist_path(&s);
     let mut doc = load_whitelist_doc(&whitelist_file)?;
     let mut created = false;
@@ -177,7 +310,9 @@ pub async fn approve_device(
         .find(|entry| normalize_mac_lossy(&entry.mac) == normalized_mac)
     {
         Some(existing) => {
-            if let Some(label) = body.label {
+            if let Some(label) = resolved_label.clone().filter(|_| {
+                requested_label.is_some() || existing.label.as_deref().unwrap_or("").is_empty()
+            }) {
                 existing.label = Some(label);
             }
             existing.clone()
@@ -185,7 +320,7 @@ pub async fn approve_device(
         None => {
             let entry = WhitelistEntry {
                 mac: normalized_mac,
-                label: body.label,
+                label: resolved_label,
                 expected_os: None,
                 expected_ports: Vec::new(),
                 expected_ips: Vec::new(),
@@ -205,12 +340,19 @@ pub async fn approve_device(
 
     let inventory_updated =
         refresh_inventory_statuses(&inventory_path(&s), &runtime_whitelist(&doc))?;
+    let refreshed_inventory = load_inventory_devices(&inventory_path(&s))?;
+    let current_devices = enrich_entries(std::slice::from_ref(&entry), &refreshed_inventory)
+        .into_iter()
+        .next()
+        .map(|view| view.current_devices)
+        .unwrap_or_default();
 
     Ok(Json(ApproveResponse {
         success: true,
         created,
         inventory_updated,
         entry,
+        current_devices,
     }))
 }
 
@@ -263,9 +405,36 @@ fn load_whitelist_doc(path: &Path) -> Result<WhitelistDoc, ApiError> {
         .map_err(|e| ApiError::Internal(format!("whitelist parse error: {}", e)))
 }
 
+fn load_inventory_devices(path: &Path) -> Result<Vec<ConnectedDevice>, ApiError> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let bytes = std::fs::read(path)?;
+    if bytes.iter().all(|byte| byte.is_ascii_whitespace()) {
+        return Ok(Vec::new());
+    }
+
+    serde_json::from_slice(&bytes)
+        .map_err(|e| ApiError::Internal(format!("inventory parse: {}", e)))
+}
+
+fn enrich_whitelist_doc(doc: WhitelistDoc, inventory: &[ConnectedDevice]) -> WhitelistViewDoc {
+    WhitelistViewDoc {
+        version: doc.version,
+        devices: enrich_entries(&doc.devices, inventory),
+    }
+}
+
 fn load_nmap_config(path: &Path) -> Result<NmapConfig, ApiError> {
     NmapConfig::load(path)
         .map_err(|e| ApiError::BadRequest(format!("discovery config load error: {}", e)))
+}
+
+fn normalize_optional_label(label: Option<String>) -> Option<String> {
+    label
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn schedule_doc_from_config(cfg: &NmapConfig) -> ScheduleDoc {
@@ -598,7 +767,25 @@ pub struct RunsResponse {
     pub total_in_inventory: usize,
 }
 
-pub async fn get_runs(State(s): State<Arc<AppState>>) -> Result<Json<RunsResponse>, ApiError> {
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum RunsApiResponse {
+    Raw(RunsResponse),
+    History(Vec<HistoryRunDetail>),
+}
+
+pub async fn get_runs(
+    State(s): State<Arc<AppState>>,
+    Query(query): Query<RunsQuery>,
+) -> Result<Json<RunsApiResponse>, ApiError> {
+    if matches!(query.view, Some(RunsView::History)) || query.limit.is_some() {
+        let runs = load_run_history(s.as_ref(), query.limit)?;
+        return Ok(Json(RunsApiResponse::History(enrich_run_history(
+            s.as_ref(),
+            runs,
+        )?)));
+    }
+
     let state_dir = PathBuf::from(&s.discovery_state_dir);
 
     // Device count from inventory for context.
@@ -633,10 +820,10 @@ pub async fn get_runs(State(s): State<Arc<AppState>>) -> Result<Json<RunsRespons
     }
 
     runs.sort_by(|a, b| b.unix_ts.cmp(&a.unix_ts)); // newest first
-    Ok(Json(RunsResponse {
+    Ok(Json(RunsApiResponse::Raw(RunsResponse {
         runs,
         total_in_inventory,
-    }))
+    })))
 }
 
 // ── Risk computation ──────────────────────────────────────────────────────────
@@ -710,15 +897,31 @@ fn unix_ts_to_rfc3339(unix_ts: u64) -> String {
         .to_rfc3339()
 }
 
+fn intensity_name(intensity: ScanIntensity) -> &'static str {
+    match intensity {
+        ScanIntensity::Stealth => "stealth",
+        ScanIntensity::Standard => "standard",
+        ScanIntensity::Aggressive => "aggressive",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_schedule_patch, default_version, normalize_excludes, refresh_inventory_statuses,
-        runtime_whitelist, SchedulePatch, ScheduleProfilePatch, ScheduleUpdateRequest,
-        WhitelistDoc,
+        apply_schedule_patch, default_version, get_runs, list_devices, normalize_excludes,
+        refresh_inventory_statuses, runtime_whitelist, RunsApiResponse, RunsQuery, RunsView,
+        SchedulePatch, ScheduleProfilePatch, ScheduleUpdateRequest, WhitelistDoc,
     };
+    use crate::api::state::AppState;
+    use crate::did::Resolver;
+    use crate::discovery::run_history::{self, ScanRunRecord, ScanRunSource};
     use crate::discovery::whitelist::WhitelistEntry;
     use crate::discovery::{ConnectedDevice, DeviceStatus, NmapConfig, OpenPort, ScanIntensity};
+    use crate::virtual_id_cache::VirtualIdCache;
+    use axum::extract::{Query, State};
+    use axum::Json;
+    use chrono::{TimeZone, Utc};
+    use std::sync::Arc;
     use tempfile::tempdir;
 
     fn test_device(status: DeviceStatus) -> ConnectedDevice {
@@ -744,6 +947,58 @@ mod tests {
             last_seen: "2026-06-12T00:00:00Z".into(),
             vuln_triaged: false,
             last_scan_intensity: None,
+        }
+    }
+
+    fn test_state(config_dir: &std::path::Path, state_dir: &std::path::Path) -> Arc<AppState> {
+        Arc::new(AppState {
+            node_id: "test-nodeA".into(),
+            config_dir: "/tmp/config".into(),
+            boot_dir: "/tmp/boot".into(),
+            keys_dir: "/tmp/keys".into(),
+            pcr_dir: "/tmp/pcr".into(),
+            pcr_baseline_dir: "/tmp".into(),
+            log_dir_primary: "/tmp/logs".into(),
+            log_dir_fallback: "/tmp/logs-fallback".into(),
+            did_resolver: Resolver::new(Default::default()),
+            vid_cache: VirtualIdCache::new(),
+            discovery_config_dir: config_dir.display().to_string(),
+            discovery_state_dir: state_dir.display().to_string(),
+            threat_config_path: "/tmp/threat-config.yaml".into(),
+            threat_state_dir: "/tmp/threat-state".into(),
+        })
+    }
+
+    fn test_run_record(
+        raw_xml_path: &std::path::Path,
+        inventory_path: &std::path::Path,
+    ) -> ScanRunRecord {
+        let started_at = Utc.with_ymd_and_hms(2026, 7, 5, 5, 35, 4).unwrap();
+        let completed_at = Utc.with_ymd_and_hms(2026, 7, 5, 5, 39, 8).unwrap();
+        ScanRunRecord {
+            run_id: "20260705T053504Z-aggressive-test".into(),
+            started_at,
+            completed_at,
+            duration_ms: completed_at
+                .signed_duration_since(started_at)
+                .num_milliseconds()
+                .max(0) as u128,
+            source: ScanRunSource::Manual,
+            schedule_kind: None,
+            intensity: ScanIntensity::Aggressive,
+            target: "192.168.50.0/24".into(),
+            success: true,
+            error: None,
+            new_devices: 1,
+            updated_devices: 0,
+            marked_stale: 0,
+            total_devices: 1,
+            approved: 0,
+            unauthorized: 1,
+            drifted: 0,
+            stale: 0,
+            raw_xml_path: Some(raw_xml_path.display().to_string()),
+            inventory_path: inventory_path.display().to_string(),
         }
     }
 
@@ -820,5 +1075,155 @@ mod tests {
         )
         .expect("inventory should parse");
         assert_eq!(stored[0].status, DeviceStatus::Approved);
+    }
+
+    #[tokio::test]
+    async fn history_view_includes_historical_devices_without_touching_inventory_endpoints() {
+        let dir = tempdir().expect("temp dir should exist");
+        let config_dir = dir.path().join("config");
+        let state_dir = dir.path().join("state");
+        let raw_dir = state_dir.join("raw");
+        let whitelist_path = config_dir.join("whitelist.yaml");
+        let inventory_path = state_dir.join("inventory.json");
+        let run_history_path = run_history::history_path(&state_dir);
+        std::fs::create_dir_all(&config_dir).expect("config dir");
+        std::fs::create_dir_all(&raw_dir).expect("raw dir");
+        std::fs::write(&whitelist_path, "version: \"1.0\"\ndevices: []\n")
+            .expect("whitelist fixture");
+
+        let inventory_device = ConnectedDevice {
+            device_id: "inventory-dev".into(),
+            ip: "192.168.50.77".into(),
+            mac: Some("AA:BB:CC:11:22:33".into()),
+            vendor: Some("Inventory Device".into()),
+            hostname: Some("current-device".into()),
+            os_fingerprint: Some("Linux".into()),
+            os_cpe: Vec::new(),
+            open_ports: Vec::new(),
+            host_scripts: Vec::new(),
+            status: DeviceStatus::Unauthorized,
+            first_seen: "2026-07-05T05:16:29+00:00".into(),
+            last_seen: "2026-07-05T05:39:08+00:00".into(),
+            vuln_triaged: false,
+            last_scan_intensity: Some("aggressive".into()),
+        };
+        std::fs::write(
+            &inventory_path,
+            serde_json::to_vec(&vec![inventory_device.clone()]).expect("inventory serialize"),
+        )
+        .expect("inventory write");
+
+        let raw_xml_path = raw_dir.join("1783229948.xml");
+        std::fs::write(
+            &raw_xml_path,
+            r#"
+<nmaprun scanner="nmap" args="nmap -oX - 127.0.0.1/32">
+  <host>
+    <status state="up" reason="localhost-response"/>
+    <address addr="127.0.0.1" addrtype="ipv4"/>
+    <hostnames>
+      <hostname name="localhost" type="PTR"/>
+    </hostnames>
+    <ports>
+      <port protocol="tcp" portid="443">
+        <state state="open"/>
+        <service name="https" product="nginx" version="1.20.1"/>
+      </port>
+    </ports>
+    <os>
+      <osmatch name="Linux 5.x" accuracy="98"/>
+    </os>
+  </host>
+</nmaprun>
+"#,
+        )
+        .expect("raw xml write");
+
+        run_history::append_record(
+            &run_history_path,
+            &test_run_record(&raw_xml_path, &inventory_path),
+        )
+        .expect("append run history");
+
+        let state = test_state(&config_dir, &state_dir);
+
+        let Json(RunsApiResponse::History(runs)) = get_runs(
+            State(state.clone()),
+            Query(RunsQuery {
+                limit: None,
+                view: Some(RunsView::History),
+            }),
+        )
+        .await
+        .expect("history response") else {
+            panic!("expected history response");
+        };
+
+        assert_eq!(runs.len(), 1);
+        let history_run = &runs[0];
+        let devices = history_run
+            .devices
+            .as_ref()
+            .expect("history run should include parsed devices");
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].ip, "127.0.0.1");
+        assert_eq!(devices[0].hostname.as_deref(), Some("localhost"));
+        assert_eq!(
+            devices[0].last_scan_intensity.as_deref(),
+            Some("aggressive")
+        );
+        assert_eq!(
+            devices[0].last_seen,
+            history_run.run.completed_at.to_rfc3339()
+        );
+
+        let Json(current_devices) = list_devices(State(state))
+            .await
+            .expect("inventory endpoint should still read inventory.json");
+        assert_eq!(current_devices, vec![inventory_device]);
+    }
+
+    #[tokio::test]
+    async fn history_view_reports_missing_raw_xml_without_failing() {
+        let dir = tempdir().expect("temp dir should exist");
+        let config_dir = dir.path().join("config");
+        let state_dir = dir.path().join("state");
+        let inventory_path = state_dir.join("inventory.json");
+        let run_history_path = run_history::history_path(&state_dir);
+        std::fs::create_dir_all(&config_dir).expect("config dir");
+        std::fs::create_dir_all(&state_dir).expect("state dir");
+        std::fs::write(
+            config_dir.join("whitelist.yaml"),
+            "version: \"1.0\"\ndevices: []\n",
+        )
+        .expect("whitelist fixture");
+        std::fs::write(&inventory_path, b"[]").expect("inventory write");
+
+        let missing_raw_xml = state_dir.join("raw").join("missing.xml");
+        run_history::append_record(
+            &run_history_path,
+            &test_run_record(&missing_raw_xml, &inventory_path),
+        )
+        .expect("append run history");
+
+        let Json(RunsApiResponse::History(runs)) = get_runs(
+            State(test_state(&config_dir, &state_dir)),
+            Query(RunsQuery {
+                limit: None,
+                view: Some(RunsView::History),
+            }),
+        )
+        .await
+        .expect("history response") else {
+            panic!("expected history response");
+        };
+
+        assert_eq!(runs.len(), 1);
+        assert!(runs[0].devices.is_none());
+        assert!(runs[0]
+            .devices_error
+            .as_deref()
+            .expect("devices_error should be present")
+            .contains("raw xml not available"));
     }
 }

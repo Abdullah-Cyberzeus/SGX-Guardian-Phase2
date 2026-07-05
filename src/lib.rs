@@ -10,6 +10,7 @@ pub mod client;
 pub mod cloud;
 pub mod config_loader;
 pub mod cot;
+pub mod crl;
 pub mod did;
 pub mod discovery; // NEW - Sprint 6 NMP-series
 pub mod enforcement;

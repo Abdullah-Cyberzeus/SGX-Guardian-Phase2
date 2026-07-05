@@ -115,19 +115,7 @@ pub fn verify(doc: &DidDocument) -> Result<(), DidError> {
         .decode(&proof.proof_value)
         .map_err(|e| DidError::InvalidFormat(format!("proofValue decode: {}", e)))?;
 
-    let algo: &dyn signature::VerificationAlgorithm = match sig.len() {
-        64 => &signature::ECDSA_P256_SHA256_FIXED,
-        _ if sig.first() == Some(&0x30) => &signature::ECDSA_P256_SHA256_ASN1,
-        _ => {
-            return Err(DidError::InvalidFormat(format!(
-                "Unknown ECDSA signature format (len={})",
-                sig.len()
-            )))
-        }
-    };
-    let key = UnparsedPublicKey::new(algo, &raw);
-    key.verify(&digest, &sig)
-        .map_err(|_| DidError::DerivSignatureInvalid)
+    ecdsa_p256_verify_der_or_raw(&raw, &digest, &sig)
 }
 
 pub fn verify_with_replay_protection(
@@ -142,4 +130,44 @@ pub fn verify_with_replay_protection(
         });
     }
     Ok(())
+}
+
+pub fn ecdsa_p256_verify_der_or_raw(
+    public_key_der: &[u8],
+    digest: &[u8],
+    sig: &[u8],
+) -> Result<(), DidError> {
+    let raw = normalize_p256_pubkey(public_key_der).ok_or_else(|| {
+        DidError::InvalidFormat(format!(
+            "Unsupported public key length {} for P-256 verification",
+            public_key_der.len()
+        ))
+    })?;
+
+    let algo: &dyn signature::VerificationAlgorithm = match sig.len() {
+        64 => &signature::ECDSA_P256_SHA256_FIXED,
+        _ if sig.first() == Some(&0x30) => &signature::ECDSA_P256_SHA256_ASN1,
+        _ => {
+            return Err(DidError::InvalidFormat(format!(
+                "Unknown ECDSA signature format (len={})",
+                sig.len()
+            )))
+        }
+    };
+    let key = UnparsedPublicKey::new(algo, raw);
+    key.verify(digest, sig)
+        .map_err(|_| DidError::DerivSignatureInvalid)
+}
+
+fn normalize_p256_pubkey(bytes: &[u8]) -> Option<Vec<u8>> {
+    if bytes.len() == 65 && bytes.first() == Some(&0x04) {
+        return Some(bytes.to_vec());
+    }
+    if bytes.len() == 91 {
+        return Some(bytes[26..].to_vec());
+    }
+    if bytes.len() > 65 && bytes[bytes.len() - 65] == 0x04 {
+        return Some(bytes[bytes.len() - 65..].to_vec());
+    }
+    None
 }

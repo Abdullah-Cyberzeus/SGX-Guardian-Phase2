@@ -21,3 +21,4 @@ tarpaulin-report.html
 coverage/
 
 .codex/
+.claude/

@@ -6,10 +6,12 @@ use crate::discovery::{
     inventory::Inventory,
     nmap_parser,
     nmap_runner::NmapRunner,
+    run_history::{self, ScanRunSource},
     vuln_trigger,
     whitelist::Whitelist,
     ScanIntensity,
 };
+use chrono::Utc;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -96,6 +98,7 @@ impl DiscoveryScheduler {
         kind: ScheduledScanKind,
         intensity: ScanIntensity,
     ) -> DiscoveryResult<()> {
+        let started_at = Utc::now();
         let target = cfg.resolved_target_cidr();
 
         log_audit(
@@ -111,17 +114,68 @@ impl DiscoveryScheduler {
             ),
         );
 
-        let xml = NmapRunner::run_with_intensity(cfg, &target, intensity).await?;
+        let xml = match NmapRunner::run_with_intensity(cfg, &target, intensity).await {
+            Ok(xml) => xml,
+            Err(err) => {
+                let completed_at = Utc::now();
+                let counts = {
+                    let inv = self.state.lock().await;
+                    run_history::status_counts(&inv)
+                };
+                let record = run_history::build_record(
+                    started_at,
+                    completed_at,
+                    ScanRunSource::Scheduled,
+                    Some(kind),
+                    intensity,
+                    target.clone(),
+                    false,
+                    Some(err.to_string()),
+                    None,
+                    counts,
+                    None,
+                    &self.inventory_path,
+                );
+                self.append_history_record(&record);
+                return Err(err);
+            }
+        };
 
         // Persist raw XML for forensic re-parsing (rotated last 10).
+        let mut raw_xml_path = None;
         if let Some(state_dir) = self.inventory_path.parent() {
-            if let Err(err) = crate::discovery::raw_store::RawXmlStore::persist(state_dir, &xml) {
-                tracing::warn!("raw_store persist failed: {}", err);
+            match crate::discovery::raw_store::RawXmlStore::persist(state_dir, &xml) {
+                Ok(path) => raw_xml_path = Some(path),
+                Err(err) => tracing::warn!("raw_store persist failed: {}", err),
             }
         }
 
         let wl = Whitelist::load(&self.whitelist_path).unwrap_or_default();
-        let devices = nmap_parser::parse(&xml)?;
+        let devices = match nmap_parser::parse(&xml) {
+            Ok(devices) => devices,
+            Err(err) => {
+                let counts = {
+                    let inv = self.state.lock().await;
+                    run_history::status_counts(&inv)
+                };
+                let record = run_history::build_record(
+                    started_at,
+                    Utc::now(),
+                    ScanRunSource::Scheduled,
+                    Some(kind),
+                    intensity,
+                    target.clone(),
+                    false,
+                    Some(err.to_string()),
+                    None,
+                    counts,
+                    raw_xml_path,
+                    &self.inventory_path,
+                );
+                self.append_history_record(&record);
+                return Err(err);
+            }
+        };
         let semantics = cfg.scan_semantics_for_intensity(&target, intensity);
 
         let intensity_label = match intensity {
@@ -137,7 +191,40 @@ impl DiscoveryScheduler {
                 wl.classify(device);
             }
         }
-        inv.save_atomic(&self.inventory_path)?;
+        let counts = run_history::status_counts(&inv);
+        if let Err(err) = inv.save_atomic(&self.inventory_path) {
+            let record = run_history::build_record(
+                started_at,
+                Utc::now(),
+                ScanRunSource::Scheduled,
+                Some(kind),
+                intensity,
+                target.clone(),
+                false,
+                Some(err.to_string()),
+                Some(&delta),
+                counts,
+                raw_xml_path,
+                &self.inventory_path,
+            );
+            self.append_history_record(&record);
+            return Err(err);
+        }
+        let record = run_history::build_record(
+            started_at,
+            Utc::now(),
+            ScanRunSource::Scheduled,
+            Some(kind),
+            intensity,
+            target.clone(),
+            true,
+            None,
+            Some(&delta),
+            counts,
+            raw_xml_path,
+            &self.inventory_path,
+        );
+        self.append_history_record(&record);
 
         if !delta.newly_seen.is_empty() {
             vuln_trigger::queue_for_ai_review(&self.node_id, &delta.newly_seen);
@@ -154,6 +241,17 @@ impl DiscoveryScheduler {
             );
         }
         Ok(())
+    }
+
+    fn append_history_record(&self, record: &run_history::ScanRunRecord) {
+        let Some(state_dir) = self.inventory_path.parent() else {
+            return;
+        };
+
+        let path = run_history::history_path(state_dir);
+        if let Err(err) = run_history::append_record(&path, record) {
+            tracing::warn!("discovery run history persist failed: {}", err);
+        }
     }
 
     /// Test hook for timeout-bounded integration checks in `tests/`.
