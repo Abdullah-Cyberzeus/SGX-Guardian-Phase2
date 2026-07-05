@@ -2300,7 +2300,7 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
         }
     }
 
-    // === Sprint 2 Day 9 – Periodic Re-Attestation Timer (every 60 seconds) ===
+    // === Periodic re-attestation timer (every 60 seconds) ===
     tokio::spawn(async move {
         let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
         let local_conf = match load_node_config_for_attestation(&node_id) {

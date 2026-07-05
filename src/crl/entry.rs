@@ -3,11 +3,11 @@
 //! Each entry is cryptographically signed (DataIntegrityProof + ecdsa-2019)
 //! by the issuer (Circle owner or member reporting compromise) using their
 //! DKP. The proof verifies against the issuer's DID Document resolved via
-//! Sprint 5 Task 3 Resolver.
+//! the local DID resolver.
 //!
-//! Sprint 4 Task 1 = THIS structure. Gossip propagation, emergency
-//! broadcast, and offline sync are separate Sprint 4 tasks but the schema
-//! here pre-allocates the fields they need (peers_notified, propagated).
+//! Gossip propagation, emergency broadcast, and offline sync build on this
+//! structure, so the schema pre-allocates the bookkeeping fields they need
+//! (`peers_notified`, `propagated`).
 
 use crate::did::document::Proof;
 use serde::{Deserialize, Serialize};
@@ -43,8 +43,8 @@ impl RevocationReason {
     }
 
     /// Whether this reason is security-critical (i.e. should propagate via
-    /// emergency broadcast, terminate sessions instantly). Used by Sprint 4
-    /// Task 3 to decide channel.
+    /// emergency broadcast and terminate sessions instantly). Used to select
+    /// the fast-path notification channel.
     pub fn is_security_critical(self) -> bool {
         matches!(
             self,
@@ -133,7 +133,7 @@ pub struct CrlEntry {
     // ── Cryptographic proof (spec: "cryptographic signature") ──────────
     pub proof: Proof,
 
-    // ── Gossip / anti-entropy fields (pre-allocated for Sprint 4 Task 2)
+    // ── Gossip / anti-entropy fields ───────────────────────────────────
     /// Peers (by DID) that have ack'd receipt of this entry.
     #[serde(default)]
     pub peers_notified: Vec<String>,

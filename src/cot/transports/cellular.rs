@@ -1,7 +1,7 @@
 // src/cot/transports/cellular.rs
 // ============================================================
 // Cellular Transport (LTE/5G) — Full Implementation
-// Replaces Sprint 2 stub. Uses wwan0 for TCP CoT messaging.
+// Replaces the earlier stub implementation. Uses wwan0 for TCP CoT messaging.
 // Same length-prefixed protocol as Ethernet/WiFi.
 // Board: AERIS SIM via wwan0 interface
 // ============================================================
