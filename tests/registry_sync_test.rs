@@ -1,11 +1,10 @@
-use sgx_guardian_client::nebula::registry_sync::*;
-use sgx_guardian_client::nebula::overlay_registry::OverlayRegistry;
 use sgx_guardian_client::nebula::lighthouse::LighthouseRegistry;
+use sgx_guardian_client::nebula::overlay_registry::OverlayRegistry;
+use sgx_guardian_client::nebula::registry_sync::*;
 use sgx_guardian_client::nebula::relay_registry::RelayRegistry;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tempfile::NamedTempFile;
-
+use tokio::sync::RwLock;
 
 #[tokio::test]
 async fn test_registry_sync_snapshots() {
@@ -13,22 +12,22 @@ async fn test_registry_sync_snapshots() {
     let mut registry = OverlayRegistry::new("alpha", "192.168.100", "node1");
     registry.assign_ip("node1").unwrap();
     let json = serde_json::to_string(&registry).unwrap();
-    
+
     let tmp = NamedTempFile::new().unwrap();
     let path = tmp.path().to_str().unwrap();
-    
+
     // Test applying valid snapshot
     assert!(apply_overlay_snapshot(&json, path).is_ok());
-    
+
     // Test applying invalid payload
     assert!(apply_overlay_snapshot("{invalid}", path).is_err());
-    
+
     // Test Lighthouse snapshot
     let lh_reg = LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "1.1.1.1:4242");
     let lh_json = serde_json::to_string(&lh_reg).unwrap();
     // It has nodeA as lighthouse, so it succeeds
     assert!(apply_lighthouse_snapshot(&lh_json, path).is_ok());
-    
+
     // Test Relay snapshot
     let relay_reg = RelayRegistry::new("alpha");
     let relay_json = serde_json::to_string(&relay_reg).unwrap();
@@ -38,18 +37,22 @@ async fn test_registry_sync_snapshots() {
 #[tokio::test]
 async fn test_registry_server_and_client() {
     // Start server
-    let _registry = Arc::new(RwLock::new(OverlayRegistry::new("alpha", "192.168.100", "ca-node")));
+    let _registry = Arc::new(RwLock::new(OverlayRegistry::new(
+        "alpha",
+        "192.168.100",
+        "ca-node",
+    )));
     // Bind to a random port or just standard if free (we can't change the port because REGISTRY_SYNC_PORT is hardcoded to 50062!)
     // Actually, start_registry_server binds to 50062. If it's in use by another test, it will just fail to bind but loop continues? No, it returns.
     // We can't guarantee 50062 is free if run in parallel, but tests run sequentially with `--test-threads=1` or in separate processes.
-    
+
     // Let's test the client failure when CA is down
     let err = query_ip_from_ca("nodeB", "127.0.0.1").await;
     assert!(err.is_err()); // Connection refused
-    
+
     let err2 = request_ip_from_ca("nodeB", "127.0.0.1", "pubkey").await;
     assert!(err2.is_err());
-    
+
     let err3 = pull_registry_snapshot_from_ca("127.0.0.1").await;
     assert!(err3.is_err());
 }
@@ -93,7 +96,10 @@ fn test_snapshot_error_paths() {
     let control_resp = "{\"success\": false, \"error\": \"some error\"}";
     let parse_err = apply_overlay_snapshot(control_resp, "/tmp/nonexistent");
     assert!(parse_err.is_err());
-    assert_eq!(parse_err.unwrap_err(), "received control response instead of registry snapshot");
+    assert_eq!(
+        parse_err.unwrap_err(),
+        "received control response instead of registry snapshot"
+    );
 
     let empty_payload = "   ";
     assert_eq!(
@@ -112,7 +118,9 @@ fn test_snapshot_error_paths() {
         "schema_version": 1,
         "last_modified": "2026-06-30T10:00:00Z"
     }"#;
-    assert!(apply_overlay_snapshot(overlay_no_owner, "/tmp/nonexistent").unwrap_err().contains("missing owner allocation"));
+    assert!(apply_overlay_snapshot(overlay_no_owner, "/tmp/nonexistent")
+        .unwrap_err()
+        .contains("missing owner allocation"));
 
     // 3. apply_lighthouse_snapshot rejects empty lighthouse entries
     let lh_empty = r#"{

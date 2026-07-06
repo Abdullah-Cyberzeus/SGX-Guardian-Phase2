@@ -15,7 +15,7 @@ rules:
     port: 80
 "#;
     let policy = validate_policy(yaml).unwrap();
-    
+
     // Translate policy to enforcement rules and apply (will likely return an Error if nft is missing, which is fine)
     let _result = enforce_policy(&policy);
 }

@@ -2,8 +2,8 @@
 // Integration tests for src/tls.rs
 
 use sgx_guardian_client::tls::{
-    build_client_config, build_server_config, der_to_pem,
-    ensure_node_certificate_or_generate, load_certificate, load_private_key,
+    build_client_config, build_server_config, der_to_pem, ensure_node_certificate_or_generate,
+    load_certificate, load_private_key,
 };
 use std::fs;
 use std::sync::Arc;
@@ -66,20 +66,13 @@ fn test_tls_generation_and_loading_flow() {
 
     // 6. Test build_server_config and build_client_config
     let client_ca = loaded_certs.clone();
-    let server_config = build_server_config(
-        loaded_certs.clone(),
-        loaded_key,
-        client_ca,
-    );
+    let server_config = build_server_config(loaded_certs.clone(), loaded_key, client_ca);
     assert!(server_config.is_ok());
 
     // Re-load key because loaded_key was consumed (moved)
     let loaded_key_for_client = load_private_key(key_pem_path.to_str().unwrap()).unwrap();
-    let client_config = build_client_config(
-        loaded_certs.clone(),
-        loaded_certs,
-        loaded_key_for_client,
-    );
+    let client_config =
+        build_client_config(loaded_certs.clone(), loaded_certs, loaded_key_for_client);
     assert!(client_config.is_ok());
 
     // 7. Verify handshake using in-memory ClientConnection and ServerConnection
@@ -98,12 +91,12 @@ fn test_tls_generation_and_loading_flow() {
     let mut loop_count = 0;
     while (client_conn.is_handshaking() || server_conn.is_handshaking()) && loop_count < 100 {
         loop_count += 1;
-        
+
         // Client -> Server
         if client_conn.wants_write() {
             let mut buf = Vec::new();
             client_conn.write_tls(&mut buf).unwrap();
-            
+
             let mut read_slice = &buf[..];
             server_conn.read_tls(&mut read_slice).unwrap();
             server_conn.process_new_packets().unwrap();
@@ -113,7 +106,7 @@ fn test_tls_generation_and_loading_flow() {
         if server_conn.wants_write() {
             let mut buf = Vec::new();
             server_conn.write_tls(&mut buf).unwrap();
-            
+
             let mut read_slice = &buf[..];
             client_conn.read_tls(&mut read_slice).unwrap();
             client_conn.process_new_packets().unwrap();

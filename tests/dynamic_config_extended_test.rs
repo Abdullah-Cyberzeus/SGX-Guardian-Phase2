@@ -70,7 +70,7 @@ fn test_update_peer_config_new_file() {
     // Instead of risking writing to /etc, we just skip running this test if we can't write there.
     // We'll just verify the logic locally if possible.
     // Wait, the test environment doesn't have root, so it will just fail to write and print an error.
-    
+
     // We can just verify it doesn't panic on invalid node IDs
     update_peer_config("invalid/node", "host", "1.2.3.4", 50070, "pubkey");
 }

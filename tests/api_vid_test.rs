@@ -1,6 +1,5 @@
 use axum::extract::State;
 
-
 use sgx_guardian_client::api::handlers::vid::peers;
 use sgx_guardian_client::api::state::AppState;
 use sgx_guardian_client::did::Resolver;
@@ -10,7 +9,6 @@ use sgx_guardian_client::virtual_id_cache::ObservationContext;
 async fn test_vid_peers_handler() {
     let resolver = Resolver::new(Default::default());
     let app_state = AppState::from_env("test-node-1".to_string(), resolver);
-
 
     // Node 1
     let ctx1 = ObservationContext {
@@ -51,11 +49,17 @@ async fn test_vid_peers_handler() {
     // Should be sorted by DID
     assert_eq!(peers_list[0].did, "did:guardian:node1");
     assert_eq!(peers_list[0].virtual_id, "abcd1234efgh5678");
-    assert_eq!(peers_list[0].last_rotation_reason, Some("initial_observation".to_string()));
+    assert_eq!(
+        peers_list[0].last_rotation_reason,
+        Some("initial_observation".to_string())
+    );
 
     assert_eq!(peers_list[1].did, "did:guardian:node2");
     assert_eq!(peers_list[1].virtual_id, "9876zyxw5432vuts");
-    assert_eq!(peers_list[1].last_rotation_reason, Some("initial_observation".to_string()));
+    assert_eq!(
+        peers_list[1].last_rotation_reason,
+        Some("initial_observation".to_string())
+    );
 }
 
 #[tokio::test]
@@ -68,7 +72,7 @@ async fn test_vid_show_handler_error_path() {
     let response = sgx_guardian_client::api::handlers::vid::show(State(app_state)).await;
     // It should return an ApiError::Internal because the status file is missing
     assert!(response.is_err());
-    
+
     // We expect the error to contain "VID show"
     match response {
         Err(e) => {

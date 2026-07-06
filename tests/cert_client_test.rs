@@ -1,8 +1,8 @@
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use sgx_guardian_client::cert_client::*;
 use sgx_guardian_client::proto::sgx::cert_service_server::{CertService, CertServiceServer};
 use sgx_guardian_client::proto::sgx::{CertSignRequest, CertSignResponse};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 
@@ -325,9 +325,20 @@ async fn test_request_cert_approved_flow() {
         handle.await.ok();
 
         // Verify written files
-        assert_eq!(std::fs::read_to_string("/var/lib/sgx-guardian/nebula/nodes/test-node-approved.crt").unwrap(), "APPROVED CERT");
-        assert_eq!(std::fs::read_to_string("/var/lib/sgx-guardian/nebula/nodes/test-node-approved.key").unwrap(), "APPROVED KEY");
-        assert_eq!(std::fs::read_to_string("/var/lib/sgx-guardian/nebula/ca/ca.crt").unwrap(), "APPROVED CA");
+        assert_eq!(
+            std::fs::read_to_string("/var/lib/sgx-guardian/nebula/nodes/test-node-approved.crt")
+                .unwrap(),
+            "APPROVED CERT"
+        );
+        assert_eq!(
+            std::fs::read_to_string("/var/lib/sgx-guardian/nebula/nodes/test-node-approved.key")
+                .unwrap(),
+            "APPROVED KEY"
+        );
+        assert_eq!(
+            std::fs::read_to_string("/var/lib/sgx-guardian/nebula/ca/ca.crt").unwrap(),
+            "APPROVED CA"
+        );
 
         // Clean up files
         let _ = std::fs::remove_file("/var/lib/sgx-guardian/nebula/nodes/test-node-approved.crt");

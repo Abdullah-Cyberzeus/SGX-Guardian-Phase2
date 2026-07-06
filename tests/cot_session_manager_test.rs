@@ -88,7 +88,9 @@ async fn test_session_manager_get_session_some() {
 #[tokio::test]
 async fn test_session_manager_migrate_missing_peer() {
     let mgr = SessionManager::new();
-    let result = mgr.migrate_session("nonexistent", TransportType::WiFi).await;
+    let result = mgr
+        .migrate_session("nonexistent", TransportType::WiFi)
+        .await;
     assert!(result.is_err());
 }
 

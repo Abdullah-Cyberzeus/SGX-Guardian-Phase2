@@ -1,6 +1,6 @@
+use sgx_guardian_client::nebula::daemon::NebulaDaemon;
 use sgx_guardian_client::nebula::install::NebulaInstall;
 use sgx_guardian_client::nebula::interface::NebulaInterface;
-use sgx_guardian_client::nebula::daemon::NebulaDaemon;
 use sgx_guardian_client::nebula::stats::NebulaStats;
 
 // ─── NebulaInstall ───────────────────────────────────────────
@@ -9,13 +9,21 @@ use sgx_guardian_client::nebula::stats::NebulaStats;
 fn test_nebula_check_binary() {
     // nebula is installed at /usr/local/bin/nebula
     let result = NebulaInstall::check_binary();
-    assert!(result.is_ok(), "nebula binary check failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "nebula binary check failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_nebula_check_version() {
     let result = NebulaInstall::check_version();
-    assert!(result.is_ok(), "nebula version check failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "nebula version check failed: {:?}",
+        result.err()
+    );
     let version = result.unwrap();
     assert!(!version.is_empty(), "version string should not be empty");
 }
@@ -57,7 +65,11 @@ fn test_interface_verify_ip_without_interface() {
 #[test]
 fn test_interface_status_report_format() {
     let report = NebulaInterface::status_report();
-    assert!(report.contains("nebula0:"), "report should mention nebula0: got {}", report);
+    assert!(
+        report.contains("nebula0:"),
+        "report should mention nebula0: got {}",
+        report
+    );
     assert!(report.contains("up="), "report should contain up= field");
     assert!(report.contains("ip="), "report should contain ip= field");
 }

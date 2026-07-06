@@ -57,7 +57,7 @@ fn test_node_announcement_verify_integrity_stale() {
     ann.timestamp = old_ts;
 
     // Recompute signature for the stale timestamp
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let msg = format!(
         "{}{}{}{}{}",
         ann.node_id, ann.ip, ann.port, ann.public_key, ann.timestamp

@@ -55,9 +55,14 @@ async fn test_metrics_server_get_metrics() {
         .await
         .expect("GET /metrics should succeed");
 
-    assert!(resp.status().is_success(), "Expected 200 OK, got {}", resp.status());
+    assert!(
+        resp.status().is_success(),
+        "Expected 200 OK, got {}",
+        resp.status()
+    );
 
-    let content_type = resp.headers()
+    let content_type = resp
+        .headers()
         .get("content-type")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
@@ -68,10 +73,22 @@ async fn test_metrics_server_get_metrics() {
     );
 
     let body = resp.text().await.expect("response body");
-    assert!(body.contains("sgx_connections_total"), "body should contain connections counter");
-    assert!(body.contains("sgx_errors_total"), "body should contain errors counter");
-    assert!(body.contains("sgx_relay_active_peers"), "body should contain relay peers");
-    assert!(body.contains("42"), "body should contain connections count 42");
+    assert!(
+        body.contains("sgx_connections_total"),
+        "body should contain connections counter"
+    );
+    assert!(
+        body.contains("sgx_errors_total"),
+        "body should contain errors counter"
+    );
+    assert!(
+        body.contains("sgx_relay_active_peers"),
+        "body should contain relay peers"
+    );
+    assert!(
+        body.contains("42"),
+        "body should contain connections count 42"
+    );
     assert!(body.contains("7"), "body should contain error count 7");
 }
 
@@ -97,7 +114,8 @@ async fn test_metrics_server_content_type() {
         .await
         .expect("GET /metrics");
 
-    let content_type = resp.headers()
+    let content_type = resp
+        .headers()
         .get("content-type")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
@@ -113,11 +131,13 @@ async fn test_metrics_server_content_type() {
 
 #[test]
 fn test_metrics_snapshot_prometheus_format() {
-    let mut m = Metrics::default();
-    m.connections_total = 10;
-    m.errors_total = 2;
-    m.relay_active_peers = 5;
-    m.relay_bytes_total = 100_000;
+    let mut m = Metrics {
+        connections_total: 10,
+        errors_total: 2,
+        relay_active_peers: 5,
+        relay_bytes_total: 100_000,
+        ..Default::default()
+    };
     m.update_relay_stats(5, 100_000, 1.5, 3, 2);
     m.set_cot_transport_state("eth0", "Ethernet", true, 10, 1000);
     m.set_cot_active_transport("Ethernet");

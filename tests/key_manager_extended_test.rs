@@ -24,7 +24,7 @@ fn test_key_manager_quarantines_corrupt_file_and_regenerates() {
     // We can also verify that a quarantine file was created alongside
     let parent = tmp.path().parent().unwrap();
     let file_name = tmp.path().file_name().unwrap().to_str().unwrap();
-    
+
     let mut found_quarantine = false;
     for entry in fs::read_dir(parent).unwrap() {
         let entry = entry.unwrap();

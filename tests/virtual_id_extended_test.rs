@@ -146,17 +146,30 @@ fn test_canonical_bytes_changes_with_longer_did() {
         did: "did:guardian:much-longer-did-value-that-changes-length",
         ..short_did_inp.clone()
     };
-    assert_ne!(short_did_inp.canonical_bytes(), long_did_inp.canonical_bytes());
+    assert_ne!(
+        short_did_inp.canonical_bytes(),
+        long_did_inp.canonical_bytes()
+    );
 }
 
 #[test]
 #[allow(deprecated)]
 fn test_compute_virtual_id_legacy_deterministic() {
     use sgx_guardian_client::virtual_id::compute_virtual_id_legacy;
-    let result1 =
-        compute_virtual_id_legacy(&[0xAA; 65], &[0x01; 32], &[0x02; 32], &[0x03; 16], &[0x04; 16]);
-    let result2 =
-        compute_virtual_id_legacy(&[0xAA; 65], &[0x01; 32], &[0x02; 32], &[0x03; 16], &[0x04; 16]);
+    let result1 = compute_virtual_id_legacy(
+        &[0xAA; 65],
+        &[0x01; 32],
+        &[0x02; 32],
+        &[0x03; 16],
+        &[0x04; 16],
+    );
+    let result2 = compute_virtual_id_legacy(
+        &[0xAA; 65],
+        &[0x01; 32],
+        &[0x02; 32],
+        &[0x03; 16],
+        &[0x04; 16],
+    );
     assert_eq!(result1, result2);
 }
 
@@ -164,9 +177,19 @@ fn test_compute_virtual_id_legacy_deterministic() {
 #[allow(deprecated)]
 fn test_compute_virtual_id_legacy_changes_with_different_input() {
     use sgx_guardian_client::virtual_id::compute_virtual_id_legacy;
-    let result1 =
-        compute_virtual_id_legacy(&[0xAA; 65], &[0x01; 32], &[0x02; 32], &[0x03; 16], &[0x04; 16]);
-    let result2 =
-        compute_virtual_id_legacy(&[0xBB; 65], &[0x01; 32], &[0x02; 32], &[0x03; 16], &[0x04; 16]);
+    let result1 = compute_virtual_id_legacy(
+        &[0xAA; 65],
+        &[0x01; 32],
+        &[0x02; 32],
+        &[0x03; 16],
+        &[0x04; 16],
+    );
+    let result2 = compute_virtual_id_legacy(
+        &[0xBB; 65],
+        &[0x01; 32],
+        &[0x02; 32],
+        &[0x03; 16],
+        &[0x04; 16],
+    );
     assert_ne!(result1, result2);
 }

@@ -9,8 +9,8 @@
 // and add our own integration tests for the public API using a global mutex
 // to serialize them.
 
-use sha2::{Digest, Sha256};
 use sgx_guardian_client::policy_state::{ensure_policy_dir, ActivationOutcome};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::sync::Mutex;
 use tempfile::TempDir;
@@ -132,8 +132,7 @@ fn test_activate_policy_new_digest_rotates_backup() {
     // Now activate v2 with different content
     let yaml_v2 = "policy_id: v2\nversion: \"2\"\nrules: []\n";
     let digest_v2 = sha256_hex(yaml_v2);
-    let outcome =
-        sgx_guardian_client::policy_state::activate_policy(yaml_v2, &digest_v2).unwrap();
+    let outcome = sgx_guardian_client::policy_state::activate_policy(yaml_v2, &digest_v2).unwrap();
 
     match outcome {
         ActivationOutcome::Activated { backup_rotated } => {

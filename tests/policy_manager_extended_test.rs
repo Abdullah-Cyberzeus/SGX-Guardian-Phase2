@@ -20,7 +20,10 @@ fn test_verify_signed_policy_invalid_json() {
     fs::write(tmp.path(), b"not-a-json-object").unwrap();
     let result = policy_manager::verify_signed_policy(tmp.path().to_str().unwrap());
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Invalid signed policy JSON"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Invalid signed policy JSON"));
 }
 
 #[test]
@@ -35,10 +38,13 @@ fn test_verify_signed_policy_unsupported_version() {
         "signing_pubkey_b64": ""
     }"#;
     fs::write(tmp.path(), content).unwrap();
-    
+
     let result = policy_manager::verify_signed_policy(tmp.path().to_str().unwrap());
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Unsupported policy version"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Unsupported policy version"));
 }
 
 #[test]
@@ -52,30 +58,39 @@ fn test_verify_signed_policy_invalid_base64_policy() {
         "signing_pubkey_b64": ""
     }"#;
     fs::write(tmp.path(), content).unwrap();
-    
+
     let result = policy_manager::verify_signed_policy(tmp.path().to_str().unwrap());
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Failed to decode policy base64"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Failed to decode policy base64"));
 }
 
 #[test]
 fn test_verify_signed_policy_digest_mismatch() {
     let tmp = NamedTempFile::new().unwrap();
-    
+
     // Create base64 of "some policy"
     let policy_b64 = base64::engine::general_purpose::STANDARD.encode(b"some policy");
-    
-    let content = format!(r#"{{
+
+    let content = format!(
+        r#"{{
         "version": 1,
         "policy_b64": "{}",
         "digest_hex": "deadbeef",
         "signature_b64": "",
         "signing_pubkey_b64": ""
-    }}"#, policy_b64);
-    
+    }}"#,
+        policy_b64
+    );
+
     fs::write(tmp.path(), content).unwrap();
-    
+
     let result = policy_manager::verify_signed_policy(tmp.path().to_str().unwrap());
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Policy digest mismatch"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Policy digest mismatch"));
 }

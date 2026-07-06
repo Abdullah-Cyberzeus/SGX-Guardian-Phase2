@@ -13,7 +13,6 @@ use chrono::Utc;
 use std::ffi::OsString;
 use tempfile::TempDir;
 
-
 struct EnvGuard {
     self_doc_prev: Option<OsString>,
     peers_dir_prev: Option<OsString>,

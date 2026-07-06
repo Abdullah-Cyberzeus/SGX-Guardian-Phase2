@@ -12,7 +12,7 @@ fn create_mock_app_state(node_id: &str) -> (Arc<AppState>, TempDir) {
     let temp_dir = TempDir::new().unwrap();
     let resolver = Resolver::new(Default::default());
     let mut state = AppState::from_env(node_id.to_string(), resolver);
-    
+
     // Override directories to point to our temp dir
     let arc_state = Arc::get_mut(&mut state).unwrap();
     arc_state.pcr_dir = temp_dir.path().to_str().unwrap().to_string();
@@ -118,14 +118,14 @@ async fn test_dkp_status_missing_file_fails() {
 #[tokio::test]
 async fn test_run_cli_handlers() {
     let (state, temp_dir) = create_mock_app_state("test-node");
-    
+
     // Create a mock sgx-pa-cli executable
     let mock_cli_path = temp_dir.path().join("sgx-pa-cli");
     let mock_cli_script = r#"#!/bin/sh
 echo "Mock CLI output"
 "#;
     fs::write(&mock_cli_path, mock_cli_script).unwrap();
-    
+
     let mut perms = fs::metadata(&mock_cli_path).unwrap().permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&mock_cli_path, perms).unwrap();

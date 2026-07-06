@@ -127,9 +127,9 @@ async fn test_cert_service_creates_yaml_request_file() {
         return;
     }
 
+    use sgx_guardian_client::cert_service::MyCertService;
     use sgx_guardian_client::proto::sgx::cert_service_server::CertService;
     use sgx_guardian_client::proto::sgx::CertSignRequest;
-    use sgx_guardian_client::cert_service::MyCertService;
     use tonic::Request;
 
     let service = MyCertService;
@@ -155,7 +155,8 @@ async fn test_cert_service_creates_yaml_request_file() {
     let response = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         service.request_certificate(request),
-    ).await;
+    )
+    .await;
 
     // Either times out (if waiting for file) or returns rejected
     match response {
@@ -172,9 +173,9 @@ async fn test_cert_service_creates_yaml_request_file() {
 
 #[tokio::test]
 async fn test_cert_service_invalid_node_id_rejected() {
+    use sgx_guardian_client::cert_service::MyCertService;
     use sgx_guardian_client::proto::sgx::cert_service_server::CertService;
     use sgx_guardian_client::proto::sgx::CertSignRequest;
-    use sgx_guardian_client::cert_service::MyCertService;
     use tonic::Request;
 
     let service = MyCertService;
@@ -196,9 +197,9 @@ async fn test_cert_service_invalid_node_id_rejected() {
 
 #[tokio::test]
 async fn test_cert_service_invalid_chars_node_id() {
+    use sgx_guardian_client::cert_service::MyCertService;
     use sgx_guardian_client::proto::sgx::cert_service_server::CertService;
     use sgx_guardian_client::proto::sgx::CertSignRequest;
-    use sgx_guardian_client::cert_service::MyCertService;
     use tonic::Request;
 
     let service = MyCertService;

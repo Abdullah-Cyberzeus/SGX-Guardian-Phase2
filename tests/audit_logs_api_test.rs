@@ -192,22 +192,40 @@ async fn test_raw_logs_api() {
     let addr = listener.local_addr().unwrap();
 
     tokio::spawn(async move {
-        axum::serve(listener, app.into_make_service()).await.unwrap();
+        axum::serve(listener, app.into_make_service())
+            .await
+            .unwrap();
     });
 
     let client = reqwest::Client::new();
     let base_url = format!("http://{}", addr);
 
     // 1. Test empty log dir (should return 404)
-    let res = client.get(format!("{}/api/v1/logs", base_url)).send().await.unwrap();
+    let res = client
+        .get(format!("{}/api/v1/logs", base_url))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(res.status(), 404);
 
     // 2. Write mock raw logs
     let raw_log_path = temp_dir.path().join("nodeA-2026-07-03.log");
     let mut file = File::create(&raw_log_path).unwrap();
-    writeln!(file, r#"{{"timestamp":"2026-07-03T10:00:00Z","level":"info","message":"started"}}"#).unwrap();
-    writeln!(file, r#"{{"timestamp":"2026-07-03T10:01:00Z","level":"warn","message":"low memory"}}"#).unwrap();
-    writeln!(file, r#"{{"timestamp":"2026-07-03T10:02:00Z","level":"error","message":"crash"}}"#).unwrap();
+    writeln!(
+        file,
+        r#"{{"timestamp":"2026-07-03T10:00:00Z","level":"info","message":"started"}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"timestamp":"2026-07-03T10:01:00Z","level":"warn","message":"low memory"}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"timestamp":"2026-07-03T10:02:00Z","level":"error","message":"crash"}}"#
+    )
+    .unwrap();
     writeln!(file, "plain text log line without json").unwrap();
     drop(file);
 
@@ -220,7 +238,7 @@ async fn test_raw_logs_api() {
         .json()
         .await
         .unwrap();
-    
+
     assert_eq!(resp["total"], 2);
     assert_eq!(resp["entries"][0]["level"], "error"); // 3rd line
     assert_eq!(resp["entries"][1]["level"], "info"); // 4th line parsed as info
@@ -233,7 +251,7 @@ async fn test_raw_logs_api() {
         .json()
         .await
         .unwrap();
-    
+
     assert_eq!(resp_warn["total"], 1);
     assert_eq!(resp_warn["entries"][0]["message"], "low memory");
 
@@ -245,8 +263,7 @@ async fn test_raw_logs_api() {
         .json()
         .await
         .unwrap();
-    
+
     assert_eq!(resp_search["total"], 1);
     assert_eq!(resp_search["entries"][0]["message"], "crash");
 }
-

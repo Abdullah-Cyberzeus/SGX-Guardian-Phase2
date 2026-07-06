@@ -13,7 +13,10 @@ fn test_enforce_policy_empty_rules_fails_validation() {
     };
     let result = enforce_policy(&policy);
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("contains no enforcement rules"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("contains no enforcement rules"));
 }
 
 #[test]
@@ -70,7 +73,10 @@ fn test_enforce_policy_missing_src_fails_validation() {
     };
     let result = enforce_policy(&policy);
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("missing source address"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("missing source address"));
 }
 
 #[test]
@@ -89,7 +95,10 @@ fn test_enforce_policy_missing_dst_fails_validation() {
     };
     let result = enforce_policy(&policy);
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("missing destination address"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("missing destination address"));
 }
 
 #[test]
@@ -127,7 +136,10 @@ fn test_enforce_policy_invalid_action_fails_translation() {
     };
     let result = enforce_policy(&policy);
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("unsupported action"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("unsupported action"));
 }
 
 #[test]
@@ -146,5 +158,8 @@ fn test_enforce_policy_invalid_protocol_fails_translation() {
     };
     let result = enforce_policy(&policy);
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("unsupported protocol"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("unsupported protocol"));
 }

@@ -23,7 +23,9 @@ fn test_state(temp_dir: &std::path::Path) -> Arc<AppState> {
     })
 }
 
-async fn spawn_api(temp_dir: &std::path::Path) -> (String, tokio::task::JoinHandle<()>, Arc<AppState>) {
+async fn spawn_api(
+    temp_dir: &std::path::Path,
+) -> (String, tokio::task::JoinHandle<()>, Arc<AppState>) {
     let state = test_state(temp_dir);
     let app = build_router(state.clone());
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
@@ -39,9 +41,10 @@ async fn test_vc_endpoints() {
     let temp_dir = TempDir::new().unwrap();
     let (base_url, _handle, _state) = spawn_api(temp_dir.path()).await;
     let client = reqwest::Client::new();
-    
+
     // Test /api/v1/vc/issue
-    let res = client.post(&format!("{}/api/v1/vc/issue", base_url))
+    let res = client
+        .post(format!("{}/api/v1/vc/issue", base_url))
         .json(&serde_json::json!({
             "credentialType": "EmployeeCredential",
             "subjectDid": "did:example:123",
@@ -52,28 +55,40 @@ async fn test_vc_endpoints() {
             "expirationDate": "2026-12-31T23:59:59Z",
             "owner": "test-nodeA"
         }))
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
     // Will fail with 500 or 400 without proper DID/DKP setup, but that covers the handler logic
     assert!(!res.status().is_success());
 
     // Test /api/v1/vc/verify
-    let res = client.post(&format!("{}/api/v1/vc/verify", base_url))
+    let res = client
+        .post(format!("{}/api/v1/vc/verify", base_url))
         .json(&serde_json::json!({
             "credential_jwt": "eyJhbG..."
         }))
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
     assert!(!res.status().is_success());
 
     // Test /api/v1/vc/revoke
-    let res = client.post(&format!("{}/api/v1/vc/revoke", base_url))
+    let res = client
+        .post(format!("{}/api/v1/vc/revoke", base_url))
         .json(&serde_json::json!({
             "jti": "urn:uuid:123",
             "reason": "compromised"
         }))
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
     assert!(!res.status().is_success());
 
     // Test /api/v1/vc/status
-    let res = client.get(&format!("{}/api/v1/vc/status/urn:uuid:123", base_url)).send().await.unwrap();
+    let res = client
+        .get(format!("{}/api/v1/vc/status/urn:uuid:123", base_url))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(res.status(), reqwest::StatusCode::BAD_REQUEST); // Validation fails for '123'
 }

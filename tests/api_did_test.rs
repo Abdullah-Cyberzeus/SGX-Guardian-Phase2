@@ -1,12 +1,12 @@
+use base64::engine::general_purpose;
+use base64::Engine as _;
 use sgx_guardian_client::api::{build_router, state::AppState};
+use sgx_guardian_client::did::document::{DidDocument, Jwk, VerificationMethod};
+use sgx_guardian_client::did::persistence::{DerivationProof, DidRecord};
+use std::ffi::OsString;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::net::TcpListener;
-use std::ffi::OsString;
-use sgx_guardian_client::did::persistence::{DidRecord, DerivationProof};
-use sgx_guardian_client::did::document::{DidDocument, VerificationMethod, Jwk};
-use base64::engine::general_purpose;
-use base64::Engine as _;
 
 struct EnvGuard {
     vars: Vec<(&'static str, Option<OsString>)>,
@@ -70,8 +70,8 @@ fn seed_did(did_path: &str, dkp_pubkey_path: &str, doc_path: &str) {
         public_key_jwk: Jwk {
             kty: "EC".into(),
             crv: "P-256".into(),
-            x: general_purpose::URL_SAFE_NO_PAD.encode(&[1u8; 32]),
-            y: general_purpose::URL_SAFE_NO_PAD.encode(&[1u8; 32]),
+            x: general_purpose::URL_SAFE_NO_PAD.encode([1u8; 32]),
+            y: general_purpose::URL_SAFE_NO_PAD.encode([1u8; 32]),
             kid: "dkp-v3".into(),
         },
     };
@@ -97,7 +97,9 @@ fn seed_did(did_path: &str, dkp_pubkey_path: &str, doc_path: &str) {
     std::fs::write(doc_path, json).unwrap();
 }
 
-async fn spawn_api(temp_dir: &std::path::Path) -> (String, tokio::task::JoinHandle<()>, Arc<AppState>, EnvGuard) {
+async fn spawn_api(
+    temp_dir: &std::path::Path,
+) -> (String, tokio::task::JoinHandle<()>, Arc<AppState>, EnvGuard) {
     let pcr_dir = temp_dir.join("pcr");
     let logs_dir = temp_dir.join("logs");
     let keys_dir = temp_dir.join("keys");
@@ -106,7 +108,7 @@ async fn spawn_api(temp_dir: &std::path::Path) -> (String, tokio::task::JoinHand
     let identity_dir = temp_dir.join("identity");
     let peers_dir = temp_dir.join("peers");
     let did_dir = temp_dir.join("did");
-    
+
     std::fs::create_dir_all(&pcr_dir).unwrap();
     std::fs::create_dir_all(&logs_dir).unwrap();
     std::fs::create_dir_all(&keys_dir).unwrap();
@@ -122,15 +124,25 @@ async fn spawn_api(temp_dir: &std::path::Path) -> (String, tokio::task::JoinHand
     let aggregate_path = identity_dir.join("circle_did_docs.json");
     let counter_path = did_dir.join("self_version_counter");
 
-    seed_did(did_path.to_str().unwrap(), dkp_path.to_str().unwrap(), doc_path.to_str().unwrap());
+    seed_did(
+        did_path.to_str().unwrap(),
+        dkp_path.to_str().unwrap(),
+        doc_path.to_str().unwrap(),
+    );
 
     let env_guard = EnvGuard::new(&[
         ("SGX_GUARDIAN_DID_PATH", did_path.to_str().unwrap()),
         ("SGX_GUARDIAN_DKP_PUBKEY_PATH", dkp_path.to_str().unwrap()),
         ("SGX_GUARDIAN_DID_DOC_PATH", doc_path.to_str().unwrap()),
         ("SGX_GUARDIAN_DID_PEERS_DIR", peers_dir.to_str().unwrap()),
-        ("SGX_GUARDIAN_DID_CA_AGGREGATE_PATH", aggregate_path.to_str().unwrap()),
-        ("SGX_GUARDIAN_DID_SELF_VERSION_COUNTER_PATH", counter_path.to_str().unwrap()),
+        (
+            "SGX_GUARDIAN_DID_CA_AGGREGATE_PATH",
+            aggregate_path.to_str().unwrap(),
+        ),
+        (
+            "SGX_GUARDIAN_DID_SELF_VERSION_COUNTER_PATH",
+            counter_path.to_str().unwrap(),
+        ),
     ]);
 
     let state = Arc::new(AppState {
@@ -144,8 +156,14 @@ async fn spawn_api(temp_dir: &std::path::Path) -> (String, tokio::task::JoinHand
         log_dir_fallback: temp_dir.join("logs-fallback").to_string_lossy().to_string(),
         did_resolver: sgx_guardian_client::did::Resolver::new(Default::default()),
         vid_cache: sgx_guardian_client::virtual_id_cache::VirtualIdCache::new(),
-        discovery_config_dir: temp_dir.join("discovery-config").to_string_lossy().to_string(),
-        discovery_state_dir: temp_dir.join("discovery-state").to_string_lossy().to_string(),
+        discovery_config_dir: temp_dir
+            .join("discovery-config")
+            .to_string_lossy()
+            .to_string(),
+        discovery_state_dir: temp_dir
+            .join("discovery-state")
+            .to_string_lossy()
+            .to_string(),
     });
 
     let app = build_router(state.clone());
@@ -162,44 +180,70 @@ async fn test_did_endpoints() {
     let temp_dir = TempDir::new().unwrap();
     let (base_url, _handle, _state, _guard) = spawn_api(temp_dir.path()).await;
     let client = reqwest::Client::new();
-    
+
     // 1. GET /api/v1/did/status
-    let res = client.get(&format!("{}/api/v1/did/status", base_url)).send().await.unwrap();
+    let res = client
+        .get(format!("{}/api/v1/did/status", base_url))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(res.status(), reqwest::StatusCode::OK);
     let body: serde_json::Value = res.json().await.unwrap();
     assert_eq!(body["status"], "active");
 
     // 2. GET /api/v1/did/resolve (Local)
-    let res = client.get(&format!("{}/api/v1/did/resolve", base_url)).send().await.unwrap();
+    let res = client
+        .get(format!("{}/api/v1/did/resolve", base_url))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(res.status(), reqwest::StatusCode::OK);
     let body: serde_json::Value = res.json().await.unwrap();
     assert_eq!(body["status"], "ACTIVE");
 
     // 3. GET /api/v1/did/document
-    let res = client.get(&format!("{}/api/v1/did/document", base_url)).send().await.unwrap();
+    let res = client
+        .get(format!("{}/api/v1/did/document", base_url))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(res.status(), reqwest::StatusCode::OK);
     let body: serde_json::Value = res.json().await.unwrap();
     assert_eq!(body["node_name"], "nodeA");
 
     // 4. GET /api/v1/did/document/raw
-    let res = client.get(&format!("{}/api/v1/did/document/raw", base_url)).send().await.unwrap();
+    let res = client
+        .get(format!("{}/api/v1/did/document/raw", base_url))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(res.status(), reqwest::StatusCode::OK);
     let body: serde_json::Value = res.json().await.unwrap();
     assert!(body["id"].is_string());
 
     // 5. POST /api/v1/did/deactivate (without confirm)
-    let res = client.post(&format!("{}/api/v1/did/deactivate", base_url))
+    let res = client
+        .post(format!("{}/api/v1/did/deactivate", base_url))
         .json(&serde_json::json!({"reason": "test", "confirm": false}))
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
     assert_eq!(res.status(), reqwest::StatusCode::BAD_REQUEST);
 
     // 6. POST /api/v1/did/deactivate (with confirm)
-    let res = client.post(&format!("{}/api/v1/did/deactivate", base_url))
+    let res = client
+        .post(format!("{}/api/v1/did/deactivate", base_url))
         .json(&serde_json::json!({"reason": "test", "confirm": true}))
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
     assert_eq!(res.status(), reqwest::StatusCode::OK);
-    
+
     // 7. GET /api/v1/did/peers
-    let res = client.get(&format!("{}/api/v1/did/document/peers", base_url)).send().await.unwrap();
+    let res = client
+        .get(format!("{}/api/v1/did/document/peers", base_url))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(res.status(), reqwest::StatusCode::OK);
 }

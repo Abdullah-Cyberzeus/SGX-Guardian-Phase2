@@ -36,7 +36,9 @@ async fn setup(seed: u8) -> (TrustEngine, Arc<CircleMembership>, String) {
 async fn test_verify_known_verified_member() {
     let (engine, _, _) = setup(0xAA).await;
     let owner_key = make_key(0xAA);
-    let result = engine.verify_peer(&owner_key, TransportType::Ethernet).await;
+    let result = engine
+        .verify_peer(&owner_key, TransportType::Ethernet)
+        .await;
     assert!(result.is_trusted);
     assert_eq!(result.trust_level, TrustLevel::Verified);
     assert!(result.reason.is_none());
@@ -61,7 +63,9 @@ async fn test_verify_revoked_member_rejected() {
         .await
         .unwrap();
     let owner_key = make_key(0xAA);
-    let result = engine.verify_peer(&owner_key, TransportType::Cellular).await;
+    let result = engine
+        .verify_peer(&owner_key, TransportType::Cellular)
+        .await;
     assert!(!result.is_trusted);
     assert_eq!(result.trust_level, TrustLevel::Revoked);
 }
@@ -85,7 +89,9 @@ async fn test_verify_key_mismatch_rejected() {
     // TrustEngine will compute device_id from presented_public_key and look it up —
     // the member's stored key won't match the computed ID from a different raw key
     let wrong_key = make_key(0xCC);
-    let result = engine.verify_peer(&wrong_key, TransportType::Ethernet).await;
+    let result = engine
+        .verify_peer(&wrong_key, TransportType::Ethernet)
+        .await;
     // wrong_key generates a device_id that isn't in the circle → rejected as not a member
     assert!(!result.is_trusted);
 }
@@ -125,7 +131,9 @@ async fn test_cached_verification_populated_after_success() {
     assert!(cached_before.is_none());
 
     // Verify
-    let result = engine.verify_peer(&owner_key, TransportType::Ethernet).await;
+    let result = engine
+        .verify_peer(&owner_key, TransportType::Ethernet)
+        .await;
     assert!(result.is_trusted);
 
     // Should now be in cache
@@ -143,7 +151,9 @@ async fn test_cached_verification_cleared_on_failure() {
     let owner_id = DeviceIdentity::compute_id(&owner_key);
 
     // First verify successfully to populate cache
-    engine.verify_peer(&owner_key, TransportType::Ethernet).await;
+    engine
+        .verify_peer(&owner_key, TransportType::Ethernet)
+        .await;
 
     // Revoke member
     circle
@@ -152,7 +162,9 @@ async fn test_cached_verification_cleared_on_failure() {
         .unwrap();
 
     // Verify again — should fail and clear cache
-    engine.verify_peer(&owner_key, TransportType::Ethernet).await;
+    engine
+        .verify_peer(&owner_key, TransportType::Ethernet)
+        .await;
 
     let cached = engine.cached_verification(&owner_id).await;
     assert!(cached.is_none());
@@ -181,6 +193,8 @@ async fn test_verify_sets_transport_type_in_result() {
     let (engine, _, _) = setup(0xAA).await;
     let owner_key = make_key(0xAA);
 
-    let result = engine.verify_peer(&owner_key, TransportType::Satellite).await;
+    let result = engine
+        .verify_peer(&owner_key, TransportType::Satellite)
+        .await;
     assert_eq!(result.transport_used, TransportType::Satellite);
 }

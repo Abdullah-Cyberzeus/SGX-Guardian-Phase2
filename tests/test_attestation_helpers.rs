@@ -24,7 +24,7 @@ fn test_ports() {
 #[tokio::test]
 async fn test_reattest_trigger() {
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-    
+
     // Set the sender (might fail if already set in another test, but once_cell handles it safely)
     set_reattest_sender(tx);
 

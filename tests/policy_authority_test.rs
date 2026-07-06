@@ -23,9 +23,17 @@ fn test_pa_key_load_or_generate() {
         let pa = result.unwrap();
         let pubkey = pa.pubkey_der();
         // P256 uncompressed point = 65 bytes
-        assert_eq!(pubkey.len(), 65, "P256 pubkey should be 65 bytes, got {}", pubkey.len());
+        assert_eq!(
+            pubkey.len(),
+            65,
+            "P256 pubkey should be 65 bytes, got {}",
+            pubkey.len()
+        );
         // First byte of uncompressed P256 point is 0x04
-        assert_eq!(pubkey[0], 0x04, "P256 uncompressed point should start with 0x04");
+        assert_eq!(
+            pubkey[0], 0x04,
+            "P256 uncompressed point should start with 0x04"
+        );
     }
 }
 
@@ -76,21 +84,32 @@ fn test_pa_sign_policy_to_disk() {
         std::fs::write(tmp.path(), "version: 1\nrules:\n  - allow: all\n").unwrap();
 
         let result = pa.sign_policy_to_disk(tmp.path().to_str().unwrap());
-        assert!(result.is_ok(), "sign_policy_to_disk failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "sign_policy_to_disk failed: {:?}",
+            result.err()
+        );
 
         let digest_hex = result.unwrap();
-        assert_eq!(digest_hex.len(), 64, "SHA-256 hex digest should be 64 chars");
+        assert_eq!(
+            digest_hex.len(),
+            64,
+            "SHA-256 hex digest should be 64 chars"
+        );
 
         // Verify policy.sig was written
         let sig_path = "/etc/sgx-guardian/policies/policy.sig";
-        assert!(std::path::Path::new(sig_path).exists(), "policy.sig not written");
+        assert!(
+            std::path::Path::new(sig_path).exists(),
+            "policy.sig not written"
+        );
 
         let envelope = std::fs::read_to_string(sig_path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&envelope).unwrap();
         assert_eq!(parsed["version"], 1);
-        assert!(parsed["policy_b64"].as_str().unwrap().len() > 0);
-        assert!(parsed["signature_b64"].as_str().unwrap().len() > 0);
-        assert!(parsed["signing_pubkey_b64"].as_str().unwrap().len() > 0);
+        assert!(!parsed["policy_b64"].as_str().unwrap().is_empty());
+        assert!(!parsed["signature_b64"].as_str().unwrap().is_empty());
+        assert!(!parsed["signing_pubkey_b64"].as_str().unwrap().is_empty());
         assert_eq!(parsed["digest_hex"].as_str().unwrap(), digest_hex);
     }
 }

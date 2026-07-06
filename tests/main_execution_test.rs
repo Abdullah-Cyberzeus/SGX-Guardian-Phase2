@@ -7,6 +7,6 @@ fn test_main_execution() {
         .arg("--help")
         .output()
         .expect("Failed to run binary");
-    
+
     println!("{:?}", output);
 }

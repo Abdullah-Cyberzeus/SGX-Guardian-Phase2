@@ -2,10 +2,11 @@
 // Integration tests for uncovered branches in src/virtual_id_cache.rs
 
 use sgx_guardian_client::virtual_id_cache::{
-    ObservationContext, RotationReason, VidObservation, VirtualIdCache,
-    compute_stable_security_state_hex,
+    compute_stable_security_state_hex, ObservationContext, RotationReason, VidObservation,
+    VirtualIdCache,
 };
 
+#[allow(clippy::too_many_arguments)]
 fn make_ctx<'a>(
     peer_did: &'a str,
     vid: &'a str,
@@ -49,14 +50,23 @@ fn test_rotation_reason_not_security_event() {
 
 #[test]
 fn test_rotation_reason_as_str_all_variants() {
-    assert_eq!(RotationReason::InitialObservation.as_str(), "initial_observation");
+    assert_eq!(
+        RotationReason::InitialObservation.as_str(),
+        "initial_observation"
+    );
     assert_eq!(RotationReason::NonceOnly.as_str(), "nonce_refreshed");
     assert_eq!(RotationReason::DidChanged.as_str(), "did_changed");
     assert_eq!(RotationReason::DkpRotated.as_str(), "dkp_rotated");
     assert_eq!(RotationReason::PcrChanged.as_str(), "pcr_changed");
     assert_eq!(RotationReason::PolicyChanged.as_str(), "policy_changed");
-    assert_eq!(RotationReason::MultipleSecurityInputs.as_str(), "multiple_security_inputs");
-    assert_eq!(RotationReason::UnknownInputChange.as_str(), "unknown_input_change");
+    assert_eq!(
+        RotationReason::MultipleSecurityInputs.as_str(),
+        "multiple_security_inputs"
+    );
+    assert_eq!(
+        RotationReason::UnknownInputChange.as_str(),
+        "unknown_input_change"
+    );
 }
 
 // ── VirtualIdCache::new / default ────────────────────────────────────────────
@@ -254,9 +264,16 @@ fn test_observe_rich_nonce_only_classified_correctly() {
         "policy-1",
     ));
     match result {
-        VidObservation::Rotated { reason, cooldown_allows_reattest, .. } => {
+        VidObservation::Rotated {
+            reason,
+            cooldown_allows_reattest,
+            ..
+        } => {
             assert_eq!(reason, RotationReason::NonceOnly);
-            assert!(!cooldown_allows_reattest, "NonceOnly must not trigger re-attest");
+            assert!(
+                !cooldown_allows_reattest,
+                "NonceOnly must not trigger re-attest"
+            );
         }
         _ => panic!("Expected Rotated"),
     }
@@ -267,10 +284,20 @@ fn test_observe_rich_nonce_only_classified_correctly() {
 #[test]
 fn test_compute_stable_security_state_hex_deterministic() {
     let h1 = compute_stable_security_state_hex(
-        "did:guardian:x", "#dkp-v1", "v1", "fp-1", "pcr-1", "policy-1",
+        "did:guardian:x",
+        "#dkp-v1",
+        "v1",
+        "fp-1",
+        "pcr-1",
+        "policy-1",
     );
     let h2 = compute_stable_security_state_hex(
-        "did:guardian:x", "#dkp-v1", "v1", "fp-1", "pcr-1", "policy-1",
+        "did:guardian:x",
+        "#dkp-v1",
+        "v1",
+        "fp-1",
+        "pcr-1",
+        "policy-1",
     );
     assert_eq!(h1, h2);
 }
@@ -278,10 +305,20 @@ fn test_compute_stable_security_state_hex_deterministic() {
 #[test]
 fn test_compute_stable_security_state_hex_changes_with_pcr() {
     let h1 = compute_stable_security_state_hex(
-        "did:guardian:x", "#dkp-v1", "v1", "fp-1", "pcr-1", "policy-1",
+        "did:guardian:x",
+        "#dkp-v1",
+        "v1",
+        "fp-1",
+        "pcr-1",
+        "policy-1",
     );
     let h2 = compute_stable_security_state_hex(
-        "did:guardian:x", "#dkp-v1", "v1", "fp-1", "pcr-2", "policy-1",
+        "did:guardian:x",
+        "#dkp-v1",
+        "v1",
+        "fp-1",
+        "pcr-2",
+        "policy-1",
     );
     assert_ne!(h1, h2);
 }

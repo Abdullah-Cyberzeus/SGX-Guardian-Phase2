@@ -7,7 +7,7 @@ use sgx_guardian_client::logging::{init_logger, log_error, log_event};
 #[test]
 fn test_logging_workflow() {
     let node_id = "test-log-node";
-    
+
     // We cannot reliably reset the global logger, but we can call it. If another test already
     // initialized it, it might panic or do nothing depending on tracing subscriber implementation.
     // However, `tracing-subscriber::fmt::SubscriberBuilder::try_init` vs `init` might panic.

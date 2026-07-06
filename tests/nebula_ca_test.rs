@@ -37,7 +37,10 @@ fn test_generate_ca_idempotent() {
     assert!(NebulaCA::generate_ca(base).is_ok());
 
     let second_content = std::fs::read_to_string(&ca_crt).unwrap();
-    assert_eq!(first_content, second_content, "idempotent call overwrote CA");
+    assert_eq!(
+        first_content, second_content,
+        "idempotent call overwrote CA"
+    );
 }
 
 #[test]
@@ -116,11 +119,7 @@ fn test_save_ca_cert_empty_rejected() {
     let result = NebulaCA::save_ca_cert(base, "   ");
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
-    assert!(
-        err_msg.contains("empty"),
-        "unexpected error: {}",
-        err_msg
-    );
+    assert!(err_msg.contains("empty"), "unexpected error: {}", err_msg);
 }
 
 // ─── ca_cert_exists ──────────────────────────────────────────
@@ -130,13 +129,19 @@ fn test_ca_cert_exists_true_when_present() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let base = tmp.path().to_str().unwrap();
 
-    assert!(!NebulaCA::ca_cert_exists(base), "should be false when absent");
+    assert!(
+        !NebulaCA::ca_cert_exists(base),
+        "should be false when absent"
+    );
 
     let ca_dir = tmp.path().join("ca");
     std::fs::create_dir_all(&ca_dir).unwrap();
     std::fs::write(ca_dir.join("ca.crt"), "CERT_DATA").unwrap();
 
-    assert!(NebulaCA::ca_cert_exists(base), "should be true when present and non-empty");
+    assert!(
+        NebulaCA::ca_cert_exists(base),
+        "should be true when present and non-empty"
+    );
 }
 
 #[test]
@@ -148,7 +153,10 @@ fn test_ca_cert_exists_false_when_empty() {
     std::fs::create_dir_all(&ca_dir).unwrap();
     std::fs::write(ca_dir.join("ca.crt"), "").unwrap();
 
-    assert!(!NebulaCA::ca_cert_exists(base), "should be false when empty");
+    assert!(
+        !NebulaCA::ca_cert_exists(base),
+        "should be false when empty"
+    );
 }
 
 // ─── ca_fingerprint ──────────────────────────────────────────
@@ -170,7 +178,12 @@ fn test_ca_fingerprint_fallback_sha256() {
     let fp = NebulaCA::ca_fingerprint(base);
     assert!(fp.is_some(), "fingerprint should use SHA-256 fallback");
     let fp_str = fp.unwrap();
-    assert_eq!(fp_str.len(), 16, "fingerprint should be 8-byte hex = 16 chars, got: {}", fp_str);
+    assert_eq!(
+        fp_str.len(),
+        16,
+        "fingerprint should be 8-byte hex = 16 chars, got: {}",
+        fp_str
+    );
 }
 
 #[test]
@@ -239,7 +252,10 @@ fn test_issue_node_cert_idempotent() {
     assert!(NebulaCA::issue_node_cert(base, &membership, "192.168.100.3/24").is_ok());
 
     let second_content = std::fs::read_to_string(&cert).unwrap();
-    assert_eq!(first_content, second_content, "idempotent call overwrote cert");
+    assert_eq!(
+        first_content, second_content,
+        "idempotent call overwrote cert"
+    );
 }
 
 #[test]

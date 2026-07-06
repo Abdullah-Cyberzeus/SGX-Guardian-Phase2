@@ -2,7 +2,7 @@
 // Integration tests for src/secure_element logic
 
 use sgx_guardian_client::secure_element::safe_mode;
-use sgx_guardian_client::secure_element::tamper::{TamperStatus, is_tampered};
+use sgx_guardian_client::secure_element::tamper::{is_tampered, TamperStatus};
 
 #[test]
 fn test_tamper_status_display() {

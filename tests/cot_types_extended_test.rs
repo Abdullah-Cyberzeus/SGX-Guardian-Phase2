@@ -20,20 +20,12 @@ fn test_transport_type_display_all() {
 fn test_transport_priority_ordering() {
     // Cellular is highest priority (lowest number)
     assert!(
-        TransportType::Cellular.default_priority()
-            < TransportType::Ethernet.default_priority()
+        TransportType::Cellular.default_priority() < TransportType::Ethernet.default_priority()
     );
+    assert!(TransportType::Ethernet.default_priority() < TransportType::WiFi.default_priority());
+    assert!(TransportType::WiFi.default_priority() < TransportType::Bluetooth.default_priority());
     assert!(
-        TransportType::Ethernet.default_priority()
-            < TransportType::WiFi.default_priority()
-    );
-    assert!(
-        TransportType::WiFi.default_priority()
-            < TransportType::Bluetooth.default_priority()
-    );
-    assert!(
-        TransportType::Bluetooth.default_priority()
-            < TransportType::Satellite.default_priority()
+        TransportType::Bluetooth.default_priority() < TransportType::Satellite.default_priority()
     );
 }
 
@@ -136,7 +128,10 @@ fn test_cot_error_display_all_variants() {
             "WiFi not registered",
         ),
         (CotError::PeerNotFound("abc".into()), "peer not found"),
-        (CotError::SessionInvalid("expired".into()), "session invalid"),
+        (
+            CotError::SessionInvalid("expired".into()),
+            "session invalid",
+        ),
         (
             CotError::TrustVerificationFailed("sig fail".into()),
             "trust verification failed",
