@@ -85,8 +85,8 @@ impl CertificateRevocationList {
 
     /// Recompute the Merkle root over sorted entry fingerprints.
     /// Single SHA-256 over the concatenation is sufficient for Phase 2
-    /// (no proof-of-inclusion required yet — that's a Sprint 6 forensics
-    /// task). Function name kept "merkle" to preserve nomenclature.
+    /// (no proof-of-inclusion required yet - future forensics work can add
+    /// that later). Function name kept "merkle" to preserve nomenclature.
     pub fn recompute_root(&mut self) {
         use sha2::{Digest, Sha256};
         let fps: BTreeSet<String> = self.entries.iter().map(|e| e.fingerprint()).collect();
@@ -104,7 +104,7 @@ impl CertificateRevocationList {
         cloned.proof = Proof::default();
         let v: serde_json::Value = serde_json::to_value(&cloned)?;
         let sorted = sort_json_keys(&v);
-        Ok(serde_json::to_vec(&sorted)?)
+        serde_json::to_vec(&sorted)
     }
 }
 

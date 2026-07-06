@@ -1,7 +1,7 @@
 // src/cot/transports/bluetooth.rs
 // ============================================================
 // Bluetooth Transport (BLE / Classic) — Full Implementation
-// Replaces Sprint 2 stub. Uses bnep0 (BT PAN) for TCP CoT.
+// Replaces the earlier stub implementation. Uses bnep0 (BT PAN) for TCP CoT.
 // Board: BT 5.0 via hci0 interface
 // ============================================================
 

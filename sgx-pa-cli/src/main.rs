@@ -98,7 +98,7 @@ enum Commands {
     Crl(commands::crl::CrlArgs),
     /// VirtualID inspection and recomputation
     Vid(commands::vid::VidArgs),
-    /// Sprint 8 - Suricata IDS/IPS administration
+    /// Suricata IDS/IPS administration
     Threat(commands::threat::ThreatArgs),
 }
 /// Entry point for the SGX Policy Authority CLI.

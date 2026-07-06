@@ -15,4 +15,12 @@ pub fn crl_router() -> Router<Arc<AppState>> {
         .route("/api/v1/crl/check", get(handlers::crl::check))
         .route("/api/v1/crl/verify", post(handlers::crl::verify))
         .route("/api/v1/crl/root", get(handlers::crl::root))
+        .route(
+            "/api/v1/crl/gossip/status",
+            get(handlers::crl::gossip_status),
+        )
+        .route(
+            "/api/v1/crl/gossip/trigger",
+            post(handlers::crl::gossip_trigger),
+        )
 }

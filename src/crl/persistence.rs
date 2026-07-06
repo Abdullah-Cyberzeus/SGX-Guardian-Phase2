@@ -31,7 +31,7 @@ fn write_atomic(path: &PathBuf, bytes: &[u8]) -> Result<(), CrlError> {
 
 fn id_to_filename(id: &str) -> String {
     // urn:uuid:xxxx → urn_uuid_xxxx (filesystem-safe)
-    id.replace(':', "_").replace('/', "_")
+    id.replace([':', '/'], "_")
 }
 
 pub fn save_entry(e: &CrlEntry) -> Result<(), CrlError> {

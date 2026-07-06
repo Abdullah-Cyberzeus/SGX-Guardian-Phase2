@@ -112,6 +112,9 @@ fn build_nft_ruleset(rules: &[EnforcementRule]) -> Result<String> {
     // Allow cert bootstrap
     out.push_str("    tcp dport 50061 accept\n");
 
+    // Allow CRL gossip exchange for decentralized revocation propagation
+    out.push_str("    tcp dport 50063 accept\n");
+
     // Allow ICMP ping
     out.push_str("    ip protocol icmp accept\n");
 

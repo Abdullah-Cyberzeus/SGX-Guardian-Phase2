@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// One device observed on the local network during an NMAP scan.
-/// Maps directly to the "ConnectedDevice entity" required by the Sprint 6 spec.
+/// Maps directly to the canonical `ConnectedDevice` discovery entity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConnectedDevice {
     /// Stable per-device id: prefer MAC-only identity, fall back to IP-only.
