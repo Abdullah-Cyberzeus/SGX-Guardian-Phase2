@@ -23,31 +23,36 @@ pub struct LogsArgs {
 pub fn run(args: LogsArgs) {
     use std::fs;
     use std::path::PathBuf;
-    let logs_dir = PathBuf::from("../logs");
-
     // Try to find the latest log file that starts with the node name (e.g. nodeA)
     let mut latest_file: Option<PathBuf> = None;
-    if logs_dir.exists() {
-        let mut candidates: Vec<_> = fs::read_dir(&logs_dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                let name = e.file_name().to_string_lossy().to_string();
-                name.starts_with(&args.node)
-            })
-            .collect();
+    let mut searched_paths = Vec::new();
 
-        // Sort by modification time so we pick the newest
-        candidates.sort_by_key(|e| e.metadata().unwrap().modified().unwrap());
-        if let Some(entry) = candidates.last() {
-            latest_file = Some(entry.path());
+    for dir in ["/var/log/sgx-guardian", "../logs", "logs"] {
+        let logs_dir = PathBuf::from(dir);
+        searched_paths.push(logs_dir.clone());
+        if logs_dir.exists() {
+            let mut candidates: Vec<_> = fs::read_dir(&logs_dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    name.starts_with(&args.node)
+                })
+                .collect();
+
+            // Sort by modification time so we pick the newest
+            candidates.sort_by_key(|e| e.metadata().unwrap().modified().unwrap());
+            if let Some(entry) = candidates.last() {
+                latest_file = Some(entry.path());
+                break;
+            }
         }
     }
 
     if latest_file.is_none() {
         eprintln!(
-            "❌ No log file found for node `{}` in {:?}",
-            args.node, logs_dir
+            "❌ No log file found for node `{}` in searched locations: {:?}",
+            args.node, searched_paths
         );
         eprintln!("Make sure node is running and logs directory exists.");
         std::process::exit(1);
