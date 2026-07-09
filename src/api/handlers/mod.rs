@@ -14,4 +14,5 @@ pub mod transport;
 pub mod vc;
 pub mod vid;
 
+pub mod cert;
 pub mod discovery;

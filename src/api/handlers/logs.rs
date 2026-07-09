@@ -148,3 +148,143 @@ fn parse_log_line(raw: &str) -> LogEntry {
         message: raw.to_string(),
     }
 }
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct AuditLogEntry {
+    pub event: crate::audit::event::AuditEvent,
+    pub hash: String,
+    pub previous_hash: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct AuditLogsQuery {
+    pub category: Option<String>,
+    pub search: Option<String>,
+    pub node: Option<String>,
+    pub severity: Option<String>,
+    pub tail: Option<usize>,
+}
+
+#[derive(serde::Serialize)]
+pub struct AuditLogsResponse {
+    pub status: String,
+    pub count: usize,
+    pub items: Vec<AuditLogEntry>,
+}
+
+fn resolve_audit_log_path_for_node(
+    node: &str,
+    state: &AppState,
+) -> Result<std::path::PathBuf, ApiError> {
+    if let Ok(path) = std::env::var("SGX_GUARDIAN_AUDIT_LOG_PATH") {
+        let explicit = std::path::PathBuf::from(path);
+        if explicit.exists() {
+            return Ok(explicit);
+        }
+    }
+
+    for dir in [&state.log_dir_primary, &state.log_dir_fallback] {
+        let directory = std::path::PathBuf::from(dir);
+        if !directory.exists() {
+            continue;
+        }
+        let file_path = directory.join(format!("audit-{}.log", node));
+        if file_path.exists() {
+            return Ok(file_path);
+        }
+    }
+
+    // Also check for legacy audit.log
+    for dir in [&state.log_dir_primary, &state.log_dir_fallback] {
+        let directory = std::path::PathBuf::from(dir);
+        if !directory.exists() {
+            continue;
+        }
+        let legacy = directory.join("audit.log");
+        if legacy.exists() {
+            return Ok(legacy);
+        }
+    }
+
+    Err(ApiError::NotFound(format!(
+        "no audit log file found for node {}",
+        node
+    )))
+}
+
+fn category_matches(category_enum: &crate::audit::event::AuditCategory, query: &str) -> bool {
+    if let Ok(val) = serde_json::to_value(category_enum) {
+        if let Some(s) = val.as_str() {
+            return s.eq_ignore_ascii_case(query);
+        }
+    }
+    false
+}
+
+fn severity_matches(severity_enum: &crate::audit::event::AuditSeverity, query: &str) -> bool {
+    let query_lower = query.to_lowercase();
+    match severity_enum {
+        crate::audit::event::AuditSeverity::Info => query_lower == "info",
+        crate::audit::event::AuditSeverity::Warning => {
+            query_lower == "warn" || query_lower == "warning"
+        }
+        crate::audit::event::AuditSeverity::Critical => {
+            query_lower == "error" || query_lower == "critical"
+        }
+    }
+}
+
+pub async fn audit_logs(
+    State(s): State<Arc<AppState>>,
+    Query(q): Query<AuditLogsQuery>,
+) -> Result<Json<AuditLogsResponse>, ApiError> {
+    let node = q.node.unwrap_or_else(|| s.node_id.clone());
+    if !is_valid_node_id(&node) {
+        return Err(ApiError::BadRequest(format!("invalid node name: {}", node)));
+    }
+
+    let path = resolve_audit_log_path_for_node(&node, &s)?;
+    let f = tokio::fs::File::open(&path).await?;
+    let mut reader = BufReader::new(f).lines();
+    let mut all_entries: Vec<AuditLogEntry> = Vec::new();
+
+    while let Some(line) = reader.next_line().await? {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Ok(entry) = serde_json::from_str::<AuditLogEntry>(&line) {
+            all_entries.push(entry);
+        }
+    }
+
+    // Apply filters
+    if let Some(cat) = q.category.as_deref() {
+        all_entries.retain(|item| category_matches(&item.event.category, cat));
+    }
+
+    if let Some(sev) = q.severity.as_deref() {
+        if !sev.eq_ignore_ascii_case("all") {
+            all_entries.retain(|item| severity_matches(&item.event.severity, sev));
+        }
+    }
+
+    if let Some(needle) = q.search.as_deref() {
+        let n = needle.to_lowercase();
+        all_entries.retain(|item| item.event.message.to_lowercase().contains(&n));
+    }
+
+    // Return newest first (reverse chronological order)
+    all_entries.reverse();
+
+    // Apply tail limits
+    if let Some(limit) = q.tail {
+        all_entries.truncate(limit.min(1000));
+    }
+
+    let count = all_entries.len();
+    Ok(Json(AuditLogsResponse {
+        status: "success".to_string(),
+        count,
+        items: all_entries,
+    }))
+}
