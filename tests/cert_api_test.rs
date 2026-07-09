@@ -33,6 +33,8 @@ approve: false
         keys_dir: "/tmp/keys".into(),
         pcr_dir: "/tmp/pcr".into(),
         pcr_baseline_dir: "/tmp/pcr_baseline".into(),
+        threat_config_path: "/tmp/test_threat_config.json".into(),
+        threat_state_dir: "/tmp/test_threat_state".into(),
         log_dir_primary: "/tmp/logs".into(),
         log_dir_fallback: "logs".into(),
         did_resolver: sgx_guardian_client::did::Resolver::new(Default::default()),

@@ -14,6 +14,8 @@ fn test_state(temp_dir: &std::path::Path) -> Arc<AppState> {
         keys_dir: temp_dir.join("keys").to_string_lossy().to_string(),
         pcr_dir: temp_dir.join("pcr").to_string_lossy().to_string(),
         pcr_baseline_dir: temp_dir.join("baseline").to_string_lossy().to_string(),
+        threat_config_path: temp_dir.join("threat.json").to_string_lossy().to_string(),
+        threat_state_dir: temp_dir.join("threat_state").to_string_lossy().to_string(),
         log_dir_primary: temp_dir.join("logs").to_string_lossy().to_string(),
         log_dir_fallback: temp_dir.join("logs2").to_string_lossy().to_string(),
         did_resolver: sgx_guardian_client::did::Resolver::new(Default::default()),

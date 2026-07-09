@@ -20,6 +20,7 @@ fn create_device(ip: &str, mac: Option<&str>) -> ConnectedDevice {
         last_seen: chrono::Utc::now().to_rfc3339(),
         status: DeviceStatus::Unauthorized, // Set as unauthorized by default
         vuln_triaged: false,
+        last_scan_intensity: None,
     }
 }
 
