@@ -3,7 +3,7 @@
 **Status**: Engineering recommendations — for stakeholder confirmation
 **Scope**: Build, packaging, and distribution of `sgx_guardian_client` (+ `sgx-pa-cli`)
 **Companion docs**: `./Containerization_Assessment.md`, `./Technical_Assessment_Framework_Containerizing_SGX_Guardian.md`
-**Date**: 2026-07-08
+**Date**: 2026-07-09 — rev B (adds §0.2 dev-team Q&A and the Yocto-branch decision D-6); supersedes 2026-07-08
 
 ---
 
@@ -22,9 +22,9 @@ gives:
   depends on.
 
 The single fact that ties most answers together: **the production Guardian boards
-appear to be embedded ARM64 devices** — signalled by *Yocto Scarthgap* (an
-embedded-Linux build system, not a desktop distro) and the *SE050 secure element*
-in the questions. That one fact drives Q1, Q2, Q3, Q5, Q7, Q8, and Q9. **If the
+appear to be embedded ARM64 devices** — signalled by the board running **Yocto**
+(an embedded-Linux build system, not a desktop distro — *Mickledore* today, with
+*Scarthgap* proposed) and the *SE050 secure element* in the questions. That one fact drives Q1, Q2, Q3, Q5, Q7, Q8, and Q9. **If the
 boards are actually x86_64, several answers change** — so please confirm the board
 architecture first (it's the top open decision in §11).
 
@@ -33,9 +33,9 @@ architecture first (it's the top open decision in §11).
 ## 0.1 Answers at a Glance
 
 | # | Question | Recommended answer | Basis |
-|---|----------|--------------------|-------|
+| - | -------- | ------------------ | ----- |
 | 1 | CPU architecture | **Both** — AMD64 (dev/server/container) + ARM64 (production boards) | Recommendation (confirm boards = ARM64) |
-| 2 | OS support | **Ubuntu 22.04+ & Debian 12+ (.deb), Yocto Scarthgap (boards); Windows = dev-only, not production** | Code-dictated (Linux-only enforcement) |
+| 2 | OS support | **Ubuntu 22.04+ & Debian 12+ (.deb); Yocto Scarthgap LTS on boards (currently Mickledore/EOL — recommend upgrade); Windows = dev-only** | Code-dictated (Linux-only enforcement) |
 | 3 | Release packaging | **One release package containing platform-specific binaries** | Code-dictated (a single universal binary is infeasible) |
 | 4 | Reproducible + single locked dep set | **Yes** | Code-dictated (single `Cargo.lock` already committed) |
 | 5 | Shared version + auto-detect installer | **Yes** — shared version; installer for Ubuntu/Debian; boards provisioned via Yocto image | Recommendation |
@@ -47,6 +47,24 @@ architecture first (it's the top open decision in §11).
 
 > Legend on current state: ✅ already in the repo · ⚠️ partially present / needs
 > work · ❌ not present yet.
+
+---
+
+## 0.2 Dev-Team Questions — Direct Answers
+
+The seven questions engineering raised against this document, answered in their own
+numbering. Each points to the fuller section. Legend: ✅ code-dictated / settled ·
+⚠️ engineering answer given, still needs a stakeholder sign-off.
+
+| # | Dev-team question | Direct answer | Detail | Sign-off? |
+|---|-------------------|---------------|--------|-----------|
+| 1 | Is the production board CPU **ARM64/AArch64**? | **Yes — production boards are ARM64/AArch64.** AMD64 stays for dev, servers, the NUC, and containers. | §1 | ⚠️ Hardware fact — confirm (D-1) |
+| 2 | Board OS — **Scarthgap** or the current **Mickledore**? | **Move to Yocto Scarthgap (5.0 LTS).** Mickledore (4.2) is **non-LTS and already end-of-life** — no upstream security backports, which is unacceptable under a security-enforcement product. | §2 | ⚠️ Confirm + verify vendor BSP (D-6) |
+| 3 | Which host OSes — **Ubuntu 22.04+, Debian 12+, RHEL/Rocky**? | **Yes: Ubuntu 22.04+ and Debian 12+ are required (`.deb`).** RHEL/Rocky/Fedora 9+ (`.rpm`) already builds — official vs. dev-only is your call. Windows is dev-only. | §2 | ⚠️ RHEL scope (D-3) |
+| 4 | Does **"one binary"** mean one release package with per-platform binaries (AMD64 for NUC/server, ARM64 for board)? | **Yes, exactly.** A single universal binary is infeasible across arch/libc; ship **one immutable, versioned release** that bundles the per-platform artifacts. | §3 | ✅ Code-dictated |
+| 5 | Should the board run SG-X Guardian as a **native systemd service** (not Docker)? | **Yes — native, systemd-managed, on the boards.** | §7 | ✅ Code-dictated |
+| 6 | Are **software keys** allowed only for Docker/demo/dev? | **Yes.** Software keys = dev/demo/CI/Docker only; production boards use **SE050-backed keys and fail closed** (no silent software fallback). | §9, §8 | ⚠️ Corollary of SE050 (D-2) |
+| 7 | Docker scope — **dev/demo/CI only, or an official deliverable**? | **Both: an official, supported deliverable — but scoped to dev/demo/CI/cloud, never the production board path.** | §6 | ✅ Recommendation |
 
 ---
 
@@ -86,12 +104,14 @@ enforcement via kernel `nftables`/`nft`**, which is **Linux-only**
 | **Ubuntu 20.04+** | Supported as the **glibc floor** | The `.deb` already depends on `libc6 >= 2.31` (`control:7`) — exactly Ubuntu 20.04's glibc. Works, but 20.04 EOLs Apr 2025 (standard); prefer 22.04+ as the stated minimum. |
 | **Ubuntu 22.04+** | ✅ **Required (recommended minimum)** | Primary server/dev target; cgroups v2, modern kernel with `nf_tables`. |
 | **Debian 12+** | ✅ **Required** | Same `.deb` artifact family; kernel ships `nf_tables`. |
-| **Yocto Scarthgap** | ✅ **Required — production boards** | Yocto 5.0 **LTS**. Not a package-install target: the binary is **cross-compiled to aarch64 and integrated via a bitbake recipe (`.bb`)** into the board image; SE050 support pulls in NXP's Plug & Trust middleware layer. Kernel config must enable `nf_tables`. |
+| **Yocto — boards** | ✅ **Required — production boards; target Scarthgap (5.0 LTS)** | Not a package-install target: the binary is **cross-compiled to aarch64 and integrated via a bitbake recipe (`.bb`)** into the board image; SE050 support pulls in NXP's Plug & Trust middleware. Kernel config must enable `nf_tables`. **Branch:** the board runs **Mickledore (4.2) today, which is non-LTS and already end-of-life** (no upstream CVE backports) — **recommend moving to Scarthgap (5.0 LTS**, maintained to ~2028**)**. If the board/SoC vendor BSP predates Scarthgap, fall back to **Kirkstone (4.0 LTS)** — **not** Mickledore. See D-6. |
 | **Windows** | ❌ **Dev-only, not production** | The Windows code (`src/main.rs:46-66`) is console-ctrl-handler glue behind `#[cfg(windows)]`; it **cannot enforce** (no `nftables`). Fine for developer builds/tests; not a deployment target. |
 | **Other** | RHEL/Rocky/Fedora 9+ **available now** | An `.rpm` spec already exists (`packaging/rpm/...`), so the RHEL family is essentially free if you want it in scope. Please confirm. |
 
 > **Confirm:** (a) minimum Ubuntu = 22.04 (with 20.04 as glibc floor, or drop it);
-> (b) whether the RHEL/Rocky `.rpm` family is officially in scope or dev-only.
+> (b) whether the RHEL/Rocky `.rpm` family is officially in scope or dev-only;
+> (c) the target Yocto branch for boards — **Scarthgap (5.0 LTS)** recommended over
+> the current **Mickledore (4.2, EOL)** (D-6).
 
 ---
 
@@ -336,6 +356,11 @@ calls we need confirmed:
 - **D-5 — Distribution channel (Q3/Q5):** Where do signed artifacts live (GitHub
   Releases, an APT/YUM repo, a container registry)? The versioned release and the
   installer both depend on this.
+- **D-6 — Board Yocto branch (Q2):** Target **Scarthgap (5.0 LTS)** for the boards?
+  The board runs **Mickledore (4.2) today, which is non-LTS and end-of-life** — no
+  upstream security maintenance, a poor base for a security product. Confirm the
+  board/SoC vendor BSP supports Scarthgap (fallback: **Kirkstone 4.0 LTS**, not
+  Mickledore). *(Security-relevant — sets the board's patch cadence.)*
 
 **Top priority: D-1.** Until the board architecture is confirmed, "binaries for all
 supported platforms" has no testable definition, and the repo's own docs disagree
