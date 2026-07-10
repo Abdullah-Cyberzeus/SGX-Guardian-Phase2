@@ -17,7 +17,7 @@ This decision log tracks all significant architectural, tactical, and procedural
 ### Quick Reference Table
 
 | ID | Decision | Category | Status | Sprint |
-|------|----------|----------|--------|--------|
+| -- | -------- | -------- | ------ | ------ |
 | D001 | Core Programming Language - Rust | Architecture - Core Technology | Accepted | Sprint 1 |
 | D002 | Inter-Service Communication - gRPC over mTLS | Architecture - Communication | Accepted | Sprint 1 |
 | D003 | Cryptographic Algorithm - ECDSA P-256 | Architecture - Security | Accepted | Sprint 1 |
@@ -42,7 +42,7 @@ This decision log tracks all significant architectural, tactical, and procedural
 ### Decisions by Category
 
 | Category | Count | Decisions |
-|----------|-------|-----------|
+| -------- | ----- | --------- |
 | **Architecture** | 9 | D001, D002, D003, D004, D005, D006, D007, D008, D013, D014, D016 |
 | **Implementation** | 3 | D011, D012, D015 |
 | **Deployment** | 2 | D009, D010 |
@@ -54,7 +54,7 @@ This decision log tracks all significant architectural, tactical, and procedural
 ### Technology Stack Decisions
 
 | Component | Technology | Decision ID | Justification |
-|-----------|-----------|-------------|---------------|
+| --------- | --------- | ----------- | ------------- |
 | **Core Language** | Rust | D001 | Memory safety, fearless concurrency, and high performance are non-negotiable for security |
 | **P2P Communication** | gRPC over mTLS | D002 | High-performance, strongly-typed RPC framework. mTLS ensures mutual authentication and encryption with forward secrecy |
 | **Cryptography** | ECDSA P-256 | D003 | Standardized, efficient elliptic curve algorithm for FIPS-compliant device identity and policy signing |
@@ -87,7 +87,7 @@ Use Rust as the primary programming language for both `sgx-guardian` daemon and 
 **Rationale**:
 
 | Criterion | Why Rust |
-|-----------|----------|
+| --------- | -------- |
 | **Memory Safety** | Ownership system eliminates entire classes of security vulnerabilities (buffer overflows, use-after-free, data races) at compile time |
 | **Performance** | Zero-cost abstractions and no garbage collector provide performance comparable to C/C++ |
 | **Concurrency** | Fearless concurrency model prevents race conditions and deadlocks at compile time |
@@ -97,7 +97,7 @@ Use Rust as the primary programming language for both `sgx-guardian` daemon and 
 **Alternatives Considered**:
 
 | Alternative | Pros | Cons | Why Not Chosen |
-|-------------|------|------|----------------|
+| ----------- | ---- | ---- | -------------- |
 | **Go** | Simple to learn, good concurrency, fast compilation | Garbage collector (non-deterministic latency), lacks compile-time memory safety | Insufficient memory safety guarantees for security-critical code |
 | **C/C++** | Maximum performance and control, mature ecosystem | Manual memory management, prone to security vulnerabilities | Too high risk of memory safety issues |
 | **Python** | Rapid development, excellent libraries | Slow performance, GIL limitations, dynamic typing | Insufficient performance and security guarantees |
@@ -128,7 +128,7 @@ Use gRPC with mutual TLS (mTLS) for all P2P communication between guardian nodes
 **Rationale**:
 
 | Feature | Benefit |
-|---------|---------|
+| ------- | ------- |
 | **Strongly Typed** | Protocol Buffers provide language-agnostic, versioned API contracts |
 | **High Performance** | Binary serialization is more efficient than JSON/XML |
 | **Built-in Security** | Native support for TLS/mTLS enables mutual authentication |
@@ -140,7 +140,7 @@ Use gRPC with mutual TLS (mTLS) for all P2P communication between guardian nodes
 **Alternatives Considered**:
 
 | Alternative | Pros | Cons | Why Not Chosen |
-|-------------|------|------|----------------|
+| ----------- | ---- | ---- | -------------- |
 | **REST over HTTPS** | Simple, well-understood, widespread adoption | Lacks strong typing, no streaming, inefficient text-based serialization | Insufficient for real-time policy synchronization |
 | **Custom Protocol** | Maximum control, optimized for specific use case | Significant engineering effort, security auditing required, no ecosystem | Too much development overhead for MVP |
 | **MQTT** | Lightweight, good pub/sub support | Not ideal for request/response, lacks strong typing, requires broker | Doesn't fit P2P architecture without broker |
@@ -1146,7 +1146,7 @@ Defer the following features to Phase 2 and beyond:
 **Deferred Features Summary**:
 
 | Feature | Target Phase | Reason for Deferral | Dependency |
-|---------|-------------|---------------------|------------|
+| ------- | ----------- | ------------------- | ---------- |
 | **Virtual Shift (AI/ML)** | Phase 3+ | Requires significant R&D; Circle of Trust must be stable first | D001, D008 |
 | **Protocol Connectors (L7)** | Phase 2 | Substantial engineering effort; requires eBPF integration | D005 |
 | **Hardware TPM Attestation** | Phase 2 | Adds hardware complexity; software attestation validates protocol | D007 |
