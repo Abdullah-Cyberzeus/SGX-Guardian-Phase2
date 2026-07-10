@@ -39,6 +39,48 @@ function Require-LocalCommand {
     return [bool](Get-Command -Name $CommandName -ErrorAction SilentlyContinue)
 }
 
+function Invoke-NativeCommand {
+    param(
+        [string]$CommandName,
+        [string[]]$Arguments,
+        [switch]$SuppressOutput
+    )
+
+    $PreviousErrorActionPreference = $ErrorActionPreference
+    $HasNativePreference = $false
+    $PreviousNativePreference = $null
+
+    if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+        $HasNativePreference = $true
+        $PreviousNativePreference = $PSNativeCommandUseErrorActionPreference
+        $script:PSNativeCommandUseErrorActionPreference = $false
+    }
+
+    $script:ErrorActionPreference = "Continue"
+
+    try {
+        if ($SuppressOutput) {
+            & $CommandName @Arguments *> $null
+        } else {
+            & $CommandName @Arguments
+        }
+
+        return $LASTEXITCODE
+    } catch {
+        if ($LASTEXITCODE -is [int] -and $LASTEXITCODE -ne 0) {
+            return $LASTEXITCODE
+        }
+
+        return 1
+    } finally {
+        $script:ErrorActionPreference = $PreviousErrorActionPreference
+
+        if ($HasNativePreference) {
+            $script:PSNativeCommandUseErrorActionPreference = $PreviousNativePreference
+        }
+    }
+}
+
 function Add-BoardIssue {
     param(
         [System.Collections.Generic.List[pscustomobject]]$Issues,
@@ -67,15 +109,30 @@ $ScpOptions = @(
     "-o", "ConnectionAttempts=1"
 )
 $SshOptionText = "-o BatchMode=yes -o ConnectTimeout=$ConnectTimeoutSeconds -o ConnectionAttempts=1"
+$ProbePort = 22
 
 function Test-BoardReachable {
     param(
-        [string]$Target,
-        [string[]]$Options
+        [string]$BoardIp,
+        [int]$Port,
+        [int]$TimeoutSeconds
     )
 
-    & ssh @Options $Target "exit 0" *> $null
-    return ($LASTEXITCODE -eq 0)
+    $Client = New-Object System.Net.Sockets.TcpClient
+
+    try {
+        $Async = $Client.BeginConnect($BoardIp, $Port, $null, $null)
+        if (-not $Async.AsyncWaitHandle.WaitOne($TimeoutSeconds * 1000, $false)) {
+            return $false
+        }
+
+        $null = $Client.EndConnect($Async)
+        return $true
+    } catch {
+        return $false
+    } finally {
+        $Client.Close()
+    }
 }
 
 $BoardIssues = [System.Collections.Generic.List[pscustomobject]]::new()
@@ -128,35 +185,35 @@ if ($BoardIssues.Count -eq 0) {
         $ChmodCommand = "ssh $SshOptionText $Target 'chmod +x $RemoteDir/$DaemonBinary $RemoteDir/$CliBinary'"
 
         Write-Step "Checking board availability on $Board"
-        if (-not (Test-BoardReachable -Target $Target -Options $SshOptions)) {
+        if (-not (Test-BoardReachable -BoardIp $Board -Port $ProbePort -TimeoutSeconds $ConnectTimeoutSeconds)) {
             Add-BoardIssue -Issues $BoardIssues -Board $Board -Step "reachability" -Message "Board appears offline or SSH is unreachable. Skipping remaining steps." -Command $ProbeCommand
             continue
         }
 
         Write-Step "Cleaning old binaries and state on $Board"
-        & ssh @SshOptions $Target "rm -rf $RemoteDir/$DaemonBinary $RemoteDir/$CliBinary /var/lib/sgx-guardian"
-        if ($LASTEXITCODE -ne 0) {
+        $CleanupExitCode = Invoke-NativeCommand -CommandName "ssh" -Arguments ($SshOptions + @($Target, "rm -rf $RemoteDir/$DaemonBinary $RemoteDir/$CliBinary /var/lib/sgx-guardian")) -SuppressOutput
+        if ($CleanupExitCode -ne 0) {
             $BoardHasIssue = $true
             Add-BoardIssue -Issues $BoardIssues -Board $Board -Step "cleanup" -Message "Remote cleanup failed" -Command $CleanupCommand
         }
 
         Write-Step "Copying $DaemonBinary to $Board"
-        & scp @ScpOptions $DaemonPath "${Target}:$RemoteDir/"
-        if ($LASTEXITCODE -ne 0) {
+        $CopyDaemonExitCode = Invoke-NativeCommand -CommandName "scp" -Arguments ($ScpOptions + @($DaemonPath, "${Target}:$RemoteDir/")) -SuppressOutput
+        if ($CopyDaemonExitCode -ne 0) {
             $BoardHasIssue = $true
             Add-BoardIssue -Issues $BoardIssues -Board $Board -Step "copy-daemon" -Message "Failed to copy $DaemonBinary" -Command $CopyDaemonCommand
         }
 
         Write-Step "Copying $CliBinary to $Board"
-        & scp @ScpOptions $CliPath "${Target}:$RemoteDir/"
-        if ($LASTEXITCODE -ne 0) {
+        $CopyCliExitCode = Invoke-NativeCommand -CommandName "scp" -Arguments ($ScpOptions + @($CliPath, "${Target}:$RemoteDir/")) -SuppressOutput
+        if ($CopyCliExitCode -ne 0) {
             $BoardHasIssue = $true
             Add-BoardIssue -Issues $BoardIssues -Board $Board -Step "copy-cli" -Message "Failed to copy $CliBinary" -Command $CopyCliCommand
         }
 
         Write-Step "Making binaries executable on $Board"
-        & ssh @SshOptions $Target "chmod +x $RemoteDir/$DaemonBinary $RemoteDir/$CliBinary"
-        if ($LASTEXITCODE -ne 0) {
+        $ChmodExitCode = Invoke-NativeCommand -CommandName "ssh" -Arguments ($SshOptions + @($Target, "chmod +x $RemoteDir/$DaemonBinary $RemoteDir/$CliBinary")) -SuppressOutput
+        if ($ChmodExitCode -ne 0) {
             $BoardHasIssue = $true
             Add-BoardIssue -Issues $BoardIssues -Board $Board -Step "chmod" -Message "chmod failed" -Command $ChmodCommand
         }

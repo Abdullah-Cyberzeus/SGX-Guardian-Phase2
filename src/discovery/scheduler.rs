@@ -294,7 +294,7 @@ schedules:
 "#;
 
 const DEFAULT_WHITELIST_YAML: &str = r#"# /etc/sgx-guardian/discovery/whitelist.yaml
-# Sprint 6 NMAP whitelist. Empty by default - admin populates after first scan.
+# NMAP whitelist. Empty by default - admin populates after first scan.
 version: "1.0"
 devices: []
 # Example with strict IP binding (recommended on multi-subnet networks):

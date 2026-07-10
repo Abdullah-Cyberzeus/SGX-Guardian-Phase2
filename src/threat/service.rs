@@ -36,6 +36,9 @@ impl ThreatService {
             };
 
             let _ = tokio::fs::create_dir_all(&self.state_dir).await;
+            if let Some(log_dir) = Path::new(&cfg.eve_path).parent() {
+                let _ = tokio::fs::create_dir_all(log_dir).await;
+            }
             let inv_path = self.state_dir.join("alerts.jsonl");
             if let Ok(existing) = AlertInventory::load_from_path(&inv_path) {
                 *self.inventory.lock().await = existing;

@@ -1,9 +1,9 @@
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 
-/// Stub: enqueues newly-seen device IDs for the AI Threat Prediction Model
-/// (Sprint 5) to review. In Sprint 6 we just log; Sprint 7 wires this to
-/// the Virtual Shift correlation engine.
+/// Stub: enqueues newly-seen device IDs for AI review.
+/// The current implementation logs the event; a future integration can
+/// forward it to the correlation engine.
 pub fn queue_for_ai_review(node_id: &str, new_device_ids: &[String]) {
     if new_device_ids.is_empty() {
         return;
@@ -18,5 +18,5 @@ pub fn queue_for_ai_review(node_id: &str, new_device_ids: &[String]) {
             new_device_ids.len()
         ),
     );
-    // TODO Sprint 7: send to virtual_shift::ingest_discovery_delta(...)
+    // TODO: send to virtual_shift::ingest_discovery_delta(...)
 }

@@ -82,6 +82,106 @@ pub struct CrlRootResponse {
     pub merkle_root: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct GossipStatusResponse {
+    pub enabled: bool,
+    pub port: u16,
+    pub interval_secs: u64,
+    pub threshold_pct: u8,
+    pub self_did: String,
+    pub circle_id: String,
+    pub other_members: usize,
+    pub threshold_count: usize,
+    pub sequence: u64,
+    pub merkle_root: String,
+    pub entries: usize,
+    pub propagated: usize,
+    pub rounds_initiated: u64,
+    pub rounds_served: u64,
+    pub entries_merged: u64,
+    pub last_round: Option<crate::crl::gossip::engine::LastRound>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GossipTriggerResponse {
+    pub success: bool,
+    pub peer_did: String,
+    pub peer_node: String,
+    pub merged: usize,
+    pub pushed: usize,
+    pub peer_merged: usize,
+    pub merkle_root: String,
+    pub newly_propagated: Vec<String>,
+    pub message: String,
+}
+
+/// GET /api/v1/crl/gossip/status - gossip engine observability.
+pub async fn gossip_status(
+    State(_state): State<Arc<crate::api::state::AppState>>,
+) -> Result<Json<GossipStatusResponse>, ApiError> {
+    let config = crate::crl::gossip::GossipConfig::from_env();
+    let self_did = crate::did::DidRecord::load(&crate::crl::gossip::engine::did_record_path())
+        .map(|record| record.did)
+        .unwrap_or_default();
+    let circle_id = crate::crl::issue::current_circle_id()
+        .unwrap_or_else(|_| crate::crl::issue::DEFAULT_CIRCLE_ID.to_string());
+    let other_members = crate::crl::gossip::engine::active_gossip_peers(&self_did).len();
+    let threshold_count =
+        crate::crl::gossip::engine::threshold_count(other_members, config.threshold_pct);
+    let (sequence, merkle_root, entries, propagated) =
+        match persistence::load_crl().map_err(|error| ApiError::Internal(error.to_string()))? {
+            Some(crl) => (
+                crl.sequence,
+                crl.merkle_root.clone(),
+                crl.entries.len(),
+                crl.entries.iter().filter(|entry| entry.propagated).count(),
+            ),
+            None => (0, String::new(), 0, 0),
+        };
+    Ok(Json(GossipStatusResponse {
+        enabled: config.enabled,
+        port: config.port,
+        interval_secs: config.interval_secs,
+        threshold_pct: config.threshold_pct,
+        self_did,
+        circle_id,
+        other_members,
+        threshold_count,
+        sequence,
+        merkle_root,
+        entries,
+        propagated,
+        rounds_initiated: crate::crl::gossip::engine::rounds_initiated(),
+        rounds_served: crate::crl::gossip::engine::rounds_served(),
+        entries_merged: crate::crl::gossip::engine::entries_merged_total(),
+        last_round: crate::crl::gossip::engine::last_round(),
+    }))
+}
+
+/// POST /api/v1/crl/gossip/trigger - run ONE gossip round immediately with
+/// a random active peer. Deterministic board-testing hook; the periodic
+/// loop keeps running untouched.
+pub async fn gossip_trigger(
+    State(state): State<Arc<crate::api::state::AppState>>,
+) -> Result<Json<GossipTriggerResponse>, ApiError> {
+    let config = crate::crl::gossip::GossipConfig::from_env();
+    let report =
+        crate::crl::gossip::engine::run_round_once(&state.node_id, &state.did_resolver, &config)
+            .await
+            .map_err(ApiError::Internal)?;
+    Ok(Json(GossipTriggerResponse {
+        success: true,
+        peer_did: report.peer_did,
+        peer_node: report.peer_node,
+        merged: report.merged + report.replaced,
+        pushed: report.pushed,
+        peer_merged: report.peer_merged,
+        merkle_root: report.merkle_root,
+        newly_propagated: report.newly_propagated,
+        message: "gossip round completed".to_string(),
+    }))
+}
+
 pub async fn revoke(
     State(_state): State<Arc<crate::api::state::AppState>>,
     Json(body): Json<RevokeCrlRequest>,

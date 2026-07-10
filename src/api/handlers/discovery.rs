@@ -8,6 +8,7 @@ use crate::discovery::{
     ConnectedDevice, DeviceStatus, NmapConfig, ScanIntensity, ScanSchedule, ScheduleProfile,
     ScheduledScans,
 };
+use axum::body::Bytes;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
@@ -169,24 +170,53 @@ pub struct ScanResponse {
     pub timestamp: String,
 }
 
-pub async fn scan_now(State(_s): State<Arc<AppState>>) -> Result<Json<ScanResponse>, ApiError> {
-    scan_with_args(&["discovery", "scan"]).await
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ScanTargetRequest {
+    pub target: Option<String>,
 }
 
-pub async fn scan_stealth(State(_s): State<Arc<AppState>>) -> Result<Json<ScanResponse>, ApiError> {
-    scan_with_args(&["discovery", "scan", "--intensity", "stealth"]).await
+pub async fn scan_now(
+    State(_s): State<Arc<AppState>>,
+    Query(query): Query<ScanTargetRequest>,
+    body: Bytes,
+) -> Result<Json<ScanResponse>, ApiError> {
+    scan_with_args(&["discovery", "scan"], resolve_scan_target(query, &body)?).await
+}
+
+pub async fn scan_stealth(
+    State(_s): State<Arc<AppState>>,
+    Query(query): Query<ScanTargetRequest>,
+    body: Bytes,
+) -> Result<Json<ScanResponse>, ApiError> {
+    scan_with_args(
+        &["discovery", "scan", "--intensity", "stealth"],
+        resolve_scan_target(query, &body)?,
+    )
+    .await
 }
 
 pub async fn scan_standard(
     State(_s): State<Arc<AppState>>,
+    Query(query): Query<ScanTargetRequest>,
+    body: Bytes,
 ) -> Result<Json<ScanResponse>, ApiError> {
-    scan_with_args(&["discovery", "scan", "--intensity", "standard"]).await
+    scan_with_args(
+        &["discovery", "scan", "--intensity", "standard"],
+        resolve_scan_target(query, &body)?,
+    )
+    .await
 }
 
 pub async fn scan_aggressive(
     State(_s): State<Arc<AppState>>,
+    Query(query): Query<ScanTargetRequest>,
+    body: Bytes,
 ) -> Result<Json<ScanResponse>, ApiError> {
-    scan_with_args(&["discovery", "scan", "--intensity", "aggressive"]).await
+    scan_with_args(
+        &["discovery", "scan", "--intensity", "aggressive"],
+        resolve_scan_target(query, &body)?,
+    )
+    .await
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -621,8 +651,37 @@ fn atomic_write_bytes(path: &Path, content: &[u8], tmp_extension: &str) -> Resul
     Ok(())
 }
 
-async fn scan_with_args(args: &[&str]) -> Result<Json<ScanResponse>, ApiError> {
-    let resp = super::dkp::run_cli(args).await?;
+fn resolve_scan_target(query: ScanTargetRequest, body: &[u8]) -> Result<Option<String>, ApiError> {
+    let query_target = normalize_target_override(query.target);
+    if body.is_empty() {
+        return Ok(query_target);
+    }
+
+    let parsed: ScanTargetRequest = serde_json::from_slice(body)
+        .map_err(|e| ApiError::BadRequest(format!("invalid discovery scan request body: {}", e)))?;
+    let body_target = normalize_target_override(parsed.target);
+    Ok(body_target.or(query_target))
+}
+
+fn build_scan_args(args: &[&str], target: Option<String>) -> Vec<String> {
+    let mut out = args
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect::<Vec<_>>();
+    if let Some(target) = target {
+        out.push("--target".to_string());
+        out.push(target);
+    }
+    out
+}
+
+async fn scan_with_args(
+    args: &[&str],
+    target: Option<String>,
+) -> Result<Json<ScanResponse>, ApiError> {
+    let args = build_scan_args(args, target);
+    let refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
+    let resp = super::dkp::run_cli(&refs).await?;
     Ok(Json(ScanResponse {
         success: resp.success,
         stdout: resp.stdout,
@@ -908,9 +967,10 @@ fn intensity_name(intensity: ScanIntensity) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_schedule_patch, default_version, get_runs, list_devices, normalize_excludes,
-        refresh_inventory_statuses, runtime_whitelist, RunsApiResponse, RunsQuery, RunsView,
-        SchedulePatch, ScheduleProfilePatch, ScheduleUpdateRequest, WhitelistDoc,
+        apply_schedule_patch, build_scan_args, default_version, get_runs, list_devices,
+        normalize_excludes, refresh_inventory_statuses, resolve_scan_target, runtime_whitelist,
+        RunsApiResponse, RunsQuery, RunsView, ScanTargetRequest, SchedulePatch,
+        ScheduleProfilePatch, ScheduleUpdateRequest, WhitelistDoc,
     };
     use crate::api::state::AppState;
     use crate::did::Resolver;
@@ -1042,6 +1102,61 @@ mod tests {
         let err = normalize_excludes(vec!["none".into(), "192.168.50.1".into()])
             .expect_err("mixed clear tokens should fail");
         assert!(matches!(err, crate::api::error::ApiError::BadRequest(_)));
+    }
+
+    #[test]
+    fn resolve_scan_target_uses_query_when_body_missing() {
+        let target = resolve_scan_target(
+            ScanTargetRequest {
+                target: Some("192.168.50.248/32".into()),
+            },
+            b"",
+        )
+        .expect("query target should parse");
+        assert_eq!(target.as_deref(), Some("192.168.50.248/32"));
+    }
+
+    #[test]
+    fn resolve_scan_target_prefers_body_when_present() {
+        let target = resolve_scan_target(
+            ScanTargetRequest {
+                target: Some("192.168.50.0/24".into()),
+            },
+            br#"{"target":"192.168.50.248/32"}"#,
+        )
+        .expect("body target should parse");
+        assert_eq!(target.as_deref(), Some("192.168.50.248/32"));
+    }
+
+    #[test]
+    fn resolve_scan_target_ignores_auto_body_and_uses_query() {
+        let target = resolve_scan_target(
+            ScanTargetRequest {
+                target: Some("192.168.50.248/32".into()),
+            },
+            br#"{"target":"auto"}"#,
+        )
+        .expect("body target should parse");
+        assert_eq!(target.as_deref(), Some("192.168.50.248/32"));
+    }
+
+    #[test]
+    fn build_scan_args_appends_target_override() {
+        let args = build_scan_args(
+            &["discovery", "scan", "--intensity", "standard"],
+            Some("192.168.50.248/32".into()),
+        );
+        assert_eq!(
+            args,
+            vec![
+                "discovery",
+                "scan",
+                "--intensity",
+                "standard",
+                "--target",
+                "192.168.50.248/32",
+            ]
+        );
     }
 
     #[test]

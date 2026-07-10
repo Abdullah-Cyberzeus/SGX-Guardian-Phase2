@@ -11,6 +11,7 @@ use axum::{
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -24,16 +25,7 @@ pub async fn list_alerts(
     State(state): State<Arc<AppState>>,
     Query(query): Query<AlertsQuery>,
 ) -> Result<Json<Vec<ThreatAlert>>, ApiError> {
-    let path = PathBuf::from(&state.threat_state_dir).join("alerts.jsonl");
-    let bytes = tokio::fs::read(&path)
-        .await
-        .map_err(|_| ApiError::NotFound("no alerts yet - has Suricata produced events?".into()))?;
-
-    let mut alerts: Vec<ThreatAlert> = bytes
-        .split(|byte| *byte == b'\n')
-        .filter(|line| !line.is_empty())
-        .filter_map(|line| serde_json::from_slice(line).ok())
-        .collect();
+    let mut alerts = load_alerts(&state).await?;
 
     if let Some(severity) = query.severity.as_deref() {
         alerts.retain(|alert| severity_matches(alert.severity, severity));
@@ -45,6 +37,69 @@ pub async fn list_alerts(
     }
 
     Ok(Json(alerts))
+}
+
+#[derive(Serialize)]
+pub struct ModbusAlertsResponse {
+    pub total_matches: usize,
+    pub rules: Vec<ModbusRuleSummary>,
+}
+
+#[derive(Serialize)]
+pub struct ModbusRuleSummary {
+    pub rule_id: u8,
+    pub name: &'static str,
+    pub function_codes: &'static [&'static str],
+    pub matched: bool,
+    pub match_count: usize,
+    pub matched_signatures: Vec<String>,
+    pub recent_alerts: Vec<ThreatAlert>,
+}
+
+pub async fn modbus_alerts(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ModbusAlertsResponse>, ApiError> {
+    let alerts = match load_alerts(&state).await {
+        Ok(alerts) => alerts,
+        Err(ApiError::NotFound(_)) => Vec::new(),
+        Err(err) => return Err(err),
+    };
+
+    let mut total_matches = 0usize;
+    let mut rules = Vec::with_capacity(MODBUS_RULES.len());
+
+    for spec in MODBUS_RULES {
+        let matches: Vec<ThreatAlert> = alerts
+            .iter()
+            .filter(|alert| modbus_rule_matches(spec, alert))
+            .cloned()
+            .collect();
+
+        total_matches += matches.len();
+
+        let mut matched_signatures = Vec::new();
+        for alert in &matches {
+            if !matched_signatures.iter().any(|sig| sig == &alert.signature) {
+                matched_signatures.push(alert.signature.clone());
+            }
+        }
+
+        let recent_start = matches.len().saturating_sub(5);
+        rules.push(ModbusRuleSummary {
+            rule_id: spec.rule_id,
+            name: spec.name,
+            function_codes: spec.function_codes,
+            matched: !matches.is_empty(),
+            match_count: matches.len(),
+            matched_signatures,
+            recent_alerts: matches[recent_start..].to_vec(),
+        });
+    }
+
+    Ok(Json(ModbusAlertsResponse {
+        total_matches,
+        rules,
+    }))
 }
 
 #[derive(Serialize)]
@@ -228,6 +283,100 @@ pub async fn start(State(_state): State<Arc<AppState>>) -> Result<Json<ActionRes
 fn severity_matches(actual: Severity, expected: &str) -> bool {
     actual.as_str().eq_ignore_ascii_case(expected)
         || format!("{:?}", actual).eq_ignore_ascii_case(expected)
+}
+
+async fn load_alerts(state: &AppState) -> Result<Vec<ThreatAlert>, ApiError> {
+    let path = PathBuf::from(&state.threat_state_dir).join("alerts.jsonl");
+    let bytes = tokio::fs::read(&path).await.map_err(|err| {
+        if err.kind() == ErrorKind::NotFound {
+            ApiError::NotFound("no alerts yet - has Suricata produced events?".into())
+        } else {
+            ApiError::Internal(format!("failed to read {}: {}", path.display(), err))
+        }
+    })?;
+
+    Ok(bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| serde_json::from_slice(line).ok())
+        .collect())
+}
+
+struct ModbusRuleSpec {
+    rule_id: u8,
+    name: &'static str,
+    function_codes: &'static [&'static str],
+    signature_ids: &'static [u32],
+    signatures: &'static [&'static str],
+}
+
+const MODBUS_RULE_1_SIGNATURE_IDS: &[u32] = &[10000201, 10000202];
+const MODBUS_RULE_2_SIGNATURE_IDS: &[u32] = &[10000203, 10000204];
+const MODBUS_RULE_3_SIGNATURE_IDS: &[u32] = &[10000205, 10000206, 10000207, 10000208];
+const MODBUS_RULE_4_SIGNATURE_IDS: &[u32] = &[10000209];
+const MODBUS_RULE_5_SIGNATURE_IDS: &[u32] = &[10000210];
+
+const MODBUS_RULE_1_SIGNATURES: &[&str] = &[
+    "SGX OT Modbus Unauthorized Write Single Coil FC5",
+    "SGX OT Modbus Unauthorized Write Multiple Coils FC15",
+];
+const MODBUS_RULE_2_SIGNATURES: &[&str] = &[
+    "SGX OT Modbus Write Safety Critical Register FC6",
+    "SGX OT Modbus Write Safety Critical Registers FC16",
+];
+const MODBUS_RULE_3_SIGNATURES: &[&str] = &[
+    "SGX OT Modbus PLC Program Upload FC65",
+    "SGX OT Modbus PLC Program Upload FC66",
+    "SGX OT Modbus PLC Firmware Upload FC67",
+    "SGX OT Modbus PLC Firmware Upload FC68",
+];
+const MODBUS_RULE_4_SIGNATURES: &[&str] = &["SGX OT Modbus Exception Response Detected"];
+const MODBUS_RULE_5_SIGNATURES: &[&str] = &["SGX OT Modbus Write Command Time Audit"];
+
+const MODBUS_RULES: &[ModbusRuleSpec] = &[
+    ModbusRuleSpec {
+        rule_id: 1,
+        name: "Unauthorized Write to PLC Coils",
+        function_codes: &["FC5", "FC15"],
+        signature_ids: MODBUS_RULE_1_SIGNATURE_IDS,
+        signatures: MODBUS_RULE_1_SIGNATURES,
+    },
+    ModbusRuleSpec {
+        rule_id: 2,
+        name: "Write to Safety-Critical Holding Registers",
+        function_codes: &["FC6", "FC16"],
+        signature_ids: MODBUS_RULE_2_SIGNATURE_IDS,
+        signatures: MODBUS_RULE_2_SIGNATURES,
+    },
+    ModbusRuleSpec {
+        rule_id: 3,
+        name: "PLC Firmware/Program Upload",
+        function_codes: &["FC65", "FC66", "FC67", "FC68"],
+        signature_ids: MODBUS_RULE_3_SIGNATURE_IDS,
+        signatures: MODBUS_RULE_3_SIGNATURES,
+    },
+    ModbusRuleSpec {
+        rule_id: 4,
+        name: "Modbus Exception Response Detection",
+        function_codes: &["FC129"],
+        signature_ids: MODBUS_RULE_4_SIGNATURE_IDS,
+        signatures: MODBUS_RULE_4_SIGNATURES,
+    },
+    ModbusRuleSpec {
+        rule_id: 5,
+        name: "Write Command Time Audit",
+        function_codes: &["FC5"],
+        signature_ids: MODBUS_RULE_5_SIGNATURE_IDS,
+        signatures: MODBUS_RULE_5_SIGNATURES,
+    },
+];
+
+fn modbus_rule_matches(spec: &ModbusRuleSpec, alert: &ThreatAlert) -> bool {
+    spec.signature_ids.contains(&alert.signature_id)
+        || spec
+            .signatures
+            .iter()
+            .any(|signature| *signature == alert.signature)
 }
 
 async fn nft_blocked_ips() -> Result<Vec<String>, ApiError> {

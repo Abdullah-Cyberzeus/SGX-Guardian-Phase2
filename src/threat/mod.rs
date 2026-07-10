@@ -1,4 +1,4 @@
-//! Suricata IDS/IPS integration (Sprint 8, SUR-series).
+//! Suricata IDS/IPS integration.
 //!
 //! Responsibilities:
 //!   - Tail `/var/log/suricata/eve.json` asynchronously without blocking.
@@ -6,7 +6,7 @@
 //!   - Maintain a rolling alert ring buffer (10,000 alerts, in-memory + persisted).
 //!   - Translate High/Critical alerts into ephemeral nftables drop rules
 //!     in a dedicated `inet sgx_threat` table.
-//!   - Forward alerts to the AI anomaly engine (stub now; wired in Sprint 11).
+//!   - Forward alerts to the AI anomaly engine (stub for now; integration point reserved).
 //!   - Schedule daily `suricata-update` runs for rule freshness.
 //!
 //! All subprocesses use `tokio::process::Command`, the tailer uses `tokio::fs`,
