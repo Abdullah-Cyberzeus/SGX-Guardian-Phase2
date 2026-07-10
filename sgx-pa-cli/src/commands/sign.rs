@@ -76,7 +76,7 @@ pub fn execute(args: SignArgs) -> bool {
 
     // 6 Sign the digest
     let signature: Signature = signing_key.sign(&digest);
-    // === New JSON envelope support (Day-2 Sprint-3) ===
+    // JSON envelope output
 
     // 6b. Compute hex digest (existing digest already computed)
     let digest_hex = hex::encode(digest);

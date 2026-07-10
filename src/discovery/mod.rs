@@ -1,4 +1,4 @@
-//! NMAP-driven network discovery and device profiling (Sprint 6, NMP-series).
+//! NMAP-driven network discovery and device profiling.
 //!
 //! This module is responsible for:
 //!   - Periodically scanning the Guardian's primary LAN segment with `nmap`.
@@ -6,7 +6,7 @@
 //!   - Persisting an inventory under `/var/lib/sgx-guardian/discovery/`.
 //!   - Flagging devices not in the admin-curated whitelist.
 //!   - Forwarding discovery deltas to the AI threat-prediction layer
-//!     (Sprint 5's Virtual Shift) for vulnerability triage.
+//!     for vulnerability triage.
 //!
 //! Designed to be safe to spawn as a tokio task: every subprocess is async,
 //! every file write is atomic, and every loop honours a shutdown channel.
@@ -18,6 +18,7 @@ pub mod inventory;
 pub mod nmap_parser;
 pub mod nmap_runner;
 pub mod raw_store;
+pub mod run_history;
 pub mod scheduler;
 pub mod vuln_trigger;
 pub mod whitelist;

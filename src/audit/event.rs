@@ -12,6 +12,7 @@ pub enum AuditCategory {
     Identity,
     Did,
     Vc,
+    Crl,
     Attestation,
     Policy,
     Enforcement,
@@ -19,7 +20,7 @@ pub enum AuditCategory {
     Tls,
     Cryptography,
     Cloud,
-    /// Sprint 6 - NMAP discovery, whitelist mismatches, vuln-triage handoff.
+    /// Network discovery, whitelist mismatches, and vulnerability-triage handoff.
     Discovery,
 }
 
@@ -49,9 +50,9 @@ pub enum AuditAction {
     Queued,
     /// New device / event detected during a scan.
     Detected,
-    /// Sprint 8 - source IP added to the active block list.
+    /// Source IP added to the active block list.
     Blocked,
-    /// Sprint 8 - rule set or signature database updated.
+    /// Rule set or signature database updated.
     Updated,
 }
 

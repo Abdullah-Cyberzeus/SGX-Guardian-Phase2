@@ -2600,9 +2600,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
+
+    // === CRL gossip engine ===
+    // Decentralized epidemic revocation propagation: listener on
+    // SGX_CRL_GOSSIP_PORT (default 50063) + periodic anti-entropy rounds.
+    // Spawns two background tokio tasks; returns immediately; runs on
+    // every node role (nodeA is an ordinary gossip peer, not a hub).
+    sgx_guardian_client::crl::gossip::spawn(node_id.clone(), did_resolver.clone());
     println!("✅ REST admin API listening on http://{}/api/v1", api_bind);
 
-    // === Sprint 6: NMAP Discovery Scheduler ===
+    // === NMAP discovery scheduler ===
     {
         use sgx_guardian_client::discovery::{DiscoveryScheduler, Inventory};
         use std::path::PathBuf;
@@ -2625,7 +2632,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("✅ Discovery scheduler spawned (NMP-series, Sprint 6)");
     }
 
-    // === Sprint 8: Suricata IDS/IPS Threat Service ===
+    // === Suricata IDS/IPS threat service ===
     {
         use sgx_guardian_client::threat::{AlertInventory, ThreatService};
         use std::path::PathBuf;

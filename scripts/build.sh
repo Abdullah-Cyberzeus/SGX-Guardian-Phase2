@@ -11,6 +11,7 @@ set -euo pipefail
 TARGET_TRIPLE="aarch64-unknown-linux-gnu"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ARTIFACT_DIR="${REPO_ROOT}/build/artifacts/arm64"
+DAEMON_BINARY_NAME="sgx_guardian_client"
 
 APT_UPDATED=0
 SUDO=()
@@ -271,9 +272,9 @@ build_workspace() {
 
   # Always remove previously generated binaries so output is guaranteed fresh.
   rm -f \
-    "${out_dir}/sgx_guardian_client" \
+    "${out_dir}/${DAEMON_BINARY_NAME}" \
     "${out_dir}/sgx-pa-cli" \
-    "${ARTIFACT_DIR}/sgx-guardian" \
+    "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" \
     "${ARTIFACT_DIR}/sgx-pa-cli"
 
   if [[ "${CLEAN:-0}" == "1" ]]; then
@@ -329,7 +330,7 @@ build_workspace() {
 
 collect_artifacts() {
   local out_dir="${REPO_ROOT}/target/${TARGET_TRIPLE}/release"
-  local daemon_src="${out_dir}/sgx_guardian_client"
+  local daemon_src="${out_dir}/${DAEMON_BINARY_NAME}"
   local cli_src="${out_dir}/sgx-pa-cli"
 
   [[ -f "${daemon_src}" ]] || die "Missing built binary: ${daemon_src}"
@@ -337,15 +338,15 @@ collect_artifacts() {
 
   mkdir -p "${ARTIFACT_DIR}"
 
-  cp "${daemon_src}" "${ARTIFACT_DIR}/sgx-guardian"
+  cp "${daemon_src}" "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}"
   cp "${cli_src}" "${ARTIFACT_DIR}/sgx-pa-cli"
 
   log "Artifacts ready"
-  ls -lh "${ARTIFACT_DIR}/sgx-guardian" "${ARTIFACT_DIR}/sgx-pa-cli"
-  file "${ARTIFACT_DIR}/sgx-guardian" "${ARTIFACT_DIR}/sgx-pa-cli"
+  ls -lh "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" "${ARTIFACT_DIR}/sgx-pa-cli"
+  file "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" "${ARTIFACT_DIR}/sgx-pa-cli"
 
   log "SHA256"
-  sha256sum "${ARTIFACT_DIR}/sgx-guardian" "${ARTIFACT_DIR}/sgx-pa-cli"
+  sha256sum "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" "${ARTIFACT_DIR}/sgx-pa-cli"
 }
 
 main() {

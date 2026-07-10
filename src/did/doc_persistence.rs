@@ -13,6 +13,9 @@ pub const PEERS_DOC_DIR_ENV: &str = "SGX_GUARDIAN_DID_PEERS_DIR";
 pub const CA_AGGREGATE_PATH_ENV: &str = "SGX_GUARDIAN_DID_CA_AGGREGATE_PATH";
 pub const VERSION_COUNTER_PATH_ENV: &str = "SGX_GUARDIAN_DID_SELF_VERSION_COUNTER_PATH";
 
+#[cfg(test)]
+static TEST_ENV_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+
 pub fn configured_self_doc_path() -> PathBuf {
     env::var(SELF_DOC_PATH_ENV)
         .map(PathBuf::from)
@@ -35,6 +38,14 @@ pub fn configured_self_version_counter_path() -> PathBuf {
     env::var(VERSION_COUNTER_PATH_ENV)
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(VERSION_COUNTER_PATH))
+}
+
+#[cfg(test)]
+pub fn lock_test_env() -> std::sync::MutexGuard<'static, ()> {
+    TEST_ENV_LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
 }
 
 pub fn load_doc_at_path(path: &Path) -> Result<DidDocument, DidError> {

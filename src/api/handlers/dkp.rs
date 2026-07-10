@@ -3,7 +3,6 @@ use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 #[derive(Serialize)]
 pub struct DkpKey {
@@ -200,13 +199,13 @@ pub async fn run_cli(args: &[&str]) -> Result<ActionResponse, ApiError> {
         ApiError::Internal("sgx-pa-cli not found — check server logs".into())
     })?;
 
-    let out = tokio::time::timeout(
-        Duration::from_secs(30),
-        tokio::process::Command::new(&cli_path).args(args).output(),
-    )
-    .await
-    .map_err(|_| ApiError::Internal("sgx-pa-cli timed out after 30s".into()))?
-    .map_err(|e| ApiError::Internal(format!("sgx-pa-cli spawn ({}): {}", cli_path.display(), e)))?;
+    let out = tokio::process::Command::new(&cli_path)
+        .args(args)
+        .output()
+        .await
+        .map_err(|e| {
+            ApiError::Internal(format!("sgx-pa-cli spawn ({}): {}", cli_path.display(), e))
+        })?;
     Ok(ActionResponse {
         success: out.status.success(),
         stdout: String::from_utf8_lossy(&out.stdout).to_string(),

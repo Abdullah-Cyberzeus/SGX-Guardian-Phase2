@@ -1,11 +1,11 @@
-//! Sprint 6 Task 2: Session-bound Virtual Identity.
+//! Session-bound Virtual Identity.
 //!
 //! VirtualID = SHA-256(
 //!     DID || CurrentDKP_PubKey || PCR_values ||
 //!     policy_digest || Nonce_I || Nonce_R
 //! )
 //!
-//! DID is the persistent identity anchor (Sprint 5 Task 1).
+//! DID is the persistent identity anchor.
 //! VirtualID is the session-scoped credential: it rotates whenever
 //! DKP, PCR, policy, or session nonces change.
 

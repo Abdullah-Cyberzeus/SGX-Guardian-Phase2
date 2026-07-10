@@ -5,6 +5,7 @@
 pub mod attest_quote;
 pub mod attestation;
 pub mod boot_status;
+pub mod crl;
 pub mod did;
 pub mod diddoc;
 pub mod discovery;

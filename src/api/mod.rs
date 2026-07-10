@@ -13,6 +13,7 @@ use tower_http::trace::TraceLayer;
 
 pub mod error;
 pub mod handlers;
+pub mod routes;
 pub mod state;
 
 use state::AppState;
@@ -232,6 +233,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/vc/pull-status", post(handlers::vc::pull_status))
         .route("/api/v1/threat/status", get(handlers::threat::status))
         .route("/api/v1/threat/alerts", get(handlers::threat::list_alerts))
+        .route(
+            "/api/v1/threat/modbus",
+            get(handlers::threat::modbus_alerts),
+        )
         .route("/api/v1/threat/blocks", get(handlers::threat::list_blocks))
         .route("/api/v1/threat/blocks", post(handlers::threat::block_ip))
         .route(
@@ -249,6 +254,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/threat/config", get(handlers::threat::get_config))
         .route("/api/v1/threat/config", post(handlers::threat::set_config))
         .route("/api/v1/threat/start", post(handlers::threat::start))
+        .merge(routes::crl_router())
         // Health
         .route("/api/v1/health", get(|| async { "ok" }))
         .layer(cors)
@@ -277,9 +283,9 @@ mod tests {
     use crate::did::Did;
     use crate::key_manager::KeyManager;
     use crate::nebula::registry_sync::{RegistryRequest, RegistryResponse, REGISTRY_SYNC_PORT};
+    use crate::threat::threat_alert::{Severity, ThreatAlert, ThreatCategory};
     use crate::vc::{issue, persistence};
     use chrono::Utc;
-    use once_cell::sync::Lazy;
     use reqwest::StatusCode;
     use serde_json::Value;
     use std::ffi::OsString;
@@ -288,10 +294,8 @@ mod tests {
     use tempfile::TempDir;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
-    use tokio::sync::Mutex;
 
     const DEPLOYED_SIG_PATH: &str = "/etc/sgx-guardian/policies/policy.sig";
-    static TEST_ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
     struct EnvGuard {
         self_doc_prev: Option<OsString>,
@@ -647,6 +651,37 @@ mod tests {
         })
     }
 
+    fn write_threat_alerts(path: &Path, alerts: &[ThreatAlert]) {
+        let parent = path.parent().expect("alerts parent");
+        std::fs::create_dir_all(parent).expect("create alerts dir");
+        let payload = alerts
+            .iter()
+            .map(|alert| serde_json::to_string(alert).expect("serialize alert"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(path, format!("{}\n", payload)).expect("write alerts");
+    }
+
+    fn sample_threat_alert(signature_id: u32, signature: &str) -> ThreatAlert {
+        ThreatAlert {
+            alert_id: ThreatAlert::compute_id(signature_id, "192.168.50.115", "192.168.50.248"),
+            timestamp: Utc::now(),
+            src_ip: "192.168.50.115".into(),
+            src_port: 43000,
+            dst_ip: "192.168.50.248".into(),
+            dst_port: 502,
+            protocol: "TCP".into(),
+            signature_id,
+            signature: signature.into(),
+            category: ThreatCategory::PolicyViolation,
+            severity: Severity::High,
+            rev: 1,
+            gid: 1,
+            event_type: "alert".into(),
+            blocked: false,
+        }
+    }
+
     #[tokio::test]
     async fn verify_deployed_does_not_require_multipart_upload() {
         let (base_url, handle) = spawn_api().await;
@@ -712,7 +747,7 @@ mod tests {
 
     #[tokio::test]
     async fn vc_issue_reuse_status_and_safe_file_reads_work() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = doc_persistence::lock_test_env();
         let env = VcEnvGuard::new();
         let (km_dir, _km, issuer, doc) = make_vc_material("nodeA", 7, "192.168.100.1/24");
         install_vc_runtime_material(&env, &km_dir, &issuer, &doc);
@@ -815,7 +850,7 @@ mod tests {
 
     #[tokio::test]
     async fn vc_renew_verify_revoke_summary_and_audit_routes_work() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = doc_persistence::lock_test_env();
         let env = VcEnvGuard::new();
         let (km_dir, km, issuer, doc) = make_vc_material("nodeA", 9, "192.168.100.1/24");
         install_vc_runtime_material(&env, &km_dir, &issuer, &doc);
@@ -1083,7 +1118,7 @@ mod tests {
 
     #[tokio::test]
     async fn vc_verify_uses_same_resolver_cache_as_did_resolve_api() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = doc_persistence::lock_test_env();
         let env = VcEnvGuard::new();
         let (km_dir, _km, issuer, doc) = make_vc_material("nodeA", 31, "192.168.100.1/24");
         install_vc_runtime_material(&env, &km_dir, &issuer, &doc);
@@ -1195,7 +1230,7 @@ mod tests {
 
     #[tokio::test]
     async fn did_document_routes_work_end_to_end() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = doc_persistence::lock_test_env();
         let td = TempDir::new().expect("tempdir");
         let self_doc_path = td.path().join("identity").join("did_doc.json");
         let peers_dir = td.path().join("identity").join("peers");
@@ -1333,7 +1368,7 @@ mod tests {
 
     #[tokio::test]
     async fn did_resolve_query_returns_peer_resolution_result() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = doc_persistence::lock_test_env();
         let td = TempDir::new().expect("tempdir");
         let self_doc_path = td.path().join("identity").join("did_doc.json");
         let peers_dir = td.path().join("identity").join("peers");
@@ -1365,8 +1400,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn threat_modbus_endpoint_groups_alerts_into_five_rules() {
+        let td = TempDir::new().expect("tempdir");
+        let alerts_path = td.path().join("alerts.jsonl");
+        write_threat_alerts(
+            &alerts_path,
+            &[
+                sample_threat_alert(10000201, "SGX OT Modbus Unauthorized Write Single Coil FC5"),
+                sample_threat_alert(
+                    10000202,
+                    "SGX OT Modbus Unauthorized Write Multiple Coils FC15",
+                ),
+                sample_threat_alert(10000203, "SGX OT Modbus Write Safety Critical Register FC6"),
+                sample_threat_alert(10000209, "SGX OT Modbus Exception Response Detected"),
+                sample_threat_alert(10000210, "SGX OT Modbus Write Command Time Audit"),
+            ],
+        );
+
+        let mut state = (*test_state()).clone();
+        state.threat_state_dir = td.path().to_string_lossy().to_string();
+        let (base_url, handle) = spawn_api_with_state(Arc::new(state)).await;
+
+        let response: Value = reqwest::Client::new()
+            .get(format!("{}/api/v1/threat/modbus", base_url))
+            .send()
+            .await
+            .expect("modbus request")
+            .json()
+            .await
+            .expect("modbus json");
+        handle.abort();
+
+        assert_eq!(response["total_matches"], 5);
+        let rules = response["rules"].as_array().expect("rules array");
+        assert_eq!(rules.len(), 5);
+
+        assert_eq!(rules[0]["rule_id"], 1);
+        assert_eq!(rules[0]["matched"], true);
+        assert_eq!(rules[0]["match_count"], 2);
+
+        assert_eq!(rules[1]["rule_id"], 2);
+        assert_eq!(rules[1]["matched"], true);
+        assert_eq!(rules[1]["match_count"], 1);
+
+        assert_eq!(rules[2]["rule_id"], 3);
+        assert_eq!(rules[2]["matched"], false);
+        assert_eq!(rules[2]["match_count"], 0);
+
+        assert_eq!(rules[3]["rule_id"], 4);
+        assert_eq!(rules[3]["matched"], true);
+        assert_eq!(rules[3]["match_count"], 1);
+
+        assert_eq!(rules[4]["rule_id"], 5);
+        assert_eq!(rules[4]["matched"], true);
+        assert_eq!(rules[4]["match_count"], 1);
+    }
+
+    #[tokio::test]
     async fn did_document_verify_rejects_replayed_lower_version() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = doc_persistence::lock_test_env();
         let td = TempDir::new().expect("tempdir");
         let self_doc_path = td.path().join("identity").join("did_doc.json");
         let peers_dir = td.path().join("identity").join("peers");

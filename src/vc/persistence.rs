@@ -164,14 +164,21 @@ pub fn find_issued_for_subject(
     subject_did: &str,
     circle_id: &str,
 ) -> Result<Option<VerifiableCredential>, VcError> {
-    let mut matches = list_issued()?
+    let mut matches = list_issued_for_subject(subject_did)?
         .into_iter()
-        .filter(|vc| {
-            vc.subject_did() == subject_did && vc.credential_subject.circle_id == circle_id
-        })
+        .filter(|vc| vc.credential_subject.circle_id == circle_id)
         .collect::<Vec<_>>();
     matches.sort_by(|a, b| a.issuance_date.cmp(&b.issuance_date));
     Ok(matches.pop())
+}
+
+pub fn list_issued_for_subject(subject_did: &str) -> Result<Vec<VerifiableCredential>, VcError> {
+    let mut out = list_issued()?
+        .into_iter()
+        .filter(|vc| vc.subject_did() == subject_did)
+        .collect::<Vec<_>>();
+    out.sort_by(|a, b| a.issuance_date.cmp(&b.issuance_date));
+    Ok(out)
 }
 
 pub fn find_issued_for_subject_and_role(

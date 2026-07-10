@@ -7,15 +7,11 @@ use crate::did::{Did, DidError, ResolutionSource, Resolver, ResolverConfig};
 use crate::key_manager::KeyManager;
 use crate::nebula::registry_sync::{RegistryRequest, RegistryResponse, REGISTRY_SYNC_PORT};
 use base64::Engine as _;
-use once_cell::sync::Lazy;
 use std::ffi::OsString;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
-
-static TEST_ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 struct EnvGuard {
     self_doc_prev: Option<OsString>,
@@ -140,7 +136,7 @@ fn resolver(ca_host: &str) -> Resolver {
 
 #[tokio::test]
 async fn resolves_from_local_peer_doc() {
-    let _lock = TEST_ENV_LOCK.lock().await;
+    let _lock = doc_persistence::lock_test_env();
     let td = TempDir::new().expect("tempdir");
     let self_doc_path = td.path().join("identity").join("did_doc.json");
     let peers_dir = td.path().join("identity").join("peers");
@@ -167,7 +163,7 @@ async fn resolves_from_local_peer_doc() {
 
 #[tokio::test]
 async fn mem_cache_hit_within_ttl() {
-    let _lock = TEST_ENV_LOCK.lock().await;
+    let _lock = doc_persistence::lock_test_env();
     let td = TempDir::new().expect("tempdir");
     let self_doc_path = td.path().join("identity").join("did_doc.json");
     let peers_dir = td.path().join("identity").join("peers");
@@ -190,7 +186,7 @@ async fn mem_cache_hit_within_ttl() {
 
 #[tokio::test]
 async fn invalidate_refreshes_after_peer_doc_update() {
-    let _lock = TEST_ENV_LOCK.lock().await;
+    let _lock = doc_persistence::lock_test_env();
     let td = TempDir::new().expect("tempdir");
     let self_doc_path = td.path().join("identity").join("did_doc.json");
     let peers_dir = td.path().join("identity").join("peers");
@@ -225,7 +221,7 @@ async fn invalidate_refreshes_after_peer_doc_update() {
 
 #[tokio::test]
 async fn rejected_aggregate_doc_does_not_seed_mem_cache() {
-    let _lock = TEST_ENV_LOCK.lock().await;
+    let _lock = doc_persistence::lock_test_env();
     let td = TempDir::new().expect("tempdir");
     let self_doc_path = td.path().join("identity").join("did_doc.json");
     let peers_dir = td.path().join("identity").join("peers");
@@ -263,7 +259,7 @@ async fn rejected_aggregate_doc_does_not_seed_mem_cache() {
 
 #[tokio::test]
 async fn resolves_from_local_aggregate() {
-    let _lock = TEST_ENV_LOCK.lock().await;
+    let _lock = doc_persistence::lock_test_env();
     let td = TempDir::new().expect("tempdir");
     let self_doc_path = td.path().join("identity").join("did_doc.json");
     let peers_dir = td.path().join("identity").join("peers");
@@ -281,7 +277,7 @@ async fn resolves_from_local_aggregate() {
 
 #[tokio::test]
 async fn resolves_from_ca_network() {
-    let _lock = TEST_ENV_LOCK.lock().await;
+    let _lock = doc_persistence::lock_test_env();
     let td = TempDir::new().expect("tempdir");
     let self_doc_path = td.path().join("identity").join("did_doc.json");
     let peers_dir = td.path().join("identity").join("peers");
@@ -301,7 +297,7 @@ async fn resolves_from_ca_network() {
 
 #[tokio::test]
 async fn unreachable_ca_network_returns_friendly_message() {
-    let _lock = TEST_ENV_LOCK.lock().await;
+    let _lock = doc_persistence::lock_test_env();
     let td = TempDir::new().expect("tempdir");
     let self_doc_path = td.path().join("identity").join("did_doc.json");
     let peers_dir = td.path().join("identity").join("peers");
@@ -326,7 +322,7 @@ async fn unreachable_ca_network_returns_friendly_message() {
 
 #[tokio::test]
 async fn reject_deactivated_mode_returns_deactivated_error() {
-    let _lock = TEST_ENV_LOCK.lock().await;
+    let _lock = doc_persistence::lock_test_env();
     let td = TempDir::new().expect("tempdir");
     let self_doc_path = td.path().join("identity").join("did_doc.json");
     let peers_dir = td.path().join("identity").join("peers");
@@ -350,7 +346,7 @@ async fn reject_deactivated_mode_returns_deactivated_error() {
 
 #[tokio::test]
 async fn malformed_did_returns_invalid_format() {
-    let _lock = TEST_ENV_LOCK.lock().await;
+    let _lock = doc_persistence::lock_test_env();
     let err = resolver("")
         .resolve("did:guardian:FAKE123")
         .await

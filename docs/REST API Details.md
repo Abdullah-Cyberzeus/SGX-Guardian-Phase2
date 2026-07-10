@@ -78,28 +78,37 @@
 | 67 | GET | `/discovery/inventory/list` | Alias of discovery inventory list |
 | 68 | GET | `/discovery/devices/unauthorized` | Unauthorized or drifted discovered devices |
 | 69 | GET | `/discovery/unauthorized` | Alias of unauthorized discovery list |
+| 69a | GET | `/discovery/runs?view=history` | List persisted NMAP discovery scan run history |
 | 70 | POST | `/discovery/scan` | Run discovery scan using default ad-hoc intensity |
 | 71 | POST | `/discovery/scan/stealth` | Run one stealth NMAP discovery scan |
 | 72 | POST | `/discovery/scan/standard` | Run one standard NMAP discovery scan |
 | 73 | POST | `/discovery/scan/aggressive` | Run one aggressive NMAP discovery scan |
 | 74 | POST | `/discovery/approve` | Authorize a discovered device by MAC and add it to whitelist |
-| 75 | GET | `/discovery/whitelist` | Fetch discovery whitelist YAML content as JSON |
+| 75 | GET | `/discovery/whitelist` | Fetch whitelist policy enriched with current inventory matches |
 | 76 | PUT | `/discovery/whitelist` | Replace discovery whitelist and refresh inventory statuses |
 | 77 | GET | `/discovery/schedule` | Fetch scheduled NMAP discovery configuration |
 | 78 | PUT | `/discovery/schedule` | Update scheduled NMAP discovery configuration |
 | 79 | GET | `/discovery/summary` | Aggregate inventory stats: totals, open ports, risk counts, last_seen_at |
 | 80 | GET | `/discovery/devices/{device_id}` | Full device detail with risk_level, risk_reasons, and flagged_ports |
-| 81 | GET | `/discovery/runs` | Actual scan run history from raw XML archive (not inferred) |
+| 81 | GET | `/discovery/runs?view=raw` | Actual scan run history from raw XML archive (default mode) |
 | 82 | GET | `/threat/status` | Suricata service state, block mode, alert and block counts |
 | 83 | GET | `/threat/alerts` | List parsed Suricata alerts from Guardian threat inventory |
-| 84 | GET | `/threat/blocks` | List currently blocked IPs from the threat blocker |
-| 85 | POST | `/threat/blocks` | Manually block an IP and persist the block record |
-| 86 | POST | `/threat/blocks/unblock` | Remove one IP from the active threat block list |
-| 87 | POST | `/threat/rules/update` | Trigger `suricata-update` and reload validated rules |
-| 88 | POST | `/threat/validate` | Validate Guardian threat config and Suricata YAML |
-| 89 | GET | `/threat/config` | Read current Guardian threat config |
-| 90 | POST | `/threat/config` | Patch threat config fields; effective within 5 seconds |
-| 91 | POST | `/threat/start` | Start Suricata via `systemctl start suricata` when offline |
+| 84 | GET | `/threat/modbus` | Group recent Modbus alerts into the 5 Guardian Modbus rule buckets |
+| 85 | GET | `/threat/blocks` | List currently blocked IPs from the threat blocker |
+| 86 | POST | `/threat/blocks` | Manually block an IP and persist the block record |
+| 87 | POST | `/threat/blocks/unblock` | Remove one IP from the active threat block list |
+| 88 | POST | `/threat/rules/update` | Trigger `suricata-update` and reload validated rules |
+| 89 | POST | `/threat/validate` | Validate Guardian threat config and Suricata YAML |
+| 90 | GET | `/threat/config` | Read current Guardian threat config |
+| 91 | POST | `/threat/config` | Patch threat config fields; effective within 5 seconds |
+| 92 | POST | `/threat/start` | Start Suricata via `systemctl start suricata` when offline |
+| 93 | POST | `/crl/revoke` | Issue a DID revocation entry and rebuild the signed CRL |
+| 94 | GET | `/crl/list` | List all locally persisted CRL entries |
+| 95 | GET | `/crl/entry` | Fetch one CRL entry by entry ID |
+| 96 | GET | `/crl/check` | Check whether a DID is currently revoked |
+| 97 | POST | `/crl/verify` | Verify CRL entry signatures and aggregate root |
+| 98 | GET | `/crl/root` | Return current CRL sequence and Merkle root |
+| 99 | POST | `/crl/unrevoke` | Reverse a mistaken revocation (Circle Owner only) |
 
 
 ## 2. NEW Endpoints 
@@ -108,9 +117,11 @@
 |---|---|---|
 | GET | `/discovery/summary` | Aggregate inventory stats: totals, open ports, risk counts, last_seen_at |
 | GET | `/discovery/devices/{device_id}` | Full device detail with risk_level, risk_reasons, and flagged_ports |
-| GET | `/discovery/runs` | Actual scan run history from raw XML archive (not inferred) |
+| GET | `/discovery/runs?view=raw` | Actual scan run history from raw XML archive (default mode) |
+| GET | `/discovery/runs?view=history` | Persisted NMAP discovery scan run history |
 | GET | `/threat/status` | Suricata service state, block mode, alert and block counts |
 | GET | `/threat/alerts` | Read recent Suricata alerts with optional `limit` and `severity` filters |
+| GET | `/threat/modbus` | Group recent Modbus alerts into the 5 Guardian Modbus rule buckets |
 | GET | `/threat/blocks` | Return the currently blocked IP list from nftables or persisted state |
 | POST | `/threat/blocks` | Manually block an IP with nftables + persisted TTL |
 | POST | `/threat/blocks/unblock` | Remove a blocked IP and rebuild the threat nftables chain |
@@ -119,6 +130,13 @@
 | GET | `/threat/config` | Read full Guardian threat config as JSON |
 | POST | `/threat/config` | Patch threat config fields; live-reloaded within 5 seconds |
 | POST | `/threat/start` | Start Suricata if offline via `systemctl start suricata` |
+| POST | `/crl/revoke` | Issue a CRL revocation entry for a DID |
+| GET | `/crl/list` | Return all CRL entries |
+| GET | `/crl/entry` | Return one CRL entry by `id` |
+| GET | `/crl/check` | Return `{ revoked, entry }` for a DID |
+| POST | `/crl/verify` | Verify CRL signatures, role rules, and Merkle root |
+| GET | `/crl/root` | Return CRL sequence and Merkle root |
+| POST | `/crl/unrevoke` | Reverse a mistaken revocation (Circle Owner only) |
 ---
 
 ## 2. Standard Error Envelope
@@ -2219,8 +2237,17 @@ Peer DID resolution response (`?did=did:guardian:...`):
 ### 3.66 POST `/discovery/scan`
 
 - Request:
-  - Query params: none
-  - Body: none
+  - Query params:
+    - `target` (optional, string): one-off override for this scan's target CIDR, host IP, `/32`, or hostname
+  - JSON body (optional):
+
+```json
+{
+  "target": "192.168.50.248/32"
+}
+```
+
+  - When both query and body specify `target`, the JSON body wins
 - Success response (`200 OK`):
 
 ```json
@@ -2234,6 +2261,7 @@ Peer DID resolution response (`?did=did:guardian:...`):
 
 - Notes:
   - Executes `sgx-pa-cli discovery scan`
+  - Supports both subnet scans and single-host scans through the optional `target` override
   - If the CLI process exits non-zero, endpoint still returns `200 OK` with `success=false`
   - Ad-hoc scan intensity follows the current discovery config's effective manual/default intensity
 - Error responses:
@@ -2242,8 +2270,7 @@ Peer DID resolution response (`?did=did:guardian:...`):
 ### 3.67 POST `/discovery/scan/stealth`
 
 - Request:
-  - Query params: none
-  - Body: none
+  - Same optional `target` query param / JSON body as `POST /discovery/scan`
 - Success response (`200 OK`):
   - Same schema as `POST /discovery/scan`
 - Notes:
@@ -2254,8 +2281,7 @@ Peer DID resolution response (`?did=did:guardian:...`):
 ### 3.68 POST `/discovery/scan/standard`
 
 - Request:
-  - Query params: none
-  - Body: none
+  - Same optional `target` query param / JSON body as `POST /discovery/scan`
 - Success response (`200 OK`):
   - Same schema as `POST /discovery/scan`
 - Notes:
@@ -2266,14 +2292,89 @@ Peer DID resolution response (`?did=did:guardian:...`):
 ### 3.69 POST `/discovery/scan/aggressive`
 
 - Request:
-  - Query params: none
-  - Body: none
+  - Same optional `target` query param / JSON body as `POST /discovery/scan`
 - Success response (`200 OK`):
   - Same schema as `POST /discovery/scan`
 - Notes:
   - Executes `sgx-pa-cli discovery scan --intensity aggressive`
 - Error responses:
   - `500 INTERNAL_SERVER_ERROR`: `sgx-pa-cli` not found or command spawn failed
+
+### 3.69a GET `/discovery/runs`
+
+- Request:
+  - Query params:
+    - `view` (optional, string): set to `history` to force persisted run-history mode
+    - `limit` (optional, default `50`, max `500`): when provided, the handler also switches to persisted run-history mode
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+[
+  {
+    "run_id": "20260701T050842Z-standard-550e8400-e29b-41d4-a716-446655440000",
+    "started_at": "2026-07-01T05:08:42Z",
+    "completed_at": "2026-07-01T05:09:12Z",
+    "duration_ms": 30000,
+    "source": "manual",
+    "schedule_kind": null,
+    "intensity": "standard",
+    "target": "192.168.50.0/24",
+    "success": true,
+    "error": null,
+    "new_devices": 1,
+    "updated_devices": 27,
+    "marked_stale": 0,
+    "total_devices": 28,
+    "approved": 2,
+    "unauthorized": 26,
+    "drifted": 0,
+    "stale": 0,
+    "raw_xml_path": "/var/lib/sgx-guardian/discovery/raw/1782911322.xml",
+    "inventory_path": "/var/lib/sgx-guardian/discovery/inventory.json",
+    "devices": [
+      {
+        "device_id": "5245c334a84abcb2",
+        "ip": "192.168.50.103",
+        "mac": null,
+        "vendor": null,
+        "hostname": null,
+        "os_fingerprint": "Linux 5.0 - 6.2",
+        "os_cpe": [
+          "cpe:/o:linux:linux_kernel:5",
+          "cpe:/o:linux:linux_kernel:6"
+        ],
+        "open_ports": [
+          {
+            "port": 22,
+            "protocol": "tcp",
+            "service": "ssh",
+            "product_version": "OpenSSH 9.3",
+            "cpe": ["cpe:/a:openbsd:openssh:9.3"],
+            "scripts": []
+          }
+        ],
+        "host_scripts": [],
+        "status": "unauthorized",
+        "first_seen": "2026-07-01T05:09:12+00:00",
+        "last_seen": "2026-07-01T05:09:12+00:00",
+        "vuln_triaged": false,
+        "last_scan_intensity": "standard"
+      }
+    ]
+  }
+]
+```
+
+- Notes:
+  - Reads `/var/lib/sgx-guardian/discovery/runs.jsonl`
+  - Returns newest scan runs first
+  - History records are written by manual scan commands and scheduled discovery scans
+  - When `raw_xml_path` is still available, each run is enriched with a `devices` array reconstructed from that scan's raw NMAP XML, without changing the current `inventory.json`-backed endpoints
+  - If a historical raw XML file has been pruned or is unreadable, the run stays in the response and includes `devices_error` instead of failing the whole endpoint
+  - `GET /discovery/runs` without `view=history` and without `limit` uses the raw-archive response documented in `3.72c`
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: run history read/parse failure
 
 ### 3.70 POST `/discovery/approve`
 
@@ -2302,13 +2403,31 @@ Peer DID resolution response (`?did=did:guardian:...`):
     "expected_os": null,
     "expected_ports": [],
     "expected_ips": []
-  }
+  },
+  "current_devices": [
+    {
+      "device_id": "a1b2c3d4e5f60708",
+      "ip": "192.168.50.103",
+      "vendor": "Acme",
+      "hostname": "printer.local",
+      "status": "approved",
+      "os_fingerprint": "Linux 5.x",
+      "open_ports": [
+        "22/tcp ssh"
+      ],
+      "first_seen": "2026-06-30T10:00:00Z",
+      "last_seen": "2026-06-30T11:00:00Z",
+      "vuln_triaged": false
+    }
+  ]
 }
 ```
 
 - Notes:
   - Adds or updates the MAC inside `/etc/sgx-guardian/discovery/whitelist.yaml`
+  - If `label` is omitted, the API attempts to infer a readable label from the matching inventory vendor or hostname
   - Immediately reclassifies matching non-stale inventory records so approved devices become authorized without waiting for the next scan
+  - Returns current inventory matches for that MAC in `current_devices`
 - Error responses:
   - `400 BAD_REQUEST`: invalid or empty MAC address
   - `500 INTERNAL_SERVER_ERROR`: whitelist read/write or inventory refresh failure
@@ -2335,6 +2454,24 @@ Peer DID resolution response (`?did=did:guardian:...`):
       ],
       "expected_ips": [
         "192.168.50.103/32"
+      ],
+      "inventory_match": true,
+      "current_devices": [
+        {
+          "device_id": "a1b2c3d4e5f60708",
+          "ip": "192.168.50.103",
+          "vendor": "Acme",
+          "hostname": "printer.local",
+          "status": "approved",
+          "os_fingerprint": "Linux 5.x",
+          "open_ports": [
+            "22/tcp ssh",
+            "9100/tcp jetdirect"
+          ],
+          "first_seen": "2026-06-30T10:00:00Z",
+          "last_seen": "2026-06-30T11:00:00Z",
+          "vuln_triaged": false
+        }
       ]
     }
   ]
@@ -2343,6 +2480,7 @@ Peer DID resolution response (`?did=did:guardian:...`):
 
 - Notes:
   - Missing or empty whitelist file returns the default empty document
+  - Stored whitelist remains policy-only; `inventory_match` and `current_devices` are read-only fields joined from `/var/lib/sgx-guardian/discovery/inventory.json`
 - Error responses:
   - `500 INTERNAL_SERVER_ERROR`: whitelist YAML parse failure or file I/O error
 
@@ -2374,7 +2512,7 @@ Peer DID resolution response (`?did=did:guardian:...`):
 
   - Required fields: none (`version` defaults to `"1.0"` when empty)
 - Success response (`200 OK`):
-  - Same schema as `GET /discovery/whitelist`
+  - Same policy schema as the request body
 - Notes:
   - Writes `/etc/sgx-guardian/discovery/whitelist.yaml` atomically
   - Refreshes matching non-stale inventory statuses after the whitelist update
@@ -2523,7 +2661,8 @@ Peer DID resolution response (`?did=did:guardian:...`):
 ### 3.72c GET `/discovery/runs`
 
 - Request:
-  - Query params: none
+  - Query params:
+    - `view` (optional, string): set to `raw` to force raw-archive mode; this is also the default when neither `view=history` nor `limit` is supplied
   - Body: none
 - Success response (`200 OK`):
 
@@ -2550,6 +2689,7 @@ Peer DID resolution response (`?did=did:guardian:...`):
   - The archive keeps the last 10 scans. Older runs are pruned automatically.
   - `total_in_inventory`: current device count from inventory for context
   - Runs are sorted newest-first
+  - Use `view=history` or provide `limit` to receive the persisted `runs.jsonl` array documented in `3.69a`
 - Error responses:
   - None expected when raw directory is empty; returns `{ "runs": [], "total_in_inventory": N }`
   - `500 INTERNAL_SERVER_ERROR`: inventory read failure
@@ -2610,6 +2750,18 @@ Peer DID resolution response (`?did=did:guardian:...`):
 }
 ```
 
+- Success response (`200 OK`):
+  - Same schema as `GET /discovery/schedule`
+- Error responses:
+  - `400 BAD_REQUEST`: invalid `target_cidr`, `timeout_secs`, or schedule intensity
+  - `500 INTERNAL_SERVER_ERROR`: schedule serialization/write failure
+
+- Success response (`200 OK`):
+  - Same schema as `GET /discovery/schedule`
+- Error responses:
+  - `400 BAD_REQUEST`: invalid `target_cidr`, `timeout_secs`, or schedule intensity
+  - `500 INTERNAL_SERVER_ERROR`: schedule serialization/write failure
+
 ## 4. Threat Endpoint Contracts
 
 ### GET `/threat/alerts`
@@ -2649,6 +2801,68 @@ Peer DID resolution response (`?did=did:guardian:...`):
   - `category` values are snake_case enum strings such as `malware`, `exploit`, `policy_violation`, `reconnaissance`, `anomaly`, `other`.
 - Error responses:
   - `404 NOT_FOUND`: no alert inventory exists yet (`"no alerts yet - has Suricata produced events?"`)
+  - `500 INTERNAL_SERVER_ERROR`: storage read failure or malformed runtime state
+
+### GET `/threat/modbus`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "total_matches": 5,
+  "rules": [
+    {
+      "rule_id": 1,
+      "name": "Unauthorized Write to PLC Coils",
+      "function_codes": ["FC5", "FC15"],
+      "matched": true,
+      "match_count": 2,
+      "matched_signatures": [
+        "SGX OT Modbus Unauthorized Write Single Coil FC5",
+        "SGX OT Modbus Unauthorized Write Multiple Coils FC15"
+      ],
+      "recent_alerts": [
+        {
+          "alert_id": "8c9dd2bfa6a6fd71",
+          "timestamp": "2026-07-05T12:14:11Z",
+          "src_ip": "192.168.50.115",
+          "src_port": 43000,
+          "dst_ip": "192.168.50.248",
+          "dst_port": 502,
+          "protocol": "TCP",
+          "signature_id": 10000201,
+          "signature": "SGX OT Modbus Unauthorized Write Single Coil FC5",
+          "category": "policy_violation",
+          "severity": "high",
+          "rev": 1,
+          "gid": 1,
+          "event_type": "alert",
+          "blocked": false
+        }
+      ]
+    }
+  ]
+}
+```
+
+- Notes:
+  - Reads the same `alerts.jsonl` threat inventory used by `GET /threat/alerts`.
+  - Groups matching alerts into the 5 logical Guardian Modbus rule buckets:
+    - Rule 1: FC5 / FC15
+    - Rule 2: FC6 / FC16
+    - Rule 3: FC65 / FC66 / FC67 / FC68
+    - Rule 4: FC129
+    - Rule 5: FC5 audit
+  - Each rule bucket includes:
+    - `matched` (`boolean`): whether at least one matching alert exists
+    - `match_count` (`integer`): total number of matching alerts for that logical rule
+    - `matched_signatures` (`string[]`): distinct Suricata signatures seen for that rule
+    - `recent_alerts` (`ThreatAlert[]`): up to 5 most recent matching alerts
+  - Unlike `GET /threat/alerts`, this endpoint returns an empty summary instead of `404` when no alert inventory exists yet.
+- Error responses:
   - `500 INTERNAL_SERVER_ERROR`: storage read failure or malformed runtime state
 
 ### GET `/threat/blocks`
@@ -2892,3 +3106,221 @@ Peer DID resolution response (`?did=did:guardian:...`):
   - Runs `systemctl start suricata`.
   - If Suricata is already active, `systemctl start` is a no-op and returns success.
   - Use `GET /threat/status` to confirm `suricata` field becomes `"active"` after calling this endpoint.
+
+## 5. CRL Endpoint Contracts
+
+### 3.75 POST `/crl/revoke`
+
+- Full path: `/api/v1/crl/revoke`
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "did": "did:guardian:TARGET",
+  "reason": "compromised",
+  "severity": "critical",
+  "device_id": "device-001",
+  "user_id": "user-001",
+  "note": "reported key compromise",
+  "audit_ref": "audit:123",
+  "attestation_ref": "attestation:456",
+  "evidence_digest": "sha256:..."
+}
+```
+
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "message": "CRL entry issued",
+  "entry": {
+    "id": "urn:uuid:...",
+    "revoked_did": "did:guardian:TARGET",
+    "circle_id": "guardian-circle-alpha",
+    "reason": "compromised",
+    "severity": "critical",
+    "revoker_did": "did:guardian:OWNER",
+    "revoker_role": "owner",
+    "timestamp": "2026-06-30T10:00:00Z"
+  },
+  "sequence": 1,
+  "merkle_root": "hex-sha256-root"
+}
+```
+
+- Notes:
+  - Owner revokers can issue any reason/severity.
+  - Member revokers are limited to security-critical reasons and `critical` or `high` severity.
+  - Owner-issued revocations also flip VC status-list bits for VCs issued to the revoked DID.
+- Error responses:
+  - `400 BAD_REQUEST`: invalid reason, severity, circle, or local membership state
+  - `403 FORBIDDEN`: self-revocation, invalid proof, or member policy violation
+  - `409 CONFLICT`: DID already revoked
+  - `500 INTERNAL_SERVER_ERROR`: local DID/key/audit/persistence failure
+
+### 3.76 GET `/crl/list`
+
+- Full path: `/api/v1/crl/list`
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "count": 1,
+  "entries": [
+    {
+      "id": "urn:uuid:...",
+      "revoked_did": "did:guardian:TARGET",
+      "reason": "compromised",
+      "severity": "critical",
+      "revoker_did": "did:guardian:OWNER"
+    }
+  ]
+}
+```
+
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: CRL persistence load failure
+
+### 3.77 GET `/crl/entry`
+
+- Full path: `/api/v1/crl/entry?id=urn:uuid:...`
+- Request:
+  - Query params:
+    - `id` (required, string): CRL entry ID.
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "id": "urn:uuid:...",
+  "revoked_did": "did:guardian:TARGET",
+  "reason": "compromised",
+  "severity": "critical",
+  "revoker_did": "did:guardian:OWNER"
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: missing or empty `id`
+  - `404 NOT_FOUND`: CRL entry not found
+  - `500 INTERNAL_SERVER_ERROR`: CRL persistence load failure
+
+### 3.78 GET `/crl/check`
+
+- Full path: `/api/v1/crl/check?did=did:guardian:TARGET`
+- Request:
+  - Query params:
+    - `did` (required, string): DID to check.
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "did": "did:guardian:TARGET",
+  "revoked": true,
+  "entry": {
+    "id": "urn:uuid:...",
+    "reason": "compromised",
+    "severity": "critical"
+  }
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: missing or empty `did`
+  - `500 INTERNAL_SERVER_ERROR`: CRL persistence load failure
+
+### 3.79 POST `/crl/verify`
+
+- Full path: `/api/v1/crl/verify`
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "ok": true,
+  "errors": []
+}
+```
+
+- Failure response (`200 OK` with verification details):
+
+```json
+{
+  "ok": false,
+  "errors": [
+    "invalid signature on CRL entry urn:uuid:..."
+  ]
+}
+```
+
+- Notes:
+  - Verifies each entry signature against resolved DID public keys.
+  - Recomputes the CRL Merkle root and rejects mismatches.
+  - Re-applies member role restrictions and circle checks.
+
+### 3.80 GET `/crl/root`
+
+- Full path: `/api/v1/crl/root`
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "sequence": 1,
+  "merkle_root": "hex-sha256-root"
+}
+```
+
+- Notes:
+  - Empty local CRL state returns `sequence: 0` and an empty `merkle_root`.
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: CRL persistence load failure
+
+### 3.81 POST `/crl/unrevoke`
+
+- Full path: `/api/v1/crl/unrevoke`
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "did": "did:guardian:TARGET"
+}
+```
+
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "message": "CRL entry unrevoked",
+  "did": "did:guardian:TARGET",
+  "sequence": 2,
+  "merkle_root": "hex-sha256-root"
+}
+```
+
+- Notes:
+  - Admin-only rollback for a mistakenly-issued revocation — reverses `POST /crl/revoke`.
+  - Only the Circle **Owner** may call this, regardless of which role originally issued the revocation.
+  - Removes the entry from the live `entries` list (`sequence` bumps, `merkle_root` recomputes and re-signs); the original per-entry file under `entries/<id>.json` is left untouched as append-only history.
+  - If the original revocation flipped VC status-list bits for the revoked DID (owner-issued revocations only), those bits are restored (unset) as well.
+- Error responses:
+  - `400 BAD_REQUEST`: empty `did`, or other local CRL/DID state error
+  - `403 FORBIDDEN`: caller's local role is Member, not Owner
+  - `404 NOT_FOUND`: DID is not currently revoked
+  - `500 INTERNAL_SERVER_ERROR`: local DID/key/audit/persistence failure
