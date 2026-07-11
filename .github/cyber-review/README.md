@@ -18,6 +18,11 @@ Run by `CI Pipeline` (`.github/workflows/ci.yml`) and `CodeQL Analysis`:
 
 These are deterministic and are the backbone of "green".
 
+> **Note:** `Build, Test & Security Checks` is temporarily **not** a required check
+> because `cargo audit` is red on `main` (9 dependency advisories, see #89).
+> `Static Analysis (CodeQL)` and `Cyber-review gate` are required today; add the
+> build/test context back once #89 is fixed.
+
 ### Tier 2 — LLM cyber-review (this workflow)
 `.github/workflows/cyber-review.yml` runs a multi-dimension review (security,
 static, tests, architecture, simplification) and **ingests CodeRabbit's findings

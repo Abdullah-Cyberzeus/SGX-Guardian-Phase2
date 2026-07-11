@@ -27,12 +27,17 @@ The user explicitly chose (over the recommended safer defaults):
    `severity ∈ {critical,high}` ∧ `confidence ∈ {high,medium}`. Break-glass via
    the `security-override` label (must be paired with an ADR). The model never
    decides merge-ability (prompt-injection defense); the gate is a fixed policy.
-2. Add an **additive** branch ruleset "Cyber-review required checks" on the
-   default branch requiring these status checks (leaving the existing "Basic"
-   ruleset — signed commits, 1 approval, no force-push/deletion — untouched):
-   - `Build, Test & Security Checks` (CI Pipeline)
+2. Add an **additive** branch ruleset "Cyber-review required checks" (ruleset id
+   18809646) on the default branch, leaving the existing "Basic" ruleset — signed
+   commits, 1 approval, no force-push/deletion — untouched. **Currently required:**
    - `Static Analysis (CodeQL)`
    - `Cyber-review gate` (this workflow)
+
+   **Deferred:** `Build, Test & Security Checks` is **not yet required** because it
+   is red on `main` — `cargo audit` reports 9 dependency advisories (see #89,
+   incl. a CRL-parsing panic in `rustls-webpki`). Requiring it now would wedge all
+   merges. Add its context to the ruleset once #89 is resolved (or the audit step
+   is made non-blocking / split from build+test).
 3. Rely on the repo's already-enabled **auto-merge**; PRs use
    `gh pr merge --auto --squash --delete-branch` to merge the moment all required
    checks pass.
