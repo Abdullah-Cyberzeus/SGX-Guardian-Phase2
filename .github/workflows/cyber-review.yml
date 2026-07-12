@@ -1,0 +1,122 @@
+name: Cybersecurity Review Gate
+
+# Multi-dimension, security-first LLM review of the PR diff. The model NEVER
+# decides merge-ability — it only writes a structured findings file, and the
+# deterministic gate (.github/cyber-review/gate.py) applies a fixed severity
+# policy. See .github/cyber-review/README.md for what "passing" means.
+#
+# Safe to require as a status check even before ANTHROPIC_API_KEY is set: when
+# the secret is absent the job passes as "not configured" (so it never wedges
+# merges); once the secret exists it enforces automatically.
+
+on:
+  pull_request:
+    branches: [ main ]
+    types: [ opened, synchronize, reopened, labeled ]
+
+# Least privilege: read the code, write PR comments + the check status only.
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+concurrency:
+  group: cyber-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  cyber-review:
+    name: Cyber-review gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check whether the review is configured
+        id: cfg
+        run: echo "enabled=${{ secrets.ANTHROPIC_API_KEY != '' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Not configured — passing as skipped
+        if: steps.cfg.outputs.enabled != 'true'
+        run: |
+          echo "## 🛡️ Cyber-review gate" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "⚠️ \`ANTHROPIC_API_KEY\` secret is not set — the LLM review did not run." >> "$GITHUB_STEP_SUMMARY"
+          echo "This check passes as *not configured*. Add the secret to activate enforcement." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Checkout (full history for base..head diff)
+        if: steps.cfg.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect break-glass override label
+        if: steps.cfg.outputs.enabled == 'true'
+        id: override
+        run: |
+          if ${{ contains(github.event.pull_request.labels.*.name, 'security-override') }}; then
+            echo "has_override=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_override=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Give the review a real toolchain so its static-analysis & test dimensions
+      # actually compile/run instead of falling back to manual inspection.
+      - name: Install Rust toolchain
+        if: steps.cfg.outputs.enabled == 'true'
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+          override: true
+      - name: Install protoc
+        if: steps.cfg.outputs.enabled == 'true'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Run multi-dimension cybersecurity review
+        if: steps.cfg.outputs.enabled == 'true'
+        uses: anthropics/claude-code-action@e90deca47693f9457b72f2b53c17d7c445a87342 # v1.0.171
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          claude_args: "--allowed-tools Bash,Read,Grep,Glob,Write"
+          prompt: |
+            You are the Lead/Judge of a cybersecurity code review of THIS pull request.
+            Repo root is the checkout. The PR base is `origin/${{ github.base_ref }}`;
+            the head is checked out. Scope the review to the PR diff:
+              git diff --stat origin/${{ github.base_ref }}...HEAD
+
+            Review the diff across FIVE dimensions (treat each as a specialist lens):
+              1. Security      — injection, authn/authz & trust-boundary flaws, crypto
+                                 misuse, sensitive-data leakage, unsafe deserialization,
+                                 confused-deputy, fail-open gates.
+              2. Static/lint   — run `cargo clippy --all-targets -- -D warnings` and
+                                 `cargo check`; capture unresolved refs / type errors.
+              3. Tests         — run `cargo test` for the changed areas; note failures and
+                                 missing coverage on the riskiest new logic.
+              4. Architecture  — dependency safety (cargo deny/audit), migration/persistence
+                                 safety, concurrency, tenant/isolation, structural design.
+              5. Simplification— scope creep, duplication, over-complex patches.
+
+            ALSO ingest existing automated reviews as additional input:
+              gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --paginate \
+                --jq '.[]|select(.user.login=="coderabbitai[bot]")|{path,line,body}'
+              gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews --paginate \
+                --jq '.[]|select(.user.login=="coderabbitai[bot]")|.body'
+            Corroborate/dedupe against your own findings; surface theirs too. Verify
+            every finding's cited location against the real code before reporting it.
+
+            Report ONLY real, defensible issues with a concrete failure scenario.
+            Write the result to `.github/cyber-review/findings.json` as:
+              {"findings":[
+                {"id":"S1","title":"...","severity":"critical|high|medium|low|info",
+                 "confidence":"high|medium|low","file":"path","line":123,
+                 "category":"security|correctness|tests|architecture|simplification",
+                 "scenario":"concrete failure","recommendation":"...","sources":["security","coderabbit"]}
+              ]}
+            If there are no real issues, write {"findings":[]}. Do NOT state a merge
+            decision — a deterministic gate consumes this file. Post a concise summary
+            of the findings as a PR comment.
+
+      - name: Apply deterministic severity gate
+        if: steps.cfg.outputs.enabled == 'true'
+        env:
+          HAS_OVERRIDE: ${{ steps.override.outputs.has_override }}
+        run: python3 .github/cyber-review/gate.py .github/cyber-review/findings.json
