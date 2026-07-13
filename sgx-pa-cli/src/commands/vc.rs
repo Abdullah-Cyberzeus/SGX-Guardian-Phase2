@@ -153,6 +153,11 @@ fn cmd_verify(path: &str) {
     });
     let expected_issuer = issue::known_ca_did().ok();
     let status_list = load_verified_status_list(&resolver, expected_issuer.as_deref());
+    if status_list.is_none() {
+        eprintln!("❌ VC status list is unavailable or unverifiable");
+        eprintln!("   Cannot verify revocation status — failing closed");
+        std::process::exit(1);
+    }
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
