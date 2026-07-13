@@ -86,6 +86,11 @@ impl KeyManager {
                         EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
                             .map_err(|_| anyhow!("Failed to generate keypair"))?;
                     fs::write(key_path, pkcs8.as_ref())?;
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let _ = fs::set_permissions(key_path, fs::Permissions::from_mode(0o600));
+                    }
                     pkcs8.as_ref().to_vec()
                 }
             }
@@ -101,6 +106,11 @@ impl KeyManager {
             let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
                 .map_err(|_| anyhow!("Failed to generate keypair"))?;
             fs::write(key_path, pkcs8.as_ref())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(key_path, fs::Permissions::from_mode(0o600));
+            }
             info!("New identity key generated at {}", key_path.display());
             pkcs8.as_ref().to_vec()
         };
