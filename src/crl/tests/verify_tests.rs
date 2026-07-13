@@ -196,3 +196,53 @@ fn verify_rejects_member_claiming_owner() {
         .expect_err("member claiming owner role must be rejected");
     assert!(matches!(error, CrlError::InvalidStructure(_)));
 }
+
+#[test]
+fn verify_rejects_member_revoking_owner() {
+    let _lock = test_lock();
+    let env = TestEnv::new();
+
+    // Owner — tagged "nodeA" so known_ca_did() resolves to it.
+    let owner = make_did_record(&test_did("realOwnerForOwnerRevokeTest"), 1);
+    let owner_km = make_key_manager(&env.key_path("node-owner-revoke-test"));
+    seed_peer_document(&owner, &owner_km, "nodeA");
+
+    // A genuine Member with a valid, active Member VC.
+    let member = make_did_record(&test_did("memberAttemptingOwnerRevoke"), 1);
+    let member_km = make_key_manager(&env.key_path("node-member-revoke-test"));
+    let member_vc = make_membership_vc(
+        &member.did,
+        CredentialRole::Member,
+        issue::DEFAULT_CIRCLE_ID,
+        &owner.did,
+        0,
+    );
+    crate::vc::persistence::save_peer(&member.did, &member_vc).expect("cache member vc");
+    seed_peer_document(&member, &member_km, "node-member-revoke-test");
+
+    // Member issues an otherwise-legitimate entry (correct wire role,
+    // security-critical reason/severity) but targets the Owner's DID.
+    let entry = build_entry(
+        &owner.did,
+        &member.did,
+        issue::DEFAULT_CIRCLE_ID,
+        RevocationReason::Compromised,
+        Severity::Critical,
+        RevokerRole::Member,
+    );
+
+    let resolver = crate::did::Resolver::new(crate::did::ResolverConfig::default());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+
+    let error = runtime
+        .block_on(async {
+            crate::crl::verify::verify_entry(&entry, &resolver, issue::DEFAULT_CIRCLE_ID).await
+        })
+        .expect_err("member revoking owner must be rejected");
+    assert!(
+        matches!(error, CrlError::InvalidStructure(ref msg) if msg.contains("cannot revoke Owner"))
+    );
+}

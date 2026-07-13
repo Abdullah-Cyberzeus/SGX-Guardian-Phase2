@@ -61,6 +61,24 @@ pub async fn verify_entry(
         )));
     }
 
+    // SECURITY: Members can NEVER revoke the Circle Owner. The Owner is the
+    // CA/issuer, so an Owner revocation collapses the entire trust chain
+    // circle-wide and is unrecoverable — a Member with a valid VC and a
+    // Compromised/Critical-severity entry would otherwise pass every other
+    // check here. Only another Owner (future multi-owner) may revoke an
+    // Owner.
+    if matches!(actual_role, RevokerRole::Member) {
+        let target_is_owner = crate::vc::issue::known_ca_did()
+            .map(|ca_did| ca_did == entry.revoked_did)
+            .unwrap_or(false);
+        if target_is_owner {
+            return Err(CrlError::InvalidStructure(format!(
+                "Member {} cannot revoke Owner {} — Owner revocation requires Owner authority",
+                entry.revoker_did, entry.revoked_did
+            )));
+        }
+    }
+
     if matches!(actual_role, RevokerRole::Member) {
         if !entry.reason.is_security_critical() {
             return Err(CrlError::MemberReasonNotCritical(
