@@ -1281,10 +1281,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("📌 Using SGX_LIGHTHOUSE_IP={}", env_ip);
                         env_ip
                     } else {
-                        resolve_ca_ip_from_config_inner()
+                        resolve_ca_ip_from_config_inner().await
                     }
                 } else {
-                    resolve_ca_ip_from_config_inner()
+                    resolve_ca_ip_from_config_inner().await
                 }
             };
             println!("📡 nodeA (CA/Lighthouse) LAN IP: {}", ca_lan_ip);
@@ -1467,10 +1467,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        let resolver_ca_host = did_doc_publish_state
-            .as_ref()
-            .map(|(_, ca_host, _, _)| ca_host.clone())
-            .unwrap_or_else(resolve_ca_ip_from_config_inner);
+        let resolver_ca_host = match did_doc_publish_state.as_ref() {
+            Some((_, ca_host, _, _)) => ca_host.clone(),
+            None => resolve_ca_ip_from_config_inner().await,
+        };
         did_resolver =
             sgx_guardian_client::did::Resolver::new(sgx_guardian_client::did::ResolverConfig {
                 ca_host: resolver_ca_host,
@@ -1488,7 +1488,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut vc_status_list_sync_elapsed = 0u64;
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(RELAY_SYNC_INTERVAL_SECS)).await;
-                let ca_host = resolve_ca_ip_from_config_inner();
+                let ca_host = resolve_ca_ip_from_config_inner().await;
                 let mut topology_changed = false;
                 did_doc_sync_elapsed += RELAY_SYNC_INTERVAL_SECS;
                 vc_status_list_sync_elapsed += RELAY_SYNC_INTERVAL_SECS;
@@ -2773,7 +2773,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         *overlay_ip_cidr = cached_ip;
                     }
                     if !*is_ca {
-                        *ca_host = resolve_ca_ip_from_config_inner();
+                        *ca_host = resolve_ca_ip_from_config_inner().await;
                     }
                     publish_args = Some((overlay_ip_cidr.clone(), ca_host.clone(), *is_ca));
                 }
@@ -3038,7 +3038,7 @@ async fn refresh_and_publish_did_doc_inner(
 
 // ── Helper function (add to main.rs as a nested fn or module fn) ─────────
 // Resolves nodeA's LAN IP from its config file (written by UDP broadcast).
-fn resolve_ca_ip_from_config_inner() -> String {
+async fn resolve_ca_ip_from_config_inner() -> String {
     // Give broadcasts a short window to populate nodeA's config on members.
     for attempt in 1..=20 {
         for path in &[
@@ -3054,7 +3054,7 @@ fn resolve_ca_ip_from_config_inner() -> String {
         if attempt == 1 {
             eprintln!("⏳ Waiting for nodeA LAN IP via discovery/config sync...");
         }
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
     eprintln!(
         "⚠️  Could not find nodeA LAN IP from config files. \
