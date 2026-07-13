@@ -134,6 +134,12 @@ fn resolver(ca_host: &str) -> Resolver {
     })
 }
 
+// Held across .await deliberately: these tests mutate process-wide env vars
+// (SELF_DOC_PATH_ENV etc.) that the async resolve() calls read, so the lock
+// must serialize the WHOLE test, not just setup, against other tests running
+// in parallel threads. #[tokio::test] here defaults to a current-thread
+// runtime, so there's no cross-thread guard hand-off for this to deadlock.
+#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn resolves_from_local_peer_doc() {
     let _lock = doc_persistence::lock_test_env();
@@ -161,6 +167,7 @@ async fn resolves_from_local_peer_doc() {
     );
 }
 
+#[allow(clippy::await_holding_lock)] // see resolves_from_local_peer_doc
 #[tokio::test]
 async fn mem_cache_hit_within_ttl() {
     let _lock = doc_persistence::lock_test_env();
@@ -184,6 +191,7 @@ async fn mem_cache_hit_within_ttl() {
     assert!(second.ttl_remaining_sec <= 3600);
 }
 
+#[allow(clippy::await_holding_lock)] // see resolves_from_local_peer_doc
 #[tokio::test]
 async fn invalidate_refreshes_after_peer_doc_update() {
     let _lock = doc_persistence::lock_test_env();
@@ -219,6 +227,7 @@ async fn invalidate_refreshes_after_peer_doc_update() {
     assert_eq!(refreshed.dkp_version, 5);
 }
 
+#[allow(clippy::await_holding_lock)] // see resolves_from_local_peer_doc
 #[tokio::test]
 async fn rejected_aggregate_doc_does_not_seed_mem_cache() {
     let _lock = doc_persistence::lock_test_env();
@@ -257,6 +266,7 @@ async fn rejected_aggregate_doc_does_not_seed_mem_cache() {
     assert!(matches!(err, DidError::Unresolvable(ref value) if value == &did));
 }
 
+#[allow(clippy::await_holding_lock)] // see resolves_from_local_peer_doc
 #[tokio::test]
 async fn resolves_from_local_aggregate() {
     let _lock = doc_persistence::lock_test_env();
@@ -275,6 +285,7 @@ async fn resolves_from_local_aggregate() {
     assert_eq!(result.did, did);
 }
 
+#[allow(clippy::await_holding_lock)] // see resolves_from_local_peer_doc
 #[tokio::test]
 async fn resolves_from_ca_network() {
     let _lock = doc_persistence::lock_test_env();
@@ -295,6 +306,7 @@ async fn resolves_from_ca_network() {
     assert_eq!(result.did, did);
 }
 
+#[allow(clippy::await_holding_lock)] // see resolves_from_local_peer_doc
 #[tokio::test]
 async fn unreachable_ca_network_returns_friendly_message() {
     let _lock = doc_persistence::lock_test_env();
@@ -320,6 +332,7 @@ async fn unreachable_ca_network_returns_friendly_message() {
     }
 }
 
+#[allow(clippy::await_holding_lock)] // see resolves_from_local_peer_doc
 #[tokio::test]
 async fn reject_deactivated_mode_returns_deactivated_error() {
     let _lock = doc_persistence::lock_test_env();
@@ -344,6 +357,7 @@ async fn reject_deactivated_mode_returns_deactivated_error() {
     assert!(matches!(err, DidError::Deactivated(_)));
 }
 
+#[allow(clippy::await_holding_lock)] // see resolves_from_local_peer_doc
 #[tokio::test]
 async fn malformed_did_returns_invalid_format() {
     let _lock = doc_persistence::lock_test_env();
