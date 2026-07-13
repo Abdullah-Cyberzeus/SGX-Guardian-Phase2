@@ -58,8 +58,10 @@ fn nebula_endpoint_parsing() {
 fn conflict_rule_is_deterministic_and_symmetric() {
     let older = sample_entry("did:guardian:target", "2026-07-01T00:00:00Z", "urn:uuid:a");
     let newer = sample_entry("did:guardian:target", "2026-07-02T00:00:00Z", "urn:uuid:b");
-    assert!(incoming_wins(&newer, &older));
-    assert!(!incoming_wins(&older, &newer));
+    // Later timestamp wins: an older incoming entry must not displace a newer existing one.
+    assert!(!incoming_wins(&newer, &older));
+    // ...but a newer incoming entry must displace an older existing one.
+    assert!(incoming_wins(&older, &newer));
     let twin_a = sample_entry("did:guardian:t2", "2026-07-01T00:00:00Z", "urn:uuid:c");
     let twin_b = sample_entry("did:guardian:t2", "2026-07-01T00:00:00Z", "urn:uuid:d");
     assert_ne!(

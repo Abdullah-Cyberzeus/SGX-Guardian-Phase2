@@ -79,11 +79,25 @@ pub async fn verify_entry(
     let timestamp = DateTime::parse_from_rfc3339(&entry.timestamp)
         .map_err(|error| CrlError::InvalidStructure(format!("timestamp: {}", error)))?;
     let now = Utc::now();
-    let skew_minutes = (now - timestamp.with_timezone(&Utc)).num_minutes().abs();
-    if skew_minutes > 60 * 24 * 365 {
+    let skew = now.signed_duration_since(timestamp.with_timezone(&Utc));
+
+    // Future-dated entries beyond normal clock drift are rejected outright —
+    // a legitimate entry's timestamp should never be meaningfully ahead of
+    // "now" on any honest node.
+    const MAX_FUTURE_SKEW_MINUTES: i64 = 15;
+    if skew < chrono::Duration::minutes(-MAX_FUTURE_SKEW_MINUTES) {
         return Err(CrlError::InvalidStructure(
-            "timestamp too far from local clock".into(),
+            "timestamp too far in the future".into(),
         ));
+    }
+
+    // Entries older than CRL_ENTRY_MAX_AGE_DAYS are expired. This bounds how
+    // far an attacker-backdated timestamp can reach and pairs with the
+    // latest-wins gossip merge rule (store::incoming_wins) so a stale,
+    // backdated entry can't be kept alive indefinitely.
+    const CRL_ENTRY_MAX_AGE_DAYS: i64 = 365;
+    if skew.num_days() > CRL_ENTRY_MAX_AGE_DAYS {
+        return Err(CrlError::InvalidStructure("CRL entry expired".into()));
     }
 
     let resolved = resolver

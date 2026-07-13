@@ -38,14 +38,16 @@ pub struct MergeOutcome {
 }
 
 /// Deterministic conflict rule when two independently-issued, verified
-/// entries revoke the SAME DID: earlier `timestamp` wins; ties break on
-/// the lexicographically lower fingerprint. Every node applies the same
-/// rule, so entry sets (and therefore Merkle roots) converge.
+/// entries revoke the SAME DID: LATER `timestamp` wins (an attacker who
+/// backdates a revocation must not be able to pin a stale entry over a
+/// genuinely more recent one); ties break on the lexicographically lower
+/// fingerprint. Every node applies the same rule, so entry sets (and
+/// therefore Merkle roots) converge.
 pub fn incoming_wins(existing: &CrlEntry, incoming: &CrlEntry) -> bool {
     let existing_ts = DateTime::parse_from_rfc3339(&existing.timestamp).ok();
     let incoming_ts = DateTime::parse_from_rfc3339(&incoming.timestamp).ok();
     match (incoming_ts, existing_ts) {
-        (Some(incoming), Some(existing)) if incoming != existing => incoming < existing,
+        (Some(incoming), Some(existing)) if incoming != existing => incoming > existing,
         _ => incoming.fingerprint() < existing.fingerprint(),
     }
 }
