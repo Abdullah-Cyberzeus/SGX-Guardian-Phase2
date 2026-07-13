@@ -2756,12 +2756,6 @@ Peer DID resolution response (`?did=did:guardian:...`):
   - `400 BAD_REQUEST`: invalid `target_cidr`, `timeout_secs`, or schedule intensity
   - `500 INTERNAL_SERVER_ERROR`: schedule serialization/write failure
 
-- Success response (`200 OK`):
-  - Same schema as `GET /discovery/schedule`
-- Error responses:
-  - `400 BAD_REQUEST`: invalid `target_cidr`, `timeout_secs`, or schedule intensity
-  - `500 INTERNAL_SERVER_ERROR`: schedule serialization/write failure
-
 ## 4. Threat Endpoint Contracts
 
 ### GET `/threat/alerts`

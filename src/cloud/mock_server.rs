@@ -7,7 +7,7 @@ pub async fn run_mock_cloud(addr: ([u8; 4], u16)) {
     let app = Router::new().route("/uplink", post(handle_uplink));
 
     println!(
-        "[MOCK CLOUD] Listening on http://{}.{}",
+        "[MOCK CLOUD] Listening on http://{}:{}",
         addr.0
             .iter()
             .map(|b| b.to_string())
