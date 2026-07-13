@@ -1483,7 +1483,9 @@ mod tests {
         doc_persistence::save_self(&current_doc).expect("save self doc");
         doc_persistence::write_self_floor_version(current_doc.sgx_version_id)
             .expect("write self floor version");
-        let older_path = td.path().join("older_did_doc.json");
+        // Must live under the configured self-doc directory — document_verify's
+        // path parameter is now restricted to the configured DID doc directories.
+        let older_path = td.path().join("identity").join("older_did_doc.json");
         std::fs::write(
             &older_path,
             serde_json::to_vec_pretty(&older_doc).expect("older doc json"),
@@ -1509,6 +1511,41 @@ mod tests {
             .as_str()
             .expect("verify error message")
             .contains("older than locally known v5"));
+    }
+
+    #[allow(clippy::await_holding_lock)] // see vc_issue_reuse_status_and_safe_file_reads_work
+    #[tokio::test]
+    async fn did_document_verify_rejects_path_outside_configured_directories() {
+        let _lock = doc_persistence::lock_test_env();
+        let td = TempDir::new().expect("tempdir");
+        let self_doc_path = td.path().join("identity").join("did_doc.json");
+        let peers_dir = td.path().join("identity").join("peers");
+        let aggregate_path = td.path().join("identity").join("circle_did_docs.json");
+        let _env = EnvGuard::new(&self_doc_path, &peers_dir, &aggregate_path);
+
+        // A file that exists but sits OUTSIDE the configured DID directories —
+        // must be rejected before it ever reaches fs::read_to_string.
+        let outside_path = td.path().join("outside_did_doc.json");
+        std::fs::write(&outside_path, b"{}").expect("write outside file");
+
+        let (base_url, handle) = spawn_api().await;
+        let response = reqwest::Client::new()
+            .post(format!("{}/api/v1/did/document/verify", base_url))
+            .json(&serde_json::json!({
+                "path": outside_path
+            }))
+            .send()
+            .await
+            .expect("verify request");
+        let status = response.status();
+        let body: Value = response.json().await.expect("verify error body");
+        handle.abort();
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"]["message"]
+            .as_str()
+            .expect("verify error message")
+            .contains("configured DID document directories"));
     }
 
     #[tokio::test]

@@ -450,7 +450,36 @@ fn verify_request_path(path: Option<String>) -> Result<PathBuf, ApiError> {
                     "path must not be empty when provided".to_string(),
                 ));
             }
-            Ok(PathBuf::from(trimmed))
+
+            // SECURITY: this path came straight from the request body with no
+            // validation, straight into fs::read_to_string via
+            // load_doc_at_path — an unauthenticated caller could point it at
+            // any file on the host (e.g. /etc/shadow, the PA private key).
+            // Resolve symlinks/".." and require the result to live under one
+            // of the configured DID document directories (dynamic, not
+            // hardcoded, so this also works under test env-var overrides).
+            let resolved = Path::new(trimmed)
+                .canonicalize()
+                .map_err(|e| ApiError::BadRequest(format!("invalid path: {}", e)))?;
+
+            let allowed_roots: Vec<PathBuf> = [
+                doc_persistence::configured_self_doc_path()
+                    .parent()
+                    .map(Path::to_path_buf),
+                Some(doc_persistence::configured_peers_doc_dir()),
+            ]
+            .into_iter()
+            .flatten()
+            .filter_map(|root| root.canonicalize().ok())
+            .collect();
+
+            if !allowed_roots.iter().any(|root| resolved.starts_with(root)) {
+                return Err(ApiError::BadRequest(
+                    "path must be under the configured DID document directories".to_string(),
+                ));
+            }
+
+            Ok(resolved)
         }
         None => Ok(doc_persistence::configured_self_doc_path()),
     }
