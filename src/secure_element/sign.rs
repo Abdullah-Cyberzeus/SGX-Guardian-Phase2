@@ -28,6 +28,9 @@ impl SeSigner {
     /// Sign data — key never leaves SE050 hardware.
     /// Writes data to temp file, ssscli signs inside chip, reads signature back.
     pub fn sign(&self, key_id: u32, data: &[u8]) -> Result<Vec<u8>, SeError> {
+        if crate::secure_element::tamper::is_tampered() {
+            return Err(SeError::TamperDetected);
+        }
         let hex_id = format!("0x{:08X}", key_id);
         let sign_id = Uuid::new_v4().simple().to_string();
         let sign_tag = &sign_id[..8];
@@ -52,6 +55,9 @@ impl SeSigner {
 
     /// Verify signature using SE050.
     pub fn verify(&self, key_id: u32, data: &[u8], sig: &[u8]) -> Result<bool, SeError> {
+        if crate::secure_element::tamper::is_tampered() {
+            return Err(SeError::TamperDetected);
+        }
         let hex_id = format!("0x{:08X}", key_id);
         let verify_id = Uuid::new_v4().simple().to_string();
         let verify_tag = &verify_id[..8];
