@@ -18,10 +18,18 @@ pub use list::CertificateRevocationList;
 /// Reads the locally-persisted `crl.json`. Callers that need fresher data
 /// should first wait for gossip convergence or trigger a fresh sync. For
 /// the current baseline this is the canonical "are you allowed to talk" gate.
+///
+/// Fails CLOSED: if the CRL file exists but cannot be loaded or parsed, the
+/// DID is treated as revoked until the CRL is readable again, rather than
+/// silently letting revoked DIDs through.
 pub fn is_revoked(did: &str) -> bool {
     match persistence::load_crl() {
         Ok(Some(crl)) => crl.contains(did),
-        _ => false,
+        Ok(None) => false, // no CRL file yet — fresh install, no revocations
+        Err(e) => {
+            eprintln!("⚠️ CRL load failed (fail-closed): {}", e);
+            true
+        }
     }
 }
 
