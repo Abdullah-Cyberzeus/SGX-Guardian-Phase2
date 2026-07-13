@@ -72,9 +72,36 @@ pub async fn pull_and_apply_aggregate(ca_host: &str) -> Result<Vec<String>, DidE
 
 pub async fn ca_ingest_published(payload: &str) -> Result<(), DidError> {
     let doc: DidDocument = serde_json::from_str(payload)?;
-    let floor = crate::did::doc_persistence::load_peer(&doc.did()?)?
-        .map(|existing| existing.sgx_version_id)
-        .unwrap_or(0);
+    let existing = crate::did::doc_persistence::load_peer(&doc.did()?)?;
+
+    // SECURITY: bind doc.id to the signing key. verify_with_replay_protection
+    // only checks that the document's embedded proof is internally
+    // consistent (signed by the key embedded in the SAME document) — it
+    // never checks that doc.id actually belongs to that key. Without this, an
+    // overlay member could publish a doc claiming id: "did:guardian:<owner
+    // hash>", signed with their OWN key, and it would pass (the signature IS
+    // valid — just from the wrong identity), overwriting the CA's record of
+    // an already-known DID with an attacker-controlled key. A key change is
+    // only accepted if the version is higher (a legitimate rotation).
+    if let Some(existing) = &existing {
+        let existing_key = existing
+            .verification_method
+            .first()
+            .map(|vm| (vm.public_key_jwk.x.clone(), vm.public_key_jwk.y.clone()));
+        let incoming_key = doc
+            .verification_method
+            .first()
+            .map(|vm| (vm.public_key_jwk.x.clone(), vm.public_key_jwk.y.clone()));
+
+        if existing_key != incoming_key && doc.sgx_version_id <= existing.sgx_version_id {
+            return Err(DidError::InvalidFormat(format!(
+                "key change for {} requires version > {} (got {})",
+                doc.id, existing.sgx_version_id, doc.sgx_version_id
+            )));
+        }
+    }
+
+    let floor = existing.map(|e| e.sgx_version_id).unwrap_or(0);
     verify_with_replay_protection(&doc, floor)?;
     save_peer(&doc)?;
     let aggregate = list_peer_docs()?;
@@ -140,5 +167,80 @@ fn local_floor_version(doc: &DidDocument) -> u32 {
             .map(|existing| existing.sgx_version_id)
             .unwrap_or(0),
         Err(_) => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::did::doc_persistence::{self, PEERS_DOC_DIR_ENV, SELF_DOC_PATH_ENV};
+    use crate::did::document::DocBuildInput;
+    use crate::did::{doc_sign, Did};
+    use crate::key_manager::KeyManager;
+    use tempfile::TempDir;
+
+    fn signed_doc(did: &str, km: &KeyManager, version: u32) -> DidDocument {
+        let der = km.pubkey_der().expect("pubkey der");
+        let mut doc = DidDocument::build(DocBuildInput {
+            did,
+            node_name: Some("node-test"),
+            current_dkp_version: 1,
+            current_dkp_pubkey_der: &der,
+            overlay_ip_cidr: None,
+            attestation_bind: None,
+            cert_bootstrap_bind: None,
+            revoked: vec![],
+            previous_version_id: version.saturating_sub(1),
+            created_at: None,
+            status: None,
+        })
+        .expect("build did doc");
+        let vm_ref = doc.verification_method[0].id.clone();
+        doc_sign::sign_in_place(&mut doc, km, &vm_ref).expect("sign did doc");
+        doc
+    }
+
+    // Held across .await deliberately: this test mutates process-wide env
+    // vars (SELF_DOC_PATH_ENV etc.) that the async ca_ingest_published() call
+    // reads, so the lock must serialize the whole test, not just setup,
+    // against other tests running in parallel threads. #[tokio::test] here
+    // defaults to a current-thread runtime, so there's no cross-thread guard
+    // hand-off for this to deadlock.
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn ca_ingest_rejects_key_change_at_same_or_lower_version() {
+        let _lock = doc_persistence::lock_test_env();
+        let td = TempDir::new().expect("tempdir");
+        let self_doc_path = td.path().join("identity").join("did_doc.json");
+        let peers_dir = td.path().join("identity").join("peers");
+        std::env::set_var(SELF_DOC_PATH_ENV, &self_doc_path);
+        std::env::set_var(PEERS_DOC_DIR_ENV, &peers_dir);
+
+        let did = Did::from_id_bytes(&[41u8; 32]).to_string();
+        let owner_km =
+            KeyManager::load_or_generate(td.path().join("owner.key").to_str().unwrap()).unwrap();
+        let attacker_km =
+            KeyManager::load_or_generate(td.path().join("attacker.key").to_str().unwrap()).unwrap();
+
+        let genuine = signed_doc(&did, &owner_km, 1);
+        doc_persistence::save_peer(&genuine).expect("save genuine peer doc");
+
+        // Attacker claims the SAME DID, signs with their OWN key, at the same version.
+        let forged = signed_doc(&did, &attacker_km, 1);
+        let payload = serde_json::to_string(&forged).expect("forged payload");
+
+        let err = ca_ingest_published(&payload)
+            .await
+            .expect_err("key change at same version must be rejected");
+        assert!(matches!(err, DidError::InvalidFormat(msg) if msg.contains("key change")));
+
+        // The genuine peer doc must be untouched.
+        let stored = doc_persistence::load_peer(&Did::parse(&did).unwrap())
+            .expect("load peer")
+            .expect("peer doc still present");
+        assert!(stored.substantively_equal(&genuine));
+
+        std::env::remove_var(SELF_DOC_PATH_ENV);
+        std::env::remove_var(PEERS_DOC_DIR_ENV);
     }
 }
