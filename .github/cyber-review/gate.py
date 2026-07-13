@@ -5,10 +5,15 @@ The LLM review is non-deterministic, so the *model* never decides merge-ability.
 It only emits a structured findings file; THIS script applies a fixed policy.
 
 Policy ("passing" = exit 0):
-  A finding BLOCKS merge iff  severity in {critical, high}
+  A finding BLOCKS merge iff  severity in BLOCKING severities
                          AND  confidence in {high, medium}.
-  Everything else (low/medium severity, or low-confidence high/critical) is
-  advisory and never blocks.
+  Everything else is advisory and never blocks.
+
+  Blocking severities depend on the release phase (see ADR 0002):
+    PRE_GA=true   -> {critical}          (feature-buildout posture; high and
+                                          below are auto-filed as tracked
+                                          security-debt issues instead)
+    PRE_GA unset  -> {critical, high}    (release/hardening posture)
 
 Break-glass:
   If the PR carries the `security-override` label, the gate is advisory for that
@@ -21,12 +26,14 @@ Fail-closed:
 
 Usage: gate.py <findings.json>
 Env:   HAS_OVERRIDE = "true" when the PR has the security-override label.
+       PRE_GA       = "true" to block on critical only (pre-GA posture).
 """
 import json
 import os
 import sys
 
-BLOCKING_SEVERITY = {"critical", "high"}
+PRE_GA = os.environ.get("PRE_GA", "").lower() == "true"
+BLOCKING_SEVERITY = {"critical"} if PRE_GA else {"critical", "high"}
 BLOCKING_CONFIDENCE = {"high", "medium"}
 
 
@@ -88,8 +95,12 @@ def main() -> int:
             lines.append(f"| {sev} | {counts[sev]} |")
     lines.append("")
 
+    sev_set = "{" + ",".join(sorted(BLOCKING_SEVERITY)) + "}"
+    if PRE_GA:
+        lines.append("_Pre-GA posture: only critical blocks; high and below are tracked as security-debt issues (ADR 0002)._")
+        lines.append("")
     if blocking:
-        lines.append(f"**{len(blocking)} blocking finding(s)** (severity∈{{critical,high}} ∧ confidence∈{{high,medium}}):")
+        lines.append(f"**{len(blocking)} blocking finding(s)** (severity∈{sev_set} ∧ confidence∈{{high,medium}}):")
         lines.append("")
         for f in blocking:
             loc = f.get("file", "?")
