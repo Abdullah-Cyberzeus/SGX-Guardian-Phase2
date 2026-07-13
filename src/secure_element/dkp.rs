@@ -83,6 +83,14 @@ impl DkpManager {
         let metadata_path = format!("{}/keys/dkp_metadata.json", base_path);
         let public_key_path = format!("{}/keys/dkp_pub.der", base_path);
 
+        // Guards against the Fix-5 restore block (below) immediately undoing
+        // a quarantine performed earlier in this SAME boot: without this,
+        // a confirmed-absent slot gets its metadata renamed to
+        // dkp_metadata.json.stale.<ts>, then the restore block finds that
+        // exact file moments later and renames it straight back, defeating
+        // the quarantine and blocking re-provisioning forever.
+        let mut quarantined_this_boot = false;
+
         // Try to load existing metadata history
         if let Ok(history) = DkpKeyHistory::load(&metadata_path) {
             if let Some(active) = history.active_key() {
@@ -119,6 +127,7 @@ impl DkpManager {
                     let quarantine =
                         format!("{}.stale.{}", metadata_path, chrono::Utc::now().timestamp());
                     let _ = std::fs::rename(&metadata_path, &quarantine);
+                    quarantined_this_boot = true;
                     // Fall through to fresh-provision branch below.
                 } else {
                     if let SlotProbe::Unknown = probe {
@@ -166,7 +175,7 @@ impl DkpManager {
         // public key DER is still intact on disk, the SE050 slot almost
         // certainly still holds the original key — regenerating would
         // permanently change the device identity and break the DID/baseline.
-        if !Path::new(&metadata_path).exists() {
+        if !Path::new(&metadata_path).exists() && !quarantined_this_boot {
             if let Some(parent) = Path::new(&metadata_path).parent() {
                 if let Ok(entries) = std::fs::read_dir(parent) {
                     let mut quarantines: Vec<std::path::PathBuf> = entries
