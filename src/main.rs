@@ -307,6 +307,56 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // === SE050 Tamper Detection — arm at startup ===
+    // Deliberately does NOT go through Se050::init(), which resets the
+    // applet: re-probing/reinitializing SE050 after DKP/DIK have already
+    // established state on this boot has previously amplified chip
+    // contention issues on this hardware (see the DKP auto-rotation
+    // comment above). connect() alone is safe to call again — "session
+    // already open" is a normal, expected warning — so this only reads
+    // the UID/cert UID to establish the tamper-detection baseline.
+    #[cfg(feature = "secure-element")]
+    let se050_tamper_handle: Option<std::sync::Arc<secure_element::se050::Se050>> = {
+        let se_config = secure_element::SeConfig::default();
+        let cli = secure_element::ssscli::SssCli::new(se_config.clone());
+        match cli.connect() {
+            Ok(_) => {
+                let uid = cli.get_uid().ok();
+                let cert_uid = cli.get_certuid().ok();
+                let se = secure_element::se050::Se050 {
+                    cli,
+                    config: se_config,
+                    uid,
+                    cert_uid,
+                    status: secure_element::se050::SeStatus::Active,
+                };
+                let tamper_status = secure_element::tamper::check_tamper(&se);
+                if tamper_status == secure_element::tamper::TamperStatus::Detected {
+                    eprintln!("🔴 SE050 TAMPER DETECTED — all crypto operations blocked");
+                    log_audit(
+                        &node_id,
+                        AuditCategory::Cryptography,
+                        AuditSeverity::Critical,
+                        AuditAction::Failed,
+                        "SE050 tamper detected at startup — crypto blocked",
+                    );
+                } else {
+                    println!("✅ SE050 tamper check: OK");
+                }
+                Some(std::sync::Arc::new(se))
+            }
+            Err(e) => {
+                eprintln!(
+                    "⚠️ SE050 tamper baseline unavailable: {} — tamper detection disabled this boot",
+                    e
+                );
+                None
+            }
+        }
+    };
+    #[cfg(not(feature = "secure-element"))]
+    let _se050_tamper_handle: Option<()> = None;
+
     // === DID Initialization (W3C DID / did:guardian) ===
     println!("\n🆔 Initializing W3C DID (did:guardian)...");
     {
@@ -2726,6 +2776,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // background uptime tracker + heartbeat writer
     let node_id_clone = node_id.clone();
     let metrics_clone = metrics.clone();
+    #[cfg(feature = "secure-element")]
+    let se050_tamper_handle_clone = se050_tamper_handle.clone();
     tokio::spawn(async move {
         let heartbeat_path = "/tmp/sgx_guardian_heartbeat";
         loop {
@@ -2733,6 +2785,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let m = metrics_clone.lock().await;
                 let uptime = m.uptime().as_secs();
                 log_event(&node_id_clone, &format!("Uptime: {} seconds", uptime));
+            }
+            // Re-check SE050 tamper status each heartbeat — check_tamper()
+            // sets the global TAMPER_DETECTED flag, which blocks all
+            // sign()/verify() operations if a chip swap or comms loss is
+            // detected mid-run, not just at startup.
+            #[cfg(feature = "secure-element")]
+            if let Some(se) = se050_tamper_handle_clone.as_ref() {
+                if secure_element::tamper::check_tamper(se)
+                    == secure_element::tamper::TamperStatus::Detected
+                {
+                    eprintln!("🔴 SE050 TAMPER DETECTED — all crypto operations blocked");
+                }
             }
             // Write heartbeat file — external watchdog monitors this
             let _ = std::fs::write(heartbeat_path, chrono::Utc::now().to_rfc3339());
