@@ -355,6 +355,10 @@ impl NmapConfig {
             args.push("--exclude".to_string());
             args.push(ex.clone());
         }
+        // `--` ends option parsing: an ad-hoc scan target (REST/CLI-supplied,
+        // only trimmed upstream) can never be misparsed as an nmap flag
+        // (e.g. "--script=...", "-oN ...") regardless of its content.
+        args.push("--".to_string());
         args.push(target.to_string());
         args
     }
@@ -636,6 +640,21 @@ schedules:
         assert!(args
             .windows(2)
             .any(|w| w[0] == "--host-timeout" && w[1] == "180s"));
+    }
+
+    #[test]
+    fn target_is_preceded_by_end_of_options_separator() {
+        // A malicious/malformed target (e.g. "--script=evil.nse") must never
+        // be parsed by nmap as a flag — `--` must immediately precede it.
+        let cfg = NmapConfig::default();
+        let malicious_target = "--script=evil.nse";
+        let args = cfg.nmap_args_for_intensity(malicious_target, ScanIntensity::Standard);
+        let target_pos = args
+            .iter()
+            .position(|a| a == malicious_target)
+            .expect("target present in args");
+        assert_eq!(args[target_pos - 1], "--");
+        assert_eq!(target_pos, args.len() - 1, "target must be the last arg");
     }
 
     #[test]
