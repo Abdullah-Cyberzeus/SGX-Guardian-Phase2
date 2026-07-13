@@ -283,9 +283,14 @@ impl CertService for MyCertService {
                 let signed_cert = tokio::fs::read_to_string(&cert_path)
                     .await
                     .unwrap_or_default();
-                let node_key = tokio::fs::read_to_string(&key_path)
-                    .await
-                    .unwrap_or_default();
+                // SECURITY: never return the private key on this idempotency
+                // path — it skips the YAML approval step entirely, so any
+                // unauthenticated LAN caller who guesses/knows a node_id could
+                // otherwise fetch that node's private key without approval.
+                // A legitimate re-requesting client already has its own key
+                // file locally and ignores this field (see cert_client.rs's
+                // `!Path::new(&key_path).exists()` guard before writing it).
+                let node_key = String::new();
                 let ca_cert_pem =
                     tokio::fs::read_to_string(format!("{}/ca/ca.crt", NEBULA_BASE_DIR))
                         .await
