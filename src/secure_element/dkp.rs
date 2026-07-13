@@ -49,19 +49,7 @@ fn probe_slot_with_retry(config: &SeConfig, slot_hex: &str, attempts: u8) -> Opt
                 );
             }
         }
-        // Clear stale session pickle so the next connect() is clean.
-        // ssscli writes ~/.ssscli_session.pkl (note the leading char varies
-        // by ssscli version: "~.ssscli_session.pkl" on these boards).
-        if let Some(home) = std::env::var_os("HOME") {
-            let home = home.to_string_lossy().to_string();
-            for candidate in [
-                format!("{}/.ssscli_session.pkl", home),
-                format!("{}/~.ssscli_session.pkl", home),
-                format!("{}/~.ssscli_session.pkl", "/root"),
-            ] {
-                let _ = std::fs::remove_file(&candidate);
-            }
-        }
+        crate::secure_element::ssscli::clear_stale_session_pickle();
     }
     None
 }

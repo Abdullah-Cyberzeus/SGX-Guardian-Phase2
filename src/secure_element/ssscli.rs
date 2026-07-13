@@ -18,8 +18,22 @@
 
 use crate::secure_element::config::SeConfig;
 use crate::secure_element::error::SeError;
+use once_cell::sync::Lazy;
 use std::process::Command;
+use std::sync::Mutex;
 use tracing::{debug, error};
+
+/// Serializes ALL SE050 subprocess access process-wide.
+///
+/// SE050 talks over a single I2C session (t1oi2c). Many independent call
+/// sites — DKP loading, DIK, VC/CRL signing, attestation, PCR, key rotation —
+/// each open their own ssscli session with zero coordination. Two concurrent
+/// invocations race for the same physical session and `sss_session_open`
+/// fails on the loser (seen as "SE050 sign failed ... sss_session_open
+/// failed. status: FAILED" during member VC issuance while another SE050
+/// operation was in flight). Every ssscli command funnels through `run()`
+/// below, so locking there serializes all SE050 access with one guard.
+static SE050_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 /// Wrapper around NXP ssscli command-line tool.
 pub struct SssCli {
@@ -123,7 +137,45 @@ impl SssCli {
 
     // ── Internal ────────────────────────────────────────────
 
+    /// Every ssscli invocation, retried on failure.
+    ///
+    /// ssscli persists its session in `~/.ssscli_session.pkl` across process
+    /// invocations. That session state can get stuck (seen as e.g. "SE050
+    /// sign failed ... sss_session_open failed. status: FAILED" during VC
+    /// issuance, even with SE050_LOCK preventing true concurrent access —
+    /// the *previous* invocation's session wasn't left in a state the next
+    /// one can resume). DkpManager's slot-probe path already worked around
+    /// this for years by clearing the stale pickle and retrying; generalizing
+    /// that proven fix here covers every ssscli caller (sign, verify,
+    /// connect, key generation, ...), not just slot probing.
+    const RUN_ATTEMPTS: u8 = 3;
+
     fn run(&self, args: &[&str]) -> Result<String, SeError> {
+        let _se050_guard = SE050_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let mut last_err = None;
+        for attempt in 1..=Self::RUN_ATTEMPTS {
+            match self.run_once(args) {
+                Ok(out) => return Ok(out),
+                Err(e) => {
+                    if attempt < Self::RUN_ATTEMPTS {
+                        debug!(
+                            "ssscli {} attempt {}/{} failed, clearing stale session and retrying: {}",
+                            args.join(" "),
+                            attempt,
+                            Self::RUN_ATTEMPTS,
+                            e
+                        );
+                        clear_stale_session_pickle();
+                    }
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(last_err.expect("loop runs at least once"))
+    }
+
+    fn run_once(&self, args: &[&str]) -> Result<String, SeError> {
         let cmd_str = format!("ssscli {}", args.join(" "));
         debug!("Executing: {}", cmd_str);
 
@@ -172,6 +224,22 @@ impl SssCli {
             }
         }
         None
+    }
+}
+
+/// Remove ssscli's persisted session file so the next invocation opens a
+/// fresh session instead of resuming a stuck one. Session file naming
+/// varies by ssscli version (leading char observed as "~" on-board).
+pub(crate) fn clear_stale_session_pickle() {
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = home.to_string_lossy().to_string();
+        for candidate in [
+            format!("{}/.ssscli_session.pkl", home),
+            format!("{}/~.ssscli_session.pkl", home),
+            format!("{}/~.ssscli_session.pkl", "/root"),
+        ] {
+            let _ = std::fs::remove_file(&candidate);
+        }
     }
 }
 

@@ -26,7 +26,7 @@ pub struct IssueRequest<'a> {
     pub evidence: Option<RevocationEvidence>,
 }
 
-pub fn load_runtime_signing_context() -> Result<(DidRecord, KeyManager), CrlError> {
+pub fn load_runtime_signing_context() -> Result<(DidRecord, std::sync::Arc<KeyManager>), CrlError> {
     let revoker = DidRecord::load(&did_path())?;
     let node_id =
         crate::vc::issue::resolve_runtime_node_id().unwrap_or_else(|| "nodeA".to_string());

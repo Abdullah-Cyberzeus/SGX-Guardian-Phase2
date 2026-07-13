@@ -10,9 +10,11 @@ use crate::vc::errors::VcError;
 use crate::vc::persistence;
 use crate::vc::status_list::StatusListManager;
 use chrono::{Duration, Utc};
-use std::collections::BTreeSet;
+use once_cell::sync::Lazy;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex as StdMutex};
 use uuid::Uuid;
 
 pub const DEFAULT_VC_DURATION_DAYS: i64 = 365;
@@ -457,22 +459,54 @@ pub fn resolve_runtime_node_id() -> Option<String> {
     (matches.len() == 1).then(|| matches.remove(0))
 }
 
-pub fn load_runtime_key_manager(node_id: &str) -> anyhow::Result<KeyManager> {
+/// Process-wide cache of runtime KeyManagers, keyed by the resolved key path.
+///
+/// load_runtime_key_manager() used to reconstruct a fresh KeyManager on
+/// EVERY call — CRL gossip (every 60s round), CRL issuance, cert-service VC
+/// issuance, and the VC REST API each independently re-ran DkpManager::init(),
+/// re-probing the SE050 slot every time ("Existing DKP found ... loading
+/// from SE050" printing far more often than at startup). Beyond the noisy
+/// logs, this meant far more SE050 traffic than necessary, increasing the
+/// odds of colliding with a concurrent SE050 operation. The underlying DKP
+/// key never changes at runtime, so it's safe to build it once and share it.
+///
+/// Keyed by the full resolved key path rather than node_id: tests reuse the
+/// same node_id (e.g. "nodeA") across isolated temp directories via
+/// SGX_GUARDIAN_DEVICE_KEY_DIR, and caching by node_id alone would leak a
+/// KeyManager built for one test's directory into another's. The key path
+/// already encodes that directory, so it's the correct identity to cache on
+/// and happens to make tests safe for free.
+static KEY_MANAGER_CACHE: Lazy<StdMutex<HashMap<String, Arc<KeyManager>>>> =
+    Lazy::new(|| StdMutex::new(HashMap::new()));
+
+pub fn load_runtime_key_manager(node_id: &str) -> anyhow::Result<Arc<KeyManager>> {
     let key_path = runtime_device_key_dir().join(format!("device_{}.key", node_id));
     let key_path = key_path.to_string_lossy().to_string();
+
+    if let Some(km) = KEY_MANAGER_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&key_path)
+    {
+        return Ok(km.clone());
+    }
+
     #[cfg(feature = "secure-element")]
-    {
-        KeyManager::init_with_se050(
-            &crate::secure_element::config::SeConfig::default(),
-            "/var/lib/sgx-guardian",
-            &key_path,
-        )
-        .or_else(|_| KeyManager::load_or_generate(&key_path))
-    }
+    let km = KeyManager::init_with_se050(
+        &crate::secure_element::config::SeConfig::default(),
+        "/var/lib/sgx-guardian",
+        &key_path,
+    )
+    .or_else(|_| KeyManager::load_or_generate(&key_path))?;
     #[cfg(not(feature = "secure-element"))]
-    {
-        KeyManager::load_or_generate(&key_path)
-    }
+    let km = KeyManager::load_or_generate(&key_path)?;
+
+    let km = Arc::new(km);
+    KEY_MANAGER_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(key_path, km.clone());
+    Ok(km)
 }
 
 fn runtime_device_key_dir() -> PathBuf {

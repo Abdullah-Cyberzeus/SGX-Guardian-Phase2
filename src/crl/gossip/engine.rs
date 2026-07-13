@@ -66,7 +66,7 @@ pub fn did_record_path() -> String {
         .unwrap_or_else(|_| crate::did::DEFAULT_DID_PATH.to_string())
 }
 
-fn load_identity(node_id: &str) -> Result<(DidRecord, KeyManager, String), String> {
+fn load_identity(node_id: &str) -> Result<(DidRecord, std::sync::Arc<KeyManager>, String), String> {
     let record =
         DidRecord::load(&did_record_path()).map_err(|error| format!("did record: {}", error))?;
     let km = crate::vc::issue::load_runtime_key_manager(node_id)

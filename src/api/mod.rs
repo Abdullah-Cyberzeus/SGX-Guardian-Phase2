@@ -745,6 +745,13 @@ mod tests {
         );
     }
 
+    // Held across .await deliberately: these tests mutate process-wide env
+    // vars (SELF_DOC_PATH_ENV etc. via VcEnvGuard/EnvGuard) that the async
+    // API calls read, so the lock must serialize the WHOLE test, not just
+    // setup, against other tests running in parallel threads. #[tokio::test]
+    // here defaults to a current-thread runtime, so there's no cross-thread
+    // guard hand-off for this to deadlock.
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn vc_issue_reuse_status_and_safe_file_reads_work() {
         let _lock = doc_persistence::lock_test_env();
@@ -848,6 +855,7 @@ mod tests {
         handle.abort();
     }
 
+    #[allow(clippy::await_holding_lock)] // see vc_issue_reuse_status_and_safe_file_reads_work
     #[tokio::test]
     async fn vc_renew_verify_revoke_summary_and_audit_routes_work() {
         let _lock = doc_persistence::lock_test_env();
@@ -1116,6 +1124,7 @@ mod tests {
         handle.abort();
     }
 
+    #[allow(clippy::await_holding_lock)] // see vc_issue_reuse_status_and_safe_file_reads_work
     #[tokio::test]
     async fn vc_verify_uses_same_resolver_cache_as_did_resolve_api() {
         let _lock = doc_persistence::lock_test_env();
@@ -1228,6 +1237,7 @@ mod tests {
         assert_eq!(body["error"]["code"], "BAD_REQUEST");
     }
 
+    #[allow(clippy::await_holding_lock)] // see vc_issue_reuse_status_and_safe_file_reads_work
     #[tokio::test]
     async fn did_document_routes_work_end_to_end() {
         let _lock = doc_persistence::lock_test_env();
@@ -1366,6 +1376,7 @@ mod tests {
         publish_handle.await.expect("mock ca task");
     }
 
+    #[allow(clippy::await_holding_lock)] // see vc_issue_reuse_status_and_safe_file_reads_work
     #[tokio::test]
     async fn did_resolve_query_returns_peer_resolution_result() {
         let _lock = doc_persistence::lock_test_env();
@@ -1456,6 +1467,7 @@ mod tests {
         assert_eq!(rules[4]["match_count"], 1);
     }
 
+    #[allow(clippy::await_holding_lock)] // see vc_issue_reuse_status_and_safe_file_reads_work
     #[tokio::test]
     async fn did_document_verify_rejects_replayed_lower_version() {
         let _lock = doc_persistence::lock_test_env();

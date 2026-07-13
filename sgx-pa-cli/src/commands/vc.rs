@@ -340,7 +340,7 @@ fn parse_permissions(raw: &str) -> Result<Vec<String>, String> {
 
 fn load_runtime_issuer_and_km() -> (
     sgx_guardian_client::did::DidRecord,
-    sgx_guardian_client::key_manager::KeyManager,
+    std::sync::Arc<sgx_guardian_client::key_manager::KeyManager>,
 ) {
     let node_id = issue::resolve_runtime_node_id().unwrap_or_else(|| "nodeA".to_string());
     let issuer =

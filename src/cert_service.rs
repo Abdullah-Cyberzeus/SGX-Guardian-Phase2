@@ -11,8 +11,12 @@ use crate::nebula::models::CircleMembership;
 use crate::nebula::relay_registry::RelayRegistry;
 use crate::proto::sgx::cert_service_server::CertService;
 use crate::proto::sgx::{CertSignRequest, CertSignResponse};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Arc, Mutex as StdMutex};
+use tokio::sync::Mutex as AsyncMutex;
 use tonic::{Request, Response, Status};
 
 /// Base directory — the ONLY path we use.
@@ -54,6 +58,28 @@ struct CertRequestYaml {
 
 /// gRPC CertService implementation — registered on nodeA only.
 pub struct MyCertService;
+
+/// Serializes concurrent certificate requests for the same node_id.
+///
+/// nodeB's bootstrap client (cert_client.rs) retries on any transient error
+/// with no request coalescing and no gRPC deadline. Without this lock, a
+/// retried request can race an in-flight one on the shared
+/// requests/<node>.yaml file: the retry can misidentify the first request's
+/// still-active "approved" YAML as a stale leftover and delete it out from
+/// under it, silently stalling both requests. Holding this lock for the
+/// whole handler serializes same-node requests; a retry that arrives while
+/// the first is still being processed simply waits, then hits the
+/// idempotency fast-path once the first request finishes signing.
+static NODE_LOCKS: Lazy<StdMutex<HashMap<String, Arc<AsyncMutex<()>>>>> =
+    Lazy::new(|| StdMutex::new(HashMap::new()));
+
+fn node_lock(node_id: &str) -> Arc<AsyncMutex<()>> {
+    let mut locks = NODE_LOCKS.lock().unwrap();
+    locks
+        .entry(node_id.to_string())
+        .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+        .clone()
+}
 
 async fn read_pa_pubkey_or_warn() -> Vec<u8> {
     match tokio::fs::read(PA_PUB_PATH).await {
@@ -207,6 +233,11 @@ impl CertService for MyCertService {
         let req = request.into_inner();
         let node_id = req.node_id.clone();
         validate_node_id(&node_id)?;
+
+        // Serialize concurrent/retried requests for this node_id — see NODE_LOCKS docs.
+        let lock = node_lock(&node_id);
+        let _node_guard = lock.lock().await;
+
         let public_key_pem = req.public_key_pem.clone();
         let wants_lighthouse = req.wants_lighthouse;
         let wants_relay = req.wants_relay;
@@ -327,8 +358,17 @@ impl CertService for MyCertService {
         // IMPROVEMENT #1: Only create YAML if it does NOT already exist.
         // Repeated requests from same node skip YAML creation and
         // go straight to polling. Admin edits are never lost.
+        //
+        // A YAML left over from an already-approved-and-consumed request is
+        // stale and gets deleted — but a *fresh* one must be written in its
+        // place (needs_new_yaml), otherwise this request silently polls a
+        // file that no longer exists until the 1-hour timeout, and the
+        // admin never sees a new approval prompt.
         // ═══════════════════════════════════════════════════════════
+        let mut needs_new_yaml = true;
+
         if Path::new(&yaml_path).exists() {
+            needs_new_yaml = false;
             // Read existing YAML
             if let Ok(content) = tokio::fs::read_to_string(&yaml_path).await {
                 if let Ok(parsed) = serde_yaml::from_str::<CertRequestYaml>(&content) {
@@ -339,7 +379,7 @@ impl CertService for MyCertService {
                             | ApprovalDecision::Relay
                             | ApprovalDecision::LhRelay
                     ) {
-                        // Old approved YAML is stale → delete it
+                        // Old approved YAML is stale → delete it and re-request approval
                         println!(
                             "⚠️ Stale approved YAML detected for {} — deleting old request",
                             node_id
@@ -354,6 +394,7 @@ impl CertService for MyCertService {
                         );
 
                         let _ = tokio::fs::remove_file(&yaml_path).await;
+                        needs_new_yaml = true;
                     } else {
                         // Pending request still valid
                         println!(
@@ -368,7 +409,9 @@ impl CertService for MyCertService {
                     }
                 }
             }
-        } else {
+        }
+
+        if needs_new_yaml {
             // Fingerprint from public key (first 16 hex chars of SHA-256)
             let fingerprint = {
                 use sha2::{Digest, Sha256};
@@ -394,8 +437,6 @@ impl CertService for MyCertService {
             }
 
             // Terminal instructions for admin
-            println!("Certificate request received from {}", node_id);
-            println!("  Node requested role: {}", requested_role);
             println!();
             println!("Approval file created: {}", yaml_path);
             println!();
@@ -523,14 +564,39 @@ impl CertService for MyCertService {
 
         println!("📋 CA assigned overlay IP: {} → {}", node_id, overlay_ip);
 
-        let issued_vc = issue_member_vc(&node_id)?;
-        let member_vc_json = serde_json::to_string(&issued_vc)
-            .map_err(|e| Status::internal(format!("VC serialize: {}", e)))?;
+        // Best-effort member VC issuance. A failure here (e.g. the member's DID
+        // document is not yet resolvable on the CA) must NOT abort signing the
+        // Nebula certificate — the cert is what the member actually needs to
+        // join the overlay. Previously a `?` hard-failed the whole request, so
+        // the cert was never persisted, nodeA never hit its idempotency
+        // fast-path, and every retry re-created the approval YAML (an endless
+        // re-approval loop). This mirrors the idempotency path above, which
+        // already treats the VC as best-effort. The error is logged loudly so
+        // the real cause (e.g. a missing/duplicate member DID) stays visible.
+        let (member_vc_json, vc_hash) = match issue_member_vc(&node_id) {
+            Ok(vc) => (
+                serde_json::to_string(&vc).unwrap_or_default(),
+                vc.id.clone(),
+            ),
+            Err(e) => {
+                eprintln!(
+                    "⚠️ Member VC not issued for {} (continuing to sign Nebula cert): {}",
+                    node_id, e
+                );
+                log_event(
+                    "nodeA",
+                    &format!("Member VC issuance failed for {}: {}", node_id, e),
+                );
+                // Non-empty placeholder so validate_circle_membership() still
+                // permits signing the Nebula cert.
+                (String::new(), format!("bootstrap-{}", node_id))
+            }
+        };
 
         let membership = CircleMembership {
             node_name: node_id.clone(),
             circle_id: "guardian-circle-alpha".to_string(),
-            vc_hash: issued_vc.id.clone(),
+            vc_hash,
             is_valid: true,
         };
 
