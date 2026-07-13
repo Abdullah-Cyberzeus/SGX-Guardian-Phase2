@@ -126,7 +126,7 @@ fn owner_revocation_flips_status_list_for_issued_vc() {
         0,
     );
     save_own_membership_vc(&owner_vc);
-    seed_peer_document(&issuer, &km);
+    seed_peer_document(&issuer, &km, "nodeA");
 
     let target_vc = make_membership_vc(
         &test_did("target"),

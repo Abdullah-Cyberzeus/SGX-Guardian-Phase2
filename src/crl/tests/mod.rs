@@ -154,11 +154,11 @@ fn save_issued_vc(vc: &VerifiableCredential) {
     crate::vc::persistence::save_issued(vc).expect("save issued vc");
 }
 
-fn seed_peer_document(revoker: &DidRecord, km: &KeyManager) {
+fn seed_peer_document(revoker: &DidRecord, km: &KeyManager, node_name: &str) {
     let public_key_der = km.pubkey_der().expect("pubkey der");
     let mut doc = DidDocument::build(DocBuildInput {
         did: &revoker.did,
-        node_name: Some("node-test"),
+        node_name: Some(node_name),
         current_dkp_version: revoker.current_dkp_version,
         current_dkp_pubkey_der: &public_key_der,
         overlay_ip_cidr: None,

@@ -15,7 +15,7 @@ fn verify_list_passes_for_signed_entry() {
         0,
     );
     save_own_membership_vc(&owner_vc);
-    seed_peer_document(&issuer, &km);
+    seed_peer_document(&issuer, &km, "nodeA");
 
     issue::issue_revocation(
         &issuer,
@@ -65,8 +65,8 @@ fn verify_list_rejects_forged_signature() {
         0,
     );
     save_own_membership_vc(&owner_vc);
-    seed_peer_document(&issuer, &issuer_km);
-    seed_peer_document(&signer, &signer_km);
+    seed_peer_document(&issuer, &issuer_km, "nodeA");
+    seed_peer_document(&signer, &signer_km, "node-forged-signer");
 
     let mut forged = build_entry(
         &test_did("forgedTarget"),
@@ -115,7 +115,7 @@ fn verify_list_rejects_merkle_root_mismatch() {
         0,
     );
     save_own_membership_vc(&owner_vc);
-    seed_peer_document(&issuer, &km);
+    seed_peer_document(&issuer, &km, "nodeA");
 
     let entry = issue::issue_revocation(
         &issuer,
@@ -150,4 +150,49 @@ fn verify_list_rejects_merkle_root_mismatch() {
         })
         .expect_err("merkle mismatch rejected");
     assert!(matches!(error, CrlError::MerkleRootMismatch));
+}
+
+#[test]
+fn verify_rejects_member_claiming_owner() {
+    let _lock = test_lock();
+    let env = TestEnv::new();
+    let member = make_did_record(&test_did("forgingMember"), 1);
+    let owner_did = test_did("realOwnerForForgeTest");
+    let member_km = make_key_manager(&env.key_path("node-forging-member"));
+
+    // Member holds a valid, active Member VC in this circle — cached locally
+    // as it would be after real verification (see attestation_service.rs).
+    let member_vc = make_membership_vc(
+        &member.did,
+        CredentialRole::Member,
+        issue::DEFAULT_CIRCLE_ID,
+        &owner_did,
+        0,
+    );
+    crate::vc::persistence::save_peer(&member.did, &member_vc).expect("cache member vc");
+    seed_peer_document(&member, &member_km, "node-forging-member");
+
+    // Member forges revoker_role: Owner on a self-issued entry to bypass the
+    // Member-only reason/severity guards (the S1 exploit).
+    let forged = build_entry(
+        &test_did("forgeryTarget"),
+        &member.did,
+        issue::DEFAULT_CIRCLE_ID,
+        RevocationReason::AdministrativeRemoval,
+        Severity::Low,
+        RevokerRole::Owner,
+    );
+
+    let resolver = crate::did::Resolver::new(crate::did::ResolverConfig::default());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+
+    let error = runtime
+        .block_on(async {
+            crate::crl::verify::verify_entry(&forged, &resolver, issue::DEFAULT_CIRCLE_ID).await
+        })
+        .expect_err("member claiming owner role must be rejected");
+    assert!(matches!(error, CrlError::InvalidStructure(_)));
 }

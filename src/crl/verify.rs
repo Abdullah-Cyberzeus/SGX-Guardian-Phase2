@@ -18,7 +18,50 @@ pub async fn verify_entry(
         });
     }
 
-    if matches!(entry.revoker_role, RevokerRole::Member) {
+    // Re-derive the revoker's actual role from their verified membership VC —
+    // NEVER trust the wire-supplied entry.revoker_role. A Member could set
+    // revoker_role: Owner on a self-signed entry to bypass the Member-only
+    // reason/severity guards below and revoke anyone, including the Owner.
+    if crate::crl::is_revoked(&entry.revoker_did) {
+        return Err(CrlError::InvalidStructure(format!(
+            "revoker {} is themselves revoked",
+            entry.revoker_did
+        )));
+    }
+
+    let actual_role = match crate::vc::issue::known_ca_did() {
+        Ok(ca_did) if ca_did == entry.revoker_did => RevokerRole::Owner,
+        _ => {
+            let revoker_vc =
+                crate::vc::persistence::load_peer(&entry.revoker_did).map_err(|e| {
+                    CrlError::IssuerNotResolvable(format!(
+                        "no valid membership VC for revoker {}: {}",
+                        entry.revoker_did, e
+                    ))
+                })?;
+            let is_active_member = revoker_vc.credential_subject.circle_id == expected_circle_id
+                && revoker_vc.credential_subject.role
+                    == crate::vc::credential::CredentialRole::Member
+                && revoker_vc.has_active_membership_status();
+            if !is_active_member {
+                return Err(CrlError::IssuerNotResolvable(format!(
+                    "no valid active Member VC for revoker {} in circle {}",
+                    entry.revoker_did, expected_circle_id
+                )));
+            }
+            RevokerRole::Member
+        }
+    };
+
+    // Reject wire role mismatch (e.g. Member claiming Owner)
+    if entry.revoker_role != actual_role {
+        return Err(CrlError::InvalidStructure(format!(
+            "wire revoker_role {:?} != verified role {:?} for {}",
+            entry.revoker_role, actual_role, entry.revoker_did
+        )));
+    }
+
+    if matches!(actual_role, RevokerRole::Member) {
         if !entry.reason.is_security_critical() {
             return Err(CrlError::MemberReasonNotCritical(
                 entry.reason.as_str().to_string(),
