@@ -1,7 +1,23 @@
 # Cybersecurity Review Gate
 
-A required CI check that runs a security-first LLM review of each PR to `main`
-and blocks merge on high-confidence Critical/High findings.
+A security-first LLM review of each PR to `main` that blocks merge on
+high-confidence critical findings (pre-GA posture, ADR 0002) and drives the
+merge itself on pass (ADR 0003).
+
+## Cadence & cost lanes (ADR 0003)
+
+- The review runs **once per ready PR** (`opened`/`reopened`/`ready_for_review`),
+  not on every push. Re-run it with the **`re-review`** label (auto-removed) or
+  `workflow_dispatch`.
+- Docs-only PRs are **fast-laned**: no model call; they merge on green CI with
+  an audit comment. (Deletions-only diffs get full review — removing code can
+  remove a security control.)
+- **CI-first:** the model only runs after all other checks are green — red PRs
+  cost nothing.
+- **Model tiering:** Haiku for routine diffs; Sonnet for security-relevant paths.
+- On gate pass + green CI the workflow **squash-merges** (org `TOKEN`, admin
+  bypass) and deletes the branch. Opt out per PR with the **`hold`** label, a
+  "DO NOT MERGE" title marker, or draft status — re-checked at merge time.
 
 ## What "passing" means
 
@@ -29,14 +45,26 @@ static, tests, architecture, simplification) and **ingests CodeRabbit's findings
 as an additional input**. The model writes structured findings to
 `.github/cyber-review/findings.json`; it does **not** decide merge-ability.
 
-`.github/cyber-review/gate.py` applies a fixed policy:
+`.github/cyber-review/gate.py` applies a fixed, phase-dependent policy (ADR 0002):
 
-> **Block** iff a finding has `severity ∈ {critical, high}` **and**
-> `confidence ∈ {high, medium}`. Everything else is advisory.
+> **Pre-GA** (`PRE_GA: "true"` in the workflow, current setting): **block** iff
+> `severity = critical` **and** `confidence ∈ {high, medium}`.
+> **Release/hardening posture** (`PRE_GA` unset): **block** iff
+> `severity ∈ {critical, high}` **and** `confidence ∈ {high, medium}`.
 
 Rationale: the LLM is non-deterministic, so only *high-confidence, high-severity*
-findings gate. Medium/Low and low-confidence findings are posted as comments and
-never block, keeping the gate from flaking on borderline calls.
+findings gate. During feature buildout, blocking on every high produced an
+open-ended fix/rescan loop; instead, highs and below are converted into tracked
+debt (below) and one dedicated hardening pass closes the backlog before release.
+
+### Non-blocking findings become tracked issues
+
+When the gate passes, `.github/cyber-review/file_findings.py` auto-files each
+surviving high/medium/low finding as a GitHub issue labelled
+`security-debt` + `severity:<sev>` on the **"Pre-release security hardening"**
+milestone (deduped by title against open `security-debt` issues). It runs only
+on green runs, so intermediate pushes don't spam the tracker. Nothing the gate
+waves through goes invisible — the milestone must be empty before GA.
 
 ## Break-glass override
 
@@ -53,10 +81,12 @@ the override label with an ADR.
 
 ## Enabling / configuration
 
-- Requires an org/repo secret **`ANTHROPIC_API_KEY`**. Until it is set, the job
-  passes as *not configured* (never wedges merges) and auto-activates once added.
+- Requires an org/repo secret **`ANTHROPIC_API_KEY`**. If it is missing the AI
+  lane **fails closed** — no review is possible, so nothing auto-merges (the
+  ADR 0001 "pass as not configured" behavior became fail-open once the merge
+  turned workflow-driven, ADR 0003).
 - Cost/latency control: the CI review runs the five dimensions in a single agent
   pass (not five subagents per push). The full 5-subagent fan-out is the local /
   on-demand `cybersecurity-code-review` flow.
-- To narrow when it runs, restrict the `on.pull_request.types` (e.g. drop
-  `synchronize`, or gate on a `ready-for-review` label).
+- The workflow already omits `synchronize`; the `re-review` label (or
+  `workflow_dispatch`) is the only way to re-run on new pushes.
