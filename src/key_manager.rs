@@ -10,6 +10,22 @@ use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 use std::{fs, path::Path};
 use tracing::{info, warn};
 
+/// Write private key bytes to disk, then lock permissions down to 0600
+/// (owner read/write only). Every private-key write path in this file must
+/// go through this — one earlier fix covered load_or_generate()'s two write
+/// sites but missed init_with_se050()'s fallback-key sites, which shipped
+/// world/group-readable on the default umask.
+fn write_private_key(path: impl AsRef<Path>, data: &[u8]) -> Result<()> {
+    let path = path.as_ref();
+    fs::write(path, data)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
 /// Manages the SG-X node identity keypair including generation,
 /// secure persistence, loading from disk, and providing signing/public
 /// key access for attestation workflows.
@@ -85,12 +101,7 @@ impl KeyManager {
                     let pkcs8 =
                         EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
                             .map_err(|_| anyhow!("Failed to generate keypair"))?;
-                    fs::write(key_path, pkcs8.as_ref())?;
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        let _ = fs::set_permissions(key_path, fs::Permissions::from_mode(0o600));
-                    }
+                    write_private_key(key_path, pkcs8.as_ref())?;
                     pkcs8.as_ref().to_vec()
                 }
             }
@@ -105,12 +116,7 @@ impl KeyManager {
             );
             let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
                 .map_err(|_| anyhow!("Failed to generate keypair"))?;
-            fs::write(key_path, pkcs8.as_ref())?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = fs::set_permissions(key_path, fs::Permissions::from_mode(0o600));
-            }
+            write_private_key(key_path, pkcs8.as_ref())?;
             info!("New identity key generated at {}", key_path.display());
             pkcs8.as_ref().to_vec()
         };
@@ -187,7 +193,7 @@ impl KeyManager {
                                 &rng,
                             )
                             .map_err(|_| anyhow!("Generate fallback keypair"))?;
-                            fs::write(fallback_key_path, pkcs8.as_ref())?;
+                            write_private_key(fallback_key_path, pkcs8.as_ref())?;
                             pkcs8.as_ref().to_vec()
                         }
                     }
@@ -195,7 +201,7 @@ impl KeyManager {
                     let pkcs8 =
                         EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
                             .map_err(|_| anyhow!("Generate fallback keypair"))?;
-                    fs::write(fallback_key_path, pkcs8.as_ref())?;
+                    write_private_key(fallback_key_path, pkcs8.as_ref())?;
                     pkcs8.as_ref().to_vec()
                 };
 
