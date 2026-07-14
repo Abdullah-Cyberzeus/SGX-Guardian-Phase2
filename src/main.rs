@@ -2129,7 +2129,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         use sgx_guardian_client::cot::link_monitor::LinkMonitor;
         use sgx_guardian_client::cot::membership::CircleMembership as CotCircleMembership;
         use sgx_guardian_client::cot::router::CotRouter;
-        use sgx_guardian_client::cot::session_manager::SessionManager;
+        use sgx_guardian_client::cot::session_manager::{
+            set_global_session_manager, SessionManager,
+        };
         use sgx_guardian_client::cot::transport_registry::TransportRegistry;
         use sgx_guardian_client::cot::trust_engine::TrustEngine;
         use sgx_guardian_client::cot::{failover::FailoverEngine, hotplug::HotplugWatcher};
@@ -2219,6 +2221,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Step 7: Create session manager
         let cot_sessions = std::sync::Arc::new(SessionManager::new());
+        // Emergency Revocation: expose the live SessionManager process-wide so
+        // the CRL emergency channel can terminate sessions with a revoked DID.
+        set_global_session_manager(cot_sessions.clone());
 
         // Step 8: Create circle membership
         let cot_circle = std::sync::Arc::new(CotCircleMembership::new(
@@ -2657,6 +2662,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Spawns two background tokio tasks; returns immediately; runs on
     // every node role (nodeA is an ordinary gossip peer, not a hub).
     sgx_guardian_client::crl::gossip::spawn(node_id.clone(), did_resolver.clone());
+
+    // === CRL Offline Revocation Sync ===
+    // Background loop: queues locally-issued revocations while offline and,
+    // on reconnect, drives the gossip anti-entropy exchange to fetch missed
+    // revocations + flush the outbound queue. No new port/listener.
+    sgx_guardian_client::crl::offline::spawn(node_id.clone(), did_resolver.clone());
+
+    // Subscribes to the notification bus and durably appends live events so
+    // reconnecting consoles can replay missed notifications.
+    sgx_guardian_client::notify::spawn(node_id.clone());
     println!("✅ REST admin API listening on http://{}/api/v1", api_bind);
 
     // === NMAP discovery scheduler ===

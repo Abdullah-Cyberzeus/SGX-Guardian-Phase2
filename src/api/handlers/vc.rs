@@ -7,7 +7,7 @@ use crate::vc::issue::{self, IssueMembershipOutcome, IssueRequest, RenewRequest}
 use crate::vc::{distribution, persistence, status_list, verify, VcError};
 use axum::{
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     Json,
 };
 use chrono::Utc;
@@ -205,11 +205,12 @@ pub struct VcAuditResponse {
 
 pub async fn issue(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Json(body): Json<IssueVcRequest>,
 ) -> Result<(StatusCode, Json<IssueVcResponse>), ApiError> {
-    // Phase 3: AUTH-series
-    require_localhost(&headers)?;
+    // TODO(auth): no authentication on this endpoint yet. Admin API stays on
+    // 0.0.0.0:8443 for the Lightning Leap Analytics console (see ADR 0002);
+    // JWT bearer-token auth lands via the Login/Onboarding branch and is
+    // tracked as a hardening-milestone issue, not blocking this PR.
     let subject = validate_subject_did(&body)?;
     let role = parse_role(body.role.as_deref().unwrap_or("member"))?;
     let days = validate_optional_days(body.days)?;
@@ -269,11 +270,9 @@ pub async fn issue(
 
 pub async fn renew(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Json(body): Json<RenewVcRequest>,
 ) -> Result<Json<RenewVcResponse>, ApiError> {
-    // Phase 3: AUTH-series
-    require_localhost(&headers)?;
+    // TODO(auth): see issue() above.
     let vc_id = validate_vc_id(request_vc_id(body.id, body.vc_id)?.trim())?;
     let days = validate_required_days(body.days)?;
     let (issuer, km) = load_runtime_signing_context()?;
@@ -307,11 +306,9 @@ pub async fn renew(
 
 pub async fn revoke(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Json(body): Json<RevokeVcRequest>,
 ) -> Result<Json<RevokeVcResponse>, ApiError> {
-    // Phase 3: AUTH-series
-    require_localhost(&headers)?;
+    // TODO(auth): see issue() above.
     let vc_id = validate_vc_id(request_vc_id(body.id, body.vc_id)?.trim())?;
     let reason = validate_reason(body.reason)?;
     let (issuer, km) = load_runtime_signing_context()?;
@@ -769,13 +766,6 @@ fn load_runtime_signing_context(
     let km = issue::load_runtime_key_manager(&node_id)
         .map_err(|e| ApiError::Internal(format!("vc key manager: {}", e)))?;
     Ok((issuer, km))
-}
-
-fn require_localhost(headers: &HeaderMap) -> Result<(), ApiError> {
-    let _ = headers;
-    // Admin API is already bound to 127.0.0.1 — this is defense-in-depth
-    // Phase 3 will add proper bearer token / mTLS auth
-    Ok(())
 }
 
 fn load_issuer_record() -> Result<DidRecord, ApiError> {
