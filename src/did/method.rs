@@ -1,3 +1,6 @@
+use crate::did::doc_persistence;
+use crate::did::doc_sign;
+use crate::did::document::DocBuildInput;
 use crate::did::errors::DidError;
 use crate::did::persistence::{derivation_signing_bytes, DerivationProof, DidRecord};
 use crate::did::{derive, Did};
@@ -11,6 +14,7 @@ use std::io;
 use std::path::Path;
 
 const METHOD_VERSION: &str = "1.0";
+pub const DEFAULT_DKP_PUBKEY_PATH: &str = "/var/lib/sgx-guardian/keys/dkp_pub.der";
 
 pub fn create_if_absent(
     node_id: &str,
@@ -121,6 +125,67 @@ pub fn deactivate(did_path: &str, _reason: &str) -> Result<(), DidError> {
     }
     record.deactivated_at = Some(Utc::now().to_rfc3339());
     record.save(did_path)
+}
+
+pub fn ensure_runtime_pubkey(km: &KeyManager, dkp_pubkey_path: &str) -> Result<Vec<u8>, DidError> {
+    let pubkey = km
+        .pubkey_der()
+        .map_err(|e| DidError::Io(io::Error::other(format!("pubkey export: {}", e))))?;
+
+    if let Ok(existing) = fs::read(dkp_pubkey_path) {
+        if existing == pubkey {
+            return Ok(pubkey);
+        }
+    }
+
+    if let Some(parent) = Path::new(dkp_pubkey_path).parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(dkp_pubkey_path, &pubkey)?;
+    Ok(pubkey)
+}
+
+pub fn ensure_self_document(
+    node_id: &str,
+    km: &KeyManager,
+    did_path: &str,
+    dkp_pubkey_path: &str,
+) -> Result<(), DidError> {
+    if doc_persistence::load_self()?.is_some() {
+        return Ok(());
+    }
+
+    let (did, _anchor_pk, active) = resolve_local(did_path, dkp_pubkey_path)?;
+    let dkp_pub = ensure_runtime_pubkey(km, dkp_pubkey_path)?;
+    if dkp_pub.is_empty() {
+        return Err(DidError::InvalidFormat(
+            "runtime DKP pubkey is empty".to_string(),
+        ));
+    }
+
+    let input = DocBuildInput {
+        did: did.as_str(),
+        node_name: Some(node_id),
+        current_dkp_version: read_dkp_key_version(),
+        current_dkp_pubkey_der: &dkp_pub,
+        overlay_ip_cidr: None,
+        attestation_bind: None,
+        cert_bootstrap_bind: None,
+        revoked: vec![],
+        previous_version_id: 0,
+        created_at: None,
+        status: Some(if active {
+            "active".to_string()
+        } else {
+            "deactivated".to_string()
+        }),
+    };
+    let mut doc = crate::did::document::DidDocument::build(input)?;
+    let vm_ref = doc.verification_method[0].id.clone();
+    doc_sign::sign_in_place(&mut doc, km, &vm_ref)?;
+    doc_persistence::save_self(&doc)?;
+    doc_persistence::write_self_floor_version(doc.sgx_version_id)?;
+    Ok(())
 }
 
 fn read_dkp_pubkey(path: &str) -> Result<Vec<u8>, DidError> {
