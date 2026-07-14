@@ -1,0 +1,6 @@
+---
+node_id: "nodeA"
+hostname: "guardian-node-A"
+ip: "0.0.0.0"
+port: 50051
+public_key: "__GENERATED_AT_FIRST_BOOT__"

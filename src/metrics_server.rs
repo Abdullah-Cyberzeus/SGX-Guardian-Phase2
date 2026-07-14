@@ -6,37 +6,37 @@
 //! Read-only, local-only, zero-trust safe.
 
 use crate::metrics::Metrics;
+use axum::{extract::State, http::header, routing::get, Router};
+use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::net::TcpListener;
 use tokio::sync::Mutex;
-use warp::Filter;
 
 /// Start metrics HTTP server (local-only).
 pub async fn start_metrics_server(metrics: Arc<Mutex<Metrics>>, bind_addr: ([u8; 4], u16)) {
-    let metrics_route = warp::path!("metrics")
-        .and(warp::get())
-        .and(with_metrics(metrics))
-        .and_then(handle_metrics);
+    let app = Router::new()
+        .route("/metrics", get(handle_metrics))
+        .with_state(metrics);
+    let listener = TcpListener::bind(SocketAddr::from(bind_addr))
+        .await
+        .expect("bind metrics listener");
 
-    warp::serve(metrics_route).run(bind_addr).await;
-}
-
-/// Inject shared metrics into request handler
-fn with_metrics(
-    metrics: Arc<Mutex<Metrics>>,
-) -> impl Filter<Extract = (Arc<Mutex<Metrics>>,), Error = std::convert::Infallible> + Clone {
-    warp::any().map(move || metrics.clone())
+    axum::serve(listener, app)
+        .await
+        .expect("metrics server failed");
 }
 
 /// Handle GET /metrics
-async fn handle_metrics(metrics: Arc<Mutex<Metrics>>) -> Result<impl warp::Reply, warp::Rejection> {
+async fn handle_metrics(
+    State(metrics): State<Arc<Mutex<Metrics>>>,
+) -> impl axum::response::IntoResponse {
     let snapshot = {
         let m = metrics.lock().await;
         m.snapshot()
     };
 
-    Ok(warp::reply::with_header(
+    (
+        [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
         snapshot.to_prometheus(),
-        "Content-Type",
-        "text/plain; version=0.0.4",
-    ))
+    )
 }

@@ -1,6 +1,7 @@
 //! Implements the `status` subcommand for inspecting node metadata.
 use crate::config::NodeConfig;
 use clap::Args;
+use std::path::Path;
 use std::path::PathBuf;
 
 /// Command-line arguments for the `status` command, allowing selection
@@ -47,16 +48,25 @@ pub fn run(args: StatusArgs) {
         }
     };
 
-    // 3) Build config path
-    let config_path: PathBuf = exe_dir
-        .join("..")
-        .join("config")
-        .join(format!("{}.yaml", args.node));
+    // 3) Resolve config path with fallbacks across common runtime layouts.
+    let filename = format!("{}.yaml", args.node);
+    let candidates: Vec<PathBuf> = vec![
+        // Installed/runtime path expected by daemon packaging.
+        Path::new("/etc/sgx-guardian/config").join(&filename),
+        // Monorepo layout when run via `cargo run` in this workspace.
+        exe_dir.join("..").join("..").join("config").join(&filename),
+        // Historical relative path used by previous CLI versions.
+        exe_dir.join("..").join("config").join(&filename),
+    ];
 
-    let config_path = match config_path.canonicalize() {
-        Ok(path) => path,
-        Err(e) => {
-            eprintln!("❌ Config file not found at {:?}: {}", config_path, e);
+    let config_path = candidates.iter().find_map(|p| p.canonicalize().ok());
+    let config_path = match config_path {
+        Some(path) => path,
+        None => {
+            eprintln!("❌ Config file not found for node '{}'. Tried:", args.node);
+            for p in &candidates {
+                eprintln!("   - {}", p.display());
+            }
             std::process::exit(1);
         }
     };
@@ -80,4 +90,10 @@ pub fn run(args: StatusArgs) {
         node_config.port,
         node_config.public_key
     );
+    if let Some(relay) = node_config.relay {
+        println!(
+            " - Relay: enabled={}, max_peers={}, max_bw={} Mbps, alert={}%",
+            relay.enabled, relay.max_peers, relay.max_bandwidth_mbps, relay.alert_threshold_pct
+        );
+    }
 }

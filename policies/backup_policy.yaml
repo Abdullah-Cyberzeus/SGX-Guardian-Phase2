@@ -1,13 +1,13 @@
 policy_id: "123e4567-e89b-12d3-a456-426614174000"
-version: "1.0.0"
+version: "1.0.7"
 rules:
-  - id: "rule-001"
+  - id: "rule-021"
     action: "ALLOW"
     src: "10.0.0.0/24"
     dst: "0.0.0.0/0"
     protocol: "TCP"
     port: 443
-  - id: "rule-005"
+  - id: "rule-022"
     action: "DENY"
     src: "0.0.0.0/0"
     dst: "10.0.0.10"

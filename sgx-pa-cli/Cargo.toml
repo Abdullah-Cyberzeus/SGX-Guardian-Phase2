@@ -11,12 +11,17 @@ serde_json = "1.0"
 p256 = { version = "0.13", features = ["ecdsa"] }
 sha2 = "0.10"
 rand_core = "0.6"
-base64 = { version = "0.21", features = ["alloc"] }
+base64 = { version = "0.22", features = ["alloc"] }
 anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 comfy-table = "7.1"
 ring = "0.17"
 hex = "0.4"
+rand = "0.8"
+bs58 = "0.5"
+tokio = { version = "1.37", features = ["rt", "rt-multi-thread", "process", "io-util", "time", "net"] }
+sgx_guardian_client = { path = ".." }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 
 [dev-dependencies]
 assert_cmd = "2.1.1"

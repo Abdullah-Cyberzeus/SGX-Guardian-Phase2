@@ -58,7 +58,7 @@ jobs:
       - name: Install Tarpaulin
         run: cargo install cargo-tarpaulin --force
       - name: Run coverage
-        run: cargo tarpaulin --out Xml
+        run: cargo tarpaulin --out Xml -- --test-threads 1
 
       # Step 7.5 – Semgrep Static Analysis (SAST)
       - name: Run Semgrep scan

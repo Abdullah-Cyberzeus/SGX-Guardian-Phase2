@@ -2,14 +2,17 @@
 //!
 //! These structures define WHAT an audit event is.
 //! Persistence, hashing, and verification are implemented later.
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub enum AuditCategory {
     Node,
     Identity,
+    Did,
+    Vc,
+    Crl,
     Attestation,
     Policy,
     Enforcement,
@@ -17,9 +20,11 @@ pub enum AuditCategory {
     Tls,
     Cryptography,
     Cloud,
+    /// Network discovery, whitelist mismatches, and vulnerability-triage handoff.
+    Discovery,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[allow(dead_code)]
 pub enum AuditSeverity {
     Info,
@@ -27,7 +32,7 @@ pub enum AuditSeverity {
     Critical,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub enum AuditAction {
     Started,
@@ -41,9 +46,17 @@ pub enum AuditAction {
     Loaded,
     Exported,
     Used,
+    /// Item enqueued for downstream processing (e.g. AI vuln review).
+    Queued,
+    /// New device / event detected during a scan.
+    Detected,
+    /// Source IP added to the active block list.
+    Blocked,
+    /// Rule set or signature database updated.
+    Updated,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
     pub timestamp: u64,
     pub node_id: String,

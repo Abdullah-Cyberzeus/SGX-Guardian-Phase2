@@ -8,7 +8,7 @@ URL:            https://github.com/AsadAli-CyberZeus/SGX
 Source0:        sgx-guardian-client.tar.gz
 
 ExclusiveArch:      x86_64
-Requires:       systemd, ca-certificates
+Requires:       systemd, ca-certificates, nmap, libcap
 
 %description
 SGX Guardian Client is a zero-trust edge security agent designed
@@ -54,6 +54,8 @@ useradd -r -g sgxguardian -d /var/lib/sgx-guardian -s /sbin/nologin sgxguardian
 exit 0
 
 %post
+# Keep nmap privileges scoped in systemd unit; do not set file capabilities on /usr/bin/nmap.
+
 # systemd reload & enable (no auto-start)
 if command -v systemctl >/dev/null; then
     systemctl daemon-reload

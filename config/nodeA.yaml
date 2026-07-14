@@ -4,3 +4,16 @@ hostname: "guardian-node-A"
 ip: "127.0.0.1"
 port: 50051
 public_key: "placeholder-key-A"
+
+relay:
+  enabled: false
+  max_peers: 5
+  max_bandwidth_mbps: 10
+  alert_threshold_pct: 80
+
+secure_element:
+  enabled: true
+  scp_key_path: "/etc/sgx-guardian/secure-element/scp_keys.txt"
+  interface: "t1oi2c"
+  auth_type: "PlatformSCP"
+  connection_type: "se05x"

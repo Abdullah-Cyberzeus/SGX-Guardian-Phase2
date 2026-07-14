@@ -1,0 +1,28 @@
+alert tcp any any -> $HOME_NET 22 (msg:"GUARDIAN RECON SSH SYN"; flags:S; flow:to_server,stateless; classtype:attempted-recon; sid:9900001; rev:2;)
+alert tcp any any -> $HOME_NET 23 (msg:"GUARDIAN POLICY TELNET ACCESS"; flags:S; flow:to_server,stateless; classtype:policy-violation; sid:9900002; rev:2;)
+alert tcp any any -> any any (msg:"GUARDIAN MALWARE EICAR STRING"; content:"EICAR-STANDARD-ANTIVIRUS-TEST-FILE"; nocase; sid:9900003; rev:1;)
+alert tcp any any -> any any (msg:"GUARDIAN EXPLOIT CMD EXE PROBE"; content:"cmd.exe"; nocase; sid:9900004; rev:1;)
+alert tcp any any -> any any (msg:"GUARDIAN POLICY CURL USER AGENT"; content:"User-Agent|3a| curl/"; nocase; sid:9900005; rev:1;)
+
+# ── Modbus OT Detection Rules (Sprint N) ────────────────────────────────────
+# Rule 1: Unauthorized Modbus Write to PLC Coils (FC5=Write Single Coil, FC15=Write Multiple Coils)
+alert modbus any any -> $MODBUS_SERVER any (msg:"SGX OT Modbus Unauthorized Write Single Coil FC5"; modbus: function 5; classtype:policy-violation; priority:2; sid:10000201; rev:1;)
+alert modbus any any -> $MODBUS_SERVER any (msg:"SGX OT Modbus Unauthorized Write Multiple Coils FC15"; modbus: function 15; classtype:policy-violation; priority:2; sid:10000202; rev:1;)
+
+# Rule 2: Write to Safety-Critical Holding Registers (FC6=Write Single Reg, FC16=Write Multiple Regs)
+# Note: address range 1000-1999 enforced by Guardian backend when processing eve.json alerts
+alert modbus any any -> $MODBUS_SERVER any (msg:"SGX OT Modbus Write Safety Critical Register FC6"; modbus: function 6; classtype:attempted-dos; priority:1; sid:10000203; rev:2;)
+alert modbus any any -> $MODBUS_SERVER any (msg:"SGX OT Modbus Write Safety Critical Registers FC16"; modbus: function 16; classtype:attempted-dos; priority:1; sid:10000204; rev:2;)
+
+# Rule 3: PLC Firmware/Program Upload Detection (FC65-68 vendor-specific Schneider/Modicon)
+alert modbus any any -> $MODBUS_SERVER any (msg:"SGX OT Modbus PLC Program Upload FC65"; modbus: function 65; classtype:policy-violation; priority:1; sid:10000205; rev:1;)
+alert modbus any any -> $MODBUS_SERVER any (msg:"SGX OT Modbus PLC Program Upload FC66"; modbus: function 66; classtype:policy-violation; priority:1; sid:10000206; rev:1;)
+alert modbus any any -> $MODBUS_SERVER any (msg:"SGX OT Modbus PLC Firmware Upload FC67"; modbus: function 67; classtype:policy-violation; priority:1; sid:10000207; rev:1;)
+alert modbus any any -> $MODBUS_SERVER any (msg:"SGX OT Modbus PLC Firmware Upload FC68"; modbus: function 68; classtype:policy-violation; priority:1; sid:10000208; rev:1;)
+
+# Rule 4: Modbus Exception Response Detection (FC >= 0x81 = error bit set)
+# Note: frequency threshold (10 in 60s) enforced by Guardian backend
+alert modbus $MODBUS_SERVER any -> any any (msg:"SGX OT Modbus Exception Response Detected"; modbus: function 129; classtype:protocol-command-decode; priority:2; sid:10000209; rev:2;)
+
+# Rule 5: Modbus Write Command Audit (Guardian backend enforces time window)
+alert modbus any any -> $MODBUS_SERVER any (msg:"SGX OT Modbus Write Command Time Audit"; modbus: function 5; classtype:policy-violation; priority:3; sid:10000210; rev:1;)

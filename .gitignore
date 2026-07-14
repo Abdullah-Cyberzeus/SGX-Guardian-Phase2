@@ -1,4 +1,8 @@
 /target
+build/artifacts/
+build/deb/sgx-guardian-client/usr/bin/sgx-guardian
+__pycache__/
+*.pyc
 .vscode/
 logs/
 sgx-agent/
@@ -17,7 +21,5 @@ cobertura.xml
 tarpaulin-report.html
 coverage/
 
-#AI
+.codex/
 .claude/
-.intraview/
-.introview-tour.md

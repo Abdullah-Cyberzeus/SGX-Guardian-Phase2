@@ -1,0 +1,101 @@
+//! Nebula Certificate Expiry Monitor
+//! Runs as background task and periodically checks certificate expiry.
+
+use crate::logging::{log_error, log_event};
+use crate::nebula::health::NebulaHealth;
+use tokio::time::{sleep, Duration};
+
+pub struct ExpiryMonitor;
+
+impl ExpiryMonitor {
+    /// Start background expiry monitoring task
+    pub fn start(nebula_base_dir: String, node_name: String) {
+        tokio::spawn(async move {
+            loop {
+                let report = NebulaHealth::check(&nebula_base_dir, &node_name);
+
+                if let Some(days) = report.cert_days_remaining {
+                    if days <= 0 {
+                        let msg =
+        "❌ CRITICAL: Nebula certificate has EXPIRED. Please restart Guardian immediately to obtain a new certificate."
+            .to_string();
+                        println!("{}", msg);
+                        log_error(&node_name, &msg);
+
+                        crate::audit::logger::log_audit(
+                            &node_name,
+                            crate::audit::event::AuditCategory::Tls,
+                            crate::audit::event::AuditSeverity::Critical,
+                            crate::audit::event::AuditAction::Failed,
+                            "Nebula certificate expired",
+                        );
+
+                        // === Auto delete expired cert ===
+                        let nodes_dir = format!("{}/nodes", nebula_base_dir);
+                        let cert_path = format!("{}/{}.crt", nodes_dir, node_name);
+                        let key_path = format!("{}/{}.key", nodes_dir, node_name);
+
+                        let cert_removed = !std::path::Path::new(&cert_path).exists()
+                            || std::fs::remove_file(&cert_path).is_ok();
+                        let key_removed = !std::path::Path::new(&key_path).exists()
+                            || std::fs::remove_file(&key_path).is_ok();
+
+                        if cert_removed && key_removed {
+                            log_event(
+                                &node_name,
+                                "Expired Nebula certificate deleted for regeneration",
+                            );
+                        } else {
+                            log_error(
+                                &node_name,
+                                "Failed to delete expired Nebula cert/key for regeneration",
+                            );
+                        }
+                    } else if days <= 7 {
+                        // Generic message for stdout (CodeQL: avoid logging precise day count)
+                        println!("🚨 CRITICAL: Nebula certificate is nearing expiration");
+                        let msg = format!("Nebula certificate expires in {} days", days);
+                        log_error(&node_name, &msg);
+                        crate::audit::logger::log_audit(
+                            &node_name,
+                            crate::audit::event::AuditCategory::Tls,
+                            crate::audit::event::AuditSeverity::Critical,
+                            crate::audit::event::AuditAction::Succeeded,
+                            &msg,
+                        );
+                    } else if days <= 30 {
+                        // Generic message for stdout (CodeQL: avoid logging precise day count)
+                        println!("⚠️ WARNING: Nebula certificate will expire soon");
+                        let msg = format!("Nebula certificate expires in {} days", days);
+                        log_event(&node_name, &msg);
+                        crate::audit::logger::log_audit(
+                            &node_name,
+                            crate::audit::event::AuditCategory::Tls,
+                            crate::audit::event::AuditSeverity::Warning,
+                            crate::audit::event::AuditAction::Succeeded,
+                            &msg,
+                        );
+                    } else {
+                        // Generic message for stdout (CodeQL: avoid logging precise day count)
+                        println!("✅ Nebula certificate healthy");
+                        let msg = format!("Nebula certificate healthy ({} days remaining)", days);
+                        log_event(&node_name, &msg);
+                    }
+                } else {
+                    let msg = "⚠️ Could not determine Nebula certificate expiry".to_string();
+                    println!("{}", msg);
+                    log_event(&node_name, &msg);
+                    crate::audit::logger::log_audit(
+                        &node_name,
+                        crate::audit::event::AuditCategory::Tls,
+                        crate::audit::event::AuditSeverity::Warning,
+                        crate::audit::event::AuditAction::Failed,
+                        "Nebula certificate expiry could not be determined",
+                    );
+                }
+
+                sleep(Duration::from_secs(3600)).await; // 1 Hour interval for Guardian Health check testing
+            }
+        });
+    }
+}

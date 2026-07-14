@@ -1,0 +1,9 @@
+enabled: false
+target_cidr: null
+timeout_secs: 600
+exclude: []
+schedules:
+  hourly:
+    intensity: stealth
+  daily:
+    intensity: aggressive

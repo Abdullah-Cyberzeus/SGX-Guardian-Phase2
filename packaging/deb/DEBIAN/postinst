@@ -31,6 +31,14 @@ chown -R "$USER:$GROUP" "$DATA_DIR" "$LOG_DIR"
 chmod 750 "$DATA_DIR" "$LOG_DIR"
 chmod 755 "$CONFIG_DIR"
 
+# ---- NMAP network discovery ----
+if command -v nmap >/dev/null && command -v setcap >/dev/null; then
+    echo "Configuring nmap capabilities for Sprint 6 NMP-series..."
+    if ! setcap cap_net_raw,cap_net_admin+eip "$(command -v nmap)"; then
+        echo "WARNING: Failed to set nmap capabilities; discovery scans may be limited." >&2
+    fi
+fi
+
 # ---- systemd reload ----
 if command -v systemctl >/dev/null; then
     systemctl daemon-reload

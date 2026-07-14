@@ -1,13 +1,23 @@
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
+use crate::cert_service::MyCertService;
 use crate::logging::log_event;
 use crate::metrics::Metrics;
+use crate::proto::sgx::cert_service_server::CertServiceServer;
 use crate::proto::sgx::ping_service_server::{PingService, PingServiceServer};
 use crate::proto::sgx::{PingRequest, PingResponse};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tonic::transport::ServerTlsConfig;
 use tonic::{transport::Server, Request, Response, Status};
+
+fn ensure_rustls_crypto_provider() {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        // Explicitly select ring to avoid runtime panic when both rustls crypto
+        // backends are present in the dependency graph.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+}
 
 /// Basic gRPC Ping service used for inter-node liveness checks.
 /// Implements the `PingService` trait generated from the SG-X protobuf schema.
@@ -43,14 +53,14 @@ impl PingService for MyPingService {
 }
 /// Starts the SG-X gRPC server on the specified address,
 /// registers the Ping service, and begins handling requests asynchronously.
-/// Starts the SG-X gRPC server on the specified address,
-/// registers the Ping service, and begins handling requests asynchronously.
 /// NOTE: Now accepts an Arc<rustls::ServerConfig> for mTLS.
 pub async fn start_server(
     addr: String,
     identity: tonic::transport::Identity,
     ca_cert: tonic::transport::Certificate,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    ensure_rustls_crypto_provider();
+
     use crate::metrics::Metrics;
     use std::sync::Arc;
     use tokio::sync::Mutex;
@@ -100,5 +110,41 @@ pub async fn start_server(
         AuditAction::Succeeded,
         "Secure gRPC server started with mTLS",
     );
+    Ok(())
+}
+
+/// Starts a plaintext gRPC server for CertService ONLY (bootstrap endpoint).
+/// No TLS — used for initial certificate requests before nodes have trusted certs.
+/// Runs on nodeA only, on a dedicated port (e.g., 50061).
+pub async fn start_cert_bootstrap_server(addr: String) -> Result<(), Box<dyn std::error::Error>> {
+    let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
+
+    println!(
+        "🔐 CertService bootstrap server starting on {} (plaintext)",
+        addr
+    );
+
+    log_audit(
+        &node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Started,
+        &format!("CertService bootstrap server starting on {}", addr),
+    );
+
+    Server::builder()
+        .add_service(CertServiceServer::new(MyCertService))
+        .serve(addr.parse()?)
+        .await
+        .inspect_err(|_e| {
+            log_audit(
+                &node_id,
+                AuditCategory::Network,
+                AuditSeverity::Critical,
+                AuditAction::Failed,
+                "CertService bootstrap server failed to start",
+            );
+        })?;
+
     Ok(())
 }

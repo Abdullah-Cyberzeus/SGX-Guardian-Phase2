@@ -3,6 +3,7 @@ use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::enforcement::enforce_policy;
 use crate::policy;
+use crate::policy_state::ActivationOutcome;
 use anyhow::{Context, Result};
 use base64::engine::general_purpose;
 use base64::Engine as _;
@@ -127,6 +128,21 @@ pub fn load_and_activate_policy(path: &str) -> Result<VerifiedPolicy> {
     // 1. Verify cryptographic envelope
     let verified = verify_signed_policy(path)?;
 
+    // If this exact signed policy is already active, do not rotate backup.
+    if let Some(current_digest) = policy_state::current_active_policy_digest()? {
+        if current_digest.eq_ignore_ascii_case(&verified.digest_hex) {
+            println!("Policy already active; skipping backup rotation");
+            log_audit(
+                &node_id,
+                AuditCategory::Policy,
+                AuditSeverity::Info,
+                AuditAction::Applied,
+                "Policy already active; skipping backup rotation",
+            );
+            return Ok(verified);
+        }
+    }
+
     // 2. Parse + validate policy semantics (NO side effects)
     let parsed_policy =
         policy::validate_policy(&verified.policy_yaml).context("Policy YAML parsing failed")?;
@@ -145,18 +161,41 @@ pub fn load_and_activate_policy(path: &str) -> Result<VerifiedPolicy> {
     }
 
     // 4. ONLY after successful enforcement → activate policy
-    if let Err(e) = policy_state::activate_policy(&verified.policy_yaml) {
-        let _ = policy_state::rollback_policy();
+    match policy_state::activate_policy(&verified.policy_yaml, &verified.digest_hex) {
+        Ok(ActivationOutcome::Unchanged) => {
+            println!("Policy already active; skipping backup rotation");
+            log_audit(
+                &node_id,
+                AuditCategory::Policy,
+                AuditSeverity::Info,
+                AuditAction::Applied,
+                "Policy already active; skipping backup rotation",
+            );
+            return Ok(verified);
+        }
+        Ok(ActivationOutcome::Activated {
+            backup_rotated: true,
+        }) => {
+            println!("New policy activated; previous active policy moved to backup");
+        }
+        Ok(ActivationOutcome::Activated {
+            backup_rotated: false,
+        }) => {
+            // First activation path: there was no previous active policy to rotate.
+        }
+        Err(e) => {
+            let _ = policy_state::rollback_policy();
 
-        log_audit(
-            &node_id,
-            AuditCategory::Policy,
-            AuditSeverity::Critical,
-            AuditAction::Rollback,
-            "Policy activation failed — rollback executed",
-        );
+            log_audit(
+                &node_id,
+                AuditCategory::Policy,
+                AuditSeverity::Critical,
+                AuditAction::Rollback,
+                "Policy activation failed — rollback executed",
+            );
 
-        return Err(e.context("Policy activation failed, rollback executed"));
+            return Err(e.context("Policy activation failed, rollback executed"));
+        }
     }
     log_audit(
         &node_id,

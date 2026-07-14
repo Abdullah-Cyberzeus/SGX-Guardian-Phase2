@@ -1,15 +1,9 @@
 [licenses]
-allow = ["Apache-2.0", "MIT", "BSD-3-Clause", "Unicode-3.0", "Unicode-DFS-2016","ISC","MPL-2.0"]
+allow = ["Apache-2.0", "MIT", "BSD-3-Clause", "Unicode-3.0", "Unicode-DFS-2016", "ISC", "MPL-2.0", "Zlib", "CDLA-Permissive-2.0"]
 unused-allowed-license = "allow"
 
 [licenses.private]
 ignore = true
-
-
-[advisories]
-ignore = [
-    "RUSTSEC-2025-0134"
-]
 
 [bans]
 multiple-versions = "warn"      
@@ -19,17 +13,9 @@ wildcards = "deny"
 skip = [
     { name = "getrandom" },
     { name = "hashbrown" },
-    { name = "indexmap" },
     { name = "socket2" },
-    { name = "bitflags" },
+    # libmdns still depends on thiserror 1.x while newer infra crates use 2.x.
+    { name = "thiserror" },
+    { name = "thiserror-impl" },
     { name = "windows-sys" },
-    { name = "windows-targets" },
-    { name = "windows_aarch64_gnullvm" },
-    { name = "windows_aarch64_msvc" },
-    { name = "windows_i686_gnu" },
-    { name = "windows_i686_gnullvm" },
-    { name = "windows_i686_msvc" },
-    { name = "windows_x86_64_gnu" },
-    { name = "windows_x86_64_gnullvm" },
-    { name = "windows_x86_64_msvc" }
 ]

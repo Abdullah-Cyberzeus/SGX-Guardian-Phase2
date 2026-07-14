@@ -6,6 +6,10 @@ use p256::SecretKey;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::path::Path;
+
+const POLICY_SIG_OUTPUT_PATH: &str = "/etc/sgx-guardian/policies/policy.sig";
+const PA_ADMIN_PUB_DER_OUTPUT_PATH: &str = "/etc/sgx-guardian/policies/pa_admin_pub.der";
 
 /// Command-line arguments for the `sign` operation, which signs a policy file
 /// using the guardian's locally stored ECDSA-P256 private key.
@@ -18,7 +22,7 @@ pub struct SignArgs {
 /// Loads the guardian private key, computes a SHA-256 digest of the policy file,
 /// signs it using ECDSA-P256, and writes the Base64-encoded signature to
 /// `policy.sig`. Handles missing files, invalid keys, and bad formats safely.
-pub fn execute(args: SignArgs) {
+pub fn execute(args: SignArgs) -> bool {
     let policy_path = &args.file;
     println!("Signing policy file: {}", policy_path);
 
@@ -27,7 +31,7 @@ pub fn execute(args: SignArgs) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("❌ Failed to read policy file: {}", e);
-            return;
+            return false;
         }
     };
 
@@ -39,7 +43,7 @@ pub fn execute(args: SignArgs) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("❌ Missing guardian_private.key: {}", e);
-            return;
+            return false;
         }
     };
 
@@ -47,7 +51,7 @@ pub fn execute(args: SignArgs) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("❌ Failed to decode private key: {}", e);
-            return;
+            return false;
         }
     };
 
@@ -56,7 +60,7 @@ pub fn execute(args: SignArgs) {
         Ok(arr) => arr,
         Err(_) => {
             eprintln!("❌ Invalid private key length (must be 32 bytes)");
-            return;
+            return false;
         }
     };
 
@@ -65,14 +69,14 @@ pub fn execute(args: SignArgs) {
         Ok(sk) => sk,
         Err(_) => {
             eprintln!("❌ Invalid private key format");
-            return;
+            return false;
         }
     };
     let signing_key = SigningKey::from(secret_key);
 
     // 6 Sign the digest
     let signature: Signature = signing_key.sign(&digest);
-    // === New JSON envelope support (Day-2 Sprint-3) ===
+    // JSON envelope output
 
     // 6b. Compute hex digest (existing digest already computed)
     let digest_hex = hex::encode(digest);
@@ -94,14 +98,38 @@ pub fn execute(args: SignArgs) {
         "signing_pubkey_b64": pubkey_b64
     });
 
+    if let Some(parent) = Path::new(POLICY_SIG_OUTPUT_PATH).parent() {
+        if let Err(e) = fs::create_dir_all(parent) {
+            eprintln!("❌ Unable to create policy output directory: {}", e);
+            return false;
+        }
+    }
+
     // 7 Save Base64-encoded signature (old logic kept as-is)
     // === Replace old write with JSON envelope output ===
     if let Err(e) = fs::write(
-        "policy.sig",
+        POLICY_SIG_OUTPUT_PATH,
         serde_json::to_string_pretty(&envelope).unwrap(),
     ) {
         eprintln!("❌ Unable to write signed policy file: {}", e);
-        return;
+        return false;
     }
-    println!("✅ Policy signed successfully → policy.sig");
+    println!("✅ Policy signed successfully → {}", POLICY_SIG_OUTPUT_PATH);
+
+    // Also export the bare DER public key so nodeA can distribute it.
+    if let Err(e) = fs::write(PA_ADMIN_PUB_DER_OUTPUT_PATH, pubkey_bytes) {
+        eprintln!(
+            "⚠️  Failed to write {}: {}",
+            PA_ADMIN_PUB_DER_OUTPUT_PATH, e
+        );
+        return false;
+    } else {
+        let fp = hex::encode(&Sha256::digest(pubkey_bytes)[..8]);
+        println!(
+            "🔑 PA public key exported to {} (fp={})\n   → scp this to nodeA:{}",
+            PA_ADMIN_PUB_DER_OUTPUT_PATH, fp, PA_ADMIN_PUB_DER_OUTPUT_PATH
+        );
+    }
+
+    true
 }

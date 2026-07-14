@@ -1,0 +1,34 @@
+syntax = "proto3";
+package sgx;
+
+// Member Certificate Request with Manual YAML Approval
+// Uses NebulaCA for signing. All paths under /var/lib/sgx-guardian/nebula/
+
+message CertSignRequest {
+  string node_id = 1;              // e.g. "nodeB"
+  string public_key_pem = 2;       // requesting node public key PEM
+  string overlay_ip = 3;           // e.g. "192.168.100.2/24"
+  bool wants_lighthouse = 4;       // request lighthouse role assignment
+  bool wants_relay = 5;            // request relay role assignment
+}
+
+message CertSignResponse {
+  string status = 1;               // "approved", "pending", "rejected"
+  string signed_cert_pem = 2;      // Nebula signed certificate content
+  string node_key_pem = 3;         // Nebula node private key content
+  string ca_cert_pem = 4;          // CA public certificate content
+  string message = 5;              // Human-readable status message
+  bool assigned_lighthouse = 6;    // approved as secondary lighthouse
+  string lighthouse_registry_json = 7; // serialized lighthouse registry
+  string overlay_registry_json = 8;    // serialized overlay registry
+  bytes signed_policy_bytes = 9;   // /etc/sgx-guardian/policies/policy.sig
+  bool assigned_relay = 10;        // approved as relay-capable node
+  string relay_registry_json = 11; // serialized relay registry
+  // Policy Authority signing public key (DER, raw bytes)
+  bytes signing_pubkey_der = 12;
+  string member_vc_json = 13;      // signed VC issued by circle owner
+}
+
+service CertService {
+  rpc RequestCertificate (CertSignRequest) returns (CertSignResponse);
+}

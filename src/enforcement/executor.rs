@@ -97,6 +97,30 @@ fn build_nft_ruleset(rules: &[EnforcementRule]) -> Result<String> {
     // Allow local gRPC / node communication (example ports)
     out.push_str("    tcp dport {50051,50052,50053} accept\n");
 
+    // Allow attestation ports
+    out.push_str("    tcp dport {50151,50152,50153} accept\n");
+    // Allow registry sync (Overlay IP assignment)
+    out.push_str("    tcp dport 50062 accept\n");
+
+    // Allow node discovery broadcast (UDP)
+    out.push_str("    udp dport 9000 accept\n");
+    out.push_str("    udp sport 9000 accept\n");
+
+    // Allow config sync (TCP)
+    out.push_str("    tcp dport 50070 accept\n");
+
+    // Allow cert bootstrap
+    out.push_str("    tcp dport 50061 accept\n");
+
+    // Allow CRL gossip exchange for decentralized revocation propagation
+    out.push_str("    tcp dport 50063 accept\n");
+
+    // Allow ICMP ping
+    out.push_str("    ip protocol icmp accept\n");
+
+    // Allow Nebula overlay mesh traffic (VERY IMPORTANT)
+    out.push_str("    udp dport 4242 accept\n");
+    out.push_str("    udp sport 4242 accept\n");
     // ---- END DEV SAFETY RULES ----
 
     for rule in rules {
