@@ -92,6 +92,24 @@ impl Default for SessionManager {
     }
 }
 
+/// Process-global handle to the running SessionManager, set once when the
+/// CoT subsystem starts (see main.rs). Lets the CRL emergency channel drop
+/// sessions for a revoked peer without threading the manager through every
+/// call site. `None` when CoT is disabled (SGX_DISABLE_COT=1).
+static GLOBAL_SESSION_MANAGER: once_cell::sync::OnceCell<std::sync::Arc<SessionManager>> =
+    once_cell::sync::OnceCell::new();
+
+/// Register the process-wide SessionManager. Idempotent; later calls are
+/// ignored. Called once from the CoT startup block in main.rs.
+pub fn set_global_session_manager(manager: std::sync::Arc<SessionManager>) {
+    let _ = GLOBAL_SESSION_MANAGER.set(manager);
+}
+
+/// Fetch the process-wide SessionManager if CoT initialized one.
+pub fn global_session_manager() -> Option<std::sync::Arc<SessionManager>> {
+    GLOBAL_SESSION_MANAGER.get().cloned()
+}
+
 impl SessionManager {
     pub fn new() -> Self {
         Self {
@@ -174,6 +192,17 @@ impl SessionManager {
             .count()
     }
 
+    /// Emergency Revocation (Sprint 7): terminate every session whose remote
+    /// peer is `remote_device_id`. Returns the number of sessions dropped.
+    /// Used when a critical revocation for that peer is applied — active
+    /// breaches must be cut instantly, not on the next expiry sweep.
+    pub async fn terminate_peer(&self, remote_device_id: &str) -> usize {
+        let mut sessions = self.sessions.write().await;
+        let before = sessions.len();
+        sessions.retain(|key, _| key != remote_device_id);
+        before - sessions.len()
+    }
+
     pub async fn total_count(&self) -> usize {
         let sessions = self.sessions.read().await;
         sessions.len()
@@ -248,6 +277,18 @@ mod tests {
         mgr.get_or_create("local", "remote_b", TransportType::WiFi)
             .await;
         assert_eq!(mgr.active_count().await, 2);
+    }
+
+    #[tokio::test]
+    async fn test_terminate_peer() {
+        let mgr = SessionManager::new();
+        mgr.get_or_create("local", "remote_a", TransportType::Ethernet)
+            .await;
+        mgr.get_or_create("local", "remote_b", TransportType::WiFi)
+            .await;
+        assert_eq!(mgr.terminate_peer("remote_a").await, 1);
+        assert!(mgr.get_session("remote_a").await.is_none());
+        assert_eq!(mgr.total_count().await, 1);
     }
 
     #[tokio::test]

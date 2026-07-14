@@ -1,4 +1,4 @@
-use super::dkp::{run_cli, ActionResponse};
+use super::dkp::{run_cli, run_cli_with_env, ActionResponse};
 use crate::api::error::ApiError;
 use crate::crl::entry::CrlEntry;
 use crate::crl::persistence;
@@ -182,8 +182,90 @@ pub async fn gossip_trigger(
     }))
 }
 
-pub async fn revoke(
+#[derive(Debug, Serialize)]
+pub struct EmergencyStatusResponse {
+    pub enabled: bool,
+    pub port: u16,
+    pub ttl: u8,
+    pub notices_sent: u64,
+    pub notices_received: u64,
+    pub notices_merged: u64,
+    pub notices_rebroadcast: u64,
+    pub sessions_terminated: u64,
+    pub last_notice: Option<crate::crl::gossip::emergency::LastNotice>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EmergencyBroadcastResponse {
+    pub success: bool,
+    pub revoked_did: String,
+    pub message: String,
+}
+
+/// GET /api/v1/crl/emergency/status — emergency channel observability.
+pub async fn emergency_status(
     State(_state): State<Arc<crate::api::state::AppState>>,
+) -> Result<Json<EmergencyStatusResponse>, ApiError> {
+    let config = crate::crl::gossip::GossipConfig::from_env();
+    Ok(Json(EmergencyStatusResponse {
+        enabled: config.emergency_enabled,
+        port: config.emergency_port,
+        ttl: config.emergency_ttl,
+        notices_sent: crate::crl::gossip::emergency::notices_sent(),
+        notices_received: crate::crl::gossip::emergency::notices_received(),
+        notices_merged: crate::crl::gossip::emergency::notices_merged(),
+        notices_rebroadcast: crate::crl::gossip::emergency::notices_rebroadcast(),
+        sessions_terminated: crate::crl::gossip::emergency::sessions_terminated_total(),
+        last_notice: crate::crl::gossip::emergency::last_notice(),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EmergencyBroadcastQuery {
+    pub did: String,
+}
+
+pub async fn emergency_broadcast(
+    State(state): State<Arc<crate::api::state::AppState>>,
+    axum::extract::Query(q): axum::extract::Query<EmergencyBroadcastQuery>,
+) -> Result<Json<EmergencyBroadcastResponse>, ApiError> {
+    if q.did.trim().is_empty() {
+        return Err(ApiError::BadRequest("did must not be empty".into()));
+    }
+    let crl = persistence::load_crl()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .ok_or_else(|| ApiError::NotFound("no local CRL".into()))?;
+    let entry = crl
+        .entries
+        .iter()
+        .find(|entry| entry.revoked_did == q.did)
+        .cloned()
+        .ok_or_else(|| ApiError::NotFound(format!("{} is not revoked", q.did)))?;
+    if !matches!(entry.severity, crate::crl::entry::Severity::Critical) {
+        return Err(ApiError::BadRequest(
+            "emergency broadcast is only for critical revocations".into(),
+        ));
+    }
+    crate::crl::gossip::emergency::broadcast_for_entry(state.node_id.clone(), entry);
+    Ok(Json(EmergencyBroadcastResponse {
+        success: true,
+        revoked_did: q.did,
+        message: "emergency broadcast dispatched".to_string(),
+    }))
+}
+
+/// GET /api/v1/crl/emergency/notifications — durable feed the mobile app
+/// polls to raise user push notifications for critical revocations.
+pub async fn emergency_notifications(
+    State(_state): State<Arc<crate::api::state::AppState>>,
+) -> Result<Json<Vec<crate::crl::gossip::notifications::EmergencyNotification>>, ApiError> {
+    Ok(Json(crate::crl::gossip::notifications::recent(
+        crate::crl::gossip::notifications::MAX_FEED_RETURN,
+    )))
+}
+
+pub async fn revoke(
+    State(state): State<Arc<crate::api::state::AppState>>,
     Json(body): Json<RevokeCrlRequest>,
 ) -> Result<Json<RevokeCrlResponse>, ApiError> {
     if body.did.trim().is_empty() {
@@ -204,7 +286,8 @@ pub async fn revoke(
     push_optional_arg(&mut args, "--user-id", body.user_id.as_deref());
     push_optional_arg(&mut args, "--note", body.note.as_deref());
 
-    let response = run_owned_cli(args).await?;
+    let response =
+        run_owned_cli_with_env(args, &[("SGX_CRL_SKIP_EMERGENCY_BROADCAST", "1")]).await?;
     ensure_cli_success(response)?;
 
     let crl = persistence::load_crl()
@@ -216,6 +299,11 @@ pub async fn revoke(
         .find(|entry| entry.revoked_did == body.did)
         .cloned()
         .ok_or_else(|| ApiError::NotFound(format!("CRL entry not found for DID {}", body.did)))?;
+    // Emergency Revocation: critical revocations fire the priority UDP
+    // broadcast at once (daemon tokio runtime; fire-and-forget).
+    if matches!(entry.severity, crate::crl::entry::Severity::Critical) {
+        crate::crl::gossip::emergency::broadcast_for_entry(state.node_id.clone(), entry.clone());
+    }
 
     Ok(Json(RevokeCrlResponse {
         status: "success".to_string(),
@@ -356,6 +444,14 @@ pub async fn root(
 async fn run_owned_cli(args: Vec<String>) -> Result<ActionResponse, ApiError> {
     let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
     run_cli(&refs).await
+}
+
+async fn run_owned_cli_with_env(
+    args: Vec<String>,
+    envs: &[(&str, &str)],
+) -> Result<ActionResponse, ApiError> {
+    let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+    run_cli_with_env(&refs, envs).await
 }
 
 fn push_optional_arg(args: &mut Vec<String>, name: &str, value: Option<&str>) {

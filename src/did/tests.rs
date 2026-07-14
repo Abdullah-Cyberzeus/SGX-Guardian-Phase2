@@ -400,6 +400,33 @@ fn test_diddoc_malformed_jwk_fails_verify() {
 }
 
 #[test]
+fn test_diddoc_primary_public_key_bytes_roundtrip() {
+    let td = TempDir::new().unwrap();
+    let key_path = td.path().join("dev.key");
+    let km = KeyManager::load_or_generate(key_path.to_str().unwrap()).unwrap();
+    let pk = km.pubkey_der().unwrap();
+
+    let doc = super::document::DidDocument::build(super::document::DocBuildInput {
+        did: "did:guardian:11111111111111111111111111111111111111111111",
+        node_name: Some("nodeT"),
+        current_dkp_version: 1,
+        current_dkp_pubkey_der: &pk,
+        overlay_ip_cidr: Some("192.168.100.7/24"),
+        attestation_bind: None,
+        cert_bootstrap_bind: None,
+        revoked: vec![],
+        previous_version_id: 0,
+        created_at: None,
+        status: Some("active".into()),
+    })
+    .unwrap();
+
+    let pubkey = doc.primary_public_key_bytes().unwrap();
+    assert_eq!(pubkey.len(), 65);
+    assert_eq!(pubkey[0], 0x04);
+}
+
+#[test]
 fn test_diddoc_replay_protection_rejects_older_version() {
     let td = TempDir::new().unwrap();
     let key_path = td.path().join("dev.key");
