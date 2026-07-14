@@ -460,6 +460,9 @@ pub fn resolve_runtime_node_id() -> Option<String> {
 pub fn load_runtime_key_manager(node_id: &str) -> anyhow::Result<KeyManager> {
     let key_path = runtime_device_key_dir().join(format!("device_{}.key", node_id));
     let key_path = key_path.to_string_lossy().to_string();
+    if software_keys_forced() {
+        return KeyManager::load_or_generate(&key_path);
+    }
     #[cfg(feature = "secure-element")]
     {
         KeyManager::init_with_se050(
@@ -479,6 +482,17 @@ fn runtime_device_key_dir() -> PathBuf {
     std::env::var(DEVICE_KEY_DIR_ENV)
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("/var/lib/sgx-guardian/sgx-agent"))
+}
+
+fn software_keys_forced() -> bool {
+    fn env_true(key: &str) -> bool {
+        matches!(
+            std::env::var(key).ok().as_deref(),
+            Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("on")
+        )
+    }
+
+    env_true("SGX_FORCE_SOFTWARE_KEYS") || env_true("SGX_DISABLE_SE050_DKP")
 }
 
 fn ensure_circle_owner(

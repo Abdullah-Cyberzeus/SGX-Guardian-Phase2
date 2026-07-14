@@ -224,11 +224,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Start node announcement listener (UDP broadcast receiver)
-    {
+    if !GATES.disable_node_listener {
         let node_id_clone = node_id.clone();
         tokio::spawn(async move {
             node_listener::start_listener(node_id_clone).await;
         });
+    } else {
+        tracing::warn!("Node listener disabled by SGX_DISABLE_NODE_LISTENER");
     }
     GATES.log_summary();
     step(1, "post-listener: entering KeyManager init");
@@ -237,30 +239,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // === Hardware Key Manager Initialization (Phase 2 — HKM) ===
     #[cfg(feature = "secure-element")]
     let km = {
-        let se_base_path = "/var/lib/sgx-guardian";
-        let se_config = secure_element::SeConfig::default();
+        if GATES.force_software_keys {
+            println!("🔐 Software-key mode forced by SGX_FORCE_SOFTWARE_KEYS");
+            KeyManager::load_or_generate(&node_key_path)?
+        } else {
+            let se_base_path = "/var/lib/sgx-guardian";
+            let se_config = secure_element::SeConfig::default();
 
-        match KeyManager::init_with_se050(&se_config, se_base_path, &node_key_path) {
-            Ok(hw_km) => {
-                println!("DKP initialized via SE050 hardware");
-                log_audit(
-                    &node_id,
-                    AuditCategory::Identity,
-                    AuditSeverity::Info,
-                    AuditAction::Loaded,
-                    "Hardware Key Manager: DKP active via SE050",
-                );
-                hw_km
-            }
-            Err(e) => {
-                eprintln!("SE050 HKM failed: {} — using software keys", e);
-                KeyManager::load_or_generate(&node_key_path)?
+            match KeyManager::init_with_se050(&se_config, se_base_path, &node_key_path) {
+                Ok(hw_km) => {
+                    println!("DKP initialized via SE050 hardware");
+                    log_audit(
+                        &node_id,
+                        AuditCategory::Identity,
+                        AuditSeverity::Info,
+                        AuditAction::Loaded,
+                        "Hardware Key Manager: DKP active via SE050",
+                    );
+                    hw_km
+                }
+                Err(e) => {
+                    eprintln!("SE050 HKM failed: {} — using software keys", e);
+                    KeyManager::load_or_generate(&node_key_path)?
+                }
             }
         }
     };
 
     #[cfg(not(feature = "secure-element"))]
     let km = KeyManager::load_or_generate(&node_key_path)?;
+
+    if GATES.force_software_keys {
+        if let Err(e) = sgx_guardian_client::did::ensure_runtime_pubkey(
+            &km,
+            sgx_guardian_client::did::DEFAULT_DKP_PUBKEY_PATH,
+        ) {
+            eprintln!("⚠️ Software DID pubkey export failed: {}", e);
+        }
+    }
 
     // === DKP Auto-Rotation Check ===
     // Only probe the SE050 a SECOND time if the primary KeyManager init above
@@ -269,7 +285,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // and was an amplifier of the DKP-regeneration cascade. If we're on software
     // keys, there is nothing to auto-rotate in the SE050 anyway.
     #[cfg(feature = "secure-element")]
-    if km.backend_name() == "SE050" {
+    if GATES.disable_dkp_rotation {
+        tracing::warn!("DKP auto-rotation disabled by SGX_DISABLE_DKP_ROTATION");
+    } else if km.backend_name() == "SE050" {
         let se_config = sgx_guardian_client::secure_element::SeConfig::default();
         let base_path = "/var/lib/sgx-guardian";
         if let Ok(mut dkp) =
@@ -297,13 +315,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // === Device Identity Key (DIK) — non-rotating DID anchor ===
     #[cfg(feature = "secure-element")]
     {
-        let se_config = sgx_guardian_client::secure_element::SeConfig::default();
-        match sgx_guardian_client::secure_element::dik::DeviceIdentityKey::ensure(&se_config) {
-            Ok(_) => println!("🔑 Device Identity Key (DIK) ready (slot 0x20000100, non-rotating)"),
-            Err(e) => eprintln!(
-                "⚠️ DIK ensure failed: {} — DID will use cached anchor if present",
-                e
-            ),
+        if km.backend_name() == "SE050" && !GATES.force_software_keys {
+            let se_config = sgx_guardian_client::secure_element::SeConfig::default();
+            match sgx_guardian_client::secure_element::dik::DeviceIdentityKey::ensure(&se_config) {
+                Ok(_) => {
+                    println!("🔑 Device Identity Key (DIK) ready (slot 0x20000100, non-rotating)")
+                }
+                Err(e) => eprintln!(
+                    "⚠️ DIK ensure failed: {} — DID will use cached anchor if present",
+                    e
+                ),
+            }
+        } else {
+            tracing::warn!("Skipping DIK ensure because SE050 backend is not active");
         }
     }
 
@@ -311,7 +335,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n🆔 Initializing W3C DID (did:guardian)...");
     {
         let did_path = sgx_guardian_client::did::DEFAULT_DID_PATH;
-        let dkp_pubkey_path = "/var/lib/sgx-guardian/keys/dkp_pub.der";
+        let dkp_pubkey_path = sgx_guardian_client::did::DEFAULT_DKP_PUBKEY_PATH;
         match sgx_guardian_client::did::method::create_if_absent(
             &node_id,
             &km,
@@ -388,7 +412,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Ok(None) => {
             let did_path = sgx_guardian_client::did::DEFAULT_DID_PATH;
-            let dkp_pubkey_path = "/var/lib/sgx-guardian/keys/dkp_pub.der";
+            let dkp_pubkey_path = sgx_guardian_client::did::DEFAULT_DKP_PUBKEY_PATH;
             match sgx_guardian_client::did::method::resolve_local(did_path, dkp_pubkey_path) {
                 Ok((did, _anchor_pk, active)) => {
                     let refreshed_km = match km.refresh_for_active_dkp() {
@@ -488,23 +512,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         use sgx_guardian_client::secure_element::secure_boot::BootChainStatus;
 
-        let boot_status = match tokio::time::timeout(
-            std::time::Duration::from_secs(15),
-            tokio::task::spawn_blocking(BootChainStatus::check),
-        )
-        .await
-        {
-            Ok(Ok(s)) => s,
-            Ok(Err(e)) => {
-                eprintln!(
-                    "  ⚠️ BootChain task panicked: {:?} — using unknown defaults",
-                    e
-                );
-                BootChainStatus::unknown()
-            }
-            Err(_) => {
-                eprintln!("  ⚠️ BootChain check TIMED OUT after 15s — using unknown defaults");
-                BootChainStatus::unknown()
+        let boot_status = if GATES.disable_secure_boot_check {
+            tracing::warn!("Secure boot check disabled by SGX_DISABLE_SECURE_BOOT_CHECK");
+            BootChainStatus::unknown()
+        } else {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(15),
+                tokio::task::spawn_blocking(BootChainStatus::check),
+            )
+            .await
+            {
+                Ok(Ok(s)) => s,
+                Ok(Err(e)) => {
+                    eprintln!(
+                        "  ⚠️ BootChain task panicked: {:?} — using unknown defaults",
+                        e
+                    );
+                    BootChainStatus::unknown()
+                }
+                Err(_) => {
+                    eprintln!("  ⚠️ BootChain check TIMED OUT after 15s — using unknown defaults");
+                    BootChainStatus::unknown()
+                }
             }
         };
         BootChainStatus::prime_cache(boot_status.clone());
@@ -523,10 +552,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let mut local_pcr_trusted = false;
+    let mut local_pcr_trusted = GATES.disable_pcr_measurement;
     // === PCR Measurement (ATT-003) ===
     println!("\n  Measuring platform integrity (PCR)...");
-    {
+    if GATES.disable_pcr_measurement {
+        tracing::warn!("PCR measurement disabled by SGX_DISABLE_PCR");
+    } else {
         use sgx_guardian_client::secure_element::pcr::*;
         use sgx_guardian_client::secure_element::pcr_config;
         use sha2::Digest;
@@ -556,7 +587,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if src.source_type == "boot_chain" {
                 // Measure the boot chain state string
                 use sgx_guardian_client::secure_element::secure_boot::BootChainStatus;
-                let boot_status = BootChainStatus::check();
+                let boot_status = if GATES.disable_secure_boot_check {
+                    BootChainStatus::unknown()
+                } else {
+                    BootChainStatus::check()
+                };
                 let measurement = boot_status.to_measurement_string();
                 match pcr_engine.extend_from_string(src.pcr_index, &measurement) {
                     Ok(hash) => println!(
@@ -746,32 +781,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let sample_policy = sgx_guardian_client::policy::load_effective_policy_material();
 
-    let evidence = AttestationService::create_signed_evidence(&km, &sample_policy.yaml)?;
-    println!(
-        "Created local attestation evidence (nonce={}..)",
-        &evidence.nonce[..8]
-    );
-    let evidence_verified =
-        AttestationService::verify_signed_evidence(&evidence, &sample_policy.yaml)?;
-    let verified = evidence_verified && local_pcr_trusted;
-    if verified {
-        println!("✅ Local attestation evidence verified successfully.");
-        log_audit(
-            &node_id,
-            AuditCategory::Attestation,
-            AuditSeverity::Info,
-            AuditAction::Succeeded,
-            "Local attestation evidence verified",
-        );
+    if GATES.disable_startup_attest_evidence {
+        tracing::warn!("Startup attestation evidence disabled by SGX_DISABLE_STARTUP_ATTEST");
     } else {
-        eprintln!("❌ Local attestation verification failed!");
-        log_audit(
-            &node_id,
-            AuditCategory::Attestation,
-            AuditSeverity::Critical,
-            AuditAction::Failed,
-            "Local attestation evidence verification failed",
+        let evidence = AttestationService::create_signed_evidence(&km, &sample_policy.yaml)?;
+        println!(
+            "Created local attestation evidence (nonce={}..)",
+            &evidence.nonce[..8]
         );
+        let evidence_verified =
+            AttestationService::verify_signed_evidence(&evidence, &sample_policy.yaml)?;
+        let verified = evidence_verified && local_pcr_trusted;
+        if verified {
+            println!("✅ Local attestation evidence verified successfully.");
+            log_audit(
+                &node_id,
+                AuditCategory::Attestation,
+                AuditSeverity::Info,
+                AuditAction::Succeeded,
+                "Local attestation evidence verified",
+            );
+        } else {
+            eprintln!("❌ Local attestation verification failed!");
+            log_audit(
+                &node_id,
+                AuditCategory::Attestation,
+                AuditSeverity::Critical,
+                AuditAction::Failed,
+                "Local attestation evidence verification failed",
+            );
+        }
     }
 
     // === DYNAMIC IP DETECTION + CONFIG AUTO-UPDATE ===
@@ -923,7 +962,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         audit_log_path_dev.clone()
     };
 
-    if std::path::Path::new(&audit_check_path).exists() {
+    if GATES.disable_audit_verify {
+        tracing::warn!("Audit verification disabled by SGX_DISABLE_AUDIT_VERIFY");
+    } else if std::path::Path::new(&audit_check_path).exists() {
         if let Err(e) = AuditVerifier::verify(&audit_check_path) {
             log_error(
                 &node_id,
@@ -2554,16 +2595,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let identity = Identity::from_pem(cert_pem.clone(), key_pem.clone());
     let ca_cert = TonicCertificate::from_pem(cert_pem.clone());
     // spawn gRPC server using tonic Identity + CA (mTLS)
-    let server_task = task::spawn({
-        let identity = identity.clone();
-        let ca_cert = ca_cert.clone();
-        let this_addr = this_addr.clone();
-        async move {
-            if let Err(e) = start_server(this_addr.clone(), identity, ca_cert).await {
-                eprintln!("Server failed at {}: {:?}", this_addr, e);
+    let server_task = if GATES.disable_grpc_server {
+        tracing::warn!("gRPC server disabled by SGX_DISABLE_GRPC_SERVER");
+        task::spawn(async move {
+            std::future::pending::<()>().await;
+        })
+    } else {
+        task::spawn({
+            let identity = identity.clone();
+            let ca_cert = ca_cert.clone();
+            let this_addr = this_addr.clone();
+            async move {
+                if let Err(e) = start_server(this_addr.clone(), identity, ca_cert).await {
+                    eprintln!("Server failed at {}: {:?}", this_addr, e);
+                }
             }
-        }
-    });
+        })
+    };
     if let Err(e) = refresh_runtime_virtual_id_session(&node_id) {
         log_error(
             &node_id,
@@ -2653,22 +2701,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     // === CERT BOOTSTRAP SERVER (nodeA only, plaintext port 50061) ===
     if node_id == "nodeA" {
-        tokio::spawn(async move {
-            // Bind to detected LAN IP or localhost — do NOT expose on all interfaces
-            let bootstrap_addr = if detected_ip.is_empty() {
-                "127.0.0.1:50061".to_string()
-            } else {
-                format!("{}:50061", detected_ip)
-            };
-            if let Err(e) = server::start_cert_bootstrap_server(bootstrap_addr).await {
-                eprintln!("Cert bootstrap server failed: {:?}", e);
-            }
-        });
+        if GATES.disable_cert_bootstrap {
+            tracing::warn!("Cert bootstrap server disabled by SGX_DISABLE_CERT_BOOTSTRAP");
+        } else {
+            tokio::spawn(async move {
+                // Bind to detected LAN IP or localhost — do NOT expose on all interfaces
+                let bootstrap_addr = if detected_ip.is_empty() {
+                    "127.0.0.1:50061".to_string()
+                } else {
+                    format!("{}:50061", detected_ip)
+                };
+                if let Err(e) = server::start_cert_bootstrap_server(bootstrap_addr).await {
+                    eprintln!("Cert bootstrap server failed: {:?}", e);
+                }
+            });
+        }
     }
     use sgx_guardian_client::enforcement;
     use sgx_guardian_client::policy::get_active_policy;
 
-    if let Some(active_policy) = get_active_policy() {
+    if GATES.disable_policy_enforcement {
+        tracing::warn!("Policy enforcement disabled by SGX_DISABLE_POLICY_ENFORCEMENT");
+    } else if let Some(active_policy) = get_active_policy() {
         println!("🛡️ Applying policy enforcement (nftables)");
 
         log_audit(

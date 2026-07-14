@@ -878,7 +878,7 @@ pub async fn get_runs(
         }
     }
 
-    runs.sort_by(|a, b| b.unix_ts.cmp(&a.unix_ts)); // newest first
+    runs.sort_by_key(|run| std::cmp::Reverse(run.unix_ts)); // newest first
     Ok(Json(RunsApiResponse::Raw(RunsResponse {
         runs,
         total_in_inventory,
