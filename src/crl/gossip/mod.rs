@@ -22,13 +22,19 @@
 //!   converge to identical Merkle roots even after partitions, restarts,
 //!   or missed rounds (eventual consistency).
 
+pub mod emergency;
 pub mod engine;
+pub mod notifications;
 pub mod protocol;
 pub mod store;
 
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "emergency_tests.rs"]
+mod emergency_tests;
 
 /// Runtime configuration sourced from environment with safe defaults.
 #[derive(Debug, Clone)]
@@ -37,12 +43,17 @@ pub struct GossipConfig {
     pub port: u16,
     pub interval_secs: u64,
     pub threshold_pct: u8,
+    pub emergency_enabled: bool,
+    pub emergency_port: u16,
+    pub emergency_ttl: u8,
 }
 
 impl GossipConfig {
     pub const DEFAULT_PORT: u16 = 50063;
     pub const DEFAULT_INTERVAL_SECS: u64 = 60;
     pub const DEFAULT_THRESHOLD_PCT: u8 = 80;
+    pub const DEFAULT_EMERGENCY_PORT: u16 = 50064;
+    pub const DEFAULT_EMERGENCY_TTL: u8 = 1;
 
     pub fn from_env() -> Self {
         Self {
@@ -50,6 +61,9 @@ impl GossipConfig {
             port: parse_port(std::env::var("SGX_CRL_GOSSIP_PORT").ok()),
             interval_secs: parse_interval(std::env::var("SGX_CRL_GOSSIP_INTERVAL_SECS").ok()),
             threshold_pct: parse_threshold(std::env::var("SGX_CRL_GOSSIP_THRESHOLD_PCT").ok()),
+            emergency_enabled: parse_enabled(std::env::var("SGX_CRL_EMERGENCY_ENABLED").ok()),
+            emergency_port: parse_emergency_port(std::env::var("SGX_CRL_EMERGENCY_PORT").ok()),
+            emergency_ttl: parse_emergency_ttl(std::env::var("SGX_CRL_EMERGENCY_TTL").ok()),
         }
     }
 }
@@ -84,6 +98,18 @@ pub(crate) fn parse_threshold(raw: Option<String>) -> u8 {
         .clamp(1, 100)
 }
 
+pub(crate) fn parse_emergency_port(raw: Option<String>) -> u16 {
+    raw.and_then(|value| value.trim().parse::<u16>().ok())
+        .filter(|port| *port != 0)
+        .unwrap_or(GossipConfig::DEFAULT_EMERGENCY_PORT)
+}
+
+pub(crate) fn parse_emergency_ttl(raw: Option<String>) -> u8 {
+    raw.and_then(|value| value.trim().parse::<u8>().ok())
+        .unwrap_or(GossipConfig::DEFAULT_EMERGENCY_TTL)
+        .clamp(0, 4)
+}
+
 /// Entry point called from `main.rs` right after the REST API spawn.
 /// Spawns two background tokio tasks and returns immediately. Never
 /// blocks, never panics, safe on every node role (CA and members alike).
@@ -112,5 +138,17 @@ pub fn spawn(node_id: String, resolver: crate::did::Resolver) {
         resolver.clone(),
         config.clone(),
     ));
+    // Emergency priority channel (UDP): critical revocations bypass gossip.
+    if config.emergency_enabled {
+        println!(
+            "🚨 CRL-EMERGENCY channel enabled port={} ttl={}",
+            config.emergency_port, config.emergency_ttl
+        );
+        tokio::spawn(emergency::listener_task(
+            node_id.clone(),
+            resolver.clone(),
+            config.clone(),
+        ));
+    }
     tokio::spawn(engine::round_task(node_id, resolver, config));
 }

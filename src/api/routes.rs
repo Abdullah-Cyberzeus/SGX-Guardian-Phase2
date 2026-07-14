@@ -23,4 +23,16 @@ pub fn crl_router() -> Router<Arc<AppState>> {
             "/api/v1/crl/gossip/trigger",
             post(handlers::crl::gossip_trigger),
         )
+        .route(
+            "/api/v1/crl/emergency/status",
+            get(handlers::crl::emergency_status),
+        )
+        .route(
+            "/api/v1/crl/emergency/broadcast",
+            post(handlers::crl::emergency_broadcast),
+        )
+        .route(
+            "/api/v1/crl/emergency/notifications",
+            get(handlers::crl::emergency_notifications),
+        )
 }

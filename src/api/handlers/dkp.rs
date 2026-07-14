@@ -193,19 +193,27 @@ fn resolve_pa_cli_path() -> Option<PathBuf> {
 }
 
 pub async fn run_cli(args: &[&str]) -> Result<ActionResponse, ApiError> {
+    run_cli_with_env(args, &[]).await
+}
+
+pub async fn run_cli_with_env(
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> Result<ActionResponse, ApiError> {
     let cli_path = resolve_pa_cli_path().ok_or_else(|| {
         let path_env = std::env::var("PATH").unwrap_or_else(|_| "<unset>".to_string());
         eprintln!("sgx-pa-cli not found. PATH={}", path_env);
         ApiError::Internal("sgx-pa-cli not found — check server logs".into())
     })?;
 
-    let out = tokio::process::Command::new(&cli_path)
-        .args(args)
-        .output()
-        .await
-        .map_err(|e| {
-            ApiError::Internal(format!("sgx-pa-cli spawn ({}): {}", cli_path.display(), e))
-        })?;
+    let mut command = tokio::process::Command::new(&cli_path);
+    command.args(args);
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    let out = command.output().await.map_err(|e| {
+        ApiError::Internal(format!("sgx-pa-cli spawn ({}): {}", cli_path.display(), e))
+    })?;
     Ok(ActionResponse {
         success: out.status.success(),
         stdout: String::from_utf8_lossy(&out.stdout).to_string(),
