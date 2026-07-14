@@ -146,6 +146,10 @@ pub fn build_nft_ruleset(rules: &TranslatedRules) -> Result<String> {
     // Allow in-Circle file transfer (chunked, resumable, signed manifest)
     out.push_str("    tcp dport 50064 accept\n");
 
+    // Allow CRL emergency revocation broadcast (critical revocations, UDP)
+    out.push_str("    udp dport 50064 accept\n");
+    out.push_str("    udp sport 50064 accept\n");
+
     // Allow ICMP ping
     out.push_str("    ip protocol icmp accept\n");
     // Allow Nebula overlay mesh traffic (VERY IMPORTANT)

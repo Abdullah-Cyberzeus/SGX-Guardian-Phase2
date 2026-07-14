@@ -201,6 +201,28 @@ impl DidDocument {
     pub fn did(&self) -> Result<Did, DidError> {
         Did::parse(&self.id)
     }
+
+    pub fn primary_public_key_bytes(&self) -> Option<Vec<u8>> {
+        let vm = self.verification_method.first()?;
+        let jwk = &vm.public_key_jwk;
+        if jwk.kty != "EC" || jwk.crv != "P-256" {
+            return None;
+        }
+        let x = general_purpose::URL_SAFE_NO_PAD
+            .decode(jwk.x.as_bytes())
+            .ok()?;
+        let y = general_purpose::URL_SAFE_NO_PAD
+            .decode(jwk.y.as_bytes())
+            .ok()?;
+        if x.len() != 32 || y.len() != 32 {
+            return None;
+        }
+        let mut out = Vec::with_capacity(65);
+        out.push(0x04);
+        out.extend_from_slice(&x);
+        out.extend_from_slice(&y);
+        Some(out)
+    }
 }
 
 fn extract_xy_from_pubkey(pubkey: &[u8]) -> Result<([u8; 32], [u8; 32]), DidError> {

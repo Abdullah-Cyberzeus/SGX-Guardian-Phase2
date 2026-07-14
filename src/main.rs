@@ -2511,7 +2511,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         use sgx_guardian_client::cot::link_monitor::LinkMonitor;
         use sgx_guardian_client::cot::membership::CircleMembership as CotCircleMembership;
         use sgx_guardian_client::cot::router::CotRouter;
-        use sgx_guardian_client::cot::session_manager::SessionManager;
+        use sgx_guardian_client::cot::session_manager::{
+            set_global_session_manager, SessionManager,
+        };
         use sgx_guardian_client::cot::transport_registry::TransportRegistry;
         use sgx_guardian_client::cot::trust_engine::TrustEngine;
         use sgx_guardian_client::cot::{failover::FailoverEngine, hotplug::HotplugWatcher};
@@ -2601,6 +2603,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Step 7: Create session manager
         let cot_sessions = std::sync::Arc::new(SessionManager::new());
+        // Emergency Revocation: expose the live SessionManager process-wide so
+        // the CRL emergency channel can terminate sessions with a revoked DID.
+        set_global_session_manager(cot_sessions.clone());
 
         // Step 8: Create circle membership
         let cot_circle = std::sync::Arc::new(CotCircleMembership::new(

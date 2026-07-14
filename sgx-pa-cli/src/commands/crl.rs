@@ -9,6 +9,7 @@ use sgx_guardian_client::did::Resolver;
 use sgx_guardian_client::did::ResolverConfig;
 
 const CA_HOST_ENV: &str = "SGX_CA_HOST";
+const SKIP_EMERGENCY_BROADCAST_ENV: &str = "SGX_CRL_SKIP_EMERGENCY_BROADCAST";
 
 #[derive(Args)]
 #[command(about = "Certificate Revocation List operations")]
@@ -149,6 +150,32 @@ fn cmd_revoke(
                 );
             } else {
                 println!("✅ CRL entry issued: {}", entry.id);
+            }
+            // Emergency Revocation: critical entries fire the priority UDP
+            // broadcast immediately (bypasses routine gossip intervals).
+            if matches!(
+                entry.severity,
+                sgx_guardian_client::crl::entry::Severity::Critical
+            ) && std::env::var(SKIP_EMERGENCY_BROADCAST_ENV).ok().as_deref() != Some("1")
+            {
+                let node_id = sgx_guardian_client::vc::issue::resolve_runtime_node_id()
+                    .unwrap_or_else(|| "nodeA".to_string());
+                // sgx-pa-cli is a short-lived process; run the fire-and-forget
+                // broadcast to completion on a tiny current-thread runtime so the
+                // datagrams actually leave before the CLI exits.
+                if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    rt.block_on(async {
+                        sgx_guardian_client::crl::gossip::emergency::broadcast_for_entry(
+                            node_id,
+                            entry.clone(),
+                        );
+                        // Give the spawned send task a moment to flush datagrams.
+                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                    });
+                }
             }
         }
         Err(error) => {
