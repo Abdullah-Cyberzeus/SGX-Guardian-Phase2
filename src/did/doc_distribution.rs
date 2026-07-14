@@ -74,15 +74,18 @@ pub async fn ca_ingest_published(payload: &str) -> Result<(), DidError> {
     let doc: DidDocument = serde_json::from_str(payload)?;
     let existing = crate::did::doc_persistence::load_peer(&doc.did()?)?;
 
-    // SECURITY: bind doc.id to the signing key. verify_with_replay_protection
-    // only checks that the document's embedded proof is internally
-    // consistent (signed by the key embedded in the SAME document) — it
-    // never checks that doc.id actually belongs to that key. Without this, an
-    // overlay member could publish a doc claiming id: "did:guardian:<owner
-    // hash>", signed with their OWN key, and it would pass (the signature IS
-    // valid — just from the wrong identity), overwriting the CA's record of
-    // an already-known DID with an attacker-controlled key. A key change is
-    // only accepted if the version is higher (a legitimate rotation).
+    // SECURITY: external ingest cannot rotate keys. verify_with_replay_protection
+    // only checks that the document's embedded proof is internally consistent
+    // (signed by the key embedded in the SAME document) — it never checks
+    // that doc.id actually belongs to that key. A version-number check alone
+    // is bypassable: an attacker publishing a forged doc for an existing DID
+    // just sets sgx_version_id to existing+1 and signs with their OWN key,
+    // which passes both verify_with_replay_protection (self-consistent) and
+    // a "version increased" check. Legitimate key rotation for an
+    // already-known DID must go through the daemon's own DID refresh path,
+    // which has access to the old key to prove continuity; this path has no
+    // way to verify that continuity, so it only accepts a key for a DID it
+    // has never recorded before (first-time ingest / bootstrapping).
     if let Some(existing) = &existing {
         let existing_key = existing
             .verification_method
@@ -93,10 +96,10 @@ pub async fn ca_ingest_published(payload: &str) -> Result<(), DidError> {
             .first()
             .map(|vm| (vm.public_key_jwk.x.clone(), vm.public_key_jwk.y.clone()));
 
-        if existing_key != incoming_key && doc.sgx_version_id <= existing.sgx_version_id {
+        if existing_key != incoming_key {
             return Err(DidError::InvalidFormat(format!(
-                "key change for {} requires version > {} (got {})",
-                doc.id, existing.sgx_version_id, doc.sgx_version_id
+                "key change rejected for {}: external ingest cannot rotate keys",
+                doc.id
             )));
         }
     }
@@ -235,6 +238,49 @@ mod tests {
         assert!(matches!(err, DidError::InvalidFormat(msg) if msg.contains("key change")));
 
         // The genuine peer doc must be untouched.
+        let stored = doc_persistence::load_peer(&Did::parse(&did).unwrap())
+            .expect("load peer")
+            .expect("peer doc still present");
+        assert!(stored.substantively_equal(&genuine));
+
+        std::env::remove_var(SELF_DOC_PATH_ENV);
+        std::env::remove_var(PEERS_DOC_DIR_ENV);
+    }
+
+    // Held across .await deliberately: see
+    // ca_ingest_rejects_key_change_at_same_or_lower_version above.
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn ca_ingest_rejects_key_change_even_at_higher_version() {
+        let _lock = doc_persistence::lock_test_env();
+        let td = TempDir::new().expect("tempdir");
+        let self_doc_path = td.path().join("identity").join("did_doc.json");
+        let peers_dir = td.path().join("identity").join("peers");
+        std::env::set_var(SELF_DOC_PATH_ENV, &self_doc_path);
+        std::env::set_var(PEERS_DOC_DIR_ENV, &peers_dir);
+
+        let did = Did::from_id_bytes(&[42u8; 32]).to_string();
+        let owner_km =
+            KeyManager::load_or_generate(td.path().join("owner2.key").to_str().unwrap()).unwrap();
+        let attacker_km =
+            KeyManager::load_or_generate(td.path().join("attacker2.key").to_str().unwrap())
+                .unwrap();
+
+        let genuine = signed_doc(&did, &owner_km, 1);
+        doc_persistence::save_peer(&genuine).expect("save genuine peer doc");
+
+        // Attacker claims the SAME DID with their OWN key, but at a HIGHER
+        // version than the genuine doc — the exact bypass the plain
+        // version-number check missed (Round 3): a version bump alone was
+        // being accepted as sufficient proof of a legitimate rotation.
+        let forged = signed_doc(&did, &attacker_km, 2);
+        let payload = serde_json::to_string(&forged).expect("forged payload");
+
+        let err = ca_ingest_published(&payload)
+            .await
+            .expect_err("key change at a higher version must still be rejected");
+        assert!(matches!(err, DidError::InvalidFormat(msg) if msg.contains("key change")));
+
         let stored = doc_persistence::load_peer(&Did::parse(&did).unwrap())
             .expect("load peer")
             .expect("peer doc still present");
