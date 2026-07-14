@@ -150,6 +150,7 @@ jobs:
             all=$(jq -n --argjson a "$checks" --argjson b "$statuses" '$a + $b')
             FAILED=$(jq '[.[] | select(.conclusion | ascii_upcase | IN("FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","ERROR"))] | length' <<<"$all")
             PENDING=$(jq '[.[] | select(.status != "completed")] | length' <<<"$all")
+            PENDING_NAMES=$(jq -r '[.[] | select(.status != "completed") | .name] | join(", ")' <<<"$all")
             FAILED_NAMES=$(jq -r '.[] | select(.conclusion | ascii_upcase | IN("FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","ERROR")) | .name' <<<"$all")
           }
           for i in $(seq 1 60); do
@@ -159,7 +160,7 @@ jobs:
               exit 1
             fi
             [ "$PENDING" -eq 0 ] && exit 0
-            echo "waiting on $PENDING check(s)…"; sleep 30
+            echo "waiting on: $PENDING_NAMES"; sleep 30
           done
           echo "Timed out waiting for CI; not reviewing."; exit 1
 
@@ -201,7 +202,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          claude_args: "--model ${{ needs.classify.outputs.model }} --max-turns 40 --allowed-tools Bash,Read,Grep,Glob,Write"
+          claude_args: "--model ${{ needs.classify.outputs.model }} --max-turns 60 --allowed-tools Bash,Read,Grep,Glob,Write"
           prompt: |
             You are the Lead/Judge of a cybersecurity code review of pull request
             #${{ env.PR_NUMBER }} in ${{ env.REPO }}. Repo root is the checkout.
@@ -320,6 +321,7 @@ jobs:
             all=$(jq -n --argjson a "$checks" --argjson b "$statuses" '$a + $b')
             FAILED=$(jq '[.[] | select(.conclusion | ascii_upcase | IN("FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","ERROR"))] | length' <<<"$all")
             PENDING=$(jq '[.[] | select(.status != "completed")] | length' <<<"$all")
+            PENDING_NAMES=$(jq -r '[.[] | select(.status != "completed") | .name] | join(", ")' <<<"$all")
             FAILED_NAMES=$(jq -r '.[] | select(.conclusion | ascii_upcase | IN("FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","ERROR")) | .name' <<<"$all")
           }
           for i in $(seq 1 80); do
@@ -344,6 +346,6 @@ jobs:
               gh pr merge "$PR_NUMBER" --repo "$REPO" --squash --admin --delete-branch --match-head-commit "$REVIEWED_SHA"
               exit 0
             fi
-            echo "waiting on $PENDING check(s)…"; sleep 30
+            echo "waiting on: $PENDING_NAMES"; sleep 30
           done
           echo "Timed out waiting for CI on PR #$PR_NUMBER."; exit 1
