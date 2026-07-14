@@ -1,61 +1,186 @@
 name: Cybersecurity Review Gate
 
-# Multi-dimension, security-first LLM review of the PR diff. The model NEVER
-# decides merge-ability — it only writes a structured findings file, and the
-# deterministic gate (.github/cyber-review/gate.py) applies a fixed severity
-# policy. See .github/cyber-review/README.md for what "passing" means.
+# Cost-lane redesign (ADR 0003, adapted from Verjson/.github ai-review-merge.yml):
+#   * The review runs ONCE per ready PR (opened/reopened/ready_for_review), not
+#     on every push. Re-run by applying the `re-review` label (auto-removed).
+#   * `classify` (free, deterministic bash) fast-lanes deletions-only and
+#     docs-only PRs — no model is invoked.
+#   * CI-first: the model runs only AFTER the rest of CI is green on the head
+#     SHA, so red PRs cost $0.
+#   * Model tiering: docs/tests/CLI-only diffs get Haiku; anything touching
+#     security-relevant paths gets Sonnet.
+#   * Merge is workflow-driven: on gate pass + green CI, squash-merge with the
+#     org admin token (bypasses check-staleness on the reviewed SHA). Human
+#     opt-outs — `hold` label, "DO NOT MERGE" in the title, draft — are
+#     re-checked at merge time.
 #
-# Safe to require as a status check even before ANTHROPIC_API_KEY is set: when
-# the secret is absent the job passes as "not configured" (so it never wedges
-# merges); once the secret exists it enforces automatically.
+# The model NEVER decides merge-ability — it writes structured findings and the
+# deterministic gate (.github/cyber-review/gate.py) applies the fixed severity
+# policy (PRE_GA: critical blocks; high and below are auto-filed as
+# security-debt issues — see ADR 0002).
 
 on:
   pull_request:
     branches: [ main ]
-    types: [ opened, synchronize, reopened, labeled ]
-
-# Least privilege: read the code, write PR comments + the check status only.
-permissions:
-  contents: read
-  pull-requests: write
-  checks: write
+    types: [ opened, reopened, ready_for_review, labeled ]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR number to review (and merge on pass)
+        required: true
 
 concurrency:
-  group: cyber-review-${{ github.event.pull_request.number }}
+  group: cyber-review-${{ github.event.pull_request.number || inputs.pr_number }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
+env:
+  PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+  REPO: ${{ github.repository }}
+
 jobs:
+  classify:
+    name: Classify PR lane
+    # Run on ready events, the re-review label, or manual dispatch; never on
+    # drafts or opted-out PRs.
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.action != 'labeled' ||
+       github.event.label.name == 're-review') &&
+      (github.event_name == 'workflow_dispatch' ||
+       (!github.event.pull_request.draft &&
+        !contains(github.event.pull_request.labels.*.name, 'hold') &&
+        !contains(github.event.pull_request.title, 'DO NOT MERGE')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      lane: ${{ steps.classify.outputs.lane }}
+      reason: ${{ steps.classify.outputs.reason }}
+      model: ${{ steps.classify.outputs.model }}
+      head_sha: ${{ steps.classify.outputs.head_sha }}
+    steps:
+      - name: Classify
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          out() { echo "$1=$2" >> "$GITHUB_OUTPUT"; }
+
+          meta=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json labels,title,isDraft,headRefOid)
+          # workflow_dispatch bypasses the job-level if — re-check opt-outs.
+          if jq -e '(.labels | map(.name) | index("hold")) or (.title | contains("DO NOT MERGE")) or .isDraft' <<<"$meta" >/dev/null; then
+            out lane held; out reason "held by human opt-out"; out model none
+            out head_sha "$(jq -r .headRefOid <<<"$meta")"
+            exit 0
+          fi
+          out head_sha "$(jq -r .headRefOid <<<"$meta")"
+
+          # Consume the re-review label so it can be re-applied later.
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --remove-label re-review 2>/dev/null || true
+
+          files=$(gh api "repos/$REPO/pulls/$PR_NUMBER/files" --paginate --jq '.[]' | jq -s .)
+
+          # Fast lane: docs-only. (No deletions-only lane: removing code can
+          # remove a security control, so deletions get full review.)
+          if [ "$(jq length <<<"$files")" -gt 0 ] && \
+             jq -e '[.[].filename] | all(test("(^docs/|\\.(md|txt)$)"))' <<<"$files" >/dev/null; then
+            out lane fast; out reason "docs-only diff"; out model none
+            exit 0
+          fi
+
+          # AI lane — tier the model by sensitivity of touched paths.
+          if jq -e '[.[].filename] | any(test("(^|/)\\.github/|src/(api|crl|did|secure_element)|key_manager|crypto|auth|secret|polic"; "i"))' <<<"$files" >/dev/null; then
+            out model claude-sonnet-5
+          else
+            out model claude-haiku-4-5
+          fi
+          out lane ai; out reason "code diff — full cyber-review"
+
   cyber-review:
     name: Cyber-review gate
+    needs: classify
+    if: needs.classify.outputs.lane == 'ai'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+      actions: read
+      statuses: read
+      issues: write
     steps:
       - name: Check whether the review is configured
         id: cfg
         run: echo "enabled=${{ secrets.ANTHROPIC_API_KEY != '' }}" >> "$GITHUB_OUTPUT"
 
-      - name: Not configured — passing as skipped
+      # Fail-closed: with workflow-driven auto-merge, "pass as not configured"
+      # would mean zero review before merge. No key -> no review -> no merge.
+      - name: Not configured — failing closed
         if: steps.cfg.outputs.enabled != 'true'
         run: |
           echo "## 🛡️ Cyber-review gate" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "⚠️ \`ANTHROPIC_API_KEY\` secret is not set — the LLM review did not run." >> "$GITHUB_STEP_SUMMARY"
-          echo "This check passes as *not configured*. Add the secret to activate enforcement." >> "$GITHUB_STEP_SUMMARY"
+          echo "❌ \`ANTHROPIC_API_KEY\` secret is not set — no review is possible, failing closed (nothing auto-merges)." >> "$GITHUB_STEP_SUMMARY"
+          exit 1
 
-      - name: Checkout (full history for base..head diff)
+      # CI-first: never spend model tokens on a PR whose deterministic CI is
+      # red. Poll up to 30 min for every non-cyber-review check to finish.
+      - name: Wait for the rest of CI to be green
         if: steps.cfg.outputs.enabled == 'true'
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # "Build, Test & Security Checks" is excluded to mirror the ruleset:
+          # it is red on main from pre-existing cargo-audit advisories and is
+          # deliberately not a required check until #89 is fixed (ADR 0001).
+          poll() {  # sets FAILED and PENDING for all checks except our own jobs
+            sha=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)
+            checks=$(gh api "repos/$REPO/commits/$sha/check-runs?per_page=100" --paginate \
+              --jq '.check_runs[] | select(.name != "Classify PR lane" and .name != "Cyber-review gate" and .name != "Merge on green" and .name != "Build, Test & Security Checks") | {name: .name, status: .status, conclusion: (.conclusion // "")}' | jq -s .)
+            statuses=$(gh api "repos/$REPO/commits/$sha/status" \
+              --jq '[.statuses[] | {name: .context, status: (if .state == "pending" then "in_progress" else "completed" end), conclusion: .state}]')
+            all=$(jq -n --argjson a "$checks" --argjson b "$statuses" '$a + $b')
+            FAILED=$(jq '[.[] | select(.conclusion | ascii_upcase | IN("FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","ERROR"))] | length' <<<"$all")
+            PENDING=$(jq '[.[] | select(.status != "completed")] | length' <<<"$all")
+            FAILED_NAMES=$(jq -r '.[] | select(.conclusion | ascii_upcase | IN("FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","ERROR")) | .name' <<<"$all")
+          }
+          for i in $(seq 1 60); do
+            poll
+            if [ "$FAILED" -gt 0 ]; then
+              echo "CI is red on PR #$PR_NUMBER — not spending review tokens."; echo "$FAILED_NAMES"
+              exit 1
+            fi
+            [ "$PENDING" -eq 0 ] && exit 0
+            echo "waiting on $PENDING check(s)…"; sleep 30
+          done
+          echo "Timed out waiting for CI; not reviewing."; exit 1
 
       - name: Detect break-glass override label
         if: steps.cfg.outputs.enabled == 'true'
         id: override
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if ${{ contains(github.event.pull_request.labels.*.name, 'security-override') }}; then
+          if gh pr view "$PR_NUMBER" --repo "$REPO" --json labels --jq '.labels[].name' | grep -qx 'security-override'; then
             echo "has_override=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_override=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Checkout PR head (full history for base..head diff)
+        if: steps.cfg.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.classify.outputs.head_sha }}
+          fetch-depth: 0
 
       # Give the review a real toolchain so its static-analysis & test dimensions
       # actually compile/run instead of falling back to manual inspection.
@@ -76,12 +201,20 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          claude_args: "--allowed-tools Bash,Read,Grep,Glob,Write"
+          claude_args: "--model ${{ needs.classify.outputs.model }} --max-turns 40 --allowed-tools Bash,Read,Grep,Glob,Write"
           prompt: |
-            You are the Lead/Judge of a cybersecurity code review of THIS pull request.
-            Repo root is the checkout. The PR base is `origin/${{ github.base_ref }}`;
-            the head is checked out. Scope the review to the PR diff:
-              git diff --stat origin/${{ github.base_ref }}...HEAD
+            You are the Lead/Judge of a cybersecurity code review of pull request
+            #${{ env.PR_NUMBER }} in ${{ env.REPO }}. Repo root is the checkout.
+            The PR base is `origin/main`; the head is checked out. Scope the
+            review to the PR diff:
+              git diff --stat origin/main...HEAD
+
+            FIRST check for a previous "Cybersecurity Code Review" comment on
+            this PR (gh api repos/${{ env.REPO }}/issues/${{ env.PR_NUMBER }}/comments).
+            If one exists: verify the fix status of its findings and focus your
+            depth on the diff since that review. Do NOT re-litigate fixes you
+            verify as correct, and do not re-deep-dive unchanged code it already
+            covered.
 
             Review the diff across FIVE dimensions (treat each as a specialist lens):
               1. Security      — injection, authn/authz & trust-boundary flaws, crypto
@@ -96,9 +229,9 @@ jobs:
               5. Simplification— scope creep, duplication, over-complex patches.
 
             ALSO ingest existing automated reviews as additional input:
-              gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --paginate \
+              gh api repos/${{ env.REPO }}/pulls/${{ env.PR_NUMBER }}/comments --paginate \
                 --jq '.[]|select(.user.login=="coderabbitai[bot]")|{path,line,body}'
-              gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews --paginate \
+              gh api repos/${{ env.REPO }}/pulls/${{ env.PR_NUMBER }}/reviews --paginate \
                 --jq '.[]|select(.user.login=="coderabbitai[bot]")|.body'
             Corroborate/dedupe against your own findings; surface theirs too. Verify
             every finding's cited location against the real code before reporting it.
@@ -119,4 +252,98 @@ jobs:
         if: steps.cfg.outputs.enabled == 'true'
         env:
           HAS_OVERRIDE: ${{ steps.override.outputs.has_override }}
+          # Pre-GA posture (ADR 0002): only criticals block; flip to "false"
+          # (or delete) at the release-hardening milestone to restore
+          # critical+high blocking.
+          PRE_GA: "true"
         run: python3 .github/cyber-review/gate.py .github/cyber-review/findings.json
+
+      # Only reached when the gate passed: file the surviving non-blocking
+      # high/medium/low findings as tracked security-debt issues so the pre-GA
+      # posture never lets debt go invisible (ADR 0002).
+      - name: File non-blocking findings as security-debt issues
+        if: steps.cfg.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
+          REPO: ${{ env.REPO }}
+          PRE_GA: "true"
+        run: python3 .github/cyber-review/file_findings.py .github/cyber-review/findings.json
+
+  merge:
+    name: Merge on green
+    needs: [ classify, cyber-review ]
+    # Fast lane merges without a model; AI lane merges only when the gate passed.
+    if: >-
+      always() && needs.classify.result == 'success' &&
+      (needs.classify.outputs.lane == 'fast' ||
+       (needs.classify.outputs.lane == 'ai' && needs.cyber-review.result == 'success'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    permissions:
+      contents: read
+      checks: read
+      actions: read
+      statuses: read
+    env:
+      LANE: ${{ needs.classify.outputs.lane }}
+      LANE_REASON: ${{ needs.classify.outputs.reason }}
+      REVIEWED_SHA: ${{ needs.classify.outputs.head_sha }}
+    steps:
+      - name: Wait for green CI, then squash-merge
+        env:
+          # Org admin token: bypasses the reviewed-SHA staleness of required
+          # checks and satisfies the ruleset via admin bypass. Fail-closed:
+          # without it the merge step fails and the PR just stays open.
+          GH_TOKEN: ${{ secrets.TOKEN }}
+        run: |
+          set -euo pipefail
+          # Re-check opt-outs at merge time: a `hold` added after classification
+          # must still stop the merge.
+          meta=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json labels,title,isDraft,state)
+          if jq -e '(.labels | map(.name) | index("hold")) or (.title | contains("DO NOT MERGE")) or .isDraft' <<<"$meta" >/dev/null; then
+            echo "PR #$PR_NUMBER held (label/title/draft); not merging."; exit 0
+          fi
+          if [ "$(jq -r .state <<<"$meta")" != "OPEN" ]; then
+            echo "PR #$PR_NUMBER no longer open; nothing to do."; exit 0
+          fi
+
+          # "Build, Test & Security Checks" is excluded to mirror the ruleset:
+          # it is red on main from pre-existing cargo-audit advisories and is
+          # deliberately not a required check until #89 is fixed (ADR 0001).
+          poll() {  # sets FAILED and PENDING for all checks except our own jobs
+            sha=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)
+            checks=$(gh api "repos/$REPO/commits/$sha/check-runs?per_page=100" --paginate \
+              --jq '.check_runs[] | select(.name != "Classify PR lane" and .name != "Cyber-review gate" and .name != "Merge on green" and .name != "Build, Test & Security Checks") | {name: .name, status: .status, conclusion: (.conclusion // "")}' | jq -s .)
+            statuses=$(gh api "repos/$REPO/commits/$sha/status" \
+              --jq '[.statuses[] | {name: .context, status: (if .state == "pending" then "in_progress" else "completed" end), conclusion: .state}]')
+            all=$(jq -n --argjson a "$checks" --argjson b "$statuses" '$a + $b')
+            FAILED=$(jq '[.[] | select(.conclusion | ascii_upcase | IN("FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","ERROR"))] | length' <<<"$all")
+            PENDING=$(jq '[.[] | select(.status != "completed")] | length' <<<"$all")
+            FAILED_NAMES=$(jq -r '.[] | select(.conclusion | ascii_upcase | IN("FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","ERROR")) | .name' <<<"$all")
+          }
+          for i in $(seq 1 80); do
+            poll
+            if [ "$FAILED" -gt 0 ]; then
+              echo "CI failed on PR #$PR_NUMBER; not merging."; echo "$FAILED_NAMES"
+              exit 1
+            fi
+            if [ "$PENDING" -eq 0 ]; then
+              if [ "$LANE" = "fast" ]; then
+                gh pr comment "$PR_NUMBER" --repo "$REPO" \
+                  --body "🤖 Fast-lane merge (no AI review needed): ${LANE_REASON}. CI green; squash-merging."
+              fi
+              # Pin to the reviewed SHA: a commit pushed after the review
+              # must not merge unreviewed (re-apply `re-review` instead).
+              head_now=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)
+              if [ "$head_now" != "$REVIEWED_SHA" ]; then
+                echo "Head moved since review ($REVIEWED_SHA -> $head_now); not merging. Apply re-review."
+                exit 1
+              fi
+              echo "Merging PR #$PR_NUMBER (lane: $LANE) at reviewed SHA $REVIEWED_SHA."
+              gh pr merge "$PR_NUMBER" --repo "$REPO" --squash --admin --delete-branch --match-head-commit "$REVIEWED_SHA"
+              exit 0
+            fi
+            echo "waiting on $PENDING check(s)…"; sleep 30
+          done
+          echo "Timed out waiting for CI on PR #$PR_NUMBER."; exit 1
