@@ -44,11 +44,14 @@ else
 fi
 
 echo "→ Checking for key leaks in Git history (fast scan)..."
-if git log --pretty=oneline | grep -Ei "private.?key|BEGIN RSA|secret" >/dev/null; then
-    echo "❌ WARNING: Sensitive key-like content detected in repo history!"
+history_secret_pattern='-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----'
+history_matches="$(git log --all --pickaxe-regex -G "$history_secret_pattern" --format=oneline --no-patch --max-count=5)"
+if [ -n "$history_matches" ]; then
+    echo "❌ WARNING: Potential private-key material detected in repo history!"
+    echo "$history_matches"
     echo "   Run full cleanup if required."
 else
-    echo "✓ Git history OK (no obvious key strings)"
+    echo "✓ Git history OK (no PEM private-key headers found)"
 fi
 
 echo "→ Validating YAML configs..."
