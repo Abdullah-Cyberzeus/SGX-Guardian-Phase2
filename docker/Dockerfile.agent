@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1.7
+# =============================================================================
+# SG-X Guardian - agent image (x86_64)
+#   builder : pinned Rust toolchain; also the CI test environment
+#   runtime : slim Debian + runtime tools; runs the real daemon
+# =============================================================================
+
+ARG RUST_IMAGE=rust:1.90-bookworm
+ARG RUNTIME_IMAGE=debian:bookworm-slim
+
+FROM ${RUST_IMAGE} AS builder
+
+# protoc: required by tonic-prost-build in build.rs
+# cmake + pkg-config: mirror scripts/build.sh prerequisites closely
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        protobuf-compiler cmake pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . .
+
+# Keep the workspace contract aligned with CI and scripts/build.sh.
+RUN cargo build --release --workspace --locked
+
+FROM ${RUNTIME_IMAGE} AS runtime
+
+# nftables        : enforcement executor shells out to `nft -f`
+# procps          : daemon uses pkill/pgrep for nebula lifecycle
+# iproute2        : `ip`/`ss` for interface verification + debugging
+# ca-certificates : outbound TLS trust
+# curl            : healthchecks + in-container smoke tests
+# nmap            : discovery scheduler/API shell out to it at runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        nftables ca-certificates procps iproute2 curl nmap \
+    && rm -rf /var/lib/apt/lists/*
+
+# Nebula mesh binaries are vendored in-repo so image builds do not depend on GitHub.
+COPY docker/vendor/nebula /usr/local/bin/nebula
+COPY docker/vendor/nebula-cert /usr/local/bin/nebula-cert
+RUN chmod 0755 /usr/local/bin/nebula /usr/local/bin/nebula-cert \
+    && nebula -version
+
+# Keep canonical binary names so existing workflows and logs stay familiar.
+COPY --from=builder /src/target/release/sgx_guardian_client /usr/local/bin/sgx_guardian_client
+COPY --from=builder /src/target/release/sgx-pa-cli /usr/local/bin/sgx-pa-cli
+COPY docker/entrypoint.sh /usr/local/bin/sgx-entrypoint
+RUN chmod 0755 /usr/local/bin/sgx-entrypoint
+
+VOLUME ["/etc/sgx-guardian", "/var/lib/sgx-guardian", "/var/log/sgx-guardian"]
+
+# gRPC 50051-50053 | cert bootstrap 50061 | registry 50062 | CRL gossip 50063
+# REST 8443 | discovery UDP 9000 | nebula UDP 4242 | attestation 50151-50153
+EXPOSE 50051-50053 50061-50063 8443 50151-50153 9000/udp 4242/udp
+
+WORKDIR /var/lib/sgx-guardian
+ENTRYPOINT ["/usr/local/bin/sgx-entrypoint"]
+CMD ["nodeA"]

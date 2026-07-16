@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1.7
+# =============================================================================
+# SG-X Guardian - aarch64 board-builder (containerized scripts/build.sh recipe)
+#
+# WHY BOOKWORM: the boards run glibc 2.37. Bookworm's aarch64 cross libc is
+# 2.36, which keeps required GLIBC symbols safely below the board runtime.
+# =============================================================================
+
+FROM debian:bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl git build-essential pkg-config cmake \
+        protobuf-compiler nmap libcap2-bin \
+        gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+        libc6-dev-arm64-cross binutils-aarch64-linux-gnu \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG RUST_TOOLCHAIN=1.90.0
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo \
+    PATH=/opt/cargo/bin:$PATH
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --profile minimal --default-toolchain ${RUST_TOOLCHAIN} \
+    && rustup target add aarch64-unknown-linux-gnu \
+    && rustc -Vv && cargo -V && protoc --version \
+    && aarch64-linux-gnu-gcc --version | head -n1
+
+ENV CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
+    CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+
+WORKDIR /src
+VOLUME ["/src", "/artifacts"]
+
+CMD set -eux; \
+    cargo build --release --workspace --locked \
+        --target aarch64-unknown-linux-gnu --features secure-element; \
+    install -m 0755 target/aarch64-unknown-linux-gnu/release/sgx_guardian_client /artifacts/sgx-guardian; \
+    install -m 0755 target/aarch64-unknown-linux-gnu/release/sgx-pa-cli /artifacts/sgx-pa-cli; \
+    aarch64-linux-gnu-strip --strip-debug /artifacts/sgx-guardian /artifacts/sgx-pa-cli || true; \
+    file /artifacts/sgx-guardian; \
+    echo "Max GLIBC symbol version required:"; \
+    aarch64-linux-gnu-objdump -T /artifacts/sgx-guardian | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -3
