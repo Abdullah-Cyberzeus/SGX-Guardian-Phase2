@@ -202,6 +202,29 @@ pub struct EmergencyBroadcastResponse {
     pub message: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct EmergencySessionDebugSeedRequest {
+    pub did: String,
+    pub transport: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EmergencySessionDebugStatusQuery {
+    pub did: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EmergencySessionDebugResponse {
+    pub node_id: String,
+    pub did: String,
+    pub remote_device_id: String,
+    pub exists: bool,
+    pub total_sessions: usize,
+    pub active_sessions: usize,
+    pub session: Option<crate::cot::session_manager::Session>,
+    pub message: String,
+}
+
 /// GET /api/v1/crl/emergency/status — emergency channel observability.
 pub async fn emergency_status(
     State(_state): State<Arc<crate::api::state::AppState>>,
@@ -217,6 +240,66 @@ pub async fn emergency_status(
         notices_rebroadcast: crate::crl::gossip::emergency::notices_rebroadcast(),
         sessions_terminated: crate::crl::gossip::emergency::sessions_terminated_total(),
         last_notice: crate::crl::gossip::emergency::last_notice(),
+    }))
+}
+
+/// POST /api/v1/crl/emergency/debug/session — seed a live CoT session for a
+/// peer DID so CRL-029 can verify that emergency revocation drops it.
+pub async fn emergency_debug_session_seed(
+    State(state): State<Arc<crate::api::state::AppState>>,
+    Json(body): Json<EmergencySessionDebugSeedRequest>,
+) -> Result<Json<EmergencySessionDebugResponse>, ApiError> {
+    let did = normalize_debug_did(&body.did)?;
+    let transport = parse_debug_transport(body.transport.as_deref())?;
+    let remote_device_id = resolve_device_id_for_did(&did)?;
+    let local_device_id = resolve_local_device_id()?;
+    let manager = session_manager_handle()?;
+
+    let session = manager
+        .get_or_create(&local_device_id, &remote_device_id, transport)
+        .await;
+    let total_sessions = manager.total_count().await;
+    let active_sessions = manager.active_count().await;
+
+    Ok(Json(EmergencySessionDebugResponse {
+        node_id: state.node_id.clone(),
+        did,
+        remote_device_id,
+        exists: true,
+        total_sessions,
+        active_sessions,
+        session: Some(session),
+        message: format!("debug CoT session seeded via {}", transport),
+    }))
+}
+
+/// GET /api/v1/crl/emergency/debug/session?did=... — inspect whether a live
+/// CoT session still exists for the DID under test.
+pub async fn emergency_debug_session_status(
+    State(state): State<Arc<crate::api::state::AppState>>,
+    Query(query): Query<EmergencySessionDebugStatusQuery>,
+) -> Result<Json<EmergencySessionDebugResponse>, ApiError> {
+    let did = normalize_debug_did(&query.did)?;
+    let remote_device_id = resolve_device_id_for_did(&did)?;
+    let manager = session_manager_handle()?;
+    let session = manager.get_session(&remote_device_id).await;
+    let total_sessions = manager.total_count().await;
+    let active_sessions = manager.active_count().await;
+    let exists = session.is_some();
+
+    Ok(Json(EmergencySessionDebugResponse {
+        node_id: state.node_id.clone(),
+        did,
+        remote_device_id,
+        exists,
+        total_sessions,
+        active_sessions,
+        session,
+        message: if exists {
+            "debug CoT session exists".to_string()
+        } else {
+            "debug CoT session not present".to_string()
+        },
     }))
 }
 
@@ -497,4 +580,115 @@ fn cli_message(response: &ActionResponse) -> String {
         return stdout.to_string();
     }
     "sgx-pa-cli crl command failed".to_string()
+}
+
+fn normalize_debug_did(did: &str) -> Result<String, ApiError> {
+    let did = did.trim();
+    if did.is_empty() {
+        return Err(ApiError::BadRequest("did must not be empty".into()));
+    }
+    Ok(did.to_string())
+}
+
+fn parse_debug_transport(raw: Option<&str>) -> Result<crate::cot::types::TransportType, ApiError> {
+    let Some(raw) = raw.map(str::trim).filter(|raw| !raw.is_empty()) else {
+        return Ok(crate::cot::types::TransportType::Ethernet);
+    };
+
+    let lowered = raw.to_ascii_lowercase();
+    match lowered.as_str() {
+        "ethernet" | "eth" => Ok(crate::cot::types::TransportType::Ethernet),
+        "wifi" | "wi-fi" | "wlan" => Ok(crate::cot::types::TransportType::WiFi),
+        "bluetooth" | "bt" => Ok(crate::cot::types::TransportType::Bluetooth),
+        "cellular" | "lte" | "5g" => Ok(crate::cot::types::TransportType::Cellular),
+        "satellite" | "sat" => Ok(crate::cot::types::TransportType::Satellite),
+        _ => Err(ApiError::BadRequest(format!(
+            "unsupported transport '{}' (expected Ethernet, WiFi, Bluetooth, Cellular, or Satellite)",
+            raw
+        ))),
+    }
+}
+
+fn session_manager_handle(
+) -> Result<std::sync::Arc<crate::cot::session_manager::SessionManager>, ApiError> {
+    crate::cot::session_manager::global_session_manager().ok_or_else(|| {
+        ApiError::Internal("CoT session manager is not initialized on this node".into())
+    })
+}
+
+fn resolve_local_device_id() -> Result<String, ApiError> {
+    let doc = crate::did::doc_persistence::load_self()
+        .map_err(|error| ApiError::Internal(format!("load self DID document: {}", error)))?
+        .ok_or_else(|| ApiError::NotFound("self DID document not found".into()))?;
+    device_id_from_document(&doc).map_err(ApiError::Internal)
+}
+
+fn resolve_device_id_for_did(did: &str) -> Result<String, ApiError> {
+    if let Some(doc) = crate::did::doc_persistence::load_self()
+        .map_err(|error| ApiError::Internal(format!("load self DID document: {}", error)))?
+        .filter(|doc| doc.id == did)
+    {
+        return device_id_from_document(&doc).map_err(ApiError::Internal);
+    }
+
+    let docs = crate::did::doc_persistence::list_peer_docs()
+        .map_err(|error| ApiError::Internal(format!("list peer DID documents: {}", error)))?;
+    let doc = docs
+        .into_iter()
+        .find(|doc| doc.id == did)
+        .ok_or_else(|| ApiError::NotFound(format!("peer DID document not found for {}", did)))?;
+    device_id_from_document(&doc).map_err(ApiError::Internal)
+}
+
+fn device_id_from_document(doc: &crate::did::document::DidDocument) -> Result<String, String> {
+    let pubkey = doc
+        .primary_public_key_bytes()
+        .ok_or_else(|| format!("primary public key missing for {}", doc.id))?;
+    crate::cot::identity::DeviceIdentity::from_public_key(&pubkey)
+        .map(|identity| identity.device_id().to_string())
+        .map_err(|error| format!("derive device id for {}: {}", doc.id, error))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cot::types::TransportType;
+
+    #[test]
+    fn parse_debug_transport_defaults_to_ethernet() {
+        assert_eq!(
+            parse_debug_transport(None).unwrap(),
+            TransportType::Ethernet
+        );
+        assert_eq!(
+            parse_debug_transport(Some("")).unwrap(),
+            TransportType::Ethernet
+        );
+    }
+
+    #[test]
+    fn parse_debug_transport_accepts_aliases() {
+        assert_eq!(
+            parse_debug_transport(Some("wifi")).unwrap(),
+            TransportType::WiFi
+        );
+        assert_eq!(
+            parse_debug_transport(Some("bt")).unwrap(),
+            TransportType::Bluetooth
+        );
+        assert_eq!(
+            parse_debug_transport(Some("5g")).unwrap(),
+            TransportType::Cellular
+        );
+    }
+
+    #[test]
+    fn parse_debug_transport_rejects_unknown_value() {
+        let err = parse_debug_transport(Some("carrier-pigeon")).unwrap_err();
+        let message = match err {
+            ApiError::BadRequest(message) => message,
+            other => panic!("unexpected error: {:?}", other),
+        };
+        assert!(message.contains("unsupported transport"));
+    }
 }

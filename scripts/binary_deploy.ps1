@@ -1,5 +1,8 @@
+[CmdletBinding(PositionalBinding = $false)]
 param(
-    [string]$SourceDir = "/Users/Stores/Documents",
+    [string]$SourceDir,
+    [string]$DaemonPath,
+    [string]$CliPath,
     [string]$RemoteUser = "root",
     [string]$RemoteDir = "/home/root",
     [int]$ConnectTimeoutSeconds = 5,
@@ -15,18 +18,63 @@ $ErrorActionPreference = "Stop"
 
 $DaemonBinary = "sgx_guardian_client"
 $CliBinary = "sgx-pa-cli"
-$DaemonPath = Join-Path $SourceDir $DaemonBinary
-$CliPath = Join-Path $SourceDir $CliBinary
+$ScriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+$RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $ScriptRoot ".."))
 
 function Write-Step {
     param([string]$Message)
     Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
+function Test-IPv4Literal {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $false
+    }
+
+    return [bool]($Value -match '^(?:\d{1,3}\.){3}\d{1,3}$')
+}
+
+function Get-CandidateSourceDirs {
+    param([string]$ExplicitSourceDir)
+
+    $Candidates = [System.Collections.Generic.List[string]]::new()
+
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitSourceDir)) {
+        $Candidates.Add($ExplicitSourceDir)
+    }
+
+    $Candidates.Add((Join-Path $RepoRoot "build/artifacts/arm64"))
+    $Candidates.Add((Join-Path $RepoRoot "target/release"))
+    $Candidates.Add((Get-Location).Path)
+    $Candidates.Add($ScriptRoot)
+    $Candidates.Add($RepoRoot)
+
+    $MyDocuments = [Environment]::GetFolderPath([System.Environment+SpecialFolder]::MyDocuments)
+    if (-not [string]::IsNullOrWhiteSpace($MyDocuments)) {
+        $Candidates.Add($MyDocuments)
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:OneDrive)) {
+        $Candidates.Add((Join-Path $env:OneDrive "Documents"))
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($HOME)) {
+        $Candidates.Add((Join-Path $HOME "Documents"))
+    }
+
+    return @($Candidates | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+}
+
 function Require-LocalFile {
     param([string]$Path)
 
-    if (-not (Test-Path -LiteralPath $Path)) {
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $false
+    }
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         return $false
     }
 
@@ -37,6 +85,56 @@ function Require-LocalCommand {
     param([string]$CommandName)
 
     return [bool](Get-Command -Name $CommandName -ErrorAction SilentlyContinue)
+}
+
+function Resolve-BinaryPath {
+    param(
+        [string]$ExplicitPath,
+        [string]$BinaryName,
+        [string[]]$CandidateDirs
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitPath)) {
+        $CandidatePath = $ExplicitPath
+
+        if (Test-Path -LiteralPath $ExplicitPath -PathType Container) {
+            $CandidatePath = Join-Path $ExplicitPath $BinaryName
+        }
+
+        if (Test-Path -LiteralPath $CandidatePath -PathType Leaf) {
+            return (Resolve-Path -LiteralPath $CandidatePath).Path
+        }
+
+        return $null
+    }
+
+    foreach ($CandidateDir in $CandidateDirs) {
+        $CandidatePath = Join-Path $CandidateDir $BinaryName
+        if (Test-Path -LiteralPath $CandidatePath -PathType Leaf) {
+            return (Resolve-Path -LiteralPath $CandidatePath).Path
+        }
+    }
+
+    return $null
+}
+
+function Format-BinaryLookupHint {
+    param(
+        [string]$ExplicitPath,
+        [string]$BinaryName,
+        [string[]]$CandidateDirs
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitPath)) {
+        return "Verify '$ExplicitPath' or pass -SourceDir with the folder containing $BinaryName."
+    }
+
+    $CheckedLocations = @()
+    foreach ($CandidateDir in $CandidateDirs) {
+        $CheckedLocations += (Join-Path $CandidateDir $BinaryName)
+    }
+
+    return "Pass -SourceDir, -DaemonPath, or -CliPath explicitly. Checked: $($CheckedLocations -join '; ')"
 }
 
 function Invoke-NativeCommand {
@@ -111,6 +209,33 @@ $ScpOptions = @(
 $SshOptionText = "-o BatchMode=yes -o ConnectTimeout=$ConnectTimeoutSeconds -o ConnectionAttempts=1"
 $ProbePort = 22
 
+if ((Test-IPv4Literal -Value $DaemonPath) -or (Test-IPv4Literal -Value $CliPath)) {
+    $RecoveredBoards = [System.Collections.Generic.List[string]]::new()
+
+    foreach ($Board in $Boards) {
+        if (-not [string]::IsNullOrWhiteSpace($Board)) {
+            $RecoveredBoards.Add($Board)
+        }
+    }
+
+    if (Test-IPv4Literal -Value $DaemonPath) {
+        $RecoveredBoards.Add($DaemonPath)
+        $DaemonPath = $null
+    }
+
+    if (Test-IPv4Literal -Value $CliPath) {
+        $RecoveredBoards.Add($CliPath)
+        $CliPath = $null
+    }
+
+    $Boards = @($RecoveredBoards | Select-Object -Unique)
+    Write-Host "Detected board IPs passed through native -File argument parsing; recovered Boards list automatically." -ForegroundColor Yellow
+}
+
+$CandidateSourceDirs = Get-CandidateSourceDirs -ExplicitSourceDir $SourceDir
+$ResolvedDaemonPath = Resolve-BinaryPath -ExplicitPath $DaemonPath -BinaryName $DaemonBinary -CandidateDirs $CandidateSourceDirs
+$ResolvedCliPath = Resolve-BinaryPath -ExplicitPath $CliPath -BinaryName $CliBinary -CandidateDirs $CandidateSourceDirs
+
 function Test-BoardReachable {
     param(
         [string]$BoardIp,
@@ -138,22 +263,22 @@ function Test-BoardReachable {
 $BoardIssues = [System.Collections.Generic.List[pscustomobject]]::new()
 $SuccessfulBoards = [System.Collections.Generic.List[string]]::new()
 
-if (-not (Require-LocalFile -Path $DaemonPath)) {
+if (-not (Require-LocalFile -Path $ResolvedDaemonPath)) {
     Add-BoardIssue `
         -Issues $BoardIssues `
         -Board "local-machine" `
         -Step "preflight-daemon" `
-        -Message "Local file not found: $DaemonPath" `
-        -Command "Update -SourceDir or place $DaemonBinary at: $DaemonPath"
+        -Message "Local file not found for $DaemonBinary" `
+        -Command (Format-BinaryLookupHint -ExplicitPath $DaemonPath -BinaryName $DaemonBinary -CandidateDirs $CandidateSourceDirs)
 }
 
-if (-not (Require-LocalFile -Path $CliPath)) {
+if (-not (Require-LocalFile -Path $ResolvedCliPath)) {
     Add-BoardIssue `
         -Issues $BoardIssues `
         -Board "local-machine" `
         -Step "preflight-cli" `
-        -Message "Local file not found: $CliPath" `
-        -Command "Update -SourceDir or place $CliBinary at: $CliPath"
+        -Message "Local file not found for $CliBinary" `
+        -Command (Format-BinaryLookupHint -ExplicitPath $CliPath -BinaryName $CliBinary -CandidateDirs $CandidateSourceDirs)
 }
 
 if (-not (Require-LocalCommand -CommandName "ssh")) {
@@ -175,13 +300,16 @@ if (-not (Require-LocalCommand -CommandName "scp")) {
 }
 
 if ($BoardIssues.Count -eq 0) {
+    Write-Step "Using daemon binary: $ResolvedDaemonPath"
+    Write-Step "Using CLI binary: $ResolvedCliPath"
+
     foreach ($Board in $Boards) {
         $Target = "$RemoteUser@$Board"
         $BoardHasIssue = $false
         $ProbeCommand = "ssh $SshOptionText $Target 'exit 0'"
         $CleanupCommand = "ssh $SshOptionText $Target 'rm -rf $RemoteDir/$DaemonBinary $RemoteDir/$CliBinary /var/lib/sgx-guardian'"
-        $CopyDaemonCommand = "scp -o BatchMode=yes -o ConnectTimeout=$ConnectTimeoutSeconds -o ConnectionAttempts=1 `"$DaemonPath`" `"${Target}:$RemoteDir/`""
-        $CopyCliCommand = "scp -o BatchMode=yes -o ConnectTimeout=$ConnectTimeoutSeconds -o ConnectionAttempts=1 `"$CliPath`" `"${Target}:$RemoteDir/`""
+        $CopyDaemonCommand = "scp -o BatchMode=yes -o ConnectTimeout=$ConnectTimeoutSeconds -o ConnectionAttempts=1 `"$ResolvedDaemonPath`" `"${Target}:$RemoteDir/`""
+        $CopyCliCommand = "scp -o BatchMode=yes -o ConnectTimeout=$ConnectTimeoutSeconds -o ConnectionAttempts=1 `"$ResolvedCliPath`" `"${Target}:$RemoteDir/`""
         $ChmodCommand = "ssh $SshOptionText $Target 'chmod +x $RemoteDir/$DaemonBinary $RemoteDir/$CliBinary'"
 
         Write-Step "Checking board availability on $Board"
@@ -198,14 +326,14 @@ if ($BoardIssues.Count -eq 0) {
         }
 
         Write-Step "Copying $DaemonBinary to $Board"
-        $CopyDaemonExitCode = Invoke-NativeCommand -CommandName "scp" -Arguments ($ScpOptions + @($DaemonPath, "${Target}:$RemoteDir/")) -SuppressOutput
+        $CopyDaemonExitCode = Invoke-NativeCommand -CommandName "scp" -Arguments ($ScpOptions + @($ResolvedDaemonPath, "${Target}:$RemoteDir/")) -SuppressOutput
         if ($CopyDaemonExitCode -ne 0) {
             $BoardHasIssue = $true
             Add-BoardIssue -Issues $BoardIssues -Board $Board -Step "copy-daemon" -Message "Failed to copy $DaemonBinary" -Command $CopyDaemonCommand
         }
 
         Write-Step "Copying $CliBinary to $Board"
-        $CopyCliExitCode = Invoke-NativeCommand -CommandName "scp" -Arguments ($ScpOptions + @($CliPath, "${Target}:$RemoteDir/")) -SuppressOutput
+        $CopyCliExitCode = Invoke-NativeCommand -CommandName "scp" -Arguments ($ScpOptions + @($ResolvedCliPath, "${Target}:$RemoteDir/")) -SuppressOutput
         if ($CopyCliExitCode -ne 0) {
             $BoardHasIssue = $true
             Add-BoardIssue -Issues $BoardIssues -Board $Board -Step "copy-cli" -Message "Failed to copy $CliBinary" -Command $CopyCliCommand

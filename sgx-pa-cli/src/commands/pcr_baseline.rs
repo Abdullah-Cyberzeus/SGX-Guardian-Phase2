@@ -1,19 +1,38 @@
 use base64::Engine as _;
 use clap::Subcommand;
+use ring::rand::SystemRandom;
+use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
+use sgx_guardian_client::secure_element::pcr::PcrBaseline;
 use sha2::Digest;
 use std::fs;
 use std::path::Path;
 
 const PCR_DIR: &str = "/var/lib/sgx-guardian/pcr";
+const DKP_PUBKEY_PATH: &str = "/var/lib/sgx-guardian/keys/dkp_pub.der";
+const SOFTWARE_KEY_DIR: &str = "/var/lib/sgx-guardian/sgx-agent";
+
+struct BaselineSignature {
+    signature_b64: String,
+    source: &'static str,
+}
 
 fn find_pcr_snapshot() -> Option<(String, String)> {
     if let Ok(entries) = std::fs::read_dir(PCR_DIR) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with("_current.json") {
-                let node = name.trim_end_matches("_current.json").to_string();
-                return Some((entry.path().to_string_lossy().to_string(), node));
-            }
+        let mut found: Vec<(String, String)> = entries
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.ends_with("_current.json") {
+                    let node = name.trim_end_matches("_current.json").to_string();
+                    Some((entry.path().to_string_lossy().to_string(), node))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        found.sort();
+        if let Some(first) = found.into_iter().next() {
+            return Some(first);
         }
     }
     let old = format!("{}/current.json", PCR_DIR);
@@ -34,6 +53,66 @@ pub enum PcrBaselineCmd {
     Create,
     /// Verify current snapshot against baseline
     Verify,
+}
+
+fn normalize_p256_pubkey(mut key: Vec<u8>) -> Option<Vec<u8>> {
+    if key.len() == 91 {
+        key = key[26..].to_vec();
+    }
+    if key.len() == 65 {
+        Some(key)
+    } else {
+        None
+    }
+}
+
+fn local_baseline_pubkey_candidates() -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+
+    if let Ok(der) = fs::read(DKP_PUBKEY_PATH) {
+        if let Some(raw) = normalize_p256_pubkey(der) {
+            out.push(raw);
+        }
+    }
+
+    let rng = SystemRandom::new();
+    if let Ok(entries) = fs::read_dir(SOFTWARE_KEY_DIR) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.starts_with("device_") || !name.ends_with(".key") {
+                continue;
+            }
+            if let Ok(pkcs8_bytes) = fs::read(entry.path()) {
+                if let Ok(keypair) =
+                    EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &pkcs8_bytes, &rng)
+                {
+                    out.push(keypair.public_key().as_ref().to_vec());
+                }
+            }
+        }
+    }
+
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn verify_baseline_signature_locally(baseline: &PcrBaseline) -> bool {
+    let pubkeys = local_baseline_pubkey_candidates();
+    pubkeys
+        .iter()
+        .any(|pubkey| baseline.verify_signature(pubkey))
+}
+
+fn write_baseline(node_id: &str, baseline: &PcrBaseline) -> Result<(), String> {
+    if let Some(parent) = Path::new(&baseline_path_for(node_id)).parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Dir create error: {}", e))?;
+    }
+    fs::write(
+        baseline_path_for(node_id),
+        serde_json::to_string_pretty(baseline).map_err(|e| format!("Serialize error: {}", e))?,
+    )
+    .map_err(|e| format!("Write error: {}", e))
 }
 
 pub fn run_create() {
@@ -78,6 +157,14 @@ pub fn run_create() {
         }
     };
     let key_version = snap["key_version"].as_u64().unwrap_or(1) as u32;
+    let schema_version = snap["schema_version"].as_u64().unwrap_or(1) as u8;
+    let pcr_values: Vec<String> = match serde_json::from_value(snap["pcr_values"].clone()) {
+        Ok(values) => values,
+        Err(e) => {
+            eprintln!("❌ pcr_values missing/invalid in snapshot: {}", e);
+            return;
+        }
+    };
     let created_at = chrono::Utc::now().to_rfc3339();
 
     // Build the signing input (MUST match what PcrBaseline::verify_signature expects)
@@ -103,73 +190,76 @@ pub fn run_create() {
     let baseline_signature = sign_baseline_hash(&sign_hash, key_version);
 
     match baseline_signature {
-        Some(sig_b64) => {
-            let baseline = serde_json::json!({
-                "pcr_values": snap["pcr_values"],
-                "composite_digest": composite,
-                "baseline_signature": sig_b64,
-                "created_at": created_at,
-                "device_uid": device_uid,
-                "key_version": key_version,
-                "schema_version": snap["schema_version"],
-            });
+        Ok(Some(sig)) => {
+            let baseline = PcrBaseline {
+                pcr_values,
+                composite_digest: composite,
+                baseline_signature: sig.signature_b64,
+                created_at,
+                device_uid,
+                key_version,
+                schema_version,
+            };
 
-            if let Some(parent) = Path::new(&baseline_path_for(&node_id)).parent() {
-                let _ = fs::create_dir_all(parent);
+            if !verify_baseline_signature_locally(&baseline) {
+                eprintln!(
+                    "❌ Baseline was signed via {} but does NOT verify against the local DKP public key.",
+                    sig.source
+                );
+                eprintln!(
+                    "   This usually means the CLI fell back to the wrong key, or {} is stale.",
+                    DKP_PUBKEY_PATH
+                );
+                eprintln!("   Refusing to write a misleading signed baseline.");
+                return;
             }
-            match fs::write(
-                &baseline_path_for(&node_id),
-                serde_json::to_string_pretty(&baseline).unwrap(),
-            ) {
+
+            match write_baseline(&node_id, &baseline) {
                 Ok(_) => {
                     println!(
                         "✅ Baseline created and SIGNED at {}",
                         &baseline_path_for(&node_id)
                     );
+                    println!("   Signer: {}", sig.source);
                     println!("   Device UID: [redacted]");
                     println!("   Key version: {}", key_version);
                 }
-                Err(e) => eprintln!("Write error: {}", e),
+                Err(e) => eprintln!("{}", e),
             }
         }
-        None => {
-            // Can't sign from CLI — save unsigned baseline with warning
-            let baseline = serde_json::json!({
-                "pcr_values": snap["pcr_values"],
-                "composite_digest": composite,
-                "baseline_signature": "",
-                "created_at": created_at,
-                "device_uid": device_uid,
-                "key_version": key_version,
-                "schema_version": snap["schema_version"],
-            });
+        Ok(None) => {
+            let baseline = PcrBaseline {
+                pcr_values,
+                composite_digest: composite,
+                baseline_signature: String::new(),
+                created_at,
+                device_uid,
+                key_version,
+                schema_version,
+            };
 
-            if let Some(parent) = Path::new(&baseline_path_for(&node_id)).parent() {
-                let _ = fs::create_dir_all(parent);
-            }
-            match fs::write(
-                &baseline_path_for(&node_id),
-                serde_json::to_string_pretty(&baseline).unwrap(),
-            ) {
+            match write_baseline(&node_id, &baseline) {
                 Ok(_) => {
-                    println!("⚠️ Baseline created but NOT SIGNED (no signing key available)");
+                    println!(
+                        "⚠️ Baseline created but NOT SIGNED (no matching signing key available)"
+                    );
                     println!("   Baseline at: {}", &baseline_path_for(&node_id));
-                    println!("   The daemon will sign it on next startup if signature is empty.");
+                    println!("   The daemon will treat this baseline as untrusted until it is re-created with a valid DKP signature.");
                 }
-                Err(e) => eprintln!("Write error: {}", e),
+                Err(e) => eprintln!("{}", e),
             }
         }
+        Err(e) => eprintln!("❌ Baseline signing failed: {}", e),
     }
 }
 
 /// Try to sign the baseline hash using ssscli (hardware) or software key.
-fn sign_baseline_hash(hash: &[u8], key_version: u32) -> Option<String> {
+fn sign_baseline_hash(hash: &[u8], key_version: u32) -> Result<Option<BaselineSignature>, String> {
     use std::process::Command;
 
     // Method 1: Try ssscli (hardware board)
     if key_version == 0 {
-        eprintln!("❌ key_version must be >= 1");
-        return None;
+        return Err("key_version must be >= 1".into());
     }
     let key_id = format!("0x{:08X}", 0x20000010 + key_version - 1);
     let ts = std::time::SystemTime::now()
@@ -188,9 +278,36 @@ fn sign_baseline_hash(hash: &[u8], key_version: u32) -> Option<String> {
                 if let Ok(sig_bytes) = fs::read(&tmp_out) {
                     let _ = fs::remove_file(&tmp_in);
                     let _ = fs::remove_file(&tmp_out);
-                    return Some(base64::engine::general_purpose::STANDARD.encode(&sig_bytes));
+                    return Ok(Some(BaselineSignature {
+                        signature_b64: base64::engine::general_purpose::STANDARD.encode(&sig_bytes),
+                        source: "SE050 hardware",
+                    }));
                 }
             }
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if Path::new(DKP_PUBKEY_PATH).exists() {
+                let _ = fs::remove_file(&tmp_in);
+                let _ = fs::remove_file(&tmp_out);
+                let detail = if !stderr.is_empty() {
+                    stderr
+                } else if !stdout.is_empty() {
+                    stdout
+                } else {
+                    format!("ssscli exited with status {}", output.status)
+                };
+                return Err(format!(
+                    "SE050 signing via ssscli failed for {}: {}",
+                    key_id, detail
+                ));
+            }
+        } else if Path::new(DKP_PUBKEY_PATH).exists() {
+            let _ = fs::remove_file(&tmp_in);
+            let _ = fs::remove_file(&tmp_out);
+            return Err(format!(
+                "ssscli is unavailable, but {} exists so this board expects hardware DKP signing",
+                DKP_PUBKEY_PATH
+            ));
         }
         let _ = fs::remove_file(&tmp_in);
         let _ = fs::remove_file(&tmp_out);
@@ -210,9 +327,11 @@ fn sign_baseline_hash(hash: &[u8], key_version: u32) -> Option<String> {
                         &rng,
                     ) {
                         if let Ok(sig) = keypair.sign(&rng, hash) {
-                            return Some(
-                                base64::engine::general_purpose::STANDARD.encode(sig.as_ref()),
-                            );
+                            return Ok(Some(BaselineSignature {
+                                signature_b64: base64::engine::general_purpose::STANDARD
+                                    .encode(sig.as_ref()),
+                                source: "software fallback key",
+                            }));
                         }
                     }
                 }
@@ -220,7 +339,7 @@ fn sign_baseline_hash(hash: &[u8], key_version: u32) -> Option<String> {
         }
     }
 
-    None
+    Ok(None)
 }
 
 pub fn run_verify() {
@@ -238,16 +357,21 @@ pub fn run_verify() {
         return;
     }
 
-    let baseline: serde_json::Value = match fs::read_to_string(&bl_path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-    {
-        Some(v) => v,
-        None => {
-            eprintln!("❌ Failed to load baseline from {}", bl_path);
+    let baseline_json = match fs::read_to_string(&bl_path) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("❌ Failed to load baseline from {}: {}", bl_path, e);
             return;
         }
     };
+    let baseline: serde_json::Value = match serde_json::from_str(&baseline_json) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("❌ Failed to parse baseline from {}: {}", bl_path, e);
+            return;
+        }
+    };
+    let baseline_struct: Option<PcrBaseline> = serde_json::from_str(&baseline_json).ok();
     let snapshot: serde_json::Value = match fs::read_to_string(&pcr_path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -259,14 +383,20 @@ pub fn run_verify() {
         }
     };
 
-    // Verify baseline signature first
-    let sig = baseline["baseline_signature"].as_str().unwrap_or("");
-    if sig.is_empty() {
-        println!("  ⚠️ Baseline is NOT SIGNED — tamper protection not active");
+    if let Some(v) = baseline_struct {
+        if v.baseline_signature.is_empty() {
+            println!("  ❌ Baseline is NOT SIGNED — tamper protection inactive");
+        } else if verify_baseline_signature_locally(&v) {
+            println!("  ✅ Baseline signature VERIFIED against local DKP public key");
+        } else {
+            println!("  ❌ Baseline signature INVALID for local DKP public key");
+            println!(
+                "     Check whether the baseline was signed by the wrong key or {} is stale",
+                DKP_PUBKEY_PATH
+            );
+        }
     } else {
-        println!("  ⚠️ Baseline signature: present but NOT VERIFIED (requires DKP key at runtime)");
-        // Note: Full signature verification requires the DKP public key,
-        // which the daemon provides at runtime. CLI can only check signature exists.
+        println!("  ❌ Baseline format invalid — could not parse structured baseline");
     }
 
     let names = [
