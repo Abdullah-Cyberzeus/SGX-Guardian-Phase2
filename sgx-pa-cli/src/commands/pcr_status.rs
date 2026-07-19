@@ -77,11 +77,12 @@ pub fn run() {
     );
     println!("  Key ver:    {}", snap["key_version"]);
     println!(
-        "  Signed:     {}",
+        "  Snapshot Sig: {}",
         if snap["composite_signature"].is_null() {
             "No"
         } else {
             "Yes"
         }
     );
+    println!("  Baseline:     use `sgx-pa-cli pcr-baseline verify` to check baseline status");
 }

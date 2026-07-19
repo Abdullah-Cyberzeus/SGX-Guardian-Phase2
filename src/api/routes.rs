@@ -35,6 +35,11 @@ pub fn crl_router() -> Router<Arc<AppState>> {
             "/api/v1/crl/emergency/notifications",
             get(handlers::crl::emergency_notifications),
         )
+        .route(
+            "/api/v1/crl/emergency/debug/session",
+            get(handlers::crl::emergency_debug_session_status)
+                .post(handlers::crl::emergency_debug_session_seed),
+        )
 }
 
 pub fn xfer_router() -> Router<Arc<AppState>> {
