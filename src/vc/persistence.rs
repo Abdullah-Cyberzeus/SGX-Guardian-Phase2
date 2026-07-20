@@ -127,7 +127,7 @@ pub fn load_own_any() -> Result<Option<VerifiableCredential>, VcError> {
     if !dir.exists() {
         return Ok(None);
     }
-    let mut newest: Option<(std::time::SystemTime, VerifiableCredential)> = None;
+    let mut preferred: Option<(bool, std::time::SystemTime, VerifiableCredential)> = None;
     for entry in fs::read_dir(&dir)? {
         let entry = entry?;
         let modified = entry.metadata()?.modified()?;
@@ -137,15 +137,18 @@ pub fn load_own_any() -> Result<Option<VerifiableCredential>, VcError> {
         let Ok(vc) = serde_json::from_slice::<VerifiableCredential>(&bytes) else {
             continue;
         };
-        if newest
+        let is_mesh_circle = vc.credential_subject.circle_id == crate::vc::issue::DEFAULT_CIRCLE_ID;
+        let should_replace = preferred
             .as_ref()
-            .map(|(ts, _)| modified > *ts)
-            .unwrap_or(true)
-        {
-            newest = Some((modified, vc));
+            .map(|(best_is_mesh, ts, _)| {
+                (is_mesh_circle && !best_is_mesh) || (is_mesh_circle == *best_is_mesh && modified > *ts)
+            })
+            .unwrap_or(true);
+        if should_replace {
+            preferred = Some((is_mesh_circle, modified, vc));
         }
     }
-    Ok(newest.map(|(_, vc)| vc))
+    Ok(preferred.map(|(_, _, vc)| vc))
 }
 
 pub fn list_issued() -> Result<Vec<VerifiableCredential>, VcError> {

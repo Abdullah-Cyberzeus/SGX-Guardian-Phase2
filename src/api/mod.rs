@@ -33,6 +33,7 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             axum::http::Method::GET,
             axum::http::Method::POST,
             axum::http::Method::PUT,
+            axum::http::Method::PATCH,
             axum::http::Method::DELETE,
             axum::http::Method::OPTIONS,
         ])
@@ -283,6 +284,7 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         )
         .merge(routes::vault_router())
         .merge(routes::xfer_router())
+        .merge(routes::circle_router())
         .merge(routes::notify_router())
         // Health
         .route(

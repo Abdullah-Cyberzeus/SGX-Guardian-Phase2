@@ -1,5 +1,6 @@
 pub mod attestation;
 pub mod auth;
+pub mod circle;
 pub mod crl;
 pub mod devices;
 pub mod did;
