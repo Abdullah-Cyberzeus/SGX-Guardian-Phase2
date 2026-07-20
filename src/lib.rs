@@ -8,6 +8,7 @@ pub mod cert_client;
 pub mod cert_service;
 pub mod client;
 pub mod cloud;
+pub mod circle;
 pub mod config_loader;
 pub mod cot;
 pub mod crl;

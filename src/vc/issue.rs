@@ -94,7 +94,7 @@ pub struct RenewRequest<'a> {
 }
 
 #[derive(Clone, Copy)]
-enum VcAdminAction {
+pub enum VcAdminAction {
     Issue,
     Revoke,
     Renew,
@@ -550,7 +550,7 @@ fn software_keys_forced() -> bool {
     env_true("SGX_FORCE_SOFTWARE_KEYS") || env_true("SGX_DISABLE_SE050_DKP")
 }
 
-fn ensure_circle_owner(
+pub fn ensure_circle_owner(
     issuer_did: &DidRecord,
     circle_id: &str,
     action: VcAdminAction,
@@ -607,7 +607,7 @@ fn can_bootstrap_issue(issuer_did: &DidRecord, circle_id: &str) -> Result<bool, 
     }
 }
 
-fn validate_permissions_for_role(
+pub fn validate_permissions_for_role(
     role: &CredentialRole,
     permissions: &[String],
 ) -> Result<(), VcError> {
@@ -682,13 +682,13 @@ fn revoke_status_entry(
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum VcLifecycleState {
+pub enum VcLifecycleState {
     Active,
     Expired,
     Revoked,
 }
 
-fn classify_vc_state(
+pub fn classify_vc_state(
     vc: &VerifiableCredential,
     status_list: &StatusListManager,
     now: chrono::DateTime<Utc>,
