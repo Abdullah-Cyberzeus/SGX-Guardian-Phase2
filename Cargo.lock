@@ -2171,6 +2171,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "flate2",
+ "futures-core",
  "hex",
  "hyper-util",
  "ipnet",
