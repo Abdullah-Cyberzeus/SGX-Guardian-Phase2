@@ -1,4 +1,5 @@
 pub mod attestation;
+pub mod circle;
 pub mod crl;
 pub mod did;
 pub mod dkp;

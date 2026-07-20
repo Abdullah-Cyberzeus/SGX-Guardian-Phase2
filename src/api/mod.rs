@@ -28,6 +28,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             axum::http::Method::GET,
             axum::http::Method::POST,
             axum::http::Method::PUT,
+            axum::http::Method::PATCH,
+            axum::http::Method::DELETE,
         ])
         .allow_headers([
             axum::http::header::CONTENT_TYPE,
@@ -256,6 +258,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/threat/config", post(handlers::threat::set_config))
         .route("/api/v1/threat/start", post(handlers::threat::start))
         .merge(routes::crl_router())
+        .merge(routes::circle_router())
         .merge(routes::notify_router())
         // Health
         .route("/api/v1/health", get(|| async { "ok" }))

@@ -1,7 +1,7 @@
 use crate::api::handlers;
 use crate::api::state::AppState;
 use axum::{
-    routing::{get, post},
+    routing::{get, patch, post},
     Router,
 };
 use std::sync::Arc;
@@ -65,4 +65,39 @@ pub fn notify_router() -> Router<Arc<AppState>> {
             "/api/v1/notifications/prefs",
             get(handlers::notify::get_prefs).put(handlers::notify::put_prefs),
         )
+}
+
+pub fn circle_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/api/v1/circles", get(handlers::circle::list).post(handlers::circle::create))
+        .route(
+            "/api/v1/circles/{id}",
+            get(handlers::circle::detail).patch(handlers::circle::edit),
+        )
+        .route(
+            "/api/v1/circles/{id}/archive",
+            post(handlers::circle::archive),
+        )
+        .route(
+            "/api/v1/circles/{id}/members",
+            get(handlers::circle::list_members).post(handlers::circle::add_member),
+        )
+        .route(
+            "/api/v1/circles/{id}/members/{did}",
+            patch(handlers::circle::change_role).delete(handlers::circle::remove_member),
+        )
+        .route(
+            "/api/v1/circles/{id}/invites",
+            get(handlers::circle::list_invites).post(handlers::circle::mint_invite),
+        )
+        .route(
+            "/api/v1/circles/{id}/invites/{invite_id}",
+            axum::routing::delete(handlers::circle::revoke_invite),
+        )
+        .route(
+            "/api/v1/circles/join/preview",
+            post(handlers::circle::join_preview),
+        )
+        .route("/api/v1/circles/join", post(handlers::circle::join))
+        .route("/api/v1/circles/redeem", post(handlers::circle::redeem))
 }

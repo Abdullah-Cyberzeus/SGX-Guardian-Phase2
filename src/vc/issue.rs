@@ -94,7 +94,7 @@ pub struct RenewRequest<'a> {
 }
 
 #[derive(Clone, Copy)]
-enum VcAdminAction {
+pub enum VcAdminAction {
     Issue,
     Revoke,
     Renew,
@@ -515,7 +515,7 @@ fn runtime_device_key_dir() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("/var/lib/sgx-guardian/sgx-agent"))
 }
 
-fn ensure_circle_owner(
+pub fn ensure_circle_owner(
     issuer_did: &DidRecord,
     circle_id: &str,
     action: VcAdminAction,
@@ -572,7 +572,7 @@ fn can_bootstrap_issue(issuer_did: &DidRecord, circle_id: &str) -> Result<bool, 
     }
 }
 
-fn validate_permissions_for_role(
+pub fn validate_permissions_for_role(
     role: &CredentialRole,
     permissions: &[String],
 ) -> Result<(), VcError> {
@@ -647,13 +647,13 @@ fn revoke_status_entry(
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum VcLifecycleState {
+pub enum VcLifecycleState {
     Active,
     Expired,
     Revoked,
 }
 
-fn classify_vc_state(
+pub fn classify_vc_state(
     vc: &VerifiableCredential,
     status_list: &StatusListManager,
     now: chrono::DateTime<Utc>,
