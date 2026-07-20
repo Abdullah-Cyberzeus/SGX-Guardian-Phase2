@@ -2662,6 +2662,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Spawns two background tokio tasks; returns immediately; runs on
     // every node role (nodeA is an ordinary gossip peer, not a hub).
     sgx_guardian_client::crl::gossip::spawn(node_id.clone(), did_resolver.clone());
+
+    // Subscribes to the notification bus and durably appends live events so
+    // reconnecting consoles can replay missed notifications.
+    sgx_guardian_client::notify::spawn(node_id.clone());
     println!("✅ REST admin API listening on http://{}/api/v1", api_bind);
 
     // === NMAP discovery scheduler ===

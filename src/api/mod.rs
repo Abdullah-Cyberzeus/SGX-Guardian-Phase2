@@ -32,6 +32,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .allow_headers([
             axum::http::header::CONTENT_TYPE,
             axum::http::header::AUTHORIZATION,
+            axum::http::HeaderName::from_static("last-event-id"),
         ]);
 
     Router::new()
@@ -255,6 +256,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/threat/config", post(handlers::threat::set_config))
         .route("/api/v1/threat/start", post(handlers::threat::start))
         .merge(routes::crl_router())
+        .merge(routes::notify_router())
         // Health
         .route("/api/v1/health", get(|| async { "ok" }))
         .layer(cors)

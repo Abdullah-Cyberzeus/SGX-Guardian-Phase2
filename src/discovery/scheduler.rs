@@ -2,6 +2,7 @@ use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::discovery::{
     config::{NmapConfig, ScheduledScanKind},
+    connected_device::DeviceStatus,
     error::DiscoveryResult,
     inventory::Inventory,
     nmap_parser,
@@ -191,6 +192,21 @@ impl DiscoveryScheduler {
                 wl.classify(device);
             }
         }
+        let discovered_devices = delta
+            .newly_seen
+            .iter()
+            .filter_map(|id| inv.by_id.get(id).cloned())
+            .collect::<Vec<_>>();
+        let pending_devices = discovered_devices
+            .iter()
+            .filter(|device| matches!(device.status, DeviceStatus::Unauthorized))
+            .cloned()
+            .collect::<Vec<_>>();
+        let offline_devices = delta
+            .marked_stale
+            .iter()
+            .filter_map(|id| inv.by_id.get(id).cloned())
+            .collect::<Vec<_>>();
         let counts = run_history::status_counts(&inv);
         if let Err(err) = inv.save_atomic(&self.inventory_path) {
             let record = run_history::build_record(
@@ -239,6 +255,17 @@ impl DiscoveryScheduler {
                     delta.newly_seen.len()
                 ),
             );
+        }
+        drop(inv);
+
+        for device in discovered_devices {
+            crate::notify::publish_device_discovered(&device);
+        }
+        for device in pending_devices {
+            crate::notify::publish_device_pending_approval(&device);
+        }
+        for device in offline_devices {
+            crate::notify::publish_guardian_offline(&device);
         }
         Ok(())
     }

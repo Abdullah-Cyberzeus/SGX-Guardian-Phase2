@@ -142,6 +142,7 @@ impl ThreatService {
                             IngestOutcome::Inserted => {
                                 dirty = true;
                                 ai_bridge::forward_to_ai(&self.node_id, &alert);
+                                crate::notify::publish_alert(&self.node_id, &alert);
                             }
                             IngestOutcome::Updated => {
                                 dirty = true;
