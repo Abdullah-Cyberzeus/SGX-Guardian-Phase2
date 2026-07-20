@@ -11,6 +11,13 @@ relay:
   max_bandwidth_mbps: 10
   alert_threshold_pct: 80
 
+api:
+  tls:
+    enabled: true
+    require_https: true
+    cert_path: "/var/lib/sgx-guardian/sgx-agent/device_nodeA_cert.der"
+    key_path: "/var/lib/sgx-guardian/sgx-agent/device_nodeA.key"
+
 secure_element:
   enabled: true
   scp_key_path: "/etc/sgx-guardian/secure-element/scp_keys.txt"
