@@ -15,6 +15,3 @@ logs/
 signed_artifacts/
 .vscode/
 .idea/
-!docker/vendor/
-!docker/vendor/nebula
-!docker/vendor/nebula-cert
