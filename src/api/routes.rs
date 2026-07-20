@@ -89,3 +89,28 @@ pub fn vault_router() -> Router<Arc<AppState>> {
             post(handlers::vault::toggle_star),
         )
 }
+
+pub fn notify_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route(
+            "/api/v1/notifications/stream",
+            get(handlers::notify::stream),
+        )
+        .route("/api/v1/notifications", get(handlers::notify::history))
+        .route(
+            "/api/v1/notifications/unread-count",
+            get(handlers::notify::unread_count),
+        )
+        .route(
+            "/api/v1/notifications/{id}/read",
+            post(handlers::notify::mark_read),
+        )
+        .route(
+            "/api/v1/notifications/read-all",
+            post(handlers::notify::mark_all_read),
+        )
+        .route(
+            "/api/v1/notifications/prefs",
+            get(handlers::notify::get_prefs).put(handlers::notify::put_prefs),
+        )
+}
