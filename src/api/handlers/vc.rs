@@ -887,7 +887,9 @@ fn api_error_to_vc_error(err: ApiError) -> VcError {
         ApiError::BadRequest(message)
         | ApiError::Forbidden(message)
         | ApiError::Conflict(message)
+        | ApiError::Locked(message)
         | ApiError::NotFound(message)
+        | ApiError::TooManyRequests(message)
         | ApiError::Unauthorized(message)
         | ApiError::Internal(message) => VcError::InvalidStructure(message),
     }

@@ -82,6 +82,7 @@ pub async fn request_certificate_from_ca(
     public_key_pem: String,
     wants_lh: bool,
     wants_relay: bool,
+    pairing_proof: Option<String>,
 ) {
     if node_id.is_empty()
         || !node_id
@@ -181,6 +182,7 @@ pub async fn request_certificate_from_ca(
             &public_key_pem,
             wants_lh,
             wants_relay,
+            pairing_proof.as_deref(),
         )
         .await
         {
@@ -432,6 +434,7 @@ async fn try_request(
     public_key_pem: &str,
     wants_lh: bool,
     wants_relay: bool,
+    pairing_proof: Option<&str>,
 ) -> Result<crate::proto::sgx::CertSignResponse, String> {
     let endpoint = Channel::from_shared(format!("http://{}", ca_addr))
         .map_err(|e| format!("Invalid CA address: {}", e))?;
@@ -449,6 +452,7 @@ async fn try_request(
         overlay_ip: overlay_ip.to_string(),
         wants_lighthouse: wants_lh,
         wants_relay,
+        pairing_proof: pairing_proof.unwrap_or_default().to_string(),
     });
 
     let response = client

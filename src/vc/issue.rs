@@ -464,7 +464,13 @@ pub fn resolve_runtime_node_id() -> Option<String> {
 pub fn load_runtime_key_manager(node_id: &str) -> anyhow::Result<KeyManager> {
     let key_path = runtime_device_key_dir().join(format!("device_{}.key", node_id));
     let key_path = key_path.to_string_lossy().to_string();
-    #[cfg(feature = "secure-element")]
+    #[cfg(all(test, feature = "secure-element"))]
+    {
+        // Unit tests install deterministic filesystem keys for VC issuance/verification.
+        // Bypass SE050 runtime discovery there so the DID document and signer stay aligned.
+        KeyManager::load_or_generate(&key_path)
+    }
+    #[cfg(all(not(test), feature = "secure-element"))]
     {
         KeyManager::init_with_se050(
             &crate::secure_element::config::SeConfig::default(),

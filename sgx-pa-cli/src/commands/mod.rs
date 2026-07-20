@@ -14,6 +14,7 @@ pub mod dkp_status;
 pub mod emergency_rotate;
 pub mod keygen;
 pub mod logs;
+pub mod pairing;
 pub mod pcr_baseline;
 pub mod pcr_status;
 pub mod peers;

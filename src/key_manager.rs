@@ -10,6 +10,25 @@ use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 use std::{fs, path::Path};
 use tracing::{info, warn};
 
+#[cfg(unix)]
+fn set_owner_only_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_owner_only_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+fn write_private_key(path: &Path, bytes: &[u8]) -> Result<()> {
+    fs::write(path, bytes)?;
+    set_owner_only_permissions(path)?;
+    Ok(())
+}
+
 /// Manages the SG-X node identity keypair including generation,
 /// secure persistence, loading from disk, and providing signing/public
 /// key access for attestation workflows.
@@ -85,7 +104,7 @@ impl KeyManager {
                     let pkcs8 =
                         EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
                             .map_err(|_| anyhow!("Failed to generate keypair"))?;
-                    fs::write(key_path, pkcs8.as_ref())?;
+                    write_private_key(key_path, pkcs8.as_ref())?;
                     pkcs8.as_ref().to_vec()
                 }
             }
@@ -100,7 +119,7 @@ impl KeyManager {
             );
             let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
                 .map_err(|_| anyhow!("Failed to generate keypair"))?;
-            fs::write(key_path, pkcs8.as_ref())?;
+            write_private_key(key_path, pkcs8.as_ref())?;
             info!("New identity key generated at {}", key_path.display());
             pkcs8.as_ref().to_vec()
         };
@@ -177,7 +196,7 @@ impl KeyManager {
                                 &rng,
                             )
                             .map_err(|_| anyhow!("Generate fallback keypair"))?;
-                            fs::write(fallback_key_path, pkcs8.as_ref())?;
+                            write_private_key(fb_path, pkcs8.as_ref())?;
                             pkcs8.as_ref().to_vec()
                         }
                     }
@@ -185,7 +204,7 @@ impl KeyManager {
                     let pkcs8 =
                         EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
                             .map_err(|_| anyhow!("Generate fallback keypair"))?;
-                    fs::write(fallback_key_path, pkcs8.as_ref())?;
+                    write_private_key(fb_path, pkcs8.as_ref())?;
                     pkcs8.as_ref().to_vec()
                 };
 

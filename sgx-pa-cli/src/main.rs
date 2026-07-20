@@ -96,6 +96,8 @@ enum Commands {
     Vc(commands::vc::VcArgs),
     /// VirtualID inspection and recomputation
     Vid(commands::vid::VidArgs),
+    /// Device pairing helpers
+    Pairing(commands::pairing::PairingArgs),
 }
 /// Entry point for the SGX Policy Authority CLI.
 /// Dispatches the selected subcommand and routes execution
@@ -203,6 +205,7 @@ fn main() {
         }
         Commands::Vc(args) => commands::vc::run(args),
         Commands::Vid(args) => commands::vid::run(args),
+        Commands::Pairing(args) => commands::pairing::run(args),
     }
 }
 
@@ -265,6 +268,20 @@ mod tests {
             "did:guardian:test",
             "--days",
             "30"
+        ])
+        .is_ok());
+    }
+
+    #[test]
+    fn test_pairing_commands_parse() {
+        assert!(Cli::try_parse_from([
+            "sgx-pa-cli",
+            "pairing",
+            "proof",
+            "--pairing-code",
+            "test-code",
+            "--node-id",
+            "nodeA",
         ])
         .is_ok());
     }

@@ -22,6 +22,7 @@ bs58 = "0.5"
 tokio = { version = "1.37", features = ["rt", "rt-multi-thread", "process", "io-util", "time", "net"] }
 sgx_guardian_client = { path = ".." }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+libc = "0.2"
 
 [dev-dependencies]
 assert_cmd = "2.1.1"

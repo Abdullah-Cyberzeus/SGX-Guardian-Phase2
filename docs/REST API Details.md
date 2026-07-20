@@ -1,9 +1,16 @@
 # SG-X Guardian REST API Details
 
-**Version:** 2.1  
-**Port:** `8443`  
-**Base URL:** `http://<board-ip>:8443/api/v1`  
-**Example Board IP:** `192.168.1.10`
+**Version:** 2.2
+**Port:** `8443`
+**Base URL:** `https://<nodeA-ip>:8443/api/v1`
+**Example NodeA IP:** `192.168.1.10`
+
+Transport notes:
+
+- The admin API binds on `nodeA` only.
+- Plaintext `http://<nodeA-ip>:8443` is rejected; use HTTPS on `:8443`.
+- The NodeA device certificate is self-signed by default, so clients must trust or pin it explicitly.
+- Local email/password login remains active. Cylenium SSO is stubbed and disabled by default.
 
 ## 1. Implemented Endpoints 
 
@@ -87,23 +94,33 @@
 | 76 | PUT | `/discovery/whitelist` | Replace discovery whitelist and refresh inventory statuses |
 | 77 | GET | `/discovery/schedule` | Fetch scheduled NMAP discovery configuration |
 | 78 | PUT | `/discovery/schedule` | Update scheduled NMAP discovery configuration |
+| 79 | POST | `/auth/signup` | Create the initial owner account and issue a bearer session token |
+| 80 | POST | `/auth/login` | Authenticate an operator and issue a bearer session token |
+| 81 | POST | `/auth/logout` | Revoke the current bearer session token |
+| 82 | GET | `/auth/session` | Return the active authenticated session summary |
+| 83 | GET | `/devices` | List paired devices owned by the authenticated user |
+| 84 | GET | `/devices/pairing-code` | Mint a time-limited pairing challenge for a device serial |
+| 85 | POST | `/devices/pair` | Bind a device to the authenticated user using a signed pairing proof |
+| 86 | POST | `/devices/{id}/unpair` | Remove a paired device binding for the authenticated user |
+| 87 | GET | `/devices/{deviceId}` | Fetch one paired Guardian with bootstrap and mesh details |
+| 88 | GET | `/devices/pairing-status` | Poll pairing and bootstrap progress for a serial |
 
 
 ## 2. NEW Endpoints 
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/vc/files/own` | List local own-VC file metadata |
-| GET | `/vc/files/peers` | List peer-VC file metadata |
-| GET | `/vc/files/issued/{vc_id}` | Fetch the stored issued VC JSON document |
-| GET | `/vc/files/own/{vc_id}` | Fetch the stored own VC JSON document |
-| GET | `/vc/files/peer/{did}` | Fetch the stored peer VC JSON document by DID |
-| GET | `/vc/status-list` | Fetch the stored VC status-list credential JSON |
-| GET | `/vc/status-list-index` | Fetch the stored status-list next-index JSON |
-| GET | `/vc/summary` | Return aggregate VC cache and lifecycle counts |
-| GET | `/vc/audit` | Return VC audit-log entries with optional filtering |
-| GET | `/vid/show` | Show the single current nonce-bound VirtualID and its input digests |
-| GET | `/vid/peers` | List cached peer VirtualIDs and last observed rotation reasons |
+| POST | `/auth/signup` | Create the initial owner account and return a bearer session token |
+| POST | `/auth/login` | Authenticate operator credentials and return a bearer session token |
+| POST | `/auth/logout` | Revoke the current bearer session token |
+| GET | `/auth/session` | Return the current authenticated session summary |
+| GET | `/devices` | List paired devices for the authenticated user |
+| GET | `/devices/pairing-code` | Generate a time-limited pairing challenge for a device serial |
+| POST | `/devices/pair` | Complete device binding using a signed pairing proof |
+| POST | `/devices/{id}/unpair` | Remove an existing paired-device binding |
+| GET | `/devices/{deviceId}` | Fetch one paired Guardian with bootstrap metadata |
+| GET | `/devices/pairing-status` | Poll authenticated pairing/bootstrap progress |
+
 ---
 
 ## 2. Standard Error Envelope
@@ -113,7 +130,7 @@ All handler-generated API errors use this JSON envelope:
 ```json
 {
   "error": {
-    "code": "NOT_FOUND | BAD_REQUEST | UNAUTHORIZED | FORBIDDEN | CONFLICT | INTERNAL",
+    "code": "NOT_FOUND | BAD_REQUEST | UNAUTHORIZED | LOCKED | TOO_MANY_REQUESTS | FORBIDDEN | CONFLICT | INTERNAL",
     "message": "human-readable message"
   }
 }
@@ -123,6 +140,8 @@ Typical HTTP status mapping:
 
 - `400 BAD_REQUEST`
 - `401 UNAUTHORIZED`
+- `423 LOCKED`
+- `429 TOO_MANY_REQUESTS`
 - `403 FORBIDDEN`
 - `409 CONFLICT`
 - `404 NOT_FOUND`
@@ -153,6 +172,409 @@ Field notes:
 
 ---
 
+## 2.2 Guardian Admin Console Phase A-C (Authoritative)
+
+This section is the authoritative contract for the operator-facing admin-console flow covering:
+
+- Phase A: operator signup, login, session validation, logout, auth middleware
+- Phase B: Guardian QR/serial pairing, signed proof verification, binding, listing, unpairing
+- Phase C: authenticated Guardian onboarding into the existing cert-bootstrap workflow, plus bootstrap status visibility for the dashboard
+
+If a later legacy section in this document differs from this Phase A-C section, use this section.
+
+### Endpoint contracts
+
+#### GET `/health`
+
+Purpose:
+Check whether the Guardian admin API is alive.
+
+Request:
+
+- Auth: Public
+- Query params: none
+- Body: none
+
+Success response (`200 OK`):
+
+```json
+{
+  "status": "ok"
+}
+```
+
+Error responses:
+
+- None expected from handler
+
+#### POST `/auth/signup`
+
+Purpose:
+Create the first operator account as the initial `owner`.
+
+Request:
+
+- Auth: Public
+- Query params: none
+- JSON body:
+```json
+{
+  "name": "Admin",
+  "email": "admin@sgx.local",
+  "password": "SgxGuardian@2026!"
+}
+```
+
+Success response (`200 OK`):
+
+```json
+{
+  "userId": "user-id",
+  "email": "admin@sgx.local",
+  "role": "owner",
+  "token": "jwt-token",
+  "expiresAt": 1783060200
+}
+```
+
+Error responses:
+
+- `400 BAD_REQUEST`: missing name/email or password policy violation
+- `403 FORBIDDEN`: signup is only allowed before the first user exists
+- `409 CONFLICT`: conflicting user creation state
+- `500 INTERNAL_SERVER_ERROR`: user store, session persistence, or token issuance failure
+
+#### POST `/auth/login`
+
+Purpose:
+Authenticate an operator and issue a bearer session token.
+
+Request:
+
+- Auth: Public
+- Query params: none
+- JSON body:
+```json
+{
+  "email": "admin@sgx.local",
+  "password": "SgxGuardian@2026!"
+}
+```
+
+Success response (`200 OK`):
+
+```json
+{
+  "token": "jwt-token",
+  "user": {
+    "id": "user-id",
+    "email": "admin@sgx.local",
+    "role": "owner"
+  },
+  "expiresAt": 1783060200
+}
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: invalid email or password
+- `423 LOCKED`: account temporarily locked after repeated failed logins
+- `429 TOO_MANY_REQUESTS`: login rate limit exceeded
+- `500 INTERNAL_SERVER_ERROR`: user store, session persistence, or token issuance failure
+
+#### GET `/auth/session`
+
+Purpose:
+Validate the current JWT session and return the authenticated user/session summary.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+- Query params: none
+- Body: none
+```http
+Authorization: Bearer <token>
+```
+
+Success response (`200 OK`):
+
+```json
+{
+  "valid": true,
+  "userId": "user-id",
+  "email": "admin@sgx.local",
+  "role": "owner",
+  "expiresAt": 1783060200
+}
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
+- `500 INTERNAL_SERVER_ERROR`: user/session store failure
+
+#### POST `/auth/logout`
+
+Purpose:
+Revoke the current session token.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+- Query params: none
+- Body: none
+```http
+Authorization: Bearer <token>
+```
+
+Success response (`200 OK`):
+
+```json
+{
+  "status": "logged_out"
+}
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
+- `500 INTERNAL_SERVER_ERROR`: session revoke persistence failure
+
+#### GET `/node/status`
+
+Purpose:
+Show the current Guardian node status for the dashboard.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+```http
+Authorization: Bearer <token>
+```
+
+Success response (`200 OK`):
+
+```json
+{
+  "nodeId": "nodeA",
+  "hostname": "guardian-node-A",
+  "ip": "192.168.50.103",
+  "port": 50051,
+  "publicKey": "placeholder-key-A",
+  "timestamp": "2026-07-03T05:17:56Z"
+}
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
+- `400 BAD_REQUEST`: invalid node format
+- `404 NOT_FOUND`: node config not found
+- `500 INTERNAL_SERVER_ERROR`: config directory, file read, or YAML parse failure
+
+#### GET `/devices/pairing-code`
+
+Purpose:
+Generate a secure time-limited pairing code for QR or serial pairing.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+- Query params:
+  - `serial` (required, string)
+  - `ttl_secs` (optional, integer). Defaults to `300`; capped at `3600`.
+- Body: none
+
+Success response (`200 OK`):
+
+```json
+{
+  "serial": "GX-2024-TX-042-B9F3",
+  "challenge": "random-challenge",
+  "nonce": "random-nonce",
+  "expiresAt": 1783059476,
+  "pairingCode": "base64url-pairing-payload"
+}
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
+- `400 BAD_REQUEST`: invalid serial
+- `500 INTERNAL_SERVER_ERROR`: pairing store persistence or pairing-code encoding failure
+
+#### POST `/devices/pair`
+
+Purpose:
+Submit a signed pairing proof and bind a Guardian device to the authenticated owner account.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+- Query params: none
+- JSON body:
+```json
+{
+  "serial": "GX-2024-TX-042-B9F3",
+  "proof": "signed-proof-from-device"
+}
+```
+
+Success response (`200 OK`):
+
+```json
+{
+  "deviceId": "device-id",
+  "serial": "GX-2024-TX-042-B9F3",
+  "did": "did:guardian:EtFW3...",
+  "status": "bootstrap_pending",
+  "nodeId": "nodeB"
+}
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
+- `400 BAD_REQUEST`: missing proof, serial mismatch, invalid proof, missing pairing challenge, expired pairing challenge, or replayed proof
+- `403 FORBIDDEN`: pairing proof was issued for a different user
+- `409 CONFLICT`: device is already paired to another user
+- `500 INTERNAL_SERVER_ERROR`: device store persistence failure
+
+#### GET `/devices`
+
+Purpose:
+Return all paired Guardians for the authenticated user dashboard.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+- Query params: none
+- Body: none
+
+Success response (`200 OK`):
+
+```json
+[
+  {
+    "deviceId": "0299cc0d31a127a3de2a8ac66ac2bf7c5fb3eed4e06102e75b841fbb12124b1d",
+    "serial": "GX-2024-TX-042-B9F3",
+    "did": "did:guardian:EtFW3...",
+    "status": "active",
+    "nodeId": "nodeB"
+  },
+  {
+    "deviceId": "d29f0ca7641c76f1e71a0ea767992a42db629a8e389512ae4de8520446567c0f",
+    "serial": "GX-2024-TX-042-C9F3",
+    "did": "did:guardian:C2txw...",
+    "status": "active",
+    "nodeId": "nodeC"
+  }
+]
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
+- `500 INTERNAL_SERVER_ERROR`: device store read failure
+
+#### GET `/devices/{deviceId}`
+
+Purpose:
+Return detailed information for one paired Guardian.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+- Path params:
+  - `deviceId` (required, string)
+- Query params: none
+- Body: none
+
+Success response (`200 OK`):
+
+```json
+{
+  "deviceId": "device-id",
+  "serial": "GX-2024-TX-042-B9F3",
+  "did": "did:guardian:EtFW3...",
+  "nodeId": "nodeB",
+  "status": "active",
+  "bootstrapStatus": "completed",
+  "overlayIp": "192.168.100.2",
+  "attestationEndpoint": "tcp://192.168.100.2:50152"
+}
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
+- `404 NOT_FOUND`: device not found for the authenticated user
+- `500 INTERNAL_SERVER_ERROR`: device store read failure
+
+#### GET `/devices/pairing-status`
+
+Purpose:
+Allow the frontend to poll pairing and bootstrap status for a device serial.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+- Query params:
+  - `serial` (required, string)
+- Body: none
+
+Success response (`200 OK`):
+
+```json
+{
+  "serial": "GX-2024-TX-042-B9F3",
+  "status": "completed",
+  "apiConsumed": true,
+  "bootstrapConsumed": true,
+  "deviceId": "device-id",
+  "nodeId": "nodeB",
+  "did": "did:guardian:EtFW3..."
+}
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
+- `400 BAD_REQUEST`: invalid serial
+- `404 NOT_FOUND`: pairing record not found
+- `500 INTERNAL_SERVER_ERROR`: pairing or device store read failure
+
+#### POST `/devices/{deviceId}/unpair`
+
+Purpose:
+Remove or unpair a Guardian device from the authenticated owner account.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+- Path params:
+  - `deviceId` (required, string)
+- Query params: none
+- Body: none
+
+Success response (`200 OK`):
+
+```json
+{
+  "deviceId": "device-id",
+  "status": "unpaired"
+}
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
+- `403 FORBIDDEN`: caller is not authorized to unpair the device
+- `404 NOT_FOUND`: device not found for the authenticated user
+- `500 INTERNAL_SERVER_ERROR`: device store persistence failure
+
+---
+
 ## 3. Endpoint Contracts
 
 ### 3.1 GET `/health`
@@ -161,7 +583,11 @@ Field notes:
   - Query params: none
   - Body: none
 - Success response (`200 OK`):
-  - Plain text: `ok`
+```json
+{
+  "status": "ok"
+}
+```
 - Error responses:
   - None expected from handler
 
@@ -2422,3 +2848,276 @@ Peer DID resolution response (`?did=did:guardian:...`):
   }
 }
 ```
+
+- Success response (`200 OK`):
+  - Same schema as `GET /discovery/schedule`
+- Notes:
+  - Updates `/etc/sgx-guardian/discovery/nmap.yaml` and returns the persisted schedule document
+- Error responses:
+  - `400 BAD_REQUEST`: existing config is invalid or the submitted schedule patch fails validation
+  - `500 INTERNAL_SERVER_ERROR`: schedule serialization or file write failure
+  - `415`/`422`: invalid JSON body
+
+### 3.75 POST `/auth/signup`
+
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "name": "Guardian Owner",
+  "email": "admin@sgx.local",
+  "password": "SgxGuardian@2026!"
+}
+```
+
+  - Required fields:
+    - `name` (`string`)
+    - `email` (`string`)
+    - `password` (`string`)
+- Success response (`200 OK`):
+
+```json
+{
+  "userId": "6921cacc-2717-4d20-ab6c-437510dcba77",
+  "role": "owner",
+  "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9....",
+  "expiresAt": 1782800250
+}
+```
+
+- Notes:
+  - Public route. No bearer token is required.
+  - Signup is only allowed before the first user is created.
+  - The created account is the initial `owner`.
+  - Password policy is enforced server-side before hashing:
+    - minimum 12 characters
+    - at least one uppercase letter
+    - at least one lowercase letter
+    - at least one number
+    - at least one symbol
+- Error responses:
+  - `400 BAD_REQUEST`: missing name/email or password policy violation
+  - `403 FORBIDDEN`: signup is disabled because an initial user already exists
+  - `409 CONFLICT`: user already exists
+  - `500 INTERNAL_SERVER_ERROR`: user store, session persistence, or token issuance failure
+  - `415`/`422`: invalid JSON body
+
+### 3.76 POST `/auth/login`
+
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "email": "admin@sgx.local",
+  "password": "SgxGuardian@2026!"
+}
+```
+
+  - Required fields:
+    - `email` (`string`)
+    - `password` (`string`)
+- Success response (`200 OK`):
+
+```json
+{
+  "userId": "6921cacc-2717-4d20-ab6c-437510dcba77",
+  "role": "owner",
+  "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9....",
+  "expiresAt": 1782800250
+}
+```
+
+- Notes:
+  - Public route. No bearer token is required to call login.
+  - On success, the response `token` is the bearer token expected by protected endpoints.
+  - Email matching is normalized to lowercase before lookup.
+  - Failed password verification increments the persisted `failed_attempts` counter in `users.json`.
+  - When `failed_attempts` reaches the configured threshold, the account `locked_until` value is set and persisted.
+  - While `locked_until` is in the future, login is rejected before a new JWT is issued, even if the password is correct.
+  - Successful login while not locked resets `failed_attempts` to `0` and clears `locked_until`.
+  - Lockout settings are controlled by:
+    - `SGX_GUARDIAN_AUTH_MAX_FAILED_ATTEMPTS`
+    - `SGX_GUARDIAN_AUTH_ATTEMPT_WINDOW_SECS`
+    - `SGX_GUARDIAN_AUTH_LOCKOUT_SECS`
+- Error responses:
+  - `401 UNAUTHORIZED`: invalid email or password
+  - `423 LOCKED`: account is temporarily locked due to failed login attempts
+  - `500 INTERNAL_SERVER_ERROR`: user store, session persistence, or token issuance failure
+  - `415`/`422`: invalid JSON body
+
+### 3.77 POST `/auth/logout`
+
+- Request:
+  - Query params: none
+  - Headers:
+    - `Authorization: Bearer <token>` (required)
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "success": true,
+  "message": "session revoked"
+}
+```
+
+- Notes:
+  - Protected route. Requires a valid bearer session token.
+  - Revokes the current token `jti` from the persisted session store.
+- Error responses:
+  - `401 UNAUTHORIZED`: missing, invalid, expired, unknown, or revoked bearer token
+  - `500 INTERNAL_SERVER_ERROR`: session revoke persistence failure
+
+### 3.78 GET `/auth/session`
+
+- Request:
+  - Query params: none
+  - Headers:
+    - `Authorization: Bearer <token>` (required)
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "userId": "6921cacc-2717-4d20-ab6c-437510dcba77",
+  "role": "owner",
+  "expiresAt": 1782800250
+}
+```
+
+- Notes:
+  - Protected route. Requires a valid bearer session token.
+  - Returns the authenticated session claims already validated by middleware.
+- Error responses:
+  - `401 UNAUTHORIZED`: missing, invalid, expired, unknown, or revoked bearer token
+
+### 3.79 GET `/devices`
+
+- Request:
+  - Query params: none
+  - Headers:
+    - `Authorization: Bearer <token>` (required)
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+[
+  {
+    "deviceId": "f0e2b1d3...",
+    "serial": "GX-2024-TX-042-A9F3",
+    "did": "did:guardian:test-node-b",
+    "status": "pending_bootstrap",
+    "nodeId": "nodeB"
+  }
+]
+```
+
+- Notes:
+  - Protected route. Requires a valid bearer session token.
+  - Returns only devices owned by the authenticated user.
+  - Empty array means no devices are currently paired to that user.
+- Error responses:
+  - `401 UNAUTHORIZED`: missing, invalid, expired, unknown, or revoked bearer token
+  - `500 INTERNAL_SERVER_ERROR`: device store read failure
+
+### 3.80 GET `/devices/pairing-code`
+
+- Request:
+  - Query params:
+    - `serial` (required, string)
+    - `ttl_secs` (optional, integer). Defaults to `300`; capped at `3600`.
+  - Headers:
+    - `Authorization: Bearer <token>` (required)
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "serial": "GX-2024-TX-042-A9F3",
+  "challenge": "0c0f7e3d...",
+  "nonce": "ab12cd34...",
+  "expiresAt": 1782800250,
+  "pairingCode": "ZXlKelpYSnBZV3dpT2lKSFdDMHlNREkwTFZSWUxUQTBNaTFCT1VZekluMC4uLg"
+}
+```
+
+- Notes:
+  - Protected route. Requires a valid bearer session token.
+  - Persists a pairing challenge tied to the authenticated user and device serial.
+  - `pairingCode` is the encoded challenge that a device signs to produce a pairing proof.
+- Error responses:
+  - `400 BAD_REQUEST`: invalid serial or invalid TTL
+  - `401 UNAUTHORIZED`: missing, invalid, expired, unknown, or revoked bearer token
+  - `500 INTERNAL_SERVER_ERROR`: pairing store persistence or encoding failure
+
+### 3.81 POST `/devices/pair`
+
+- Request:
+  - Query params: none
+  - Headers:
+    - `Authorization: Bearer <token>` (required)
+  - JSON body:
+
+```json
+{
+  "serial": "GX-2024-TX-042-A9F3",
+  "proof": "ZXlKd1lYbHNiMkZrSWpwNy4uLg"
+}
+```
+
+  - Supported fields:
+    - `serial` (optional, string). If present, it must match the signed proof payload.
+    - `proof` (optional, string). Base64url-encoded signed pairing proof.
+    - `qr` (optional, string). Alternative field name for the same encoded proof payload.
+- Success response (`200 OK`):
+
+```json
+{
+  "deviceId": "f0e2b1d3...",
+  "serial": "GX-2024-TX-042-A9F3",
+  "did": "did:guardian:test-node-b",
+  "status": "pending_bootstrap",
+  "nodeId": "nodeB"
+}
+```
+
+- Notes:
+  - Protected route. Requires a valid bearer session token.
+  - Accepts either `proof` or `qr`; the first non-empty value is used.
+  - Stores the paired device under the authenticated user with initial status `pending_bootstrap`.
+  - The signed proof must match a previously issued pairing challenge and the same authenticated user.
+- Error responses:
+  - `400 BAD_REQUEST`: missing proof/QR, serial mismatch, expired/invalid proof, or missing pairing challenge
+  - `401 UNAUTHORIZED`: missing, invalid, expired, unknown, or revoked bearer token
+  - `403 FORBIDDEN`: pairing proof was issued for a different user
+  - `500 INTERNAL_SERVER_ERROR`: device store write failure
+  - `415`/`422`: invalid JSON body
+
+### 3.82 POST `/devices/{id}/unpair`
+
+- Request:
+  - Path params:
+    - `id` (required, string). Device ID to remove.
+  - Headers:
+    - `Authorization: Bearer <token>` (required)
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "success": true,
+  "message": "device unpaired"
+}
+```
+
+- Notes:
+  - Protected route. Requires a valid bearer session token.
+  - Removes the device binding only for the authenticated user.
+- Error responses:
+  - `401 UNAUTHORIZED`: missing, invalid, expired, unknown, or revoked bearer token
+  - `404 NOT_FOUND`: device binding not found for the authenticated user
+  - `500 INTERNAL_SERVER_ERROR`: device store persistence failure

@@ -1,4 +1,6 @@
 pub mod attestation;
+pub mod auth;
+pub mod devices;
 pub mod did;
 pub mod dkp;
 pub mod guardian_keys;
