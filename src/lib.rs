@@ -20,6 +20,7 @@ pub mod metrics;
 pub mod metrics_server;
 pub mod nebula;
 pub mod netbridge;
+pub mod notify;
 pub mod p2p_discovery;
 pub mod policy;
 pub mod policy_authority;
