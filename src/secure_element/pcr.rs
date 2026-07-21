@@ -118,6 +118,12 @@ pub struct PcrBaseline {
     pub composite_digest: String,
     /// DKP signature over: SHA256(composite_bytes || created_at_bytes || device_uid_bytes)
     pub baseline_signature: String,
+    #[serde(default)]
+    pub signing_backend: Option<String>,
+    #[serde(default)]
+    pub signing_public_key_sha256: Option<String>,
+    #[serde(default)]
+    pub signature_format: Option<String>,
     pub created_at: String,
     pub device_uid: String,
     pub key_version: u32,
@@ -140,32 +146,67 @@ impl PcrBaseline {
 
     /// Verify baseline signature. Returns false if tampered or wrong key.
     pub fn verify_signature(&self, pubkey: &[u8]) -> bool {
-        use ring::signature;
-
-        let composite_bytes = hex::decode(&self.composite_digest).unwrap_or_default();
-        let mut sign_input = Vec::new();
-        sign_input.extend_from_slice(&composite_bytes);
-        sign_input.extend_from_slice(self.created_at.as_bytes());
-        sign_input.extend_from_slice(self.device_uid.as_bytes());
-        let sign_hash = Sha256::digest(&sign_input);
-
         let sig_bytes =
             match base64::engine::general_purpose::STANDARD.decode(&self.baseline_signature) {
                 Ok(b) => b,
                 Err(_) => return false,
             };
 
-        // Auto-detect signature format (same as attestation_service.rs)
-        let algo: &dyn signature::VerificationAlgorithm =
-            if !sig_bytes.is_empty() && sig_bytes[0] == 0x30 {
-                &signature::ECDSA_P256_SHA256_ASN1
-            } else {
-                &signature::ECDSA_P256_SHA256_FIXED
-            };
+        let sign_hash = match canonical_baseline_signing_payload(
+            &self.composite_digest,
+            &self.created_at,
+            &self.device_uid,
+        ) {
+            Ok(payload) => payload,
+            Err(_) => return false,
+        };
 
-        let key = signature::UnparsedPublicKey::new(algo, pubkey);
-        key.verify(&sign_hash, &sig_bytes).is_ok()
+        verify_baseline_signature_bytes(&sign_hash, &sig_bytes, pubkey)
     }
+}
+
+pub fn canonical_baseline_signing_payload(
+    composite_digest: &str,
+    created_at: &str,
+    device_uid: &str,
+) -> Result<Vec<u8>, String> {
+    let composite_bytes =
+        hex::decode(composite_digest).map_err(|_| "Invalid composite_digest".to_string())?;
+    if composite_bytes.len() != 32 {
+        return Err(format!(
+            "composite_digest must be 32 bytes, got {}",
+            composite_bytes.len()
+        ));
+    }
+
+    let mut sign_input = Vec::new();
+    sign_input.extend_from_slice(&composite_bytes);
+    sign_input.extend_from_slice(created_at.as_bytes());
+    sign_input.extend_from_slice(device_uid.as_bytes());
+    Ok(Sha256::digest(&sign_input).to_vec())
+}
+
+pub fn signature_format(sig_bytes: &[u8]) -> &'static str {
+    if !sig_bytes.is_empty() && sig_bytes[0] == 0x30 {
+        "ecdsa-p256-sha256-asn1"
+    } else {
+        "ecdsa-p256-sha256-fixed"
+    }
+}
+
+pub fn verify_baseline_signature_bytes(payload: &[u8], sig_bytes: &[u8], pubkey: &[u8]) -> bool {
+    use ring::signature;
+
+    // Auto-detect signature format (same as attestation_service.rs)
+    let algo: &dyn signature::VerificationAlgorithm =
+        if !sig_bytes.is_empty() && sig_bytes[0] == 0x30 {
+            &signature::ECDSA_P256_SHA256_ASN1
+        } else {
+            &signature::ECDSA_P256_SHA256_FIXED
+        };
+
+    let key = signature::UnparsedPublicKey::new(algo, pubkey);
+    key.verify(payload, sig_bytes).is_ok()
 }
 
 // Need base64 import for baseline verify
@@ -592,6 +633,9 @@ mod tests {
             pcr_values: e2.snapshot().pcr_values,
             composite_digest: String::new(),
             baseline_signature: String::new(),
+            signing_backend: None,
+            signing_public_key_sha256: None,
+            signature_format: None,
             created_at: String::new(),
             device_uid: String::new(),
             key_version: 1,
@@ -610,6 +654,9 @@ mod tests {
             pcr_values: vec!["abc".into()], // wrong length
             composite_digest: String::new(),
             baseline_signature: String::new(),
+            signing_backend: None,
+            signing_public_key_sha256: None,
+            signature_format: None,
             created_at: String::new(),
             device_uid: String::new(),
             key_version: 1,

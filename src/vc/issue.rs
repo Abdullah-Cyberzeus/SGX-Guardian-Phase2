@@ -493,6 +493,23 @@ pub fn load_runtime_key_manager(node_id: &str) -> anyhow::Result<Arc<KeyManager>
     let km = if software_keys_forced() {
         KeyManager::load_or_generate(&key_path)?
     } else {
+        #[cfg(feature = "tpm")]
+        {
+            let tpm_cfg = crate::tpm::TpmConfig::default();
+            if crate::tpm::should_attempt(&tpm_cfg) {
+                if let Ok(km) =
+                    KeyManager::init_with_tpm(&tpm_cfg, crate::tpm::TPM_BASE_PATH, &key_path)
+                {
+                    let km = Arc::new(km);
+                    KEY_MANAGER_CACHE
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(key_path, km.clone());
+                    return Ok(km);
+                }
+            }
+        }
+
         #[cfg(feature = "secure-element")]
         {
             KeyManager::init_with_se050(
