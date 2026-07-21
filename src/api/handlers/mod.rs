@@ -13,7 +13,9 @@ pub mod policy;
 pub mod relay;
 pub mod threat;
 pub mod transport;
+pub mod vault;
 pub mod vc;
 pub mod vid;
+pub mod xfer;
 
 pub mod discovery;
