@@ -1,8 +1,8 @@
 //! CRL issuance helpers.
 
 use crate::crl::entry::{
-    CrlEntry, RevocationEvidence, RevocationReason, RevokerRole, Severity, CRL_CONTEXT_CORE,
-    CRL_CONTEXT_SGX,
+    CrlEntry, RevocationEvidence, RevocationReason, RevokerRole, Severity, UnrevokeTombstone,
+    CRL_CONTEXT_CORE, CRL_CONTEXT_SGX, CRL_UNREVOKE_TOMBSTONE_TYPE,
 };
 use crate::crl::errors::CrlError;
 use crate::crl::list::CertificateRevocationList;
@@ -186,7 +186,7 @@ pub fn unrevoke_revocation(
     revoker_role: RevokerRole,
     km: &KeyManager,
     revoked_did: &str,
-) -> Result<CrlEntry, CrlError> {
+) -> Result<UnrevokeTombstone, CrlError> {
     if !matches!(revoker_role, RevokerRole::Owner) {
         return Err(CrlError::UnrevokeRequiresOwner);
     }
@@ -196,15 +196,38 @@ pub fn unrevoke_revocation(
     let removed = crl.remove(revoked_did)?;
 
     let now = Utc::now();
-    crl.sequence += 1;
+    let next_sequence = crl.sequence + 1;
+    let mut tombstone = UnrevokeTombstone {
+        context: vec![CRL_CONTEXT_CORE.into(), CRL_CONTEXT_SGX.into()],
+        id: format!("urn:uuid:{}", Uuid::new_v4()),
+        r#type: vec![
+            "VerifiableCredential".into(),
+            CRL_UNREVOKE_TOMBSTONE_TYPE.into(),
+        ],
+        revoked_did: revoked_did.to_string(),
+        original_entry_id: removed.id.clone(),
+        owner_did: revoker.did.clone(),
+        sequence: next_sequence,
+        timestamp: now.to_rfc3339(),
+        proof: crate::did::document::Proof::default(),
+        peers_notified: Vec::new(),
+        propagated: false,
+    };
     crl.generated_at = now.to_rfc3339();
-    crl.recompute_root();
 
     let vm_ref = format!(
         "{}#dkp-v{}",
         revoker.did,
         revoker.current_dkp_version.max(1)
     );
+    let tombstone_canonical = tombstone.canonical_bytes_for_sign()?;
+    doc_sign::sign_in_place_generic(&mut tombstone.proof, &tombstone_canonical, km, &vm_ref)?;
+    persistence::save_tombstone(&tombstone)?;
+
+    crl.upsert_tombstone(tombstone.clone());
+    crl.sequence = next_sequence;
+    crl.recompute_root();
+
     let crl_canonical = crl.canonical_bytes_for_sign()?;
     doc_sign::sign_in_place_generic(&mut crl.proof, &crl_canonical, km, &vm_ref)?;
     persistence::save_crl(&crl)?;
@@ -219,12 +242,12 @@ pub fn unrevoke_revocation(
         crate::audit::event::AuditSeverity::Critical,
         crate::audit::event::AuditAction::Succeeded,
         &format!(
-            "Unrevoked CRL entry {} revoked_did={} by revoker_did={}",
-            removed.id, revoked_did, revoker.did
+            "Unrevoked CRL entry {} revoked_did={} tombstone_id={} by owner_did={}",
+            removed.id, revoked_did, tombstone.id, revoker.did
         ),
     );
 
-    Ok(removed)
+    Ok(tombstone)
 }
 
 fn set_owned_vcs_revoked(
