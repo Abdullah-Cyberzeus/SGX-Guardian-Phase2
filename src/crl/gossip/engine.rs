@@ -8,7 +8,7 @@ use super::store;
 use super::GossipConfig;
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
-use crate::crl::entry::{CrlEntry, Severity};
+use crate::crl::entry::{CrlEntry, Severity, UnrevokeTombstone};
 use crate::did::{DidRecord, Resolver};
 use crate::key_manager::KeyManager;
 use once_cell::sync::Lazy;
@@ -284,13 +284,27 @@ async fn exchange_with_peer(
     }
 
     // 3) verify + merge what the peer had that we lacked
-    let verified = verify_batch(node_id, &response.entries, resolver, circle_id).await;
+    let (verified_entries, verified_tombstones) = verify_batch(
+        node_id,
+        &response.entries,
+        &response.tombstones,
+        resolver,
+        circle_id,
+    )
+    .await;
     let merge = {
         let _guard = store::CRL_WRITE_LOCK.lock().await;
-        store::merge_verified_entries(record, km, circle_id, &verified)
-            .map_err(|error| error.to_string())?
+        store::merge_verified_records(
+            record,
+            km,
+            circle_id,
+            &verified_entries,
+            &verified_tombstones,
+        )
+        .map_err(|error| error.to_string())?
     };
     audit_merged_entries(node_id, &merge.merged_entries, &peer.did);
+    audit_merged_tombstones(node_id, &merge.merged_tombstones, &peer.did);
 
     // 4) push what the peer asked for. `want` is filtered against OUR
     //    pre-merge set, so entries just received from this peer are never
@@ -301,14 +315,15 @@ async fn exchange_with_peer(
         .filter(|fingerprint| local_set.contains(*fingerprint))
         .cloned()
         .collect();
-    let push_entries = {
+    let (push_entries, push_tombstones) = {
         let _guard = store::CRL_WRITE_LOCK.lock().await;
         store::entries_matching(&want).map_err(|error| error.to_string())?
     };
-    let pushed = push_entries.len();
+    let pushed = push_entries.len() + push_tombstones.len();
     let push = SyncPush {
         kind: KIND_PUSH.to_string(),
         entries: push_entries,
+        tombstones: push_tombstones,
     };
     protocol::write_json_line(&mut write_half, &push)
         .await
@@ -475,14 +490,15 @@ async fn handle_inbound(
 
     // Diff: what they lack / what we lack
     let their_set: HashSet<String> = request.fingerprints.iter().cloned().collect();
-    let (sequence, merkle_root, local_fps, entries_for_them) = {
+    let (sequence, merkle_root, local_fps, records_for_them) = {
         let _guard = store::CRL_WRITE_LOCK.lock().await;
         let (sequence, merkle_root, local_fps) =
             store::snapshot().map_err(|error| error.to_string())?;
-        let entries_for_them =
+        let records_for_them =
             store::entries_not_in(&their_set).map_err(|error| error.to_string())?;
-        (sequence, merkle_root, local_fps, entries_for_them)
+        (sequence, merkle_root, local_fps, records_for_them)
     };
+    let (entries_for_them, tombstones_for_them) = records_for_them;
     let local_set: HashSet<String> = local_fps.into_iter().collect();
     let want: Vec<String> = request
         .fingerprints
@@ -490,7 +506,7 @@ async fn handle_inbound(
         .filter(|fingerprint| !local_set.contains(*fingerprint))
         .cloned()
         .collect();
-    let sent = entries_for_them.len();
+    let sent = entries_for_them.len() + tombstones_for_them.len();
 
     let response = SyncResponse {
         kind: KIND_RESPONSE.to_string(),
@@ -499,6 +515,7 @@ async fn handle_inbound(
         sequence,
         merkle_root,
         entries: entries_for_them,
+        tombstones: tombstones_for_them,
         want,
         error: None,
     };
@@ -515,10 +532,23 @@ async fn handle_inbound(
     if push.kind != KIND_PUSH {
         return Err(format!("unexpected message kind '{}'", push.kind));
     }
-    let verified = verify_batch(node_id, &push.entries, resolver, &circle_id).await;
+    let (verified_entries, verified_tombstones) = verify_batch(
+        node_id,
+        &push.entries,
+        &push.tombstones,
+        resolver,
+        &circle_id,
+    )
+    .await;
     let merge_result = {
         let _guard = store::CRL_WRITE_LOCK.lock().await;
-        store::merge_verified_entries(&record, &km, &circle_id, &verified)
+        store::merge_verified_records(
+            &record,
+            &km,
+            &circle_id,
+            &verified_entries,
+            &verified_tombstones,
+        )
     };
     let outcome = match merge_result {
         Ok(outcome) => outcome,
@@ -537,6 +567,7 @@ async fn handle_inbound(
         }
     };
     audit_merged_entries(node_id, &outcome.merged_entries, &sender.did);
+    audit_merged_tombstones(node_id, &outcome.merged_tombstones, &sender.did);
     let merged_count = outcome.added + outcome.replaced;
     let ack = SyncAck {
         kind: KIND_ACK.to_string(),
@@ -596,6 +627,7 @@ async fn reject(
         sequence: 0,
         merkle_root: String::new(),
         entries: Vec::new(),
+        tombstones: Vec::new(),
         want: Vec::new(),
         error: Some(reason.to_string()),
     };
@@ -608,13 +640,16 @@ async fn reject(
 async fn verify_batch(
     node_id: &str,
     entries: &[CrlEntry],
+    tombstones: &[UnrevokeTombstone],
     resolver: &Resolver,
     circle_id: &str,
-) -> Vec<CrlEntry> {
-    let mut verified = Vec::new();
+) -> (Vec<CrlEntry>, Vec<UnrevokeTombstone>) {
+    let mut verified_entries = Vec::new();
+    let mut processed_entries = 0usize;
     for entry in entries.iter().take(protocol::MAX_ENTRIES_PER_MESSAGE) {
+        processed_entries += 1;
         match crate::crl::verify::verify_entry(entry, resolver, circle_id).await {
-            Ok(()) => verified.push(entry.clone()),
+            Ok(()) => verified_entries.push(entry.clone()),
             Err(error) => {
                 tracing::warn!("CRL-GOSSIP rejected entry {}: {}", entry.id, error);
                 log_audit(
@@ -627,7 +662,24 @@ async fn verify_batch(
             }
         }
     }
-    verified
+    let remaining = protocol::MAX_ENTRIES_PER_MESSAGE.saturating_sub(processed_entries);
+    let mut verified_tombstones = Vec::new();
+    for tombstone in tombstones.iter().take(remaining) {
+        match crate::crl::verify::verify_tombstone(tombstone, resolver).await {
+            Ok(()) => verified_tombstones.push(tombstone.clone()),
+            Err(error) => {
+                tracing::warn!("CRL-GOSSIP rejected tombstone {}: {}", tombstone.id, error);
+                log_audit(
+                    node_id,
+                    AuditCategory::Crl,
+                    AuditSeverity::Warning,
+                    AuditAction::Failed,
+                    &format!("CRL gossip rejected tombstone {}: {}", tombstone.id, error),
+                );
+            }
+        }
+    }
+    (verified_entries, verified_tombstones)
 }
 
 fn audit_merged_entries(node_id: &str, merged: &[CrlEntry], peer_did: &str) {
@@ -655,6 +707,25 @@ fn audit_merged_entries(node_id: &str, merged: &[CrlEntry], peer_did: &str) {
             entry.revoked_did,
             entry.severity.as_str(),
             peer_did
+        );
+    }
+}
+
+fn audit_merged_tombstones(node_id: &str, merged: &[UnrevokeTombstone], peer_did: &str) {
+    for tombstone in merged {
+        log_audit(
+            node_id,
+            AuditCategory::Crl,
+            AuditSeverity::Info,
+            AuditAction::Succeeded,
+            &format!(
+                "CRL gossip merged unrevoke tombstone revoked_did={} original_entry_id={} via_peer={}",
+                tombstone.revoked_did, tombstone.original_entry_id, peer_did
+            ),
+        );
+        println!(
+            "🗣️ CRL-GOSSIP merged tombstone revoked_did={} via_peer={}",
+            tombstone.revoked_did, peer_did
         );
     }
 }

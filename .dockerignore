@@ -1,0 +1,17 @@
+target/
+artifacts/
+.git/
+.github/
+*.md
+docs/
+deliverables/
+decision-log/
+logs/
+*.log
+*.key
+*.der
+*.crt
+*.pem
+signed_artifacts/
+.vscode/
+.idea/

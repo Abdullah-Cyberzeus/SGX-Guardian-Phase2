@@ -5,6 +5,7 @@
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::config_loader::load_config;
+use crate::key_manager::KeyManager;
 use crate::logging::log_event;
 use crate::nebula::ca::NebulaCA;
 use crate::nebula::models::CircleMembership;
@@ -23,6 +24,7 @@ use tonic::{Request, Response, Status};
 const NEBULA_BASE_DIR: &str = "/var/lib/sgx-guardian/nebula";
 const RELAY_REGISTRY_PATH: &str = "/var/lib/sgx-guardian/nebula/relay_registry.json";
 const PA_PUB_PATH: &str = "/etc/sgx-guardian/policies/pa_admin_pub.der";
+const DID_PATH_ENV: &str = "SGX_GUARDIAN_DID_PATH";
 
 /// Poll interval for YAML approval check (seconds).
 const APPROVAL_POLL_SECS: u64 = 2;
@@ -94,11 +96,91 @@ async fn read_pa_pubkey_or_warn() -> Vec<u8> {
     }
 }
 
-fn issue_member_vc(node_id: &str) -> Result<crate::vc::credential::VerifiableCredential, Status> {
-    let issuer = crate::did::DidRecord::load(crate::did::DEFAULT_DID_PATH)
+fn env_true(key: &str) -> bool {
+    matches!(
+        std::env::var(key).ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("on")
+    )
+}
+
+fn software_keys_forced() -> bool {
+    env_true("SGX_FORCE_SOFTWARE_KEYS") || env_true("SGX_DISABLE_SE050_DKP")
+}
+
+fn ca_did_path() -> String {
+    std::env::var(DID_PATH_ENV).unwrap_or_else(|_| crate::did::DEFAULT_DID_PATH.to_string())
+}
+
+fn ca_key_path(node_id: &str) -> String {
+    let dir = std::env::var(crate::vc::issue::DEVICE_KEY_DIR_ENV)
+        .unwrap_or_else(|_| "/var/lib/sgx-guardian/sgx-agent".to_string());
+    format!("{}/device_{}.key", dir.trim_end_matches('/'), node_id)
+}
+
+fn load_ca_bootstrap_identity_with_paths(
+    node_id: &str,
+    force_software_keys: bool,
+    did_path: &str,
+    dkp_pubkey_path: &str,
+    key_path: &str,
+) -> Result<(crate::did::DidRecord, KeyManager), Status> {
+    if force_software_keys {
+        let km = KeyManager::load_or_generate(key_path)
+            .map_err(|e| Status::internal(format!("CA key manager: {}", e)))?;
+        crate::did::ensure_runtime_pubkey(&km, dkp_pubkey_path)
+            .map_err(|e| Status::internal(format!("CA DID pubkey export: {}", e)))?;
+        crate::did::create_if_absent(node_id, &km, dkp_pubkey_path, did_path)
+            .map_err(|e| Status::internal(format!("CA DID ensure: {}", e)))?;
+        crate::did::ensure_self_document(node_id, &km, did_path, dkp_pubkey_path)
+            .map_err(|e| Status::internal(format!("CA DID document ensure: {}", e)))?;
+        let issuer = crate::did::DidRecord::load(did_path)
+            .map_err(|e| Status::internal(format!("CA DID load: {}", e)))?;
+        return Ok((issuer, km));
+    }
+
+    let issuer = crate::did::DidRecord::load(did_path)
         .map_err(|e| Status::internal(format!("CA DID load: {}", e)))?;
-    let km = crate::vc::issue::load_runtime_key_manager("nodeA")
-        .map_err(|e| Status::internal(format!("VC key manager: {}", e)))?;
+
+    #[cfg(feature = "secure-element")]
+    {
+        let km = KeyManager::init_with_se050(
+            &crate::secure_element::config::SeConfig::default(),
+            "/var/lib/sgx-guardian",
+            key_path,
+        )
+        .map_err(|e| Status::internal(format!("CA key manager: {}", e)))?;
+
+        if km.backend_name() != "SE050" {
+            return Err(Status::failed_precondition(
+                "CA cert bootstrap requires SE050-backed DID; set SGX_FORCE_SOFTWARE_KEYS=1 only for container/dev mode",
+            ));
+        }
+
+        Ok((issuer, km))
+    }
+
+    #[cfg(not(feature = "secure-element"))]
+    {
+        Err(Status::failed_precondition(
+            "CA cert bootstrap requires SGX_FORCE_SOFTWARE_KEYS=1 when secure-element support is unavailable",
+        ))
+    }
+}
+
+fn load_ca_bootstrap_identity(
+    node_id: &str,
+) -> Result<(crate::did::DidRecord, KeyManager), Status> {
+    load_ca_bootstrap_identity_with_paths(
+        node_id,
+        software_keys_forced(),
+        &ca_did_path(),
+        crate::did::DEFAULT_DKP_PUBKEY_PATH,
+        &ca_key_path(node_id),
+    )
+}
+
+fn issue_member_vc(node_id: &str) -> Result<crate::vc::credential::VerifiableCredential, Status> {
+    let (issuer, km) = load_ca_bootstrap_identity("nodeA")?;
     let subject_did = if node_id == "nodeA" {
         issuer.did.clone()
     } else {
@@ -751,9 +833,53 @@ impl CertService for MyCertService {
 
 #[cfg(test)]
 mod tests {
-    use super::{ensure_nodea_relay_entries, ApprovalDecision};
+    use super::{
+        ensure_nodea_relay_entries, load_ca_bootstrap_identity_with_paths, ApprovalDecision,
+    };
+    use crate::did::doc_persistence::{load_self, SELF_DOC_PATH_ENV, VERSION_COUNTER_PATH_ENV};
     use crate::nebula::lighthouse::LighthouseRegistry;
     use crate::nebula::relay_registry::RelayRegistry;
+    use once_cell::sync::Lazy;
+    use std::ffi::OsString;
+    use std::path::Path;
+    use std::sync::Mutex;
+    use tempfile::TempDir;
+    use tonic::Code;
+
+    static TEST_ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+    struct DocEnvGuard {
+        self_doc_prev: Option<OsString>,
+        counter_prev: Option<OsString>,
+    }
+
+    impl DocEnvGuard {
+        fn new(self_doc_path: &Path, counter_path: &Path) -> Self {
+            let self_doc_prev = std::env::var_os(SELF_DOC_PATH_ENV);
+            let counter_prev = std::env::var_os(VERSION_COUNTER_PATH_ENV);
+            std::env::set_var(SELF_DOC_PATH_ENV, self_doc_path);
+            std::env::set_var(VERSION_COUNTER_PATH_ENV, counter_path);
+            Self {
+                self_doc_prev,
+                counter_prev,
+            }
+        }
+    }
+
+    impl Drop for DocEnvGuard {
+        fn drop(&mut self) {
+            restore_env(SELF_DOC_PATH_ENV, self.self_doc_prev.take());
+            restore_env(VERSION_COUNTER_PATH_ENV, self.counter_prev.take());
+        }
+    }
+
+    fn restore_env(key: &str, value: Option<OsString>) {
+        if let Some(value) = value {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
+    }
 
     #[test]
     fn test_approval_decision_parses_relay() {
@@ -793,5 +919,64 @@ mod tests {
                 .expect("nodeA relay entry should exist")
                 .is_lighthouse
         );
+    }
+
+    #[test]
+    fn test_ca_bootstrap_software_mode_ensures_missing_did_and_doc() {
+        let _lock = TEST_ENV_LOCK.lock().expect("env lock");
+        let td = TempDir::new().expect("tempdir");
+        let did_path = td.path().join("identity").join("did.json");
+        let dkp_pubkey_path = td.path().join("keys").join("dkp_pub.der");
+        let key_path = td.path().join("sgx-agent").join("device_nodeA.key");
+        let self_doc_path = td.path().join("identity").join("did_doc.json");
+        let counter_path = td.path().join("identity").join("self_version_counter");
+        let _env = DocEnvGuard::new(&self_doc_path, &counter_path);
+
+        let (issuer, km) = load_ca_bootstrap_identity_with_paths(
+            "nodeA",
+            true,
+            did_path.to_str().expect("did path"),
+            dkp_pubkey_path.to_str().expect("dkp path"),
+            key_path.to_str().expect("key path"),
+        )
+        .expect("software bootstrap should succeed");
+
+        assert_eq!(km.backend_name(), "Software");
+        assert!(did_path.exists());
+        assert!(dkp_pubkey_path.exists());
+        assert!(counter_path.exists());
+
+        let doc = load_self()
+            .expect("load self did doc")
+            .expect("self did doc should exist");
+        assert_eq!(doc.id, issuer.did);
+        assert_eq!(doc.sgx_node_name.as_deref(), Some("nodeA"));
+        assert_eq!(
+            crate::did::doc_persistence::read_self_floor_version(),
+            doc.sgx_version_id
+        );
+    }
+
+    #[test]
+    fn test_ca_bootstrap_default_mode_fails_closed_when_did_missing() {
+        let td = TempDir::new().expect("tempdir");
+        let did_path = td.path().join("identity").join("did.json");
+        let dkp_pubkey_path = td.path().join("keys").join("dkp_pub.der");
+        let key_path = td.path().join("sgx-agent").join("device_nodeA.key");
+
+        let err = match load_ca_bootstrap_identity_with_paths(
+            "nodeA",
+            false,
+            did_path.to_str().expect("did path"),
+            dkp_pubkey_path.to_str().expect("dkp path"),
+            key_path.to_str().expect("key path"),
+        ) {
+            Ok(_) => panic!("default mode should fail closed"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.code(), Code::Internal);
+        assert!(err.message().contains("CA DID load:"));
+        assert!(!did_path.exists());
     }
 }

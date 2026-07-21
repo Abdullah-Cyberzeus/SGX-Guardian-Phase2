@@ -248,17 +248,196 @@ fn owner_unrevoke_removes_entry_and_restores_status_list() {
     let status_list = StatusListManager::load_or_create(&issuer, &km).expect("status list");
     assert!(status_list.is_revoked(9).expect("status bit set"));
 
-    issue::unrevoke_revocation(&issuer, RevokerRole::Owner, &km, target_vc.subject_did())
-        .expect("owner unrevoke");
+    let tombstone =
+        issue::unrevoke_revocation(&issuer, RevokerRole::Owner, &km, target_vc.subject_did())
+            .expect("owner unrevoke");
 
     assert!(!crate::crl::is_revoked(target_vc.subject_did()));
     let crl = crate::crl::persistence::load_crl()
         .expect("load crl")
         .expect("crl exists");
     assert!(!crl.contains(target_vc.subject_did()));
+    assert_eq!(crl.tombstones.len(), 1);
+    assert_eq!(crl.tombstones[0].id, tombstone.id);
+    assert_eq!(
+        crl.tombstones[0].original_entry_id,
+        tombstone.original_entry_id
+    );
 
     let status_list = StatusListManager::load_or_create(&issuer, &km).expect("status list");
     assert!(!status_list.is_revoked(9).expect("status bit restored"));
+}
+
+#[test]
+fn owner_unrevoke_tombstone_beats_stale_gossip_and_survives_restart() {
+    let _lock = test_lock();
+    let env = TestEnv::new();
+
+    let owner = make_did_record(&test_did("owner-node-a"), 1);
+    let owner_km = make_key_manager(&env.key_path("node-owner-a"));
+    let member_b = make_did_record(&test_did("member-node-b"), 1);
+    let member_b_km = make_key_manager(&env.key_path("node-member-b"));
+    let member_c = make_did_record(&test_did("member-node-c"), 1);
+    let member_c_km = make_key_manager(&env.key_path("node-member-c"));
+
+    seed_peer_document(&owner, &owner_km, "nodeA");
+    seed_peer_document(&member_b, &member_b_km, "nodeB");
+    seed_peer_document(&member_c, &member_c_km, "nodeC");
+
+    let owner_vc = make_membership_vc(
+        &owner.did,
+        CredentialRole::Owner,
+        issue::DEFAULT_CIRCLE_ID,
+        &owner.did,
+        0,
+    );
+    save_own_membership_vc(&owner_vc);
+
+    let member_c_vc = make_membership_vc(
+        &member_c.did,
+        CredentialRole::Member,
+        issue::DEFAULT_CIRCLE_ID,
+        &owner.did,
+        1,
+    );
+    crate::vc::persistence::save_peer(&member_c.did, &member_c_vc).expect("cache member C vc");
+
+    let node_a = NodeCrlBase::new();
+    let node_b = NodeCrlBase::new();
+    let node_c = NodeCrlBase::new();
+    let target_did = test_did("resurrection-target");
+
+    let resolver = crate::did::Resolver::new(crate::did::ResolverConfig::default());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+
+    let verify_and_merge =
+        |base: &NodeCrlBase,
+         record: &crate::did::DidRecord,
+         km: &crate::key_manager::KeyManager,
+         entries: &[crate::crl::CrlEntry],
+         tombstones: &[crate::crl::UnrevokeTombstone]| {
+            base.activate();
+            for entry in entries {
+                runtime
+                    .block_on(async {
+                        crate::crl::verify::verify_entry(entry, &resolver, issue::DEFAULT_CIRCLE_ID)
+                            .await
+                    })
+                    .expect("verify revoke");
+            }
+            for tombstone in tombstones {
+                runtime
+                    .block_on(async {
+                        crate::crl::verify::verify_tombstone(tombstone, &resolver).await
+                    })
+                    .expect("verify tombstone");
+            }
+            crate::crl::gossip::store::merge_verified_records(
+                record,
+                km,
+                issue::DEFAULT_CIRCLE_ID,
+                entries,
+                tombstones,
+            )
+            .expect("merge verified records")
+        };
+
+    node_c.activate();
+    let revoke = issue::issue_revocation(
+        &member_c,
+        RevokerRole::Member,
+        &member_c_km,
+        IssueRequest {
+            revoked_did: &target_did,
+            reason: RevocationReason::Compromised,
+            severity: Severity::Critical,
+            circle_id: issue::DEFAULT_CIRCLE_ID,
+            device_id: None,
+            user_id: None,
+            evidence: None,
+        },
+    )
+    .expect("member C revoke");
+
+    let outcome_a = verify_and_merge(
+        &node_a,
+        &owner,
+        &owner_km,
+        std::slice::from_ref(&revoke),
+        &[],
+    );
+    let outcome_b = verify_and_merge(
+        &node_b,
+        &member_b,
+        &member_b_km,
+        std::slice::from_ref(&revoke),
+        &[],
+    );
+    assert_eq!(outcome_a.added, 1);
+    assert_eq!(outcome_b.added, 1);
+
+    for node in [&node_a, &node_b, &node_c] {
+        node.activate();
+        assert!(crate::crl::is_revoked(&target_did));
+    }
+
+    node_a.activate();
+    let tombstone = issue::unrevoke_revocation(&owner, RevokerRole::Owner, &owner_km, &target_did)
+        .expect("owner unrevoke");
+    assert!(!crate::crl::is_revoked(&target_did));
+
+    let outcome_b = verify_and_merge(
+        &node_b,
+        &member_b,
+        &member_b_km,
+        &[],
+        std::slice::from_ref(&tombstone),
+    );
+    let outcome_c = verify_and_merge(
+        &node_c,
+        &member_c,
+        &member_c_km,
+        &[],
+        std::slice::from_ref(&tombstone),
+    );
+    assert_eq!(outcome_b.replaced, 1);
+    assert_eq!(outcome_c.replaced, 1);
+
+    for node in [&node_a, &node_b, &node_c] {
+        node.activate();
+        assert!(!crate::crl::is_revoked(&target_did));
+        let crl = crate::crl::persistence::load_crl()
+            .expect("reload crl")
+            .expect("crl exists");
+        assert!(crl.tombstone(&target_did).is_some());
+    }
+
+    let stale_a = verify_and_merge(
+        &node_a,
+        &owner,
+        &owner_km,
+        std::slice::from_ref(&revoke),
+        &[],
+    );
+    let stale_b = verify_and_merge(
+        &node_b,
+        &member_b,
+        &member_b_km,
+        std::slice::from_ref(&revoke),
+        &[],
+    );
+    let stale_c = verify_and_merge(&node_c, &member_c, &member_c_km, &[revoke], &[]);
+    assert_eq!(stale_a.skipped, 1);
+    assert_eq!(stale_b.skipped, 1);
+    assert_eq!(stale_c.skipped, 1);
+
+    for node in [&node_a, &node_b, &node_c] {
+        node.activate();
+        assert!(!crate::crl::is_revoked(&target_did));
+    }
 }
 
 #[test]
