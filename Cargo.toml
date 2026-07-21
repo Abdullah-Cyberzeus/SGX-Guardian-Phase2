@@ -29,6 +29,7 @@ serde_json = "1"
 sha2 = "0.10"
 hex = "0.4"
 ipnet = "2"
+futures-core = "0.3"
 rustls = { version = "0.23.38", default-features = false, features = ["ring", "std", "tls12"] }
 bs58 = "0.5"
 thiserror = "2"
@@ -60,6 +61,7 @@ uuid = { version = "1", features = ["v4"] }
 [features]
 default = ["secure-element"]
 secure-element = []
+tpm = []
 
 [workspace]
 members = ["sgx-pa-cli"]
