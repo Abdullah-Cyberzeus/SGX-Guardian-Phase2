@@ -13,7 +13,7 @@
 //!   initiator -> responder : SyncPush     { entries matching `want` }
 //!   responder -> initiator : SyncAck      { merged, merkle_root }
 
-use crate::crl::entry::CrlEntry;
+use crate::crl::entry::{CrlEntry, UnrevokeTombstone};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -48,6 +48,9 @@ pub struct SyncResponse {
     pub merkle_root: String,
     /// Full entries the initiator is missing (responder-has / initiator-lacks).
     pub entries: Vec<CrlEntry>,
+    /// Full tombstones the initiator is missing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tombstones: Vec<UnrevokeTombstone>,
     /// Fingerprints the responder is missing (initiator-has / responder-lacks).
     pub want: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -58,6 +61,8 @@ pub struct SyncResponse {
 pub struct SyncPush {
     pub kind: String,
     pub entries: Vec<CrlEntry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tombstones: Vec<UnrevokeTombstone>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -62,6 +62,29 @@ fn list_contains_returns_correct_bool() {
 }
 
 #[test]
+fn list_tombstone_clears_active_revocation() {
+    let _lock = test_lock();
+    let issuer = test_did("issuer");
+    let target = test_did("target");
+    let mut crl = CertificateRevocationList::new(&issuer, issue::DEFAULT_CIRCLE_ID);
+    let entry = build_entry(
+        &target,
+        &issuer,
+        issue::DEFAULT_CIRCLE_ID,
+        RevocationReason::Compromised,
+        Severity::Critical,
+        RevokerRole::Owner,
+    );
+    let tombstone = build_tombstone(&target, &entry.id, &issuer, 2);
+
+    crl.upsert(entry).expect("insert revoke");
+    assert!(crl.contains(&target));
+    assert!(crl.upsert_tombstone(tombstone));
+    assert!(!crl.contains(&target));
+    assert!(crl.tombstone(&target).is_some());
+}
+
+#[test]
 fn list_recompute_root_is_deterministic() {
     let _lock = test_lock();
     let issuer = test_did("issuer");
@@ -93,4 +116,30 @@ fn list_recompute_root_is_deterministic() {
     list_two.recompute_root();
 
     assert_eq!(list_one.merkle_root, list_two.merkle_root);
+}
+
+#[test]
+fn list_root_includes_tombstones() {
+    let _lock = test_lock();
+    let issuer = test_did("issuer");
+    let target = test_did("target");
+    let entry = build_entry(
+        &target,
+        &issuer,
+        issue::DEFAULT_CIRCLE_ID,
+        RevocationReason::Compromised,
+        Severity::Critical,
+        RevokerRole::Owner,
+    );
+    let tombstone = build_tombstone(&target, &entry.id, &issuer, 5);
+
+    let mut with_revoke = CertificateRevocationList::new(&issuer, issue::DEFAULT_CIRCLE_ID);
+    with_revoke.upsert(entry).expect("insert revoke");
+    with_revoke.recompute_root();
+
+    let mut with_tombstone = CertificateRevocationList::new(&issuer, issue::DEFAULT_CIRCLE_ID);
+    with_tombstone.upsert_tombstone(tombstone);
+    with_tombstone.recompute_root();
+
+    assert_ne!(with_revoke.merkle_root, with_tombstone.merkle_root);
 }

@@ -16,7 +16,10 @@ pub mod resolver_cache;
 pub(crate) use did_impl::derive;
 pub use did_impl::Did;
 pub use errors::DidError;
-pub use method::{create_if_absent, deactivate, resolve_local, update_dkp_version};
+pub use method::{
+    create_if_absent, deactivate, ensure_runtime_pubkey, ensure_self_document, resolve_local,
+    update_dkp_version, DEFAULT_DKP_PUBKEY_PATH,
+};
 pub use persistence::{DidRecord, DEFAULT_DID_PATH, DEFAULT_IDENTITY_DIR, DEFAULT_PEERS_DIR};
 pub use resolver::{ResolutionResult, ResolutionSource, Resolver, ResolverConfig};
 

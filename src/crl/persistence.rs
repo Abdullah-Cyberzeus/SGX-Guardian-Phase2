@@ -1,4 +1,4 @@
-use crate::crl::entry::CrlEntry;
+use crate::crl::entry::{CrlEntry, UnrevokeTombstone};
 use crate::crl::errors::CrlError;
 use crate::crl::list::CertificateRevocationList;
 use std::path::PathBuf;
@@ -19,6 +19,10 @@ pub fn pending_dir() -> PathBuf {
     crl_base().join("pending")
 }
 
+pub fn tombstones_dir() -> PathBuf {
+    crl_base().join("tombstones")
+}
+
 fn write_atomic(path: &PathBuf, bytes: &[u8]) -> Result<(), CrlError> {
     if let Some(p) = path.parent() {
         std::fs::create_dir_all(p)?;
@@ -37,6 +41,12 @@ fn id_to_filename(id: &str) -> String {
 pub fn save_entry(e: &CrlEntry) -> Result<(), CrlError> {
     let path = entries_dir().join(format!("{}.json", id_to_filename(&e.id)));
     write_atomic(&path, &serde_json::to_vec_pretty(e)?)?;
+    Ok(())
+}
+
+pub fn save_tombstone(tombstone: &UnrevokeTombstone) -> Result<(), CrlError> {
+    let path = tombstones_dir().join(format!("{}.json", id_to_filename(&tombstone.id)));
+    write_atomic(&path, &serde_json::to_vec_pretty(tombstone)?)?;
     Ok(())
 }
 
