@@ -198,7 +198,7 @@ The SG-X Guardian implements a **monolithic daemon architecture** with the follo
 | **telemetry_service** | Prometheus-format metrics collection and HTTP endpoint | `prometheus` crate |
 | **audit_logger** | Structured, tamper-evident security event logging with hash chain | `tracing`, JSON Lines |
 
-**Rationale for Monolithic Architecture** (See [D008](../decision-log/README.md#d008-service-architecture---monolithic-daemon)):
+**Rationale for Monolithic Architecture** (See [D008](../decisions/phase-1-sow-decision-log.md#d008-service-architecture---monolithic-daemon)):
 
 - Operational simplicity: Single binary deployment and management
 - Resource efficiency: No IPC overhead, shared memory space
@@ -1974,32 +1974,32 @@ The architecture provides extension points for future capabilities:
 
 ## Architecture Decision Records
 
-This architecture document is supported by detailed decision records. All 20 architectural decisions are documented in the [Decision Log](../decision-log/README.md) with full context, rationale, alternatives considered, and implications.
+This architecture document is supported by detailed decision records. All 20 architectural decisions are documented in the [Phase 1 SOW decision log](../decisions/phase-1-sow-decision-log.md) with full context, rationale, alternatives considered, and implications.
 
 ### Key Decisions Reference
 
 | Decision | Title | Impact |
 | -------- | ----- | ------ |
-| [D001](../decision-log/README.md#d001-core-programming-language---rust) | Core Programming Language - Rust | Foundation: Memory safety, performance |
-| [D002](../decision-log/README.md#d002-inter-service-communication-protocol---grpc-over-mtls) | gRPC over mTLS | P2P communication protocol |
-| [D003](../decision-log/README.md#d003-cryptographic-algorithm---ecdsa-p-256) | ECDSA P-256 Cryptography | All signing and encryption |
-| [D004](../decision-log/README.md#d004-peer-discovery-mechanism---mdns) | mDNS Peer Discovery | Zero-configuration discovery |
-| [D005](../decision-log/README.md#d005-policy-enforcement-layer---nftables) | nftables Enforcement | Kernel-level packet filtering |
-| [D006](../decision-log/README.md#d006-virtual-identity-derivation) | Virtual Identity Derivation | State-bound identity |
-| [D007](../decision-log/README.md#d007-attestation-model---software-based-phase-1) | Software Attestation (Phase 1) | Attestation approach |
-| [D008](../decision-log/README.md#d008-service-architecture---monolithic-daemon) | Monolithic Daemon Architecture | Deployment model |
-| [D009](../decision-log/README.md#d009-service-management---systemd) | systemd Service Management | Process lifecycle |
-| [D010](../decision-log/README.md#d010-package-distribution---deb-and-rpm) | .deb/.rpm Packaging | Distribution mechanism |
-| [D011](../decision-log/README.md#d011-error-handling-strategy---result-types-with-context) | Result Types Error Handling | Error management strategy |
-| [D012](../decision-log/README.md#d012-logging-and-observability-strategy) | Dual Logging Strategy | Audit + operational logs |
-| [D013](../decision-log/README.md#d013-policy-schema---yaml-based-uep-v10) | YAML Policy Schema | Policy format |
-| [D014](../decision-log/README.md#d014-atomic-policy-updates-with-rollback) | Atomic Policy Updates | Policy safety mechanism |
-| [D015](../decision-log/README.md#d015-metrics-and-telemetry---prometheus-format) | Prometheus Metrics | Observability standard |
-| [D016](../decision-log/README.md#d016-cloud-integration---outbound-only-mock-phase-1) | Outbound-Only Cloud Mock | Cloud integration path |
-| [D017](../decision-log/README.md#d017-cicd-pipeline---github-actions) | GitHub Actions CI/CD | Build automation |
-| [D018](../decision-log/README.md#d018-branch-protection-and-development-workflow) | Branch Protection Workflow | Development process |
-| [D019](../decision-log/README.md#d019-test-strategy---unit-integration-and-e2e) | Three-Tier Test Strategy | Quality assurance |
-| [D020](../decision-log/README.md#d020-feature-deferrals-to-phase-2) | Feature Deferrals | Scope management |
+| [D001](../decisions/phase-1-sow-decision-log.md#d001-core-programming-language---rust) | Core Programming Language - Rust | Foundation: Memory safety, performance |
+| [D002](../decisions/phase-1-sow-decision-log.md#d002-inter-service-communication-protocol---grpc-over-mtls) | gRPC over mTLS | P2P communication protocol |
+| [D003](../decisions/phase-1-sow-decision-log.md#d003-cryptographic-algorithm---ecdsa-p-256) | ECDSA P-256 Cryptography | All signing and encryption |
+| [D004](../decisions/phase-1-sow-decision-log.md#d004-peer-discovery-mechanism---mdns) | mDNS Peer Discovery | Zero-configuration discovery |
+| [D005](../decisions/phase-1-sow-decision-log.md#d005-policy-enforcement-layer---nftables) | nftables Enforcement | Kernel-level packet filtering |
+| [D006](../decisions/phase-1-sow-decision-log.md#d006-virtual-identity-derivation) | Virtual Identity Derivation | State-bound identity |
+| [D007](../decisions/phase-1-sow-decision-log.md#d007-attestation-model---software-based-phase-1) | Software Attestation (Phase 1) | Attestation approach |
+| [D008](../decisions/phase-1-sow-decision-log.md#d008-service-architecture---monolithic-daemon) | Monolithic Daemon Architecture | Deployment model |
+| [D009](../decisions/phase-1-sow-decision-log.md#d009-service-management---systemd) | systemd Service Management | Process lifecycle |
+| [D010](../decisions/phase-1-sow-decision-log.md#d010-package-distribution---deb-and-rpm) | .deb/.rpm Packaging | Distribution mechanism |
+| [D011](../decisions/phase-1-sow-decision-log.md#d011-error-handling-strategy---result-types-with-context) | Result Types Error Handling | Error management strategy |
+| [D012](../decisions/phase-1-sow-decision-log.md#d012-logging-and-observability-strategy) | Dual Logging Strategy | Audit + operational logs |
+| [D013](../decisions/phase-1-sow-decision-log.md#d013-policy-schema---yaml-based-uep-v10) | YAML Policy Schema | Policy format |
+| [D014](../decisions/phase-1-sow-decision-log.md#d014-atomic-policy-updates-with-rollback) | Atomic Policy Updates | Policy safety mechanism |
+| [D015](../decisions/phase-1-sow-decision-log.md#d015-metrics-and-telemetry---prometheus-format) | Prometheus Metrics | Observability standard |
+| [D016](../decisions/phase-1-sow-decision-log.md#d016-cloud-integration---outbound-only-mock-phase-1) | Outbound-Only Cloud Mock | Cloud integration path |
+| [D017](../decisions/phase-1-sow-decision-log.md#d017-cicd-pipeline---github-actions) | GitHub Actions CI/CD | Build automation |
+| [D018](../decisions/phase-1-sow-decision-log.md#d018-branch-protection-and-development-workflow) | Branch Protection Workflow | Development process |
+| [D019](../decisions/phase-1-sow-decision-log.md#d019-test-strategy---unit-integration-and-e2e) | Three-Tier Test Strategy | Quality assurance |
+| [D020](../decisions/phase-1-sow-decision-log.md#d020-feature-deferrals-to-phase-2) | Feature Deferrals | Scope management |
 
 ---
 
@@ -2016,10 +2016,11 @@ This architecture document is supported by detailed decision records. All 20 arc
 
 **Related Documents**:
 
-- [Project README](../README.md) - Overview and getting started
-- [Decision Log](../decision-log/README.md) - Detailed architectural decisions
-- [Deliverables Tracking](../deliverables/README.md) - Sprint and milestone tracking
-- [Branch Protection Setup](../BRANCH_PROTECTION_SETUP.md) - Git workflow
+- [Documentation index](../README.md) - Current documentation map
+- [Project README](../../README.md) - Overview and getting started
+- [Decision Log](../decisions/phase-1-sow-decision-log.md) - Detailed Phase 1 architectural decisions
+- [Phase 1 Deliverables](../sow/phase-1/deliverables/README.md) - Sprint and milestone tracking
+- [Branch Protection Setup](../../BRANCH_PROTECTION_SETUP.md) - Git workflow
 
 ---
 

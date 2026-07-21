@@ -80,7 +80,8 @@ numbering. Each points to the fuller section. Legend: ✅ code-dictated / settle
   Scarthgap (Q2) and the SE050 secure element (Q8) are hallmarks of an **embedded
   ARM64** device, not an x86 server. The architecture doc *already advertises*
   "x86_64 or ARM64" (`docs/architecture/README.md:1149`) and the decision log
-  lists multi-arch as a CI goal (`docs/decision-log/README.md:871`) — but
+  lists multi-arch as a CI goal
+  (`docs/decisions/phase-1-sow-decision-log.md:871`) — but
   **nothing in packaging produces ARM64 today.** That gap is exactly what this
   work item must close.
 
@@ -246,7 +247,7 @@ confirm.**
   and **never leaves it**, giving tamper-resistant identity and a hardware root of
   trust. The **Phase 2 SOW already frames this as a core value proposition** —
   "HSM integration / secure element chips for tamper-resistant key storage and
-  hardware attestation" (`docs/sow/phase 2/README.md:12,25`).
+  hardware attestation" (`docs/sow/phase-2/README.md:12,25`).
 - **Reality check on scope & timing:**
   - ❌ **Not implemented today** — identity is a **software ECDSA P-256 key on
     disk** (`/var/lib/sgx-guardian/sgx-agent/device_<id>.key`,

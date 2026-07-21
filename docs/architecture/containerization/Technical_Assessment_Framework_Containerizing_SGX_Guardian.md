@@ -35,7 +35,7 @@ The SG-X Guardian's defining capability — **deterministic L3/L4 enforcement vi
 
 | Goal | Definition | SG-X-specific driver |
 |------|-----------|----------------------|
-| **Deterministic / reproducible builds** | Same source + image digest ⇒ identical binary | Release packages (`.deb`/`.rpm`) are GPG-signed (`.github/workflows/ci.yml`); binary drift breaks signature/provenance. |
+| **Deterministic / reproducible builds** | Same source + image digest ⇒ identical binary | Release packages (`.deb`/`.rpm`) are assembled and GPG-signed by `.github/workflows/release-packages.yml`; the manifest records the binary/package hashes and bounded toolchain provenance. |
 | **CI/CD scalability** | Ephemeral agents, no host toolchain drift | Replace per-developer Rust/`protoc` setups; fan out `cargo test` + clippy/audit/deny/semgrep + tarpaulin. |
 | **Reduce host/LAN-in-the-loop testing** | Run the 3-node cohort without a physical LAN of privileged hosts | The current demo (`scripts/run_three_nodes.sh`) needs a multicast LAN and real `nft`; move it into reproducible containers. |
 | **Decouple from kernel/host primitives** | Daemon runnable in non-privileged / non-enforcing roles | Today `nft`, multicast, and absolute paths are hard requirements; decoupling enables CI and degraded-mode deployment. |
@@ -96,7 +96,7 @@ Unlike proprietary firmware toolchains, SG-X's toolchain is **fully open and per
 |---------|---------|
 | Toolchain license | Rust/Cargo (open), `protoc` (BSD) — freely redistributable in images. |
 | Crate licenses | Enforced by `cargo deny` (`deny.toml`). Project license: `Apache-2.0 OR MIT` (`Cargo.toml`). |
-| Signing material | **GPG private key** (`secrets.GPG_PRIVATE_KEY`, `GPG_PASSPHRASE`) used in CI to sign packages — must be injected as a secret, never baked into an image layer. |
+| Signing material | Release-only GPG inputs (`RELEASE_GPG_PRIVATE_KEY`, `RELEASE_GPG_PASSPHRASE`, `RELEASE_GPG_FINGERPRINT`) are scoped to the protected `release-signing` environment in `.github/workflows/release-packages.yml`; they are never available to pull-request CI or baked into an image layer. |
 
 > Net: §2.4 — the firmware framework's heaviest gate (proprietary, license-locked toolchains) **does not apply**. This is the single biggest reason SG-X is *easier* to containerize than firmware.
 

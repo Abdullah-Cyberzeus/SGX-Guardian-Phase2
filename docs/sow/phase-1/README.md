@@ -6,6 +6,8 @@
 **Team Size:** 3 FTE
 **Status:** CONFIDENTIAL
 
+**Related record:** [Phase 1 deliverable tracking](deliverables/README.md)
+
 ## Executive Summary
 
 The objective of Phase 1 is to deliver a **Minimal Viable Product (MVP)** that establishes the foundational security architecture for the SG-X Guardian Client. This 8-week effort will build a cryptographically secure, self-hosted system where a cohort of devices can autonomously form a "Circle of Trust," synchronize a digitally signed security policy, and enforce it deterministically at the network layer.

@@ -70,3 +70,31 @@ fn legacy_entry_without_evidence_field_still_parses() {
     let entry: CrlEntry = serde_json::from_value(json).expect("parse");
     assert!(entry.evidence.is_none());
 }
+
+#[test]
+fn tombstone_fingerprint_is_stable_across_resigning() {
+    let _lock = test_lock();
+    let tombstone_one = build_tombstone(
+        &test_did("target"),
+        "urn:uuid:revocation-a",
+        &test_did("issuer"),
+        4,
+    );
+    let mut tombstone_two = tombstone_one.clone();
+    tombstone_two.proof = Proof {
+        proof_type: "DataIntegrityProof".to_string(),
+        cryptosuite: "ecdsa-2019".to_string(),
+        verification_method: format!("{}#dkp-v2", test_did("issuer")),
+        created: Utc::now().to_rfc3339(),
+        proof_purpose: "assertionMethod".to_string(),
+        proof_value: "different".to_string(),
+    };
+    tombstone_two.peers_notified.push(test_did("peerB"));
+    tombstone_two.propagated = false;
+
+    assert_eq!(tombstone_one.fingerprint(), tombstone_two.fingerprint());
+    assert_ne!(
+        tombstone_one.state_fingerprint(),
+        tombstone_one.fingerprint()
+    );
+}

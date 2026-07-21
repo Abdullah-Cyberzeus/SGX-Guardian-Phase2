@@ -1,0 +1,99 @@
+# syntax=docker/dockerfile:1.7
+# =============================================================================
+# SG-X Guardian - agent image (multi-arch: linux/amd64, linux/arm64)
+#   builder      : pinned Rust toolchain; also the CI test environment
+#   nebula-fetch : downloads + verifies the Nebula mesh binaries for TARGETARCH
+#   runtime      : slim Debian + runtime tools; runs the real daemon
+# =============================================================================
+
+ARG RUST_IMAGE=rust:1.90-bookworm
+ARG RUNTIME_IMAGE=debian:bookworm-slim
+ARG NEBULA_VERSION=1.10.3
+
+FROM ${RUST_IMAGE} AS builder
+
+# protoc: required by tonic-prost-build in build.rs
+# cmake + pkg-config: mirror scripts/build.sh prerequisites closely
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        protobuf-compiler cmake pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . .
+
+# Keep the workspace contract aligned with CI and scripts/build.sh.
+RUN cargo build --release --workspace --locked
+
+# =============================================================================
+# Nebula is fetched per-TARGETARCH (not vendored) so the same Dockerfile is
+# correct on both the x86_64 dev/NUC cohort and the aarch64 boards. Version +
+# checksums are pinned; build fails on download error, checksum mismatch,
+# missing binary, or an ELF machine type that doesn't match TARGETARCH.
+# SGX_DISABLE_NEBULA=1 remains the runtime escape hatch either way.
+# =============================================================================
+FROM debian:bookworm-slim AS nebula-fetch
+ARG NEBULA_VERSION
+ARG TARGETARCH
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /nebula-src
+
+# Pinned per-arch tarball checksums (nebula v${NEBULA_VERSION} release SHASUM256.txt).
+# Bump NEBULA_VERSION and both hashes together when upgrading.
+RUN set -eu; \
+    case "${TARGETARCH}" in \
+        amd64) NEBULA_SHA256="99ac335caeb69d02a6b6b00a3d4b5d0a36ec3971df480a1cc50e6db378342955"; EXPECT_MACHINE="3e00" ;; \
+        arm64) NEBULA_SHA256="69b2764b0c27b04e4f3fb47764cf330555beb5a49e62e045ed5f208a14341343"; EXPECT_MACHINE="b700" ;; \
+        *) echo "ERROR: unsupported TARGETARCH '${TARGETARCH}' for Nebula" >&2; exit 1 ;; \
+    esac; \
+    TARBALL="nebula-linux-${TARGETARCH}.tar.gz"; \
+    URL="https://github.com/slackhq/nebula/releases/download/v${NEBULA_VERSION}/${TARBALL}"; \
+    echo "Fetching ${URL}"; \
+    curl --proto '=https' --tlsv1.2 -fSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 60 \
+        --connect-timeout 10 --max-time 90 \
+        -o "${TARBALL}" "${URL}"; \
+    echo "${NEBULA_SHA256}  ${TARBALL}" | sha256sum -c -; \
+    tar -xzf "${TARBALL}"; \
+    [ -f nebula ] && [ -f nebula-cert ] || { echo "ERROR: nebula binary missing after extraction" >&2; exit 1; }; \
+    for bin in nebula nebula-cert; do \
+        actual="$(od -An -tx1 -j18 -N2 "$bin" | tr -d ' \n')"; \
+        [ "$actual" = "$EXPECT_MACHINE" ] || { echo "ERROR: $bin ELF e_machine=$actual, expected $EXPECT_MACHINE for $TARGETARCH" >&2; exit 1; }; \
+    done; \
+    chmod 0755 nebula nebula-cert; \
+    rm -f "${TARBALL}"
+
+FROM ${RUNTIME_IMAGE} AS runtime
+
+# nftables        : enforcement executor shells out to `nft -f`
+# procps          : daemon uses pkill/pgrep for nebula lifecycle
+# iproute2        : `ip`/`ss` for interface verification + debugging
+# ca-certificates : outbound TLS trust
+# curl            : healthchecks + in-container smoke tests
+# nmap            : discovery scheduler/API shell out to it at runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        nftables ca-certificates procps iproute2 curl nmap \
+    && rm -rf /var/lib/apt/lists/*
+
+# Nebula fetched + checksum + ELF-arch verified per TARGETARCH in nebula-fetch (see above).
+COPY --from=nebula-fetch /nebula-src/nebula /usr/local/bin/nebula
+COPY --from=nebula-fetch /nebula-src/nebula-cert /usr/local/bin/nebula-cert
+RUN chmod 0755 /usr/local/bin/nebula /usr/local/bin/nebula-cert
+
+# Keep canonical binary names so existing workflows and logs stay familiar.
+COPY --from=builder /src/target/release/sgx_guardian_client /usr/local/bin/sgx_guardian_client
+COPY --from=builder /src/target/release/sgx-pa-cli /usr/local/bin/sgx-pa-cli
+COPY docker/entrypoint.sh /usr/local/bin/sgx-entrypoint
+RUN chmod 0755 /usr/local/bin/sgx-entrypoint
+
+VOLUME ["/etc/sgx-guardian", "/var/lib/sgx-guardian", "/var/log/sgx-guardian"]
+
+# gRPC 50051-50053 | cert bootstrap 50061 | registry 50062 | CRL gossip 50063
+# REST 8443 | discovery UDP 9000 | nebula UDP 4242 | attestation 50151-50153
+EXPOSE 50051-50053 50061-50063 8443 50151-50153 9000/udp 4242/udp
+
+WORKDIR /var/lib/sgx-guardian
+ENTRYPOINT ["/usr/local/bin/sgx-entrypoint"]
+CMD ["nodeA"]

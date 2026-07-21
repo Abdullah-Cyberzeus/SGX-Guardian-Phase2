@@ -1218,6 +1218,6 @@ What are the consequences? What must change as a result?
 
 ## References
 
-- [Project README](../README.md)
-- [Deliverables Tracking](../deliverables/README.md)
-- [Branch Protection Setup](../BRANCH_PROTECTION_SETUP.md)
+- [Project README](../../README.md)
+- [Phase 1 Deliverables](../sow/phase-1/deliverables/README.md)
+- [Branch Protection Setup](../../BRANCH_PROTECTION_SETUP.md)

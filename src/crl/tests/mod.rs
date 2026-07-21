@@ -1,6 +1,6 @@
 use crate::crl::entry::{
-    CrlEntry, RevocationEvidence, RevocationReason, RevokerRole, Severity, CRL_CONTEXT_CORE,
-    CRL_CONTEXT_SGX,
+    CrlEntry, RevocationEvidence, RevocationReason, RevokerRole, Severity, UnrevokeTombstone,
+    CRL_CONTEXT_CORE, CRL_CONTEXT_SGX, CRL_UNREVOKE_TOMBSTONE_TYPE,
 };
 use crate::crl::issue::{self, IssueRequest};
 use crate::crl::list::CertificateRevocationList;
@@ -37,6 +37,22 @@ struct TestEnv {
     _vc_base: TempDir,
     _peer_docs: TempDir,
     _key_dir: TempDir,
+}
+
+struct NodeCrlBase {
+    _base: TempDir,
+}
+
+impl NodeCrlBase {
+    fn new() -> Self {
+        Self {
+            _base: TempDir::new().expect("node crl tempdir"),
+        }
+    }
+
+    fn activate(&self) {
+        env::set_var(crate::crl::persistence::CRL_BASE_ENV, self._base.path());
+    }
 }
 
 impl TestEnv {
@@ -219,4 +235,37 @@ fn sign_entry_with_key(
 ) -> Result<(), crate::did::errors::DidError> {
     let canonical = entry.canonical_bytes_for_sign()?;
     doc_sign::sign_in_place_generic(&mut entry.proof, &canonical, km, vm_ref)
+}
+
+fn build_tombstone(
+    revoked_did: &str,
+    original_entry_id: &str,
+    owner_did: &str,
+    sequence: u64,
+) -> UnrevokeTombstone {
+    UnrevokeTombstone {
+        context: vec![CRL_CONTEXT_CORE.into(), CRL_CONTEXT_SGX.into()],
+        id: format!("urn:uuid:{}", uuid::Uuid::new_v4()),
+        r#type: vec![
+            "VerifiableCredential".into(),
+            CRL_UNREVOKE_TOMBSTONE_TYPE.into(),
+        ],
+        revoked_did: revoked_did.to_string(),
+        original_entry_id: original_entry_id.to_string(),
+        owner_did: owner_did.to_string(),
+        sequence,
+        timestamp: Utc::now().to_rfc3339(),
+        proof: Proof::default(),
+        peers_notified: vec![test_did("peerA")],
+        propagated: true,
+    }
+}
+
+fn sign_tombstone_with_key(
+    tombstone: &mut UnrevokeTombstone,
+    km: &KeyManager,
+    vm_ref: &str,
+) -> Result<(), crate::did::errors::DidError> {
+    let canonical = tombstone.canonical_bytes_for_sign()?;
+    doc_sign::sign_in_place_generic(&mut tombstone.proof, &canonical, km, vm_ref)
 }

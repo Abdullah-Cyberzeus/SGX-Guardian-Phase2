@@ -1,4 +1,6 @@
-# Cervais New  Guardian Deliverable Tracking
+# Phase 1 Deliverable Tracking
+
+This record tracks delivery against the [Phase 1 SOW](../README.md).
 
 ## Project Timeline & Milestones
 

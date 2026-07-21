@@ -687,7 +687,7 @@ Repeatable, scripted demonstrations of all Phase 2 capabilities on multi-node Ci
 ## References
 
 - [Phase2.pdf](./Phase2.pdf)
-- [Phase 1 README](../phase%201/README.md)
+- [Phase 1 README](../phase-1/README.md)
 - [W3C DID Core 1.0 Specification](https://www.w3.org/TR/did-core/)
 - [W3C Verifiable Credentials Data Model](https://www.w3.org/TR/vc-data-model/)
 - [Nebula Mesh Networking](https://github.com/slackhq/nebula)

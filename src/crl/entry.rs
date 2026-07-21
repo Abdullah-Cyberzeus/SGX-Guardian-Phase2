@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 pub const CRL_CONTEXT_CORE: &str = "https://www.w3.org/2018/credentials/v1";
 pub const CRL_CONTEXT_SGX: &str = "https://schemas.cyberzeus.io/sgx/v1/crl";
+pub const CRL_UNREVOKE_TOMBSTONE_TYPE: &str = "UnrevokeTombstone";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -160,12 +161,70 @@ impl CrlEntry {
         hex::encode(h)
     }
 
+    /// Stable record fingerprint including the logical record type.
+    pub fn state_fingerprint(&self) -> String {
+        format!("revoke:{}", self.fingerprint())
+    }
+
     /// Bytes to sign — entry without its own proof, with sorted keys.
     pub fn canonical_bytes_for_sign(&self) -> Result<Vec<u8>, serde_json::Error> {
         let mut cloned = self.clone();
         cloned.proof = Proof::default();
         // Gossip fields are NOT part of the signed surface — they mutate
         // post-issuance as peers ack. Signing must skip them.
+        cloned.peers_notified.clear();
+        cloned.propagated = false;
+        let v: serde_json::Value = serde_json::to_value(&cloned)?;
+        Ok(canonical_bytes(&v))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnrevokeTombstone {
+    #[serde(rename = "@context")]
+    pub context: Vec<String>,
+    /// `urn:uuid:<v4>` — unique per tombstone; used for gossip dedup.
+    pub id: String,
+    #[serde(rename = "type")]
+    pub r#type: Vec<String>, // ["VerifiableCredential", "UnrevokeTombstone"]
+    /// The DID being restored to active status.
+    pub revoked_did: String,
+    /// The original revocation entry this tombstone supersedes.
+    pub original_entry_id: String,
+    /// Circle owner DID authorizing the unrevoke.
+    pub owner_did: String,
+    /// The CRL sequence at tombstone issuance time.
+    pub sequence: u64,
+    pub timestamp: String, // RFC3339
+    pub proof: Proof,
+    /// Local gossip bookkeeping, excluded from signatures and fingerprints.
+    #[serde(default)]
+    pub peers_notified: Vec<String>,
+    #[serde(default)]
+    pub propagated: bool,
+}
+
+impl UnrevokeTombstone {
+    pub fn fingerprint(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let mut cloned = self.clone();
+        cloned.peers_notified.clear();
+        cloned.propagated = false;
+        cloned.proof = Proof::default();
+        let v = serde_json::to_value(&cloned).expect("crl tombstone to value");
+        let bytes = canonical_bytes(&v);
+        let h = Sha256::digest(&bytes);
+        hex::encode(h)
+    }
+
+    /// Stable record fingerprint including the logical record type.
+    pub fn state_fingerprint(&self) -> String {
+        format!("tombstone:{}", self.fingerprint())
+    }
+
+    pub fn canonical_bytes_for_sign(&self) -> Result<Vec<u8>, serde_json::Error> {
+        let mut cloned = self.clone();
+        cloned.proof = Proof::default();
         cloned.peers_notified.clear();
         cloned.propagated = false;
         let v: serde_json::Value = serde_json::to_value(&cloned)?;
