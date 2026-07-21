@@ -10,6 +10,7 @@ message CertSignRequest {
   string overlay_ip = 3;           // e.g. "192.168.100.2/24"
   bool wants_lighthouse = 4;       // request lighthouse role assignment
   bool wants_relay = 5;            // request relay role assignment
+  string pairing_proof = 6;        // signed onboarding challenge response
 }
 
 message CertSignResponse {
