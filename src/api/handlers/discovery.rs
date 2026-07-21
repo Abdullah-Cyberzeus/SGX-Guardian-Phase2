@@ -1011,22 +1011,15 @@ mod tests {
     }
 
     fn test_state(config_dir: &std::path::Path, state_dir: &std::path::Path) -> Arc<AppState> {
-        Arc::new(AppState {
-            node_id: "test-nodeA".into(),
-            config_dir: "/tmp/config".into(),
-            boot_dir: "/tmp/boot".into(),
-            keys_dir: "/tmp/keys".into(),
-            pcr_dir: "/tmp/pcr".into(),
-            pcr_baseline_dir: "/tmp".into(),
-            log_dir_primary: "/tmp/logs".into(),
-            log_dir_fallback: "/tmp/logs-fallback".into(),
-            did_resolver: Resolver::new(Default::default()),
-            vid_cache: VirtualIdCache::new(),
-            discovery_config_dir: config_dir.display().to_string(),
-            discovery_state_dir: state_dir.display().to_string(),
-            threat_config_path: "/tmp/threat-config.yaml".into(),
-            threat_state_dir: "/tmp/threat-state".into(),
-        })
+        let base_dir = config_dir.parent().unwrap_or(config_dir);
+        let mut state =
+            (*AppState::for_tests(base_dir, "test-nodeA", config_dir.display().to_string()))
+                .clone();
+        state.did_resolver = Resolver::new(Default::default());
+        state.vid_cache = VirtualIdCache::new();
+        state.discovery_config_dir = config_dir.display().to_string();
+        state.discovery_state_dir = state_dir.display().to_string();
+        Arc::new(state)
     }
 
     fn test_run_record(

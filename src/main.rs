@@ -7,7 +7,9 @@ use sgx_guardian_client::audit::event::{AuditAction, AuditCategory, AuditSeverit
 use sgx_guardian_client::audit::logger::{init_audit_logger, log_audit};
 use sgx_guardian_client::audit::verifier::AuditVerifier;
 use sgx_guardian_client::client::send_ping;
-use sgx_guardian_client::config_loader::{load_config, CloudConfig, NodeConfig, RelayLimitsConfig};
+use sgx_guardian_client::config_loader::{
+    load_config, ApiConfig, ApiTlsConfig, CloudConfig, NodeConfig, RelayLimitsConfig,
+};
 use sgx_guardian_client::key_manager::KeyManager;
 #[cfg(feature = "secure-element")]
 use sgx_guardian_client::secure_element;
@@ -85,6 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "/var/lib/sgx-guardian/sgx-agent",
         "/var/lib/sgx-guardian/identity",
         "/var/lib/sgx-guardian/identity/peers",
+        "/var/lib/sgx-guardian/admin",
         "/var/lib/sgx-guardian/nebula/ca",
         "/var/lib/sgx-guardian/nebula/nodes",
         "/var/lib/sgx-guardian/nebula/requests",
@@ -163,9 +166,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let path = format!("/etc/sgx-guardian/config/{}.yaml", nid);
         if !std::path::Path::new(&path).exists() {
             let letter = &nid[4..];
+            let api_tls_block = if *nid == "nodeA" {
+                "\napi:\n  tls:\n    enabled: true\n    require_https: true\n"
+            } else {
+                ""
+            };
             let content = format!(
-                "---\nnode_id: \"{}\"\nhostname: \"guardian-node-{}\"\nip: \"0.0.0.0\"\nport: {}\npublic_key: \"placeholder-key-{}\"\n\nrelay:\n  enabled: false\n  max_peers: 5\n  max_bandwidth_mbps: 10\n  alert_threshold_pct: 80\n\nsecure_element:\n  enabled: true\n  scp_key_path: \"/home/root/se05x_mw_v04.05.01/simw-top/scripts/se050F_scp_keys.txt\"\n  interface: \"t1oi2c\"\n  auth_type: \"PlatformSCP\"\n  connection_type: \"se05x\"\n",
-                nid, letter, port, letter
+                "---\nnode_id: \"{}\"\nhostname: \"guardian-node-{}\"\nip: \"0.0.0.0\"\nport: {}\npublic_key: \"placeholder-key-{}\"\n\nrelay:\n  enabled: false\n  max_peers: 5\n  max_bandwidth_mbps: 10\n  alert_threshold_pct: 80\n{}\
+\nsecure_element:\n  enabled: true\n  scp_key_path: \"/home/root/se05x_mw_v04.05.01/simw-top/scripts/se050F_scp_keys.txt\"\n  interface: \"t1oi2c\"\n  auth_type: \"PlatformSCP\"\n  connection_type: \"se05x\"\n",
+                nid, letter, port, letter, api_tls_block
             );
             let _ = std::fs::write(&path, &content);
         }
@@ -537,6 +546,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => eprintln!("  ⚠️ DID Document load failed: {}", e),
     }
 
+    let km = Arc::new(km);
+
     // === Crypto Provider Status ===
     match km.backend_name() {
         "SE050" => {
@@ -899,6 +910,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = std::fs::copy(&config_path, &main_path);
     }
 
+    fn default_admin_api_tls(node: &str) -> ApiTlsConfig {
+        ApiTlsConfig {
+            enabled: node == "nodeA",
+            cert_path: None,
+            key_path: None,
+            require_https: node == "nodeA",
+        }
+    }
+
     fn load_config_safe(node: &str) -> NodeConfig {
         // Try config/ dir first (dynamic configs live here)
         let config_path = format!("/etc/sgx-guardian/config/{}.yaml", node);
@@ -924,6 +944,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             public_key: format!("placeholder-key-{}", &node[4..]),
             metrics: None,
             relay: None,
+            api: Some(ApiConfig {
+                tls: default_admin_api_tls(node),
+            }),
         }
     }
 
@@ -1487,6 +1510,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let wants_relay = std::env::var("SGX_WANTS_RELAY")
                     .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
                     .unwrap_or(false);
+                let pairing_proof = match std::env::var("SGX_GUARDIAN_PAIRING_CODE") {
+                    Ok(code) if !code.trim().is_empty() => {
+                        let device_did = sgx_guardian_client::did::DidRecord::load(
+                            sgx_guardian_client::did::DEFAULT_DID_PATH,
+                        )
+                        .map(|record| record.did)
+                        .map_err(|e| {
+                            eprintln!("⚠️ Failed to load DID for pairing bootstrap proof: {}", e);
+                            e
+                        })
+                        .ok();
+                        let device_pubkey = km.pubkey_der().map_err(|e| {
+                            eprintln!(
+                                "⚠️ Failed to load device pubkey for pairing bootstrap proof: {}",
+                                e
+                            );
+                            e
+                        });
+                        match (device_did, device_pubkey) {
+                            (Some(device_did), Ok(device_pubkey)) => {
+                                match sgx_guardian_client::api::auth::pairing::build_pairing_proof(
+                                    &code,
+                                    &node_id,
+                                    &device_did,
+                                    &device_pubkey,
+                                    km.clone(),
+                                )
+                                .await
+                                {
+                                    Ok(proof) => Some(proof),
+                                    Err(e) => {
+                                        eprintln!(
+                                            "⚠️ Failed to build pairing bootstrap proof: {}",
+                                            e
+                                        );
+                                        None
+                                    }
+                                }
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
 
                 // BLOCKING: wait until we have the cert before starting Nebula
                 sgx_guardian_client::cert_client::request_certificate_from_ca(
@@ -1496,6 +1563,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     pubkey_b64.clone(),
                     wants_lh,
                     wants_relay,
+                    pairing_proof,
                 )
                 .await;
 
@@ -2687,17 +2755,74 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     // === REST Admin API (axum) on :8443 ===
-    let api_state =
-        sgx_guardian_client::api::state::AppState::from_env(node_id.clone(), did_resolver.clone());
-    let api_bind: std::net::SocketAddr = "0.0.0.0:8443".parse().unwrap();
-    tokio::spawn({
-        let state = api_state.clone();
-        async move {
-            if let Err(e) = sgx_guardian_client::api::serve(state, api_bind).await {
-                eprintln!("❌ REST API server failed: {:?}", e);
-            }
-        }
+    let admin_stores =
+        sgx_guardian_client::api::auth::store::AdminStores::new("/var/lib/sgx-guardian/admin");
+    sgx_guardian_client::api::auth::store::install_global_admin_stores(admin_stores.clone());
+    let device_did =
+        sgx_guardian_client::did::DidRecord::load(sgx_guardian_client::did::DEFAULT_DID_PATH)
+            .map(|record| record.did)
+            .unwrap_or_else(|e| {
+                eprintln!("⚠️ Failed to load persisted DID for auth issuer: {}", e);
+                sgx_guardian_client::did::Did::from_id_bytes(&[0u8; 32]).to_string()
+            });
+    let device_pubkey_point = km.pubkey_der().unwrap_or_else(|e| {
+        eprintln!("⚠️ Failed to load auth verification key: {}", e);
+        Vec::new()
     });
+    let api_state = sgx_guardian_client::api::state::AppState::from_env(
+        node_id.clone(),
+        did_resolver.clone(),
+        km.clone(),
+        admin_stores,
+        device_did,
+        device_pubkey_point,
+    );
+    if node_id == "nodeA" {
+        let api_bind: std::net::SocketAddr = "0.0.0.0:8443".parse().unwrap();
+        let tls_cfg = this_node
+            .api
+            .clone()
+            .map(|config| config.tls)
+            .unwrap_or_else(|| default_admin_api_tls(&node_id));
+
+        if tls_cfg.require_https && !tls_cfg.enabled {
+            eprintln!(
+                "❌ REST admin API TLS misconfigured: require_https=true but tls.enabled=false"
+            );
+            log_error(
+                &node_id,
+                "REST admin API TLS misconfigured: require_https=true but tls.enabled=false",
+            );
+        } else {
+            let tls = if tls_cfg.enabled {
+                Some(sgx_guardian_client::api::AdminTls {
+                    cert_path: tls_cfg.resolved_cert_path(&node_id),
+                    key_path: tls_cfg.resolved_key_path(&node_id),
+                })
+            } else {
+                None
+            };
+            let require_https = tls_cfg.require_https;
+            tokio::spawn({
+                let state = api_state.clone();
+                async move {
+                    if let Err(e) = sgx_guardian_client::api::serve(state, api_bind, tls).await {
+                        eprintln!("❌ REST API server failed: {:?}", e);
+                        if require_https {
+                            eprintln!("TLS required; admin API not started (fail-closed).");
+                        }
+                    }
+                }
+            });
+            let scheme = if tls_cfg.enabled { "https" } else { "http" };
+            println!(
+                "✅ REST admin API (NodeA) starting on {}://{}/api/v1",
+                scheme, api_bind
+            );
+        }
+    } else {
+        println!("ℹ️ Admin API disabled on member node {}", node_id);
+    }
 
     // === CRL gossip engine ===
     // Decentralized epidemic revocation propagation: listener on
@@ -2705,7 +2830,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Spawns two background tokio tasks; returns immediately; runs on
     // every node role (nodeA is an ordinary gossip peer, not a hub).
     sgx_guardian_client::crl::gossip::spawn(node_id.clone(), did_resolver.clone());
-    println!("✅ REST admin API listening on http://{}/api/v1", api_bind);
 
     // === NMAP discovery scheduler ===
     {
