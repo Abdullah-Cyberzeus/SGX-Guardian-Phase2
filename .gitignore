@@ -7,6 +7,7 @@ __pycache__/
 logs/
 optional/
 sgx-agent/
+optional/
 sgx-pa-cli/guardian_private.key
 private_key.asc
 *.key
@@ -24,3 +25,4 @@ coverage/
 
 .codex/
 .claude/
+optional/

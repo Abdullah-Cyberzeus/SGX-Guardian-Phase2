@@ -24,6 +24,11 @@ sgx_guardian_client = { path = ".." }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 libc = "0.2"
 
+[features]
+default = ["secure-element"]
+secure-element = ["sgx_guardian_client/secure-element"]
+tpm = ["sgx_guardian_client/tpm"]
+
 [dev-dependencies]
 assert_cmd = "2.1.1"
 tempfile = "3.23.0"

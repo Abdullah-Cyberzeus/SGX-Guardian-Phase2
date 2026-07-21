@@ -8,9 +8,12 @@
 //
 // CRITICAL: ssscli uses POSITIONAL arguments, NOT --flag style.
 //   generate ecc <keyid> <curve>     (not --key_id --curvetype)
+//   generate rsa <keyid> <bits>
 //   get ecc pub <keyid> <filename>   (not --key_id --output)
 //   sign <keyid> <input> <output>    (not sign sha256 --key_id --in --out)
 //   verify <keyid> <input> <sigfile> (not verify sha256 --key_id --in --signature)
+//   encrypt <keyid> <input> <output> --algo <oaep|rsaes|AES_CTR>
+//   decrypt <keyid> <input> <output> --algo <oaep|rsaes|AES_CTR>
 //   erase <keyid>                    (not --key_id)
 //
 // Curve names: NIST_P256, NIST_P384 (not prime256v1, secp384r1)
@@ -109,6 +112,13 @@ impl SssCli {
         self.run(&["generate", "ecc", key_id, curve])
     }
 
+    /// Generate RSA key pair inside SE050.
+    /// Syntax: ssscli generate rsa <keyid> <bits>
+    pub fn generate_rsa_key(&self, key_id: &str, bits: u16) -> Result<String, SeError> {
+        let bits = bits.to_string();
+        self.run(&["generate", "rsa", key_id, &bits])
+    }
+
     /// Export ONLY the public key from SE050 (DER format).
     /// Syntax: ssscli get ecc pub <keyid> <filename>
     pub fn get_ecc_pub(&self, key_id: &str, output_path: &str) -> Result<String, SeError> {
@@ -133,6 +143,30 @@ impl SssCli {
     /// Syntax: ssscli verify <keyid> <input_file> <signature_file>
     pub fn verify(&self, key_id: &str, input: &str, sig: &str) -> Result<String, SeError> {
         self.run(&["verify", key_id, input, sig])
+    }
+
+    /// Encrypt data using an SE050-backed key.
+    /// Syntax: ssscli encrypt <keyid> <input_data> <output_file> --algo <algo>
+    pub fn encrypt(
+        &self,
+        key_id: &str,
+        input: &str,
+        output: &str,
+        algo: &str,
+    ) -> Result<String, SeError> {
+        self.run(&["encrypt", key_id, input, output, "--algo", algo])
+    }
+
+    /// Decrypt data using an SE050-backed key.
+    /// Syntax: ssscli decrypt <keyid> <input_data> <output_file> --algo <algo>
+    pub fn decrypt(
+        &self,
+        key_id: &str,
+        input: &str,
+        output: &str,
+        algo: &str,
+    ) -> Result<String, SeError> {
+        self.run(&["decrypt", key_id, input, output, "--algo", algo])
     }
 
     // ── Internal ────────────────────────────────────────────
