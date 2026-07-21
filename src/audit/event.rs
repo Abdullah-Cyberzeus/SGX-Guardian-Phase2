@@ -22,6 +22,8 @@ pub enum AuditCategory {
     Cloud,
     /// Network discovery, whitelist mismatches, and vulnerability-triage handoff.
     Discovery,
+    Vault,
+    Xfer,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
