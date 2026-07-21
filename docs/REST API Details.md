@@ -1,9 +1,16 @@
 # SG-X Guardian REST API Details
 
-**Version:** 2.1  
-**Port:** `8443`  
-**Base URL:** `http://<board-ip>:8443/api/v1`  
-**Example Board IP:** `192.168.1.10`
+**Version:** 2.2
+**Port:** `8443`
+**Base URL:** `https://<nodeA-ip>:8443/api/v1`
+**Example NodeA IP:** `192.168.1.10`
+
+Transport notes:
+
+- The admin API binds on `nodeA` only.
+- Plaintext `http://<nodeA-ip>:8443` is rejected; use HTTPS on `:8443`.
+- The NodeA device certificate is self-signed by default, so clients must trust or pin it explicitly.
+- Local email/password login remains active. Cylenium SSO is stubbed and disabled by default.
 
 ## 1. Implemented Endpoints 
 
@@ -146,7 +153,7 @@ All handler-generated API errors use this JSON envelope:
 ```json
 {
   "error": {
-    "code": "NOT_FOUND | BAD_REQUEST | UNAUTHORIZED | FORBIDDEN | CONFLICT | INTERNAL",
+    "code": "NOT_FOUND | BAD_REQUEST | UNAUTHORIZED | LOCKED | TOO_MANY_REQUESTS | FORBIDDEN | CONFLICT | INTERNAL",
     "message": "human-readable message"
   }
 }
@@ -156,6 +163,8 @@ Typical HTTP status mapping:
 
 - `400 BAD_REQUEST`
 - `401 UNAUTHORIZED`
+- `423 LOCKED`
+- `429 TOO_MANY_REQUESTS`
 - `403 FORBIDDEN`
 - `409 CONFLICT`
 - `404 NOT_FOUND`
@@ -186,6 +195,409 @@ Field notes:
 
 ---
 
+## 2.2 Guardian Admin Console Phase A-C (Authoritative)
+
+This section is the authoritative contract for the operator-facing admin-console flow covering:
+
+- Phase A: operator signup, login, session validation, logout, auth middleware
+- Phase B: Guardian QR/serial pairing, signed proof verification, binding, listing, unpairing
+- Phase C: authenticated Guardian onboarding into the existing cert-bootstrap workflow, plus bootstrap status visibility for the dashboard
+
+If a later legacy section in this document differs from this Phase A-C section, use this section.
+
+### Endpoint contracts
+
+#### GET `/health`
+
+Purpose:
+Check whether the Guardian admin API is alive.
+
+Request:
+
+- Auth: Public
+- Query params: none
+- Body: none
+
+Success response (`200 OK`):
+
+```json
+{
+  "status": "ok"
+}
+```
+
+Error responses:
+
+- None expected from handler
+
+#### POST `/auth/signup`
+
+Purpose:
+Create the first operator account as the initial `owner`.
+
+Request:
+
+- Auth: Public
+- Query params: none
+- JSON body:
+```json
+{
+  "name": "Admin",
+  "email": "admin@sgx.local",
+  "password": "SgxGuardian@2026!"
+}
+```
+
+Success response (`200 OK`):
+
+```json
+{
+  "userId": "user-id",
+  "email": "admin@sgx.local",
+  "role": "owner",
+  "token": "jwt-token",
+  "expiresAt": 1783060200
+}
+```
+
+Error responses:
+
+- `400 BAD_REQUEST`: missing name/email or password policy violation
+- `403 FORBIDDEN`: signup is only allowed before the first user exists
+- `409 CONFLICT`: conflicting user creation state
+- `500 INTERNAL_SERVER_ERROR`: user store, session persistence, or token issuance failure
+
+#### POST `/auth/login`
+
+Purpose:
+Authenticate an operator and issue a bearer session token.
+
+Request:
+
+- Auth: Public
+- Query params: none
+- JSON body:
+```json
+{
+  "email": "admin@sgx.local",
+  "password": "SgxGuardian@2026!"
+}
+```
+
+Success response (`200 OK`):
+
+```json
+{
+  "token": "jwt-token",
+  "user": {
+    "id": "user-id",
+    "email": "admin@sgx.local",
+    "role": "owner"
+  },
+  "expiresAt": 1783060200
+}
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: invalid email or password
+- `423 LOCKED`: account temporarily locked after repeated failed logins
+- `429 TOO_MANY_REQUESTS`: login rate limit exceeded
+- `500 INTERNAL_SERVER_ERROR`: user store, session persistence, or token issuance failure
+
+#### GET `/auth/session`
+
+Purpose:
+Validate the current JWT session and return the authenticated user/session summary.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+- Query params: none
+- Body: none
+```http
+Authorization: Bearer <token>
+```
+
+Success response (`200 OK`):
+
+```json
+{
+  "valid": true,
+  "userId": "user-id",
+  "email": "admin@sgx.local",
+  "role": "owner",
+  "expiresAt": 1783060200
+}
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
+- `500 INTERNAL_SERVER_ERROR`: user/session store failure
+
+#### POST `/auth/logout`
+
+Purpose:
+Revoke the current session token.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+- Query params: none
+- Body: none
+```http
+Authorization: Bearer <token>
+```
+
+Success response (`200 OK`):
+
+```json
+{
+  "status": "logged_out"
+}
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
+- `500 INTERNAL_SERVER_ERROR`: session revoke persistence failure
+
+#### GET `/node/status`
+
+Purpose:
+Show the current Guardian node status for the dashboard.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+```http
+Authorization: Bearer <token>
+```
+
+Success response (`200 OK`):
+
+```json
+{
+  "nodeId": "nodeA",
+  "hostname": "guardian-node-A",
+  "ip": "192.168.50.103",
+  "port": 50051,
+  "publicKey": "placeholder-key-A",
+  "timestamp": "2026-07-03T05:17:56Z"
+}
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
+- `400 BAD_REQUEST`: invalid node format
+- `404 NOT_FOUND`: node config not found
+- `500 INTERNAL_SERVER_ERROR`: config directory, file read, or YAML parse failure
+
+#### GET `/devices/pairing-code`
+
+Purpose:
+Generate a secure time-limited pairing code for QR or serial pairing.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+- Query params:
+  - `serial` (required, string)
+  - `ttl_secs` (optional, integer). Defaults to `300`; capped at `3600`.
+- Body: none
+
+Success response (`200 OK`):
+
+```json
+{
+  "serial": "GX-2024-TX-042-B9F3",
+  "challenge": "random-challenge",
+  "nonce": "random-nonce",
+  "expiresAt": 1783059476,
+  "pairingCode": "base64url-pairing-payload"
+}
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
+- `400 BAD_REQUEST`: invalid serial
+- `500 INTERNAL_SERVER_ERROR`: pairing store persistence or pairing-code encoding failure
+
+#### POST `/devices/pair`
+
+Purpose:
+Submit a signed pairing proof and bind a Guardian device to the authenticated owner account.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+- Query params: none
+- JSON body:
+```json
+{
+  "serial": "GX-2024-TX-042-B9F3",
+  "proof": "signed-proof-from-device"
+}
+```
+
+Success response (`200 OK`):
+
+```json
+{
+  "deviceId": "device-id",
+  "serial": "GX-2024-TX-042-B9F3",
+  "did": "did:guardian:EtFW3...",
+  "status": "bootstrap_pending",
+  "nodeId": "nodeB"
+}
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
+- `400 BAD_REQUEST`: missing proof, serial mismatch, invalid proof, missing pairing challenge, expired pairing challenge, or replayed proof
+- `403 FORBIDDEN`: pairing proof was issued for a different user
+- `409 CONFLICT`: device is already paired to another user
+- `500 INTERNAL_SERVER_ERROR`: device store persistence failure
+
+#### GET `/devices`
+
+Purpose:
+Return all paired Guardians for the authenticated user dashboard.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+- Query params: none
+- Body: none
+
+Success response (`200 OK`):
+
+```json
+[
+  {
+    "deviceId": "0299cc0d31a127a3de2a8ac66ac2bf7c5fb3eed4e06102e75b841fbb12124b1d",
+    "serial": "GX-2024-TX-042-B9F3",
+    "did": "did:guardian:EtFW3...",
+    "status": "active",
+    "nodeId": "nodeB"
+  },
+  {
+    "deviceId": "d29f0ca7641c76f1e71a0ea767992a42db629a8e389512ae4de8520446567c0f",
+    "serial": "GX-2024-TX-042-C9F3",
+    "did": "did:guardian:C2txw...",
+    "status": "active",
+    "nodeId": "nodeC"
+  }
+]
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
+- `500 INTERNAL_SERVER_ERROR`: device store read failure
+
+#### GET `/devices/{deviceId}`
+
+Purpose:
+Return detailed information for one paired Guardian.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+- Path params:
+  - `deviceId` (required, string)
+- Query params: none
+- Body: none
+
+Success response (`200 OK`):
+
+```json
+{
+  "deviceId": "device-id",
+  "serial": "GX-2024-TX-042-B9F3",
+  "did": "did:guardian:EtFW3...",
+  "nodeId": "nodeB",
+  "status": "active",
+  "bootstrapStatus": "completed",
+  "overlayIp": "192.168.100.2",
+  "attestationEndpoint": "tcp://192.168.100.2:50152"
+}
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
+- `404 NOT_FOUND`: device not found for the authenticated user
+- `500 INTERNAL_SERVER_ERROR`: device store read failure
+
+#### GET `/devices/pairing-status`
+
+Purpose:
+Allow the frontend to poll pairing and bootstrap status for a device serial.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+- Query params:
+  - `serial` (required, string)
+- Body: none
+
+Success response (`200 OK`):
+
+```json
+{
+  "serial": "GX-2024-TX-042-B9F3",
+  "status": "completed",
+  "apiConsumed": true,
+  "bootstrapConsumed": true,
+  "deviceId": "device-id",
+  "nodeId": "nodeB",
+  "did": "did:guardian:EtFW3..."
+}
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
+- `400 BAD_REQUEST`: invalid serial
+- `404 NOT_FOUND`: pairing record not found
+- `500 INTERNAL_SERVER_ERROR`: pairing or device store read failure
+
+#### POST `/devices/{deviceId}/unpair`
+
+Purpose:
+Remove or unpair a Guardian device from the authenticated owner account.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+- Path params:
+  - `deviceId` (required, string)
+- Query params: none
+- Body: none
+
+Success response (`200 OK`):
+
+```json
+{
+  "deviceId": "device-id",
+  "status": "unpaired"
+}
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
+- `403 FORBIDDEN`: caller is not authorized to unpair the device
+- `404 NOT_FOUND`: device not found for the authenticated user
+- `500 INTERNAL_SERVER_ERROR`: device store persistence failure
+
+---
+
 ## 3. Endpoint Contracts
 
 ### 3.1 GET `/health`
@@ -194,7 +606,11 @@ Field notes:
   - Query params: none
   - Body: none
 - Success response (`200 OK`):
-  - Plain text: `ok`
+```json
+{
+  "status": "ok"
+}
+```
 - Error responses:
   - None expected from handler
 

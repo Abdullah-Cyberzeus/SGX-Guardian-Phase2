@@ -194,6 +194,7 @@ impl KeyManager {
                             )
                             .map_err(|_| anyhow!("Generate fallback keypair"))?;
                             write_private_key(fallback_key_path, pkcs8.as_ref())?;
+                            write_private_key(fb_path, pkcs8.as_ref())?;
                             pkcs8.as_ref().to_vec()
                         }
                     }
@@ -202,6 +203,7 @@ impl KeyManager {
                         EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
                             .map_err(|_| anyhow!("Generate fallback keypair"))?;
                     write_private_key(fallback_key_path, pkcs8.as_ref())?;
+                    write_private_key(fb_path, pkcs8.as_ref())?;
                     pkcs8.as_ref().to_vec()
                 };
 

@@ -20,6 +20,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 windows-sys = { version = "0.52", features = ["Win32_System_Console"] }
 anyhow = "1"
+argon2 = "0.5"
 ring = "0.17.14"
 rand = "0.8"
 base64 = "0.22"
@@ -43,6 +44,8 @@ libmdns = "0.9"
 uuid = { version = "1", features = ["v4","serde"] }
 libc = "0.2"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
+hyper-util = { version = "0.1.20", features = ["server-auto", "service", "tokio"] }
+tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring", "tls12"] }
 tempfile = "3.8"
 quick-xml = { version = "0.41", features = ["serialize"] }
 which = "8"
