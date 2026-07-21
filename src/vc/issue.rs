@@ -482,7 +482,6 @@ static KEY_MANAGER_CACHE: Lazy<StdMutex<HashMap<String, Arc<KeyManager>>>> =
 pub fn load_runtime_key_manager(node_id: &str) -> anyhow::Result<Arc<KeyManager>> {
     let key_path = runtime_device_key_dir().join(format!("device_{}.key", node_id));
     let key_path = key_path.to_string_lossy().to_string();
-
     if let Some(km) = KEY_MANAGER_CACHE
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -491,15 +490,23 @@ pub fn load_runtime_key_manager(node_id: &str) -> anyhow::Result<Arc<KeyManager>
         return Ok(km.clone());
     }
 
-    #[cfg(feature = "secure-element")]
-    let km = KeyManager::init_with_se050(
-        &crate::secure_element::config::SeConfig::default(),
-        "/var/lib/sgx-guardian",
-        &key_path,
-    )
-    .or_else(|_| KeyManager::load_or_generate(&key_path))?;
-    #[cfg(not(feature = "secure-element"))]
-    let km = KeyManager::load_or_generate(&key_path)?;
+    let km = if software_keys_forced() {
+        KeyManager::load_or_generate(&key_path)?
+    } else {
+        #[cfg(feature = "secure-element")]
+        {
+            KeyManager::init_with_se050(
+                &crate::secure_element::config::SeConfig::default(),
+                "/var/lib/sgx-guardian",
+                &key_path,
+            )
+            .or_else(|_| KeyManager::load_or_generate(&key_path))?
+        }
+        #[cfg(not(feature = "secure-element"))]
+        {
+            KeyManager::load_or_generate(&key_path)?
+        }
+    };
 
     let km = Arc::new(km);
     KEY_MANAGER_CACHE
@@ -513,6 +520,17 @@ fn runtime_device_key_dir() -> PathBuf {
     std::env::var(DEVICE_KEY_DIR_ENV)
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("/var/lib/sgx-guardian/sgx-agent"))
+}
+
+fn software_keys_forced() -> bool {
+    fn env_true(key: &str) -> bool {
+        matches!(
+            std::env::var(key).ok().as_deref(),
+            Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("on")
+        )
+    }
+
+    env_true("SGX_FORCE_SOFTWARE_KEYS") || env_true("SGX_DISABLE_SE050_DKP")
 }
 
 fn ensure_circle_owner(

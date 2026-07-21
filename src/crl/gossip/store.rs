@@ -11,7 +11,7 @@
 //! window to milliseconds. A cross-process advisory lock is a listed
 //! follow-up hardening item.
 
-use crate::crl::entry::CrlEntry;
+use crate::crl::entry::{CrlEntry, UnrevokeTombstone};
 use crate::crl::errors::CrlError;
 use crate::crl::list::CertificateRevocationList;
 use crate::crl::persistence;
@@ -32,24 +32,42 @@ pub struct MergeOutcome {
     pub skipped: usize,
     /// Clones of the entries actually added or replaced (for audit).
     pub merged_entries: Vec<CrlEntry>,
+    /// Clones of the tombstones actually added or replaced (for audit).
+    pub merged_tombstones: Vec<UnrevokeTombstone>,
     pub newly_propagated: Vec<String>,
     pub merkle_root: String,
     pub sequence: u64,
 }
 
 /// Deterministic conflict rule when two independently-issued, verified
-/// entries revoke the SAME DID: LATER `timestamp` wins (an attacker who
+/// records affect the SAME DID: LATER `timestamp` wins (an attacker who
 /// backdates a revocation must not be able to pin a stale entry over a
 /// genuinely more recent one); ties break on the lexicographically lower
-/// fingerprint. Every node applies the same rule, so entry sets (and
+/// fingerprint. Every node applies the same rule, so record sets (and
 /// therefore Merkle roots) converge.
-pub fn incoming_wins(existing: &CrlEntry, incoming: &CrlEntry) -> bool {
-    let existing_ts = DateTime::parse_from_rfc3339(&existing.timestamp).ok();
-    let incoming_ts = DateTime::parse_from_rfc3339(&incoming.timestamp).ok();
+pub fn incoming_record_wins(
+    existing_timestamp: &str,
+    existing_fingerprint: &str,
+    incoming_timestamp: &str,
+    incoming_fingerprint: &str,
+) -> bool {
+    let existing_ts = DateTime::parse_from_rfc3339(existing_timestamp).ok();
+    let incoming_ts = DateTime::parse_from_rfc3339(incoming_timestamp).ok();
     match (incoming_ts, existing_ts) {
         (Some(incoming), Some(existing)) if incoming != existing => incoming > existing,
-        _ => incoming.fingerprint() < existing.fingerprint(),
+        _ => incoming_fingerprint < existing_fingerprint,
     }
+}
+
+pub fn incoming_wins(existing: &CrlEntry, incoming: &CrlEntry) -> bool {
+    let existing_fp = existing.fingerprint();
+    let incoming_fp = incoming.fingerprint();
+    incoming_record_wins(
+        &existing.timestamp,
+        &existing_fp,
+        &incoming.timestamp,
+        &incoming_fp,
+    )
 }
 
 /// Gossip-mutable fields are LOCAL bookkeeping. A remote copy's
@@ -59,6 +77,13 @@ pub fn incoming_wins(existing: &CrlEntry, incoming: &CrlEntry) -> bool {
 /// excludes these fields.
 pub fn normalized(entry: &CrlEntry) -> CrlEntry {
     let mut cleaned = entry.clone();
+    cleaned.peers_notified.clear();
+    cleaned.propagated = false;
+    cleaned
+}
+
+pub fn normalized_tombstone(tombstone: &UnrevokeTombstone) -> UnrevokeTombstone {
+    let mut cleaned = tombstone.clone();
     cleaned.peers_notified.clear();
     cleaned.propagated = false;
     cleaned
@@ -84,24 +109,48 @@ fn resign_and_save(
     Ok(())
 }
 
-/// Merge entries that the CALLER HAS ALREADY VERIFIED
-/// (`crl::verify::verify_entry`) into the local CRL.
-pub fn merge_verified_entries(
+/// Merge records that the CALLER HAS ALREADY VERIFIED
+/// (`crl::verify::verify_entry` / `crl::verify::verify_tombstone`) into the
+/// local CRL state.
+pub fn merge_verified_records(
     record: &DidRecord,
     km: &KeyManager,
     circle_id: &str,
-    incoming: &[CrlEntry],
+    incoming_entries: &[CrlEntry],
+    incoming_tombstones: &[UnrevokeTombstone],
 ) -> Result<MergeOutcome, CrlError> {
     let mut crl = load_or_new(&record.did, circle_id)?;
     let mut outcome = MergeOutcome::default();
+    let mut remaining = super::protocol::MAX_ENTRIES_PER_MESSAGE;
 
-    for entry in incoming
-        .iter()
-        .take(super::protocol::MAX_ENTRIES_PER_MESSAGE)
-    {
+    for entry in incoming_entries.iter().take(remaining) {
         let fingerprint = entry.fingerprint();
-        if crl.entries.iter().any(|e| e.fingerprint() == fingerprint) {
+        if crl
+            .entries
+            .iter()
+            .any(|existing| existing.state_fingerprint() == entry.state_fingerprint())
+        {
             outcome.skipped += 1;
+            remaining = remaining.saturating_sub(1);
+            continue;
+        }
+        if let Some(existing_tombstone) = crl.tombstone(&entry.revoked_did).cloned() {
+            let existing_fp = existing_tombstone.fingerprint();
+            if incoming_record_wins(
+                &existing_tombstone.timestamp,
+                &existing_fp,
+                &entry.timestamp,
+                &fingerprint,
+            ) {
+                let normalized = normalized(entry);
+                crl.upsert(normalized.clone())?;
+                persistence::save_entry(&normalized)?;
+                outcome.merged_entries.push(entry.clone());
+                outcome.replaced += 1;
+            } else {
+                outcome.skipped += 1;
+            }
+            remaining = remaining.saturating_sub(1);
             continue;
         }
         if let Some(position) = crl
@@ -110,18 +159,79 @@ pub fn merge_verified_entries(
             .position(|e| e.revoked_did == entry.revoked_did)
         {
             if incoming_wins(&crl.entries[position], entry) {
-                crl.entries[position] = normalized(entry);
-                persistence::save_entry(entry)?;
+                let normalized = normalized(entry);
+                crl.entries[position] = normalized.clone();
+                persistence::save_entry(&normalized)?;
                 outcome.merged_entries.push(entry.clone());
+                outcome.replaced += 1;
+            } else {
+                outcome.skipped += 1;
+            }
+            remaining = remaining.saturating_sub(1);
+            continue;
+        }
+        let normalized = normalized(entry);
+        crl.entries.push(normalized.clone());
+        persistence::save_entry(&normalized)?;
+        outcome.merged_entries.push(entry.clone());
+        outcome.added += 1;
+        remaining = remaining.saturating_sub(1);
+    }
+
+    for tombstone in incoming_tombstones.iter().take(remaining) {
+        let fingerprint = tombstone.fingerprint();
+        if crl
+            .tombstones
+            .iter()
+            .any(|existing| existing.state_fingerprint() == tombstone.state_fingerprint())
+        {
+            outcome.skipped += 1;
+            continue;
+        }
+        if let Some(position) = crl
+            .entries
+            .iter()
+            .position(|entry| entry.revoked_did == tombstone.revoked_did)
+        {
+            let existing_fp = crl.entries[position].fingerprint();
+            if incoming_record_wins(
+                &crl.entries[position].timestamp,
+                &existing_fp,
+                &tombstone.timestamp,
+                &fingerprint,
+            ) {
+                let normalized = normalized_tombstone(tombstone);
+                crl.upsert_tombstone(normalized.clone());
+                persistence::save_tombstone(&normalized)?;
+                outcome.merged_tombstones.push(tombstone.clone());
                 outcome.replaced += 1;
             } else {
                 outcome.skipped += 1;
             }
             continue;
         }
-        crl.entries.push(normalized(entry));
-        persistence::save_entry(entry)?;
-        outcome.merged_entries.push(entry.clone());
+        if let Some(existing_tombstone) = crl.tombstone(&tombstone.revoked_did).cloned() {
+            let existing_fp = existing_tombstone.fingerprint();
+            if incoming_record_wins(
+                &existing_tombstone.timestamp,
+                &existing_fp,
+                &tombstone.timestamp,
+                &fingerprint,
+            ) {
+                let normalized = normalized_tombstone(tombstone);
+                crl.upsert_tombstone(normalized.clone());
+                persistence::save_tombstone(&normalized)?;
+                outcome.merged_tombstones.push(tombstone.clone());
+                outcome.replaced += 1;
+            } else {
+                outcome.skipped += 1;
+            }
+            continue;
+        }
+        let normalized = normalized_tombstone(tombstone);
+        crl.upsert_tombstone(normalized.clone());
+        persistence::save_tombstone(&normalized)?;
+        outcome.merged_tombstones.push(tombstone.clone());
         outcome.added += 1;
     }
 
@@ -132,6 +242,8 @@ pub fn merge_verified_entries(
     }
 
     crl.entries
+        .sort_by(|a, b| a.revoked_did.cmp(&b.revoked_did));
+    crl.tombstones
         .sort_by(|a, b| a.revoked_did.cmp(&b.revoked_did));
     resign_and_save(&mut crl, record, km)?;
     outcome.merkle_root = crl.merkle_root.clone();
@@ -168,6 +280,20 @@ pub fn mark_peer_notified(
             changed = true;
         }
     }
+    for tombstone in crl.tombstones.iter_mut() {
+        if tombstone.revoked_did == peer_did {
+            continue;
+        }
+        if !tombstone.peers_notified.iter().any(|did| did == peer_did) {
+            tombstone.peers_notified.push(peer_did.to_string());
+            changed = true;
+        }
+        if !tombstone.propagated && tombstone.peers_notified.len() >= threshold_count {
+            tombstone.propagated = true;
+            outcome.newly_propagated.push(tombstone.id.clone());
+            changed = true;
+        }
+    }
 
     if changed {
         resign_and_save(&mut crl, record, km)?;
@@ -183,36 +309,86 @@ pub fn snapshot() -> Result<(u64, String, Vec<String>), CrlError> {
         Some(crl) => (
             crl.sequence,
             crl.merkle_root.clone(),
-            crl.entries.iter().map(|e| e.fingerprint()).collect(),
+            crl.entries
+                .iter()
+                .map(CrlEntry::state_fingerprint)
+                .chain(
+                    crl.tombstones
+                        .iter()
+                        .map(UnrevokeTombstone::state_fingerprint),
+                )
+                .collect(),
         ),
         None => (0, String::new(), Vec::new()),
     })
 }
 
-/// Local entries whose fingerprints are NOT in `known` (what the peer lacks).
-pub fn entries_not_in(known: &HashSet<String>) -> Result<Vec<CrlEntry>, CrlError> {
+/// Local records whose fingerprints are NOT in `known` (what the peer lacks).
+pub fn entries_not_in(
+    known: &HashSet<String>,
+) -> Result<(Vec<CrlEntry>, Vec<UnrevokeTombstone>), CrlError> {
     Ok(match persistence::load_crl()? {
-        Some(crl) => crl
-            .entries
-            .iter()
-            .filter(|e| !known.contains(&e.fingerprint()))
-            .take(super::protocol::MAX_ENTRIES_PER_MESSAGE)
-            .cloned()
-            .collect(),
-        None => Vec::new(),
+        Some(crl) => {
+            let mut entries = Vec::new();
+            let mut tombstones = Vec::new();
+            let mut remaining = super::protocol::MAX_ENTRIES_PER_MESSAGE;
+
+            for entry in &crl.entries {
+                if remaining == 0 {
+                    break;
+                }
+                if !known.contains(&entry.state_fingerprint()) {
+                    entries.push(entry.clone());
+                    remaining -= 1;
+                }
+            }
+            for tombstone in &crl.tombstones {
+                if remaining == 0 {
+                    break;
+                }
+                if !known.contains(&tombstone.state_fingerprint()) {
+                    tombstones.push(tombstone.clone());
+                    remaining -= 1;
+                }
+            }
+
+            (entries, tombstones)
+        }
+        None => (Vec::new(), Vec::new()),
     })
 }
 
-/// Local entries whose fingerprints ARE in `want` (what the peer asked for).
-pub fn entries_matching(want: &HashSet<String>) -> Result<Vec<CrlEntry>, CrlError> {
+/// Local records whose fingerprints ARE in `want` (what the peer asked for).
+pub fn entries_matching(
+    want: &HashSet<String>,
+) -> Result<(Vec<CrlEntry>, Vec<UnrevokeTombstone>), CrlError> {
     Ok(match persistence::load_crl()? {
-        Some(crl) => crl
-            .entries
-            .iter()
-            .filter(|e| want.contains(&e.fingerprint()))
-            .take(super::protocol::MAX_ENTRIES_PER_MESSAGE)
-            .cloned()
-            .collect(),
-        None => Vec::new(),
+        Some(crl) => {
+            let mut entries = Vec::new();
+            let mut tombstones = Vec::new();
+            let mut remaining = super::protocol::MAX_ENTRIES_PER_MESSAGE;
+
+            for entry in &crl.entries {
+                if remaining == 0 {
+                    break;
+                }
+                if want.contains(&entry.state_fingerprint()) {
+                    entries.push(entry.clone());
+                    remaining -= 1;
+                }
+            }
+            for tombstone in &crl.tombstones {
+                if remaining == 0 {
+                    break;
+                }
+                if want.contains(&tombstone.state_fingerprint()) {
+                    tombstones.push(tombstone.clone());
+                    remaining -= 1;
+                }
+            }
+
+            (entries, tombstones)
+        }
+        None => (Vec::new(), Vec::new()),
     })
 }

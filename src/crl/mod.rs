@@ -7,8 +7,8 @@ pub mod persistence;
 pub mod verify;
 
 pub use entry::{
-    CrlEntry, RevocationEvidence, RevocationReason, RevokerRole, Severity, CRL_CONTEXT_CORE,
-    CRL_CONTEXT_SGX,
+    CrlEntry, RevocationEvidence, RevocationReason, RevokerRole, Severity, UnrevokeTombstone,
+    CRL_CONTEXT_CORE, CRL_CONTEXT_SGX, CRL_UNREVOKE_TOMBSTONE_TYPE,
 };
 pub use errors::CrlError;
 pub use list::CertificateRevocationList;
