@@ -163,10 +163,7 @@ impl RuntimeGates {
             self.ssscli_timeout_secs,
             self.startup_cooldown_ms
         );
-        tracing::info!(
-            "Runtime gates: disable_login={}",
-            self.disable_login,
-        );
+        tracing::info!("Runtime gates: disable_login={}", self.disable_login,);
         tracing::info!(
             "Runtime gates (boot): read_ocotp={} (disable_flag={}) measure_binary_hash={}",
             self.read_ocotp,
