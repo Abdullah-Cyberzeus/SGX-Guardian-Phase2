@@ -160,7 +160,6 @@ async fn sync_admin_bootstrap_state(
         .await
         .map_err(|e| Status::internal(format!("bootstrap state sync failed: {}", e)))
 }
-
 fn load_ca_bootstrap_identity_with_paths(
     node_id: &str,
     force_software_keys: bool,
@@ -185,6 +184,22 @@ fn load_ca_bootstrap_identity_with_paths(
     let issuer = crate::did::DidRecord::load(did_path)
         .map_err(|e| Status::internal(format!("CA DID load: {}", e)))?;
 
+    #[cfg(feature = "tpm")]
+    {
+        let tpm_cfg = crate::tpm::TpmConfig::default();
+        if crate::tpm::should_attempt(&tpm_cfg) {
+            let km = KeyManager::init_with_tpm(&tpm_cfg, crate::tpm::TPM_BASE_PATH, key_path)
+                .map_err(|e| Status::internal(format!("CA key manager: {}", e)))?;
+
+            if km.backend_name() == "Software" {
+                return Err(Status::failed_precondition(
+                    "CA cert bootstrap requires a hardware-backed DID; set SGX_FORCE_SOFTWARE_KEYS=1 only for container/dev mode",
+                ));
+            }
+
+            return Ok((issuer, km));
+        }
+    }
     #[cfg(feature = "secure-element")]
     {
         let km = KeyManager::init_with_se050(
@@ -196,7 +211,7 @@ fn load_ca_bootstrap_identity_with_paths(
 
         if km.backend_name() != "SE050" {
             return Err(Status::failed_precondition(
-                "CA cert bootstrap requires SE050-backed DID; set SGX_FORCE_SOFTWARE_KEYS=1 only for container/dev mode",
+                "CA cert bootstrap requires a hardware-backed DID; set SGX_FORCE_SOFTWARE_KEYS=1 only for container/dev mode",
             ));
         }
 
@@ -205,9 +220,9 @@ fn load_ca_bootstrap_identity_with_paths(
 
     #[cfg(not(feature = "secure-element"))]
     {
-        Err(Status::failed_precondition(
-            "CA cert bootstrap requires SGX_FORCE_SOFTWARE_KEYS=1 when secure-element support is unavailable",
-        ))
+        return Err(Status::failed_precondition(
+            "CA cert bootstrap requires SGX_FORCE_SOFTWARE_KEYS=1 when no hardware backend is available",
+        ));
     }
 }
 

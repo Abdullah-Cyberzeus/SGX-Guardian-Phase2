@@ -23,7 +23,7 @@ pub enum DidError {
     #[error("DID derivation mismatch — current hardware does not match did.json")]
     DerivationMismatch,
 
-    #[error("SE050 UID unavailable: {0}")]
+    #[error("Hardware UID unavailable: {0}")]
     UidUnavailable(String),
 
     #[error("DKP public key unavailable at {0}")]

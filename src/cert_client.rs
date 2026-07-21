@@ -69,6 +69,40 @@ fn split_host_port(addr: &str) -> (String, u16) {
     (addr.to_string(), 50061)
 }
 
+fn local_membership_vc_available() -> bool {
+    crate::vc::persistence::load_own_any()
+        .ok()
+        .flatten()
+        .is_some()
+}
+
+fn ensure_local_membership_vc(member_vc_json: &str) -> Result<Option<String>, String> {
+    if member_vc_json.trim().is_empty() {
+        return if local_membership_vc_available() {
+            Ok(None)
+        } else {
+            Err("membership VC missing from CA response and no local VC is stored".to_string())
+        };
+    }
+
+    let vc = serde_json::from_str::<crate::vc::credential::VerifiableCredential>(member_vc_json)
+        .map_err(|e| format!("VC parse failed: {}", e))?;
+    crate::vc::persistence::save_own(&vc).map_err(|e| format!("VC save failed: {}", e))?;
+
+    match crate::vc::persistence::load_own_any() {
+        Ok(Some(saved)) if saved.id == vc.id => Ok(Some(vc.id)),
+        Ok(Some(saved)) => Err(format!(
+            "VC saved as {} but load_own_any returned {}",
+            vc.id, saved.id
+        )),
+        Ok(None) => Err(format!(
+            "VC saved as {} but load_own_any returned no local VC",
+            vc.id
+        )),
+        Err(e) => Err(format!("VC post-save load failed: {}", e)),
+    }
+}
+
 /// Request a CA-signed Nebula certificate from nodeA.
 ///
 /// Blocks until the cert is received.  On success:
@@ -101,10 +135,7 @@ pub async fn request_certificate_from_ca(
 
     let cert_path = format!("{}/nodes/{}.crt", NEBULA_BASE_DIR, node_id);
     let key_path = format!("{}/nodes/{}.key", NEBULA_BASE_DIR, node_id);
-    let has_vc = crate::vc::persistence::load_own_any()
-        .ok()
-        .flatten()
-        .is_some();
+    let has_vc = local_membership_vc_available();
     let has_status_list = crate::vc::persistence::status_list_path().exists();
 
     // Idempotent: cert AND CA cert both present
@@ -157,10 +188,7 @@ pub async fn request_certificate_from_ca(
         if Path::new(&cert_path).exists()
             && Path::new(&key_path).exists()
             && NebulaCA::ca_cert_exists(NEBULA_BASE_DIR)
-            && crate::vc::persistence::load_own_any()
-                .ok()
-                .flatten()
-                .is_some()
+            && local_membership_vc_available()
             && crate::vc::persistence::status_list_path().exists()
         {
             println!("✅ Cert + CA cert + VC detected on filesystem — done.");
@@ -336,24 +364,27 @@ pub async fn request_certificate_from_ca(
                         }
                     }
 
-                    if !resp.member_vc_json.is_empty() {
-                        match serde_json::from_str::<crate::vc::credential::VerifiableCredential>(
-                            &resp.member_vc_json,
-                        ) {
-                            Ok(vc) => {
-                                if let Err(e) = crate::vc::persistence::save_own(&vc) {
-                                    log_error(&node_id, &format!("VC save failed: {}", e));
-                                } else {
-                                    log_audit(
-                                        &node_id,
-                                        AuditCategory::Vc,
-                                        AuditSeverity::Info,
-                                        AuditAction::Succeeded,
-                                        &format!("VC received and stored: {}", vc.id),
-                                    );
-                                }
-                            }
-                            Err(e) => log_error(&node_id, &format!("VC parse failed: {}", e)),
+                    match ensure_local_membership_vc(&resp.member_vc_json) {
+                        Ok(Some(vc_id)) => {
+                            log_audit(
+                                &node_id,
+                                AuditCategory::Vc,
+                                AuditSeverity::Info,
+                                AuditAction::Succeeded,
+                                &format!("VC received and stored: {}", vc_id),
+                            );
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            let msg = format!(
+                                "{}; certificate bootstrap is not complete yet, retrying",
+                                e
+                            );
+                            eprintln!("⚠️  {}", msg);
+                            log_error(&node_id, &msg);
+                            tokio::time::sleep(std::time::Duration::from_secs(RETRY_INTERVAL_SECS))
+                                .await;
+                            continue;
                         }
                     }
 
@@ -532,4 +563,69 @@ fn set_relay_enabled_in_node_config(node_id: &str) -> Result<(), String> {
     let updated = serde_yaml::to_string(&doc).map_err(|e| format!("yaml serialize: {}", e))?;
     std::fs::write(&cfg_path, updated).map_err(|e| format!("write {}: {}", cfg_path, e))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_local_membership_vc;
+    use crate::did::document::Proof;
+    use crate::vc::credential::{
+        CredentialRole, CredentialStatus, CredentialSubject, MembershipStatus,
+        VerifiableCredential, TYPE_CIRCLE_MEMBERSHIP, TYPE_VC, VC_CONTEXT_CORE,
+    };
+    use once_cell::sync::Lazy;
+    use std::sync::Mutex;
+    use tempfile::TempDir;
+
+    static TEST_ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+    #[test]
+    fn ensure_local_membership_vc_saves_and_surfaces_saved_vc() {
+        let _guard = TEST_ENV_LOCK.lock().expect("test env lock");
+        let temp = TempDir::new().expect("tempdir");
+        let previous = std::env::var_os(crate::vc::persistence::VC_BASE_ENV);
+        std::env::set_var(crate::vc::persistence::VC_BASE_ENV, temp.path());
+
+        let vc = VerifiableCredential {
+            context: vec![VC_CONTEXT_CORE.to_string()],
+            id: "urn:uuid:test-member-vc".to_string(),
+            vc_type: vec![TYPE_VC.to_string(), TYPE_CIRCLE_MEMBERSHIP.to_string()],
+            issuer: "did:guardian:issuer".to_string(),
+            issuance_date: "2026-07-16T00:00:00Z".to_string(),
+            expiration_date: "2027-07-16T00:00:00Z".to_string(),
+            credential_subject: CredentialSubject::new(
+                "did:guardian:member".to_string(),
+                CredentialRole::Member,
+                vec!["READ".to_string()],
+                "2026-07-16T00:00:00Z".to_string(),
+                "guardian-circle-alpha".to_string(),
+                Some("nodeB".to_string()),
+                MembershipStatus::Active,
+            ),
+            credential_status: CredentialStatus {
+                id: "did:guardian:issuer/status-list#0".to_string(),
+                status_type: "StatusList2021Entry".to_string(),
+                status_purpose: "revocation".to_string(),
+                status_list_index: "0".to_string(),
+                status_list_credential: "did:guardian:issuer/status-list".to_string(),
+            },
+            proof: Proof::default(),
+        };
+
+        let result =
+            ensure_local_membership_vc(&serde_json::to_string(&vc).expect("serialize test vc"))
+                .expect("persist own vc");
+        let loaded = crate::vc::persistence::load_own_any()
+            .expect("load own any")
+            .expect("saved vc");
+
+        assert_eq!(result.as_deref(), Some(vc.id.as_str()));
+        assert_eq!(loaded.id, vc.id);
+
+        if let Some(previous) = previous {
+            std::env::set_var(crate::vc::persistence::VC_BASE_ENV, previous);
+        } else {
+            std::env::remove_var(crate::vc::persistence::VC_BASE_ENV);
+        }
+    }
 }
