@@ -29,13 +29,19 @@ fn write_private_key(path: impl AsRef<Path>, data: &[u8]) -> Result<()> {
 /// Manages the SG-X node identity keypair including generation,
 /// secure persistence, loading from disk, and providing signing/public
 /// key access for attestation workflows.
-/// Signing backend — software (ring) or hardware (SE050)
+/// Signing backend — software (ring) or hardware-backed providers.
 pub enum SigningBackend {
     /// Software ECDSA via ring crate (Phase 1 default)
     Software,
     /// Hardware ECDSA via NXP SE050 secure element
     #[cfg(feature = "secure-element")]
     Hardware { signer: SeSigner, key_id: u32 },
+    /// Hardware ECDSA via TPM 2.0 persistent handle
+    #[cfg(feature = "tpm")]
+    Tpm {
+        signer: crate::tpm::signer::TpmSigner,
+        dkp_handle: u32,
+    },
 }
 pub struct KeyManager {
     keypair: EcdsaKeyPair,
@@ -248,6 +254,86 @@ impl KeyManager {
             }
         }
     }
+
+    /// Initialize KeyManager with a TPM 2.0 hardware backend.
+    #[cfg(feature = "tpm")]
+    pub fn init_with_tpm(
+        cfg: &crate::tpm::TpmConfig,
+        base_path: &str,
+        fallback_key_path: &str,
+    ) -> Result<Self> {
+        use crate::tpm::{dik, dkp::TpmDkpManager, ek};
+
+        info!("Initializing KeyManager with TPM 2.0 hardware backend...");
+
+        let _uid = ek::ensure_uid(cfg).map_err(|e| anyhow!("TPM EK/UID: {}", e))?;
+        let _dik_pub = dik::ensure(cfg).map_err(|e| anyhow!("TPM DIK: {}", e))?;
+        let dkp = TpmDkpManager::init(cfg, base_path).map_err(|e| anyhow!("TPM DKP: {}", e))?;
+        let dkp_handle = dkp.active_handle();
+        let dkp_version = dkp.active_version();
+        let signer = dkp.create_signer();
+
+        let rng = SystemRandom::new();
+        let fb_path = Path::new(fallback_key_path);
+        if let Some(parent) = fb_path.parent() {
+            fs::create_dir_all(parent).ok();
+        }
+
+        let pkcs8_bytes = if fb_path.exists() {
+            let raw = fs::read(fb_path).unwrap_or_default();
+            match EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &raw, &rng) {
+                Ok(_) => raw,
+                Err(_) => {
+                    let quarantine = format!(
+                        "{}.corrupt.{}",
+                        fallback_key_path,
+                        chrono::Utc::now().timestamp()
+                    );
+                    let _ = fs::rename(fb_path, &quarantine);
+                    warn!(
+                        "TPM fallback key corrupt — quarantined to {} and regenerating",
+                        quarantine
+                    );
+                    let pkcs8 =
+                        EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
+                            .map_err(|_| anyhow!("Generate TPM fallback keypair"))?;
+                    write_private_key(fallback_key_path, pkcs8.as_ref())?;
+                    pkcs8.as_ref().to_vec()
+                }
+            }
+        } else {
+            let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
+                .map_err(|_| anyhow!("Generate TPM fallback keypair"))?;
+            write_private_key(fallback_key_path, pkcs8.as_ref())?;
+            pkcs8.as_ref().to_vec()
+        };
+
+        let keypair =
+            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &pkcs8_bytes, &rng)
+                .map_err(|_| anyhow!("Load TPM fallback keypair after regen"))?;
+
+        log_audit(
+            "system",
+            AuditCategory::Identity,
+            AuditSeverity::Info,
+            AuditAction::Loaded,
+            &format!(
+                "DKP initialized via TPM 2.0 hardware (handle=0x{:08X}, v{})",
+                dkp_handle, dkp_version
+            ),
+        );
+
+        info!(
+            "KeyManager initialized with TPM backend (handle=0x{:08X}, version={})",
+            dkp_handle, dkp_version
+        );
+
+        Ok(Self {
+            keypair,
+            key_path: fallback_key_path.to_string(),
+            backend: SigningBackend::Tpm { signer, dkp_handle },
+        })
+    }
     /// Signs the provided message bytes using the node’s private ECDSA key.
     /// Returns the raw signature bytes, used in attestation messages.
     pub fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
@@ -279,6 +365,20 @@ impl KeyManager {
                     AuditSeverity::Info,
                     AuditAction::Used,
                     "Key used to sign data (SE050 hardware)",
+                );
+                Ok(sig)
+            }
+            #[cfg(feature = "tpm")]
+            SigningBackend::Tpm { signer, dkp_handle } => {
+                let sig = signer
+                    .sign(*dkp_handle, data)
+                    .map_err(|e| anyhow!("TPM sign failed: {}", e))?;
+                log_audit(
+                    "system",
+                    AuditCategory::Cryptography,
+                    AuditSeverity::Info,
+                    AuditAction::Used,
+                    "Key used to sign data (TPM 2.0 hardware)",
                 );
                 Ok(sig)
             }
@@ -322,6 +422,38 @@ impl KeyManager {
                     )),
                 }
             }
+            #[cfg(feature = "tpm")]
+            SigningBackend::Tpm { .. } => {
+                let der = std::fs::read(crate::tpm::dkp::DKP_PUB_PATH).map_err(|e| {
+                    anyhow!(
+                        "TPM DKP pubkey missing at {}: {}",
+                        crate::tpm::dkp::DKP_PUB_PATH,
+                        e
+                    )
+                })?;
+                if der.len() == 91 {
+                    Ok(der[26..].to_vec())
+                } else if der.len() == 65 {
+                    Ok(der)
+                } else {
+                    Err(anyhow!("TPM DKP pubkey unexpected length {}", der.len()))
+                }
+            }
+        }
+    }
+
+    /// Returns the runtime public key export used for persisted DID artifacts.
+    pub fn runtime_public_key_export(&self) -> Result<Vec<u8>> {
+        match &self.backend {
+            SigningBackend::Software => Ok(self.keypair.public_key().as_ref().to_vec()),
+            #[cfg(feature = "secure-element")]
+            SigningBackend::Hardware { .. } => {
+                std::fs::read("/var/lib/sgx-guardian/keys/dkp_pub.der")
+                    .map_err(|e| anyhow!("Read SE050 runtime pubkey export: {}", e))
+            }
+            #[cfg(feature = "tpm")]
+            SigningBackend::Tpm { .. } => std::fs::read(crate::tpm::dkp::DKP_PUB_PATH)
+                .map_err(|e| anyhow!("Read TPM runtime pubkey export: {}", e)),
         }
     }
 
@@ -330,6 +462,32 @@ impl KeyManager {
             SigningBackend::Software => "Software",
             #[cfg(feature = "secure-element")]
             SigningBackend::Hardware { .. } => "SE050",
+            #[cfg(feature = "tpm")]
+            SigningBackend::Tpm { .. } => "TPM2",
+        }
+    }
+
+    pub fn backend_display_name(&self) -> &str {
+        match &self.backend {
+            SigningBackend::Software => "software",
+            #[cfg(feature = "secure-element")]
+            SigningBackend::Hardware { .. } => "SE050",
+            #[cfg(feature = "tpm")]
+            SigningBackend::Tpm { .. } => "TPM 2.0",
+        }
+    }
+
+    pub fn dkp_version(&self) -> u32 {
+        match &self.backend {
+            SigningBackend::Software => 1,
+            #[cfg(feature = "secure-element")]
+            SigningBackend::Hardware { key_id, .. } => {
+                key_id.saturating_sub(crate::secure_element::dkp::DKP_BASE_KEY_ID) + 1
+            }
+            #[cfg(feature = "tpm")]
+            SigningBackend::Tpm { dkp_handle, .. } => {
+                dkp_handle.saturating_sub(crate::tpm::TpmConfig::default().dkp_handle_base) + 1
+            }
         }
     }
 
@@ -343,6 +501,11 @@ impl KeyManager {
                 let se_config = crate::secure_element::config::SeConfig::default();
                 Self::init_with_se050(&se_config, "/var/lib/sgx-guardian", &self.key_path).map(Some)
             }
+            #[cfg(feature = "tpm")]
+            SigningBackend::Tpm { .. } => {
+                let cfg = crate::tpm::TpmConfig::default();
+                Self::init_with_tpm(&cfg, crate::tpm::TPM_BASE_PATH, &self.key_path).map(Some)
+            }
         }
     }
 
@@ -351,6 +514,55 @@ impl KeyManager {
     pub fn key_path(&self) -> &str {
         &self.key_path
     }
+}
+
+#[cfg(feature = "tpm")]
+fn tpm_runtime_candidate() -> Option<crate::tpm::TpmConfig> {
+    let cfg = crate::tpm::TpmConfig::default();
+    crate::tpm::should_attempt(&cfg).then_some(cfg)
+}
+
+pub fn runtime_device_uid_details(
+    fallback: &str,
+) -> std::result::Result<(String, String, Vec<u8>), String> {
+    #[cfg(feature = "tpm")]
+    if let Some(cfg) = tpm_runtime_candidate() {
+        let uid_bytes = crate::tpm::ek::ensure_uid(&cfg).map_err(|e| e.to_string())?;
+        let uid_string = hex::encode(&uid_bytes);
+        return Ok((uid_string, "tpm-ek".to_string(), uid_bytes));
+    }
+
+    let uid = crate::secure_element::pcr::read_device_uid(fallback);
+    if uid.trim().is_empty() {
+        return Err("empty uid".to_string());
+    }
+
+    let source = if uid.len() >= 20 && uid.chars().all(|c| c.is_ascii_hexdigit()) {
+        "ssscli".to_string()
+    } else {
+        "fallback".to_string()
+    };
+
+    Ok((uid.clone(), source, uid_to_bytes(&uid)))
+}
+
+pub fn runtime_device_uid(fallback: &str) -> String {
+    runtime_device_uid_details(fallback)
+        .map(|(uid, _, _)| uid)
+        .unwrap_or_else(|_| fallback.to_string())
+}
+
+fn uid_to_bytes(uid: &str) -> Vec<u8> {
+    let trimmed = uid.trim();
+    if trimmed.len().is_multiple_of(2)
+        && trimmed.len() >= 2
+        && trimmed.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        if let Ok(decoded) = hex::decode(trimmed) {
+            return decoded;
+        }
+    }
+    trimmed.as_bytes().to_vec()
 }
 #[cfg(test)]
 mod tests {

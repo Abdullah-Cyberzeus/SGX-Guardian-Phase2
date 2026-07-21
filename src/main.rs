@@ -51,6 +51,24 @@ const DID_DOC_REFRESH_INTERVAL_SECS: u64 = 300;
 const DID_DOC_PULL_INTERVAL_SECS: u64 = 30;
 const VC_STATUS_LIST_PULL_INTERVAL_SECS: u64 = 300;
 const DID_DOC_ROTATION_FLAG: &str = "/var/lib/sgx-guardian/identity/.dkp_rotated.flag";
+
+#[cfg(feature = "secure-element")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Se050TamperPlan {
+    Run,
+    SkipTpm,
+    SkipSoftware,
+}
+
+#[cfg(feature = "secure-element")]
+fn se050_tamper_plan(active_backend: &str) -> Se050TamperPlan {
+    match active_backend {
+        "SE050" => Se050TamperPlan::Run,
+        "TPM2" => Se050TamperPlan::SkipTpm,
+        _ => Se050TamperPlan::SkipSoftware,
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(" SGX Guardian Client Starting...");
@@ -92,6 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "/var/lib/sgx-guardian/nebula/nodes",
         "/var/lib/sgx-guardian/nebula/requests",
         "/var/lib/sgx-guardian/threat",
+        "/var/lib/sgx-guardian/xfer",
         "/etc/sgx-guardian/threat",
         "/var/log/sgx-guardian",
     ] {
@@ -246,37 +265,181 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Generate node-specific identity key path
     let node_key_path = format!("/var/lib/sgx-guardian/sgx-agent/device_{}.key", node_id);
     // === Hardware Key Manager Initialization (Phase 2 — HKM) ===
-    #[cfg(feature = "secure-element")]
     let km = {
+        #[cfg(feature = "tpm")]
+        let tpm_cfg = sgx_guardian_client::tpm::TpmConfig::default();
+
+        #[cfg(feature = "tpm")]
+        if GATES.force_software_keys && sgx_guardian_client::tpm::tpm_required(&tpm_cfg) {
+            let msg = format!(
+                "TPM mode is required by backend {} but software keys were requested; set SGX_ALLOW_TPM_DEV_FALLBACK=1 only for development fallback",
+                tpm_cfg.tcti
+            );
+            eprintln!("FATAL: {}", msg);
+            return Err(std::io::Error::other(msg).into());
+        }
+
         if GATES.force_software_keys {
             println!("🔐 Software-key mode forced by SGX_FORCE_SOFTWARE_KEYS");
+            log_audit(
+                &node_id,
+                AuditCategory::Identity,
+                AuditSeverity::Info,
+                AuditAction::Loaded,
+                "Software Key Manager forced by runtime gate",
+            );
             KeyManager::load_or_generate(&node_key_path)?
         } else {
-            let se_base_path = "/var/lib/sgx-guardian";
-            let se_config = secure_element::SeConfig::default();
+            #[cfg(feature = "tpm")]
+            {
+                if sgx_guardian_client::tpm::should_attempt(&tpm_cfg) {
+                    match KeyManager::init_with_tpm(
+                        &tpm_cfg,
+                        sgx_guardian_client::tpm::TPM_BASE_PATH,
+                        &node_key_path,
+                    ) {
+                        Ok(hw_km) => {
+                            if let Err(e) =
+                                sgx_guardian_client::tpm::probe_required_capabilities(&tpm_cfg)
+                            {
+                                if sgx_guardian_client::tpm::tpm_required(&tpm_cfg) {
+                                    let msg = format!(
+                                        "TPM required startup probe failed for {}: {}",
+                                        tpm_cfg.tcti, e
+                                    );
+                                    eprintln!("FATAL: {}", msg);
+                                    return Err(std::io::Error::other(msg).into());
+                                }
+                                eprintln!(
+                                    "TPM startup probe failed: {} — falling back because SGX_ALLOW_TPM_DEV_FALLBACK=1",
+                                    e
+                                );
+                                #[cfg(feature = "secure-element")]
+                                {
+                                    let se_base_path = "/var/lib/sgx-guardian";
+                                    let se_config = secure_element::SeConfig::default();
+                                    KeyManager::init_with_se050(
+                                        &se_config,
+                                        se_base_path,
+                                        &node_key_path,
+                                    )
+                                    .unwrap_or_else(|_| {
+                                        KeyManager::load_or_generate(&node_key_path)
+                                            .expect("software key fallback")
+                                    })
+                                }
+                                #[cfg(not(feature = "secure-element"))]
+                                {
+                                    KeyManager::load_or_generate(&node_key_path)?
+                                }
+                            } else {
+                                println!("DKP initialized via TPM 2.0 hardware");
+                                log_audit(
+                                    &node_id,
+                                    AuditCategory::Identity,
+                                    AuditSeverity::Info,
+                                    AuditAction::Loaded,
+                                    "Hardware Key Manager: DKP active via TPM 2.0",
+                                );
+                                hw_km
+                            }
+                        }
+                        Err(e) if sgx_guardian_client::tpm::tpm_required(&tpm_cfg) => {
+                            let msg = format!(
+                                "TPM HKM failed for required backend {}: {}",
+                                tpm_cfg.tcti, e
+                            );
+                            eprintln!("FATAL: {}", msg);
+                            return Err(std::io::Error::other(msg).into());
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "TPM HKM failed: {} — falling back because SGX_ALLOW_TPM_DEV_FALLBACK=1",
+                                e
+                            );
+                            #[cfg(feature = "secure-element")]
+                            {
+                                let se_base_path = "/var/lib/sgx-guardian";
+                                let se_config = secure_element::SeConfig::default();
 
-            match KeyManager::init_with_se050(&se_config, se_base_path, &node_key_path) {
-                Ok(hw_km) => {
-                    println!("DKP initialized via SE050 hardware");
-                    log_audit(
-                        &node_id,
-                        AuditCategory::Identity,
-                        AuditSeverity::Info,
-                        AuditAction::Loaded,
-                        "Hardware Key Manager: DKP active via SE050",
-                    );
-                    hw_km
+                                match KeyManager::init_with_se050(
+                                    &se_config,
+                                    se_base_path,
+                                    &node_key_path,
+                                ) {
+                                    Ok(hw_km) => hw_km,
+                                    Err(_) => KeyManager::load_or_generate(&node_key_path)?,
+                                }
+                            }
+                            #[cfg(not(feature = "secure-element"))]
+                            {
+                                KeyManager::load_or_generate(&node_key_path)?
+                            }
+                        }
+                    }
+                } else {
+                    #[cfg(feature = "secure-element")]
+                    {
+                        let se_base_path = "/var/lib/sgx-guardian";
+                        let se_config = secure_element::SeConfig::default();
+
+                        match KeyManager::init_with_se050(&se_config, se_base_path, &node_key_path)
+                        {
+                            Ok(hw_km) => {
+                                println!("DKP initialized via SE050 hardware");
+                                log_audit(
+                                    &node_id,
+                                    AuditCategory::Identity,
+                                    AuditSeverity::Info,
+                                    AuditAction::Loaded,
+                                    "Hardware Key Manager: DKP active via SE050",
+                                );
+                                hw_km
+                            }
+                            Err(e) => {
+                                eprintln!("SE050 HKM failed: {} — using software keys", e);
+                                KeyManager::load_or_generate(&node_key_path)?
+                            }
+                        }
+                    }
+
+                    #[cfg(not(feature = "secure-element"))]
+                    {
+                        KeyManager::load_or_generate(&node_key_path)?
+                    }
                 }
-                Err(e) => {
-                    eprintln!("SE050 HKM failed: {} — using software keys", e);
-                    KeyManager::load_or_generate(&node_key_path)?
+            }
+
+            #[cfg(all(not(feature = "tpm"), feature = "secure-element"))]
+            {
+                let se_base_path = "/var/lib/sgx-guardian";
+                let se_config = secure_element::SeConfig::default();
+
+                match KeyManager::init_with_se050(&se_config, se_base_path, &node_key_path) {
+                    Ok(hw_km) => {
+                        println!("DKP initialized via SE050 hardware");
+                        log_audit(
+                            &node_id,
+                            AuditCategory::Identity,
+                            AuditSeverity::Info,
+                            AuditAction::Loaded,
+                            "Hardware Key Manager: DKP active via SE050",
+                        );
+                        hw_km
+                    }
+                    Err(e) => {
+                        eprintln!("SE050 HKM failed: {} — using software keys", e);
+                        KeyManager::load_or_generate(&node_key_path)?
+                    }
                 }
+            }
+
+            #[cfg(all(not(feature = "tpm"), not(feature = "secure-element")))]
+            {
+                KeyManager::load_or_generate(&node_key_path)?
             }
         }
     };
-
-    #[cfg(not(feature = "secure-element"))]
-    let km = KeyManager::load_or_generate(&node_key_path)?;
 
     if GATES.force_software_keys {
         if let Err(e) = sgx_guardian_client::did::ensure_runtime_pubkey(
@@ -286,7 +449,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("⚠️ Software DID pubkey export failed: {}", e);
         }
     }
-
     // === DKP Auto-Rotation Check ===
     // Only probe the SE050 a SECOND time if the primary KeyManager init above
     // actually came up on hardware. Re-initializing DkpManager on a flaky chip
@@ -320,23 +482,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    #[cfg(feature = "tpm")]
+    if km.backend_name() == "TPM2" {
+        let tpm_cfg = sgx_guardian_client::tpm::TpmConfig::default();
+        if let Ok(mut dkp) = sgx_guardian_client::tpm::dkp::TpmDkpManager::init(
+            &tpm_cfg,
+            sgx_guardian_client::tpm::TPM_BASE_PATH,
+        ) {
+            match dkp.check_and_auto_rotate() {
+                Ok(Some(new_meta)) => {
+                    println!("  DKP auto-rotated to v{}", new_meta.version);
+                    if let Err(e) = sgx_guardian_client::did::method::update_dkp_version(
+                        sgx_guardian_client::did::DEFAULT_DID_PATH,
+                        new_meta.version,
+                    ) {
+                        eprintln!("  ⚠️ DID dkp_version update failed: {}", e);
+                    }
+                    let _ = std::fs::write(DID_DOC_ROTATION_FLAG, chrono::Utc::now().to_rfc3339());
+                }
+                Ok(None) => {}
+                Err(e) => eprintln!("  Auto-rotation check failed: {}", e),
+            }
+        }
+    }
 
     // === Device Identity Key (DIK) — non-rotating DID anchor ===
     #[cfg(feature = "secure-element")]
-    {
-        if km.backend_name() == "SE050" && !GATES.force_software_keys {
-            let se_config = sgx_guardian_client::secure_element::SeConfig::default();
-            match sgx_guardian_client::secure_element::dik::DeviceIdentityKey::ensure(&se_config) {
-                Ok(_) => {
-                    println!("🔑 Device Identity Key (DIK) ready (slot 0x20000100, non-rotating)")
-                }
-                Err(e) => eprintln!(
-                    "⚠️ DIK ensure failed: {} — DID will use cached anchor if present",
-                    e
-                ),
+    if km.backend_name() == "SE050" && !GATES.force_software_keys {
+        let se_config = sgx_guardian_client::secure_element::SeConfig::default();
+        match sgx_guardian_client::secure_element::dik::DeviceIdentityKey::ensure(&se_config) {
+            Ok(_) => {
+                println!("🔑 Device Identity Key (DIK) ready (slot 0x20000100, non-rotating)")
             }
-        } else {
-            tracing::warn!("Skipping DIK ensure because SE050 backend is not active");
+            Err(e) => eprintln!(
+                "⚠️ DIK ensure failed: {} — DID will use cached anchor if present",
+                e
+            ),
+        }
+    } else if km.backend_name() == "TPM2" {
+        tracing::info!("Skipping SE050 DIK ensure because TPM 2.0 backend is active");
+    } else {
+        tracing::info!("Skipping SE050 DIK ensure because software backend is active");
+    }
+
+    #[cfg(feature = "tpm")]
+    if km.backend_name() == "TPM2" && !GATES.force_software_keys {
+        let cfg = sgx_guardian_client::tpm::TpmConfig::default();
+        match sgx_guardian_client::tpm::dik::ensure(&cfg) {
+            Ok(_) => println!("🔑 TPM DIK ready (handle 0x81000100, non-rotating)"),
+            Err(e) => eprintln!(
+                "⚠️ TPM DIK ensure failed: {} — DID will use cached anchor if present",
+                e
+            ),
         }
     }
 
@@ -349,44 +546,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // already open" is a normal, expected warning — so this only reads
     // the UID/cert UID to establish the tamper-detection baseline.
     #[cfg(feature = "secure-element")]
-    let se050_tamper_handle: Option<std::sync::Arc<secure_element::se050::Se050>> = {
-        let se_config = secure_element::SeConfig::default();
-        let cli = secure_element::ssscli::SssCli::new(se_config.clone());
-        match cli.connect() {
-            Ok(_) => {
-                let uid = cli.get_uid().ok();
-                let cert_uid = cli.get_certuid().ok();
-                let se = secure_element::se050::Se050 {
-                    cli,
-                    config: se_config,
-                    uid,
-                    cert_uid,
-                    status: secure_element::se050::SeStatus::Active,
-                };
-                let tamper_status = secure_element::tamper::check_tamper(&se);
-                if tamper_status == secure_element::tamper::TamperStatus::Detected {
-                    eprintln!("🔴 SE050 TAMPER DETECTED — all crypto operations blocked");
-                    log_audit(
-                        &node_id,
-                        AuditCategory::Cryptography,
-                        AuditSeverity::Critical,
-                        AuditAction::Failed,
-                        "SE050 tamper detected at startup — crypto blocked",
-                    );
-                } else {
-                    println!("✅ SE050 tamper check: OK");
+    let se050_tamper_handle: Option<std::sync::Arc<secure_element::se050::Se050>> =
+        match se050_tamper_plan(km.backend_name()) {
+            Se050TamperPlan::Run => {
+                let se_config = secure_element::SeConfig::default();
+                let cli = secure_element::ssscli::SssCli::new(se_config.clone());
+                match cli.connect() {
+                    Ok(_) => {
+                        let uid = cli.get_uid().ok();
+                        let cert_uid = cli.get_certuid().ok();
+                        let se = secure_element::se050::Se050 {
+                            cli,
+                            config: se_config,
+                            uid,
+                            cert_uid,
+                            status: secure_element::se050::SeStatus::Active,
+                        };
+                        let tamper_status = secure_element::tamper::check_tamper(&se);
+                        if tamper_status == secure_element::tamper::TamperStatus::Detected {
+                            eprintln!("🔴 SE050 TAMPER DETECTED — all crypto operations blocked");
+                            log_audit(
+                                &node_id,
+                                AuditCategory::Cryptography,
+                                AuditSeverity::Critical,
+                                AuditAction::Failed,
+                                "SE050 tamper detected at startup — crypto blocked",
+                            );
+                        } else {
+                            println!("✅ SE050 tamper check: OK");
+                        }
+                        Some(std::sync::Arc::new(se))
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "⚠️ SE050 tamper baseline unavailable: {} — tamper detection disabled this boot",
+                            e
+                        );
+                        None
+                    }
                 }
-                Some(std::sync::Arc::new(se))
             }
-            Err(e) => {
-                eprintln!(
-                    "⚠️ SE050 tamper baseline unavailable: {} — tamper detection disabled this boot",
-                    e
+            Se050TamperPlan::SkipTpm => {
+                tracing::info!(
+                    "Skipping SE050 tamper initialization because TPM 2.0 backend is active"
+                );
+                println!("ℹ️ SE050 tamper initialization skipped: TPM 2.0 backend active");
+                None
+            }
+            Se050TamperPlan::SkipSoftware => {
+                tracing::info!(
+                    "Skipping SE050 tamper initialization because software backend is active"
                 );
                 None
             }
-        }
-    };
+        };
     #[cfg(not(feature = "secure-element"))]
     let _se050_tamper_handle: Option<()> = None;
 
@@ -413,14 +626,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(sgx_guardian_client::did::DidError::DerivationMismatch) => {
                 // A mismatch derived from the pinned DIK pubkey means the
-                // SE050 UID changed (true chip swap) — NOT a transient read
+                // The hardware UID changed (true root-of-trust swap) — NOT a transient read
                 // blip (Fix 1/2 prevent those from ever regenerating the DKP).
                 // Even so, do NOT kill the daemon: the persisted did.json
                 // remains the authoritative identity. Log CRITICAL, keep the
                 // persisted DID, and continue in a degraded-but-running state
                 // so the operator can investigate instead of facing a boot loop.
                 eprintln!(
-                    "  🔴 DID DERIVATION MISMATCH (SE050 UID changed?) — \
+                    "  🔴 DID DERIVATION MISMATCH (hardware UID changed?) — \
                      keeping persisted DID, continuing in DEGRADED mode."
                 );
                 log_audit(
@@ -472,75 +685,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(None) => {
             let did_path = sgx_guardian_client::did::DEFAULT_DID_PATH;
             let dkp_pubkey_path = sgx_guardian_client::did::DEFAULT_DKP_PUBKEY_PATH;
-            match sgx_guardian_client::did::method::resolve_local(did_path, dkp_pubkey_path) {
-                Ok((did, _anchor_pk, active)) => {
-                    let refreshed_km = match km.refresh_for_active_dkp() {
-                        Ok(km_opt) => km_opt,
-                        Err(e) => {
-                            eprintln!("  ⚠️ DID Document signer refresh failed: {}", e);
-                            None
-                        }
-                    };
-                    let did_doc_km = refreshed_km.as_ref().unwrap_or(&km);
-                    let dkp_pub = did_doc_km
-                        .pubkey_der()
-                        .or_else(|_| std::fs::read(dkp_pubkey_path))
-                        .unwrap_or_default();
-                    if dkp_pub.is_empty() {
-                        eprintln!("  ⚠️ DID Document skipped: DKP pubkey unavailable");
-                    } else {
-                        let input = sgx_guardian_client::did::document::DocBuildInput {
-                            did: did.as_str(),
-                            node_name: Some(&node_id),
-                            current_dkp_version:
-                                sgx_guardian_client::secure_element::pcr::read_dkp_key_version(),
-                            current_dkp_pubkey_der: &dkp_pub,
-                            overlay_ip_cidr: None,
-                            attestation_bind: None,
-                            cert_bootstrap_bind: None,
-                            revoked: vec![],
-                            previous_version_id: 0,
-                            created_at: None,
-                            status: Some(if active {
-                                "active".to_string()
-                            } else {
-                                "deactivated".to_string()
-                            }),
-                        };
-                        match sgx_guardian_client::did::document::DidDocument::build(input) {
-                            Ok(mut doc) => {
-                                let vm_ref = doc.verification_method[0].id.clone();
-                                match sgx_guardian_client::did::doc_sign::sign_in_place(
-                                    &mut doc, did_doc_km, &vm_ref,
-                                ) {
-                                    Ok(()) => {
-                                        if let Err(e) =
-                                            sgx_guardian_client::did::doc_persistence::save_self(
-                                                &doc,
-                                            )
-                                        {
-                                            eprintln!("  ⚠️ DID Document save failed: {}", e);
-                                        } else if let Err(e) =
-                                            sgx_guardian_client::did::doc_persistence::write_self_floor_version(
-                                                doc.sgx_version_id,
-                                            )
-                                        {
-                                            eprintln!(
-                                                "  ⚠️ DID Document version counter update failed: {}",
-                                                e
-                                            );
-                                        } else {
-                                            println!("  ✅ DID Document v1 created");
-                                        }
-                                    }
-                                    Err(e) => eprintln!("  ⚠️ DID Document sign failed: {}", e),
-                                }
-                            }
-                            Err(e) => eprintln!("  ⚠️ DID Document build failed: {}", e),
-                        }
-                    }
+            let refreshed_km = match km.refresh_for_active_dkp() {
+                Ok(km_opt) => km_opt,
+                Err(e) => {
+                    eprintln!("  ⚠️ DID Document signer refresh failed: {}", e);
+                    None
                 }
-                Err(e) => eprintln!("  ⚠️ DID Document resolve_local failed: {}", e),
+            };
+            let did_doc_km = refreshed_km.as_ref().unwrap_or(&km);
+            match sgx_guardian_client::did::ensure_self_document(
+                &node_id,
+                did_doc_km,
+                did_path,
+                dkp_pubkey_path,
+            ) {
+                Ok(()) => println!("  ✅ DID Document v1 created"),
+                Err(e) => eprintln!("  ⚠️ DID Document ensure failed: {}", e),
             }
         }
         Err(e) => eprintln!("  ⚠️ DID Document load failed: {}", e),
@@ -554,6 +714,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  Secure Element detected: SE050");
             println!("  Signing provider: SE050 hardware (ECDSA-P256)");
             println!("  RNG source: SE050 TRNG");
+        }
+        "TPM2" => {
+            println!("  Hardware root of trust detected: TPM 2.0");
+            println!("  Signing provider: TPM 2.0 hardware (ECDSA-P256)");
+            println!("  RNG source: TPM-backed identity with software nonces");
         }
         _ => {
             println!("  Secure Element not available");
@@ -623,217 +788,313 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         use sgx_guardian_client::secure_element::pcr_config;
         use sha2::Digest;
 
-        let mut pcr_engine = PcrEngine::new();
-        let mut measurement_errors: Vec<PcrMeasurementError> = Vec::new();
+        #[cfg(feature = "tpm")]
+        let tpm_mode = km.backend_name() == "TPM2";
+        #[cfg(not(feature = "tpm"))]
+        let tpm_mode = false;
 
-        // Detect environment
-        let is_hardware = std::path::Path::new("/proc/device-tree/model").exists();
-        println!(
-            "  PCR mode: {}",
-            if is_hardware {
-                "Hardware (board)"
-            } else {
-                "Software (simulated)"
-            }
-        );
+        if tpm_mode {
+            let cfg = sgx_guardian_client::tpm::TpmConfig::default();
+            let selected = sgx_guardian_client::tpm::pcr::selected_indices(&cfg.pcr_selection);
+            println!("  PCR mode: TPM 2.0 native ({})", cfg.pcr_selection);
 
-        let sources = if is_hardware {
-            pcr_config::default_measurement_sources(&node_id)
-        } else {
-            pcr_config::software_measurement_sources()
-        };
-
-        // Perform measurements
-        for src in &sources {
-            if src.source_type == "boot_chain" {
-                // Measure the boot chain state string
-                use sgx_guardian_client::secure_element::secure_boot::BootChainStatus;
-                let boot_status = if GATES.disable_secure_boot_check {
-                    BootChainStatus::unknown()
-                } else {
-                    BootChainStatus::check()
-                };
-                let measurement = boot_status.to_measurement_string();
-                match pcr_engine.extend_from_string(src.pcr_index, &measurement) {
-                    Ok(hash) => println!(
-                        "    PCR{}: {} → {}...",
-                        src.pcr_index,
-                        src.label,
-                        &hash[..12]
-                    ),
-                    Err(e) => {
-                        let _ =
-                            pcr_engine.extend_from_string(src.pcr_index, &format!("ERROR:{}", e));
-                        measurement_errors.push(PcrMeasurementError {
-                            pcr_index: src.pcr_index,
-                            source: src.source.clone(),
-                            error: e.clone(),
-                        });
-                        println!("    PCR{}: {} → ⚠️ {}", src.pcr_index, src.label, e);
+            match sgx_guardian_client::tpm::pcr::read_snapshot(&cfg) {
+                Ok(mut snapshot) => {
+                    for (position, value) in snapshot.pcr_values.iter().enumerate() {
+                        let pcr_index = selected.get(position).copied().unwrap_or(position as u32);
+                        let prefix = value.chars().take(12).collect::<String>();
+                        println!("    PCR{}: {}...", pcr_index, prefix);
                     }
-                }
-            } else if src.source_type == "multi_file" {
-                let files: Vec<String> = src
-                    .source
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .collect();
-                let errs = pcr_engine.extend_from_files(src.pcr_index, &files);
-                measurement_errors.extend(errs);
-            } else if src.source_type == "static_yaml" {
-                let canonical = canonical_static_yaml_measurement(&src.source);
-                match pcr_engine.extend_from_string(src.pcr_index, &canonical) {
-                    Ok(hash) => println!(
-                        "    PCR{}: {} → {}...",
-                        src.pcr_index,
-                        src.label,
-                        &hash[..12]
-                    ),
-                    Err(e) => {
-                        let _ =
-                            pcr_engine.extend_from_string(src.pcr_index, &format!("ERROR:{}", e));
-                        measurement_errors.push(PcrMeasurementError {
-                            pcr_index: src.pcr_index,
-                            source: src.source.clone(),
-                            error: e.clone(),
-                        });
-                        println!("    PCR{}: {} → ⚠️ {}", src.pcr_index, src.label, e);
+                    println!("  Platform integrity: ✅ PASS");
+
+                    let mut nonce_bytes = [0u8; 16];
+                    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce_bytes);
+                    snapshot.nonce = hex::encode(nonce_bytes);
+                    snapshot.measured_at = chrono::Utc::now().to_rfc3339();
+
+                    let composite_bytes =
+                        hex::decode(&snapshot.composite_digest).unwrap_or_else(|_| vec![0u8; 32]);
+                    let nonce_sign_bytes =
+                        hex::decode(&snapshot.nonce).unwrap_or_else(|_| vec![0u8; 16]);
+                    let ts_bytes = snapshot.measured_at.as_bytes();
+                    let mut sign_input = Vec::with_capacity(32 + 16 + ts_bytes.len());
+                    sign_input.extend_from_slice(&composite_bytes);
+                    sign_input.extend_from_slice(&nonce_sign_bytes);
+                    sign_input.extend_from_slice(ts_bytes);
+                    let sign_hash = sha2::Sha256::digest(&sign_input);
+
+                    if let Ok(sig) = km.sign(&sign_hash) {
+                        snapshot.composite_signature =
+                            Some(base64::engine::general_purpose::STANDARD.encode(&sig));
+                        println!(
+                            "  PCR composite signed by DKP (v{}) ✅",
+                            snapshot.key_version
+                        );
                     }
-                }
-            } else {
-                let result = match src.source_type.as_str() {
-                    "file" => pcr_engine.extend_from_file(src.pcr_index, &src.source),
-                    "string" => pcr_engine.extend_from_string(src.pcr_index, &src.source),
-                    _ => Err(format!("Unknown type: {}", src.source_type)),
-                };
-                match result {
-                    Ok(hash) => println!(
-                        "    PCR{}: {} → {}...",
-                        src.pcr_index,
-                        src.label,
-                        &hash[..12]
-                    ),
-                    Err(e) => {
-                        let _ =
-                            pcr_engine.extend_from_string(src.pcr_index, &format!("ERROR:{}", e));
-                        measurement_errors.push(PcrMeasurementError {
-                            pcr_index: src.pcr_index,
-                            source: src.source.clone(),
-                            error: e.clone(),
-                        });
-                        println!("    PCR{}: {} → ⚠️ {}", src.pcr_index, src.label, e);
+
+                    let pcr_path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node_id);
+                    match snapshot.save(&pcr_path) {
+                        Ok(_) => println!("  PCR snapshot → {}", pcr_path),
+                        Err(e) => eprintln!("  PCR save failed: {}", e),
                     }
-                }
-            }
-        }
-
-        pcr_engine.print_status();
-
-        // Determine integrity status
-        let has_critical_fail = measurement_errors.iter().any(|err| {
-            sources
-                .iter()
-                .any(|s| s.pcr_index == err.pcr_index && s.critical)
-        });
-        let integrity_status = if measurement_errors.is_empty() {
-            "PASS".to_string()
-        } else if has_critical_fail {
-            "FAIL".to_string()
-        } else {
-            "DEGRADED".to_string()
-        };
-
-        if integrity_status == "FAIL" {
-            eprintln!("  🔴 CRITICAL: Platform integrity check FAILED — attestation will be rejected by peers");
-        } else if integrity_status == "DEGRADED" {
-            println!("  ⚠️ Some measurements failed (non-critical) — status DEGRADED");
-        } else {
-            println!("  Platform integrity: ✅ PASS");
-        }
-
-        // Build snapshot
-        let mut snapshot = pcr_engine.snapshot();
-        snapshot.measurement_errors = measurement_errors;
-        snapshot.integrity_status = integrity_status;
-        snapshot.device_uid = read_device_uid(&node_id);
-        snapshot.key_version = read_dkp_key_version();
-
-        // Generate nonce + timestamp
-        let mut nonce_bytes = [0u8; 16];
-        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce_bytes);
-        snapshot.nonce = hex::encode(nonce_bytes);
-        snapshot.measured_at = chrono::Utc::now().to_rfc3339();
-
-        // Sign: SHA256(composite_bytes || nonce_bytes || timestamp_bytes)  (BINARY concat)
-        let composite_bytes =
-            hex::decode(&snapshot.composite_digest).unwrap_or_else(|_| vec![0u8; 32]);
-        let nonce_sign_bytes = hex::decode(&snapshot.nonce).unwrap_or_else(|_| vec![0u8; 16]);
-        let ts_bytes = snapshot.measured_at.as_bytes();
-        let mut sign_input = Vec::with_capacity(32 + 16 + ts_bytes.len());
-        sign_input.extend_from_slice(&composite_bytes);
-        sign_input.extend_from_slice(&nonce_sign_bytes);
-        sign_input.extend_from_slice(ts_bytes);
-        let sign_hash = sha2::Sha256::digest(&sign_input);
-
-        if let Ok(sig) = km.sign(&sign_hash) {
-            snapshot.composite_signature =
-                Some(base64::engine::general_purpose::STANDARD.encode(&sig));
-            println!(
-                "  PCR composite signed by DKP (v{}) ✅",
-                snapshot.key_version
-            );
-        }
-
-        // Save snapshot
-        let pcr_path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node_id);
-        match snapshot.save(&pcr_path) {
-            Ok(_) => println!("  PCR snapshot → {}", pcr_path),
-            Err(e) => eprintln!("  PCR save failed: {}", e),
-        }
-
-        // Compare against baseline
-        let baseline_path = format!("/etc/sgx-guardian/pcr_{}_baseline.json", node_id);
-        if let Ok(baseline) = PcrBaseline::load(&baseline_path) {
-            // Validate schema version
-            if baseline.schema_version != PCR_SCHEMA_VERSION {
-                eprintln!(
-                    "  ⚠️ Baseline schema v{} != current v{} — re-create baseline",
-                    baseline.schema_version, PCR_SCHEMA_VERSION
-                );
-            } else {
-                // Verify baseline signature
-                let pubkey = km.pubkey_der()?;
-                if !baseline.verify_signature(&pubkey) {
-                    if baseline.key_version != snapshot.key_version {
-                        eprintln!("  ⚠️ Baseline signed with DKP v{}, current is v{}. Re-create baseline.",
-                            baseline.key_version, snapshot.key_version);
-                    } else {
-                        eprintln!("  🔴 Baseline signature INVALID — possible tampering!");
-                    }
-                } else {
-                    match snapshot.compare_baseline(&baseline) {
-                        Ok(mismatches) if mismatches.is_empty() => {
-                            println!("  PCR baseline: ✅ ALL MATCH");
-                            local_pcr_trusted = true;
-                        }
-                        Ok(mismatches) => {
-                            eprintln!("  ⚠️ PCR MISMATCH detected:");
-                            for idx in &mismatches {
-                                eprintln!(
-                                    "    PCR{} [{}]: expected {}.. got {}..",
-                                    idx,
-                                    PcrEngine::pcr_name(*idx),
-                                    &baseline.pcr_values[*idx][..16],
-                                    &snapshot.pcr_values[*idx][..16]
-                                );
+                    let baseline_path = format!("/etc/sgx-guardian/pcr_{}_baseline.json", node_id);
+                    if let Ok(baseline) = PcrBaseline::load(&baseline_path) {
+                        if baseline.schema_version != PCR_SCHEMA_VERSION {
+                            eprintln!(
+                                "  ⚠️ Baseline schema v{} != current v{} — re-create baseline",
+                                baseline.schema_version, PCR_SCHEMA_VERSION
+                            );
+                        } else {
+                            let pubkey = km.pubkey_der()?;
+                            if !baseline.verify_signature(&pubkey) {
+                                if baseline.key_version != snapshot.key_version {
+                                    eprintln!(
+                                        "  ⚠️ Baseline signed with DKP v{}, current is v{}. Re-create baseline.",
+                                        baseline.key_version, snapshot.key_version
+                                    );
+                                } else {
+                                    eprintln!(
+                                        "  🔴 Baseline signature INVALID — possible tampering!"
+                                    );
+                                }
+                            } else {
+                                match snapshot.compare_baseline(&baseline) {
+                                    Ok(mismatches) if mismatches.is_empty() => {
+                                        println!("  PCR baseline: ✅ ALL MATCH");
+                                        local_pcr_trusted = true;
+                                    }
+                                    Ok(mismatches) => {
+                                        eprintln!("  ⚠️ PCR MISMATCH detected:");
+                                        for idx in &mismatches {
+                                            let pcr_index =
+                                                selected.get(*idx).copied().unwrap_or(*idx as u32);
+                                            eprintln!(
+                                                "    PCR{}: expected {}.. got {}..",
+                                                pcr_index,
+                                                &baseline.pcr_values[*idx][..16],
+                                                &snapshot.pcr_values[*idx][..16]
+                                            );
+                                        }
+                                    }
+                                    Err(e) => eprintln!("  ⚠️ Baseline compare error: {}", e),
+                                }
                             }
                         }
-                        Err(e) => eprintln!("  ⚠️ Baseline compare error: {}", e),
+                    } else {
+                        println!("  No baseline — create with: sgx-pa-cli pcr-baseline-create");
+                    }
+                }
+                Err(e) => eprintln!("  ⚠️ Native TPM PCR read failed: {}", e),
+            }
+        } else {
+            let mut pcr_engine = PcrEngine::new();
+            let mut measurement_errors: Vec<PcrMeasurementError> = Vec::new();
+
+            // Detect environment
+            let is_hardware = std::path::Path::new("/proc/device-tree/model").exists();
+            println!(
+                "  PCR mode: {}",
+                if is_hardware {
+                    "Hardware (board)"
+                } else {
+                    "Software (simulated)"
+                }
+            );
+
+            let sources = if is_hardware {
+                pcr_config::default_measurement_sources(&node_id)
+            } else {
+                pcr_config::software_measurement_sources()
+            };
+
+            // Perform measurements
+            for src in &sources {
+                if src.source_type == "boot_chain" {
+                    // Measure the boot chain state string
+                    use sgx_guardian_client::secure_element::secure_boot::BootChainStatus;
+                    let boot_status = BootChainStatus::check();
+                    let measurement = boot_status.to_measurement_string();
+                    match pcr_engine.extend_from_string(src.pcr_index, &measurement) {
+                        Ok(hash) => println!(
+                            "    PCR{}: {} → {}...",
+                            src.pcr_index,
+                            src.label,
+                            &hash[..12]
+                        ),
+                        Err(e) => {
+                            let _ = pcr_engine
+                                .extend_from_string(src.pcr_index, &format!("ERROR:{}", e));
+                            measurement_errors.push(PcrMeasurementError {
+                                pcr_index: src.pcr_index,
+                                source: src.source.clone(),
+                                error: e.clone(),
+                            });
+                            println!("    PCR{}: {} → ⚠️ {}", src.pcr_index, src.label, e);
+                        }
+                    }
+                } else if src.source_type == "multi_file" {
+                    let files: Vec<String> = src
+                        .source
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .collect();
+                    let errs = pcr_engine.extend_from_files(src.pcr_index, &files);
+                    measurement_errors.extend(errs);
+                } else if src.source_type == "static_yaml" {
+                    let canonical = canonical_static_yaml_measurement(&src.source);
+                    match pcr_engine.extend_from_string(src.pcr_index, &canonical) {
+                        Ok(hash) => println!(
+                            "    PCR{}: {} → {}...",
+                            src.pcr_index,
+                            src.label,
+                            &hash[..12]
+                        ),
+                        Err(e) => {
+                            let _ = pcr_engine
+                                .extend_from_string(src.pcr_index, &format!("ERROR:{}", e));
+                            measurement_errors.push(PcrMeasurementError {
+                                pcr_index: src.pcr_index,
+                                source: src.source.clone(),
+                                error: e.clone(),
+                            });
+                            println!("    PCR{}: {} → ⚠️ {}", src.pcr_index, src.label, e);
+                        }
+                    }
+                } else {
+                    let result = match src.source_type.as_str() {
+                        "file" => pcr_engine.extend_from_file(src.pcr_index, &src.source),
+                        "string" => pcr_engine.extend_from_string(src.pcr_index, &src.source),
+                        _ => Err(format!("Unknown type: {}", src.source_type)),
+                    };
+                    match result {
+                        Ok(hash) => println!(
+                            "    PCR{}: {} → {}...",
+                            src.pcr_index,
+                            src.label,
+                            &hash[..12]
+                        ),
+                        Err(e) => {
+                            let _ = pcr_engine
+                                .extend_from_string(src.pcr_index, &format!("ERROR:{}", e));
+                            measurement_errors.push(PcrMeasurementError {
+                                pcr_index: src.pcr_index,
+                                source: src.source.clone(),
+                                error: e.clone(),
+                            });
+                            println!("    PCR{}: {} → ⚠️ {}", src.pcr_index, src.label, e);
+                        }
                     }
                 }
             }
-        } else {
-            println!("  No baseline — create with: sgx-pa-cli pcr-baseline-create");
+
+            pcr_engine.print_status();
+
+            // Determine integrity status
+            let has_critical_fail = measurement_errors.iter().any(|err| {
+                sources
+                    .iter()
+                    .any(|s| s.pcr_index == err.pcr_index && s.critical)
+            });
+            let integrity_status = if measurement_errors.is_empty() {
+                "PASS".to_string()
+            } else if has_critical_fail {
+                "FAIL".to_string()
+            } else {
+                "DEGRADED".to_string()
+            };
+
+            if integrity_status == "FAIL" {
+                eprintln!("  🔴 CRITICAL: Platform integrity check FAILED — attestation will be rejected by peers");
+            } else if integrity_status == "DEGRADED" {
+                println!("  ⚠️ Some measurements failed (non-critical) — status DEGRADED");
+            } else {
+                println!("  Platform integrity: ✅ PASS");
+            }
+
+            // Build snapshot
+            let mut snapshot = pcr_engine.snapshot();
+            snapshot.measurement_errors = measurement_errors;
+            snapshot.integrity_status = integrity_status;
+            snapshot.device_uid = sgx_guardian_client::key_manager::runtime_device_uid(&node_id);
+            snapshot.key_version = read_dkp_key_version();
+
+            // Generate nonce + timestamp
+            let mut nonce_bytes = [0u8; 16];
+            rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce_bytes);
+            snapshot.nonce = hex::encode(nonce_bytes);
+            snapshot.measured_at = chrono::Utc::now().to_rfc3339();
+
+            // Sign: SHA256(composite_bytes || nonce_bytes || timestamp_bytes)  (BINARY concat)
+            let composite_bytes =
+                hex::decode(&snapshot.composite_digest).unwrap_or_else(|_| vec![0u8; 32]);
+            let nonce_sign_bytes = hex::decode(&snapshot.nonce).unwrap_or_else(|_| vec![0u8; 16]);
+            let ts_bytes = snapshot.measured_at.as_bytes();
+            let mut sign_input = Vec::with_capacity(32 + 16 + ts_bytes.len());
+            sign_input.extend_from_slice(&composite_bytes);
+            sign_input.extend_from_slice(&nonce_sign_bytes);
+            sign_input.extend_from_slice(ts_bytes);
+            let sign_hash = sha2::Sha256::digest(&sign_input);
+
+            if let Ok(sig) = km.sign(&sign_hash) {
+                snapshot.composite_signature =
+                    Some(base64::engine::general_purpose::STANDARD.encode(&sig));
+                println!(
+                    "  PCR composite signed by DKP (v{}) ✅",
+                    snapshot.key_version
+                );
+            }
+
+            // Save snapshot
+            let pcr_path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node_id);
+            match snapshot.save(&pcr_path) {
+                Ok(_) => println!("  PCR snapshot → {}", pcr_path),
+                Err(e) => eprintln!("  PCR save failed: {}", e),
+            }
+
+            // Compare against baseline
+            let baseline_path = format!("/etc/sgx-guardian/pcr_{}_baseline.json", node_id);
+            if let Ok(baseline) = PcrBaseline::load(&baseline_path) {
+                // Validate schema version
+                if baseline.schema_version != PCR_SCHEMA_VERSION {
+                    eprintln!(
+                        "  ⚠️ Baseline schema v{} != current v{} — re-create baseline",
+                        baseline.schema_version, PCR_SCHEMA_VERSION
+                    );
+                } else {
+                    // Verify baseline signature
+                    let pubkey = km.pubkey_der()?;
+                    if !baseline.verify_signature(&pubkey) {
+                        if baseline.key_version != snapshot.key_version {
+                            eprintln!("  ⚠️ Baseline signed with DKP v{}, current is v{}. Re-create baseline.",
+                            baseline.key_version, snapshot.key_version);
+                        } else {
+                            eprintln!("  🔴 Baseline signature INVALID — possible tampering!");
+                        }
+                    } else {
+                        match snapshot.compare_baseline(&baseline) {
+                            Ok(mismatches) if mismatches.is_empty() => {
+                                println!("  PCR baseline: ✅ ALL MATCH");
+                                local_pcr_trusted = true;
+                            }
+                            Ok(mismatches) => {
+                                eprintln!("  ⚠️ PCR MISMATCH detected:");
+                                for idx in &mismatches {
+                                    eprintln!(
+                                        "    PCR{} [{}]: expected {}.. got {}..",
+                                        idx,
+                                        PcrEngine::pcr_name(*idx),
+                                        &baseline.pcr_values[*idx][..16],
+                                        &snapshot.pcr_values[*idx][..16]
+                                    );
+                                }
+                            }
+                            Err(e) => eprintln!("  ⚠️ Baseline compare error: {}", e),
+                        }
+                    }
+                }
+            } else {
+                println!("  No baseline — create with: sgx-pa-cli pcr-baseline-create");
+            }
         }
     }
 
@@ -2831,6 +3092,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // every node role (nodeA is an ordinary gossip peer, not a hub).
     sgx_guardian_client::crl::gossip::spawn(node_id.clone(), did_resolver.clone());
 
+    // === In-Circle file transfer ===
+    // Chunked, resumable, signed file transfer between Circle members.
+    // Listener on SGX_XFER_PORT (default 50064). Spawns one background
+    // tokio task; returns immediately; runs on every node role.
+    sgx_guardian_client::xfer::spawn(node_id.clone(), did_resolver.clone());
+
     // === NMAP discovery scheduler ===
     {
         use sgx_guardian_client::discovery::{DiscoveryScheduler, Inventory};
@@ -3355,5 +3622,25 @@ fn json_equivalent(a: &str, b: &str) -> bool {
     match (va, vb) {
         (Ok(lhs), Ok(rhs)) => lhs == rhs,
         _ => a.trim() == b.trim(),
+    }
+}
+
+#[cfg(all(test, feature = "secure-element"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn se050_backend_runs_se050_tamper_flow() {
+        assert_eq!(se050_tamper_plan("SE050"), Se050TamperPlan::Run);
+    }
+
+    #[test]
+    fn tpm_backend_skips_se050_tamper_flow() {
+        assert_eq!(se050_tamper_plan("TPM2"), Se050TamperPlan::SkipTpm);
+    }
+
+    #[test]
+    fn software_backend_skips_se050_tamper_flow() {
+        assert_eq!(se050_tamper_plan("Software"), Se050TamperPlan::SkipSoftware);
     }
 }

@@ -199,6 +199,30 @@ fn test_method_create_idempotent_and_deactivate() {
 }
 
 #[test]
+fn test_method_create_bootstraps_missing_runtime_pubkey_for_software_keys() {
+    let td = TempDir::new().unwrap();
+    let key_path = td.path().join("device.key");
+    let dkp_pub = td.path().join("keys").join("dkp_pub.der");
+    let did_path = td.path().join("did.json");
+
+    let km = KeyManager::load_or_generate(key_path.to_str().unwrap()).unwrap();
+    assert!(!dkp_pub.exists());
+
+    let did = method::create_if_absent(
+        "nodeT",
+        &km,
+        dkp_pub.to_str().unwrap(),
+        did_path.to_str().unwrap(),
+    )
+    .unwrap();
+
+    assert!(!did.as_str().is_empty());
+    assert!(did_path.exists());
+    assert!(dkp_pub.exists());
+    assert_eq!(std::fs::read(&dkp_pub).unwrap(), km.pubkey_der().unwrap());
+}
+
+#[test]
 fn test_method_uses_pinned_v1_pubkey_when_live_pubkey_changes() {
     let td = TempDir::new().unwrap();
     let key_path1 = td.path().join("device1.key");
