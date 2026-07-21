@@ -72,6 +72,9 @@ pub struct RuntimeGates {
     /// Milliseconds to sleep between major subsystem startups. 0 = no cooldown.
     pub startup_cooldown_ms: u64,
 
+    /// Skip login/auth enforcement — all API routes accessible without a Bearer token.
+    pub disable_login: bool,
+
     // Board-freeze fix (Apr 2026)
     /// Attempt to read OCOTP fuses via /sys/bus/nvmem. Default ON.
     pub read_ocotp: bool,
@@ -112,6 +115,7 @@ impl RuntimeGates {
             disable_node_listener: env_true("SGX_DISABLE_NODE_LISTENER"),
             ssscli_timeout_secs: env_u64("SGX_SSSCLI_TIMEOUT_SECS", 10),
             startup_cooldown_ms: env_u64("SGX_STARTUP_COOLDOWN_MS", 0),
+            disable_login: env_true("SGX_DISABLE_LOGIN"),
             // Default ON, with two disable options:
             // 1) SGX_DISABLE_READ_OCOTP=1
             // 2) explicit SGX_READ_OCOTP=0|false|no|off
@@ -158,6 +162,10 @@ impl RuntimeGates {
             self.disable_node_listener,
             self.ssscli_timeout_secs,
             self.startup_cooldown_ms
+        );
+        tracing::info!(
+            "Runtime gates: disable_login={}",
+            self.disable_login,
         );
         tracing::info!(
             "Runtime gates (boot): read_ocotp={} (disable_flag={}) measure_binary_hash={}",

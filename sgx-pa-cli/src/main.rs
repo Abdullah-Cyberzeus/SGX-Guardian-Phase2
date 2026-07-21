@@ -100,6 +100,8 @@ enum Commands {
     Vid(commands::vid::VidArgs),
     /// Suricata IDS/IPS administration
     Threat(commands::threat::ThreatArgs),
+    /// Device pairing helpers
+    Pairing(commands::pairing::PairingArgs),
 }
 /// Entry point for the SGX Policy Authority CLI.
 /// Dispatches the selected subcommand and routes execution
@@ -214,6 +216,7 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        Commands::Pairing(args) => commands::pairing::run(args),
     }
 }
 
@@ -276,6 +279,20 @@ mod tests {
             "did:guardian:test",
             "--days",
             "30"
+        ])
+        .is_ok());
+    }
+
+    #[test]
+    fn test_pairing_commands_parse() {
+        assert!(Cli::try_parse_from([
+            "sgx-pa-cli",
+            "pairing",
+            "proof",
+            "--pairing-code",
+            "test-code",
+            "--node-id",
+            "nodeA",
         ])
         .is_ok());
     }

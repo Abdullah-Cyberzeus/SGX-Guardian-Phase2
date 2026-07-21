@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 use tonic::transport::ServerTlsConfig;
 use tonic::{transport::Server, Request, Response, Status};
 
-fn ensure_rustls_crypto_provider() {
+pub fn ensure_rustls_crypto_provider() {
     if rustls::crypto::CryptoProvider::get_default().is_none() {
         // Explicitly select ring to avoid runtime panic when both rustls crypto
         // backends are present in the dependency graph.

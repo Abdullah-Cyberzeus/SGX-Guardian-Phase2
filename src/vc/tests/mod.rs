@@ -144,8 +144,8 @@ fn build_resolver() -> Resolver {
     Resolver::new(Default::default())
 }
 
-fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    crate::did::doc_persistence::lock_test_env()
+fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    crate::test_support::blocking_env_lock()
 }
 
 fn save_owner_context(doc: &DidDocument) {
