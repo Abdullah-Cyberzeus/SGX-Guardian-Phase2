@@ -22,6 +22,7 @@ impl BluetoothTransport {
         Self { interface }
     }
 
+    #[cfg(not(test))]
     fn adapter_powered(&self) -> bool {
         Command::new("bluetoothctl")
             .args(["show"])
@@ -36,6 +37,12 @@ impl BluetoothTransport {
             })
     }
 
+    #[cfg(test)]
+    fn adapter_powered(&self) -> bool {
+        false
+    }
+
+    #[cfg(not(test))]
     fn get_rssi(&self) -> Option<i8> {
         // hcitool rssi requires a device MAC, not interface name.
         // Use hcitool con to find connected devices, then query RSSI.
@@ -53,6 +60,11 @@ impl BluetoothTransport {
             .find(|l| l.contains("RSSI"))
             .and_then(|l| l.split(':').next_back())
             .and_then(|v| v.trim().parse::<i8>().ok())
+    }
+
+    #[cfg(test)]
+    fn get_rssi(&self) -> Option<i8> {
+        None
     }
 
     pub fn scan_guardians() -> Vec<String> {

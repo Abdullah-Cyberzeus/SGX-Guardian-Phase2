@@ -38,6 +38,8 @@ pub mod network_selector;
 pub mod node_announcement;
 pub mod node_broadcast;
 pub mod node_listener;
+#[cfg(test)]
+mod test_support;
 
 // gRPC proto (auto-generated)
 pub mod proto {
