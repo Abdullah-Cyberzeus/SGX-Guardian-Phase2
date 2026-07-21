@@ -1,10 +1,19 @@
 use base64::Engine as _;
 use clap::Subcommand;
-use sha2::Digest;
+use sgx_guardian_client::key_manager::KeyManager;
+use sgx_guardian_client::secure_element::pcr::{
+    canonical_baseline_signing_payload, signature_format, verify_baseline_signature_bytes,
+    PcrBaseline,
+};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
 
 const PCR_DIR: &str = "/var/lib/sgx-guardian/pcr";
+const KEY_DIR_ENV: &str = "SGX_GUARDIAN_DEVICE_KEY_DIR";
+const DEFAULT_KEY_DIR: &str = "/var/lib/sgx-guardian/sgx-agent";
+const SE_BASE_PATH: &str = "/var/lib/sgx-guardian";
+const DKP_METADATA_PATH: &str = "/var/lib/sgx-guardian/keys/dkp_metadata.json";
 
 fn find_pcr_snapshot() -> Option<(String, String)> {
     if let Ok(entries) = std::fs::read_dir(PCR_DIR) {
@@ -77,150 +86,57 @@ pub fn run_create() {
             return;
         }
     };
-    let key_version = snap["key_version"].as_u64().unwrap_or(1) as u32;
     let created_at = chrono::Utc::now().to_rfc3339();
 
-    // Build the signing input (MUST match what PcrBaseline::verify_signature expects)
-    let composite_bytes = match hex::decode(&composite) {
-        Ok(b) if b.len() == 32 => b,
-        Ok(b) => {
-            eprintln!("❌ composite_digest must be 32 bytes, got {}", b.len());
-            return;
-        }
-        Err(_) => {
-            eprintln!("❌ Invalid composite_digest");
+    let signer = match load_active_baseline_signer(&node_id) {
+        Ok(signer) => signer,
+        Err(e) => {
+            eprintln!("❌ PCR baseline signer unavailable: {}", e);
             return;
         }
     };
-    let mut sign_input = Vec::new();
-    sign_input.extend_from_slice(&composite_bytes);
-    sign_input.extend_from_slice(created_at.as_bytes());
-    sign_input.extend_from_slice(device_uid.as_bytes());
 
-    let sign_hash = sha2::Sha256::digest(&sign_input);
-
-    // Try to sign with ssscli (hardware) or warn that daemon must sign
-    let baseline_signature = sign_baseline_hash(&sign_hash, key_version);
-
-    match baseline_signature {
-        Some(sig_b64) => {
-            let baseline = serde_json::json!({
-                "pcr_values": snap["pcr_values"],
-                "composite_digest": composite,
-                "baseline_signature": sig_b64,
-                "created_at": created_at,
-                "device_uid": device_uid,
-                "key_version": key_version,
-                "schema_version": snap["schema_version"],
-            });
-
-            if let Some(parent) = Path::new(&baseline_path_for(&node_id)).parent() {
-                let _ = fs::create_dir_all(parent);
-            }
-            match fs::write(
-                &baseline_path_for(&node_id),
-                serde_json::to_string_pretty(&baseline).unwrap(),
-            ) {
-                Ok(_) => {
-                    println!(
-                        "✅ Baseline created and SIGNED at {}",
-                        &baseline_path_for(&node_id)
-                    );
-                    println!("   Device UID: [redacted]");
-                    println!("   Key version: {}", key_version);
-                }
-                Err(e) => eprintln!("Write error: {}", e),
-            }
+    let pcr_values = match serde_json::from_value::<Vec<String>>(snap["pcr_values"].clone()) {
+        Ok(values) => values,
+        Err(e) => {
+            eprintln!("❌ Invalid pcr_values: {}", e);
+            return;
         }
-        None => {
-            // Can't sign from CLI — save unsigned baseline with warning
-            let baseline = serde_json::json!({
-                "pcr_values": snap["pcr_values"],
-                "composite_digest": composite,
-                "baseline_signature": "",
-                "created_at": created_at,
-                "device_uid": device_uid,
-                "key_version": key_version,
-                "schema_version": snap["schema_version"],
-            });
+    };
+    let schema_version = snap["schema_version"].as_u64().unwrap_or(1) as u8;
 
-            if let Some(parent) = Path::new(&baseline_path_for(&node_id)).parent() {
-                let _ = fs::create_dir_all(parent);
-            }
-            match fs::write(
-                &baseline_path_for(&node_id),
-                serde_json::to_string_pretty(&baseline).unwrap(),
-            ) {
-                Ok(_) => {
-                    println!("⚠️ Baseline created but NOT SIGNED (no signing key available)");
-                    println!("   Baseline at: {}", &baseline_path_for(&node_id));
-                    println!("   The daemon will sign it on next startup if signature is empty.");
-                }
-                Err(e) => eprintln!("Write error: {}", e),
-            }
+    let baseline = match create_signed_baseline(
+        pcr_values,
+        composite,
+        created_at,
+        device_uid,
+        schema_version,
+        signer.as_ref(),
+    ) {
+        Ok(baseline) => baseline,
+        Err(e) => {
+            eprintln!("❌ Failed to sign PCR baseline: {}", e);
+            return;
         }
+    };
+
+    let bl_path = baseline_path_for(&node_id);
+    if let Some(parent) = Path::new(&bl_path).parent() {
+        let _ = fs::create_dir_all(parent);
     }
-}
-
-/// Try to sign the baseline hash using ssscli (hardware) or software key.
-fn sign_baseline_hash(hash: &[u8], key_version: u32) -> Option<String> {
-    use std::process::Command;
-
-    // Method 1: Try ssscli (hardware board)
-    if key_version == 0 {
-        eprintln!("❌ key_version must be >= 1");
-        return None;
-    }
-    let key_id = format!("0x{:08X}", 0x20000010 + key_version - 1);
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let tmp_in = format!("/tmp/guardian_baseline_hash_{}.bin", ts);
-    let tmp_out = format!("/tmp/guardian_baseline_sig_{}.bin", ts);
-
-    if fs::write(&tmp_in, hash).is_ok() {
-        if let Ok(output) = Command::new("ssscli")
-            .args(["sign", &key_id, &tmp_in, &tmp_out])
-            .output()
-        {
-            if output.status.success() {
-                if let Ok(sig_bytes) = fs::read(&tmp_out) {
-                    let _ = fs::remove_file(&tmp_in);
-                    let _ = fs::remove_file(&tmp_out);
-                    return Some(base64::engine::general_purpose::STANDARD.encode(&sig_bytes));
-                }
-            }
+    match baseline.save(&bl_path) {
+        Ok(_) => {
+            println!("✅ Baseline created and SIGNED at {}", bl_path);
+            println!("   Signing backend: {}", signer.backend_display());
+            println!("   Device UID: [redacted]");
+            println!("   DKP version: {}", signer.dkp_version());
+            println!(
+                "   Signature format: {}",
+                baseline.signature_format.as_deref().unwrap_or("unknown")
+            );
         }
-        let _ = fs::remove_file(&tmp_in);
-        let _ = fs::remove_file(&tmp_out);
-    }
-
-    // Method 2: Try ring with software key file
-    let agent_dir = "/var/lib/sgx-guardian/sgx-agent";
-    if let Ok(entries) = fs::read_dir(agent_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with("device_") && name.ends_with(".key") {
-                if let Ok(pkcs8_bytes) = fs::read(entry.path()) {
-                    let rng = ring::rand::SystemRandom::new();
-                    if let Ok(keypair) = ring::signature::EcdsaKeyPair::from_pkcs8(
-                        &ring::signature::ECDSA_P256_SHA256_FIXED_SIGNING,
-                        &pkcs8_bytes,
-                        &rng,
-                    ) {
-                        if let Ok(sig) = keypair.sign(&rng, hash) {
-                            return Some(
-                                base64::engine::general_purpose::STANDARD.encode(sig.as_ref()),
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    None
+        Err(e) => eprintln!("Write error: {}", e),
+    };
 }
 
 pub fn run_verify() {
@@ -259,15 +175,50 @@ pub fn run_verify() {
         }
     };
 
-    // Verify baseline signature first
+    let signer = match load_active_baseline_signer(&node_id) {
+        Ok(signer) => signer,
+        Err(e) => {
+            eprintln!("❌ PCR baseline signer unavailable: {}", e);
+            return;
+        }
+    };
+
+    // Verify baseline signature first.
     let sig = baseline["baseline_signature"].as_str().unwrap_or("");
     if sig.is_empty() {
-        println!("  ⚠️ Baseline is NOT SIGNED — tamper protection not active");
-    } else {
-        println!("  ⚠️ Baseline signature: present but NOT VERIFIED (requires DKP key at runtime)");
-        // Note: Full signature verification requires the DKP public key,
-        // which the daemon provides at runtime. CLI can only check signature exists.
+        eprintln!("❌ Baseline is NOT SIGNED — tamper protection not active");
+        return;
     }
+    let created_at = baseline["created_at"].as_str().unwrap_or("");
+    let device_uid = baseline["device_uid"].as_str().unwrap_or("");
+    let composite = baseline["composite_digest"].as_str().unwrap_or("");
+    let payload = match canonical_baseline_signing_payload(composite, created_at, device_uid) {
+        Ok(payload) => payload,
+        Err(e) => {
+            eprintln!("❌ Invalid baseline signing payload: {}", e);
+            return;
+        }
+    };
+    let sig_bytes = match base64::engine::general_purpose::STANDARD.decode(sig) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            eprintln!("❌ Invalid baseline signature encoding: {}", e);
+            return;
+        }
+    };
+    if !verify_baseline_signature_bytes(&payload, &sig_bytes, signer.public_key()) {
+        eprintln!(
+            "❌ Baseline signature INVALID for active {} DKP v{}",
+            signer.backend_display(),
+            signer.dkp_version()
+        );
+        return;
+    }
+    println!(
+        "  Baseline signature: ✅ verified with active {} DKP v{}",
+        signer.backend_display(),
+        signer.dkp_version()
+    );
 
     let names = [
         "BIOS/Bootloader",
@@ -305,5 +256,237 @@ pub fn run_verify() {
         } else {
             println!("\n  Result: ❌ MISMATCH DETECTED — investigate immediately");
         }
+    }
+}
+
+trait BaselineSigner {
+    fn sign(&self, payload: &[u8]) -> anyhow::Result<Vec<u8>>;
+    fn public_key(&self) -> &[u8];
+    fn dkp_version(&self) -> u32;
+    fn backend_display(&self) -> &str;
+}
+
+struct KeyManagerBaselineSigner {
+    km: KeyManager,
+    public_key: Vec<u8>,
+}
+
+impl BaselineSigner for KeyManagerBaselineSigner {
+    fn sign(&self, payload: &[u8]) -> anyhow::Result<Vec<u8>> {
+        self.km.sign(payload)
+    }
+
+    fn public_key(&self) -> &[u8] {
+        &self.public_key
+    }
+
+    fn dkp_version(&self) -> u32 {
+        self.km.dkp_version()
+    }
+
+    fn backend_display(&self) -> &str {
+        self.km.backend_display_name()
+    }
+}
+
+fn create_signed_baseline(
+    pcr_values: Vec<String>,
+    composite_digest: String,
+    created_at: String,
+    device_uid: String,
+    schema_version: u8,
+    signer: &dyn BaselineSigner,
+) -> anyhow::Result<PcrBaseline> {
+    let payload = canonical_baseline_signing_payload(&composite_digest, &created_at, &device_uid)
+        .map_err(anyhow::Error::msg)?;
+    let sig = signer.sign(&payload)?;
+    if !verify_baseline_signature_bytes(&payload, &sig, signer.public_key()) {
+        anyhow::bail!(
+            "signature self-check failed for {} DKP v{}",
+            signer.backend_display(),
+            signer.dkp_version()
+        );
+    }
+
+    Ok(PcrBaseline {
+        pcr_values,
+        composite_digest,
+        baseline_signature: base64::engine::general_purpose::STANDARD.encode(&sig),
+        signing_backend: Some(signer.backend_display().to_string()),
+        signing_public_key_sha256: Some(hex::encode(Sha256::digest(signer.public_key()))),
+        signature_format: Some(signature_format(&sig).to_string()),
+        created_at,
+        device_uid,
+        key_version: signer.dkp_version(),
+        schema_version,
+    })
+}
+
+fn load_active_baseline_signer(node_id: &str) -> anyhow::Result<Box<dyn BaselineSigner>> {
+    let key_path = device_key_path(node_id);
+
+    if env_true("SGX_FORCE_SOFTWARE_KEYS") || env_true("SGX_DISABLE_SE050_DKP") {
+        return signer_from_key_manager(KeyManager::load_or_generate(&key_path)?);
+    }
+
+    #[cfg(feature = "tpm")]
+    {
+        let tpm_cfg = sgx_guardian_client::tpm::TpmConfig::default();
+        if sgx_guardian_client::tpm::should_attempt(&tpm_cfg) {
+            let km = KeyManager::init_with_tpm(
+                &tpm_cfg,
+                sgx_guardian_client::tpm::TPM_BASE_PATH,
+                &key_path,
+            )
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "TPM 2.0 hardware mode selected, but active TPM DKP is unavailable: {}",
+                    e
+                )
+            })?;
+            return signer_from_key_manager(km);
+        }
+    }
+
+    #[cfg(feature = "secure-element")]
+    {
+        let se_config = sgx_guardian_client::secure_element::config::SeConfig::default();
+        let km = KeyManager::init_with_se050(&se_config, SE_BASE_PATH, &key_path)?;
+        if km.backend_name() == "SE050" {
+            return signer_from_key_manager(km);
+        }
+        if Path::new(DKP_METADATA_PATH).exists() {
+            anyhow::bail!(
+                "SE050 DKP metadata exists, but active SE050 DKP signer is unavailable; refusing software fallback"
+            );
+        }
+        return signer_from_key_manager(km);
+    }
+
+    #[cfg(not(feature = "secure-element"))]
+    signer_from_key_manager(KeyManager::load_or_generate(&key_path)?)
+}
+
+fn signer_from_key_manager(km: KeyManager) -> anyhow::Result<Box<dyn BaselineSigner>> {
+    let public_key = km.pubkey_der()?;
+    Ok(Box::new(KeyManagerBaselineSigner { km, public_key }))
+}
+
+fn device_key_path(node_id: &str) -> String {
+    let key_dir = std::env::var(KEY_DIR_ENV).unwrap_or_else(|_| DEFAULT_KEY_DIR.to_string());
+    format!("{}/device_{}.key", key_dir.trim_end_matches('/'), node_id)
+}
+
+fn env_true(key: &str) -> bool {
+    matches!(
+        std::env::var(key).ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("on")
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ring::rand::SystemRandom;
+    use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
+
+    struct RingTestSigner {
+        keypair: EcdsaKeyPair,
+        public_key: Vec<u8>,
+        version: u32,
+        backend: &'static str,
+    }
+
+    impl RingTestSigner {
+        fn new(backend: &'static str, version: u32) -> Self {
+            let rng = SystemRandom::new();
+            let pkcs8 =
+                EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng).unwrap();
+            let keypair =
+                EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &rng)
+                    .unwrap();
+            let public_key = keypair.public_key().as_ref().to_vec();
+            Self {
+                keypair,
+                public_key,
+                version,
+                backend,
+            }
+        }
+    }
+
+    impl BaselineSigner for RingTestSigner {
+        fn sign(&self, payload: &[u8]) -> anyhow::Result<Vec<u8>> {
+            let rng = SystemRandom::new();
+            let sig = self
+                .keypair
+                .sign(&rng, payload)
+                .map_err(|_| anyhow::anyhow!("test sign failed"))?;
+            Ok(sig.as_ref().to_vec())
+        }
+
+        fn public_key(&self) -> &[u8] {
+            &self.public_key
+        }
+
+        fn dkp_version(&self) -> u32 {
+            self.version
+        }
+
+        fn backend_display(&self) -> &str {
+            self.backend
+        }
+    }
+
+    fn make_baseline(signer: &RingTestSigner) -> PcrBaseline {
+        create_signed_baseline(
+            vec!["00".repeat(32); 5],
+            "11".repeat(32),
+            "2026-07-19T00:00:00Z".to_string(),
+            "device-uid".to_string(),
+            1,
+            signer,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn software_container_baseline_signs_verifies_and_rejects_wrong_key() {
+        let signer = RingTestSigner::new("software", 1);
+        let wrong = RingTestSigner::new("software", 1);
+        let baseline = make_baseline(&signer);
+
+        assert_eq!(baseline.signing_backend.as_deref(), Some("software"));
+        assert_eq!(baseline.key_version, 1);
+        assert!(baseline.verify_signature(signer.public_key()));
+        assert!(!baseline.verify_signature(wrong.public_key()));
+    }
+
+    #[test]
+    fn se050_baseline_preserves_backend_version_and_rejects_wrong_key() {
+        let signer = RingTestSigner::new("SE050", 3);
+        let wrong = RingTestSigner::new("SE050", 3);
+        let baseline = make_baseline(&signer);
+
+        assert_eq!(baseline.signing_backend.as_deref(), Some("SE050"));
+        assert_eq!(baseline.key_version, 3);
+        assert_eq!(
+            baseline.signature_format.as_deref(),
+            Some("ecdsa-p256-sha256-fixed")
+        );
+        assert!(baseline.verify_signature(signer.public_key()));
+        assert!(!baseline.verify_signature(wrong.public_key()));
+    }
+
+    #[test]
+    fn tpm_baseline_preserves_backend_version_and_rejects_wrong_key() {
+        let signer = RingTestSigner::new("TPM 2.0", 2);
+        let wrong = RingTestSigner::new("TPM 2.0", 2);
+        let baseline = make_baseline(&signer);
+
+        assert_eq!(baseline.signing_backend.as_deref(), Some("TPM 2.0"));
+        assert_eq!(baseline.key_version, 2);
+        assert!(baseline.verify_signature(signer.public_key()));
+        assert!(!baseline.verify_signature(wrong.public_key()));
     }
 }

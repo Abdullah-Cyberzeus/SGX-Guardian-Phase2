@@ -1378,6 +1378,42 @@ pub struct AttestationEvidence {
     pub baseline_status: Option<BaselineStatus>,
 }
 
+fn attach_local_membership_vc(
+    evidence: &mut AttestationEvidence,
+    direction: &str,
+    peer_label: &str,
+) -> bool {
+    match crate::vc::persistence::load_own_any() {
+        Ok(Some(vc)) => match serde_json::to_string(&vc) {
+            Ok(vc_json) => {
+                evidence.presented_vc_json = Some(vc_json);
+                true
+            }
+            Err(e) => {
+                eprintln!(
+                    "⚠️ Failed to serialize local membership VC for {} {}: {}",
+                    direction, peer_label, e
+                );
+                false
+            }
+        },
+        Ok(None) => {
+            eprintln!(
+                "⚠️ No local membership VC available for {} {} — presented_vc_json omitted",
+                direction, peer_label
+            );
+            false
+        }
+        Err(e) => {
+            eprintln!(
+                "⚠️ Failed to load local membership VC for {} {}: {}",
+                direction, peer_label, e
+            );
+            false
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BaselineStatus {
     /// "ALL_MATCH" | "MISMATCH" | "ABSENT" | "BAD_SIGNATURE"
@@ -1497,7 +1533,7 @@ impl AttestationQuote {
             .map_err(|_| anyhow::anyhow!("RNG failed"))?;
 
         // Read device UID
-        let device_uid = crate::secure_element::pcr::read_device_uid(node_id);
+        let device_uid = crate::key_manager::runtime_device_uid(node_id);
 
         // Get active policy digest
         let policy_mat = load_attestation_policy_material();
@@ -1707,12 +1743,20 @@ pub fn save_verification_result(result: &QuoteVerificationResult, peer_node: &st
 }
 
 fn compute_local_baseline_status(node_id: &str, km: &KeyManager) -> BaselineStatus {
-    use crate::secure_element::pcr::{PcrBaseline, PcrSnapshot};
-
     let snap_path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node_id);
     let bl_path = format!("/etc/sgx-guardian/pcr_{}_baseline.json", node_id);
 
-    let snap = match PcrSnapshot::load(&snap_path) {
+    compute_baseline_status_from_paths(&snap_path, &bl_path, km)
+}
+
+fn compute_baseline_status_from_paths(
+    snap_path: &str,
+    bl_path: &str,
+    km: &KeyManager,
+) -> BaselineStatus {
+    use crate::secure_element::pcr::{PcrBaseline, PcrSnapshot};
+
+    let snap = match PcrSnapshot::load(snap_path) {
         Ok(s) => s,
         Err(_) => {
             return BaselineStatus {
@@ -1723,7 +1767,7 @@ fn compute_local_baseline_status(node_id: &str, km: &KeyManager) -> BaselineStat
         }
     };
 
-    let baseline = match PcrBaseline::load(&bl_path) {
+    let baseline = match PcrBaseline::load(bl_path) {
         Ok(b) => b,
         Err(_) => {
             return BaselineStatus {
@@ -2128,9 +2172,8 @@ impl AttestationService {
         // Step 2: send our attestation evidence
         let policy = load_attestation_policy_material();
         let mut evidence = Self::create_signed_evidence(km, &policy.yaml)?;
-        if let Ok(Some(vc)) = crate::vc::persistence::load_own_any() {
-            evidence.presented_vc_json = serde_json::to_string(&vc).ok();
-        }
+        let local_vc_attached =
+            attach_local_membership_vc(&mut evidence, "outbound attestation to", &addr);
         if let Err(e) = write_evidence_framed(&mut stream, &evidence).await {
             eprintln!(
                 "❌ Failed to send attestation evidence to {}: {:?}",
@@ -2142,7 +2185,14 @@ impl AttestationService {
         let peer_ev = match read_evidence_framed(&mut stream).await {
             Ok(ev) => ev,
             Err(e) => {
-                println!("⚠️ No valid attestation reply from peer {}: {:?}", addr, e);
+                if local_vc_attached {
+                    println!("⚠️ No valid attestation reply from peer {}: {:?}", addr, e);
+                } else {
+                    println!(
+                        "⚠️ No valid attestation reply from peer {}: {:?} (local membership VC was not attached)",
+                        addr, e
+                    );
+                }
                 return Ok(false);
             }
         };
@@ -2605,6 +2655,10 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
                             }
                             Ok(None) => {}
                             Err(e) => {
+                                eprintln!(
+                                    "❌ Listener: incoming peer VC rejected from {}: {}",
+                                    remote, e
+                                );
                                 log_audit(
                                     &node_id,
                                     AuditCategory::Vc,
@@ -2619,9 +2673,11 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
 
                         let mut reply =
                             AttestationService::create_signed_evidence(&km, &policy.yaml)?;
-                        if let Ok(Some(vc)) = crate::vc::persistence::load_own_any() {
-                            reply.presented_vc_json = serde_json::to_string(&vc).ok();
-                        }
+                        let _ = attach_local_membership_vc(
+                            &mut reply,
+                            "attestation reply to",
+                            &remote.to_string(),
+                        );
                         if let Err(e) = write_evidence_framed(&mut socket, &reply).await {
                             eprintln!(
                                 "⚠️ Failed to send attestation reply to {} : {:?}",
@@ -2663,6 +2719,9 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
 mod tests {
     use super::*;
     use crate::did::document::{DidDocument, Jwk, VerificationMethod};
+    use crate::secure_element::pcr::{
+        canonical_baseline_signing_payload, PcrBaseline, PcrEngine, PcrSnapshot, PCR_SCHEMA_VERSION,
+    };
     use crate::virtual_id_cache::RotationReason;
     use base64::engine::general_purpose;
     use p256::ecdsa::{signature::Signer, Signature, SigningKey};
@@ -2738,6 +2797,113 @@ mod tests {
 
     fn make_test_evidence(policy: &str, nonce: &str) -> AttestationEvidence {
         make_test_evidence_with_secret([42u8; 32], policy, nonce)
+    }
+
+    fn resign_test_evidence(ev: &mut AttestationEvidence, secret_bytes: [u8; 32]) {
+        let secret = SecretKey::from_slice(&secret_bytes).expect("valid deterministic secret key");
+        let signing_key = SigningKey::from(secret);
+        let msg = build_evidence_signing_message_from_evidence(ev);
+        let signature: Signature = signing_key.sign(&msg);
+        ev.signature = general_purpose::STANDARD.encode(signature.to_der().as_bytes());
+    }
+
+    fn attach_pcr_status_and_resign(
+        ev: &mut AttestationEvidence,
+        snapshot: PcrSnapshot,
+        status: BaselineStatus,
+        secret_bytes: [u8; 32],
+    ) {
+        ev.pcr_values = Some(snapshot);
+        ev.baseline_status = Some(status);
+
+        let peer_dkp_bytes = general_purpose::STANDARD
+            .decode(&ev.pubkey_der_b64)
+            .expect("decode evidence public key");
+        let pcr_dig_bytes = ev
+            .pcr_values
+            .as_ref()
+            .map(|snapshot| {
+                crate::virtual_id::pcr_values_material(
+                    &snapshot.pcr_values,
+                    &snapshot.composite_digest,
+                )
+            })
+            .unwrap_or_default();
+        let policy_dig_bytes = hex::decode(&ev.policy_digest).expect("policy digest hex");
+        let nonce_i_bytes = hex::decode(attestation_nonce_i(ev)).expect("nonce_i hex");
+        let nonce_r_bytes = hex::decode(attestation_nonce_r(ev)).unwrap_or_default();
+        ev.virtual_id = hex::encode(
+            crate::virtual_id::VirtualIdInputs {
+                did: &ev.subject_did,
+                dkp_pubkey_der: &peer_dkp_bytes,
+                pcr_values: &pcr_dig_bytes,
+                policy_digest: &policy_dig_bytes,
+                nonce_i: &nonce_i_bytes,
+                nonce_r: &nonce_r_bytes,
+            }
+            .compute(),
+        );
+
+        resign_test_evidence(ev, secret_bytes);
+    }
+
+    fn make_test_snapshot_and_baseline(km: &KeyManager) -> (PcrSnapshot, PcrBaseline) {
+        let mut engine = PcrEngine::new();
+        for pcr in 0..crate::secure_element::pcr::PCR_COUNT {
+            engine
+                .extend_from_string(pcr, &format!("baseline-tamper-test-pcr-{pcr}"))
+                .expect("extend PCR");
+        }
+
+        let mut snapshot = engine.snapshot();
+        snapshot.device_uid = "test-device-uid".into();
+        snapshot.key_version = km.dkp_version();
+        snapshot.integrity_status = "PASS".into();
+
+        let created_at = chrono::Utc::now().to_rfc3339();
+        let payload = canonical_baseline_signing_payload(
+            &snapshot.composite_digest,
+            &created_at,
+            &snapshot.device_uid,
+        )
+        .expect("canonical baseline signing payload");
+        let signature = km.sign(&payload).expect("sign baseline payload");
+        let signature_format = crate::secure_element::pcr::signature_format(&signature).to_string();
+
+        let baseline = PcrBaseline {
+            pcr_values: snapshot.pcr_values.clone(),
+            composite_digest: snapshot.composite_digest.clone(),
+            baseline_signature: general_purpose::STANDARD.encode(signature),
+            signing_backend: Some(km.backend_display_name().to_string()),
+            signing_public_key_sha256: Some(hex::encode(Sha256::digest(
+                km.pubkey_der().expect("public key"),
+            ))),
+            signature_format: Some(signature_format),
+            created_at,
+            device_uid: snapshot.device_uid.clone(),
+            key_version: km.dkp_version(),
+            schema_version: PCR_SCHEMA_VERSION,
+        };
+
+        (snapshot, baseline)
+    }
+
+    struct FileRestoreGuard {
+        path: PathBuf,
+        original: Vec<u8>,
+    }
+
+    impl FileRestoreGuard {
+        fn new(path: PathBuf) -> Self {
+            let original = fs::read(&path).expect("read original baseline");
+            Self { path, original }
+        }
+    }
+
+    impl Drop for FileRestoreGuard {
+        fn drop(&mut self) {
+            fs::write(&self.path, &self.original).expect("restore original baseline");
+        }
     }
 
     fn verification_method_from_evidence(
@@ -2828,6 +2994,106 @@ mod tests {
         };
         let ev = make_test_evidence(policy, &nonce);
         assert!(AttestationService::verify_signed_evidence(&ev, policy).unwrap());
+    }
+
+    #[test]
+    fn pcr_baseline_tampering_fails_local_attestation() {
+        let base = temp_test_dir("pcr-baseline-tamper");
+        let snapshot_path = base.join("nodeA_current.json");
+        let baseline_path = base.join("pcr_nodeA_baseline.json");
+        let key_path = base.join("device_nodeA.key");
+        let km = KeyManager::load_or_generate(key_path.to_str().expect("key path"))
+            .expect("software key manager");
+        let policy = "allow: all";
+        let nonce = hex::encode(&Sha256::digest(b"sgx-guardian-test-nonce::pcr-tamper")[..16]);
+
+        let (snapshot, baseline) = make_test_snapshot_and_baseline(&km);
+        snapshot
+            .save(snapshot_path.to_str().expect("snapshot path"))
+            .expect("write snapshot");
+        baseline
+            .save(baseline_path.to_str().expect("baseline path"))
+            .expect("write baseline");
+        let original_baseline = fs::read(&baseline_path).expect("read original baseline");
+
+        {
+            let _restore = FileRestoreGuard::new(baseline_path.clone());
+            let mut tampered: serde_json::Value =
+                serde_json::from_slice(&original_baseline).expect("parse baseline JSON");
+            let first_pcr = tampered
+                .pointer_mut("/pcr_values/0")
+                .expect("PCR field path /pcr_values/0 exists");
+            let original = first_pcr
+                .as_str()
+                .expect("PCR value is a string")
+                .to_string();
+            *first_pcr = serde_json::Value::String(if original == "ff".repeat(32) {
+                "00".repeat(32)
+            } else {
+                "ff".repeat(32)
+            });
+            fs::write(
+                &baseline_path,
+                serde_json::to_vec_pretty(&tampered).expect("serialize PCR tamper"),
+            )
+            .expect("write PCR tamper");
+
+            let status = compute_baseline_status_from_paths(
+                snapshot_path.to_str().expect("snapshot path"),
+                baseline_path.to_str().expect("baseline path"),
+                &km,
+            );
+            assert_eq!(status.state, "MISMATCH");
+            assert_eq!(status.mismatched_pcrs, vec![0]);
+
+            let mut ev = make_test_evidence(policy, &nonce);
+            attach_pcr_status_and_resign(&mut ev, snapshot.clone(), status, [42u8; 32]);
+            assert!(!AttestationService::verify_signed_evidence(&ev, policy).unwrap());
+        }
+        assert_eq!(
+            fs::read(&baseline_path).expect("read restored baseline"),
+            original_baseline
+        );
+
+        {
+            let _restore = FileRestoreGuard::new(baseline_path.clone());
+            let mut tampered: serde_json::Value =
+                serde_json::from_slice(&original_baseline).expect("parse baseline JSON");
+            let composite = tampered
+                .pointer_mut("/composite_digest")
+                .expect("signed payload field path /composite_digest exists");
+            let original = composite
+                .as_str()
+                .expect("composite digest is a string")
+                .to_string();
+            *composite = serde_json::Value::String(if original == "aa".repeat(32) {
+                "bb".repeat(32)
+            } else {
+                "aa".repeat(32)
+            });
+            fs::write(
+                &baseline_path,
+                serde_json::to_vec_pretty(&tampered).expect("serialize digest tamper"),
+            )
+            .expect("write digest tamper");
+
+            let status = compute_baseline_status_from_paths(
+                snapshot_path.to_str().expect("snapshot path"),
+                baseline_path.to_str().expect("baseline path"),
+                &km,
+            );
+            assert_eq!(status.state, "BAD_SIGNATURE");
+
+            let mut ev = make_test_evidence(policy, &nonce);
+            attach_pcr_status_and_resign(&mut ev, snapshot.clone(), status, [42u8; 32]);
+            assert!(!AttestationService::verify_signed_evidence(&ev, policy).unwrap());
+        }
+        assert_eq!(
+            fs::read(&baseline_path).expect("read restored baseline"),
+            original_baseline
+        );
+
+        fs::remove_dir_all(base).expect("cleanup temp dir");
     }
 
     #[test]

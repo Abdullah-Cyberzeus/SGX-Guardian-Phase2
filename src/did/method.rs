@@ -4,8 +4,8 @@ use crate::did::document::DocBuildInput;
 use crate::did::errors::DidError;
 use crate::did::persistence::{derivation_signing_bytes, DerivationProof, DidRecord};
 use crate::did::{derive, Did};
-use crate::key_manager::KeyManager;
-use crate::secure_element::pcr::{read_device_uid, read_dkp_key_version};
+use crate::key_manager::{runtime_device_uid_details, KeyManager};
+use crate::secure_element::pcr::read_dkp_key_version;
 use base64::{engine::general_purpose, Engine as _};
 use chrono::Utc;
 use sha2::{Digest, Sha256};
@@ -22,6 +22,10 @@ pub fn create_if_absent(
     dkp_pubkey_path: &str,
     did_path: &str,
 ) -> Result<Did, DidError> {
+    // In software/dev mode there may be no exported runtime pubkey on first boot yet.
+    // Persist it up front so every node can derive and save its own local DID.
+    ensure_runtime_pubkey(km, dkp_pubkey_path)?;
+
     let (uid_string, uid_source, uid_bytes) = read_uid(node_id)?;
 
     // ── Existing DID present: validate against the pinned DIK pubkey,
@@ -129,7 +133,7 @@ pub fn deactivate(did_path: &str, _reason: &str) -> Result<(), DidError> {
 
 pub fn ensure_runtime_pubkey(km: &KeyManager, dkp_pubkey_path: &str) -> Result<Vec<u8>, DidError> {
     let pubkey = km
-        .pubkey_der()
+        .runtime_public_key_export()
         .map_err(|e| DidError::Io(io::Error::other(format!("pubkey export: {}", e))))?;
 
     if let Ok(existing) = fs::read(dkp_pubkey_path) {
@@ -195,47 +199,52 @@ fn read_dkp_pubkey(path: &str) -> Result<Vec<u8>, DidError> {
     Ok(fs::read(path)?)
 }
 
+#[allow(clippy::needless_return)]
 fn get_dik_pubkey(dkp_pubkey_path: &str) -> Result<Vec<u8>, DidError> {
-    let se_config = crate::secure_element::config::SeConfig::default();
-    match crate::secure_element::dik::DeviceIdentityKey::ensure(&se_config) {
-        Ok(pk) => Ok(pk),
-        Err(e) => {
-            // Keep software/dev flows working when no SE050 is present.
-            // On hardware boards, a DIK error remains a hard DID error.
-            if !Path::new("/proc/device-tree/model").exists() {
-                if let Ok(pk) = read_dkp_pubkey(dkp_pubkey_path) {
-                    return Ok(pk);
-                }
-            }
-            Err(DidError::Io(io::Error::other(format!("DIK ensure: {}", e))))
+    #[cfg(feature = "tpm")]
+    {
+        let cfg = crate::tpm::TpmConfig::default();
+        if crate::tpm::should_attempt(&cfg) {
+            return crate::tpm::dik::ensure(&cfg)
+                .map_err(|e| DidError::Io(io::Error::other(format!("TPM DIK ensure: {}", e))));
         }
     }
+
+    #[cfg(feature = "secure-element")]
+    {
+        let se_config = crate::secure_element::config::SeConfig::default();
+        match crate::secure_element::dik::DeviceIdentityKey::ensure(&se_config) {
+            Ok(pk) => return Ok(pk),
+            Err(e) => {
+                if !hardware_identity_expected() {
+                    if let Ok(pk) = read_dkp_pubkey(dkp_pubkey_path) {
+                        return Ok(pk);
+                    }
+                }
+                return Err(DidError::Io(io::Error::other(format!("DIK ensure: {}", e))));
+            }
+        }
+    }
+
+    #[cfg(not(feature = "secure-element"))]
+    {
+        return read_dkp_pubkey(dkp_pubkey_path);
+    }
+}
+
+#[cfg(feature = "secure-element")]
+fn hardware_identity_expected() -> bool {
+    #[cfg(feature = "tpm")]
+    {
+        let cfg = crate::tpm::TpmConfig::default();
+        if crate::tpm::should_attempt(&cfg) {
+            return true;
+        }
+    }
+
+    Path::new("/proc/device-tree/model").exists()
 }
 
 fn read_uid(fallback: &str) -> Result<(String, String, Vec<u8>), DidError> {
-    let uid = read_device_uid(fallback);
-    if uid.trim().is_empty() {
-        return Err(DidError::UidUnavailable("empty uid".to_string()));
-    }
-
-    let source = if uid.len() >= 20 && uid.chars().all(|c| c.is_ascii_hexdigit()) {
-        "ssscli".to_string()
-    } else {
-        "fallback".to_string()
-    };
-    let bytes = uid_to_bytes(&uid);
-    Ok((uid, source, bytes))
-}
-
-fn uid_to_bytes(uid: &str) -> Vec<u8> {
-    let trimmed = uid.trim();
-    if trimmed.len().is_multiple_of(2)
-        && trimmed.len() >= 2
-        && trimmed.chars().all(|c| c.is_ascii_hexdigit())
-    {
-        if let Ok(decoded) = hex::decode(trimmed) {
-            return decoded;
-        }
-    }
-    trimmed.as_bytes().to_vec()
+    runtime_device_uid_details(fallback).map_err(DidError::UidUnavailable)
 }
