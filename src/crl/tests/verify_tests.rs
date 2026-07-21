@@ -50,6 +50,54 @@ fn verify_list_passes_for_signed_entry() {
 }
 
 #[test]
+fn verify_list_passes_for_signed_tombstone() {
+    let _lock = test_lock();
+    let env = TestEnv::new();
+    let issuer = make_did_record(&test_did("verify-owner-tombstone"), 1);
+    let key_path = env.key_path("node-verify-owner-tombstone");
+    let km = make_key_manager(&key_path);
+    seed_peer_document(&issuer, &km, "nodeA");
+
+    issue::issue_revocation(
+        &issuer,
+        RevokerRole::Owner,
+        &km,
+        IssueRequest {
+            revoked_did: &test_did("verifyTombstoneTarget"),
+            reason: RevocationReason::Compromised,
+            severity: Severity::Critical,
+            circle_id: issue::DEFAULT_CIRCLE_ID,
+            device_id: None,
+            user_id: None,
+            evidence: None,
+        },
+    )
+    .expect("issue revoke");
+    issue::unrevoke_revocation(
+        &issuer,
+        RevokerRole::Owner,
+        &km,
+        &test_did("verifyTombstoneTarget"),
+    )
+    .expect("issue tombstone");
+
+    let crl = crate::crl::persistence::load_crl()
+        .expect("load crl")
+        .expect("crl exists");
+    let resolver = crate::did::Resolver::new(crate::did::ResolverConfig::default());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+
+    runtime
+        .block_on(async {
+            crate::crl::verify::verify_list(&crl, &resolver, issue::DEFAULT_CIRCLE_ID).await
+        })
+        .expect("verify list with tombstone");
+}
+
+#[test]
 fn verify_list_rejects_forged_signature() {
     let _lock = test_lock();
     let env = TestEnv::new();
@@ -245,4 +293,41 @@ fn verify_rejects_member_revoking_owner() {
     assert!(
         matches!(error, CrlError::InvalidStructure(ref msg) if msg.contains("cannot revoke Owner"))
     );
+}
+
+#[test]
+fn verify_rejects_member_signed_tombstone() {
+    let _lock = test_lock();
+    let env = TestEnv::new();
+    let owner = make_did_record(&test_did("owner-for-tombstone-verify"), 1);
+    let owner_km = make_key_manager(&env.key_path("node-owner-tombstone-verify"));
+    let member = make_did_record(&test_did("member-for-tombstone-verify"), 1);
+    let member_km = make_key_manager(&env.key_path("node-member-tombstone-verify"));
+
+    seed_peer_document(&owner, &owner_km, "nodeA");
+    seed_peer_document(&member, &member_km, "node-member-tombstone-verify");
+
+    let mut tombstone = build_tombstone(
+        &test_did("tombstoneTarget"),
+        "urn:uuid:revocation-member-forged",
+        &member.did,
+        3,
+    );
+    sign_tombstone_with_key(
+        &mut tombstone,
+        &member_km,
+        &format!("{}#dkp-v1", member.did),
+    )
+    .expect("sign member tombstone");
+
+    let resolver = crate::did::Resolver::new(crate::did::ResolverConfig::default());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+
+    let error = runtime
+        .block_on(async { crate::crl::verify::verify_tombstone(&tombstone, &resolver).await })
+        .expect_err("member tombstone must be rejected");
+    assert!(matches!(error, CrlError::InvalidStructure(_)));
 }

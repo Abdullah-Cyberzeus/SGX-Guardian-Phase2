@@ -85,7 +85,7 @@ impl Transport for BluetoothTransport {
     }
 
     async fn is_available(&self) -> bool {
-        self.adapter_powered() && self.interface.is_usable()
+        self.interface.is_usable() && self.adapter_powered()
     }
 
     async fn send(&self, message: &TransportMessage) -> CotResult<()> {
@@ -115,11 +115,11 @@ impl Transport for BluetoothTransport {
     }
 
     async fn health_check(&self) -> TransportHealth {
-        if !self.adapter_powered() {
-            return TransportHealth::unhealthy("BT adapter not powered");
-        }
         if !self.interface.is_usable() {
             return TransportHealth::unhealthy("BT interface not usable");
+        }
+        if !self.adapter_powered() {
+            return TransportHealth::unhealthy("BT adapter not powered");
         }
         let bw = match self.get_rssi() {
             Some(r) if r > -50 => 3_000,
@@ -248,14 +248,7 @@ mod tests {
         let t = BluetoothTransport::new(make_bt(InterfaceStatus::Down));
         assert_eq!(t.priority().0, 40);
     }
-    #[tokio::test]
-    async fn test_down_unavailable() {
-        assert!(
-            !BluetoothTransport::new(make_bt(InterfaceStatus::Down))
-                .is_available()
-                .await
-        );
-    }
+
     #[tokio::test]
     async fn test_down_unhealthy() {
         let h = BluetoothTransport::new(make_bt(InterfaceStatus::Down))

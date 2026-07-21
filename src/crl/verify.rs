@@ -1,4 +1,4 @@
-use crate::crl::entry::{CrlEntry, RevokerRole, Severity};
+use crate::crl::entry::{CrlEntry, RevokerRole, Severity, UnrevokeTombstone};
 use crate::crl::errors::CrlError;
 use crate::crl::list::CertificateRevocationList;
 use crate::did::Resolver;
@@ -94,29 +94,7 @@ pub async fn verify_entry(
         return Err(CrlError::SelfRevocation);
     }
 
-    let timestamp = DateTime::parse_from_rfc3339(&entry.timestamp)
-        .map_err(|error| CrlError::InvalidStructure(format!("timestamp: {}", error)))?;
-    let now = Utc::now();
-    let skew = now.signed_duration_since(timestamp.with_timezone(&Utc));
-
-    // Future-dated entries beyond normal clock drift are rejected outright —
-    // a legitimate entry's timestamp should never be meaningfully ahead of
-    // "now" on any honest node.
-    const MAX_FUTURE_SKEW_MINUTES: i64 = 15;
-    if skew < chrono::Duration::minutes(-MAX_FUTURE_SKEW_MINUTES) {
-        return Err(CrlError::InvalidStructure(
-            "timestamp too far in the future".into(),
-        ));
-    }
-
-    // Entries older than CRL_ENTRY_MAX_AGE_DAYS are expired. This bounds how
-    // far an attacker-backdated timestamp can reach and pairs with the
-    // latest-wins gossip merge rule (store::incoming_wins) so a stale,
-    // backdated entry can't be kept alive indefinitely.
-    const CRL_ENTRY_MAX_AGE_DAYS: i64 = 365;
-    if skew.num_days() > CRL_ENTRY_MAX_AGE_DAYS {
-        return Err(CrlError::InvalidStructure("CRL entry expired".into()));
-    }
+    verify_timestamp("CRL entry", &entry.timestamp)?;
 
     let resolved = resolver
         .resolve(&entry.revoker_did)
@@ -126,16 +104,66 @@ pub async fn verify_entry(
         })?;
 
     let canonical = entry.canonical_bytes_for_sign()?;
-    let public_key_der = general_purpose::STANDARD
-        .decode(&resolved.public_key_der_b64)
-        .map_err(|_| CrlError::InvalidProof(entry.id.clone()))?;
-    let signature = general_purpose::STANDARD
-        .decode(&entry.proof.proof_value)
-        .map_err(|_| CrlError::InvalidProof(entry.id.clone()))?;
-    let digest = Sha256::digest(&canonical);
+    verify_canonical_signature(
+        &entry.id,
+        &entry.proof.proof_value,
+        &canonical,
+        &resolved.public_key_der_b64,
+    )?;
 
-    crate::did::doc_sign::ecdsa_p256_verify_der_or_raw(&public_key_der, &digest, &signature)
-        .map_err(|_| CrlError::InvalidProof(entry.id.clone()))?;
+    Ok(())
+}
+
+pub async fn verify_tombstone(
+    tombstone: &UnrevokeTombstone,
+    resolver: &Resolver,
+) -> Result<(), CrlError> {
+    if tombstone.revoked_did.trim().is_empty() {
+        return Err(CrlError::InvalidStructure(
+            "tombstone revoked_did must not be empty".into(),
+        ));
+    }
+    if tombstone.original_entry_id.trim().is_empty() {
+        return Err(CrlError::InvalidStructure(
+            "tombstone original_entry_id must not be empty".into(),
+        ));
+    }
+    if tombstone.owner_did.trim().is_empty() {
+        return Err(CrlError::InvalidStructure(
+            "tombstone owner_did must not be empty".into(),
+        ));
+    }
+    if tombstone.sequence == 0 {
+        return Err(CrlError::InvalidStructure(
+            "tombstone sequence must be greater than zero".into(),
+        ));
+    }
+
+    let expected_owner = crate::vc::issue::known_ca_did().map_err(|error| {
+        CrlError::IssuerNotResolvable(format!("circle owner DID not known: {}", error))
+    })?;
+    if tombstone.owner_did != expected_owner {
+        return Err(CrlError::InvalidStructure(format!(
+            "tombstone owner_did {} != circle owner {}",
+            tombstone.owner_did, expected_owner
+        )));
+    }
+
+    verify_timestamp("CRL tombstone", &tombstone.timestamp)?;
+
+    let resolved = resolver
+        .resolve(&tombstone.owner_did)
+        .await
+        .map_err(|error| {
+            CrlError::IssuerNotResolvable(format!("{}: {}", tombstone.owner_did, error))
+        })?;
+    let canonical = tombstone.canonical_bytes_for_sign()?;
+    verify_canonical_signature(
+        &tombstone.id,
+        &tombstone.proof.proof_value,
+        &canonical,
+        &resolved.public_key_der_b64,
+    )?;
 
     Ok(())
 }
@@ -155,6 +183,21 @@ pub async fn verify_list(
     for entry in &crl.entries {
         verify_entry(entry, resolver, expected_circle_id).await?;
     }
+    for tombstone in &crl.tombstones {
+        verify_tombstone(tombstone, resolver).await?;
+    }
+    for tombstone in &crl.tombstones {
+        if crl
+            .entries
+            .iter()
+            .any(|entry| entry.revoked_did == tombstone.revoked_did)
+        {
+            return Err(CrlError::InvalidStructure(format!(
+                "CRL contains both active revoke and tombstone for {}",
+                tombstone.revoked_did
+            )));
+        }
+    }
 
     let mut clone = crl.clone();
     clone.recompute_root();
@@ -163,4 +206,44 @@ pub async fn verify_list(
     }
 
     Ok(())
+}
+
+fn verify_timestamp(label: &str, timestamp: &str) -> Result<(), CrlError> {
+    let timestamp = DateTime::parse_from_rfc3339(timestamp)
+        .map_err(|error| CrlError::InvalidStructure(format!("timestamp: {}", error)))?;
+    let now = Utc::now();
+    let skew = now.signed_duration_since(timestamp.with_timezone(&Utc));
+
+    const MAX_FUTURE_SKEW_MINUTES: i64 = 15;
+    if skew < chrono::Duration::minutes(-MAX_FUTURE_SKEW_MINUTES) {
+        return Err(CrlError::InvalidStructure(format!(
+            "{} timestamp too far in the future",
+            label
+        )));
+    }
+
+    const CRL_ENTRY_MAX_AGE_DAYS: i64 = 365;
+    if skew.num_days() > CRL_ENTRY_MAX_AGE_DAYS {
+        return Err(CrlError::InvalidStructure(format!("{} expired", label)));
+    }
+
+    Ok(())
+}
+
+fn verify_canonical_signature(
+    record_id: &str,
+    proof_value_b64: &str,
+    canonical: &[u8],
+    public_key_der_b64: &str,
+) -> Result<(), CrlError> {
+    let public_key_der = general_purpose::STANDARD
+        .decode(public_key_der_b64)
+        .map_err(|_| CrlError::InvalidProof(record_id.to_string()))?;
+    let signature = general_purpose::STANDARD
+        .decode(proof_value_b64)
+        .map_err(|_| CrlError::InvalidProof(record_id.to_string()))?;
+    let digest = Sha256::digest(canonical);
+
+    crate::did::doc_sign::ecdsa_p256_verify_der_or_raw(&public_key_der, &digest, &signature)
+        .map_err(|_| CrlError::InvalidProof(record_id.to_string()))
 }

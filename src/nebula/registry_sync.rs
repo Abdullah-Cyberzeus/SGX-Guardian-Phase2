@@ -126,6 +126,10 @@ fn parse_snapshot_payload(raw: &str) -> Result<serde_json::Value, String> {
 }
 
 fn atomic_write(path: &str, content: &str) -> Result<(), String> {
+    if let Some(parent) = Path::new(path).parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("create parent {}: {}", parent.display(), e))?;
+    }
     let tmp = format!("{}.tmp", path);
     std::fs::write(&tmp, content).map_err(|e| format!("write {}: {}", tmp, e))?;
     std::fs::rename(&tmp, path).map_err(|e| format!("rename {} -> {}: {}", tmp, path, e))
@@ -886,6 +890,7 @@ pub fn clear_local_ip_cache(node_name: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     fn tmp_file(name: &str) -> String {
         let pid = std::process::id();
@@ -916,5 +921,23 @@ mod tests {
         let preserved = RelayRegistry::load(&path).unwrap();
         assert!(preserved.relays.contains_key("nodeA"));
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_apply_relay_snapshot_creates_parent_directories() {
+        let td = TempDir::new().expect("tempdir");
+        let path = td
+            .path()
+            .join("nested")
+            .join("relay")
+            .join("relay_registry.json");
+        let mut incoming = RelayRegistry::new("guardian-circle-alpha");
+        incoming.add_relay("nodeA", "192.168.100.1", "10.0.0.1:4242", 5, 10, true);
+        let payload = serde_json::to_string_pretty(&incoming).expect("serialize relay registry");
+
+        apply_relay_snapshot(&payload, path.to_str().expect("path")).expect("apply snapshot");
+
+        let saved = RelayRegistry::load(path.to_str().expect("path")).expect("load snapshot");
+        assert!(saved.relays.contains_key("nodeA"));
     }
 }
