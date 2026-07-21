@@ -47,6 +47,41 @@ impl Default for RelayLimitsConfig {
     }
 }
 
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct ApiTlsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub cert_path: Option<String>,
+    #[serde(default)]
+    pub key_path: Option<String>,
+    #[serde(default)]
+    pub require_https: bool,
+}
+
+impl ApiTlsConfig {
+    pub fn resolved_cert_path(&self, node_id: &str) -> String {
+        self.cert_path.clone().unwrap_or_else(|| {
+            format!(
+                "/var/lib/sgx-guardian/sgx-agent/device_{}_cert.der",
+                node_id
+            )
+        })
+    }
+
+    pub fn resolved_key_path(&self, node_id: &str) -> String {
+        self.key_path
+            .clone()
+            .unwrap_or_else(|| format!("/var/lib/sgx-guardian/sgx-agent/device_{}.key", node_id))
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct ApiConfig {
+    #[serde(default)]
+    pub tls: ApiTlsConfig,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct NodeConfig {
     pub node_id: String,
@@ -56,6 +91,8 @@ pub struct NodeConfig {
     pub public_key: String,
     pub metrics: Option<MetricsConfig>,
     pub relay: Option<RelayLimitsConfig>,
+    #[serde(default)]
+    pub api: Option<ApiConfig>,
 }
 impl NodeConfig {
     /// Validates the node configuration fields, ensuring correct ID,
@@ -112,6 +149,14 @@ impl NodeConfig {
 
     pub fn relay_or_default(&self) -> RelayLimitsConfig {
         self.relay.clone().unwrap_or_default()
+    }
+
+    pub fn api_or_default(&self) -> ApiConfig {
+        self.api.clone().unwrap_or_default()
+    }
+
+    pub fn load(path: &str) -> Result<Self, Box<dyn Error>> {
+        load_config(path)
     }
 }
 

@@ -5,6 +5,7 @@ __pycache__/
 *.pyc
 .vscode/
 logs/
+optional/
 sgx-agent/
 sgx-pa-cli/guardian_private.key
 private_key.asc

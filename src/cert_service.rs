@@ -2,6 +2,10 @@
 //!
 //! YAML-based manual approval + NebulaCA signing.
 
+use crate::api::auth::{
+    pairing::{self, PairingUsage},
+    store::{global_admin_stores, AdminStores},
+};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::config_loader::load_config;
@@ -12,8 +16,10 @@ use crate::nebula::models::CircleMembership;
 use crate::nebula::relay_registry::RelayRegistry;
 use crate::proto::sgx::cert_service_server::CertService;
 use crate::proto::sgx::{CertSignRequest, CertSignResponse};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex as StdMutex};
@@ -83,6 +89,10 @@ fn node_lock(node_id: &str) -> Arc<AsyncMutex<()>> {
         .clone()
 }
 
+fn admin_stores() -> Arc<AdminStores> {
+    global_admin_stores().unwrap_or_else(|| AdminStores::new("/var/lib/sgx-guardian/admin"))
+}
+
 async fn read_pa_pubkey_or_warn() -> Vec<u8> {
     match tokio::fs::read(PA_PUB_PATH).await {
         Ok(b) if !b.is_empty() => b,
@@ -115,6 +125,40 @@ fn ca_key_path(node_id: &str) -> String {
     let dir = std::env::var(crate::vc::issue::DEVICE_KEY_DIR_ENV)
         .unwrap_or_else(|_| "/var/lib/sgx-guardian/sgx-agent".to_string());
     format!("{}/device_{}.key", dir.trim_end_matches('/'), node_id)
+}
+
+fn derive_device_id(public_key_b64: &str) -> Option<String> {
+    let public_key = STANDARD.decode(public_key_b64.trim()).ok()?;
+    (!public_key.is_empty()).then(|| hex::encode(Sha256::digest(public_key)))
+}
+
+async fn sync_admin_bootstrap_state(
+    stores: &AdminStores,
+    pairing: Option<&pairing::AuthorizedPairing>,
+    node_id: &str,
+    public_key_b64: &str,
+) -> Result<(), Status> {
+    if let Some(pairing) = pairing {
+        return stores
+            .sync_bootstrap_by_identity(
+                Some(pairing.serial.as_str()),
+                Some(pairing.device_id.as_str()),
+                Some(pairing.device_did.as_str()),
+                Some(pairing.owner_user_id.as_str()),
+                Some(pairing.node_id.as_str()),
+            )
+            .await
+            .map_err(|e| Status::internal(format!("bootstrap state sync failed: {}", e)));
+    }
+
+    let Some(device_id) = derive_device_id(public_key_b64) else {
+        return Ok(());
+    };
+
+    stores
+        .sync_bootstrap_by_identity(None, Some(device_id.as_str()), None, None, Some(node_id))
+        .await
+        .map_err(|e| Status::internal(format!("bootstrap state sync failed: {}", e)))
 }
 
 fn load_ca_bootstrap_identity_with_paths(
@@ -329,6 +373,24 @@ impl CertService for MyCertService {
             (false, true) => "relay",
             (false, false) => "member",
         };
+        let admin_stores = admin_stores();
+        let auto_approved_pairing = if req.pairing_proof.trim().is_empty() {
+            None
+        } else {
+            let pairing = pairing::authorize_pairing_proof(
+                admin_stores.as_ref(),
+                &req.pairing_proof,
+                PairingUsage::Bootstrap,
+            )
+            .await
+            .map_err(|e| Status::permission_denied(format!("pairing proof rejected: {}", e)))?;
+            if pairing.node_id != node_id {
+                return Err(Status::permission_denied(
+                    "pairing proof node_id does not match certificate request",
+                ));
+            }
+            Some(pairing)
+        };
 
         // ── 1. Log receipt ──────────────────────────────────────────
         println!("Certificate request received from {}", node_id);
@@ -406,6 +468,13 @@ impl CertService for MyCertService {
                     .ok()
                     .and_then(|vc| serde_json::to_string(&vc).ok())
                     .unwrap_or_default();
+                sync_admin_bootstrap_state(
+                    admin_stores.as_ref(),
+                    auto_approved_pairing.as_ref(),
+                    &node_id,
+                    &public_key_pem,
+                )
+                .await?;
 
                 return Ok(Response::new(CertSignResponse {
                     status: "approved".into(),
@@ -452,170 +521,186 @@ impl CertService for MyCertService {
         // file that no longer exists until the 1-hour timeout, and the
         // admin never sees a new approval prompt.
         // ═══════════════════════════════════════════════════════════
-        let mut needs_new_yaml = true;
-
-        if Path::new(&yaml_path).exists() {
-            needs_new_yaml = false;
-            // Read existing YAML
-            if let Ok(content) = tokio::fs::read_to_string(&yaml_path).await {
-                if let Ok(parsed) = serde_yaml::from_str::<CertRequestYaml>(&content) {
-                    if matches!(
-                        parsed.approve,
-                        ApprovalDecision::Member
-                            | ApprovalDecision::Lighthouse
-                            | ApprovalDecision::Relay
-                            | ApprovalDecision::LhRelay
-                    ) {
-                        // Old approved YAML is stale → delete it and re-request approval
-                        println!(
-                            "⚠️ Stale approved YAML detected for {} — deleting old request",
-                            node_id
-                        );
-
-                        log_event(
-                            "nodeA",
-                            &format!(
-                                "Deleting stale approved YAML for {} before new request",
+        if auto_approved_pairing.is_none() {
+            let mut needs_new_yaml = true;
+            if Path::new(&yaml_path).exists() {
+                needs_new_yaml = false;
+                // Read existing YAML
+                if let Ok(content) = tokio::fs::read_to_string(&yaml_path).await {
+                    if let Ok(parsed) = serde_yaml::from_str::<CertRequestYaml>(&content) {
+                        if matches!(
+                            parsed.approve,
+                            ApprovalDecision::Member
+                                | ApprovalDecision::Lighthouse
+                                | ApprovalDecision::Relay
+                                | ApprovalDecision::LhRelay
+                        ) {
+                            // Old approved YAML is stale → delete it
+                            println!(
+                                "⚠️ Stale approved YAML detected for {} — deleting old request",
                                 node_id
-                            ),
-                        );
+                            );
 
-                        let _ = tokio::fs::remove_file(&yaml_path).await;
-                        needs_new_yaml = true;
-                    } else {
-                        // Pending request still valid
-                        println!(
-                            "YAML already exists for {} — request still pending, resuming poll",
-                            node_id
-                        );
+                            log_event(
+                                "nodeA",
+                                &format!(
+                                    "Deleting stale approved YAML for {} before new request",
+                                    node_id
+                                ),
+                            );
 
-                        log_event(
-                            "nodeA",
-                            &format!("Existing pending YAML for {} — polling continues", node_id),
-                        );
+                            let _ = tokio::fs::remove_file(&yaml_path).await;
+                            needs_new_yaml = true;
+                        } else {
+                            // Pending request still valid
+                            println!(
+                                "YAML already exists for {} — request still pending, resuming poll",
+                                node_id
+                            );
+
+                            log_event(
+                                "nodeA",
+                                &format!(
+                                    "Existing pending YAML for {} — polling continues",
+                                    node_id
+                                ),
+                            );
+                        }
                     }
                 }
             }
-        }
 
-        if needs_new_yaml {
-            // Fingerprint from public key (first 16 hex chars of SHA-256)
-            let fingerprint = {
-                use sha2::{Digest, Sha256};
-                let hash = Sha256::digest(public_key_pem.as_bytes());
-                hex::encode(&hash[..8])
-            };
+            if needs_new_yaml {
+                // Fingerprint from public key (first 16 hex chars of SHA-256)
+                let fingerprint = {
+                    use sha2::{Digest, Sha256};
+                    let hash = Sha256::digest(public_key_pem.as_bytes());
+                    hex::encode(&hash[..8])
+                };
 
-            let yaml_data = CertRequestYaml {
-                node_id: node_id.clone(),
-                requested_at: chrono::Utc::now().to_rfc3339(),
-                overlay_ip: req.overlay_ip.clone(),
-                public_key_fingerprint: fingerprint,
-                requested_role: requested_role.to_string(),
-                approve: ApprovalDecision::False,
-            };
+                let yaml_data = CertRequestYaml {
+                    node_id: node_id.clone(),
+                    requested_at: chrono::Utc::now().to_rfc3339(),
+                    overlay_ip: req.overlay_ip.clone(),
+                    public_key_fingerprint: fingerprint,
+                    requested_role: requested_role.to_string(),
+                    approve: ApprovalDecision::False,
+                };
 
-            let yaml_string = serde_yaml::to_string(&yaml_data)
-                .map_err(|e| Status::internal(format!("YAML serialization failed: {}", e)))?;
+                let yaml_string = serde_yaml::to_string(&yaml_data)
+                    .map_err(|e| Status::internal(format!("YAML serialization failed: {}", e)))?;
 
-            if let Err(e) = tokio::fs::write(&yaml_path, &yaml_string).await {
-                eprintln!("Failed to write approval YAML: {}", e);
-                return Err(Status::internal("Failed to create approval YAML"));
+                if let Err(e) = tokio::fs::write(&yaml_path, &yaml_string).await {
+                    eprintln!("Failed to write approval YAML: {}", e);
+                    return Err(Status::internal("Failed to create approval YAML"));
+                }
+
+                // Terminal instructions for admin
+                println!();
+                println!("Approval file created: {}", yaml_path);
+                println!();
+                println!("Edit the file and set 'approve' to ONE of:");
+                println!("  approve: false        (reject the request)");
+                println!("  approve: member       (accept as standard member)");
+                println!("  approve: lighthouse   (accept as lighthouse only)");
+                println!("  approve: relay        (accept as relay only)");
+                println!("  approve: lh_relay     (accept as lighthouse + relay)");
+                println!();
+                println!("Save the file to trigger approval.");
             }
-
-            // Terminal instructions for admin
-            println!();
-            println!("Approval file created: {}", yaml_path);
-            println!();
-            println!("Edit the file and set 'approve' to ONE of:");
-            println!("  approve: false        (reject the request)");
-            println!("  approve: member       (accept as standard member)");
-            println!("  approve: lighthouse   (accept as lighthouse only)");
-            println!("  approve: relay        (accept as relay only)");
-            println!("  approve: lh_relay     (accept as lighthouse + relay)");
-            println!();
-            println!("Save the file to trigger approval.");
         }
 
         // ── 4. Async-poll YAML for approve: true ────────────────────
-        let start = tokio::time::Instant::now();
-        let timeout = std::time::Duration::from_secs(APPROVAL_TIMEOUT_SECS);
-        let poll_interval = std::time::Duration::from_secs(APPROVAL_POLL_SECS);
-        let (assigned_lh, assigned_relay) = loop {
-            if start.elapsed() > timeout {
-                println!(
-                    "Approval timeout for {} after {} seconds",
-                    node_id, APPROVAL_TIMEOUT_SECS
-                );
-                log_audit(
-                    "nodeA",
-                    AuditCategory::Network,
-                    AuditSeverity::Warning,
-                    AuditAction::Failed,
-                    &format!("Certificate approval timeout for {}", node_id),
-                );
-                return Ok(Response::new(CertSignResponse {
-                    status: "pending".into(),
-                    signed_cert_pem: String::new(),
-                    node_key_pem: String::new(),
-                    ca_cert_pem: String::new(),
-                    message: format!(
-                        "Approval timeout after {} seconds. Request still pending.",
-                        APPROVAL_TIMEOUT_SECS
-                    ),
-                    assigned_lighthouse: false,
-                    lighthouse_registry_json: String::new(),
-                    overlay_registry_json: String::new(),
-                    signed_policy_bytes: Vec::new(),
-                    assigned_relay: false,
-                    relay_registry_json: String::new(),
-                    signing_pubkey_der: Vec::new(),
-                    member_vc_json: String::new(),
-                }));
-            }
+        let (assigned_lh, assigned_relay) = if auto_approved_pairing.is_some() {
+            println!("Auto-approval detected for {} via pairing proof", node_id);
+            log_event(
+                "nodeA",
+                &format!(
+                    "Certificate auto-approved for {} via pairing proof",
+                    node_id
+                ),
+            );
+            (false, false)
+        } else {
+            let start = tokio::time::Instant::now();
+            let timeout = std::time::Duration::from_secs(APPROVAL_TIMEOUT_SECS);
+            let poll_interval = std::time::Duration::from_secs(APPROVAL_POLL_SECS);
+            loop {
+                if start.elapsed() > timeout {
+                    println!(
+                        "Approval timeout for {} after {} seconds",
+                        node_id, APPROVAL_TIMEOUT_SECS
+                    );
+                    log_audit(
+                        "nodeA",
+                        AuditCategory::Network,
+                        AuditSeverity::Warning,
+                        AuditAction::Failed,
+                        &format!("Certificate approval timeout for {}", node_id),
+                    );
+                    return Ok(Response::new(CertSignResponse {
+                        status: "pending".into(),
+                        signed_cert_pem: String::new(),
+                        node_key_pem: String::new(),
+                        ca_cert_pem: String::new(),
+                        message: format!(
+                            "Approval timeout after {} seconds. Request still pending.",
+                            APPROVAL_TIMEOUT_SECS
+                        ),
+                        assigned_lighthouse: false,
+                        lighthouse_registry_json: String::new(),
+                        overlay_registry_json: String::new(),
+                        signed_policy_bytes: Vec::new(),
+                        assigned_relay: false,
+                        relay_registry_json: String::new(),
+                        signing_pubkey_der: Vec::new(),
+                        member_vc_json: String::new(),
+                    }));
+                }
 
-            // Read and parse YAML
-            if let Ok(content) = tokio::fs::read_to_string(&yaml_path).await {
-                if let Ok(parsed) = serde_yaml::from_str::<CertRequestYaml>(&content) {
-                    match parsed.approve {
-                        ApprovalDecision::False => {}
-                        ApprovalDecision::Member => {
-                            println!("Approval detected for {} (role: member)", node_id);
-                            log_event(
-                                "nodeA",
-                                &format!("Certificate approval detected for {}", node_id),
-                            );
-                            break (false, false);
-                        }
-                        ApprovalDecision::Lighthouse => {
-                            println!("Approval detected for {} (role: lighthouse)", node_id);
-                            log_event(
-                                "nodeA",
-                                &format!("Certificate approval detected for {}", node_id),
-                            );
-                            break (true, false);
-                        }
-                        ApprovalDecision::Relay => {
-                            println!("Approval detected for {} (role: relay)", node_id);
-                            log_event(
-                                "nodeA",
-                                &format!("Certificate approval detected for {}", node_id),
-                            );
-                            break (false, true);
-                        }
-                        ApprovalDecision::LhRelay => {
-                            println!("Approval detected for {} (role: lh_relay)", node_id);
-                            log_event(
-                                "nodeA",
-                                &format!("Certificate approval detected for {}", node_id),
-                            );
-                            break (true, true);
+                // Read and parse YAML
+                if let Ok(content) = tokio::fs::read_to_string(&yaml_path).await {
+                    if let Ok(parsed) = serde_yaml::from_str::<CertRequestYaml>(&content) {
+                        match parsed.approve {
+                            ApprovalDecision::False => {}
+                            ApprovalDecision::Member => {
+                                println!("Approval detected for {} (role: member)", node_id);
+                                log_event(
+                                    "nodeA",
+                                    &format!("Certificate approval detected for {}", node_id),
+                                );
+                                break (false, false);
+                            }
+                            ApprovalDecision::Lighthouse => {
+                                println!("Approval detected for {} (role: lighthouse)", node_id);
+                                log_event(
+                                    "nodeA",
+                                    &format!("Certificate approval detected for {}", node_id),
+                                );
+                                break (true, false);
+                            }
+                            ApprovalDecision::Relay => {
+                                println!("Approval detected for {} (role: relay)", node_id);
+                                log_event(
+                                    "nodeA",
+                                    &format!("Certificate approval detected for {}", node_id),
+                                );
+                                break (false, true);
+                            }
+                            ApprovalDecision::LhRelay => {
+                                println!("Approval detected for {} (role: lh_relay)", node_id);
+                                log_event(
+                                    "nodeA",
+                                    &format!("Certificate approval detected for {}", node_id),
+                                );
+                                break (true, true);
+                            }
                         }
                     }
                 }
-            }
 
-            tokio::time::sleep(poll_interval).await;
+                tokio::time::sleep(poll_interval).await;
+            }
         };
 
         // ── 5. Sign using NebulaCA (sync — run in blocking task) ────
@@ -800,6 +885,13 @@ impl CertService for MyCertService {
             .await
             .unwrap_or_default();
         let signing_pubkey_der = read_pa_pubkey_or_warn().await;
+        sync_admin_bootstrap_state(
+            admin_stores.as_ref(),
+            auto_approved_pairing.as_ref(),
+            &node_id,
+            &public_key_pem,
+        )
+        .await?;
 
         println!("Certificate approved and signed for {}", node_id);
         // Remove YAML after successful signing

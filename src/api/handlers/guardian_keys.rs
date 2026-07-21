@@ -507,22 +507,12 @@ mod tests {
     }
 
     fn test_state() -> Arc<AppState> {
-        Arc::new(AppState {
-            node_id: "test-nodeA".into(),
-            config_dir: "/tmp/config".into(),
-            boot_dir: "/tmp/boot".into(),
-            keys_dir: "/tmp/keys".into(),
-            pcr_dir: "/tmp/pcr".into(),
-            pcr_baseline_dir: "/tmp".into(),
-            log_dir_primary: "/tmp/logs".into(),
-            log_dir_fallback: "/tmp/logs-fallback".into(),
-            did_resolver: crate::did::Resolver::new(Default::default()),
-            vid_cache: crate::virtual_id_cache::VirtualIdCache::new(),
-            discovery_config_dir: "/tmp/discovery-config".into(),
-            discovery_state_dir: "/tmp/discovery-state".into(),
-            threat_config_path: "/tmp/threat-config.yaml".into(),
-            threat_state_dir: "/tmp/threat-state".into(),
-        })
+        let base = std::env::temp_dir().join(format!("sgx-guardian-keys-{}", uuid::Uuid::new_v4()));
+        AppState::for_tests(
+            &base,
+            "test-nodeA",
+            base.join("config").to_string_lossy().to_string(),
+        )
     }
 
     fn write_fake_cli(dir: &TempDir, script_body: &str) -> PathBuf {

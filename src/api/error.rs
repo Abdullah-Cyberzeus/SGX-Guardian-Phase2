@@ -12,6 +12,8 @@ pub enum ApiError {
     NotFound(String),
     BadRequest(String),
     Unauthorized(String),
+    Locked(String),
+    TooManyRequests(String),
     Forbidden(String),
     Conflict(String),
     Internal(String),
@@ -32,6 +34,14 @@ impl IntoResponse for ApiError {
                 let body = Json(json!({ "error": { "code": "UNAUTHORIZED", "message": m } }));
                 (StatusCode::UNAUTHORIZED, body).into_response()
             }
+            ApiError::Locked(m) => {
+                let body = Json(json!({ "error": { "code": "LOCKED", "message": m } }));
+                (StatusCode::LOCKED, body).into_response()
+            }
+            ApiError::TooManyRequests(m) => {
+                let body = Json(json!({ "error": { "code": "TOO_MANY_REQUESTS", "message": m } }));
+                (StatusCode::TOO_MANY_REQUESTS, body).into_response()
+            }
             ApiError::Forbidden(m) => {
                 let body = Json(json!({ "error": { "code": "FORBIDDEN", "message": m } }));
                 (StatusCode::FORBIDDEN, body).into_response()
@@ -40,13 +50,15 @@ impl IntoResponse for ApiError {
                 let body = Json(json!({ "error": { "code": "CONFLICT", "message": m } }));
                 (StatusCode::CONFLICT, body).into_response()
             }
-            ApiError::Internal(ref msg) => {
+            ApiError::Internal(msg) => {
                 eprintln!("API Internal Error: {}", msg);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "internal server error", "code": "INTERNAL"})),
-                )
-                    .into_response()
+                let body = Json(json!({
+                    "error": {
+                        "code": "INTERNAL",
+                        "message": msg
+                    }
+                }));
+                (StatusCode::INTERNAL_SERVER_ERROR, body).into_response()
             }
         }
     }
@@ -65,5 +77,28 @@ impl From<serde_json::Error> for ApiError {
 impl From<anyhow::Error> for ApiError {
     fn from(e: anyhow::Error) -> Self {
         ApiError::Internal(e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+
+    #[tokio::test]
+    async fn internal_error_response_includes_the_actual_message() {
+        let response =
+            ApiError::Internal("parse devices.json: expected a sequence".into()).into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read response body");
+        let body: serde_json::Value = serde_json::from_slice(&body).expect("parse response body");
+        assert_eq!(body["error"]["code"], "INTERNAL");
+        assert_eq!(
+            body["error"]["message"],
+            "parse devices.json: expected a sequence"
+        );
     }
 }
