@@ -281,6 +281,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/devices/{id}/unpair",
             post(handlers::devices::unpair),
         )
+        .merge(routes::vault_router())
+        .merge(routes::xfer_router())
         // Health
         .route(
             "/api/v1/health",
@@ -384,6 +386,8 @@ mod tests {
     use chrono::Utc;
     use reqwest::StatusCode;
     use serde_json::Value;
+    use sha2::Digest;
+    use std::collections::HashMap;
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
     use std::time::Duration;
@@ -453,6 +457,98 @@ mod tests {
     impl Drop for ScopedEnvVar {
         fn drop(&mut self) {
             restore_env(self.key, self.prev.take());
+        }
+    }
+
+    #[derive(Default)]
+    struct ApiSe050State {
+        available: bool,
+        keys: HashMap<String, u8>,
+    }
+
+    struct ApiSe050Backend {
+        state: Arc<std::sync::Mutex<ApiSe050State>>,
+        utf8_marshaled_unwrap: bool,
+    }
+
+    impl ApiSe050Backend {
+        fn available_with_utf8_marshaled_unwrap(utf8_marshaled_unwrap: bool) -> Arc<Self> {
+            Arc::new(Self {
+                state: Arc::new(std::sync::Mutex::new(ApiSe050State {
+                    available: true,
+                    ..Default::default()
+                })),
+                utf8_marshaled_unwrap,
+            })
+        }
+
+        fn key_mask(key_id: &str) -> u8 {
+            sha2::Sha256::digest(key_id.as_bytes())[0]
+        }
+    }
+
+    impl crate::vault::wrapper::Se050WrapBackend for ApiSe050Backend {
+        fn slot_exists(&self, key_id: &str) -> Result<bool, crate::vault::VaultError> {
+            let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+            if !state.available {
+                return Err(crate::vault::VaultError::Crypto(
+                    "mock SE050 unavailable".to_string(),
+                ));
+            }
+            Ok(state.keys.contains_key(key_id))
+        }
+
+        fn provision_key(&self, key_id: &str) -> Result<(), crate::vault::VaultError> {
+            let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+            if !state.available {
+                return Err(crate::vault::VaultError::Crypto(
+                    "mock SE050 unavailable".to_string(),
+                ));
+            }
+            state
+                .keys
+                .entry(key_id.to_string())
+                .or_insert_with(|| Self::key_mask(key_id));
+            Ok(())
+        }
+
+        fn wrap(&self, key_id: &str, plain: &[u8]) -> Result<Vec<u8>, crate::vault::VaultError> {
+            let mask = {
+                let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+                if !state.available {
+                    return Err(crate::vault::VaultError::Crypto(
+                        "mock SE050 unavailable".to_string(),
+                    ));
+                }
+                *state.keys.get(key_id).ok_or_else(|| {
+                    crate::vault::VaultError::Crypto(format!("mock key missing: {}", key_id))
+                })?
+            };
+            Ok(plain.iter().map(|byte| byte ^ mask).collect())
+        }
+
+        fn unwrap(
+            &self,
+            key_id: &str,
+            wrapped: &[u8],
+        ) -> Result<Vec<u8>, crate::vault::VaultError> {
+            let mask = {
+                let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+                if !state.available {
+                    return Err(crate::vault::VaultError::Crypto(
+                        "mock SE050 unavailable".to_string(),
+                    ));
+                }
+                *state.keys.get(key_id).ok_or_else(|| {
+                    crate::vault::VaultError::Crypto(format!("mock key missing: {}", key_id))
+                })?
+            };
+            let plain: Vec<u8> = wrapped.iter().map(|byte| byte ^ mask).collect();
+            if self.utf8_marshaled_unwrap {
+                Ok(crate::vault::wrapper::test_encode_ssscli_utf8_marshaled_bytes(&plain))
+            } else {
+                Ok(plain)
+            }
         }
     }
 
@@ -882,6 +978,153 @@ mod tests {
         let last = signature.pop().expect("jwt signature character");
         signature.push(if last == 'A' { 'B' } else { 'A' });
         format!("{}.{}.{}", header, claims, signature)
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn vault_download_and_preview_routes_stream_original_bytes_with_se050_after_restart() {
+        let _vault_lock = crate::vault::lock_test_env().await;
+        let _xfer_lock = crate::xfer::lock_test_env().await;
+        let td = TempDir::new().expect("tempdir");
+        let vault_base = td.path().join("vault");
+        let vault_base_value = vault_base.to_string_lossy().to_string();
+        let _vault_base = ScopedEnvVar::set(crate::vault::VAULT_BASE_ENV, &vault_base_value);
+        let _node_id = ScopedEnvVar::set("SGX_NODE_ID", "nodeA");
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Production,
+        );
+        let _backend = crate::vault::wrapper::test_override_se050_wrap_backend(
+            ApiSe050Backend::available_with_utf8_marshaled_unwrap(true),
+        );
+
+        let payload = b"\x89PNG\r\n\x1a\nse050-api-regression".to_vec();
+        let input_path = td.path().join("se050-preview.png");
+        tokio::fs::write(&input_path, &payload)
+            .await
+            .expect("write preview fixture");
+
+        let record = crate::vault::ingest::ingest_file(
+            "guardian-circle-alpha",
+            "did:guardian:sender",
+            &input_path,
+            crate::vault::ingest::IngestMeta {
+                filename: "se050-preview.png".into(),
+                mime: "image/png".into(),
+                sha256_plain: hex::encode(sha2::Sha256::digest(&payload)),
+                size_plain: payload.len() as u64,
+                chunk_bytes: crate::vault::VaultConfig::DEFAULT_CHUNK_BYTES,
+            },
+        )
+        .await
+        .expect("ingest hardware-backed vault record");
+
+        let download = crate::api::handlers::vault::download(
+            axum::extract::State(test_state()),
+            axum::extract::Path(record.vault_id.clone()),
+        )
+        .await
+        .expect("download response");
+        assert_eq!(download.status(), StatusCode::OK);
+        let downloaded = axum::body::to_bytes(download.into_body(), usize::MAX)
+            .await
+            .expect("downloaded bytes");
+        assert_eq!(downloaded.as_ref(), payload.as_slice());
+        assert_eq!(
+            hex::encode(sha2::Sha256::digest(downloaded.as_ref())),
+            record.sha256_plain
+        );
+
+        let preview = crate::api::handlers::vault::preview(
+            axum::extract::State(test_state()),
+            axum::extract::Path(record.vault_id.clone()),
+        )
+        .await
+        .expect("preview response");
+        assert_eq!(preview.status(), StatusCode::OK);
+        let previewed = axum::body::to_bytes(preview.into_body(), usize::MAX)
+            .await
+            .expect("preview bytes");
+        assert_eq!(previewed.as_ref(), payload.as_slice());
+
+        let restart_download = crate::api::handlers::vault::download(
+            axum::extract::State(test_state()),
+            axum::extract::Path(record.vault_id.clone()),
+        )
+        .await
+        .expect("download after restart response");
+        assert_eq!(restart_download.status(), StatusCode::OK);
+        let restarted_bytes = axum::body::to_bytes(restart_download.into_body(), usize::MAX)
+            .await
+            .expect("download bytes after restart");
+        assert_eq!(restarted_bytes.as_ref(), payload.as_slice());
+        assert_eq!(
+            hex::encode(sha2::Sha256::digest(restarted_bytes.as_ref())),
+            record.sha256_plain
+        );
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn vault_quota_endpoint_reports_namespace_usage() {
+        let _vault_lock = crate::vault::lock_test_env().await;
+        let td = TempDir::new().expect("tempdir");
+        let vault_base = td.path().join("vault");
+        let vault_base_value = vault_base.to_string_lossy().to_string();
+        let _vault_base = ScopedEnvVar::set(crate::vault::VAULT_BASE_ENV, &vault_base_value);
+        let config = crate::vault::VaultConfig::from_env();
+        crate::vault::quota::save_settings(
+            &config,
+            &crate::vault::quota::VaultQuotaSettings {
+                personal_quota_bytes: 500,
+                circle_quota_bytes: 700,
+            },
+        )
+        .await
+        .expect("save quota settings");
+        crate::vault::persistence::save_record(
+            &config,
+            &crate::vault::VaultRecord {
+                vault_id: "urn:uuid:quota-personal".into(),
+                namespace: crate::vault::VaultNamespace::PERSONAL_STORAGE_KEY.to_string(),
+                circle_id: String::new(),
+                filename: "quota.txt".into(),
+                mime: "text/plain".into(),
+                size_plain: 32,
+                size_cipher: 200,
+                sha256_plain: "aa".repeat(32),
+                sender_did: "did:guardian:sender".into(),
+                received_at: "2026-07-18T00:00:00Z".into(),
+                source: crate::vault::VaultSource::Upload,
+                folder_id: String::new(),
+                starred: false,
+                enc: crate::vault::EncMeta {
+                    algo: "AES-256-GCM/STREAM-BE32".into(),
+                    chunk_bytes: crate::vault::VaultConfig::DEFAULT_CHUNK_BYTES,
+                    base_nonce_b64: "bm9uY2VwcmU=".into(),
+                    wrapped_dek_b64: "d3JhcHBlZA==".into(),
+                    wrap_scheme: "software-hkdf".into(),
+                    wrap_key_id: "software-master-v1".into(),
+                },
+            },
+        )
+        .await
+        .expect("save quota record");
+
+        let response = crate::api::handlers::vault::quota_status(
+            axum::extract::State(test_state()),
+            axum::extract::Query(crate::api::handlers::vault::VaultQuotaQuery {
+                ns: Some("personal".into()),
+                circle_id: None,
+            }),
+        )
+        .await
+        .expect("quota handler response");
+        let body = response.0;
+
+        assert_eq!(body.used_bytes, 200);
+        assert_eq!(body.quota_bytes, 500);
+        assert_eq!(body.remaining_bytes, 300);
+        assert_eq!(body.usage_percent, 40.0);
     }
 
     fn make_vc_material(
