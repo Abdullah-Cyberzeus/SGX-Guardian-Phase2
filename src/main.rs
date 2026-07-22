@@ -1171,12 +1171,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = std::fs::copy(&config_path, &main_path);
     }
 
-    fn default_admin_api_tls(node: &str) -> ApiTlsConfig {
+    fn default_admin_api_tls(_node: &str) -> ApiTlsConfig {
         ApiTlsConfig {
-            enabled: node == "nodeA",
+            enabled: false,
             cert_path: None,
             key_path: None,
-            require_https: node == "nodeA",
+            require_https: false,
         }
     }
 
@@ -3038,13 +3038,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         device_did,
         device_pubkey_point,
     );
-    if node_id == "nodeA" {
+    {
         let api_bind: std::net::SocketAddr = "0.0.0.0:8443".parse().unwrap();
-        let tls_cfg = this_node
+        let mut tls_cfg = this_node
             .api
             .clone()
             .map(|config| config.tls)
             .unwrap_or_else(|| default_admin_api_tls(&node_id));
+        tls_cfg.enabled = false;
+        tls_cfg.require_https = false;
 
         if tls_cfg.require_https && !tls_cfg.enabled {
             eprintln!(
@@ -3077,12 +3079,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
             let scheme = if tls_cfg.enabled { "https" } else { "http" };
             println!(
-                "✅ REST admin API (NodeA) starting on {}://{}/api/v1",
-                scheme, api_bind
+                "✅ REST admin API ({}) starting on {}://{}/api/v1",
+                node_id, scheme, api_bind
             );
         }
-    } else {
-        println!("ℹ️ Admin API disabled on member node {}", node_id);
     }
 
     // === CRL gossip engine ===
