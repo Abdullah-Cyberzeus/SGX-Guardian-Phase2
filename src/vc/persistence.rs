@@ -141,7 +141,8 @@ pub fn load_own_any() -> Result<Option<VerifiableCredential>, VcError> {
         let should_replace = preferred
             .as_ref()
             .map(|(best_is_mesh, ts, _)| {
-                (is_mesh_circle && !best_is_mesh) || (is_mesh_circle == *best_is_mesh && modified > *ts)
+                (is_mesh_circle && !best_is_mesh)
+                    || (is_mesh_circle == *best_is_mesh && modified > *ts)
             })
             .unwrap_or(true);
         if should_replace {

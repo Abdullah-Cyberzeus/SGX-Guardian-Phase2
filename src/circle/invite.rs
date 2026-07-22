@@ -6,7 +6,9 @@ use crate::circle::Circle;
 use crate::did::document::Proof;
 use crate::did::{DidRecord, Resolver};
 use crate::key_manager::KeyManager;
-use crate::vc::credential::{sort_json_keys, CredentialRole, VC_CONTEXT_CORE, VC_CONTEXT_SGX_CIRCLE};
+use crate::vc::credential::{
+    sort_json_keys, CredentialRole, VC_CONTEXT_CORE, VC_CONTEXT_SGX_CIRCLE,
+};
 use crate::vc::issue::{default_permissions_for_role, validate_permissions_for_role};
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{Duration, Utc};
@@ -103,7 +105,9 @@ pub fn mint_invite(
 pub async fn verify_invite(token: &InviteToken, resolver: &Resolver) -> Result<(), CircleError> {
     validate_permissions_for_role(&token.role, &token.permissions)?;
     if token.max_uses == 0 {
-        return Err(CircleError::Invalid("invite max_uses must be at least 1".into()));
+        return Err(CircleError::Invalid(
+            "invite max_uses must be at least 1".into(),
+        ));
     }
     let expires_at = chrono::DateTime::parse_from_rfc3339(&token.expires_at)
         .map_err(|err| CircleError::Invalid(format!("invite expiry: {}", err)))?;
@@ -140,7 +144,8 @@ pub fn list_invites(circle_id: &str) -> Result<Vec<InviteToken>, CircleError> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if !path.is_file() || path.file_name().and_then(|name| name.to_str()) == Some("redeemed.json")
+        if !path.is_file()
+            || path.file_name().and_then(|name| name.to_str()) == Some("redeemed.json")
         {
             continue;
         }
@@ -172,9 +177,11 @@ pub fn encode_compact(token: &InviteToken) -> Result<String, CircleError> {
 }
 
 pub fn decode_compact(value: &str) -> Result<InviteToken, CircleError> {
-    Ok(serde_json::from_slice(
-        &general_purpose::URL_SAFE_NO_PAD.decode(value)?,
-    )?)
+    let raw = general_purpose::URL_SAFE_NO_PAD
+        .decode(value)
+        .map_err(|err| CircleError::Invalid(format!("invalid invite token: {}", err)))?;
+    serde_json::from_slice(&raw)
+        .map_err(|err| CircleError::Invalid(format!("invalid invite token: {}", err)))
 }
 
 pub fn build_share_link(token_b64: &str, owner_host: &str) -> Result<String, CircleError> {
