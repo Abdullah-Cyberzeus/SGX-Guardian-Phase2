@@ -1,7 +1,7 @@
 // src/policy_manager.rs
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
-use crate::enforcement::enforce_policy;
+use crate::enforcement::apply_policy;
 use crate::policy;
 use crate::policy_state::ActivationOutcome;
 use anyhow::{Context, Result};
@@ -149,7 +149,7 @@ pub fn load_and_activate_policy(path: &str) -> Result<VerifiedPolicy> {
 
     // 3. Enforcement validation (gatekeeper)
     // If this fails → policy MUST NOT become active
-    if let Err(e) = enforce_policy(&parsed_policy) {
+    if let Err(e) = apply_policy(&parsed_policy) {
         log_audit(
             &node_id,
             AuditCategory::Policy,

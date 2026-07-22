@@ -6,7 +6,7 @@ license = "Apache-2.0 OR MIT"
 build = "build.rs"
 
 [dependencies]
-axum = { version = "0.7", features = ["macros", "multipart"] }
+axum = { version = "0.7", features = ["macros", "multipart", "ws"] }
 tonic = { version = "0.14.5", features = ["transport", "tls-native-roots", "tls-ring"] }
 tonic-prost = "0.14.2"
 prost = "0.14.3"
@@ -50,6 +50,7 @@ tonic-prost-build = "0.14.2"
 [dev-dependencies]
 rcgen = "0.12"
 uuid = { version = "1", features = ["v4"] }
+tower = { version = "0.4", features = ["util"] }
 
 [features]
 default = ["secure-element"]

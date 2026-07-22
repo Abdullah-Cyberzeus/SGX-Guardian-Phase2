@@ -18,7 +18,7 @@ pub mod state;
 use state::AppState;
 
 /// Build the full axum router with all v1 routes.
-pub fn build_router(state: Arc<AppState>) -> Router {
+pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -85,11 +85,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+        // SGX Guardian Wi-Fi Runtime Sub-Router (must be applied after .with_state returns Router<()>)
+        .nest("/api/v1/wifi", wifi_router)
 }
 
 /// Entry point. Spawned from main.rs as a tokio task.
-pub async fn serve(state: Arc<AppState>, bind: SocketAddr) -> anyhow::Result<()> {
-    let app = build_router(state);
+pub async fn serve(
+    state: Arc<AppState>,
+    bind: SocketAddr,
+    wifi_router: Router,
+) -> anyhow::Result<()> {
+    let app = build_router(state, wifi_router);
     let listener = tokio::net::TcpListener::bind(bind).await?;
     tracing::info!("Admin REST API listening on http://{}", bind);
     axum::serve(listener, app.into_make_service()).await?;
@@ -118,7 +124,7 @@ mod tests {
     }
 
     async fn spawn_api() -> (String, tokio::task::JoinHandle<()>) {
-        let app = build_router(test_state());
+        let app = build_router(test_state(), Router::new());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test listener");
