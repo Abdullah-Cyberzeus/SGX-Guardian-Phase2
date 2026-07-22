@@ -101,7 +101,7 @@ jq -r .did /var/lib/sgx-guardian/identity/did.json
 - UDP listener is visible on 0.0.0.0:50064
 ```
 
-**Current board run status:** ⏳ In progress — CRL-022 through CRL-028, CRL-030 through CRL-034, Hook 1, and Hook 2 PASS. The partial CRL-029 lab-state contamination was cleaned and nodeA/nodeB were rehydrated from nodeC back to Merkle root `43a51330227510e3e822b5e06a98c7d07c687c1d9b165b501493ebe9c952219f`; only CRL-029 still pending.
+**Current board run status:** ❌ CRL-029 failed on final board rerun — CRL-022 through CRL-028, CRL-030 through CRL-034, Hook 1, and Hook 2 PASS. Requirement 5 remains failed/not passed because nodeB kept the active nodeC CoT session after receiving the critical emergency notice (`sessions_terminated_delta=0`).
 
 ---
 
@@ -1243,7 +1243,7 @@ last_notice: {
 
 ---
 
-## ⏳ CRL-029 — Critical revoke terminates active CoT sessions
+## ❌ CRL-029 — Critical revoke terminates active CoT sessions
 
 > Verify that when the revoked DID maps to a live CoT peer session, that session is dropped immediately.
 
@@ -1746,7 +1746,81 @@ EMERGENCY revocation applied revoked_did=did:guardian:board-emergency-rest-20260
 EMERGENCY revocation applied revoked_did=did:guardian:board-emergency-ttl-dedup-20260721-002 sessions_terminated=0
 ```
 
-**Verdict:** ⏳ Blocked / retry required — retry precheck with the real nodeC DID succeeded and nodeB had an active debug CoT session ready for termination. The second nodeA attempt partially wrote a local revocation entry but returned an SE050 signing error while committing the status list, did not emit an emergency notice (`notices_sent=0`, `last_notice=null`), and nodeB did not record emergency application or `sessions_terminated` increment. Follow-up cleanup reset nodeA/nodeB CRLs and manual gossip trigger rehydrated both back to nodeC's clean Merkle root, so the lab state is recovered. CRL-029 still cannot be marked PASS until a critical emergency notice is delivered while a real active CoT session exists and receiver status/audit shows `sessions_terminated > 0`.
+Final board rerun after config/public-key and PCR baseline repair (`2026-07-22`):
+```text
+Preconditions:
+- nodeB CRL root empty: merkle_root="", sequence=0
+- nodeB nodeC DID check: revoked=false
+- nodeB emergency status before revoke: sessions_terminated=0, last_notice=null
+- nodeB debug session seed:
+  did=did:guardian:EtFW3QGXPgjjz6RYqqUQqdXrNKknaxFun18A6mr2mySB
+  remote_device_id=0299cc0d31a127a3de2a8ac66ac2bf7c5fb3eed4e06102e75b841fbb12124b1d
+  exists=true
+  total_sessions=1
+  active_sessions=1
+  session_id=b849c6cf-ff7b-40dc-9996-890d6a6b87c6
+
+nodeA REST critical revoke:
+{
+  "status": "success",
+  "message": "CRL entry issued",
+  "entry": {
+    "id": "urn:uuid:a27399fd-315b-4dfe-9eeb-1bd613c23a53",
+    "revoked_did": "did:guardian:EtFW3QGXPgjjz6RYqqUQqdXrNKknaxFun18A6mr2mySB",
+    "reason": "compromised",
+    "severity": "critical",
+    "revoker_did": "did:guardian:C2txwUBkHG5GukHRgvbZQqvxtv7CNkNDvdRAQfx9VQkE",
+    "evidence": { "note": "CRL-029 final board session termination" }
+  },
+  "sequence": 1,
+  "merkle_root": "4c3c11db9a32cf51bbade8fc8a632fb397812f7b5ba7913e97a08a65510fd1bd"
+}
+
+nodeA emergency status after revoke:
+{
+  "notices_sent": 1,
+  "last_notice": {
+    "direction": "sent",
+    "revoked_did": "did:guardian:EtFW3QGXPgjjz6RYqqUQqdXrNKknaxFun18A6mr2mySB",
+    "origin_did": "did:guardian:C2txwUBkHG5GukHRgvbZQqvxtv7CNkNDvdRAQfx9VQkE",
+    "peers": 1,
+    "merged": true
+  }
+}
+
+nodeB post-emergency debug session:
+{
+  "exists": true,
+  "total_sessions": 1,
+  "active_sessions": 1,
+  "session": {
+    "session_id": "b849c6cf-ff7b-40dc-9996-890d6a6b87c6",
+    "remote_device_id": "0299cc0d31a127a3de2a8ac66ac2bf7c5fb3eed4e06102e75b841fbb12124b1d",
+    "state": "Active"
+  }
+}
+
+nodeB emergency status after revoke:
+{
+  "notices_received": 1,
+  "notices_merged": 0,
+  "sessions_terminated": 0,
+  "last_notice": {
+    "direction": "received",
+    "revoked_did": "did:guardian:EtFW3QGXPgjjz6RYqqUQqdXrNKknaxFun18A6mr2mySB",
+    "origin_did": "did:guardian:C2txwUBkHG5GukHRgvbZQqvxtv7CNkNDvdRAQfx9VQkE",
+    "merged": false
+  }
+}
+
+sessions_terminated_delta: 0
+
+nodeB audit tail:
+- CRL gossip merged revocation revoked_did=did:guardian:EtFW3QGXPgjjz6RYqqUQqdXrNKknaxFun18A6mr2mySB reason=compromised severity=critical via_peer=did:guardian:C2txwUBkHG5GukHRgvbZQqvxtv7CNkNDvdRAQfx9VQkE
+- No "EMERGENCY revocation applied ... sessions_terminated=1" audit entry appeared.
+```
+
+**Verdict:** ❌ FAIL — the final board rerun satisfied the important preconditions: nodeB had an active CoT debug session for nodeC, nodeA issued a successful critical revoke, and nodeB received the emergency notice. However nodeB kept the session active (`exists=true`, `active_sessions=1`), `sessions_terminated_delta=0`, and no emergency application audit with `sessions_terminated=1` was produced. The audit shows the critical revocation was later merged through routine CRL gossip, while the emergency status recorded `merged=false`. This points to a code-side race/logic gap: critical session-termination side effects currently run only in the emergency handler when `newly_merged=true`; if routine gossip merges the critical entry first, or if the emergency handler sees the entry as already present, the session termination side effect is skipped. CRL-029 remains not passed until critical revocation side effects are enforced idempotently for all critical CRL merge paths or at least for received emergency notices even when the entry already exists.
 
 ---
 
@@ -2163,7 +2237,7 @@ The separately pasted nodeA/nodeC outputs still showed normal enabled mode and U
 - CRL-027 PASS: nodeA created valid source entry `urn:uuid:d0881f0b-5410-4a1b-bd85-7bb8df0c59bc`, then sent a tampered emergency notice to nodeB with `revoked_did=did:guardian:board-emergency-tampered-20260721-001`. nodeB kept the tampered DID `revoked=false` and audit logged `EMERGENCY notice rejected ... invalid signature`.
 - CRL-028 attempt 1 blocked on nodeA by recurring SE050 `No open session`; retry after SE050 probe succeeded.
 - CRL-028 PASS with DID `did:guardian:board-emergency-ttl-dedup-20260721-002`: nodeA issued entry `urn:uuid:b525f30d-7503-49bd-88d5-bca42d9a8659`; manual `POST /api/v1/crl/emergency/broadcast?did=` returned `success=true`; nodeC duplicate delivery increased `notices_received` by 2 but `notices_merged` and `notices_rebroadcast` stayed unchanged, proving fingerprint dedup bounded duplicate reprocessing.
-- CRL-029 blocked: synthetic DID `did:guardian:board-emergency-session-20260721-001` could not seed a debug CoT session on nodeB because its peer DID document was not found. Retry with real nodeC DID successfully seeded an active debug session on nodeB, but nodeA CRL revoke returned an SE050 signing error while committing the status list, did not send an emergency notice, and nodeB showed `sessions_terminated_delta=0`. The partial nodeC revocation contaminated nodeA and propagated to nodeB, then nodeA/nodeB were reset from backup-safe local CRL cleanup and rehydrated from nodeC via manual gossip trigger. Current recovery evidence shows nodeA/nodeB/nodeC root `43a51330227510e3e822b5e06a98c7d07c687c1d9b165b501493ebe9c952219f`, `other_members=2`, and nodeC DID `revoked=false`; CRL-029 remains pending because session termination was not observed.
+- CRL-029 failed on final rerun: earlier synthetic DID/debug-session and SE050 failures were cleared. Final rerun used the real nodeC DID, nodeB had `exists=true`/`active_sessions=1`, nodeA REST revoke succeeded, and nodeB received the emergency notice. nodeB still reported `exists=true`, `active_sessions=1`, `sessions_terminated_delta=0`, and no `EMERGENCY revocation applied ... sessions_terminated=1` audit entry. Audit showed routine gossip later merged the critical revocation, while emergency status showed `merged=false`. Likely code-side race/logic gap: critical session termination is tied to emergency `newly_merged=true`, so if routine gossip merges first or the entry is already present, the side effect is skipped.
 - CRL-030 PASS: nodeC `GET /api/v1/crl/emergency/notifications` returned multiple critical notification records and `/var/lib/sgx-guardian/identity/crl/emergency_notifications.jsonl` existed with JSONL records. nodeA source feed was empty.
 - CRL-031 PASS: nodeA/nodeB/nodeC emergency status endpoint exposed enabled config, port, TTL, counters, sessions_terminated, and last_notice metadata.
 - CRL-032 PASS: nodeA `POST /api/v1/crl/emergency/broadcast?did=did:guardian:board-emergency-ttl-dedup-20260721-002` returned `success=true` and status showed `notices_sent=2`, `peers=2`.
@@ -2179,4 +2253,4 @@ The separately pasted nodeA/nodeC outputs still showed normal enabled mode and U
 - **Requirements Passed:** `7/8`
 - **APIs Passed:** `4/4`
 - **CLI / Runtime Hooks Passed:** `2/2`
-- **Overall Verdict:** ⏳ In progress — CRL-022 through CRL-028, CRL-030 through CRL-034, and both runtime hooks passed; only CRL-029 session termination remains pending.
+- **Overall Verdict:** ❌ CRL-029 / Requirement 5 failed on final board rerun — CRL-022 through CRL-028, CRL-030 through CRL-034, and both runtime hooks passed; session termination still needs a code fix and rerun.
