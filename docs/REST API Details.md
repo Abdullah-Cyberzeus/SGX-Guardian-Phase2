@@ -120,6 +120,9 @@ Transport notes:
 | 101 | POST | `/wifi/mode` | Update network orchestration mode (DualWifi, HotspotOnly, ClientOnly, Off) |
 | 102 | GET | `/wifi/scan` | Perform Wi-Fi scan for visible access points in range |
 | 103 | GET | `/wifi/clients` | Retrieve active hotspot connected DHCP client leases |
+| 104 | GET | `/crl/offline/status` | Offline CRL sync status, counters, and per-peer version-vector view |
+| 105 | GET | `/crl/offline/pending` | List queued offline revocations with retry metadata |
+| 106 | POST | `/crl/offline/sync` | Trigger one offline CRL sync cycle immediately |
 
 
 ## 2. NEW Endpoints 
@@ -152,6 +155,9 @@ Transport notes:
 | POST | `/wifi/mode` | Update network orchestration mode (DualWifi, HotspotOnly, ClientOnly, Off) |
 | GET | `/wifi/scan` | Perform Wi-Fi scan for visible access points in range |
 | GET | `/wifi/clients` | Retrieve active hotspot connected DHCP client leases |
+| GET | `/crl/offline/status` | Return offline sync enablement, counters, and peer sync-state snapshot |
+| GET | `/crl/offline/pending` | Return queued revocations with attempts, timestamps, and parked state |
+| POST | `/crl/offline/sync` | Run one offline fetch-and-flush cycle on demand |
 ---
 
 ## 2. Standard Error Envelope

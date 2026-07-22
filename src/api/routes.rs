@@ -40,6 +40,18 @@ pub fn crl_router() -> Router<Arc<AppState>> {
             get(handlers::crl::emergency_debug_session_status)
                 .post(handlers::crl::emergency_debug_session_seed),
         )
+        .route(
+            "/api/v1/crl/offline/status",
+            get(handlers::crl::offline_status),
+        )
+        .route(
+            "/api/v1/crl/offline/pending",
+            get(handlers::crl::offline_pending),
+        )
+        .route(
+            "/api/v1/crl/offline/sync",
+            post(handlers::crl::offline_sync),
+        )
 }
 
 pub fn xfer_router() -> Router<Arc<AppState>> {
@@ -117,7 +129,10 @@ pub fn notify_router() -> Router<Arc<AppState>> {
 
 pub fn circle_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/api/v1/circles", get(handlers::circle::list).post(handlers::circle::create))
+        .route(
+            "/api/v1/circles",
+            get(handlers::circle::list).post(handlers::circle::create),
+        )
         .route(
             "/api/v1/circles/{id}",
             get(handlers::circle::detail).patch(handlers::circle::edit),

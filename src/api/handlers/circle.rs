@@ -7,7 +7,9 @@ use crate::circle::store::{self, CIRCLE_WRITE_LOCK};
 use crate::circle::{Circle, CircleError};
 use crate::did::Did;
 use crate::vc::credential::{CredentialRole, VerifiableCredential};
-use crate::vc::issue::{self, default_permissions_for_role, IssueMembershipOutcome, IssueRequest, VcAdminAction};
+use crate::vc::issue::{
+    self, default_permissions_for_role, IssueMembershipOutcome, IssueRequest, VcAdminAction,
+};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -198,7 +200,11 @@ pub async fn create(
     issue::ensure_circle_owner(&issuer, &mesh_circle_id, VcAdminAction::Issue, false)
         .map_err(map_vc_error)?;
     let registry = store::load_or_seed(&state.node_id).map_err(map_circle_error)?;
-    if registry.circles.iter().any(|circle| circle.circle_id == circle_id) {
+    if registry
+        .circles
+        .iter()
+        .any(|circle| circle.circle_id == circle_id)
+    {
         return Err(ApiError::Conflict(format!(
             "circle {} already exists",
             circle_id
@@ -265,8 +271,12 @@ pub async fn edit(
         .as_deref()
         .map(|value| required_name(Some(value)).map(str::to_string))
         .transpose()?;
-    let description = body.description.as_deref().map(|value| value.trim().to_string());
-    let circle = store::edit_circle(&state.node_id, &id, name, description).map_err(map_circle_error)?;
+    let description = body
+        .description
+        .as_deref()
+        .map(|value| value.trim().to_string());
+    let circle =
+        store::edit_circle(&state.node_id, &id, name, description).map_err(map_circle_error)?;
     log_audit(
         &state.node_id,
         AuditCategory::Circle,
@@ -328,7 +338,10 @@ pub async fn add_member(
         AuditCategory::Circle,
         AuditSeverity::Info,
         AuditAction::Succeeded,
-        &format!("Circle member added: circle={} subject={} role={:?}", id, did, role),
+        &format!(
+            "Circle member added: circle={} subject={} role={:?}",
+            id, did, role
+        ),
     );
     Ok((
         if result.reused_existing {
@@ -355,9 +368,8 @@ pub async fn remove_member(
     Path((id, did)): Path<(String, String)>,
 ) -> Result<Json<MemberRemoveResponse>, ApiError> {
     let did = required_did(Some(&did))?;
-    let revoked_vc_ids =
-        members::remove_member(&state.node_id, &id, &did, "circle member removed")
-            .map_err(map_circle_error)?;
+    let revoked_vc_ids = members::remove_member(&state.node_id, &id, &did, "circle member removed")
+        .map_err(map_circle_error)?;
     log_audit(
         &state.node_id,
         AuditCategory::Circle,
@@ -387,7 +399,10 @@ pub async fn change_role(
         AuditCategory::Circle,
         AuditSeverity::Info,
         AuditAction::Updated,
-        &format!("Circle role changed: circle={} subject={} role={:?}", id, did, role),
+        &format!(
+            "Circle role changed: circle={} subject={} role={:?}",
+            id, did, role
+        ),
     );
     Ok(Json(MemberMutationResponse {
         status: "success".to_string(),
@@ -422,10 +437,17 @@ pub async fn mint_invite(
         return Err(ApiError::Conflict(format!("circle {} is archived", id)));
     }
     let role = parse_role(body.role.as_deref().unwrap_or("member"))?;
-    let (issuer, km) = store::load_runtime_signing_context(&state.node_id).map_err(map_circle_error)?;
-    let invite_token =
-        invite::mint_invite(&circle, &issuer, &km, role.clone(), body.expires_in_minutes, body.max_uses)
-            .map_err(map_circle_error)?;
+    let (issuer, km) =
+        store::load_runtime_signing_context(&state.node_id).map_err(map_circle_error)?;
+    let invite_token = invite::mint_invite(
+        &circle,
+        &issuer,
+        &km,
+        role.clone(),
+        body.expires_in_minutes,
+        body.max_uses,
+    )
+    .map_err(map_circle_error)?;
     let token_b64 = invite::encode_compact(&invite_token).map_err(map_circle_error)?;
     let owner_host = body
         .owner_host
@@ -512,7 +534,8 @@ pub async fn join(
     invite::verify_invite(&invite_token, &state.did_resolver)
         .await
         .map_err(map_circle_error)?;
-    let (joiner, km) = store::load_runtime_signing_context(&state.node_id).map_err(map_circle_error)?;
+    let (joiner, km) =
+        store::load_runtime_signing_context(&state.node_id).map_err(map_circle_error)?;
     let join_request =
         invite::sign_join_request(&joiner, &km, invite_token.clone()).map_err(map_circle_error)?;
     let owner_url = normalize_owner_url(&body.owner_host)?;
@@ -598,8 +621,10 @@ pub async fn redeem(
         )));
     }
 
-    let (issuer, km) = store::load_runtime_signing_context(&state.node_id).map_err(map_circle_error)?;
-    let circle = store::get_circle(&state.node_id, &body.invite_token.circle_id).map_err(map_circle_error)?;
+    let (issuer, km) =
+        store::load_runtime_signing_context(&state.node_id).map_err(map_circle_error)?;
+    let circle = store::get_circle(&state.node_id, &body.invite_token.circle_id)
+        .map_err(map_circle_error)?;
     if circle.is_archived() {
         return Err(ApiError::Conflict(format!(
             "circle {} is archived",
@@ -607,7 +632,9 @@ pub async fn redeem(
         )));
     }
 
-    let _guard = CIRCLE_WRITE_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _guard = CIRCLE_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     issue::ensure_circle_owner(&issuer, &circle.circle_id, VcAdminAction::Issue, false)
         .map_err(map_vc_error)?;
     invite::assert_redeemable(&circle, &body.invite_token, &body.joiner_did)
@@ -653,7 +680,8 @@ fn ensure_circle_owner_access(
     circle_id: &str,
     action: VcAdminAction,
 ) -> Result<(), ApiError> {
-    let (issuer, _) = store::load_runtime_signing_context(&state.node_id).map_err(map_circle_error)?;
+    let (issuer, _) =
+        store::load_runtime_signing_context(&state.node_id).map_err(map_circle_error)?;
     issue::ensure_circle_owner(&issuer, circle_id, action, false).map_err(map_vc_error)
 }
 
@@ -672,13 +700,16 @@ fn required_name(raw: Option<&str>) -> Result<&str, ApiError> {
 }
 
 fn normalized_description(raw: Option<&str>) -> String {
-    raw.map(|value| value.trim().to_string()).unwrap_or_default()
+    raw.map(|value| value.trim().to_string())
+        .unwrap_or_default()
 }
 
 fn normalize_circle_id(raw: &str) -> Result<String, ApiError> {
     let value = raw.trim();
     if value.is_empty() {
-        return Err(ApiError::BadRequest("circle_id must not be empty".to_string()));
+        return Err(ApiError::BadRequest(
+            "circle_id must not be empty".to_string(),
+        ));
     }
     if value.contains('/') || value.contains('\\') || value.contains(' ') {
         return Err(ApiError::BadRequest(
@@ -773,17 +804,23 @@ fn map_vc_error(err: crate::vc::errors::VcError) -> ApiError {
     match err {
         crate::vc::errors::VcError::NotCircleOwnerForIssue
         | crate::vc::errors::VcError::NotCircleOwnerForRevoke
-        | crate::vc::errors::VcError::NotCircleOwnerForRenew => ApiError::Forbidden(err.to_string()),
+        | crate::vc::errors::VcError::NotCircleOwnerForRenew => {
+            ApiError::Forbidden(err.to_string())
+        }
         crate::vc::errors::VcError::NotFound(item) => ApiError::NotFound(item),
         crate::vc::errors::VcError::CannotRenewRevokedVc
-        | crate::vc::errors::VcError::CannotRenewExpiredVc(_) => ApiError::Conflict(err.to_string()),
+        | crate::vc::errors::VcError::CannotRenewExpiredVc(_) => {
+            ApiError::Conflict(err.to_string())
+        }
         crate::vc::errors::VcError::InvalidStructure(_)
         | crate::vc::errors::VcError::InvalidMembershipStatus(_)
         | crate::vc::errors::VcError::UnknownPermission(_)
         | crate::vc::errors::VcError::IndexOutOfRange { .. }
         | crate::vc::errors::VcError::CircleMismatch { .. }
         | crate::vc::errors::VcError::IssuerMismatch { .. }
-        | crate::vc::errors::VcError::SubjectMismatch { .. } => ApiError::BadRequest(err.to_string()),
+        | crate::vc::errors::VcError::SubjectMismatch { .. } => {
+            ApiError::BadRequest(err.to_string())
+        }
         crate::vc::errors::VcError::Io(error) if error.kind() == std::io::ErrorKind::NotFound => {
             ApiError::NotFound(error.to_string())
         }
