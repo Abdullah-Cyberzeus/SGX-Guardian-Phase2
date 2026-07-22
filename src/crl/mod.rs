@@ -3,6 +3,7 @@ pub mod errors;
 pub mod gossip;
 pub mod issue;
 pub mod list;
+pub mod offline;
 pub mod persistence;
 pub mod verify;
 

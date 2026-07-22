@@ -31,7 +31,9 @@ pub fn mesh_circle_id() -> Result<String, CircleError> {
 }
 
 pub fn load_or_seed(node_id: &str) -> Result<CircleRegistry, CircleError> {
-    let _guard = CIRCLE_WRITE_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _guard = CIRCLE_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     load_or_seed_unlocked(node_id)
 }
 
@@ -51,9 +53,15 @@ pub fn create_circle(
     description: String,
     owner_did: String,
 ) -> Result<Circle, CircleError> {
-    let _guard = CIRCLE_WRITE_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _guard = CIRCLE_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     let mut registry = load_or_seed_unlocked(node_id)?;
-    if registry.circles.iter().any(|circle| circle.circle_id == circle_id) {
+    if registry
+        .circles
+        .iter()
+        .any(|circle| circle.circle_id == circle_id)
+    {
         return Err(CircleError::Conflict(format!(
             "circle {} already exists",
             circle_id
@@ -73,7 +81,9 @@ pub fn create_circle(
     };
     registry.circles.push(circle.clone());
     registry.sequence += 1;
-    registry.circles.sort_by(|left, right| left.circle_id.cmp(&right.circle_id));
+    registry
+        .circles
+        .sort_by(|left, right| left.circle_id.cmp(&right.circle_id));
     save_registry(node_id, &mut registry)?;
     Ok(circle)
 }
@@ -84,7 +94,9 @@ pub fn edit_circle(
     name: Option<String>,
     description: Option<String>,
 ) -> Result<Circle, CircleError> {
-    let _guard = CIRCLE_WRITE_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _guard = CIRCLE_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     let mut registry = load_or_seed_unlocked(node_id)?;
     let circle = registry
         .circles
@@ -105,7 +117,9 @@ pub fn edit_circle(
 }
 
 pub fn archive_circle(node_id: &str, circle_id: &str) -> Result<Circle, CircleError> {
-    let _guard = CIRCLE_WRITE_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _guard = CIRCLE_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     let mut registry = load_or_seed_unlocked(node_id)?;
     let circle = registry
         .circles
@@ -126,7 +140,9 @@ pub fn archive_circle(node_id: &str, circle_id: &str) -> Result<Circle, CircleEr
 }
 
 pub fn upsert_circle(node_id: &str, circle: Circle) -> Result<Circle, CircleError> {
-    let _guard = CIRCLE_WRITE_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _guard = CIRCLE_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     let mut registry = load_or_seed_unlocked(node_id)?;
     let mut incoming = circle.clone();
     incoming.updated_at = Utc::now().to_rfc3339();
@@ -142,7 +158,9 @@ pub fn upsert_circle(node_id: &str, circle: Circle) -> Result<Circle, CircleErro
         None => registry.circles.push(incoming.clone()),
     }
     registry.sequence += 1;
-    registry.circles.sort_by(|left, right| left.circle_id.cmp(&right.circle_id));
+    registry
+        .circles
+        .sort_by(|left, right| left.circle_id.cmp(&right.circle_id));
     save_registry(node_id, &mut registry)?;
     Ok(incoming)
 }

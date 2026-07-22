@@ -347,6 +347,82 @@ pub async fn emergency_notifications(
     )))
 }
 
+#[derive(Debug, Serialize)]
+pub struct OfflineStatusResponse {
+    pub enabled: bool,
+    pub online: bool,
+    pub sync_interval_secs: u64,
+    pub flush_rounds: u32,
+    pub max_retries: u32,
+    pub pending: usize,
+    pub sync_cycles: u64,
+    pub reconnects: u64,
+    pub entries_delivered: u64,
+    pub entries_fetched: u64,
+    pub peer_sync_state:
+        std::collections::HashMap<String, crate::crl::offline::sync::PeerSyncState>,
+}
+
+/// GET /api/v1/crl/offline/status - offline sync observability.
+pub async fn offline_status(
+    State(_state): State<Arc<crate::api::state::AppState>>,
+) -> Result<Json<OfflineStatusResponse>, ApiError> {
+    let config = crate::crl::offline::OfflineConfig::from_env();
+    Ok(Json(OfflineStatusResponse {
+        enabled: config.enabled,
+        online: crate::crl::offline::sync::is_online(),
+        sync_interval_secs: config.sync_interval_secs,
+        flush_rounds: config.flush_rounds,
+        max_retries: config.max_retries,
+        pending: crate::crl::offline::queue::count(),
+        sync_cycles: crate::crl::offline::sync::sync_cycles(),
+        reconnects: crate::crl::offline::sync::reconnects(),
+        entries_delivered: crate::crl::offline::sync::entries_delivered(),
+        entries_fetched: crate::crl::offline::sync::entries_fetched(),
+        peer_sync_state: crate::crl::offline::sync::sync_state_snapshot(),
+    }))
+}
+
+/// GET /api/v1/crl/offline/pending - list queued (undelivered) revocations.
+pub async fn offline_pending(
+    State(_state): State<Arc<crate::api::state::AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let pending = crate::crl::offline::queue::list()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let items: Vec<serde_json::Value> = pending
+        .into_iter()
+        .map(|item| {
+            serde_json::json!({
+                "id": item.entry.id,
+                "revoked_did": item.entry.revoked_did,
+                "reason": item.entry.reason.as_str(),
+                "severity": item.entry.severity.as_str(),
+                "attempts": item.attempts,
+                "queued_at": item.queued_at,
+                "last_attempt_at": item.last_attempt_at,
+                "last_error": item.last_error,
+                "parked": item.parked,
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({
+        "status": "success",
+        "count": items.len(),
+        "pending": items,
+    })))
+}
+
+/// POST /api/v1/crl/offline/sync - run one sync cycle now (deterministic hook).
+pub async fn offline_sync(
+    State(state): State<Arc<crate::api::state::AppState>>,
+) -> Result<Json<crate::crl::offline::sync::CycleReport>, ApiError> {
+    let config = crate::crl::offline::OfflineConfig::from_env();
+    let report = crate::crl::offline::sync::run_cycle(&state.node_id, &state.did_resolver, &config)
+        .await
+        .map_err(ApiError::Internal)?;
+    Ok(Json(report))
+}
+
 pub async fn revoke(
     State(state): State<Arc<crate::api::state::AppState>>,
     Json(body): Json<RevokeCrlRequest>,
@@ -387,6 +463,10 @@ pub async fn revoke(
     if matches!(entry.severity, crate::crl::entry::Severity::Critical) {
         crate::crl::gossip::emergency::broadcast_for_entry(state.node_id.clone(), entry.clone());
     }
+
+    // Track the just-issued revocation in the offline queue so it is
+    // guaranteed to reach peers even if connectivity is currently down.
+    crate::crl::offline::queue_pending(&state.node_id, &entry);
 
     Ok(Json(RevokeCrlResponse {
         status: "success".to_string(),

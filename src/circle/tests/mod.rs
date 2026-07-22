@@ -12,6 +12,7 @@ use crate::did::{derive, Resolver};
 use crate::key_manager::KeyManager;
 use crate::vc::credential::CredentialRole;
 use crate::vc::issue::{self, IssueRequest};
+use base64::Engine as _;
 use chrono::{Duration, Utc};
 use std::ffi::OsString;
 use tempfile::TempDir;
@@ -80,7 +81,10 @@ impl Drop for EnvGuard {
         restore_env(PEERS_DOC_DIR_ENV, self.peers_dir_prev.take());
         restore_env(CA_AGGREGATE_PATH_ENV, self.aggregate_prev.take());
         restore_env(VERSION_COUNTER_PATH_ENV, self.counter_prev.take());
-        restore_env(crate::vc::persistence::VC_BASE_ENV, self.vc_base_prev.take());
+        restore_env(
+            crate::vc::persistence::VC_BASE_ENV,
+            self.vc_base_prev.take(),
+        );
         restore_env(CIRCLE_BASE_ENV, self.circle_base_prev.take());
         restore_env(DID_PATH_ENV, self.did_path_prev.take());
         restore_env(issue::DEVICE_KEY_DIR_ENV, self.device_key_dir_prev.take());
@@ -135,7 +139,10 @@ fn make_material(
         current_dkp_pubkey_der: &pubkey,
         overlay_ip_cidr: Some(overlay_ip_cidr),
         attestation_bind: None,
-        cert_bootstrap_bind: Some((overlay_ip_cidr.split('/').next().unwrap_or("127.0.0.1"), 50061)),
+        cert_bootstrap_bind: Some((
+            overlay_ip_cidr.split('/').next().unwrap_or("127.0.0.1"),
+            50061,
+        )),
         revoked: vec![],
         previous_version_id: 0,
         created_at: Some(now),
@@ -209,7 +216,10 @@ fn registry_roundtrip_and_tamper_detection() {
     assert_eq!(edited.name, "Ops Renamed");
 
     let archived = store::archive_circle("nodeA", "circle-ops").expect("archive circle");
-    assert!(matches!(archived.status, crate::circle::CircleStatus::Archived));
+    assert!(matches!(
+        archived.status,
+        crate::circle::CircleStatus::Archived
+    ));
 
     let registry = store::load_or_seed("nodeA").expect("reload registry");
     let circle = registry
@@ -221,7 +231,8 @@ fn registry_roundtrip_and_tamper_detection() {
 
     let path = crate::circle::persistence::registry_path();
     let mut tampered: crate::circle::CircleRegistry =
-        serde_json::from_slice(&std::fs::read(&path).expect("registry bytes")).expect("registry json");
+        serde_json::from_slice(&std::fs::read(&path).expect("registry bytes"))
+            .expect("registry json");
     tampered.sequence += 1;
     crate::circle::persistence::write_atomic(&path, &serde_json::to_vec_pretty(&tampered).unwrap())
         .expect("write tampered registry");
@@ -258,7 +269,10 @@ fn load_own_any_prefers_mesh_circle_membership() {
     let preferred = crate::vc::persistence::load_own_any()
         .expect("load own")
         .expect("own vc");
-    assert_eq!(preferred.credential_subject.circle_id, issue::DEFAULT_CIRCLE_ID);
+    assert_eq!(
+        preferred.credential_subject.circle_id,
+        issue::DEFAULT_CIRCLE_ID
+    );
 }
 
 #[test]
@@ -300,6 +314,19 @@ fn invite_roundtrip_verifies_and_fits_qr_budget() {
 
     let link = invite::build_share_link(&compact, "http://owner.example:8443").expect("link");
     assert!(link.len() <= invite::MAX_QR_PAYLOAD_SIZE);
+}
+
+#[test]
+fn decode_compact_rejects_invalid_base64_as_invalid_input() {
+    let err = invite::decode_compact("not-a-valid-token***").expect_err("invalid base64");
+    assert!(matches!(err, crate::circle::CircleError::Invalid(_)));
+}
+
+#[test]
+fn decode_compact_rejects_non_json_payload_as_invalid_input() {
+    let compact = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("not-json");
+    let err = invite::decode_compact(&compact).expect_err("invalid json payload");
+    assert!(matches!(err, crate::circle::CircleError::Invalid(_)));
 }
 
 #[test]
@@ -415,7 +442,10 @@ fn invite_replay_and_non_owner_invites_are_rejected() {
     invite::record_redemption(&token.id, &joiner.did).expect("record redemption");
     let replay = invite::assert_redeemable(&circle, &token, &joiner.did)
         .expect_err("second redemption must fail");
-    assert!(matches!(replay, crate::circle::CircleError::InviteReplay(_)));
+    assert!(matches!(
+        replay,
+        crate::circle::CircleError::InviteReplay(_)
+    ));
 
     let forged = invite::mint_invite(
         &circle,

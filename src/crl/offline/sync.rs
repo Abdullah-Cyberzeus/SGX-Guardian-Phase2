@@ -1,0 +1,332 @@
+//! Connectivity detection + reconnect-driven fetch/flush via the existing
+//! gossip anti-entropy exchange. Maintains a per-peer version-vector view.
+
+use super::{queue, OfflineConfig};
+use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use crate::audit::logger::log_audit;
+use crate::crl::gossip::engine::{
+    active_gossip_peers, did_record_path, run_round_once, GossipPeer,
+};
+use crate::crl::gossip::GossipConfig;
+use crate::crl::persistence;
+use crate::did::{DidRecord, Resolver};
+use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::RwLock;
+use std::time::Duration;
+use tokio::net::TcpStream;
+
+// Observability
+static SYNC_CYCLES: AtomicU64 = AtomicU64::new(0);
+static RECONNECTS: AtomicU64 = AtomicU64::new(0);
+static ENTRIES_DELIVERED: AtomicU64 = AtomicU64::new(0);
+static ENTRIES_FETCHED: AtomicU64 = AtomicU64::new(0);
+static WAS_ONLINE: AtomicBool = AtomicBool::new(false);
+
+pub fn sync_cycles() -> u64 {
+    SYNC_CYCLES.load(Ordering::Relaxed)
+}
+
+pub fn reconnects() -> u64 {
+    RECONNECTS.load(Ordering::Relaxed)
+}
+
+pub fn entries_delivered() -> u64 {
+    ENTRIES_DELIVERED.load(Ordering::Relaxed)
+}
+
+pub fn entries_fetched() -> u64 {
+    ENTRIES_FETCHED.load(Ordering::Relaxed)
+}
+
+pub fn is_online() -> bool {
+    WAS_ONLINE.load(Ordering::Relaxed)
+}
+
+/// Per-peer CRL version-vector view, persisted for observability.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PeerSyncState {
+    pub last_seen_merkle_root: String,
+    pub last_seen_sequence: u64,
+    pub last_sync_at: String,
+}
+
+static SYNC_STATE: Lazy<RwLock<HashMap<String, PeerSyncState>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+pub fn sync_state_snapshot() -> HashMap<String, PeerSyncState> {
+    SYNC_STATE
+        .read()
+        .map(|guard| guard.clone())
+        .unwrap_or_default()
+}
+
+fn sync_state_path() -> std::path::PathBuf {
+    persistence::pending_dir()
+        .parent()
+        .map(|base| base.join("sync_state.json"))
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from("/var/lib/sgx-guardian/identity/crl/sync_state.json")
+        })
+}
+
+fn load_sync_state() {
+    let path = sync_state_path();
+    let Ok(bytes) = std::fs::read(path) else {
+        return;
+    };
+    let Ok(snapshot) = serde_json::from_slice::<HashMap<String, PeerSyncState>>(&bytes) else {
+        return;
+    };
+    if let Ok(mut guard) = SYNC_STATE.write() {
+        *guard = snapshot;
+    }
+}
+
+fn persist_sync_state() {
+    if let Ok(guard) = SYNC_STATE.read() {
+        if let Ok(bytes) = serde_json::to_vec_pretty(&*guard) {
+            let path = sync_state_path();
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let tmp = path.with_extension("tmp");
+            if std::fs::write(&tmp, &bytes).is_ok() {
+                let _ = std::fs::rename(&tmp, &path);
+            }
+        }
+    }
+}
+
+fn record_local_vector_for(peer_did: &str) {
+    let (sequence, merkle_root) = match persistence::load_crl() {
+        Ok(Some(crl)) => (crl.sequence, crl.merkle_root),
+        _ => (0, String::new()),
+    };
+    if let Ok(mut guard) = SYNC_STATE.write() {
+        guard.insert(
+            peer_did.to_string(),
+            PeerSyncState {
+                last_seen_merkle_root: merkle_root,
+                last_seen_sequence: sequence,
+                last_sync_at: chrono::Utc::now().to_rfc3339(),
+            },
+        );
+    }
+}
+
+async fn reachable_peers(self_did: &str, config: &OfflineConfig) -> Vec<GossipPeer> {
+    let gossip_port = GossipConfig::from_env().port;
+    let candidates = active_gossip_peers(self_did);
+    let mut reachable = Vec::new();
+    for peer in candidates {
+        let addr = format!("{}:{}", peer.overlay_ip, gossip_port);
+        let ok = tokio::time::timeout(
+            Duration::from_millis(config.probe_timeout_ms),
+            TcpStream::connect(&addr),
+        )
+        .await
+        .map(|result| result.is_ok())
+        .unwrap_or(false);
+        if ok {
+            reachable.push(peer);
+        }
+    }
+    reachable
+}
+
+pub async fn sync_loop(node_id: String, resolver: Resolver, config: OfflineConfig) {
+    load_sync_state();
+    tokio::time::sleep(Duration::from_secs(config.sync_interval_secs)).await;
+    loop {
+        if let Err(reason) = run_cycle(&node_id, &resolver, &config).await {
+            tracing::warn!("CRL-OFFLINE cycle error: {}", reason);
+        }
+        tokio::time::sleep(Duration::from_secs(config.sync_interval_secs)).await;
+    }
+}
+
+/// One sync cycle. Also invoked by POST /crl/offline/sync for deterministic
+/// board testing. Returns a short human summary.
+pub async fn run_cycle(
+    node_id: &str,
+    resolver: &Resolver,
+    config: &OfflineConfig,
+) -> Result<CycleReport, String> {
+    SYNC_CYCLES.fetch_add(1, Ordering::Relaxed);
+
+    let record = DidRecord::load(&did_record_path()).map_err(|error| error.to_string())?;
+    let self_did = record.did.clone();
+
+    let reachable = reachable_peers(&self_did, config).await;
+    let online = !reachable.is_empty();
+
+    let was_online = WAS_ONLINE.swap(online, Ordering::Relaxed);
+    if online && !was_online {
+        RECONNECTS.fetch_add(1, Ordering::Relaxed);
+        log_audit(
+            node_id,
+            AuditCategory::Crl,
+            AuditSeverity::Info,
+            AuditAction::Succeeded,
+            &format!(
+                "CRL offline: connectivity restored - {} peer(s) reachable, syncing",
+                reachable.len()
+            ),
+        );
+        println!(
+            "CRL-OFFLINE connectivity restored: {} peer(s) reachable",
+            reachable.len()
+        );
+    } else if !online && was_online {
+        log_audit(
+            node_id,
+            AuditCategory::Crl,
+            AuditSeverity::Warning,
+            AuditAction::Failed,
+            "CRL offline: connectivity lost - no reachable gossip peers",
+        );
+        println!("CRL-OFFLINE connectivity lost: no reachable gossip peers");
+    }
+
+    let reconciled = queue::reconcile_from_local(&self_did).map_err(|error| error.to_string())?;
+
+    if !online {
+        return Ok(CycleReport {
+            online: false,
+            reachable_peers: 0,
+            reconciled,
+            fetched: 0,
+            delivered: 0,
+            pending_remaining: queue::count(),
+        });
+    }
+
+    let before = pending_fingerprints();
+    let mut fetched = 0usize;
+    for _ in 0..config.flush_rounds {
+        match run_round_once(node_id, resolver, &GossipConfig::from_env()).await {
+            Ok(report) => {
+                fetched += report.merged + report.replaced;
+                record_local_vector_for(&report.peer_did);
+            }
+            Err(reason) => {
+                tracing::info!("CRL-OFFLINE round skipped: {}", reason);
+            }
+        }
+    }
+    persist_sync_state();
+    ENTRIES_FETCHED.fetch_add(fetched as u64, Ordering::Relaxed);
+
+    let delivered = settle_pending(node_id, config, &before)?;
+    ENTRIES_DELIVERED.fetch_add(delivered as u64, Ordering::Relaxed);
+
+    println!(
+        "CRL-OFFLINE cycle complete peers={} reconciled={} fetched={} delivered={} pending={}",
+        reachable.len(),
+        reconciled,
+        fetched,
+        delivered,
+        queue::count()
+    );
+
+    Ok(CycleReport {
+        online: true,
+        reachable_peers: reachable.len(),
+        reconciled,
+        fetched,
+        delivered,
+        pending_remaining: queue::count(),
+    })
+}
+
+fn pending_fingerprints() -> Vec<String> {
+    queue::list()
+        .map(|items| items.iter().map(|p| p.entry.fingerprint()).collect())
+        .unwrap_or_default()
+}
+
+/// For each pending entry: bump the attempt counter; if the entry is now
+/// `propagated` in local crl.json, dequeue it (delivered). Returns the number
+/// dequeued this cycle.
+fn settle_pending(
+    node_id: &str,
+    config: &OfflineConfig,
+    _before: &[String],
+) -> Result<usize, String> {
+    let crl = persistence::load_crl().map_err(|error| error.to_string())?;
+    let propagated_ids: HashSet<String> = crl
+        .map(|crl| {
+            crl.entries
+                .into_iter()
+                .filter(|entry| entry.propagated)
+                .map(|entry| entry.id)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let pending = queue::list().map_err(|error| error.to_string())?;
+    let mut delivered = 0usize;
+    for item in pending {
+        if propagated_ids.contains(&item.entry.id) {
+            queue::dequeue(&item.entry.id).map_err(|error| error.to_string())?;
+            delivered += 1;
+            log_audit(
+                node_id,
+                AuditCategory::Crl,
+                AuditSeverity::Info,
+                AuditAction::Succeeded,
+                &format!(
+                    "CRL offline delivered revoked_did={} id={} (propagated)",
+                    item.entry.revoked_did, item.entry.id
+                ),
+            );
+            println!(
+                "CRL-OFFLINE delivered revoked_did={} id={}",
+                item.entry.revoked_did, item.entry.id
+            );
+            continue;
+        }
+
+        if item.parked {
+            continue;
+        }
+
+        let next_attempt = item.attempts.saturating_add(1);
+        queue::record_attempt(&item.entry.id, None, config.max_retries)
+            .map_err(|error| error.to_string())?;
+        println!(
+            "CRL-OFFLINE flush attempt id={} attempt={}",
+            item.entry.id, next_attempt
+        );
+        if config.max_retries > 0 && next_attempt >= config.max_retries {
+            log_audit(
+                node_id,
+                AuditCategory::Crl,
+                AuditSeverity::Warning,
+                AuditAction::Failed,
+                &format!(
+                    "CRL offline parked revoked_did={} id={} attempts={}",
+                    item.entry.revoked_did, item.entry.id, next_attempt
+                ),
+            );
+            println!(
+                "CRL-OFFLINE parked revoked_did={} id={} attempts={}",
+                item.entry.revoked_did, item.entry.id, next_attempt
+            );
+        }
+    }
+    Ok(delivered)
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CycleReport {
+    pub online: bool,
+    pub reachable_peers: usize,
+    pub reconciled: usize,
+    pub fetched: usize,
+    pub delivered: usize,
+    pub pending_remaining: usize,
+}

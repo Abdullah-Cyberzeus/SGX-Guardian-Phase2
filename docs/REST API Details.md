@@ -109,6 +109,9 @@
 | 97 | POST | `/crl/verify` | Verify CRL entry signatures and aggregate root |
 | 98 | GET | `/crl/root` | Return current CRL sequence and Merkle root |
 | 99 | POST | `/crl/unrevoke` | Reverse a mistaken revocation (Circle Owner only) |
+| 104 | GET | `/crl/offline/status` | Offline CRL sync status, counters, and per-peer version-vector view |
+| 105 | GET | `/crl/offline/pending` | List queued offline revocations with retry metadata |
+| 106 | POST | `/crl/offline/sync` | Trigger one offline CRL sync cycle immediately |
 
 
 ## 2. NEW Endpoints 
@@ -137,6 +140,9 @@
 | POST | `/crl/verify` | Verify CRL signatures, role rules, and Merkle root |
 | GET | `/crl/root` | Return CRL sequence and Merkle root |
 | POST | `/crl/unrevoke` | Reverse a mistaken revocation (Circle Owner only) |
+| GET | `/crl/offline/status` | Return offline sync enablement, counters, and peer sync-state snapshot |
+| GET | `/crl/offline/pending` | Return queued revocations with attempts, timestamps, and parked state |
+| POST | `/crl/offline/sync` | Run one offline fetch-and-flush cycle on demand |
 ---
 
 ## 2. Standard Error Envelope
