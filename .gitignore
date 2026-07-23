@@ -23,3 +23,7 @@ coverage/
 
 .codex/
 .claude/
+
+# Ignore SOW PDFs
+docs/sow/*.pdf
+
