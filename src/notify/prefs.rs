@@ -211,3 +211,70 @@ fn sort_json_keys(value: &serde_json::Value) -> serde_json::Value {
         _ => value.clone(),
     }
 }
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    #[test]
+    fn allows_maps_every_kind_to_its_pref_bucket() {
+        let mut prefs = NotificationPrefs::default();
+        assert!(prefs.allows(NotificationKind::AlertHigh));
+        assert!(prefs.allows(NotificationKind::AlertMedium));
+        assert!(prefs.allows(NotificationKind::AlertLow));
+        assert!(prefs.allows(NotificationKind::DeviceDiscovered));
+        assert!(prefs.allows(NotificationKind::DevicePendingApproval));
+        assert!(prefs.allows(NotificationKind::GuardianOffline));
+        assert!(prefs.allows(NotificationKind::CircleNewMessage));
+        assert!(prefs.allows(NotificationKind::CircleIncomingCall));
+        assert!(prefs.allows(NotificationKind::CircleMemberJoined));
+        assert!(prefs.allows(NotificationKind::CircleFileShared));
+
+        prefs.alerts.medium = false;
+        prefs.devices.new_device = false;
+        prefs.circles.member_joined = false;
+        assert!(!prefs.allows(NotificationKind::AlertMedium));
+        assert!(!prefs.allows(NotificationKind::DeviceDiscovered));
+        assert!(!prefs.allows(NotificationKind::CircleMemberJoined));
+        // CircleFileShared shares the new_message bucket, not member_joined.
+        assert!(prefs.allows(NotificationKind::CircleFileShared));
+    }
+
+    #[test]
+    fn canonical_bytes_for_sign_ignore_proof_but_detect_field_changes() {
+        let mut prefs = NotificationPrefs {
+            sequence: 1,
+            ..NotificationPrefs::default()
+        };
+        let baseline = prefs.canonical_bytes_for_sign().expect("canonical");
+
+        prefs.proof = Proof {
+            verification_method: "did:guardian:owner#dkp-v1".to_string(),
+            proof_value: "signature".to_string(),
+            ..Proof::default()
+        };
+        assert_eq!(baseline, prefs.canonical_bytes_for_sign().expect("canonical"));
+
+        prefs.sequence = 2;
+        assert_ne!(baseline, prefs.canonical_bytes_for_sign().expect("canonical"));
+    }
+
+    #[test]
+    fn verify_rejects_empty_proof_without_touching_disk() {
+        let prefs = NotificationPrefs::default();
+        let err = prefs.verify().unwrap_err();
+        assert!(matches!(err, NotifyError::InvalidProof(_)));
+    }
+
+    #[test]
+    fn sort_json_keys_orders_nested_objects_and_arrays() {
+        let value = serde_json::json!({
+            "b": 1,
+            "a": {"z": 1, "y": 2},
+            "c": [{"b": 1, "a": 2}]
+        });
+        let sorted = sort_json_keys(&value);
+        let rendered = serde_json::to_string(&sorted).unwrap();
+        assert_eq!(rendered, r#"{"a":{"y":2,"z":1},"b":1,"c":[{"a":2,"b":1}]}"#);
+    }
+}

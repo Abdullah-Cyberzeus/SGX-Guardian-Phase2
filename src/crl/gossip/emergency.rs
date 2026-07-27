@@ -461,3 +461,30 @@ fn did_to_device_id(revoked_did: &str) -> Option<String> {
         .ok()
         .map(|identity| identity.device_id().to_string())
 }
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    #[test]
+    fn seen_set_insert_new_dedups_fingerprints() {
+        let mut seen = SeenSet::default();
+        assert!(seen.insert_new("fp-1"));
+        assert!(!seen.insert_new("fp-1"));
+        assert!(seen.insert_new("fp-2"));
+    }
+
+    #[test]
+    fn seen_set_evicts_oldest_once_capacity_is_reached() {
+        let mut seen = SeenSet::default();
+        for i in 0..SEEN_CAPACITY {
+            assert!(seen.insert_new(&format!("fp-{}", i)));
+        }
+        // Capacity reached: inserting one more must evict "fp-0".
+        assert!(seen.insert_new("fp-overflow"));
+        assert!(seen.insert_new("fp-0"));
+        // The set never grows past its capacity.
+        assert_eq!(seen.set.len(), SEEN_CAPACITY);
+        assert_eq!(seen.order.len(), SEEN_CAPACITY);
+    }
+}

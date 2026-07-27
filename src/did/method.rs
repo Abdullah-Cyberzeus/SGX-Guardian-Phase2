@@ -248,3 +248,23 @@ fn hardware_identity_expected() -> bool {
 fn read_uid(fallback: &str) -> Result<(String, String, Vec<u8>), DidError> {
     runtime_device_uid_details(fallback).map_err(DidError::UidUnavailable)
 }
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    #[test]
+    fn uid_to_bytes_decodes_even_length_hex() {
+        assert_eq!(uid_to_bytes("deadbeef"), vec![0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(uid_to_bytes("  deadbeef  "), vec![0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    #[test]
+    fn uid_to_bytes_falls_back_to_raw_bytes_for_non_hex_or_odd_length() {
+        assert_eq!(uid_to_bytes("not-hex!"), b"not-hex!".to_vec());
+        // Odd-length hex-looking string must not be decoded as hex.
+        assert_eq!(uid_to_bytes("abc"), b"abc".to_vec());
+        // Single hex char is below the minimum length gate.
+        assert_eq!(uid_to_bytes("a"), b"a".to_vec());
+    }
+}

@@ -296,3 +296,139 @@ fn normalize_p256_pubkey(bytes: &[u8]) -> Option<Vec<u8>> {
     }
     None
 }
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    /// Builds a `StatusListManager` entirely in memory (private-field
+    /// construction, same module) so bit manipulation can be tested without
+    /// touching `load_or_create`'s filesystem path.
+    fn in_memory_manager() -> StatusListManager {
+        let bits = vec![0u8; (STATUS_LIST_SIZE_BITS / 8) as usize];
+        let credential = StatusListCredential {
+            context: vec![VC_CONTEXT_CORE.into(), VC_CONTEXT_STATUS_LIST_2021.into()],
+            id: "did:guardian:issuer/status-list".to_string(),
+            vc_type: vec![
+                "VerifiableCredential".into(),
+                TYPE_STATUS_LIST_CREDENTIAL.into(),
+            ],
+            issuer: "did:guardian:issuer".to_string(),
+            issuance_date: "2026-01-01T00:00:00Z".to_string(),
+            credential_subject: StatusListSubject {
+                id: "did:guardian:issuer/status-list#list".to_string(),
+                subject_type: TYPE_STATUS_LIST_SUBJECT.into(),
+                status_purpose: "revocation".into(),
+                encoded_list: encode_encoded_list(&bits).expect("encode empty list"),
+            },
+            proof: crate::did::document::Proof::default(),
+            sgx_next_index: 0,
+        };
+        StatusListManager { credential, bits }
+    }
+
+    #[test]
+    fn allocate_index_increments_sequentially() {
+        let mut manager = in_memory_manager();
+        assert_eq!(manager.allocate_index().unwrap(), 0);
+        assert_eq!(manager.allocate_index().unwrap(), 1);
+        assert_eq!(manager.allocate_index().unwrap(), 2);
+    }
+
+    #[test]
+    fn allocate_index_rejects_overflow() {
+        let mut manager = in_memory_manager();
+        manager.credential.sgx_next_index = STATUS_LIST_SIZE_BITS;
+        let err = manager.allocate_index().unwrap_err();
+        assert!(matches!(err, VcError::IndexOutOfRange { .. }));
+    }
+
+    #[test]
+    fn set_revoked_and_is_revoked_toggle_independent_bits() {
+        let mut manager = in_memory_manager();
+        assert!(!manager.is_revoked(5).unwrap());
+        assert!(!manager.is_revoked(6).unwrap());
+
+        manager.set_revoked(5, true).unwrap();
+        assert!(manager.is_revoked(5).unwrap());
+        assert!(!manager.is_revoked(6).unwrap());
+
+        manager.set_revoked(5, false).unwrap();
+        assert!(!manager.is_revoked(5).unwrap());
+    }
+
+    #[test]
+    fn bit_position_rejects_index_beyond_bitset_size() {
+        let err = bit_position(64, 8).unwrap_err();
+        assert!(matches!(err, VcError::IndexOutOfRange { index: 64, size: 64 }));
+        assert!(bit_position(63, 8).is_ok());
+    }
+
+    #[test]
+    fn is_revoked_rejects_out_of_range_index() {
+        let manager = in_memory_manager();
+        let err = manager.is_revoked(STATUS_LIST_SIZE_BITS).unwrap_err();
+        assert!(matches!(err, VcError::IndexOutOfRange { .. }));
+    }
+
+    #[test]
+    fn classify_vc_state_precedence_revoked_over_expired_over_active() {
+        use crate::vc::credential::{
+            CredentialRole, CredentialStatus, CredentialSubject, MembershipStatus,
+            VerifiableCredential, TYPE_CIRCLE_MEMBERSHIP, TYPE_VC, VC_CONTEXT_CORE,
+        };
+        use crate::vc::issue::{classify_vc_state, VcLifecycleState};
+
+        let mut manager = in_memory_manager();
+        let index = manager.allocate_index().unwrap();
+
+        let make_vc = |expiration: &str| VerifiableCredential {
+            context: vec![VC_CONTEXT_CORE.to_string()],
+            id: "urn:uuid:vc-1".to_string(),
+            vc_type: vec![TYPE_VC.to_string(), TYPE_CIRCLE_MEMBERSHIP.to_string()],
+            issuer: "did:guardian:issuer".to_string(),
+            issuance_date: "2020-01-01T00:00:00Z".to_string(),
+            expiration_date: expiration.to_string(),
+            credential_subject: CredentialSubject::new(
+                "did:guardian:subject".to_string(),
+                CredentialRole::Member,
+                vec![],
+                "2020-01-01T00:00:00Z".to_string(),
+                "circle-1".to_string(),
+                None,
+                MembershipStatus::Active,
+            ),
+            credential_status: CredentialStatus {
+                id: format!("did:guardian:issuer/status-list#{}", index),
+                status_type: "StatusList2021Entry".to_string(),
+                status_purpose: "revocation".to_string(),
+                status_list_index: index.to_string(),
+                status_list_credential: "did:guardian:issuer/status-list".to_string(),
+            },
+            proof: crate::did::document::Proof::default(),
+        };
+
+        let now = chrono::Utc::now();
+        let far_future = (now + chrono::Duration::days(365)).to_rfc3339();
+        let far_past = (now - chrono::Duration::days(1)).to_rfc3339();
+
+        let active_vc = make_vc(&far_future);
+        assert!(matches!(
+            classify_vc_state(&active_vc, &manager, now).unwrap(),
+            VcLifecycleState::Active
+        ));
+
+        let expired_vc = make_vc(&far_past);
+        assert!(matches!(
+            classify_vc_state(&expired_vc, &manager, now).unwrap(),
+            VcLifecycleState::Expired
+        ));
+
+        manager.set_revoked(index, true).unwrap();
+        // Even a not-yet-expired VC is reported Revoked once its index is flipped.
+        assert!(matches!(
+            classify_vc_state(&active_vc, &manager, now).unwrap(),
+            VcLifecycleState::Revoked
+        ));
+    }
+}

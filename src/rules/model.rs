@@ -559,3 +559,217 @@ fn sort_value(value: &Value) -> Value {
         _ => value.clone(),
     }
 }
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    #[test]
+    fn rule_action_label_formats_variants() {
+        assert_eq!(
+            RuleAction::RaiseAlert { severity: "high".to_string() }.label(),
+            "RaiseAlert(high)"
+        );
+        assert_eq!(
+            RuleAction::BlockIp { ttl_secs: Some(60) }.label(),
+            "BlockIp(ttl=60s)"
+        );
+        assert_eq!(RuleAction::BlockIp { ttl_secs: None }.label(), "BlockIp");
+        assert_eq!(RuleAction::RevokeDid.label(), "RevokeDid");
+    }
+
+    #[test]
+    fn rule_action_destructive_flags_only_high_impact_actions() {
+        assert!(RuleAction::RevokeDid.destructive());
+        assert!(RuleAction::LockTransport.destructive());
+        assert!(RuleAction::EmergencyKeyRotation.destructive());
+        assert!(!RuleAction::RaiseAlert { severity: "low".to_string() }.destructive());
+        assert!(!RuleAction::Notify { severity: "low".to_string() }.destructive());
+    }
+
+    #[test]
+    fn rule_from_draft_applies_defaults_when_fields_absent() {
+        let rule = Rule::from_draft(RuleDraft::default());
+        assert!(rule.enabled);
+        assert_eq!(rule.trigger, RuleTrigger::ThreatAlert);
+        assert_eq!(rule.condition, Condition::All(Vec::new()));
+        assert_eq!(rule.actions, default_actions());
+        assert!(!rule.notify);
+        assert!(!rule.allow_destructive);
+        assert_eq!(rule.cooldown_secs, DEFAULT_COOLDOWN_SECS);
+        assert_eq!(rule.max_actions_per_hour, DEFAULT_MAX_ACTIONS_PER_HOUR);
+        assert_eq!(rule.name, "Untitled rule");
+    }
+
+    #[test]
+    fn rule_from_draft_empty_actions_falls_back_to_default() {
+        let rule = Rule::from_draft(RuleDraft {
+            actions: Some(Vec::new()),
+            ..RuleDraft::default()
+        });
+        assert_eq!(rule.actions, default_actions());
+    }
+
+    #[test]
+    fn rule_apply_patch_updates_only_provided_fields() {
+        let mut rule = Rule::from_draft(RuleDraft::default());
+        let original_created_at = rule.created_at.clone();
+
+        rule.apply_patch(RulePatch {
+            name: Some("Renamed".to_string()),
+            cooldown_secs: Some(42),
+            ..RulePatch::default()
+        });
+
+        assert_eq!(rule.name, "Renamed");
+        assert_eq!(rule.cooldown_secs, 42);
+        // Untouched fields keep their defaults.
+        assert!(rule.enabled);
+        assert_eq!(rule.trigger, RuleTrigger::ThreatAlert);
+        assert_eq!(rule.created_at, original_created_at);
+    }
+
+    #[test]
+    fn rule_apply_patch_empty_actions_falls_back_to_default() {
+        let mut rule = Rule::from_draft(RuleDraft::default());
+        rule.apply_patch(RulePatch {
+            actions: Some(Vec::new()),
+            ..RulePatch::default()
+        });
+        assert_eq!(rule.actions, default_actions());
+    }
+
+    #[test]
+    fn rule_effective_actions_appends_notify_when_requested_but_absent() {
+        let mut rule = Rule::from_draft(RuleDraft::default());
+        rule.notify = true;
+        let actions = rule.effective_actions();
+        assert!(actions
+            .iter()
+            .any(|action| matches!(action, RuleAction::Notify { .. })));
+
+        // If a Notify action is already present, it must not be duplicated.
+        rule.actions.push(RuleAction::Notify {
+            severity: "high".to_string(),
+        });
+        let actions = rule.effective_actions();
+        let notify_count = actions
+            .iter()
+            .filter(|action| matches!(action, RuleAction::Notify { .. }))
+            .count();
+        assert_eq!(notify_count, 1);
+    }
+
+    #[test]
+    fn rule_registry_without_proof_clears_proof_but_keeps_rules() {
+        let mut registry = RuleRegistry {
+            rules: vec![Rule::from_draft(RuleDraft::default())],
+            sequence: 3,
+            proof: Proof {
+                verification_method: "did:guardian:owner#dkp-v1".to_string(),
+                proof_value: "sig".to_string(),
+                ..Proof::default()
+            },
+        };
+        let cleared = registry.without_proof();
+        assert_eq!(cleared.proof, Proof::default());
+        assert_eq!(cleared.rules.len(), registry.rules.len());
+        assert_eq!(cleared.sequence, registry.sequence);
+        registry.proof = Proof::default();
+    }
+
+    #[test]
+    fn rule_registry_canonical_bytes_ignore_proof_but_detect_field_changes() {
+        let mut registry = RuleRegistry {
+            rules: vec![Rule::from_draft(RuleDraft::default())],
+            sequence: 1,
+            proof: Proof::default(),
+        };
+        let baseline = registry.canonical_bytes_for_sign().expect("canonical");
+        registry.proof = Proof {
+            verification_method: "did:guardian:owner#dkp-v1".to_string(),
+            proof_value: "sig".to_string(),
+            ..Proof::default()
+        };
+        assert_eq!(baseline, registry.canonical_bytes_for_sign().expect("canonical"));
+
+        registry.sequence = 2;
+        assert_ne!(baseline, registry.canonical_bytes_for_sign().expect("canonical"));
+    }
+
+    #[test]
+    fn rule_event_accessors_for_threat_alert() {
+        let event = RuleEvent::sample_threat("nodeA");
+        assert_eq!(event.trigger(), RuleTrigger::ThreatAlert);
+        assert_eq!(event.target_key(), "203.0.113.55");
+        assert_eq!(event.src_ip(), Some("203.0.113.55"));
+        assert_eq!(event.ports(), vec![44_444, 443]);
+        assert_eq!(event.severity_name(), Some("high"));
+        assert_eq!(event.signature_id(), Some(9_999_001));
+        assert!(event.device_status().is_none());
+        assert!(event.zone().is_none());
+        assert!(event.target_did().is_none());
+        assert!(event.summary().starts_with("ThreatAlert"));
+    }
+
+    #[test]
+    fn rule_event_accessors_for_device_discovered_uses_ip_when_device_id_blank() {
+        let event = RuleEvent::DeviceDiscovered {
+            node_id: "nodeA".to_string(),
+            device_id: "".to_string(),
+            ip: "192.168.1.20".to_string(),
+            status: "unauthorized".to_string(),
+            ports: vec![22, 80],
+            zone: Some("warehouse".to_string()),
+        };
+        assert_eq!(event.trigger(), RuleTrigger::DeviceDiscovered);
+        assert_eq!(event.target_key(), "192.168.1.20");
+        assert_eq!(event.ports(), vec![22, 80]);
+        assert_eq!(event.device_status(), Some("unauthorized"));
+        assert_eq!(event.zone(), Some("warehouse"));
+        assert!(event.severity_name().is_none());
+    }
+
+    #[test]
+    fn rule_event_accessors_for_geofence_and_crl_revocation() {
+        let entry = RuleEvent::GeofenceEntry {
+            node_id: "nodeA".to_string(),
+            device_id: "dev-1".to_string(),
+            zone: "warehouse".to_string(),
+        };
+        assert_eq!(entry.target_key(), "dev-1:warehouse");
+        assert_eq!(entry.zone(), Some("warehouse"));
+        assert!(entry.summary().contains("GeofenceEntry"));
+
+        let revocation = RuleEvent::CrlRevocation {
+            node_id: "nodeA".to_string(),
+            revoked_did: "did:guardian:revoked".to_string(),
+            reason: "key_compromise".to_string(),
+            severity: "critical".to_string(),
+        };
+        assert_eq!(revocation.target_key(), "did:guardian:revoked");
+        assert_eq!(revocation.target_did(), Some("did:guardian:revoked"));
+        assert_eq!(revocation.category_name(), Some("key_compromise"));
+        assert_eq!(revocation.severity_name(), Some("critical"));
+    }
+
+    #[test]
+    fn device_status_name_maps_every_variant() {
+        assert_eq!(device_status_name(DeviceStatus::Approved), "approved");
+        assert_eq!(device_status_name(DeviceStatus::Unauthorized), "unauthorized");
+        assert_eq!(device_status_name(DeviceStatus::Drifted), "drifted");
+        assert_eq!(device_status_name(DeviceStatus::Stale), "stale");
+    }
+
+    #[test]
+    fn sort_value_orders_object_keys_recursively() {
+        let value: Value = serde_json::json!({
+            "b": 1,
+            "a": {"z": 1, "y": 2},
+            "c": [{"b": 1, "a": 2}]
+        });
+        let sorted = sort_value(&value);
+        let rendered = serde_json::to_string(&sorted).unwrap();
+        assert_eq!(rendered, r#"{"a":{"y":2,"z":1},"b":1,"c":[{"a":2,"b":1}]}"#);
+    }
+}
