@@ -315,11 +315,12 @@ async fn handle_notice(
     // Merge via the SAME locked path routine gossip uses → roots converge.
     let merge = {
         let _guard = store::CRL_WRITE_LOCK.lock().await;
-        store::merge_verified_entries(
+        store::merge_verified_records(
             &record,
             &km,
             &circle_id,
             std::slice::from_ref(&notice.entry),
+            &[],
         )
         .map_err(|error| error.to_string())?
     };

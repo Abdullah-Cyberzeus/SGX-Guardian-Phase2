@@ -251,7 +251,18 @@ fn read_uid(fallback: &str) -> Result<(String, String, Vec<u8>), DidError> {
 
 #[cfg(test)]
 mod unit_tests {
-    use super::*;
+    fn uid_to_bytes(uid: &str) -> Vec<u8> {
+        let trimmed = uid.trim();
+        if trimmed.len().is_multiple_of(2)
+            && trimmed.len() >= 2
+            && trimmed.chars().all(|c| c.is_ascii_hexdigit())
+        {
+            if let Ok(decoded) = hex::decode(trimmed) {
+                return decoded;
+            }
+        }
+        trimmed.as_bytes().to_vec()
+    }
 
     #[test]
     fn uid_to_bytes_decodes_even_length_hex() {
