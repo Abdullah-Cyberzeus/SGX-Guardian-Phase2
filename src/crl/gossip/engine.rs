@@ -758,3 +758,45 @@ fn audit_reject(node_id: &str, sender_did: &str, reason: &str) {
         &format!("CRL gossip rejected sender={}: {}", sender_did, reason),
     );
 }
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    #[test]
+    fn parse_nebula_endpoint_extracts_ip_from_cidr() {
+        assert_eq!(
+            parse_nebula_endpoint("nebula://192.168.100.7/24"),
+            Some("192.168.100.7".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_nebula_endpoint_extracts_ip_without_cidr_suffix() {
+        assert_eq!(
+            parse_nebula_endpoint("nebula://10.0.0.5"),
+            Some("10.0.0.5".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_nebula_endpoint_rejects_wrong_scheme_or_empty_ip() {
+        assert_eq!(parse_nebula_endpoint("tcp://192.168.100.7:9000"), None);
+        assert_eq!(parse_nebula_endpoint("nebula:///24"), None);
+        assert_eq!(parse_nebula_endpoint(""), None);
+    }
+
+    #[test]
+    fn threshold_count_ceils_percentage_of_other_members() {
+        // 3-node cohort -> other_members = 2 -> ceil(1.6) = 2.
+        assert_eq!(threshold_count(2, 80), 2);
+        assert_eq!(threshold_count(10, 50), 5);
+        assert_eq!(threshold_count(10, 51), 6);
+    }
+
+    #[test]
+    fn threshold_count_floors_at_one() {
+        assert_eq!(threshold_count(0, 80), 1);
+        assert_eq!(threshold_count(1, 1), 1);
+    }
+}

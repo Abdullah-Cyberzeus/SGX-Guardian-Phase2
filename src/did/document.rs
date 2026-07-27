@@ -266,3 +266,152 @@ fn sort_value(v: &Value) -> Value {
         _ => v.clone(),
     }
 }
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    const SAMPLE_PUBKEY: [u8; 65] = {
+        let mut bytes = [0u8; 65];
+        bytes[0] = 0x04;
+        let mut i = 1;
+        while i < 65 {
+            bytes[i] = i as u8;
+            i += 1;
+        }
+        bytes
+    };
+
+    fn build_input(did: &'static str) -> DocBuildInput<'static> {
+        DocBuildInput {
+            did,
+            node_name: Some("nodeA"),
+            current_dkp_version: 1,
+            current_dkp_pubkey_der: &SAMPLE_PUBKEY,
+            overlay_ip_cidr: None,
+            attestation_bind: None,
+            cert_bootstrap_bind: None,
+            revoked: vec![],
+            previous_version_id: 0,
+            created_at: None,
+            status: None,
+        }
+    }
+
+    #[test]
+    fn build_sets_defaults_and_verification_method() {
+        let doc = DidDocument::build(build_input("did:guardian:abc")).expect("build");
+        assert_eq!(doc.id, "did:guardian:abc");
+        assert_eq!(doc.controller, "did:guardian:abc");
+        assert_eq!(doc.sgx_version_id, 1);
+        assert_eq!(doc.sgx_status.as_deref(), Some("active"));
+        assert!(doc.service.is_empty());
+        assert_eq!(doc.verification_method.len(), 1);
+        let vm = &doc.verification_method[0];
+        assert_eq!(vm.id, "did:guardian:abc#dkp-v1");
+        assert_eq!(vm.public_key_jwk.kty, "EC");
+        assert_eq!(vm.public_key_jwk.crv, "P-256");
+        assert_eq!(doc.authentication, vec![vm.id.clone()]);
+        assert_eq!(doc.assertion_method, vec![vm.id.clone()]);
+    }
+
+    #[test]
+    fn build_adds_optional_service_endpoints() {
+        let mut input = build_input("did:guardian:svc");
+        input.overlay_ip_cidr = Some("10.10.0.5/24");
+        input.attestation_bind = Some(("10.10.0.5", 9000));
+        input.cert_bootstrap_bind = Some(("10.10.0.5", 9001));
+        let doc = DidDocument::build(input).expect("build");
+        assert_eq!(doc.service.len(), 3);
+        assert!(doc
+            .service
+            .iter()
+            .any(|svc| svc.svc_type == "SGXNebulaMesh" && svc.service_endpoint.contains("10.10.0.5/24")));
+        assert!(doc
+            .service
+            .iter()
+            .any(|svc| svc.svc_type == "SGXAttestation" && svc.service_endpoint.contains("9000")));
+        assert!(doc
+            .service
+            .iter()
+            .any(|svc| svc.svc_type == "SGXCertBootstrap" && svc.service_endpoint.contains("9001")));
+    }
+
+    #[test]
+    fn without_proof_clears_proof_field() {
+        let mut doc = DidDocument::build(build_input("did:guardian:proof")).expect("build");
+        doc.proof = Some(Proof {
+            proof_type: "DataIntegrityProof".to_string(),
+            cryptosuite: "ecdsa-2019".to_string(),
+            verification_method: "did:guardian:proof#dkp-v1".to_string(),
+            created: "2026-01-01T00:00:00Z".to_string(),
+            proof_purpose: "assertionMethod".to_string(),
+            proof_value: "sig".to_string(),
+        });
+        assert!(doc.without_proof().proof.is_none());
+        // Original document is untouched.
+        assert!(doc.proof.is_some());
+    }
+
+    #[test]
+    fn substantively_equal_ignores_publish_metadata_but_detects_real_changes() {
+        let doc_a = DidDocument::build(build_input("did:guardian:eq")).expect("build");
+        let mut doc_b = doc_a.clone();
+        doc_b.sgx_updated = "some-other-timestamp".to_string();
+        doc_b.sgx_version_id = 42;
+        assert!(doc_a.substantively_equal(&doc_b));
+
+        doc_b.sgx_node_name = Some("different-name".to_string());
+        assert!(!doc_a.substantively_equal(&doc_b));
+    }
+
+    #[test]
+    fn canonical_bytes_for_sign_is_deterministic() {
+        let doc = DidDocument::build(build_input("did:guardian:canon")).expect("build");
+        let first = doc.canonical_bytes_for_sign().expect("canonical");
+        let second = doc.canonical_bytes_for_sign().expect("canonical");
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn primary_public_key_bytes_roundtrip_and_rejects_bad_curve() {
+        let doc = DidDocument::build(build_input("did:guardian:pk")).expect("build");
+        let bytes = doc.primary_public_key_bytes().expect("primary key bytes");
+        assert_eq!(bytes, SAMPLE_PUBKEY.to_vec());
+
+        let mut bad_curve = doc.clone();
+        bad_curve.verification_method[0].public_key_jwk.crv = "P-384".to_string();
+        assert!(bad_curve.primary_public_key_bytes().is_none());
+    }
+
+    #[test]
+    fn extract_xy_from_pubkey_accepts_65_and_91_byte_forms() {
+        let (x, y) = extract_xy_from_pubkey(&SAMPLE_PUBKEY).expect("65-byte form");
+        assert_eq!(x, SAMPLE_PUBKEY[1..33]);
+        assert_eq!(y, SAMPLE_PUBKEY[33..65]);
+
+        let mut der_91 = vec![0u8; 26];
+        der_91.extend_from_slice(&SAMPLE_PUBKEY);
+        let (x91, y91) = extract_xy_from_pubkey(&der_91).expect("91-byte form");
+        assert_eq!(x91, x);
+        assert_eq!(y91, y);
+    }
+
+    #[test]
+    fn extract_xy_from_pubkey_rejects_unsupported_lengths() {
+        assert!(extract_xy_from_pubkey(&[0u8; 10]).is_err());
+        assert!(extract_xy_from_pubkey(&[0u8; 65]).is_err()); // missing 0x04 prefix
+    }
+
+    #[test]
+    fn sort_value_orders_object_keys_recursively() {
+        let value: Value = serde_json::json!({
+            "b": 1,
+            "a": {"z": 1, "y": 2},
+            "c": [{"b": 1, "a": 2}]
+        });
+        let sorted = sort_value(&value);
+        let rendered = serde_json::to_string(&sorted).unwrap();
+        assert_eq!(rendered, r#"{"a":{"y":2,"z":1},"b":1,"c":[{"a":2,"b":1}]}"#);
+    }
+}

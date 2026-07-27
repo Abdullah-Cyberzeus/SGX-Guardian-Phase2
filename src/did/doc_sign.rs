@@ -171,3 +171,74 @@ fn normalize_p256_pubkey(bytes: &[u8]) -> Option<Vec<u8>> {
     }
     None
 }
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+    use ring::rand::SystemRandom;
+    use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
+
+    fn in_memory_keypair() -> (EcdsaKeyPair, Vec<u8>) {
+        let rng = SystemRandom::new();
+        let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
+            .expect("generate keypair");
+        let keypair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &rng)
+            .expect("load keypair");
+        let public_key = keypair.public_key().as_ref().to_vec();
+        (keypair, public_key)
+    }
+
+    #[test]
+    fn ecdsa_verify_accepts_genuine_signature_over_raw_65_byte_key() {
+        let rng = SystemRandom::new();
+        let (keypair, public_key) = in_memory_keypair();
+        let digest = Sha256::digest(b"payload-bytes");
+        let signature = keypair.sign(&rng, &digest).expect("sign");
+
+        ecdsa_p256_verify_der_or_raw(&public_key, &digest, signature.as_ref())
+            .expect("genuine signature verifies");
+    }
+
+    #[test]
+    fn ecdsa_verify_rejects_tampered_digest_and_wrong_key() {
+        let rng = SystemRandom::new();
+        let (keypair, public_key) = in_memory_keypair();
+        let digest = Sha256::digest(b"payload-bytes");
+        let signature = keypair.sign(&rng, &digest).expect("sign");
+
+        let tampered_digest = Sha256::digest(b"different-payload");
+        assert!(
+            ecdsa_p256_verify_der_or_raw(&public_key, &tampered_digest, signature.as_ref())
+                .is_err()
+        );
+
+        let (_, other_public_key) = in_memory_keypair();
+        assert!(
+            ecdsa_p256_verify_der_or_raw(&other_public_key, &digest, signature.as_ref()).is_err()
+        );
+    }
+
+    #[test]
+    fn ecdsa_verify_rejects_unsupported_key_length() {
+        let digest = Sha256::digest(b"payload-bytes");
+        let err = ecdsa_p256_verify_der_or_raw(&[0u8; 12], &digest, &[0u8; 64]).unwrap_err();
+        assert!(matches!(err, DidError::InvalidFormat(_)));
+    }
+
+    #[test]
+    fn normalize_p256_pubkey_handles_all_supported_forms() {
+        let mut raw = vec![0x04u8];
+        raw.extend_from_slice(&[7u8; 64]);
+        assert_eq!(normalize_p256_pubkey(&raw), Some(raw.clone()));
+
+        let mut der = vec![0u8; 26];
+        der.extend_from_slice(&raw);
+        assert_eq!(normalize_p256_pubkey(&der), Some(raw.clone()));
+
+        let mut suffixed = vec![0xAAu8; 10];
+        suffixed.extend_from_slice(&raw);
+        assert_eq!(normalize_p256_pubkey(&suffixed), Some(raw));
+
+        assert_eq!(normalize_p256_pubkey(&[1, 2, 3]), None);
+    }
+}

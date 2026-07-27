@@ -235,3 +235,137 @@ pub(crate) fn sort_json_keys(value: &Value) -> Value {
         _ => value.clone(),
     }
 }
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    fn sample_subject() -> CredentialSubject {
+        CredentialSubject::new(
+            "did:guardian:subject".to_string(),
+            CredentialRole::Member,
+            vec!["mesh:join".to_string(), "did:resolve".to_string()],
+            "2026-01-01T00:00:00Z".to_string(),
+            "circle-1".to_string(),
+            None,
+            MembershipStatus::Active,
+        )
+    }
+
+    fn sample_vc() -> VerifiableCredential {
+        VerifiableCredential {
+            context: vec![VC_CONTEXT_CORE.to_string()],
+            id: "urn:uuid:vc-1".to_string(),
+            vc_type: vec![TYPE_VC.to_string(), TYPE_CIRCLE_MEMBERSHIP.to_string()],
+            issuer: "did:guardian:issuer".to_string(),
+            issuance_date: "2026-01-01T00:00:00Z".to_string(),
+            expiration_date: "2026-06-01T00:00:00Z".to_string(),
+            credential_subject: sample_subject(),
+            credential_status: CredentialStatus {
+                id: "did:guardian:issuer/status-list#1".to_string(),
+                status_type: "StatusList2021Entry".to_string(),
+                status_purpose: "revocation".to_string(),
+                status_list_index: "1".to_string(),
+                status_list_credential: "did:guardian:issuer/status-list".to_string(),
+            },
+            proof: Proof::default(),
+        }
+    }
+
+    #[test]
+    fn membership_status_is_active_and_display() {
+        assert!(MembershipStatus::Active.is_active());
+        assert!(!MembershipStatus::Suspended.is_active());
+        assert!(!MembershipStatus::Revoked.is_active());
+        assert_eq!(MembershipStatus::Active.to_string(), "active");
+        assert_eq!(MembershipStatus::Suspended.to_string(), "suspended");
+        assert_eq!(MembershipStatus::Revoked.to_string(), "revoked");
+    }
+
+    #[test]
+    fn credential_subject_permission_helpers() {
+        let subject = sample_subject();
+        assert!(subject.has_permission("mesh:join"));
+        assert!(!subject.has_permission("vc:issue"));
+        assert!(subject.has_all_permissions(&["mesh:join", "did:resolve"]));
+        assert!(!subject.has_all_permissions(&["mesh:join", "vc:issue"]));
+    }
+
+    #[test]
+    fn vc_accessor_helpers_delegate_to_subject() {
+        let vc = sample_vc();
+        assert_eq!(vc.subject_did(), "did:guardian:subject");
+        assert_eq!(vc.issuer_did(), "did:guardian:issuer");
+        assert!(vc.has_active_membership_status());
+        assert!(vc.has_permission("mesh:join"));
+        assert!(vc.has_all_permissions(&["mesh:join", "did:resolve"]));
+    }
+
+    #[test]
+    fn is_expired_compares_against_expiration_date() {
+        let vc = sample_vc();
+        let before = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let after = chrono::DateTime::parse_from_rfc3339("2026-12-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert!(!vc.is_expired(before));
+        assert!(vc.is_expired(after));
+    }
+
+    #[test]
+    fn is_expired_treats_malformed_expiration_date_as_expired() {
+        let mut vc = sample_vc();
+        vc.expiration_date = "not-a-date".to_string();
+        assert!(vc.is_expired(chrono::Utc::now()));
+    }
+
+    #[test]
+    fn canonical_bytes_for_sign_ignore_proof_but_detect_field_changes() {
+        let mut vc = sample_vc();
+        let baseline = vc.canonical_bytes_for_sign().expect("canonical");
+
+        vc.proof = Proof {
+            verification_method: "did:guardian:issuer#dkp-v1".to_string(),
+            proof_value: "signature".to_string(),
+            ..Proof::default()
+        };
+        assert_eq!(baseline, vc.canonical_bytes_for_sign().expect("canonical"));
+
+        vc.expiration_date = "2027-01-01T00:00:00Z".to_string();
+        assert_ne!(baseline, vc.canonical_bytes_for_sign().expect("canonical"));
+    }
+
+    #[test]
+    fn credential_subject_serde_omits_membership_status_when_implicit_active() {
+        let subject = CredentialSubject::new(
+            "did:guardian:s".to_string(),
+            CredentialRole::Member,
+            vec![],
+            "2026-01-01T00:00:00Z".to_string(),
+            "circle-1".to_string(),
+            None,
+            MembershipStatus::Active,
+        );
+        let mut implicit = subject.clone();
+        implicit.membership_status_explicit = false;
+        let json = serde_json::to_value(&implicit).unwrap();
+        assert!(json.get("membershipStatus").is_none());
+
+        let json_explicit = serde_json::to_value(&subject).unwrap();
+        assert!(json_explicit.get("membershipStatus").is_some());
+    }
+
+    #[test]
+    fn sort_json_keys_orders_nested_objects_and_arrays() {
+        let value = serde_json::json!({
+            "b": 1,
+            "a": {"z": 1, "y": 2},
+            "c": [{"b": 1, "a": 2}]
+        });
+        let sorted = sort_json_keys(&value);
+        let rendered = serde_json::to_string(&sorted).unwrap();
+        assert_eq!(rendered, r#"{"a":{"y":2,"z":1},"b":1,"c":[{"a":2,"b":1}]}"#);
+    }
+}
