@@ -216,3 +216,77 @@ pub fn entries_matching(want: &HashSet<String>) -> Result<Vec<CrlEntry>, CrlErro
         None => Vec::new(),
     })
 }
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+    use crate::crl::entry::{RevocationReason, RevokerRole, Severity, CRL_CONTEXT_CORE, CRL_CONTEXT_SGX};
+    use crate::did::document::Proof;
+
+    fn sample_entry(id: &str, revoked_did: &str, timestamp: &str) -> CrlEntry {
+        CrlEntry {
+            context: vec![CRL_CONTEXT_CORE.into(), CRL_CONTEXT_SGX.into()],
+            id: id.to_string(),
+            r#type: vec!["VerifiableCredential".into(), "RevocationCredential".into()],
+            revoked_did: revoked_did.to_string(),
+            device_id: None,
+            user_id: None,
+            circle_id: "circle-1".to_string(),
+            reason: RevocationReason::Compromised,
+            severity: Severity::High,
+            timestamp: timestamp.to_string(),
+            revoker_did: "did:guardian:owner".to_string(),
+            revoker_role: RevokerRole::Owner,
+            evidence: None,
+            proof: Proof::default(),
+            peers_notified: vec!["did:guardian:peerA".to_string()],
+            propagated: true,
+        }
+    }
+
+    #[test]
+    fn incoming_wins_prefers_later_timestamp() {
+        let existing = sample_entry("urn:uuid:1", "did:guardian:x", "2026-01-01T00:00:00Z");
+        let newer = sample_entry("urn:uuid:2", "did:guardian:x", "2026-06-01T00:00:00Z");
+        assert!(incoming_wins(&existing, &newer));
+        assert!(!incoming_wins(&newer, &existing));
+    }
+
+    #[test]
+    fn incoming_wins_ties_break_on_lower_fingerprint() {
+        // Same timestamp: whichever fingerprint sorts lower should win,
+        // and the relation must be consistent both directions.
+        let a = sample_entry("urn:uuid:a", "did:guardian:x", "2026-01-01T00:00:00Z");
+        let b = sample_entry("urn:uuid:b", "did:guardian:x", "2026-01-01T00:00:00Z");
+
+        let a_wins_over_b = incoming_wins(&b, &a);
+        let b_wins_over_a = incoming_wins(&a, &b);
+        // Exactly one direction should win (fingerprints differ since ids differ).
+        assert_ne!(a_wins_over_b, b_wins_over_a);
+    }
+
+    #[test]
+    fn incoming_wins_handles_unparseable_timestamps_via_fingerprint_fallback() {
+        let existing = sample_entry("urn:uuid:1", "did:guardian:x", "not-a-timestamp");
+        let incoming = sample_entry("urn:uuid:2", "did:guardian:x", "not-a-timestamp");
+        // Must not panic and must be a well-defined, antisymmetric relation.
+        let first = incoming_wins(&existing, &incoming);
+        let second = incoming_wins(&incoming, &existing);
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn normalized_clears_gossip_bookkeeping_fields() {
+        let entry = sample_entry("urn:uuid:1", "did:guardian:x", "2026-01-01T00:00:00Z");
+        assert!(!entry.peers_notified.is_empty());
+        assert!(entry.propagated);
+
+        let cleaned = normalized(&entry);
+        assert!(cleaned.peers_notified.is_empty());
+        assert!(!cleaned.propagated);
+        // Everything else is preserved.
+        assert_eq!(cleaned.id, entry.id);
+        assert_eq!(cleaned.revoked_did, entry.revoked_did);
+        assert_eq!(cleaned.fingerprint(), entry.fingerprint());
+    }
+}

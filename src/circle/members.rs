@@ -227,3 +227,24 @@ pub fn change_role(
     )?;
     add_member(node_id, circle_id, subject_did, role, duration_days)
 }
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    #[test]
+    fn member_lifecycle_state_maps_from_vc_lifecycle_state() {
+        assert_eq!(
+            MemberLifecycleState::from(VcLifecycleState::Active),
+            MemberLifecycleState::Active
+        );
+        assert_eq!(
+            MemberLifecycleState::from(VcLifecycleState::Expired),
+            MemberLifecycleState::Expired
+        );
+        assert_eq!(
+            MemberLifecycleState::from(VcLifecycleState::Revoked),
+            MemberLifecycleState::Revoked
+        );
+    }
+}

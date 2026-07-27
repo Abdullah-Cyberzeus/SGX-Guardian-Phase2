@@ -687,3 +687,91 @@ fn persist_renewed_copies(vc: &VerifiableCredential) -> Result<(), VcError> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    #[test]
+    fn default_permissions_for_role_match_the_role_constants() {
+        assert_eq!(
+            default_permissions_for_role(CredentialRole::Owner),
+            OWNER_DEFAULT_PERMISSIONS
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            default_permissions_for_role(CredentialRole::Member),
+            MEMBER_DEFAULT_PERMISSIONS
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn validate_permissions_for_role_rejects_unknown_permission() {
+        let permissions = vec!["totally:unknown".to_string()];
+        let err = validate_permissions_for_role(&CredentialRole::Member, &permissions).unwrap_err();
+        assert!(matches!(err, VcError::UnknownPermission(_)));
+    }
+
+    #[test]
+    fn validate_permissions_for_role_owner_requires_every_default_permission() {
+        let full = default_permissions_for_role(CredentialRole::Owner);
+        assert!(validate_permissions_for_role(&CredentialRole::Owner, &full).is_ok());
+
+        let mut missing_one = full.clone();
+        missing_one.pop();
+        let err =
+            validate_permissions_for_role(&CredentialRole::Owner, &missing_one).unwrap_err();
+        assert!(matches!(err, VcError::InvalidStructure(_)));
+    }
+
+    #[test]
+    fn validate_permissions_for_role_member_requires_exact_set() {
+        let full = default_permissions_for_role(CredentialRole::Member);
+        assert!(validate_permissions_for_role(&CredentialRole::Member, &full).is_ok());
+
+        let mut extra = full.clone();
+        extra.push("vc:issue".to_string());
+        let err = validate_permissions_for_role(&CredentialRole::Member, &extra).unwrap_err();
+        assert!(matches!(err, VcError::InvalidStructure(_)));
+
+        let mut missing = full;
+        missing.pop();
+        let err = validate_permissions_for_role(&CredentialRole::Member, &missing).unwrap_err();
+        assert!(matches!(err, VcError::InvalidStructure(_)));
+    }
+
+    #[test]
+    fn permission_sets_match_ignores_order_and_duplicates() {
+        let left = vec!["a".to_string(), "b".to_string()];
+        let right = vec!["b".to_string(), "a".to_string(), "a".to_string()];
+        assert!(permission_sets_match(&left, &right));
+
+        let different = vec!["a".to_string(), "c".to_string()];
+        assert!(!permission_sets_match(&left, &different));
+    }
+
+    #[test]
+    fn vc_admin_action_required_permissions_and_errors() {
+        assert_eq!(VcAdminAction::Issue.required_permissions(), &["vc:issue"]);
+        assert_eq!(VcAdminAction::Renew.required_permissions(), &["vc:issue"]);
+        assert_eq!(VcAdminAction::Revoke.required_permissions(), &["vc:revoke"]);
+
+        assert!(matches!(
+            VcAdminAction::Issue.not_authorized_error(),
+            VcError::NotCircleOwnerForIssue
+        ));
+        assert!(matches!(
+            VcAdminAction::Revoke.not_authorized_error(),
+            VcError::NotCircleOwnerForRevoke
+        ));
+        assert!(matches!(
+            VcAdminAction::Renew.not_authorized_error(),
+            VcError::NotCircleOwnerForRenew
+        ));
+    }
+}

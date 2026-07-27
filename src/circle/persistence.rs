@@ -57,3 +57,24 @@ fn sync_parent_dir(path: &Path) -> Result<(), CircleError> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    #[test]
+    fn safe_id_replaces_path_separators_and_colons() {
+        assert_eq!(safe_id("did:guardian:abc"), "did_guardian_abc");
+        assert_eq!(safe_id("a/b\\c"), "a_b_c");
+        assert_eq!(safe_id("plain-id"), "plain-id");
+    }
+
+    #[test]
+    fn invite_path_sanitizes_invite_id() {
+        let path = invite_path("did:guardian:abc/1");
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("did_guardian_abc_1.json")
+        );
+    }
+}

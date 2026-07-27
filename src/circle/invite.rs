@@ -339,3 +339,116 @@ fn random_nonce_b64(bytes: usize) -> String {
     rand::rngs::OsRng.fill_bytes(&mut nonce);
     general_purpose::STANDARD.encode(nonce)
 }
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+    use crate::vc::credential::CredentialRole;
+
+    fn sample_token() -> InviteToken {
+        InviteToken {
+            context: vec![INVITE_CONTEXT.to_string()],
+            id: "urn:uuid:invite-1".to_string(),
+            circle_id: "circle-1".to_string(),
+            circle_name: "Test Circle".to_string(),
+            issuer_did: "did:guardian:owner".to_string(),
+            role: CredentialRole::Member,
+            permissions: vec!["mesh:join".to_string()],
+            issued_at: "2026-01-01T00:00:00Z".to_string(),
+            expires_at: "2026-01-02T00:00:00Z".to_string(),
+            max_uses: 1,
+            nonce: "nonce".to_string(),
+            proof: Proof::default(),
+        }
+    }
+
+    #[test]
+    fn invite_token_canonical_bytes_ignore_proof_but_detect_field_changes() {
+        let mut token = sample_token();
+        let baseline = token.canonical_bytes_for_sign().expect("canonical");
+
+        token.proof = Proof {
+            proof_type: "DataIntegrityProof".to_string(),
+            cryptosuite: "ecdsa-2019".to_string(),
+            verification_method: "did:guardian:owner#dkp-v1".to_string(),
+            created: "2026-01-01T00:00:00Z".to_string(),
+            proof_purpose: "assertionMethod".to_string(),
+            proof_value: "signature".to_string(),
+        };
+        assert_eq!(baseline, token.canonical_bytes_for_sign().expect("canonical"));
+
+        token.max_uses = 5;
+        assert_ne!(baseline, token.canonical_bytes_for_sign().expect("canonical"));
+    }
+
+    #[test]
+    fn join_request_canonical_bytes_ignore_proof_but_detect_field_changes() {
+        let mut request = JoinRequest {
+            context: vec![JOIN_REQUEST_CONTEXT.to_string()],
+            invite_token: sample_token(),
+            joiner_did: "did:guardian:joiner".to_string(),
+            nonce: "nonce".to_string(),
+            issued_at: "2026-01-01T00:00:00Z".to_string(),
+            proof: Proof::default(),
+        };
+        let baseline = request.canonical_bytes_for_sign().expect("canonical");
+
+        request.proof = Proof {
+            verification_method: "did:guardian:joiner#dkp-v1".to_string(),
+            proof_value: "signature".to_string(),
+            ..Proof::default()
+        };
+        assert_eq!(
+            baseline,
+            request.canonical_bytes_for_sign().expect("canonical")
+        );
+
+        request.joiner_did = "did:guardian:other".to_string();
+        assert_ne!(
+            baseline,
+            request.canonical_bytes_for_sign().expect("canonical")
+        );
+    }
+
+    #[test]
+    fn build_share_link_accepts_payload_within_budget() {
+        let link = build_share_link("dG9rZW4", "guardian.local:8443").expect("within budget");
+        assert!(link.len() <= MAX_QR_PAYLOAD_SIZE);
+        assert!(link.starts_with("sgx-guardian://circle/join?"));
+    }
+
+    #[test]
+    fn build_share_link_rejects_oversized_payload() {
+        let oversized_token = "a".repeat(MAX_QR_PAYLOAD_SIZE);
+        let err = build_share_link(&oversized_token, "guardian.local:8443").unwrap_err();
+        assert!(matches!(err, CircleError::QrPayloadTooLarge { .. }));
+    }
+
+    #[test]
+    fn assert_redeemable_rejects_circle_mismatch_without_touching_disk() {
+        let mut circle_owner_mismatch = Circle {
+            circle_id: "circle-1".to_string(),
+            name: "Test".to_string(),
+            description: String::new(),
+            owner_did: "did:guardian:owner".to_string(),
+            kind: crate::circle::model::CircleKind::Comms,
+            status: crate::circle::model::CircleStatus::Active,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let token = sample_token();
+
+        // Wrong circle_id must be rejected before any persistence lookup runs.
+        circle_owner_mismatch.circle_id = "other-circle".to_string();
+        let err = assert_redeemable(&circle_owner_mismatch, &token, "did:guardian:joiner")
+            .unwrap_err();
+        assert!(matches!(err, CircleError::Invalid(_)));
+
+        // Wrong owner_did must likewise be rejected up front.
+        circle_owner_mismatch.circle_id = token.circle_id.clone();
+        circle_owner_mismatch.owner_did = "did:guardian:someone-else".to_string();
+        let err = assert_redeemable(&circle_owner_mismatch, &token, "did:guardian:joiner")
+            .unwrap_err();
+        assert!(matches!(err, CircleError::Invalid(_)));
+    }
+}

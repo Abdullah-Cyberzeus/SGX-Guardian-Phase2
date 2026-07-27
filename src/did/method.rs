@@ -174,3 +174,23 @@ fn uid_to_bytes(uid: &str) -> Vec<u8> {
     }
     trimmed.as_bytes().to_vec()
 }
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    #[test]
+    fn uid_to_bytes_decodes_even_length_hex() {
+        assert_eq!(uid_to_bytes("deadbeef"), vec![0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(uid_to_bytes("  deadbeef  "), vec![0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    #[test]
+    fn uid_to_bytes_falls_back_to_raw_bytes_for_non_hex_or_odd_length() {
+        assert_eq!(uid_to_bytes("not-hex!"), b"not-hex!".to_vec());
+        // Odd-length hex-looking string must not be decoded as hex.
+        assert_eq!(uid_to_bytes("abc"), b"abc".to_vec());
+        // Single hex char is below the minimum length gate.
+        assert_eq!(uid_to_bytes("a"), b"a".to_vec());
+    }
+}

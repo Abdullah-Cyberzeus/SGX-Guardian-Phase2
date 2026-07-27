@@ -49,3 +49,47 @@ pub struct NotificationEvent {
     pub created_at: String,
     pub read: bool,
 }
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    #[test]
+    fn category_mapping_covers_every_kind() {
+        let alerts = [
+            NotificationKind::AlertHigh,
+            NotificationKind::AlertMedium,
+            NotificationKind::AlertLow,
+        ];
+        for kind in alerts {
+            assert_eq!(kind.category(), NotificationCategory::Alerts);
+        }
+
+        let devices = [
+            NotificationKind::DeviceDiscovered,
+            NotificationKind::DevicePendingApproval,
+            NotificationKind::GuardianOffline,
+        ];
+        for kind in devices {
+            assert_eq!(kind.category(), NotificationCategory::Devices);
+        }
+
+        let circles = [
+            NotificationKind::CircleNewMessage,
+            NotificationKind::CircleIncomingCall,
+            NotificationKind::CircleMemberJoined,
+            NotificationKind::CircleFileShared,
+        ];
+        for kind in circles {
+            assert_eq!(kind.category(), NotificationCategory::Circles);
+        }
+    }
+
+    #[test]
+    fn notification_kind_serializes_snake_case() {
+        let json = serde_json::to_string(&NotificationKind::DevicePendingApproval).unwrap();
+        assert_eq!(json, "\"device_pending_approval\"");
+        let round_tripped: NotificationKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(round_tripped, NotificationKind::DevicePendingApproval);
+    }
+}

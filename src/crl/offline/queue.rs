@@ -139,3 +139,15 @@ pub fn reconcile_from_local(self_did: &str) -> Result<usize, CrlError> {
     }
     Ok(added)
 }
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    #[test]
+    fn id_to_filename_replaces_path_separators() {
+        assert_eq!(id_to_filename("urn:uuid:abc/def"), "urn_uuid_abc_def");
+        assert_eq!(id_to_filename("plain-id"), "plain-id");
+        assert_eq!(id_to_filename("a:b/c"), "a_b_c");
+    }
+}
