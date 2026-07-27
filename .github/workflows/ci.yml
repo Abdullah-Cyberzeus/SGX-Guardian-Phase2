@@ -2,120 +2,287 @@ name: CI Pipeline
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_TOOLCHAIN: "1.97.1"
+  PROTOC_VERSION: "35.1"
+  CARGO_INCREMENTAL: "0"
 
 jobs:
-  build-test-audit:
-    name: Build, Test & Security Checks
+  classify:
+    name: Classify Changes
     runs-on: ubuntu-latest
-
+    outputs:
+      full-ci: ${{ steps.changes.outputs.full-ci }}
     steps:
-      # Step 1: Checkout repository
       - name: Checkout repository
-        uses: actions/checkout@v3
-
-      # Step 2: Install Rust (stable)
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          toolchain: stable
-          components: clippy, rustfmt
-          override: true
+          fetch-depth: 0
 
-      # Step 2.5: Install Protocol Buffers Compiler (required for prost-build)
-      - name: Install Protocol Buffers Compiler
+      - name: Verify CI helper behavior
         run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
-          protoc --version
+          bash .github/scripts/test-classify-ci-changes.sh
+          bash .github/scripts/test-trusted-ci-gate.sh
+          bash .github/scripts/test-install-protoc.sh
 
-      # Step 3: Cache Cargo dependencies
-      - name: Cache Cargo dependencies
-        uses: actions/cache@v3
+      - name: Classify changed paths
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          full_ci="$(bash .github/scripts/classify-ci-changes.sh "$BASE_SHA" "$HEAD_SHA")"
+          echo "full-ci=$full_ci" >> "$GITHUB_OUTPUT"
+          echo "Full Rust CI required: $full_ci" >> "$GITHUB_STEP_SUMMARY"
+
+  lint:
+    name: Format & Clippy
+    needs: classify
+    if: needs.classify.outputs.full-ci == 'true'
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: target/ci-lint
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned Rust
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
+        with:
+          tool: rust@${{ env.RUST_TOOLCHAIN }} + rustfmt + clippy
+
+      - name: Install pinned protoc
+        run: bash .github/scripts/install-protoc.sh "$PROTOC_VERSION"
+
+      - name: Cache Cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-v1-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-v1-
 
-      # Step 4: Format check
+      - name: Cache lint target
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/ci-lint
+          key: ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-lint-v1-${{ hashFiles('**/Cargo.lock') }}
+
       - name: Check formatting
         run: cargo fmt -- --check
 
-      # Step 5: Lint with Clippy
-      - name: Run Clippy (linting)
+      - name: Run Clippy
         run: cargo clippy -- -D warnings
 
-      # Step 6: Run unit tests
+  tests:
+    name: Unit Tests
+    needs: classify
+    if: needs.classify.outputs.full-ci == 'true'
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: target/ci-tests
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned Rust
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
+        with:
+          tool: rust@${{ env.RUST_TOOLCHAIN }}
+
+      - name: Install pinned protoc
+        run: bash .github/scripts/install-protoc.sh "$PROTOC_VERSION"
+
+      - name: Cache Cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-v1-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-v1-
+
+      - name: Cache test target
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/ci-tests
+          key: ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-tests-v1-${{ hashFiles('**/Cargo.lock') }}
+
       - name: Run unit tests
         run: cargo test --verbose
 
-      # Step 7: Generate code coverage
-      - name: Install Tarpaulin
-        run: cargo install cargo-tarpaulin --force
+  coverage:
+    name: Coverage
+    needs: classify
+    if: needs.classify.outputs.full-ci == 'true'
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: target/ci-coverage
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned coverage toolchain
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
+        with:
+          tool: |
+            rust@${{ env.RUST_TOOLCHAIN }}
+            cargo-tarpaulin@0.37.0
+
+      - name: Install pinned protoc
+        run: bash .github/scripts/install-protoc.sh "$PROTOC_VERSION"
+
+      - name: Cache Cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-v1-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-v1-
+
       - name: Run coverage
+        # The suite mutates shared process and environment state. Keep serialization
+        # until a follow-up benchmark proves those tests have been isolated.
         run: cargo tarpaulin --out Xml -- --test-threads 1
 
-      # Step 7.5 – Semgrep Static Analysis (SAST)
-      - name: Run Semgrep scan
-        uses: returntocorp/semgrep-action@v1
+      - name: Upload coverage report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          config: auto
+          name: coverage-${{ github.run_number }}
+          path: cobertura.xml
+          if-no-files-found: error
+          retention-days: 14
 
-      # Step 8: Security audit
-      - name: Security audit with cargo-audit
-        run: cargo install cargo-audit --force && cargo audit
+  dependency-policy:
+    name: Dependency Policy
+    needs: classify
+    if: needs.classify.outputs.full-ci == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Step 9: License & security policy enforcement
-      - name: Run cargo-deny checks
-        run: |
-          # Pin cargo-deny to a known working version for stability
-          cargo install cargo-deny --version 0.18.6 --force
-          cargo deny check
+      - name: Install pinned dependency tools
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
+        with:
+          tool: |
+            rust@${{ env.RUST_TOOLCHAIN }}
+            cargo-audit@0.22.2
+            cargo-deny@0.20.2
 
-      # Step 10: Artifact packaging (if applicable)
-      - name: Build release artifacts
+      - name: Cache Cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-v1-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-v1-
+
+      - name: Audit dependencies
+        run: cargo audit
+
+      - name: Enforce dependency policy
+        run: cargo deny check
+
+  semgrep:
+    name: Semgrep
+    needs: classify
+    if: needs.classify.outputs.full-ci == 'true'
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep:1.171.0@sha256:bdf7013b2c3634a487671158da77c554f531742326b543a9464d2adf6c433ac8
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run Semgrep scan
+        run: semgrep scan --config auto
+
+  release-build:
+    name: Release Build
+    needs: classify
+    if: needs.classify.outputs.full-ci == 'true'
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: target/ci-release
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned Rust
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
+        with:
+          tool: rust@${{ env.RUST_TOOLCHAIN }}
+
+      - name: Install pinned protoc
+        run: bash .github/scripts/install-protoc.sh "$PROTOC_VERSION"
+
+      - name: Cache Cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-v1-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-v1-
+
+      - name: Cache release target
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/ci-release
+          key: ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-release-v1-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release artifact
         run: cargo build --release
 
-      # Step 11: Import GPG key for package signing
       - name: Import GPG private key
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
         run: |
           mkdir -p ~/.gnupg && chmod 700 ~/.gnupg
           echo "$GPG_PRIVATE_KEY" | gpg --batch --yes --import
-          echo "GPG key import complete"
           gpg --list-secret-keys --keyid-format LONG
 
-      # Step 12: Sign release packages (.deb/.rpm)
-      - name: Sign Packages
-        shell: bash
+      - name: Sign packages
         run: |
           mkdir -p signed_artifacts
           for pkg in $(ls target/debian/*.deb 2>/dev/null || true) $(ls target/generate-rpm/*.rpm 2>/dev/null || true); do
             if [ -f "$pkg" ]; then
-              echo "Signing $pkg ..."
               sha256sum "$pkg" > "$pkg.sha256"
               gpg --batch --yes --pinentry-mode loopback \
-                  --passphrase "${{ secrets.GPG_PASSPHRASE }}" \
-                  --detach-sign --armor "$pkg"
-               mv "$pkg" signed_artifacts/
+                --passphrase "${{ secrets.GPG_PASSPHRASE }}" \
+                --detach-sign --armor "$pkg"
+              mv "$pkg" signed_artifacts/
               mv "$pkg.sha256" signed_artifacts/
               mv "$pkg.asc" signed_artifacts/ 2>/dev/null || true
             fi
           done
 
-      # Step 13: Upload build artifacts (for verification / deployment)
-      - name: Upload Build Artifacts
-        if: success()
-        uses: actions/upload-artifact@v4
+      - name: Upload release artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sgx-guardian-client-${{ github.run_number }}
           path: |
-            target/release/sgx_guardian_client
+            target/ci-release/release/sgx_guardian_client
             signed_artifacts/*
-            cobertura.xml
+          if-no-files-found: error
+          retention-days: 14
