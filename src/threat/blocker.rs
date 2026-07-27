@@ -29,6 +29,12 @@ pub struct Blocker {
     state_path: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockAttempt {
+    pub blocked: bool,
+    pub reason: Option<String>,
+}
+
 impl Blocker {
     pub fn new(cfg: Arc<Mutex<SuricataConfig>>, node_id: String, state_dir: PathBuf) -> Self {
         Self {
@@ -153,6 +159,70 @@ impl Blocker {
         );
 
         Ok(true)
+    }
+
+    /// Direct block path for the rules engine. This bypasses Suricata
+    /// severity/block-mode checks but keeps config exemptions and runtime
+    /// local-network protection before touching nftables.
+    pub async fn block_ip_for_rule(
+        &self,
+        ip: &str,
+        ttl_secs: Option<u64>,
+    ) -> ThreatResult<BlockAttempt> {
+        let cfg = self.cfg.lock().await.clone();
+        if config_exempts_ip(&cfg, ip) {
+            return Ok(BlockAttempt {
+                blocked: false,
+                reason: Some(format!("{} matches threat block_exempt", ip)),
+            });
+        }
+
+        let ip_addr = ip
+            .parse::<std::net::IpAddr>()
+            .map_err(|_| ThreatError::InvalidCidr(ip.into()))?;
+        let ip = ip_addr.to_string();
+
+        let protected_nets = collect_protected_networks().await;
+        if protected_nets.iter().any(|net| net.contains(&ip_addr)) {
+            return Ok(BlockAttempt {
+                blocked: false,
+                reason: Some(format!(
+                    "{} is within a local interface subnet or default gateway",
+                    ip
+                )),
+            });
+        }
+
+        let mut active = self.active.lock().await;
+        if active.contains_key(&ip) {
+            return Ok(BlockAttempt {
+                blocked: false,
+                reason: Some(format!("{} is already blocked", ip)),
+            });
+        }
+
+        Self::ensure_threat_table().await?;
+        Self::insert_drop(&ip).await?;
+        let ttl = ttl_secs.unwrap_or(cfg.block_ttl_secs);
+        let expiry = Utc::now().timestamp() + ttl as i64;
+        active.insert(ip.clone(), expiry);
+        let records = map_to_records(&active);
+        drop(active);
+
+        self.persist_records(&records).await?;
+
+        log_audit(
+            &self.node_id,
+            AuditCategory::Rules,
+            AuditSeverity::Warning,
+            AuditAction::Blocked,
+            &format!("rules engine blocked {} ttl={}s", ip, ttl),
+        );
+
+        Ok(BlockAttempt {
+            blocked: true,
+            reason: None,
+        })
     }
 
     pub async fn sweep_expired(&self) -> ThreatResult<usize> {
@@ -288,6 +358,24 @@ impl Blocker {
             Err(err) => Err(err),
         }
     }
+}
+
+fn config_exempts_ip(cfg: &SuricataConfig, ip: &str) -> bool {
+    for exempt in &cfg.block_exempt {
+        if let Ok(net) = exempt.parse::<ipnet::IpNet>() {
+            if let Ok(addr) = ip.parse::<std::net::IpAddr>() {
+                if net.contains(&addr) {
+                    return true;
+                }
+            }
+        } else if let Ok(addr) = exempt.parse::<std::net::IpAddr>() {
+            if ip == addr.to_string() {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 /// Enumerate networks that must never be auto-blocked: every local interface
