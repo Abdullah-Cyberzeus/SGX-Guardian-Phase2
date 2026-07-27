@@ -23,7 +23,9 @@ coverage/
 
 .codex/
 .claude/
+.intraview/
+.introview-tour.md
+.tokensave/
 
 # Ignore SOW PDFs
 docs/sow/*.pdf
-
