@@ -79,6 +79,26 @@ pub fn notify_router() -> Router<Arc<AppState>> {
         )
 }
 
+pub fn rules_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route(
+            "/api/v1/rules",
+            get(handlers::rules::list).post(handlers::rules::create),
+        )
+        .route("/api/v1/rules/executions", get(handlers::rules::executions))
+        .route(
+            "/api/v1/rules/{id}",
+            get(handlers::rules::detail)
+                .patch(handlers::rules::edit)
+                .delete(handlers::rules::delete),
+        )
+        .route(
+            "/api/v1/rules/{id}/enable",
+            post(handlers::rules::set_enabled),
+        )
+        .route("/api/v1/rules/{id}/test", post(handlers::rules::test))
+}
+
 pub fn circle_router() -> Router<Arc<AppState>> {
     Router::new()
         .route(

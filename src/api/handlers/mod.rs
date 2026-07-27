@@ -11,6 +11,7 @@ pub mod pcr;
 pub mod peers;
 pub mod policy;
 pub mod relay;
+pub mod rules;
 pub mod threat;
 pub mod transport;
 pub mod vc;

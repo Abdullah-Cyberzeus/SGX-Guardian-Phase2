@@ -26,6 +26,7 @@ pub mod policy;
 pub mod policy_authority;
 pub mod policy_manager;
 pub mod policy_state;
+pub mod rules;
 pub mod runtime_gates;
 pub mod secure_element;
 pub mod server;

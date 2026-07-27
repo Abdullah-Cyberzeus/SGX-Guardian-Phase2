@@ -260,6 +260,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(routes::crl_router())
         .merge(routes::circle_router())
         .merge(routes::notify_router())
+        .merge(routes::rules_router())
         // Health
         .route("/api/v1/health", get(|| async { "ok" }))
         .layer(cors)
