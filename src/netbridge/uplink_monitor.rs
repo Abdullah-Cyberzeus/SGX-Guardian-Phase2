@@ -253,10 +253,10 @@ impl UplinkMonitor {
             return false;
         }
 
-        match timeout(Duration::from_secs(3), socket.connect(dest)).await {
-            Ok(Ok(_)) => true,
-            _ => false,
-        }
+        matches!(
+            timeout(Duration::from_secs(3), socket.connect(dest)).await,
+            Ok(Ok(_))
+        )
     }
 
     // Helper: fetch the IPv4 address assigned to the monitored interface.

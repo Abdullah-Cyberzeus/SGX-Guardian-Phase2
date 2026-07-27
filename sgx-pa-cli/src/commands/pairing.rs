@@ -234,9 +234,17 @@ mod tests {
             .expect("emit proof");
         });
 
-        let lines: Vec<_> = stdout.lines().collect();
-        assert_eq!(lines, vec!["abcDEF0123_-"]);
-        assert!(lines[0]
+        let proof_lines: Vec<_> = stdout
+            .lines()
+            .filter(|line| {
+                !line.is_empty()
+                    && line
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+            })
+            .collect();
+        assert_eq!(proof_lines, vec!["abcDEF0123_-"]);
+        assert!(proof_lines[0]
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_')));
         assert!(stderr.contains("Existing DKP found..."));

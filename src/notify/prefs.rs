@@ -253,10 +253,16 @@ mod unit_tests {
             proof_value: "signature".to_string(),
             ..Proof::default()
         };
-        assert_eq!(baseline, prefs.canonical_bytes_for_sign().expect("canonical"));
+        assert_eq!(
+            baseline,
+            prefs.canonical_bytes_for_sign().expect("canonical")
+        );
 
         prefs.sequence = 2;
-        assert_ne!(baseline, prefs.canonical_bytes_for_sign().expect("canonical"));
+        assert_ne!(
+            baseline,
+            prefs.canonical_bytes_for_sign().expect("canonical")
+        );
     }
 
     #[test]
