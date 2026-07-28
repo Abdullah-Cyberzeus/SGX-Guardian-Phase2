@@ -41,10 +41,21 @@ classified PR head SHA:
   after the required `CI Pipeline` jobs pass.
 - `Static Analysis (CodeQL)`, published by `.github/workflows/codeql.yml`.
 
+The base-owned `CI Required` gate compares the exact base/head Git blobs for
+the CI and CodeQL workflows, repository helpers, and policy-bearing tool
+configuration; otherwise a contributor could preserve required job names while
+replacing commands or helpers. Legitimate changes to that trusted surface
+require review and a restricted ruleset bypass (ADR 0007). Stale base SHAs
+fail closed.
+
 Missing contexts remain pending, failed/cancelled/neutral contexts fail closed,
 and a moved head or duplicate required context fails closed. The same tested
 `.github/cyber-review/ci-gate.sh` policy is used before review and immediately
 before merge.
+
+The repository ruleset must also require branches to be up to date
+(`strict_required_status_checks_policy: true`). The runtime check cannot revoke
+an already-successful commit status if `main` advances later.
 
 The live `Cyber-review required checks` ruleset (ID `18809646`) must require
 `CI Required`, `Static Analysis (CodeQL)`, and `Cyber-review gate`. At the time

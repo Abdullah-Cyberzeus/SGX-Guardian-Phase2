@@ -25,6 +25,140 @@ docs_jobs="$(jq -c '
 validate_ci_jobs full success "$success_jobs"
 validate_ci_jobs docs success "$docs_jobs"
 
+commit_sha="1111111111111111111111111111111111111111"
+tree_sha="2222222222222222222222222222222222222222"
+commit_response='{
+  "sha": "1111111111111111111111111111111111111111",
+  "tree": {
+    "sha": "2222222222222222222222222222222222222222"
+  }
+}'
+[[ "$(git_commit_tree_sha "$commit_sha" "$commit_response")" == "$tree_sha" ]]
+if git_commit_tree_sha \
+  "$commit_sha" '{"sha":"1111111111111111111111111111111111111111"}' \
+  >/dev/null 2>&1; then
+  echo "gate accepted a malformed commit response" >&2
+  exit 1
+fi
+if git_commit_tree_sha \
+  "3333333333333333333333333333333333333333" "$commit_response" \
+  >/dev/null 2>&1; then
+  echo "gate accepted a commit response for the wrong SHA" >&2
+  exit 1
+fi
+
+base_tree='{
+  "truncated": false,
+  "tree": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "path": ".github/scripts/install-protoc.sh",
+      "mode": "100755",
+      "type": "blob",
+      "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ]
+}'
+matching_head_tree="$base_tree"
+changed_helper_tree="${base_tree/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/cccccccccccccccccccccccccccccccccccccccc}"
+deleted_helper_tree="$(jq -c '
+  .tree |= map(select(.path != ".github/scripts/install-protoc.sh"))
+' <<<"$base_tree")"
+symlinked_helper_tree="$(jq -c '
+  .tree |= map(
+    if .path == ".github/scripts/install-protoc.sh"
+    then .mode = "120000"
+    else .
+    end
+  )
+' <<<"$base_tree")"
+
+base_manifest="$(ci_trusted_definition_manifest "$base_tree")"
+grep -Fqx $'.github/workflows/ci.yml\t100644\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  <<<"$base_manifest"
+grep -Fqx $'.github/scripts/install-protoc.sh\t100755\tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
+  <<<"$base_manifest"
+[[ "$(wc -l <<<"$base_manifest")" -eq "${#CI_TRUSTED_DEFINITION_PATHS[@]}" ]]
+
+docs_base_tree="$(jq -c '
+  .tree += [{
+    "path": "docs/guide.md",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "dddddddddddddddddddddddddddddddddddddddd"
+  }]
+' <<<"$base_tree")"
+docs_head_tree="${docs_base_tree/dddddddddddddddddddddddddddddddddddddddd/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee}"
+mapfile -t docs_changed_paths < <(
+  changed_paths_from_trees "$docs_base_tree" "$docs_head_tree"
+)
+[[ "${docs_changed_paths[*]}" == "docs/guide.md" ]]
+if requires_full_ci "${docs_changed_paths[@]}"; then
+  echo "exact-tree classifier rejected a docs-only change" >&2
+  exit 1
+fi
+
+mapfile -t helper_changed_paths < <(
+  changed_paths_from_trees "$base_tree" "$changed_helper_tree"
+)
+[[ "${helper_changed_paths[*]}" == ".github/scripts/install-protoc.sh" ]]
+if ! requires_full_ci "${helper_changed_paths[@]}"; then
+  echo "exact-tree classifier accepted a CI helper as docs-only" >&2
+  exit 1
+fi
+
+enforce_base_owned_ci_definition "$base_tree" "$matching_head_tree"
+if enforce_base_owned_ci_definition \
+  "$base_tree" "$changed_helper_tree" >/dev/null 2>&1; then
+  echo "gate accepted a PR-controlled CI helper" >&2
+  exit 1
+fi
+if enforce_base_owned_ci_definition \
+  "$base_tree" "$deleted_helper_tree" >/dev/null 2>&1; then
+  echo "gate accepted a deleted CI helper" >&2
+  exit 1
+fi
+if enforce_base_owned_ci_definition \
+  "$base_tree" "$symlinked_helper_tree" >/dev/null 2>&1; then
+  echo "gate accepted a symlinked CI helper" >&2
+  exit 1
+fi
+if enforce_base_owned_ci_definition \
+  "$base_tree" '{"truncated":true,"tree":[]}' >/dev/null 2>&1; then
+  echo "gate accepted a truncated Git tree response" >&2
+  exit 1
+fi
+if enforce_base_owned_ci_definition \
+  "$base_tree" '{"truncated":false,"tree":"invalid"}' >/dev/null 2>&1; then
+  echo "gate accepted a malformed Git tree response" >&2
+  exit 1
+fi
+if changed_paths_from_trees \
+  "$base_tree" '{"truncated":true,"tree":[]}' >/dev/null 2>&1; then
+  echo "classifier accepted a truncated head Git tree" >&2
+  exit 1
+fi
+
+base_sha="1111111111111111111111111111111111111111"
+current_base_ref='{
+  "object": {
+    "type": "commit",
+    "sha": "1111111111111111111111111111111111111111"
+  }
+}'
+enforce_current_base_sha "$base_sha" "$current_base_ref"
+if enforce_current_base_sha \
+  "2222222222222222222222222222222222222222" \
+  "$current_base_ref" >/dev/null 2>&1; then
+  echo "gate accepted a stale pull request base SHA" >&2
+  exit 1
+fi
+
 skipped_coverage="$(jq -c '
   .jobs |= map(
     if .name == "Coverage" then .conclusion = "skipped"
