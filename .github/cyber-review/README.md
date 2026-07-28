@@ -64,6 +64,27 @@ must add `CI Required` after this base-owned policy reaches `main`. The workflow
 fails closed on `CI Required` independently, so the admin update strengthens
 manual/ruleset enforcement rather than creating the workflow gate.
 
+### Manual and admin delivery precondition
+
+Prefer the workflow-owned merge step. If that step is broken and a manual or
+admin merge is proposed, delivery automation must first pin the current PR head
+SHA and inspect only checks and statuses attached to that SHA. It must refuse
+the merge while any required context is pending, missing, failed, stale, or
+belongs to a different head.
+
+Immediately before merging, re-fetch the PR head and require it to match the
+pinned SHA. The current head must have successful `CI Required` and
+`Static Analysis (CodeQL)` evidence plus a successful exact-head
+`Cyber-review gate` for an AI-lane review. A docs fast lane must instead have a
+successful current-head classification from the base-owned cyber-review
+workflow. Adding or rebasing a commit invalidates the evidence and requires a
+fresh run.
+
+Admin capability is not approval to bypass these preconditions. Trusted CI
+definition changes that intentionally fail the base-owned manifest comparison
+require explicit authorization for the restricted ruleset-bypass path described
+by ADR 0007; delivery automation must stop and request that authorization.
+
 ### Tier 2 — LLM cyber-review (this workflow)
 `.github/workflows/cyber-review.yml` runs a multi-dimension review (security,
 static evidence, test adequacy, architecture, simplification) and **ingests
