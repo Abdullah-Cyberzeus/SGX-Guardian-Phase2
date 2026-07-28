@@ -63,6 +63,20 @@ if [[ "$top_permissions" != "  contents: read" ]]; then
   exit 1
 fi
 
+merge_permissions="$(
+  awk '
+    /^  merge:$/ { in_merge = 1; next }
+    in_merge && /^    permissions:$/ { capture = 1; next }
+    capture && /^    env:$/ { exit }
+    capture { print }
+  ' "$workflow"
+)"
+expected_merge_permissions=$'      contents: read\n      checks: read\n      pull-requests: read\n      statuses: read'
+if [[ "$merge_permissions" != "$expected_merge_permissions" ]]; then
+  echo "cyber-review merge permissions must remain least-privilege and include pull-request metadata reads" >&2
+  exit 1
+fi
+
 assert_contains "id: review"
 assert_contains "--json-schema"
 assert_contains '--allowedTools "Read,Grep,Glob"'

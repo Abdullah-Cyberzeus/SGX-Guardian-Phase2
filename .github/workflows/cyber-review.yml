@@ -323,6 +323,7 @@ jobs:
     permissions:
       contents: read
       checks: read
+      pull-requests: read
       statuses: read
     env:
       LANE: ${{ needs.classify.outputs.lane }}
