@@ -1,4 +1,6 @@
-# Cervais New  Guardian Deliverable Tracking
+# Phase 1 Deliverable Tracking
+
+This record tracks delivery against the [Phase 1 SOW](../README.md).
 
 ## Project Timeline & Milestones
 
@@ -49,32 +51,3 @@
 | Documentation | Administrator Guide v0.5 | Installation, configuration, key management, and operational procedures for system administrators | 2025-12-21 | 2025-12-21 | | Final deliverable | Yes | | | Section 5 | |
 | Documentation | Source Code & Documentation | Complete, modular, and documented Rust codebase for sgx-guardian daemon and sgx-pa-cli tool | 2025-12-21 | 2025-12-21 | | Final deliverable | No | | | Section 5 | |
 | Demonstration | Final E2E Demo | Full end-to-end scripted demo on 3-node cohort proving trust formation, policy sync, and active L3/L4 enforcement with CLI status visibility | 2025-12-21 | 2025-12-21 | | Phase 1 completion | Yes | | | Section 3, Sprint 4 | |
-
-## Phase 2 Extension – Additional Frontend & Containerization Deliverables (Target Date: 2026-07-27)
-
-Acceptance is defined in the
-[Phase 2 Extension demo use cases](acceptance/phase-2-extension-demo-use-cases.md).
-Record each execution with the [demo run template](acceptance/demo-run-template.md);
-a UI-only walkthrough does not complete a deliverable.
-
-| Scope | Deliverable | Descriptions | Target Date | Status | Notes |
-|-------|-------------|--------------|-------------|--------|-------|
-| Communications | Text Chat / Messaging | Implement secure real-time Circle messaging including message history, timestamps, read receipts, image/file attachments, and encrypted message transport. | 2026-07-27 | Pending | Persistent message storage & sync |
-| Communications | Voice Calling | Implement peer-to-peer and group voice communication with secure signaling, participant management, call history, mute/unmute controls, and encrypted media transport. | 2026-07-27 | Pending | Encrypted media transport |
-| Communications | Video Calling | Implement secure video communication using the existing voice signaling layer, including camera streams, participant management, and hardware acceleration support. | 2026-07-27 | Pending | Uses voice signaling layer |
-| Communications | In-Circle File Transfer | Implement secure file and image sharing within Circles, including attachment storage, transfer status tracking, file synchronization, and integration with the encrypted file vault. | 2026-07-27 | Pending | Integrates with file vault |
-| Circle Management | Circle-as-Comms Container + Invites | Implement Circle creation, editing, membership management, QR-based invitations, signed invite tokens, and member administration using DID/VC identity verification. | 2026-07-27 | Pending | DID/VC verification |
-| Storage | Encrypted Cloud Storage Vault | Implement encrypted device-hosted storage with folder hierarchy, upload/download, preview, deletion, storage quota management, and integration with Circle file sharing. | 2026-07-27 | Pending | Folder hierarchy & quotas |
-| Smart Home | Smart Home Integration | Implement integrations for Ring, Google Nest, Wyze, Ecobee, TP-Link Kasa, and Arlo devices, including automation rules, telemetry synchronization, and local hardware hub management. | 2026-07-27 | Pending | 6 device brand integrations |
-| Network Intelligence | Live Network Topology / Mesh Map | Implement real-time mesh network visualization, node/link mapping, geolocation support, event logging, topology analytics, and interactive monitoring tools. | 2026-07-27 | Pending | Real-time mesh map |
-| Security | Geofencing / Location Zones | Implement geographic boundary management with entry/exit triggers, coordinate mapping, location-based alerts, and automation integration. | 2026-07-27 | Pending | Entry/exit triggers |
-| System Management | Backup & Restore | Implement encrypted device backup and restoration capabilities, configuration snapshots, restore validation, backup history, and secure key handling. | 2026-07-27 | Pending | Encrypted snapshots |
-| Notifications | Notification Preferences + Push Delivery | Implement notification preference management, delivery pipelines, push services, severity filtering, and real-time notification subscriptions. | 2026-07-27 | Pending | Severity filtering & push |
-| Automation | Custom Alert Rules / Automation Engine | Implement event-condition-action rule engine supporting alert creation, modification, execution workflows, action handlers, and rule lifecycle management. | 2026-07-27 | Pending | ECA rule engine |
-| Monitoring | Data Usage Monitoring | Implement per-device and per-category bandwidth monitoring, quota tracking, usage history, analytics, and reset scheduling using nftables counters. | 2026-07-27 | Pending | nftables counters |
-| AI Services | AI Alert Recommendation | Implement AI-generated remediation recommendations for security alerts, integrating anomaly detection engines with contextual response generation and advisory services. | 2026-07-27 | Pending | Anomaly correlation |
-| Identity / Auth | Cylenium SSO / Cloud Sign-On | Implement Cylenium single-sign-on as an identity-provider option alongside local email/password authentication, including the SSO/OIDC authorization flow, token exchange, session establishment, and linking of the Cylenium identity to the device DID and owner account. | 2026-07-27 | Pending | SSO/OIDC flow |
-| Device Security | Connected Devices Management & Security / Privacy Scoring | Implement per-device security and privacy scoring, on-demand multi-step device security scans (firmware, open ports, encryption, known vulnerabilities, report), manual device onboarding, approve/reject workflows, and per-device block/remove enforcement, complementing NMAP network discovery. | 2026-07-27 | Pending | Privacy scoring & scans |
-| Deployment / Containerization | Container Installation & Hardware Environment Demo | Demonstrate application installation and execution in containerized environments (Docker Compose / Kubernetes) across target hosts meeting hardware requirements (SE050, CAP_NET_ADMIN, host network). | 2026-07-27 | Pending | Hardware & container demo |
-| Deployment / Containerization | Containerization Architecture & Tooling | Deliver multi-stage Docker build pipeline, multi-arch image support (AMD64 & ARM64), host network + CAP_NET_ADMIN isolation profiles, persistent volume mounts, and configurable path environment variables. | 2026-07-27 | Pending | Multi-arch Docker & Compose/K8s specs |
-

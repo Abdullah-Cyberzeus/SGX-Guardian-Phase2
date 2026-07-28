@@ -1,8 +1,9 @@
 # Phase 2 Extension Acceptance Demo Use Cases
 
-- **Status:** Draft acceptance baseline
+- **Status:** Proposed; effective upon signature by Cervais and CyberZeus
 - **SOW target date:** July 27, 2026
-- **Scope source:** [Phase 2 Extension contract](../../sow/phase-2-extension/contract.md)
+- **Scope source:** [Phase 2 Extension contract](../../contract.md)
+- **Deliverables:** [Phase 2 Extension deliverable tracker](../README.md)
 - **Execution record:** [Demo run template](demo-run-template.md)
 
 ## Purpose and acceptance standard
@@ -25,6 +26,11 @@ A use case passes only when:
 
 Mock data, simulated success toasts, screenshots of static screens, or API calls
 made outside the delivered workflow do not satisfy acceptance.
+
+Together with the [Phase 2 Extension contract](../../contract.md), this document
+forms the mutual delivery and acceptance baseline. The contract defines scope;
+this document defines how Cervais and CyberZeus will determine whether that
+scope has been delivered.
 
 ## Product model that must be kept explicit
 
@@ -318,8 +324,8 @@ table ensures every latest-SOW line item has an explicit observable demo.
 | SOW-18 | Container architecture and tooling | Reproduce AMD64 and ARM64 builds, inspect minimal runtime contents, run Compose and Kubernetes profiles, verify host networking/capabilities/volumes/environment paths, and publish image digests/SBOM | Operational evidence |
 
 If a contracted provider, transport, hardware root of trust, architecture, or
-workflow is replaced with a simulator, the run is blocked unless the client has
-authorized that substitution in writing.
+workflow is replaced with a simulator, the run is blocked unless Cervais and
+CyberZeus have jointly authorized that substitution in writing.
 
 ## Scenario applicability matrix
 
@@ -386,3 +392,15 @@ features from failure of local security, CoT, and communication functions.
 No unresolved item should be silently decided during the demo. Record the agreed
 answer in this document or a linked, versioned acceptance decision before the
 run.
+
+## Acceptance Baseline Agreement
+
+By signing below, Cervais and CyberZeus agree that these use cases, network
+profiles, evidence requirements, and pass conditions govern acceptance of the
+[Phase 2 Extension deliverables](../README.md). Changes or exceptions require
+written agreement by both parties.
+
+| Organization | Authorized representative | Title | Signature | Date |
+| --- | --- | --- | --- | --- |
+| Cervais |  |  |  |  |
+| CyberZeus |  |  |  |  |

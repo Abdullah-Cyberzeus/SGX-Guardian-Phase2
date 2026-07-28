@@ -1,5 +1,9 @@
 # Phase 2 Extension Acceptance Demo Run
 
+This run records acceptance against the
+[Phase 2 Extension contract](../../contract.md) and its
+[demo use cases](demo-use-cases.md).
+
 Copy this file for each execution and name it
 `YYYY-MM-DD-<network-profile>-<run-number>.md`.
 
@@ -10,7 +14,8 @@ Copy this file for each execution and name it
 | Run ID | |
 | Date and location | |
 | Facilitator | |
-| Client witness | |
+| Cervais representative | |
+| CyberZeus representative | |
 | Network profile | N1 / N2 / N3 / N4 / N5 / N6 |
 | Internet state | Disconnected / Connected / Transition tested |
 | Claimed transports | |
@@ -70,7 +75,10 @@ Repeat for every transport claimed as supported for this delivery.
 
 ## Sign-off
 
-| Role | Name | Decision | Date | Notes |
-| --- | --- | --- | --- | --- |
-| Delivery representative | | Accept / Reject | | |
-| Client acceptance representative | | Accept / Reject | | |
+Both decisions must be `Accept` for the run to establish acceptance. A `Reject`
+or missing decision leaves the affected deliverables unaccepted.
+
+| Organization | Authorized representative | Decision | Signature | Date | Notes |
+| --- | --- | --- | --- | --- | --- |
+| Cervais | | Accept / Reject | | | |
+| CyberZeus | | Accept / Reject | | | |

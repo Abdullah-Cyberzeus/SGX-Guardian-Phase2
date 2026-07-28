@@ -153,8 +153,8 @@ The on-premise command-line tool used by administrators for:
 
 - [SG-X Administrator Guide](docs/reference/SGX%20Admin%20Guide.pdf) (Installation, configuration, key management, and operational procedures)
 - [Test Cases](docs/reference/Test%20Cases.pdf) (Point-in-time unit and integration test cases)
-- CI/CD_Pipeline_Documentation.md (Pipeline architecture, quality gates, workflow procedures, troubleshooting guide)
-- Decision log tracking all architectural and technical decisions
+- [CI/CD workflow](.github/workflows/ci.yml) (Pipeline definition and quality gates)
+- [Decision records](docs/decisions/README.md) tracking architectural and technical decisions
 
 ### Demonstration
 
@@ -263,7 +263,7 @@ sudo systemctl enable sgx-guardian
 
 ## Project Documentation
 
-- [Deliverables Tracking](docs/deliverables/README.md) - Detailed deliverable tracking table
+- [Statements of Work and Deliverables](docs/sow/README.md) - Phase-specific scope, tracking, and acceptance records
 - [API Specification](docs/reference/api-specification-v1.0.md) - API schemas and sequence diagrams (Sprint 1 deliverable)
 - [UEP Policy Schema](schemas/uep_policy_v1.yaml) - Policy format specification (Sprint 1 deliverable)
 - [Administrator Guide](docs/reference/SGX%20Admin%20Guide.pdf) - Installation and operational procedures (Sprint 4 deliverable)

@@ -1,7 +1,15 @@
 # SG-X Guardian – Additional Frontend & Containerization Deliverables Contract
 
-**Phase 2 Extension – Frontend Feature Implementation, Containerization & Integration**  
-**Target Due Date:** 27 July, 2026  
+- **Phase:** Phase 2 Extension – Frontend Feature Implementation,
+  Containerization & Integration
+- **Target due date:** July 27, 2026
+- **Status:** Proposed; effective upon signature by Cervais and CyberZeus
+
+**Companion documents:**
+
+[Deliverable tracker](deliverables/README.md) ·
+[Acceptance demo use cases](deliverables/acceptance/demo-use-cases.md) ·
+[Demo run template](deliverables/acceptance/demo-run-template.md)
 
 ---
 
@@ -79,3 +87,27 @@ The extended frontend & containerization demo will successfully demonstrate the 
 12. **Data usage monitoring** and analytics visualization.
 13. **AI-powered alert recommendations** and remediation guidance.
 14. **Containerized app installation & execution** on hardware-capable environments (demonstrating container deployment with SE050 hardware security, `CAP_NET_ADMIN` firewalling, and host network integration).
+
+The detailed steps, evidence requirements, negative cases, and pass conditions
+for these capabilities are part of the
+[Phase 2 Extension acceptance demo use cases](deliverables/acceptance/demo-use-cases.md).
+
+---
+
+## 5. Mutual Agreement and Acceptance
+
+By signing below, Cervais and CyberZeus confirm that they have reviewed and
+agree to this Phase 2 Extension, including the linked deliverable tracker and
+acceptance demo use cases. Those linked documents are incorporated into this
+agreement as the delivery and acceptance baseline.
+
+Changes, substitutions, waivers, or exceptions require written agreement by
+both parties. Agreement to these terms does not itself mean that implementation
+has been accepted. A deliverable is accepted only after its required demo use
+cases pass and both parties record `Accept` in the corresponding demo run, or
+both parties approve a written exception.
+
+| Organization | Authorized representative | Title | Signature | Date |
+| --- | --- | --- | --- | --- |
+| Cervais |  |  |  |  |
+| CyberZeus |  |  |  |  |

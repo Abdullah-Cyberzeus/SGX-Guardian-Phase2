@@ -2019,7 +2019,7 @@ This architecture document is supported by detailed decision records. All 20 arc
 - [Documentation index](../README.md) - Current documentation map
 - [Project README](../../README.md) - Overview and getting started
 - [Decision Log](../decisions/phase-1-sow-decision-log.md) - Detailed Phase 1 architectural decisions
-- [Deliverables Tracking](../deliverables/README.md) - Sprint and milestone tracking
+- [Phase 1 Deliverables](../sow/phase-1/deliverables/README.md) - Sprint and milestone tracking
 - [Branch Protection Setup](../../BRANCH_PROTECTION_SETUP.md) - Git workflow
 
 ---
