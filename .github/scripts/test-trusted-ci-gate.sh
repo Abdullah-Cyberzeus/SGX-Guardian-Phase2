@@ -4,6 +4,18 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 source "$script_dir/ci-gate-lib.sh"
 
+mapfile -t executed_ci_scripts < <(
+  grep -Eo '\.github/[A-Za-z0-9_./-]+\.(sh|ps1|py)' \
+    "$script_dir/../workflows/ci.yml" |
+    sort -u
+)
+for executed_script in "${executed_ci_scripts[@]}"; do
+  if [[ ! " ${CI_TRUSTED_DEFINITION_PATHS[*]} " =~ " $executed_script " ]]; then
+    echo "trusted definition manifest omits CI-executed script: $executed_script" >&2
+    exit 1
+  fi
+done
+
 success_jobs='{"jobs":[
   {"name":"Classify Changes","conclusion":"success"},
   {"name":"Format & Clippy","conclusion":"success"},
