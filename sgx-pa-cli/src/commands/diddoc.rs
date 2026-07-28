@@ -91,7 +91,7 @@ fn cmd_verify(args: VerifyArgs) {
                 eprintln!("❌ Read {}: {}", path, e);
                 std::process::exit(1);
             });
-            serde_json::from_str(&s).unwrap_or_else(|e| {
+            serde_json::from_str::<DidDocument>(&s).unwrap_or_else(|e| {
                 eprintln!("❌ Parse {}: {}", path, e);
                 std::process::exit(1);
             })

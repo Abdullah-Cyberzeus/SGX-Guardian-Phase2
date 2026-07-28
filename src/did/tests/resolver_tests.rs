@@ -5,7 +5,7 @@ use crate::did::doc_sign;
 use crate::did::document::{DidDocument, DocBuildInput};
 use crate::did::{Did, DidError, ResolutionSource, Resolver, ResolverConfig};
 use crate::key_manager::KeyManager;
-use crate::nebula::registry_sync::{RegistryRequest, RegistryResponse, REGISTRY_SYNC_PORT};
+use crate::nebula::registry_sync::{RegistryRequest, RegistryResponse};
 use base64::Engine as _;
 use std::ffi::OsString;
 use std::time::Duration;
@@ -98,11 +98,12 @@ fn signed_doc(did: &str, node_name: &str, version: u32, current_dkp_version: u32
 async fn spawn_mock_resolve_server(
     expected_did: String,
     doc: DidDocument,
-) -> tokio::task::JoinHandle<()> {
-    let listener = TcpListener::bind(("127.0.0.1", REGISTRY_SYNC_PORT))
+) -> (u16, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind(("127.0.0.1", 0))
         .await
         .expect("bind mock resolver");
-    tokio::spawn(async move {
+    let port = listener.local_addr().expect("mock resolver address").port();
+    let handle = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.expect("accept resolve");
         let (reader, mut writer) = stream.into_split();
         let mut buffered = BufReader::new(reader);
@@ -124,7 +125,8 @@ async fn spawn_mock_resolve_server(
             .write_all(response.as_bytes())
             .await
             .expect("write resolve response");
-    })
+    });
+    (port, handle)
 }
 
 fn resolver(ca_host: &str) -> Resolver {
@@ -297,7 +299,8 @@ async fn resolves_from_ca_network() {
 
     let did = Did::from_id_bytes(&[14u8; 32]).to_string();
     let doc = signed_doc(&did, "nodeD", 6, 5);
-    let handle = spawn_mock_resolve_server(did.clone(), doc).await;
+    let (registry_port, handle) = spawn_mock_resolve_server(did.clone(), doc).await;
+    let _registry_port = crate::did::doc_distribution::use_test_registry_sync_port(registry_port);
 
     let result = resolver("127.0.0.1").resolve(&did).await.expect("resolve");
     handle.await.expect("mock server");

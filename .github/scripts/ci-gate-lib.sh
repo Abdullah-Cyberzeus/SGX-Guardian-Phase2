@@ -3,6 +3,7 @@
 CI_REQUIRED_JOBS=(
   "Format & Clippy"
   "Unit Tests"
+  "Windows Workspace Tests"
   "Coverage"
   "Dependency Policy"
   "Semgrep"

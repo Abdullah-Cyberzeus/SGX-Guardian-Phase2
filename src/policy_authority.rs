@@ -122,6 +122,9 @@ impl PaKey {
 fn atomic_write(path: &str, bytes: &[u8], mode: u32) -> Result<()> {
     use std::io::Write;
 
+    #[cfg(not(unix))]
+    let _ = mode;
+
     let tmp = format!("{}.tmp", path);
     {
         let mut f = fs::File::create(&tmp).with_context(|| format!("Create tmp file {}", tmp))?;

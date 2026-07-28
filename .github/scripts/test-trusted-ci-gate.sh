@@ -8,6 +8,7 @@ success_jobs='{"jobs":[
   {"name":"Classify Changes","conclusion":"success"},
   {"name":"Format & Clippy","conclusion":"success"},
   {"name":"Unit Tests","conclusion":"success"},
+  {"name":"Windows Workspace Tests","conclusion":"success"},
   {"name":"Coverage","conclusion":"success"},
   {"name":"Dependency Policy","conclusion":"success"},
   {"name":"Semgrep","conclusion":"success"},

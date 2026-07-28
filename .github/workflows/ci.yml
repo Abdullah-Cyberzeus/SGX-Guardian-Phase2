@@ -36,6 +36,7 @@ jobs:
           bash .github/scripts/test-cargo-cache-workflow.sh
           bash .github/scripts/test-trusted-ci-gate.sh
           bash .github/scripts/test-install-protoc.sh
+          pwsh -File .github/scripts/test-install-protoc.ps1
           bash .github/scripts/test-release-ref.sh
           bash .github/scripts/test-release-packages.sh
           bash .github/cyber-review/test-ci-gate.sh
@@ -141,6 +142,45 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
           key: ${{ steps.cargo-registry.outputs.cache-primary-key }}
+
+  windows-tests:
+    name: Windows Workspace Tests
+    needs: classify
+    if: needs.classify.outputs.full-ci == 'true'
+    runs-on: windows-latest
+    env:
+      CARGO_TARGET_DIR: target/ci-windows-tests
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned Rust
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
+        with:
+          tool: rust@${{ env.RUST_TOOLCHAIN }}
+
+      - name: Install pinned protoc
+        shell: pwsh
+        run: .github/scripts/install-protoc.ps1 -Version "$env:PROTOC_VERSION"
+
+      - name: Cache Cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-v1-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-v1-
+
+      - name: Cache Windows test target
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/ci-windows-tests
+          key: ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-tests-v1-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run workspace tests
+        run: cargo test --workspace --locked
 
   coverage:
     name: Coverage

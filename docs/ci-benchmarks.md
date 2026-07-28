@@ -95,6 +95,74 @@ completed in **2m32s**, from `2026-07-27T17:55:38Z` to
 - All three measured full-CI runs are below the 15-minute target. Their
   nearest-rank sample p95 is 13m57s; more runs are needed for a stable p95.
 
+## Windows workspace compatibility
+
+Local measurements use Windows x86_64 MSVC, Rust 1.97.1, and the official
+protoc 35.1 archive after verifying SHA-256
+`5d3ff218d7d91eea95f7569bcb5a98f3030f8996d44151279d9772edcff76082`.
+
+| Revision | Command and outcome | Measured duration |
+|---|---|---:|
+| Before | `cargo test --workspace --locked --no-run`; clean compile succeeded | 2m35.6s |
+| Before | `cargo test --workspace --locked`; stopped after 436 library tests passed and five shell-based guardian-key tests failed with Win32 error 193 | 9.0s |
+| After | `cargo test --workspace --locked`; all workspace and integration tests passed | 2m08.73s |
+| After, warm target | `cargo test --workspace --locked --quiet`; all workspace and integration tests passed | 1m48.45s |
+
+The before/after elapsed times are not a performance comparison: the failing
+baseline stopped before integration tests, while the successful runs completed
+the entire suite. They establish the compatibility baseline and current result.
+The warm local target reduced elapsed time by 20.28s (15.8%) from the first
+successful changed-crate run.
+
+### First GitHub Actions cold run
+
+Source:
+[PR #134 CI run 30298888920](https://github.com/Cervais/new-guardian/actions/runs/30298888920),
+[Windows Workspace Tests job 90086703889](https://github.com/Cervais/new-guardian/actions/runs/30298888920/job/90086703889).
+
+The job started at `2026-07-27T19:35:41Z` and completed at
+`2026-07-27T19:46:48Z`: **11m07s measured elapsed time**.
+
+| Phase | Measured duration |
+|---|---:|
+| Setup, checkout, Rust/protoc install, and cache lookup | 29s |
+| `Run workspace tests` (`19:36:10Z`–`19:44:34Z`) | 8m24s |
+| Save Windows target cache (`19:44:34Z`–`19:46:34Z`) | 2m00s |
+| Remaining post-job steps | 14s |
+
+Coverage completed at `2026-07-27T19:47:50Z`, **1m02s after** the Windows job.
+The new required check therefore added no wall time to this full-CI run because
+Coverage remained the critical path. This is cold Actions data; a warm Actions
+run is still required before changing the Windows target cache strategy.
+
+### First GitHub Actions warm run
+
+Source:
+[PR #134 CI run 30300000432](https://github.com/Cervais/new-guardian/actions/runs/30300000432),
+[Windows Workspace Tests job 90090399327](https://github.com/Cervais/new-guardian/actions/runs/30300000432/job/90090399327).
+
+The warm job started at `2026-07-27T19:51:04Z` and completed at
+`2026-07-27T19:57:50Z`: **6m46s measured elapsed time**.
+
+| Measurement | Cold | Warm | Reduction |
+|---|---:|---:|---:|
+| Whole Windows job | 11m07s | 6m46s | 4m21s (39.1%) |
+| Workspace tests | 8m24s | 5m30s | 2m54s (34.5%) |
+| Save Windows target cache | 2m00s | 3s | 1m57s |
+
+The warm target cache restored in 34s (`19:51:37Z`–`19:52:11Z`). Coverage ran
+from `19:50:52Z` to `19:59:08Z` (**8m16s**), so Windows completed **1m18s
+before** the critical path and again added no full-CI wall time.
+
+The measured warm run supports retaining the Windows target cache: it reduced
+both workspace-test time and total job time while the job remained off the
+critical path. No cache or workflow change is warranted from these results.
+
+The previously reported `tests/test_logging.rs` rustc internal compiler error
+did not reproduce from a clean target directory. The test remains unchanged
+and passes under Rust 1.97.1; keeping it in the required Windows workspace run
+detects a recurrence without weakening production logging behavior.
+
 ## Cargo registry cache race
 
 The lock-change [main run 30298203077](https://github.com/Cervais/new-guardian/actions/runs/30298203077)
