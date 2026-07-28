@@ -35,6 +35,8 @@ jobs:
           bash .github/scripts/test-classify-ci-changes.sh
           bash .github/scripts/test-trusted-ci-gate.sh
           bash .github/scripts/test-install-protoc.sh
+          bash .github/cyber-review/test-ci-gate.sh
+          bash .github/cyber-review/test-workflow-contract.sh
 
       - name: Classify changed paths
         id: changes

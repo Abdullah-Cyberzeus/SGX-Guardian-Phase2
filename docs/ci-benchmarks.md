@@ -109,11 +109,21 @@ took 5s and completed 8s after Coverage. That summary was removed because its
 logic came from the PR checkout.
 
 The replacement `CI Required` status is evaluated by a base-owned workflow. It
-polls every 10s, so its configured detection delay after the slowest job is at
-most one polling interval under normal API operation; this is not yet a
-measurement. The first post-merge pull request must capture actual gate
-latency because `pull_request_target` workflows do not run until their workflow
-file exists on the default branch.
+polls every 10s. The first live measurement is final PR #131 head
+`84380fb5ea243fb5c3888001e2532c9103ec19a9`:
+
+- [CI run 30298348187](https://github.com/Cervais/new-guardian/actions/runs/30298348187)
+  started `Classify Changes` at `2026-07-27T19:32:56Z`, completed Coverage at
+  `19:45:24Z`, and completed the pipeline at `19:45:25Z`.
+- [Trusted-gate run 30298346665](https://github.com/Cervais/new-guardian/actions/runs/30298346665)
+  completed its exact-head evaluation and published `CI Required` at
+  `19:45:33Z`; the job completed at `19:45:35Z`.
+
+This is **12m29s measured CI execution wall time** from classification start to
+pipeline completion. The trusted gate detected completed CI in **8s**, or 9s
+after Coverage, within one configured polling interval. The trusted workflow
+started earlier while prior head activity was being cancelled/queued; that
+pre-CI wait is separate from the 12m29s execution measurement.
 
 Repeated Rust/protoc/cache setup remains inside the parallel jobs by design;
 factoring it into a shared preparation job would serialize the fan-out.
