@@ -101,6 +101,7 @@ pub fn run_create() {
 
     // Try to sign with ssscli (hardware) or warn that daemon must sign
     let baseline_signature = sign_baseline_hash(&sign_hash, key_version);
+    let baseline_path = baseline_path_for(&node_id);
 
     match baseline_signature {
         Some(sig_b64) => {
@@ -114,18 +115,15 @@ pub fn run_create() {
                 "schema_version": snap["schema_version"],
             });
 
-            if let Some(parent) = Path::new(&baseline_path_for(&node_id)).parent() {
+            if let Some(parent) = Path::new(&baseline_path).parent() {
                 let _ = fs::create_dir_all(parent);
             }
             match fs::write(
-                &baseline_path_for(&node_id),
+                &baseline_path,
                 serde_json::to_string_pretty(&baseline).unwrap(),
             ) {
                 Ok(_) => {
-                    println!(
-                        "✅ Baseline created and SIGNED at {}",
-                        &baseline_path_for(&node_id)
-                    );
+                    println!("✅ Baseline created and SIGNED at {}", baseline_path);
                     println!("   Device UID: [redacted]");
                     println!("   Key version: {}", key_version);
                 }
@@ -144,16 +142,16 @@ pub fn run_create() {
                 "schema_version": snap["schema_version"],
             });
 
-            if let Some(parent) = Path::new(&baseline_path_for(&node_id)).parent() {
+            if let Some(parent) = Path::new(&baseline_path).parent() {
                 let _ = fs::create_dir_all(parent);
             }
             match fs::write(
-                &baseline_path_for(&node_id),
+                &baseline_path,
                 serde_json::to_string_pretty(&baseline).unwrap(),
             ) {
                 Ok(_) => {
                     println!("⚠️ Baseline created but NOT SIGNED (no signing key available)");
-                    println!("   Baseline at: {}", &baseline_path_for(&node_id));
+                    println!("   Baseline at: {}", baseline_path);
                     println!("   The daemon will sign it on next startup if signature is empty.");
                 }
                 Err(e) => eprintln!("Write error: {}", e),

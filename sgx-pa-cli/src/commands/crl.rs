@@ -367,8 +367,5 @@ fn parse_severity(raw: &str) -> Result<Severity, String> {
 }
 
 fn normalize_token(raw: &str) -> String {
-    raw.trim()
-        .to_ascii_lowercase()
-        .replace(' ', "_")
-        .replace('-', "_")
+    raw.trim().to_ascii_lowercase().replace([' ', '-'], "_")
 }

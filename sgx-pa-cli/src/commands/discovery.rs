@@ -178,14 +178,12 @@ async fn scan_now(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
     let xml = match NmapRunner::run_with_intensity(&cfg, &target, intensity).await {
         Ok(xml) => xml,
         Err(err) => {
-            append_manual_history(
+            append_manual_failure_history(
                 started_at,
                 chrono::Utc::now(),
                 intensity,
                 target.clone(),
-                false,
-                Some(err.to_string()),
-                None,
+                err.to_string(),
                 None,
             );
             return Err(err.into());
@@ -203,15 +201,13 @@ async fn scan_now(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
     let devices = match nmap_parser::parse(&xml) {
         Ok(devices) => devices,
         Err(err) => {
-            append_manual_history(
+            append_manual_failure_history(
                 started_at,
                 chrono::Utc::now(),
                 intensity,
                 target.clone(),
-                false,
-                Some(err.to_string()),
+                err.to_string(),
                 raw_xml_path,
-                None,
             );
             return Err(err.into());
         }
@@ -600,15 +596,13 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-fn append_manual_history(
+fn append_manual_failure_history(
     started_at: chrono::DateTime<chrono::Utc>,
     completed_at: chrono::DateTime<chrono::Utc>,
     intensity: ScanIntensity,
     target: String,
-    success: bool,
-    error: Option<String>,
+    error: String,
     raw_xml_path: Option<PathBuf>,
-    delta: Option<&sgx_guardian_client::discovery::inventory::InventoryDelta>,
 ) {
     let inv_path = PathBuf::from(INVENTORY_PATH);
     let counts = Inventory::load(&inv_path)
@@ -621,9 +615,9 @@ fn append_manual_history(
         None,
         intensity,
         target,
-        success,
-        error,
-        delta,
+        false,
+        Some(error),
+        None,
         counts,
         raw_xml_path,
         &inv_path,
