@@ -183,8 +183,8 @@ pub async fn cooldown() {
     }
 }
 
-/// Print STEP marker (logged + printed once to stdout for run_node.sh head -20).
+/// Print STEP marker to stdout (for run_node.sh head -20 and operator visibility).
+/// Intentionally not sent through tracing to avoid duplicating on the console layer.
 pub fn step(n: u32, label: &str) {
-    tracing::info!("STEP_{:02} {}", n, label);
     println!("STEP_{:02} {}", n, label);
 }

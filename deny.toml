@@ -5,11 +5,15 @@ unused-allowed-license = "allow"
 [licenses.private]
 ignore = true
 
-[bans]
-multiple-versions = "warn"      
-wildcards = "deny"             
 
-#  Explicitly ignore only harmless known system-level duplicates
+[advisories]
+ignore = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+#  Explicitly ignore only harmless known system-level duplicates and unavoidable nested deps
 skip = [
     { name = "getrandom" },
     { name = "hashbrown" },
@@ -18,4 +22,13 @@ skip = [
     { name = "thiserror" },
     { name = "thiserror-impl" },
     { name = "windows-sys" },
+    { name = "axum" },
+    { name = "axum-core" },
+    { name = "base64" },
+    { name = "h2" },
+    { name = "http" },
+    { name = "http-body" },
+    { name = "hyper" },
+    { name = "matchit" },
+    { name = "tower-http" },
 ]

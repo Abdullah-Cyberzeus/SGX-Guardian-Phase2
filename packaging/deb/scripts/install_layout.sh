@@ -15,4 +15,7 @@ mkdir -p /var/lib/sgx-guardian/sgx-agent
 mkdir -p /var/lib/sgx-guardian/threat
 mkdir -p /var/log/sgx-guardian
 
+# Scripts
+mkdir -p /usr/lib/sgx-guardian/scripts
+
 exit 0

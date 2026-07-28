@@ -26,6 +26,7 @@ impl ThreatService {
             let cfg = match SuricataConfig::load(&self.config_path) {
                 Ok(cfg) if cfg.enabled => cfg,
                 Ok(_) => {
+                    stop_suricata_when_disabled().await;
                     tracing::info!("Suricata integration disabled in config");
                     return;
                 }
@@ -172,6 +173,26 @@ impl ThreatService {
                 }
             }
         });
+    }
+}
+
+async fn stop_suricata_when_disabled() {
+    let active = tokio::process::Command::new("systemctl")
+        .args(["is-active", "--quiet", "suricata"])
+        .status()
+        .await;
+
+    if matches!(active, Ok(status) if status.success()) {
+        tracing::warn!(
+            "Suricata service is running while Guardian threat config is disabled; stopping capture."
+        );
+        if let Err(error) = tokio::process::Command::new("systemctl")
+            .args(["stop", "suricata"])
+            .status()
+            .await
+        {
+            tracing::warn!("Failed to stop disabled Suricata service: {}", error);
+        }
     }
 }
 

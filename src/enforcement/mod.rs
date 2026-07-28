@@ -1,30 +1,47 @@
 //! Enforcement Engine
 //!
-//! Responsible for translating a verified UEP policy
-//! into concrete OS-level enforcement (nftables).
+//! Responsible for orchestrating the translation of verified
+//! security policies into concrete OS-level enforcement (nftables).
 //!
-//! This module assumes the policy is already:
-//! - Signed
-//! - Verified
-//! - Atomically activated
+//! Connects Validator -> Translator -> Executor into a single pipeline.
 
-mod executor;
-mod model;
-mod translator;
-mod validator;
+pub mod executor;
+pub mod model;
+pub mod translator;
+pub mod validator;
 
 use crate::policy::Policy;
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 /// Apply a verified policy to the system firewall.
 ///
-/// This function is:
-/// - Atomic
-/// - Deterministic
-/// - Fail-closed on error
-pub fn enforce_policy(policy: &Policy) -> Result<()> {
-    validator::validate_policy(policy)?;
-    let rules = translator::translate(policy)?;
-    executor::apply_rules(&rules)?;
+/// Orchestrates the pipeline:
+/// 1. Validate (safety checks)
+/// 2. Translate (model conversion)
+/// 3. Execute (nftables atomic commit)
+pub fn apply_policy(policy: &Policy) -> Result<()> {
+    // 1. Validate
+    validator::validate_policy(policy).context("Enforcement Error [Validation]")?;
+
+    // 2. Translate
+    let translated_rules =
+        translator::translate(policy).context("Enforcement Error [Translation]")?;
+
+    // 3. Execute
+    executor::apply_rules(&translated_rules).context("Enforcement Error [Execution]")?;
+
     Ok(())
+}
+
+/// Removes all active enforcement rules from the system safely.
+/// Returns the system to an unprotected (or default) state.
+pub fn remove_policy() -> Result<()> {
+    executor::cleanup_rules().context("Enforcement Error [Removal]")?;
+    Ok(())
+}
+
+/// Atomically reloads the firewall with a new policy.
+/// Under the hood, apply_policy already performs an atomic replacement.
+pub fn reload_policy(policy: &Policy) -> Result<()> {
+    apply_policy(policy)
 }
