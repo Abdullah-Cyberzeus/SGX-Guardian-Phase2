@@ -8,6 +8,12 @@
 
 **Document Date**: October 8, 2025
 
+## Documentation
+
+Start with the [documentation index](docs/README.md). The current delivery scope,
+acceptance demos, architecture, decisions, and historical reference artifacts
+are indexed there.
+
 ## Executive Summary
 
 The SG-X Guardian is a cryptographically secure, self-hosted security system that enables a cohort of edge devices to autonomously form a "Circle of Trust," synchronize digitally signed security policies, and enforce them deterministically at the network layer. This Phase 1 MVP establishes the foundational security architecture with a **Self-Hosted First** design and provisions for future **Cloud-Optional** integration.
@@ -134,7 +140,7 @@ The on-premise command-line tool used by administrators for:
 
 ### Design Artifacts
 
-- API_Specification_v1.0.pdf (Protobuf schemas & sequence diagrams)
+- [API Specification v1.0](docs/reference/api-specification-v1.0.md) (Protobuf schemas & sequence diagrams)
 - UEP_Policy_Schema_v1.0.pdf (YAML/JSON structure)
 
 ### Working Software & Artifacts
@@ -145,8 +151,8 @@ The on-premise command-line tool used by administrators for:
 
 ### Phase 1 Project Documentation
 
-- Administrator_Guide_v0.5.pdf (Installation, configuration, key management, and operational procedures)
-- Test_Report.pdf (Summary of all unit and integration test results)
+- [SG-X Administrator Guide](docs/reference/SGX%20Admin%20Guide.pdf) (Installation, configuration, key management, and operational procedures)
+- [Test Cases](docs/reference/Test%20Cases.pdf) (Point-in-time unit and integration test cases)
 - CI/CD_Pipeline_Documentation.md (Pipeline architecture, quality gates, workflow procedures, troubleshooting guide)
 - Decision log tracking all architectural and technical decisions
 
@@ -257,11 +263,11 @@ sudo systemctl enable sgx-guardian
 
 ## Project Documentation
 
-- [Deliverables Tracking](deliverables/README.md) - Detailed deliverable tracking table
-- [API Specification](docs/) - API schemas and sequence diagrams (Sprint 1 deliverable)
-- [UEP Policy Schema](docs/) - Policy format specification (Sprint 1 deliverable)
-- [Administrator Guide](docs/) - Installation and operational procedures (Sprint 4 deliverable)
-- [CI/CD Pipeline Documentation](docs/) - Pipeline architecture and procedures (Sprint 1 deliverable)
+- [Deliverables Tracking](docs/deliverables/README.md) - Detailed deliverable tracking table
+- [API Specification](docs/reference/api-specification-v1.0.md) - API schemas and sequence diagrams (Sprint 1 deliverable)
+- [UEP Policy Schema](schemas/uep_policy_v1.yaml) - Policy format specification (Sprint 1 deliverable)
+- [Administrator Guide](docs/reference/SGX%20Admin%20Guide.pdf) - Installation and operational procedures (Sprint 4 deliverable)
+- [CI/CD Pipeline](.github/workflows/ci.yml) - Pipeline definition and quality gates
 
 ## Security
 

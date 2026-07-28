@@ -52,6 +52,11 @@
 
 ## Phase 2 Extension – Additional Frontend & Containerization Deliverables (Target Date: 2026-07-27)
 
+Acceptance is defined in the
+[Phase 2 Extension demo use cases](acceptance/phase-2-extension-demo-use-cases.md).
+Record each execution with the [demo run template](acceptance/demo-run-template.md);
+a UI-only walkthrough does not complete a deliverable.
+
 | Scope | Deliverable | Descriptions | Target Date | Status | Notes |
 |-------|-------------|--------------|-------------|--------|-------|
 | Communications | Text Chat / Messaging | Implement secure real-time Circle messaging including message history, timestamps, read receipts, image/file attachments, and encrypted message transport. | 2026-07-27 | Pending | Persistent message storage & sync |
@@ -72,5 +77,4 @@
 | Device Security | Connected Devices Management & Security / Privacy Scoring | Implement per-device security and privacy scoring, on-demand multi-step device security scans (firmware, open ports, encryption, known vulnerabilities, report), manual device onboarding, approve/reject workflows, and per-device block/remove enforcement, complementing NMAP network discovery. | 2026-07-27 | Pending | Privacy scoring & scans |
 | Deployment / Containerization | Container Installation & Hardware Environment Demo | Demonstrate application installation and execution in containerized environments (Docker Compose / Kubernetes) across target hosts meeting hardware requirements (SE050, CAP_NET_ADMIN, host network). | 2026-07-27 | Pending | Hardware & container demo |
 | Deployment / Containerization | Containerization Architecture & Tooling | Deliver multi-stage Docker build pipeline, multi-arch image support (AMD64 & ARM64), host network + CAP_NET_ADMIN isolation profiles, persistent volume mounts, and configurable path environment variables. | 2026-07-27 | Pending | Multi-arch Docker & Compose/K8s specs |
-
 

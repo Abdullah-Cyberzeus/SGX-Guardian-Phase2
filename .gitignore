@@ -27,5 +27,5 @@ coverage/
 .introview-tour.md
 .tokensave/
 
-# Ignore SOW PDFs
-docs/sow/*.pdf
+# Ignore locally supplied SOW PDFs at any phase depth
+docs/sow/**/*.pdf
