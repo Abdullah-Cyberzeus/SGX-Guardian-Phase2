@@ -33,6 +33,7 @@ jobs:
       - name: Verify CI helper behavior
         run: |
           bash .github/scripts/test-classify-ci-changes.sh
+          bash .github/scripts/test-cargo-cache-workflow.sh
           bash .github/scripts/test-trusted-ci-gate.sh
           bash .github/scripts/test-install-protoc.sh
           bash .github/cyber-review/test-ci-gate.sh
@@ -67,8 +68,9 @@ jobs:
       - name: Install pinned protoc
         run: bash .github/scripts/install-protoc.sh "$PROTOC_VERSION"
 
-      - name: Cache Cargo registry
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore Cargo registry
+        id: cargo-registry
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -108,8 +110,9 @@ jobs:
       - name: Install pinned protoc
         run: bash .github/scripts/install-protoc.sh "$PROTOC_VERSION"
 
-      - name: Cache Cargo registry
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore Cargo registry
+        id: cargo-registry
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -126,6 +129,16 @@ jobs:
 
       - name: Run unit tests
         run: cargo test --verbose
+
+      - name: Save Cargo registry
+        if: steps.cargo-registry.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ steps.cargo-registry.outputs.cache-primary-key }}
 
   coverage:
     name: Coverage
@@ -148,8 +161,9 @@ jobs:
       - name: Install pinned protoc
         run: bash .github/scripts/install-protoc.sh "$PROTOC_VERSION"
 
-      - name: Cache Cargo registry
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore Cargo registry
+        id: cargo-registry
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -188,8 +202,9 @@ jobs:
             cargo-audit@0.22.2
             cargo-deny@0.20.2
 
-      - name: Cache Cargo registry
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore Cargo registry
+        id: cargo-registry
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -237,8 +252,9 @@ jobs:
       - name: Install pinned protoc
         run: bash .github/scripts/install-protoc.sh "$PROTOC_VERSION"
 
-      - name: Cache Cargo registry
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore Cargo registry
+        id: cargo-registry
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index

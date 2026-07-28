@@ -95,9 +95,72 @@ completed in **2m32s**, from `2026-07-27T17:55:38Z` to
 - All three measured full-CI runs are below the 15-minute target. Their
   nearest-rank sample p95 is 13m57s; more runs are needed for a stable p95.
 
+## Cargo registry cache race
+
+The lock-change [main run 30298203077](https://github.com/Cervais/new-guardian/actions/runs/30298203077)
+measured the shared-key miss behavior. All five Linux Rust jobs restored the
+previous lockfile's registry cache, then attempted to save the new primary key.
+Dependency Policy won and saved one 55,408,010-byte (**52.8 MiB**) cache;
+Format & Clippy, Unit Tests, Coverage, and Release Build each logged
+`Unable to reserve cache ... another job may be creating this cache`.
+
+| Cold lock-change cache phase | Measured duration |
+|---|---:|
+| Registry restore per job | 1–7s |
+| Winning registry save | 3s |
+| Four losing post-job save attempts | 1–2s each; 5 runner-seconds total |
+
+The warm [main run 30303159439](https://github.com/Cervais/new-guardian/actions/runs/30303159439)
+showed the steady state: all five jobs restored the exact primary key in 2–3s,
+and their post steps detected the primary-key hit without uploading. A cache
+API snapshot at `2026-07-27T21:04:20Z` listed one current main registry entry
+at 55,408,010 bytes. Appending a job suffix would avoid the race but create up
+to five equivalent entries, about 277,040,050 bytes (**264.2 MiB**), while
+preventing cross-job reuse.
+
+The selected design keeps the shared primary key, makes every Linux job
+restore-only, and assigns Unit Tests as the sole producer on a miss. Unit Tests
+resolves the workspace runtime and development dependency superset before
+saving; the save is skipped if tests fail or the primary key already exists.
+Publishing waits for Unit Tests instead of the faster Dependency Policy job,
+but no job in the current run can consume a cache saved after its startup.
+The trade-off therefore favors a complete cache for future runs without adding
+critical-path work or duplicate storage.
+
+### Post-change sample
+
+[PR #138 run 30305368953](https://github.com/Cervais/new-guardian/actions/runs/30305368953)
+measured the new exact-key-hit behavior:
+
+- all five Linux jobs restored the shared primary registry key in 2s each;
+- Unit Tests skipped its explicit save step because `cache-hit` was `true`;
+- the other four jobs had no Cargo registry post-save step;
+- no job logged an upload, reserve conflict, or duplicate-key warning; and
+- the cache API still listed only the 55,408,010-byte main entry, with no
+  PR-scoped duplicate registry entry.
+
+| Post-change job | Measured duration |
+|---|---:|
+| Dependency Policy | 28s |
+| Format & Clippy | 36s |
+| Release Build | 2m25s |
+| Unit Tests | 2m38s |
+| Coverage | 12m21s |
+| Full workflow (`21:05:23Z`–`21:18:09Z`) | 12m46s |
+
+On an exact hit, this removes the previous run's five registry post steps
+(2 runner-seconds measured in warm run 30303159439). On a miss, the static
+workflow fixture limits publication to one Unit Tests save instead of the four
+losing attempts and 5 runner-seconds observed in cold run 30298203077.
+Coverage still owns the critical path, so the 44s difference from the prior
+13m30s warm workflow is ordinary job variance and is not attributed to this
+cache change. A natural future lockfile change should confirm the single
+producer miss path; CI did not force a duplicate key merely to create that
+measurement.
+
 ## Remaining measurements
 
-Documentation-only timing and Actions cache API evidence remain pending.
+Documentation-only timing remains pending.
 Additional final-revision full-CI runs are needed to make the sample p95
 representative; do not substitute estimates for those measurements.
 
@@ -131,3 +194,28 @@ Coverage still repeats the unit suite and owns the approximately 13-minute
 critical path. Moving coverage off the PR-required path could reduce latency
 but would weaken per-PR evidence, so it remains a documented follow-up rather
 than part of this change.
+
+## Cyber-review gate benchmark
+
+The pre-redesign exact-head review for PR #131 ran in
+[workflow 30326730994](https://github.com/Cervais/new-guardian/actions/runs/30326730994).
+Its `Cyber-review gate` job took **9m01s**; the model review step accounted for
+**8m23s**.
+
+The first successful review after PR #131 merged was PR #138 at head
+`78a6f00eb2d5c9342ee8d2f5bd1970de965d433d` in
+[workflow 30344277766](https://github.com/Cervais/new-guardian/actions/runs/30344277766).
+Required CI was already green, so the exact-SHA wait completed immediately.
+The `Cyber-review gate` job took **1m39s**, including **1m25s** for the
+non-executable structured review.
+
+| Review measurement | Before PR #131 | After PR #131 | Reduction |
+|---|---:|---:|---:|
+| Cyber-review gate job | 9m01s | 1m39s | 7m22s (81.7%) |
+| Model review step | 8m23s | 1m25s | 6m58s (83.1%) |
+
+The sample isolates review latency after deterministic CI is green. It does
+not include the parallel CI critical path or claim a stable percentile from a
+single post-change review. The post-review merge verification exposed a
+separate missing read permission, tracked and fixed by issue #143 and PR #144;
+that failure does not change the completed review measurements above.
