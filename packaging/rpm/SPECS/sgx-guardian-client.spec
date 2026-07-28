@@ -1,11 +1,11 @@
 Name:           sgx-guardian-client
-Version:        1.0.0
+Version:        %{?version_override}%{!?version_override:0.0.0}
 Release:        1%{?dist}
 Summary:        SGX Guardian Client - Zero-Trust Edge Security Agent
 
 License:        Proprietary
-URL:            https://github.com/AsadAli-CyberZeus/SGX
-Source0:        sgx-guardian-client.tar.gz
+URL:            https://github.com/Cervais/new-guardian
+Source0:        %{name}-%{version}.tar.gz
 
 ExclusiveArch:      x86_64
 Requires:       systemd, ca-certificates, nmap, libcap
@@ -19,7 +19,7 @@ operates autonomously and continues to function securely even when
 disconnected from central infrastructure.
 
 %prep
-%setup -q -n sgx-guardian-client
+%setup -q
 
 %build
 # No build required (pre-built Rust binary)
@@ -37,7 +37,11 @@ mkdir -p %{buildroot}/lib/systemd/system
 cp sgx-guardian.service %{buildroot}/lib/systemd/system/
 
 # ---- Config directory ----
-mkdir -p %{buildroot}/etc/sgx-guardian
+mkdir -p %{buildroot}/etc/sgx-guardian/config
+cp -a config/node*.yaml %{buildroot}/etc/sgx-guardian/config/
+cp -a config/node_profile %{buildroot}/etc/sgx-guardian/
+mkdir -p %{buildroot}/etc/sgx-guardian/policies
+cp -a policies/. %{buildroot}/etc/sgx-guardian/policies/
 
 # ---- Runtime directories (empty) ----
 mkdir -p %{buildroot}/var/lib/sgx-guardian
@@ -85,6 +89,14 @@ exit 0
 /usr/bin/sgx-guardian
 /lib/systemd/system/sgx-guardian.service
 %dir %attr(0755,root,root) /etc/sgx-guardian
+%config(noreplace) /etc/sgx-guardian/node_profile
+%dir /etc/sgx-guardian/config
+%config(noreplace) /etc/sgx-guardian/config/nodeA.yaml
+%config(noreplace) /etc/sgx-guardian/config/nodeB.yaml
+%config(noreplace) /etc/sgx-guardian/config/nodeC.yaml
+%dir /etc/sgx-guardian/policies
+%config(noreplace) /etc/sgx-guardian/policies/active_policy.yaml
+%config(noreplace) /etc/sgx-guardian/policies/backup_policy.yaml
 %dir %attr(0750,sgxguardian,sgxguardian) /var/lib/sgx-guardian
 %dir %attr(0750,sgxguardian,sgxguardian) /var/log/sgx-guardian
 

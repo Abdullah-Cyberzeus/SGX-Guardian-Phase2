@@ -1,0 +1,100 @@
+name: Release Packages
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-signing-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+env:
+  PROTOC_VERSION: "35.1"
+  CARGO_INCREMENTAL: "0"
+  PACKAGING_IMAGE: "rust@sha256:77fac8b98f9f46062bb680b6d25d5bcaabfc400143952ebc572e924bcbedc3fa"
+
+jobs:
+  package-and-sign:
+    name: Build and sign release packages
+    runs-on: ubuntu-24.04
+    container:
+      image: rust@sha256:77fac8b98f9f46062bb680b6d25d5bcaabfc400143952ebc572e924bcbedc3fa
+    environment: release-signing
+    defaults:
+      run:
+        working-directory: release
+    steps:
+      - name: Checkout trusted main lineage
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          path: trusted-main
+          persist-credentials: false
+
+      - name: Checkout immutable release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          path: release
+          persist-credentials: false
+
+      - name: Validate release provenance
+        id: release
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          git fetch --no-tags ../trusted-main \
+            refs/heads/main:refs/remotes/trusted/main
+          bash .github/scripts/validate-release-ref.sh \
+            "$RELEASE_TAG" "$RELEASE_SHA" refs/remotes/trusted/main "$GITHUB_OUTPUT"
+
+      - name: Install pinned protoc
+        run: bash .github/scripts/install-protoc.sh "$PROTOC_VERSION"
+
+      - name: Install native packaging tools
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            rpm=4.18.0+dfsg-1+deb12u1
+
+      - name: Build trusted release binary
+        run: cargo build --release --locked
+
+      - name: Build Debian and RPM packages
+        run: |
+          bash .github/scripts/build-release-packages.sh \
+            "${{ steps.release.outputs.version }}" \
+            target/release/sgx_guardian_client \
+            dist \
+            "${{ steps.release.outputs.source-date-epoch }}"
+
+      - name: Record release provenance
+        run: |
+          bash .github/scripts/create-release-manifest.sh \
+            dist \
+            dist/release-manifest.txt \
+            "${{ github.event.release.tag_name }}" \
+            "${{ steps.release.outputs.commit-sha }}" \
+            "${{ steps.release.outputs.source-date-epoch }}" \
+            "$PACKAGING_IMAGE"
+
+      - name: Sign generated packages
+        env:
+          RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+          RELEASE_GPG_FINGERPRINT: ${{ secrets.RELEASE_GPG_FINGERPRINT }}
+        run: bash .github/scripts/sign-release-packages.sh dist signed-artifacts
+
+      - name: Upload signed release packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sgx-guardian-client-${{ github.event.release.tag_name }}
+          path: release/signed-artifacts/
+          if-no-files-found: error
+          retention-days: 90

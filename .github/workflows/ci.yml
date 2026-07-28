@@ -36,6 +36,8 @@ jobs:
           bash .github/scripts/test-cargo-cache-workflow.sh
           bash .github/scripts/test-trusted-ci-gate.sh
           bash .github/scripts/test-install-protoc.sh
+          bash .github/scripts/test-release-ref.sh
+          bash .github/scripts/test-release-packages.sh
           bash .github/cyber-review/test-ci-gate.sh
           bash .github/cyber-review/test-workflow-contract.sh
 
@@ -270,37 +272,12 @@ jobs:
           key: ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-release-v1-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build release artifact
-        run: cargo build --release
-
-      - name: Import GPG private key
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-        run: |
-          mkdir -p ~/.gnupg && chmod 700 ~/.gnupg
-          echo "$GPG_PRIVATE_KEY" | gpg --batch --yes --import
-          gpg --list-secret-keys --keyid-format LONG
-
-      - name: Sign packages
-        run: |
-          mkdir -p signed_artifacts
-          for pkg in $(ls target/debian/*.deb 2>/dev/null || true) $(ls target/generate-rpm/*.rpm 2>/dev/null || true); do
-            if [ -f "$pkg" ]; then
-              sha256sum "$pkg" > "$pkg.sha256"
-              gpg --batch --yes --pinentry-mode loopback \
-                --passphrase "${{ secrets.GPG_PASSPHRASE }}" \
-                --detach-sign --armor "$pkg"
-              mv "$pkg" signed_artifacts/
-              mv "$pkg.sha256" signed_artifacts/
-              mv "$pkg.asc" signed_artifacts/ 2>/dev/null || true
-            fi
-          done
+        run: cargo build --release --locked
 
       - name: Upload release artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sgx-guardian-client-${{ github.run_number }}
-          path: |
-            target/ci-release/release/sgx_guardian_client
-            signed_artifacts/*
+          path: target/ci-release/release/sgx_guardian_client
           if-no-files-found: error
           retention-days: 14
