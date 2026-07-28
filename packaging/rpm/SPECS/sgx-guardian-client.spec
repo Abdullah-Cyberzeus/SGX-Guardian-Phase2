@@ -38,6 +38,14 @@ cp sgx-guardian.service %{buildroot}/lib/systemd/system/
 
 # ---- Config directory ----
 mkdir -p %{buildroot}/etc/sgx-guardian
+cp config/hostapd/hostapd.conf.template %{buildroot}/etc/sgx-guardian/
+cp config/dnsmasq/dnsmasq.conf.template %{buildroot}/etc/sgx-guardian/
+cp config/wpa_supplicant/wpa_supplicant.conf.template %{buildroot}/etc/sgx-guardian/
+
+# ---- Scripts directory ----
+mkdir -p %{buildroot}/usr/lib/sgx-guardian/scripts
+cp scripts/check_ap_support.sh %{buildroot}/usr/lib/sgx-guardian/scripts/
+chmod 755 %{buildroot}/usr/lib/sgx-guardian/scripts/*.sh
 
 # ---- Runtime directories (empty) ----
 mkdir -p %{buildroot}/var/lib/sgx-guardian
@@ -84,6 +92,10 @@ exit 0
 %files
 /usr/bin/sgx-guardian
 /lib/systemd/system/sgx-guardian.service
+/etc/sgx-guardian/hostapd.conf.template
+%dir %attr(0755,root,root) /usr/lib/sgx-guardian
+%dir %attr(0755,root,root) /usr/lib/sgx-guardian/scripts
+/usr/lib/sgx-guardian/scripts/check_ap_support.sh
 %dir %attr(0755,root,root) /etc/sgx-guardian
 %dir %attr(0750,sgxguardian,sgxguardian) /var/lib/sgx-guardian
 %dir %attr(0750,sgxguardian,sgxguardian) /var/log/sgx-guardian

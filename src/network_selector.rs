@@ -278,6 +278,9 @@ fn should_skip_interface(name: &str) -> bool {
         || lower.starts_with("cali")
         || lower.starts_with("defined")
         || lower.starts_with("armia")
+        || lower.starts_with("uap")
+        || lower.starts_with("wfd")
+        || lower.starts_with("ap")
 }
 
 fn is_routable_ipv4(ip: Ipv4Addr) -> bool {

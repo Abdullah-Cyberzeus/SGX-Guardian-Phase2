@@ -695,12 +695,15 @@ fn save_se050_wrap_metadata(path: &Path, key_id: &str) -> Result<(), VaultError>
 }
 
 fn normalize_se050_unwrap_output(output: &[u8]) -> Result<Vec<u8>, VaultError> {
-    if is_supported_se050_unwrap_payload_len(output.len()) {
-        return Ok(output.to_vec());
-    }
-
+    // UTF-8 marshaled output must be checked before the raw-length fast path: a 32-byte DEK
+    // with enough bytes >= 0x80 widens to exactly SE050_LEGACY_V1_PAYLOAD_BYTES on the wire,
+    // which would otherwise be misread as an (invalid) unmarshaled legacy v1 payload.
     if let Some(recovered) = decode_ssscli_utf8_marshaled_bytes(output)? {
         return Ok(recovered);
+    }
+
+    if is_supported_se050_unwrap_payload_len(output.len()) {
+        return Ok(output.to_vec());
     }
 
     if !output.iter().copied().all(is_valid_se050_base64_text_byte) {

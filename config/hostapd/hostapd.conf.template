@@ -1,0 +1,30 @@
+# Netbridge hostapd configuration template
+# Variables in {} will be replaced by the netbridge orchestrator at runtime.
+
+# --- Basic Configuration ---
+interface={INTERFACE}
+driver=nl80211
+ssid={SSID}
+hw_mode={HW_MODE}
+channel={CHANNEL}
+country_code={COUNTRY_CODE}
+ieee80211d=1
+ieee80211h=1
+
+# --- 802.11n (High Throughput) Settings ---
+ieee80211n=1
+wmm_enabled=1
+
+# --- General AP Settings ---
+macaddr_acl=0
+auth_algs=1
+ignore_broadcast_ssid=0
+max_num_sta=20
+
+# --- Security (WPA2-PSK) ---
+# When WPA is enabled, these variables are dynamically configured
+wpa={WPA}
+wpa_passphrase={WPA_PASSPHRASE}
+wpa_key_mgmt={WPA_KEY_MGMT}
+wpa_pairwise={WPA_PAIRWISE}
+rsn_pairwise={RSN_PAIRWISE}

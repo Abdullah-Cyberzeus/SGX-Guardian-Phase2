@@ -33,20 +33,16 @@ stats:
   enabled: yes
   interval: 60
 
-# Fix 4: capture on all three board interfaces.
-# Drop "-i wlan0" from ExecStart — interface selection is done here, not on the CLI.
+# Avoid AF_PACKET promiscuous mode on managed/AP Wi-Fi interfaces. The NXP SDIO
+# driver can reset an active WLAN while capture mode is repeatedly reconfigured.
 af-packet:
-  - interface: wlan0
+  - interface: __INTERFACE__
     threads: 4
     cluster-id: 99
     cluster-type: cluster_flow
     defrag: yes
   - interface: nebula0
     cluster-id: 98
-    cluster-type: cluster_flow
-    defrag: yes
-  - interface: uap0
-    cluster-id: 97
     cluster-type: cluster_flow
     defrag: yes
 

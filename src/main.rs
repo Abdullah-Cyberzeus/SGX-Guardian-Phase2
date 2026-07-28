@@ -72,6 +72,17 @@ fn se050_tamper_plan(active_backend: &str) -> Se050TamperPlan {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(" SGX Guardian Client Starting...");
+
+    println!("[-] Initializing Persistent Runtime Configuration...");
+    match sgx_guardian_client::runtime::ConfigStore::load() {
+        Ok(config) => {
+            println!("[+] Successfully loaded runtime configuration.");
+            println!("[*] Active Runtime Mode: {:?}", config.mode);
+        }
+        Err(e) => {
+            eprintln!("[-] Failed to load configuration: {}", e);
+        }
+    }
     #[cfg(windows)]
     {
         static CTRL_C_PRESSED: AtomicBool = AtomicBool::new(false);
@@ -84,6 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             SetConsoleCtrlHandler(Some(ctrl_handler), 1);
         }
     }
+
     let node_id = match std::env::args().nth(1) {
         Some(id) if !id.is_empty() && !id.starts_with('-') => id,
         _ => {
@@ -1171,12 +1183,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = std::fs::copy(&config_path, &main_path);
     }
 
-    fn default_admin_api_tls(node: &str) -> ApiTlsConfig {
+    fn default_admin_api_tls(_node: &str) -> ApiTlsConfig {
         ApiTlsConfig {
-            enabled: node == "nodeA",
+            enabled: false,
             cert_path: None,
             key_path: None,
-            require_https: node == "nodeA",
+            require_https: false,
         }
     }
 
@@ -2973,6 +2985,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build tonic Identity + CA root
     let identity = Identity::from_pem(cert_pem.clone(), key_pem.clone());
     let ca_cert = TonicCertificate::from_pem(cert_pem.clone());
+
+    // === START SGX GUARDIAN RUNTIME ORCHESTRATOR ===
+    // This spins up the entire Network Orchestration Daemon (Hotspot, Dual-WiFi, API) alongside the node
+    let (wifi_router, runtime_manager) = sgx_guardian_client::runtime::start_daemon().await;
+
     // spawn gRPC server using tonic Identity + CA (mTLS)
     let server_task = if GATES.disable_grpc_server {
         tracing::warn!("gRPC server disabled by SGX_DISABLE_GRPC_SERVER");
@@ -3038,13 +3055,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         device_did,
         device_pubkey_point,
     );
-    if node_id == "nodeA" {
+    {
         let api_bind: std::net::SocketAddr = "0.0.0.0:8443".parse().unwrap();
-        let tls_cfg = this_node
+        let mut tls_cfg = this_node
             .api
             .clone()
             .map(|config| config.tls)
             .unwrap_or_else(|| default_admin_api_tls(&node_id));
+        tls_cfg.enabled = false;
+        tls_cfg.require_https = false;
 
         if tls_cfg.require_https && !tls_cfg.enabled {
             eprintln!(
@@ -3067,7 +3086,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tokio::spawn({
                 let state = api_state.clone();
                 async move {
-                    if let Err(e) = sgx_guardian_client::api::serve(state, api_bind, tls).await {
+                    if let Err(e) =
+                        sgx_guardian_client::api::serve(state, api_bind, tls, wifi_router).await
+                    {
                         eprintln!("❌ REST API server failed: {:?}", e);
                         if require_https {
                             eprintln!("TLS required; admin API not started (fail-closed).");
@@ -3077,12 +3098,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
             let scheme = if tls_cfg.enabled { "https" } else { "http" };
             println!(
-                "✅ REST admin API (NodeA) starting on {}://{}/api/v1",
-                scheme, api_bind
+                "✅ REST admin API ({}) starting on {}://{}/api/v1",
+                node_id, scheme, api_bind
             );
         }
-    } else {
-        println!("ℹ️ Admin API disabled on member node {}", node_id);
     }
 
     // === CRL gossip engine ===
@@ -3174,7 +3193,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Policy enforcement started",
         );
 
-        match enforcement::enforce_policy(&active_policy) {
+        match enforcement::apply_policy(&active_policy) {
             Ok(_) => {
                 println!("✅ Policy enforcement applied successfully");
 
@@ -3258,6 +3277,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ = signal::ctrl_c() => {
                 println!("\n shutting down gracefully...");
                 log_event(&node_id, "Ctrl+C detected — graceful shutdown initiated");
+
+                // Explicitly tear down the network to prevent ghost hotspots and background task leaks
+                println!("🛑 Tearing down networking stacks...");
+                let _ = runtime_manager.handle_transition(sgx_guardian_client::runtime::models::RuntimeMode::Off).await;
                 break;
             },
             res = &mut server_task => {

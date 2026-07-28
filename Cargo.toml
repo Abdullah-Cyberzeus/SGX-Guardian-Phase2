@@ -6,7 +6,7 @@ license = "Apache-2.0 OR MIT"
 build = "build.rs"
 
 [dependencies]
-axum = { version = "0.8", features = ["macros", "multipart"] }
+axum = { version = "0.8", features = ["macros", "multipart", "ws"] }
 tonic = { version = "0.14.5", features = ["transport", "tls-native-roots", "tls-ring"] }
 tonic-prost = "0.14.5"
 prost = "0.14.3"
@@ -50,13 +50,14 @@ tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring
 tempfile = "3.8"
 quick-xml = { version = "0.41", features = ["serialize"] }
 which = "8"
-
+socket2 = "0.5"
 [build-dependencies]
 tonic-prost-build = "0.14.5"
 
 [dev-dependencies]
 rcgen = "0.12"
 uuid = { version = "1", features = ["v4"] }
+tower = { version = "0.4", features = ["util"] }
 
 [features]
 default = ["secure-element"]
@@ -66,5 +67,7 @@ tpm = []
 [workspace]
 members = ["sgx-pa-cli"]
 
+
 [lib]
 doctest = false
+

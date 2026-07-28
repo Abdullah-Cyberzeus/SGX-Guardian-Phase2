@@ -120,8 +120,12 @@ configure_suricata() {
   suricata -T -c /etc/suricata/suricata.yaml
 
   if command -v systemctl >/dev/null 2>&1; then
-    systemctl enable suricata
-    systemctl restart suricata
+    if grep -Eq '^[[:space:]]*enabled:[[:space:]]*true' config/threat/config.yaml; then
+      systemctl enable suricata
+      systemctl restart suricata
+    else
+      systemctl disable --now suricata 2>/dev/null || true
+    fi
   else
     warn "systemctl not available. Start suricata manually after install."
   fi

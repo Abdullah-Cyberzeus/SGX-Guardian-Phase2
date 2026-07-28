@@ -26,7 +26,7 @@ use state::AppState;
 pub use tls::AdminTls;
 
 /// Build the full axum router with all v1 routes.
-pub fn build_router(state: Arc<AppState>) -> Router {
+pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(tower_http::cors::Any)
         .allow_methods([
@@ -295,6 +295,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+        // SGX Guardian Wi-Fi Runtime Sub-Router (must be applied after .with_state returns Router<()>)
+        .nest("/api/v1/wifi", wifi_router)
 }
 
 /// Entry point. Spawned from main.rs as a tokio task.
@@ -302,8 +304,9 @@ pub async fn serve(
     state: Arc<AppState>,
     bind: SocketAddr,
     tls: Option<AdminTls>,
+    wifi_router: Router,
 ) -> anyhow::Result<()> {
-    let app = build_router(state);
+    let app = build_router(state, wifi_router);
 
     match tls {
         Some(tls) => {
@@ -639,7 +642,7 @@ mod tests {
     }
 
     async fn spawn_api_with_state(state: Arc<AppState>) -> (String, tokio::task::JoinHandle<()>) {
-        let app = build_router(state);
+        let app = build_router(state, Router::new());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test listener");
@@ -708,10 +711,9 @@ mod tests {
     async fn spawn_secured_api_with_state(
         state: Arc<AppState>,
     ) -> (String, tokio::task::JoinHandle<()>) {
-        let app = build_router(state.clone()).layer(axum::middleware::from_fn_with_state(
-            state,
-            auth::middleware::require_auth,
-        ));
+        let app = build_router(state.clone(), Router::new()).layer(
+            axum::middleware::from_fn_with_state(state, auth::middleware::require_auth),
+        );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind secured test listener");
@@ -759,10 +761,9 @@ mod tests {
             key_path.to_str().expect("key path"),
         )
         .expect("build admin tls config");
-        let app = build_router(state.clone()).layer(axum::middleware::from_fn_with_state(
-            state,
-            auth::middleware::require_auth,
-        ));
+        let app = build_router(state.clone(), Router::new()).layer(
+            axum::middleware::from_fn_with_state(state, auth::middleware::require_auth),
+        );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind https test listener");

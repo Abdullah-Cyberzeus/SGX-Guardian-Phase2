@@ -116,6 +116,10 @@ Transport notes:
 | 97 | POST | `/crl/verify` | Verify CRL entry signatures and aggregate root |
 | 98 | GET | `/crl/root` | Return current CRL sequence and Merkle root |
 | 99 | POST | `/crl/unrevoke` | Reverse a mistaken revocation (Circle Owner only) |
+| 100 | GET | `/wifi/mode` | Retrieve active network orchestration mode, status, and module configurations |
+| 101 | POST | `/wifi/mode` | Update network orchestration mode (DualWifi, HotspotOnly, ClientOnly, Off) |
+| 102 | GET | `/wifi/scan` | Perform Wi-Fi scan for visible access points in range |
+| 103 | GET | `/wifi/clients` | Retrieve active hotspot connected DHCP client leases |
 
 
 ## 2. NEW Endpoints 
@@ -144,6 +148,10 @@ Transport notes:
 | POST | `/crl/verify` | Verify CRL signatures, role rules, and Merkle root |
 | GET | `/crl/root` | Return CRL sequence and Merkle root |
 | POST | `/crl/unrevoke` | Reverse a mistaken revocation (Circle Owner only) |
+| GET | `/wifi/mode` | Retrieve active network orchestration mode, status, and module configurations |
+| POST | `/wifi/mode` | Update network orchestration mode (DualWifi, HotspotOnly, ClientOnly, Off) |
+| GET | `/wifi/scan` | Perform Wi-Fi scan for visible access points in range |
+| GET | `/wifi/clients` | Retrieve active hotspot connected DHCP client leases |
 ---
 
 ## 2. Standard Error Envelope
@@ -3734,3 +3742,375 @@ Peer DID resolution response (`?did=did:guardian:...`):
   - `403 FORBIDDEN`: caller's local role is Member, not Owner
   - `404 NOT_FOUND`: DID is not currently revoked
   - `500 INTERNAL_SERVER_ERROR`: local DID/key/audit/persistence failure
+
+## 6. Network Orchestration Wi-Fi Endpoint Contracts
+
+### 3.82 GET `/wifi/mode`
+
+- Full path: `/api/v1/wifi/mode`
+- Request:
+  - Query params: none
+  - Body: none
+  - Headers: `Accept: application/json`
+- Request Example:
+
+```bash
+curl -X GET http://localhost:8443/api/v1/wifi/mode
+```
+
+- Success response (`200 OK` - Dual Active):
+
+```json
+{
+  "mode": "dual",
+  "status": {
+    "state": "DualActive",
+    "metadata": {
+      "message": null,
+      "error_code": null
+    }
+  },
+  "module1": {
+    "role": "ap",
+    "ssid": "MySecureHotspot",
+    "channel": 6
+  },
+  "module2": {
+    "role": "client",
+    "saved_networks": [
+      "HomeWiFi",
+      "OfficeNetwork"
+    ]
+  },
+  "security": {
+    "zero_trust_active": true,
+    "suricata_running": false
+  }
+}
+```
+
+- Success response (`200 OK` - Off State):
+
+```json
+{
+  "mode": "off",
+  "status": {
+    "state": "Idle",
+    "metadata": {
+      "message": null,
+      "error_code": null
+    }
+  },
+  "module1": {
+    "role": "ap",
+    "ssid": "",
+    "channel": 1
+  },
+  "module2": {
+    "role": "client",
+    "saved_networks": []
+  },
+  "security": {
+    "zero_trust_active": false,
+    "suricata_running": false
+  }
+}
+```
+
+- Notes:
+  - Retrieves active orchestration mode (`off`, `hotspot_only`, `client_only`, `dual`), health state of internal state machine, and basic module configurations.
+  - The `status.state` field represents the exact phase of the state machine. Possible values:
+    - `Idle`: No active orchestration.
+    - `ApplyingChange`: Actively transitioning states.
+    - `HotspotStarting`: AP starting up.
+    - `HotspotActive`: AP is broadcasted but no client/internet is active yet.
+    - `ClientConnecting`: Uplink is attempting to associate.
+    - `ClientConnected`: Uplink associated and obtained IP.
+    - `DualStarting`: Bootstrapping Dual Wi-Fi mode.
+    - `DualActive`: Both AP and client connected with NAT/Firewall routing active.
+    - `Error`: Transition failed. Check `status.metadata.message` for details.
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: Internal orchestrator state retrieval failure
+
+### 3.83 POST `/wifi/mode`
+
+- Full path: `/api/v1/wifi/mode`
+- Request:
+  - Query params: none
+  - Headers: `Content-Type: application/json`
+  - JSON body schema:
+    - `mode` (string, required): Target mode (`DualWifi`, `HotspotOnly`, `ClientOnly`, `Off`).
+    - `flags` (object): Flags such as `restore_on_boot`.
+    - `hotspot` (object): AP settings (`interface`, `ssid`, `password`, `channel`, `band`, `client_isolation`).
+    - `uplink` (object): Wi-Fi client settings (`interface`, `networks`).
+
+- Request Examples:
+
+  - **Dual Wi-Fi Mode (2.4GHz Hotspot)**:
+
+```bash
+curl -X POST http://localhost:8443/api/v1/wifi/mode \
+-H "Content-Type: application/json" \
+-d '{
+  "mode": "DualWifi",
+  "flags": {
+    "restore_on_boot": true
+  },
+  "hotspot": {
+    "interface": "uap0",
+    "ssid": "SGX_Hotspot",
+    "password": "SecurePassword123!",
+    "channel": 6,
+    "band": "2.4GHz",
+    "client_isolation": true
+  },
+  "uplink": {
+    "interface": "wlan1",
+    "networks": [
+      {
+        "ssid": "HomeWiFi",
+        "bssid": null,
+        "password": "HomePassword123"
+      }
+    ]
+  }
+}'
+```
+
+  - **Dual Wi-Fi Mode (5GHz Hotspot)**:
+
+```bash
+curl -X POST http://localhost:8443/api/v1/wifi/mode \
+-H "Content-Type: application/json" \
+-d '{
+  "mode": "DualWifi",
+  "flags": {
+    "restore_on_boot": true
+  },
+  "hotspot": {
+    "interface": "uap0",
+    "ssid": "SGX_Hotspot_5G",
+    "password": "SecurePassword123!",
+    "channel": 36,
+    "band": "5GHz",
+    "client_isolation": true
+  },
+  "uplink": {
+    "interface": "wlan1",
+    "networks": [
+      {
+        "ssid": "HomeWiFi",
+        "bssid": null,
+        "password": "HomePassword123"
+      }
+    ]
+  }
+}'
+```
+
+  - **HotspotOnly Mode (2.4GHz Band)**:
+
+```bash
+curl -X POST http://localhost:8443/api/v1/wifi/mode \
+-H "Content-Type: application/json" \
+-d '{
+  "mode": "HotspotOnly",
+  "flags": {
+    "restore_on_boot": false
+  },
+  "hotspot": {
+    "interface": "uap0",
+    "ssid": "SGX_Hotspot_2.4G",
+    "password": "SecurePassword123!",
+    "channel": 6,
+    "band": "2.4GHz",
+    "client_isolation": true
+  },
+  "uplink": {
+    "interface": "wlan1",
+    "networks": []
+  }
+}'
+```
+
+  - **HotspotOnly Mode (5GHz Band)**:
+
+```bash
+curl -X POST http://localhost:8443/api/v1/wifi/mode \
+-H "Content-Type: application/json" \
+-d '{
+  "mode": "HotspotOnly",
+  "flags": {
+    "restore_on_boot": false
+  },
+  "hotspot": {
+    "interface": "uap0",
+    "ssid": "SGX_Hotspot_5G",
+    "password": "SecurePassword123!",
+    "channel": 36,
+    "band": "5GHz",
+    "client_isolation": true
+  },
+  "uplink": {
+    "interface": "wlan1",
+    "networks": []
+  }
+}'
+```
+
+  - **ClientOnly Mode**:
+
+```bash
+curl -X POST http://localhost:8443/api/v1/wifi/mode \
+-H "Content-Type: application/json" \
+-d '{
+  "mode": "ClientOnly",
+  "flags": {
+    "restore_on_boot": true
+  },
+  "hotspot": {
+    "interface": "uap0",
+    "ssid": "",
+    "password": "",
+    "channel": 1,
+    "band": "2.4GHz",
+    "client_isolation": false
+  },
+  "uplink": {
+    "interface": "wlan1",
+    "networks": [
+      {
+        "ssid": "OfficeWiFi",
+        "bssid": "aa:bb:cc:dd:ee:11",
+        "password": "OfficePasswordSecret"
+      }
+    ]
+  }
+}'
+```
+
+  - **Off Mode**:
+
+```bash
+curl -X POST http://localhost:8443/api/v1/wifi/mode \
+-H "Content-Type: application/json" \
+-d '{
+  "mode": "Off",
+  "flags": {
+    "restore_on_boot": false
+  },
+  "hotspot": {
+    "interface": "uap0",
+    "ssid": "",
+    "password": "",
+    "channel": 1,
+    "band": "2.4GHz",
+    "client_isolation": false
+  },
+  "uplink": {
+    "interface": "wlan1",
+    "networks": []
+  }
+}'
+```
+
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "applying",
+  "estimated_downtime_seconds": 3
+}
+```
+
+- Notes:
+  - Transition runs asynchronously in the background; query `GET /api/v1/wifi/mode` to track progress.
+  - Hotspot AP password validation rules:
+    - Minimum **8 characters** long.
+    - Must contain at least **one non-alphanumeric character** (e.g. `!`, `@`, `#`, `$`).
+    - Must not match common passwords in the embedded `rockyou` list.
+  - Resilient Hotspot (Fail-Open): In `DualWifi` mode, local Hotspot is broadcasted *first* so local admin access is preserved even if uplink association fails.
+  - Event-Driven NAT: Automatic patching of routing and Zero Trust policies upon uplink IP acquisition.
+- Error responses:
+  - `400 BAD_REQUEST`: Invalid payload format or password failed security constraints
+  - `500 INTERNAL_SERVER_ERROR`: State machine transition initialization failed
+
+### 3.84 GET `/wifi/scan`
+
+- Full path: `/api/v1/wifi/scan`
+- Request:
+  - Query params: none
+  - Body: none
+- Request Example:
+
+```bash
+curl -X GET http://localhost:8443/api/v1/wifi/scan
+```
+
+- Success response (`200 OK`):
+
+```json
+{
+  "networks": [
+    {
+      "ssid": "HomeWiFi",
+      "bssid": "78:f5:05:8e:ec:74",
+      "signal_dbm": -45,
+      "band": "5GHz",
+      "security": "WPA2"
+    },
+    {
+      "ssid": "OfficeWiFi",
+      "bssid": "24:cd:8d:89:f7:d1",
+      "signal_dbm": -68,
+      "band": "2.4GHz",
+      "security": "WPA2"
+    }
+  ]
+}
+```
+
+- Notes:
+  - Forces the Wi-Fi module (`wlan0`) to perform a wireless network scan for visible access points in range.
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: Wi-Fi scan operation failed or interface unavailable
+
+### 3.85 GET `/wifi/clients`
+
+- Full path: `/api/v1/wifi/clients`
+- Request:
+  - Query params: none
+  - Body: none
+- Request Example:
+
+```bash
+curl -X GET http://localhost:8443/api/v1/wifi/clients
+```
+
+- Success response (`200 OK`):
+
+```json
+{
+  "clients": [
+    {
+      "expiry": 1720875323,
+      "mac_address": "de:ad:be:ef:00:11",
+      "ip_address": "192.168.200.101",
+      "hostname": "android-device-xyz",
+      "client_id": "01:de:ad:be:ef:00:11"
+    },
+    {
+      "expiry": 1720875999,
+      "mac_address": "11:22:33:44:55:66",
+      "ip_address": "192.168.200.102",
+      "hostname": "Iphone-15",
+      "client_id": "01:11:22:33:44:55:66"
+    }
+  ]
+}
+```
+
+- Notes:
+  - Retrieves the list of active network clients currently connected to the local Hotspot by parsing dynamic DHCP leases assigned by `dnsmasq`.
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: Failed to parse DHCP lease table
