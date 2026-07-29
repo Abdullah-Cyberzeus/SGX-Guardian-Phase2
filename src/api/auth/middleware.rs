@@ -77,7 +77,7 @@ fn login_disabled() -> bool {
         _ => {}
     }
 
-    crate::runtime_gates::GATES.disable_login
+    crate::runtime_gates::login_disabled()
 }
 
 fn is_public_route(method: &Method, path: &str) -> bool {
@@ -85,6 +85,8 @@ fn is_public_route(method: &Method, path: &str) -> bool {
         (method, path),
         (&Method::POST, "/api/v1/auth/signup")
             | (&Method::POST, "/api/v1/auth/login")
+            | (&Method::POST, "/api/v1/restore/validate")
+            | (&Method::GET, "/api/v1/restore/status")
             | (&Method::GET, "/api/v1/health")
     )
 }

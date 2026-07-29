@@ -278,6 +278,9 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         .route("/api/v1/threat/start", post(handlers::threat::start))
         .merge(routes::crl_router())
         .merge(routes::geofence_router())
+        .merge(routes::backup_router())
+        .merge(routes::restore_readonly_router())
+        .merge(routes::restore_destructive_router())
         .route("/api/v1/auth/signup", post(handlers::auth::signup))
         .route("/api/v1/auth/login", post(handlers::auth::login))
         .route("/api/v1/auth/logout", post(handlers::auth::logout))
@@ -395,6 +398,7 @@ async fn serve_tls_listener(
 mod tests {
     use super::*;
     use crate::api::auth::password;
+    use crate::api::auth::session::Claims;
     use crate::api::auth::store::{NewUser, UserRole};
     use crate::api::state::{AuthLockoutConfig, AuthRateLimitConfig};
     use crate::did::doc_persistence::{
@@ -408,6 +412,7 @@ mod tests {
     use crate::nebula::registry_sync::{RegistryRequest, RegistryResponse, REGISTRY_SYNC_PORT};
     use crate::threat::threat_alert::{Severity, ThreatAlert, ThreatCategory};
     use crate::vc::{issue, persistence};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
     use chrono::Utc;
     use reqwest::StatusCode;
     use serde_json::Value;
@@ -482,6 +487,21 @@ mod tests {
     impl Drop for ScopedEnvVar {
         fn drop(&mut self) {
             restore_env(self.key, self.prev.take());
+        }
+    }
+
+    struct ScopedLoginMode;
+
+    impl ScopedLoginMode {
+        fn disabled(disabled: bool) -> Self {
+            crate::runtime_gates::set_test_login_disabled(Some(disabled));
+            Self
+        }
+    }
+
+    impl Drop for ScopedLoginMode {
+        fn drop(&mut self) {
+            crate::runtime_gates::set_test_login_disabled(None);
         }
     }
 
@@ -718,6 +738,63 @@ mod tests {
             .expect("authorized API test client")
     }
 
+    async fn authed_client_with_claim_role(state: &Arc<AppState>, role: &str) -> reqwest::Client {
+        let user = state
+            .admin
+            .users
+            .create(NewUser {
+                name: "API Test User".into(),
+                email: format!("api-test-{}@example.com", uuid::Uuid::new_v4()),
+                pw_hash: "test-hash".into(),
+                role: UserRole::Owner,
+            })
+            .await
+            .expect("seed API test user");
+        let now = Utc::now().timestamp();
+        let claims = Claims {
+            sub: user.user_id.clone(),
+            role: role.to_string(),
+            iss: state.device_did.clone(),
+            iat: now,
+            exp: now + 300,
+            jti: uuid::Uuid::new_v4().to_string(),
+        };
+        let encoded_header = URL_SAFE_NO_PAD.encode(r#"{"alg":"ES256","typ":"JWT"}"#.as_bytes());
+        let encoded_claims = URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&claims).expect("serialize custom test claims"));
+        let signing_input = format!("{}.{}", encoded_header, encoded_claims);
+        let signature = state
+            .signer
+            .sign(signing_input.as_bytes())
+            .expect("sign custom test token");
+        let signature = crate::api::auth::ecdsa::normalize_p256_signature(&signature)
+            .expect("normalize custom test token signature");
+        let token = format!("{}.{}", signing_input, URL_SAFE_NO_PAD.encode(signature));
+        state
+            .admin
+            .sessions
+            .put(crate::api::auth::store::SessionRec {
+                jti: claims.jti,
+                user_id: claims.sub,
+                issued_at: claims.iat,
+                expires_at: claims.exp,
+                revoked: false,
+            })
+            .await
+            .expect("store custom role session");
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))
+                .expect("authorization header"),
+        );
+        reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .expect("custom role API test client")
+    }
+
     async fn spawn_authed_api() -> (String, reqwest::Client, tokio::task::JoinHandle<()>) {
         spawn_authed_api_with_state(test_state()).await
     }
@@ -728,6 +805,207 @@ mod tests {
         let client = authed_client_for_state(&state).await;
         let (base_url, handle) = spawn_api_with_state(state).await;
         (base_url, client, handle)
+    }
+
+    #[tokio::test]
+    async fn restore_status_and_validate_are_public_readonly_routes() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _login = ScopedLoginMode::disabled(false);
+        let temp = TempDir::new().expect("restore route tempdir");
+        let state = AppState::for_tests(
+            temp.path(),
+            "nodeA",
+            temp.path().join("config").to_string_lossy().to_string(),
+        );
+        write_test_node_config(&state);
+        let backup_config = crate::backup::BackupConfig {
+            base_dir: temp.path().join("backup"),
+            max_bundle_bytes: 1024 * 1024,
+        };
+        let _backup_base = ScopedEnvVar::set(
+            crate::backup::BACKUP_BASE_ENV,
+            backup_config.base_dir.to_str().expect("backup base path"),
+        );
+        let record = crate::backup::create::create_backup(
+            state.clone(),
+            backup_config,
+            "correct horse battery staple".to_string(),
+            true,
+        )
+        .await
+        .expect("create restore route backup");
+        let (base_url, handle) = spawn_api_with_state(state).await;
+        let client = reqwest::Client::new();
+
+        let status = client
+            .get(format!("{}/api/v1/restore/status", base_url))
+            .send()
+            .await
+            .expect("restore status request");
+        assert_eq!(status.status(), StatusCode::OK);
+        let status_body = status.text().await.expect("restore status body");
+        assert!(!status_body.contains("Missing request extension"));
+
+        let validate = client
+            .post(format!("{}/api/v1/restore/validate", base_url))
+            .json(&serde_json::json!({
+                "id": record.id,
+                "passphrase": "correct horse battery staple"
+            }))
+            .send()
+            .await
+            .expect("restore validate request");
+        assert_eq!(validate.status(), StatusCode::OK);
+        let validate_body: Value = validate.json().await.expect("restore validate body");
+        assert_eq!(validate_body["destructive_apply_enabled"], true);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn restore_apply_and_undo_require_authentication_without_missing_extension_500() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _login = ScopedLoginMode::disabled(false);
+        let state = test_state();
+        let (base_url, handle) = spawn_api_with_state(state).await;
+        let client = reqwest::Client::new();
+
+        let apply = client
+            .post(format!("{}/api/v1/restore/apply", base_url))
+            .json(&serde_json::json!({
+                "id": "bak-test",
+                "passphrase": "secret",
+                "confirm": true
+            }))
+            .send()
+            .await
+            .expect("unauthenticated restore apply request");
+        assert_eq!(apply.status(), StatusCode::UNAUTHORIZED);
+        let apply_body = apply.text().await.expect("apply body");
+        assert!(!apply_body.contains("Missing request extension"));
+
+        let undo = client
+            .post(format!("{}/api/v1/restore/undo", base_url))
+            .json(&serde_json::json!({ "confirm": true }))
+            .send()
+            .await
+            .expect("unauthenticated restore undo request");
+        assert_eq!(undo.status(), StatusCode::UNAUTHORIZED);
+        let undo_body = undo.text().await.expect("undo body");
+        assert!(!undo_body.contains("Missing request extension"));
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn restore_apply_and_undo_authorized_sessions_reach_handlers_and_roles_are_enforced() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _login = ScopedLoginMode::disabled(false);
+        let state = test_state();
+        let owner_client = authed_client_for_state(&state).await;
+        let viewer_client = authed_client_with_claim_role(&state, "viewer").await;
+        let (base_url, handle) = spawn_api_with_state(state).await;
+
+        let owner_apply = owner_client
+            .post(format!("{}/api/v1/restore/apply", base_url))
+            .json(&serde_json::json!({
+                "id": "",
+                "passphrase": "secret",
+                "confirm": true
+            }))
+            .send()
+            .await
+            .expect("authorized restore apply request");
+        assert_eq!(owner_apply.status(), StatusCode::BAD_REQUEST);
+        let owner_apply_body = owner_apply.text().await.expect("owner apply body");
+        assert!(owner_apply_body.contains("backup id must not be empty"));
+        assert!(!owner_apply_body.contains("Missing request extension"));
+
+        let owner_undo = owner_client
+            .post(format!("{}/api/v1/restore/undo", base_url))
+            .json(&serde_json::json!({ "confirm": false }))
+            .send()
+            .await
+            .expect("authorized restore undo request");
+        assert_eq!(owner_undo.status(), StatusCode::BAD_REQUEST);
+        let owner_undo_body = owner_undo.text().await.expect("owner undo body");
+        assert!(owner_undo_body.contains("restore undo requires confirm=true"));
+        assert!(!owner_undo_body.contains("Missing request extension"));
+
+        let viewer_undo = viewer_client
+            .post(format!("{}/api/v1/restore/undo", base_url))
+            .json(&serde_json::json!({ "confirm": true }))
+            .send()
+            .await
+            .expect("viewer restore undo request");
+        assert_eq!(viewer_undo.status(), StatusCode::FORBIDDEN);
+        let viewer_undo_body = viewer_undo.text().await.expect("viewer undo body");
+        assert!(viewer_undo_body.contains("restore requires owner or admin role"));
+        assert!(!viewer_undo_body.contains("Missing request extension"));
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn restore_routes_follow_login_disabled_mode_without_bearer_token() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _login = ScopedLoginMode::disabled(true);
+        let state = test_state();
+        let (base_url, handle) = spawn_api_with_state(state).await;
+        let client = reqwest::Client::new();
+
+        let status = client
+            .get(format!("{}/api/v1/restore/status", base_url))
+            .send()
+            .await
+            .expect("login-disabled restore status");
+        assert_eq!(status.status(), StatusCode::OK);
+        let status_body = status.text().await.expect("status body");
+        assert!(!status_body.contains("Missing request extension"));
+
+        let validate = client
+            .post(format!("{}/api/v1/restore/validate", base_url))
+            .json(&serde_json::json!({
+                "id": "",
+                "passphrase": "secret"
+            }))
+            .send()
+            .await
+            .expect("login-disabled restore validate");
+        assert_eq!(validate.status(), StatusCode::BAD_REQUEST);
+        let validate_body = validate.text().await.expect("validate body");
+        assert!(validate_body.contains("backup id must not be empty"));
+        assert!(!validate_body.contains("Missing request extension"));
+
+        let apply = client
+            .post(format!("{}/api/v1/restore/apply", base_url))
+            .json(&serde_json::json!({
+                "id": "",
+                "passphrase": "secret",
+                "confirm": true
+            }))
+            .send()
+            .await
+            .expect("login-disabled restore apply");
+        assert_eq!(apply.status(), StatusCode::BAD_REQUEST);
+        let apply_body = apply.text().await.expect("apply body");
+        assert!(apply_body.contains("backup id must not be empty"));
+        assert!(!apply_body.contains("restore requires authentication"));
+        assert!(!apply_body.contains("Missing request extension"));
+
+        let undo = client
+            .post(format!("{}/api/v1/restore/undo", base_url))
+            .json(&serde_json::json!({ "confirm": false }))
+            .send()
+            .await
+            .expect("login-disabled restore undo");
+        assert_eq!(undo.status(), StatusCode::BAD_REQUEST);
+        let undo_body = undo.text().await.expect("undo body");
+        assert!(undo_body.contains("restore undo requires confirm=true"));
+        assert!(!undo_body.contains("restore requires authentication"));
+        assert!(!undo_body.contains("Missing request extension"));
+
+        handle.abort();
     }
 
     async fn upload_vault_bytes(

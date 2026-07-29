@@ -106,6 +106,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // === Backup & Restore storage (MUST exist before recovery/API startup) ===
+    if let Err(error) = sgx_guardian_client::backup::init::initialize_storage_from_env() {
+        eprintln!(
+            "❌ Backup & Restore storage initialization failed: {}",
+            error
+        );
+        return Err(error.into());
+    }
+
+    // === Restore crash recovery (MUST run before policy load/enforcement) ===
+    sgx_guardian_client::backup::restore::journal::recover_if_interrupted(&node_id);
+
     // === FIRST: Ensure all required directories exist ===
     for dir in &[
         "/etc/sgx-guardian/config",

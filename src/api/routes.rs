@@ -88,6 +88,37 @@ pub fn geofence_router() -> Router<Arc<AppState>> {
         )
 }
 
+pub fn backup_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/api/v1/backup/create", post(handlers::backup::create))
+        .route("/api/v1/backup/history", get(handlers::backup::history))
+        .route(
+            "/api/v1/backup/download/{id}",
+            get(handlers::backup::download),
+        )
+        .route(
+            "/api/v1/backup/{id}",
+            axum::routing::delete(handlers::backup::delete),
+        )
+        .route("/api/v1/backup/validate", post(handlers::backup::validate))
+        .route("/api/v1/backup/restore", post(handlers::backup::restore))
+}
+
+pub fn restore_readonly_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route(
+            "/api/v1/restore/validate",
+            post(handlers::restore::validate),
+        )
+        .route("/api/v1/restore/status", get(handlers::restore::status))
+}
+
+pub fn restore_destructive_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/api/v1/restore/apply", post(handlers::restore::apply))
+        .route("/api/v1/restore/undo", post(handlers::restore::undo))
+}
+
 pub fn xfer_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/v1/xfer/send", post(handlers::xfer::send))

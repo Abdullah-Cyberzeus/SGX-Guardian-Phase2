@@ -123,6 +123,16 @@ Transport notes:
 | 104 | GET | `/crl/offline/status` | Offline CRL sync status, counters, and per-peer version-vector view |
 | 105 | GET | `/crl/offline/pending` | List queued offline revocations with retry metadata |
 | 106 | POST | `/crl/offline/sync` | Trigger one offline CRL sync cycle immediately |
+| 107 | POST | `/backup/create` | Create an encrypted backup bundle |
+| 108 | GET | `/backup/history` | List local backup bundle history |
+| 109 | GET | `/backup/download/{id}` | Download one encrypted backup bundle |
+| 110 | DELETE | `/backup/{id}` | Delete one local backup bundle |
+| 111 | POST | `/backup/validate` | Validate and inspect an encrypted backup bundle |
+| 112 | POST | `/backup/restore` | Legacy restore endpoint; returns migration guidance |
+| 113 | POST | `/restore/validate` | Preflight a restore plan without modifying files |
+| 114 | GET | `/restore/status` | Return current restore journal status |
+| 115 | POST | `/restore/apply` | Apply a confirmed restore transaction |
+| 116 | POST | `/restore/undo` | Undo the last committed restore from its snapshot |
 | 79 | GET | `/cert/requests` | List all active/pending node certificate requests |
 | 80 | POST | `/cert/approve` | Approve or reject a pending certificate request |
 
@@ -172,7 +182,357 @@ Transport notes:
 | GET | `/vid/show` | Show the single current nonce-bound VirtualID and its input digests |
 | GET | `/vid/peers` | List cached peer VirtualIDs and last observed rotation reasons |
 | GET | `/audit/logs` | Fetch secure tamper-evident audit logs with filters |
+| POST | `/backup/create` | Create an encrypted backup bundle |
+| GET | `/backup/history` | List local backup bundle history |
+| GET | `/backup/download/{id}` | Download one encrypted backup bundle |
+| DELETE | `/backup/{id}` | Delete one local backup bundle |
+| POST | `/backup/validate` | Validate and inspect an encrypted backup bundle |
+| POST | `/backup/restore` | Legacy restore endpoint; returns migration guidance |
+| POST | `/restore/validate` | Preflight a restore plan without modifying files |
+| GET | `/restore/status` | Return current restore journal status |
+| POST | `/restore/apply` | Apply a confirmed restore transaction |
+| POST | `/restore/undo` | Undo the last committed restore from its snapshot |
 ---
+
+## 6. Backup & Restore Endpoint Contracts
+
+### 3.86 POST `/backup/create`
+
+- Purpose: Create an encrypted local backup bundle and append it to backup history.
+- Method: `POST`
+- Full path: `/api/v1/backup/create`
+- Path parameters: none
+- Request body:
+
+```json
+{
+  "passphrase": "correct horse battery staple",
+  "portable": true
+}
+```
+
+- Success response (`200 OK`):
+
+```json
+{
+  "id": "backup-...",
+  "created_at": "2026-07-27T12:00:00Z",
+  "source_node_id": "nodeA",
+  "source_did": "did:guardian:...",
+  "portable": true,
+  "components": ["policy", "config", "credentials", "crl"],
+  "bundle_path": "/var/lib/sgx-guardian/backup/bundles/backup-....sgxbak",
+  "size_bytes": 123456
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: `passphrase` is empty
+  - `413 PAYLOAD_TOO_LARGE`: generated bundle exceeds configured maximum size
+  - `500 INTERNAL_SERVER_ERROR`: backup gathering, encryption, filesystem, or history write failure
+
+### 3.87 GET `/backup/history`
+
+- Purpose: Return the local backup history index.
+- Method: `GET`
+- Full path: `/api/v1/backup/history`
+- Path parameters: none
+- Request body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "records": [
+    {
+      "id": "backup-...",
+      "created_at": "2026-07-27T12:00:00Z",
+      "source_node_id": "nodeA",
+      "source_did": "did:guardian:...",
+      "portable": true,
+      "components": ["policy", "config", "credentials", "crl"],
+      "bundle_path": "/var/lib/sgx-guardian/backup/bundles/backup-....sgxbak",
+      "size_bytes": 123456
+    }
+  ]
+}
+```
+
+- Error responses:
+  - `404 NOT_FOUND`: backup history file is missing
+  - `500 INTERNAL_SERVER_ERROR`: backup history cannot be read or parsed
+
+### 3.88 GET `/backup/download/{id}`
+
+- Purpose: Download one encrypted backup bundle as an opaque binary file.
+- Method: `GET`
+- Full path: `/api/v1/backup/download/{id}`
+- Path parameters:
+  - `id` (required, string): backup ID. Unsafe path characters are sanitized before lookup.
+- Request body: none
+- Success response (`200 OK`):
+  - `Content-Type: application/octet-stream`
+  - `Content-Disposition: attachment; filename="<id>.sgxbak"`
+  - Body: encrypted backup bundle bytes.
+- Error responses:
+  - `400 BAD_REQUEST`: sanitized backup ID is empty
+  - `404 NOT_FOUND`: backup bundle is not found
+  - `413 PAYLOAD_TOO_LARGE`: bundle exceeds configured download size limit
+  - `500 INTERNAL_SERVER_ERROR`: filesystem read or response construction failure
+
+### 3.89 DELETE `/backup/{id}`
+
+- Purpose: Delete one local backup bundle and remove it from backup history.
+- Method: `DELETE`
+- Full path: `/api/v1/backup/{id}`
+- Path parameters:
+  - `id` (required, string): backup ID. Unsafe path characters are sanitized before lookup.
+- Request body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "deleted",
+  "id": "backup-..."
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: sanitized backup ID is empty
+  - `404 NOT_FOUND`: backup bundle or history record is not found
+  - `500 INTERNAL_SERVER_ERROR`: filesystem or history update failure
+
+### 3.90 POST `/backup/validate`
+
+- Purpose: Decrypt and validate a backup bundle without applying it.
+- Method: `POST`
+- Full path: `/api/v1/backup/validate`
+- Path parameters: none
+- Request body:
+
+```json
+{
+  "id": "backup-...",
+  "passphrase": "correct horse battery staple"
+}
+```
+
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "ok",
+  "backup_id": "backup-...",
+  "source_node_id": "nodeA",
+  "source_did": "did:guardian:...",
+  "target_did": "did:guardian:...",
+  "same_device_identity": true,
+  "portable": true,
+  "components": [
+    {
+      "component": "policy",
+      "schema_version": 1,
+      "paths": [
+        "policy/active_policy.yaml",
+        "policy/backup_policy.yaml",
+        "policy/policy.sig",
+        "policy/pa_admin_pub.der"
+      ]
+    }
+  ],
+  "warnings": []
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: `passphrase` is empty or request is invalid
+  - `404 NOT_FOUND`: backup bundle is not found
+  - `409 CONFLICT`: integrity validation fails or backup schema is unsupported
+  - `413 PAYLOAD_TOO_LARGE`: bundle exceeds configured maximum size
+  - `500 INTERNAL_SERVER_ERROR`: decrypt, parse, or filesystem failure
+
+### 3.91 POST `/backup/restore`
+
+- Purpose: Legacy restore endpoint retained for compatibility; it does not perform destructive restore.
+- Method: `POST`
+- Full path: `/api/v1/backup/restore`
+- Path parameters: none
+- Request body:
+
+```json
+{
+  "id": "backup-...",
+  "passphrase": "correct horse battery staple"
+}
+```
+
+- Success response: none in current implementation.
+- Error responses:
+  - `409 CONFLICT`: endpoint is unavailable; use `/api/v1/restore/validate` and `/api/v1/restore/apply` with `confirm: true`
+
+### 3.92 POST `/restore/validate`
+
+- Purpose: Build a restore preflight plan without modifying files.
+- Method: `POST`
+- Full path: `/api/v1/restore/validate`
+- Path parameters: none
+- Request body:
+
+```json
+{
+  "id": "backup-...",
+  "passphrase": "correct horse battery staple",
+  "components": ["policy", "config", "credentials", "crl"],
+  "allow_policy_rollback": false
+}
+```
+
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "ok",
+  "backup": {
+    "status": "ok",
+    "backup_id": "backup-...",
+    "source_node_id": "nodeA",
+    "source_did": "did:guardian:...",
+    "target_did": "did:guardian:...",
+    "same_device_identity": true,
+    "portable": true,
+    "components": [],
+    "warnings": []
+  },
+  "mode": "same_device",
+  "plan": [
+    {
+      "component": "policy",
+      "action": "policy_last",
+      "reason": "policy applies last and must preserve monotonic sequence/signature checks",
+      "paths": ["policy/active_policy.yaml", "policy/policy.sig"]
+    }
+  ],
+  "destructive_apply_enabled": true,
+  "warnings": [
+    "policy rollback is not authorised; older policy sequences will be skipped during apply"
+  ]
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: backup `id` or `passphrase` is empty, or request options are invalid
+  - `404 NOT_FOUND`: backup bundle is not found
+  - `409 CONFLICT`: integrity validation fails or backup schema is unsupported
+  - `413 PAYLOAD_TOO_LARGE`: bundle exceeds configured maximum size
+  - `500 INTERNAL_SERVER_ERROR`: decrypt, parse, or filesystem failure
+
+### 3.93 GET `/restore/status`
+
+- Purpose: Return the current restore journal status.
+- Method: `GET`
+- Full path: `/api/v1/restore/status`
+- Path parameters: none
+- Request body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "journal_present",
+  "journal_path": "/var/lib/sgx-guardian/backup/restore/journal.json",
+  "journal": {
+    "restore_id": "restore-...",
+    "bundle_id": "backup-...",
+    "node_id": "nodeA",
+    "phase": "committed",
+    "component_index": null,
+    "snapshot_path": "/var/lib/sgx-guardian/backup/pre-restore/restore-...",
+    "updated_at": "2026-07-27T12:00:00Z",
+    "message": "restore committed; applied 4 files"
+  }
+}
+```
+
+- Notes:
+  - When no journal exists, `status` is `idle` and `journal` is `null`.
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: restore journal cannot be read or parsed
+
+### 3.94 POST `/restore/apply`
+
+- Purpose: Apply a confirmed restore transaction after repeating validation and destructive safety checks.
+- Method: `POST`
+- Full path: `/api/v1/restore/apply`
+- Path parameters: none
+- Request body:
+
+```json
+{
+  "id": "backup-...",
+  "passphrase": "correct horse battery staple",
+  "confirm": true,
+  "components": ["policy", "config", "credentials", "crl"],
+  "allow_policy_rollback": false
+}
+```
+
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "committed",
+  "message": "restore restore-... committed; applied 4 files; restart required for in-memory state",
+  "restart_required": true
+}
+```
+
+- Success response when an older policy rollback is denied (`200 OK`):
+
+```json
+{
+  "status": "committed_policy_skipped",
+  "message": "restore restore-... committed; applied 0 files; policy skipped (backup policy version 1.0.0 is older than active policy version 1.0.1; rollback not authorised); restart required for in-memory state",
+  "restart_required": true
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: backup `id` or `passphrase` is empty, `confirm` is not `true`, another restore is in progress, or request options are invalid
+  - `401 UNAUTHORIZED`: authentication is required and no valid session is provided
+  - `403 FORBIDDEN`: caller is not owner or admin
+  - `404 NOT_FOUND`: backup bundle or restore journal dependency is not found
+  - `409 CONFLICT`: integrity validation fails, backup schema is unsupported, restore is unavailable, or policy signature validation fails
+  - `413 PAYLOAD_TOO_LARGE`: bundle exceeds configured maximum size
+  - `500 INTERNAL_SERVER_ERROR`: snapshot, staging, filesystem swap, rollback, or journal write failure
+
+### 3.95 POST `/restore/undo`
+
+- Purpose: Restore the pre-restore snapshot captured by the last restore transaction.
+- Method: `POST`
+- Full path: `/api/v1/restore/undo`
+- Path parameters: none
+- Request body:
+
+```json
+{
+  "confirm": true
+}
+```
+
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "undone",
+  "message": "restore restore-... undone from snapshot",
+  "restart_required": true
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: `confirm` is not `true`, another restore is in progress, or the journal has no snapshot path
+  - `401 UNAUTHORIZED`: authentication is required and no valid session is provided
+  - `403 FORBIDDEN`: caller is not owner or admin
+  - `404 NOT_FOUND`: restore journal or snapshot file is not found
+  - `500 INTERNAL_SERVER_ERROR`: snapshot load, filesystem write, or permission update failure
 
 ## 2. Standard Error Envelope
 
@@ -4205,4 +4565,3 @@ curl -X GET http://localhost:8443/api/v1/wifi/clients
   - `400 BAD_REQUEST`: Invalid `node_id` path traversal or invalid `decision` value.
   - `404 NOT_FOUND`: Request YAML file not found for specified `node_id`.
   - `500 INTERNAL_SERVER_ERROR`: Failed to read/write/parse request file on disk.
-

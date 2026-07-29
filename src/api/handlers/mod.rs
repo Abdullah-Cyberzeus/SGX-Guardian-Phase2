@@ -1,5 +1,6 @@
 pub mod attestation;
 pub mod auth;
+pub mod backup;
 pub mod circle;
 pub mod crl;
 pub mod devices;
@@ -14,6 +15,7 @@ pub mod pcr;
 pub mod peers;
 pub mod policy;
 pub mod relay;
+pub mod restore;
 pub mod rules;
 pub mod threat;
 pub mod transport;

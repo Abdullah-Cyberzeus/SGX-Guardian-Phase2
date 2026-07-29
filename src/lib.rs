@@ -4,6 +4,7 @@
 pub mod api;
 pub mod attestation_service;
 pub mod audit;
+pub mod backup;
 pub mod cert_client;
 pub mod cert_service;
 pub mod circle;

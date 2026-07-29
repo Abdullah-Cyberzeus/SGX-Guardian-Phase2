@@ -19,6 +19,7 @@ tracing-appender = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
+semver = "1"
 windows-sys = { version = "0.52", features = ["Win32_System_Console"] }
 anyhow = "1"
 argon2 = "0.5"
