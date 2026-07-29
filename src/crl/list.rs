@@ -1,7 +1,7 @@
 //! The CertificateRevocationList container. Holds all known revocations
 //! and a Merkle root for O(log n) anti-entropy comparisons.
 
-use crate::crl::entry::CrlEntry;
+use crate::crl::entry::{CrlEntry, UnrevokeTombstone};
 use crate::crl::errors::CrlError;
 use crate::did::document::Proof;
 use chrono::Utc;
@@ -23,9 +23,11 @@ pub struct CertificateRevocationList {
     /// Monotonically increasing per Circle. Anti-entropy uses this when
     /// Merkle roots differ to decide which side is newer.
     pub sequence: u64,
-    /// Merkle root over the sorted list of entry fingerprints.
+    /// Merkle root over the sorted list of active revoke/tombstone fingerprints.
     pub merkle_root: String,
     pub entries: Vec<CrlEntry>,
+    #[serde(default)]
+    pub tombstones: Vec<UnrevokeTombstone>,
     pub proof: Proof,
 }
 
@@ -44,6 +46,7 @@ impl CertificateRevocationList {
             sequence: 0,
             merkle_root: String::new(),
             entries: vec![],
+            tombstones: vec![],
             proof: Proof::default(),
         }
     }
@@ -65,10 +68,38 @@ impl CertificateRevocationList {
         if self.entries.iter().any(|x| x.revoked_did == e.revoked_did) {
             return Err(CrlError::AlreadyRevoked(e.revoked_did));
         }
+        if let Ok(idx) = self
+            .tombstones
+            .binary_search_by(|t| t.revoked_did.as_str().cmp(&e.revoked_did))
+        {
+            self.tombstones.remove(idx);
+        }
         self.entries.push(e);
         self.entries
             .sort_by(|a, b| a.revoked_did.cmp(&b.revoked_did));
         Ok(true)
+    }
+
+    /// Upsert the active tombstone for `revoked_did`, removing any now-stale
+    /// active revocation for that DID. A duplicate `id` is treated as a no-op.
+    pub fn upsert_tombstone(&mut self, tombstone: UnrevokeTombstone) -> bool {
+        if self.tombstones.iter().any(|x| x.id == tombstone.id) {
+            return false;
+        }
+        if let Ok(idx) = self
+            .entries
+            .binary_search_by(|e| e.revoked_did.as_str().cmp(&tombstone.revoked_did))
+        {
+            self.entries.remove(idx);
+        }
+        match self
+            .tombstones
+            .binary_search_by(|t| t.revoked_did.as_str().cmp(&tombstone.revoked_did))
+        {
+            Ok(idx) => self.tombstones[idx] = tombstone,
+            Err(idx) => self.tombstones.insert(idx, tombstone),
+        }
+        true
     }
 
     /// Admin-only reversal of a mistaken revocation. Removes the entry for
@@ -83,13 +114,36 @@ impl CertificateRevocationList {
         Ok(self.entries.remove(idx))
     }
 
+    pub fn tombstone(&self, did: &str) -> Option<&UnrevokeTombstone> {
+        self.tombstones
+            .binary_search_by(|t| t.revoked_did.as_str().cmp(did))
+            .ok()
+            .map(|idx| &self.tombstones[idx])
+    }
+
+    pub fn remove_tombstone(&mut self, did: &str) -> Option<UnrevokeTombstone> {
+        self.tombstones
+            .binary_search_by(|t| t.revoked_did.as_str().cmp(did))
+            .ok()
+            .map(|idx| self.tombstones.remove(idx))
+    }
+
     /// Recompute the Merkle root over sorted entry fingerprints.
     /// Single SHA-256 over the concatenation is sufficient for Phase 2
     /// (no proof-of-inclusion required yet - future forensics work can add
     /// that later). Function name kept "merkle" to preserve nomenclature.
     pub fn recompute_root(&mut self) {
         use sha2::{Digest, Sha256};
-        let fps: BTreeSet<String> = self.entries.iter().map(|e| e.fingerprint()).collect();
+        let fps: BTreeSet<String> = self
+            .entries
+            .iter()
+            .map(CrlEntry::state_fingerprint)
+            .chain(
+                self.tombstones
+                    .iter()
+                    .map(UnrevokeTombstone::state_fingerprint),
+            )
+            .collect();
         let mut h = Sha256::new();
         for fp in fps {
             h.update(fp.as_bytes());

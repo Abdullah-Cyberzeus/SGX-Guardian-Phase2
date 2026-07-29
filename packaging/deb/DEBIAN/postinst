@@ -31,19 +31,15 @@ chown -R "$USER:$GROUP" "$DATA_DIR" "$LOG_DIR"
 chmod 750 "$DATA_DIR" "$LOG_DIR"
 chmod 755 "$CONFIG_DIR"
 
-# ---- Remove legacy system-wide NMAP capabilities ----
-# Network privileges now come only from the sgx-guardian systemd sandbox.
-if command -v nmap >/dev/null && command -v getcap >/dev/null && command -v setcap >/dev/null; then
-    NMAP_PATH=$(command -v nmap)
-    NMAP_CAPS=$(getcap "$NMAP_PATH" 2>/dev/null || true)
-    case "$NMAP_CAPS" in
-        *"cap_net_admin,cap_net_raw=eip"*|*"cap_net_raw,cap_net_admin=eip"*)
-            echo "Removing legacy SGX Guardian file capabilities from nmap..."
-            if ! setcap -r "$NMAP_PATH"; then
-                echo "WARNING: Failed to remove legacy nmap file capabilities." >&2
-            fi
-            ;;
-    esac
+# ---- NMAP network discovery ----
+# sgx-pa-cli's discovery command shells out to nmap directly (outside the
+# sgx-guardian systemd sandbox), so it needs its own file capabilities here
+# rather than inheriting the daemon's Ambient set.
+if command -v nmap >/dev/null && command -v setcap >/dev/null; then
+    echo "Configuring nmap capabilities for Sprint 6 NMP-series..."
+    if ! setcap cap_net_raw,cap_net_admin+eip "$(command -v nmap)"; then
+        echo "WARNING: Failed to set nmap capabilities; discovery scans may be limited." >&2
+    fi
 fi
 
 # ---- systemd reload ----

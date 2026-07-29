@@ -80,20 +80,6 @@ struct CliResult {
     stderr: String,
 }
 
-#[async_trait::async_trait]
-trait GuardianKeyGenerator: Send + Sync {
-    async fn run(&self, workdir: &Path) -> Result<CliResult, ApiError>;
-}
-
-struct ProcessGuardianKeyGenerator;
-
-#[async_trait::async_trait]
-impl GuardianKeyGenerator for ProcessGuardianKeyGenerator {
-    async fn run(&self, workdir: &Path) -> Result<CliResult, ApiError> {
-        run_guardian_keygen(workdir).await
-    }
-}
-
 /// GET /api/v1/guardian/key/status
 pub async fn status(
     State(_): State<Arc<AppState>>,
@@ -118,14 +104,6 @@ pub async fn status(
 pub async fn generate(
     State(s): State<Arc<AppState>>,
     Json(body): Json<GenerateGuardianKeyRequest>,
-) -> Result<Json<GuardianKeyGenerateResponse>, ApiError> {
-    generate_with_key_generator(s, body, &ProcessGuardianKeyGenerator).await
-}
-
-async fn generate_with_key_generator(
-    s: Arc<AppState>,
-    body: GenerateGuardianKeyRequest,
-    key_generator: &dyn GuardianKeyGenerator,
 ) -> Result<Json<GuardianKeyGenerateResponse>, ApiError> {
     let paths = guardian_key_paths();
     let private_exists = Path::new(&paths.private_key_path).exists();
@@ -178,7 +156,7 @@ async fn generate_with_key_generator(
     }
 
     let workdir = guardian_keygen_workdir();
-    let cli = key_generator.run(&workdir).await?;
+    let cli = run_guardian_keygen(&workdir).await?;
 
     let mut success = cli.success;
     let stdout = cli.stdout;
@@ -468,7 +446,8 @@ mod tests {
     use super::*;
     use crate::api::state::AppState;
     use std::ffi::OsString;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+    use tempfile::TempDir;
     use tokio::sync::Mutex;
 
     static TEST_ENV_LOCK: Mutex<()> = Mutex::const_new(());
@@ -477,22 +456,35 @@ mod tests {
         priv_prev: Option<OsString>,
         pub_prev: Option<OsString>,
         keygen_dir_prev: Option<OsString>,
+        cli_prev: Option<OsString>,
     }
 
     impl EnvGuard {
-        fn new(priv_path: &Path, pub_path: &Path, keygen_dir: &Path) -> Self {
+        fn new(
+            priv_path: &Path,
+            pub_path: &Path,
+            keygen_dir: &Path,
+            cli_path: Option<&Path>,
+        ) -> Self {
             let priv_prev = std::env::var_os("SGX_GUARDIAN_PRIV_KEY_PATH");
             let pub_prev = std::env::var_os("SGX_GUARDIAN_PUB_KEY_PATH");
             let keygen_dir_prev = std::env::var_os("SGX_GUARDIAN_KEYGEN_DIR");
+            let cli_prev = std::env::var_os("SGX_PA_CLI_PATH");
 
             std::env::set_var("SGX_GUARDIAN_PRIV_KEY_PATH", priv_path);
             std::env::set_var("SGX_GUARDIAN_PUB_KEY_PATH", pub_path);
             std::env::set_var("SGX_GUARDIAN_KEYGEN_DIR", keygen_dir);
+            if let Some(p) = cli_path {
+                std::env::set_var("SGX_PA_CLI_PATH", p);
+            } else {
+                std::env::remove_var("SGX_PA_CLI_PATH");
+            }
 
             Self {
                 priv_prev,
                 pub_prev,
                 keygen_dir_prev,
+                cli_prev,
             }
         }
     }
@@ -502,6 +494,7 @@ mod tests {
             restore_env("SGX_GUARDIAN_PRIV_KEY_PATH", self.priv_prev.take());
             restore_env("SGX_GUARDIAN_PUB_KEY_PATH", self.pub_prev.take());
             restore_env("SGX_GUARDIAN_KEYGEN_DIR", self.keygen_dir_prev.take());
+            restore_env("SGX_PA_CLI_PATH", self.cli_prev.take());
         }
     }
 
@@ -532,52 +525,17 @@ mod tests {
         })
     }
 
-    struct FakeKeyGenerator {
-        success: bool,
-        stderr: &'static str,
-        private_key: Option<&'static str>,
-        public_key: Option<&'static str>,
-    }
-
-    impl FakeKeyGenerator {
-        fn succeeds(private_key: &'static str, public_key: &'static str) -> Self {
-            Self {
-                success: true,
-                stderr: "",
-                private_key: Some(private_key),
-                public_key: Some(public_key),
-            }
+    fn write_fake_cli(dir: &TempDir, script_body: &str) -> PathBuf {
+        let script_path = dir.path().join("fake-sgx-pa-cli.sh");
+        let script = format!("#!/usr/bin/env bash\nset -eu\n{}\n", script_body);
+        std::fs::write(&script_path, script).expect("write fake cli script");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod fake cli");
         }
-
-        fn fails(stderr: &'static str) -> Self {
-            Self {
-                success: false,
-                stderr,
-                private_key: None,
-                public_key: None,
-            }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl GuardianKeyGenerator for FakeKeyGenerator {
-        async fn run(&self, workdir: &Path) -> Result<CliResult, ApiError> {
-            if let Some(private_key) = self.private_key {
-                std::fs::write(workdir.join(GENERATED_PRIV_KEY_NAME), private_key)?;
-            }
-            if let Some(public_key) = self.public_key {
-                std::fs::write(workdir.join(GENERATED_PUB_KEY_NAME), public_key)?;
-            }
-            Ok(CliResult {
-                success: self.success,
-                stdout: if self.success {
-                    "generated".to_string()
-                } else {
-                    String::new()
-                },
-                stderr: self.stderr.to_string(),
-            })
-        }
+        script_path
     }
 
     #[tokio::test]
@@ -586,7 +544,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let priv_path = dir.path().join("guardian_private.key");
         let pub_path = dir.path().join("guardian_public.key");
-        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path());
+        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path(), None);
 
         let Json(resp) = status(State(test_state())).await.expect("status response");
         assert!(!resp.exists);
@@ -601,13 +559,15 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let priv_path = dir.path().join("guardian_private.key.installed");
         let pub_path = dir.path().join("guardian_public.key.installed");
-        let key_generator = FakeKeyGenerator::succeeds("PRIVATE-KEY-DATA", "PUBLIC-KEY-DATA");
-        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path());
+        let cli_path = write_fake_cli(
+            &dir,
+            "if [ \"${1:-}\" != \"keygen\" ]; then\n  exit 22\nfi\nprintf 'PRIVATE-KEY-DATA' > guardian_private.key\nprintf 'PUBLIC-KEY-DATA' > guardian_public.key\necho generated\nexit 0",
+        );
+        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path(), Some(&cli_path));
 
-        let Json(resp) = generate_with_key_generator(
-            test_state(),
-            GenerateGuardianKeyRequest::default(),
-            &key_generator,
+        let Json(resp) = generate(
+            State(test_state()),
+            Json(GenerateGuardianKeyRequest::default()),
         )
         .await
         .expect("generate response");
@@ -633,13 +593,12 @@ mod tests {
         let pub_path = dir.path().join("guardian_public.key.installed");
         std::fs::write(&priv_path, "OLD_PRIVATE").expect("seed private");
         std::fs::write(&pub_path, "OLD_PUBLIC").expect("seed public");
-        let key_generator = FakeKeyGenerator::fails("should not run");
-        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path());
+        let cli_path = write_fake_cli(&dir, "echo should-not-run >&2\nexit 99");
+        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path(), Some(&cli_path));
 
-        let Json(resp) = generate_with_key_generator(
-            test_state(),
-            GenerateGuardianKeyRequest { force: false },
-            &key_generator,
+        let Json(resp) = generate(
+            State(test_state()),
+            Json(GenerateGuardianKeyRequest { force: false }),
         )
         .await
         .expect("generate response");
@@ -656,13 +615,15 @@ mod tests {
         let pub_path = dir.path().join("guardian_public.key.installed");
         std::fs::write(&priv_path, "OLD_PRIVATE").expect("seed private");
         std::fs::write(&pub_path, "OLD_PUBLIC").expect("seed public");
-        let key_generator = FakeKeyGenerator::succeeds("NEW_PRIVATE", "NEW_PUBLIC");
-        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path());
+        let cli_path = write_fake_cli(
+            &dir,
+            "if [ \"${1:-}\" != \"keygen\" ]; then\n  exit 22\nfi\nprintf 'NEW_PRIVATE' > guardian_private.key\nprintf 'NEW_PUBLIC' > guardian_public.key\nexit 0",
+        );
+        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path(), Some(&cli_path));
 
-        let Json(resp) = generate_with_key_generator(
-            test_state(),
-            GenerateGuardianKeyRequest { force: true },
-            &key_generator,
+        let Json(resp) = generate(
+            State(test_state()),
+            Json(GenerateGuardianKeyRequest { force: true }),
         )
         .await
         .expect("generate response");
@@ -686,14 +647,15 @@ mod tests {
         let priv_path = dir.path().join("guardian_private.key.installed");
         let pub_path = dir.path().join("guardian_public.key.installed");
         let secret = "DO_NOT_LEAK_PRIVATE_KEY_VALUE";
-        let key_generator =
-            FakeKeyGenerator::succeeds("DO_NOT_LEAK_PRIVATE_KEY_VALUE", "PUBLIC_DATA");
-        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path());
+        let cli_path = write_fake_cli(
+            &dir,
+            "printf 'DO_NOT_LEAK_PRIVATE_KEY_VALUE' > guardian_private.key\nprintf 'PUBLIC_DATA' > guardian_public.key\nexit 0",
+        );
+        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path(), Some(&cli_path));
 
-        let Json(resp) = generate_with_key_generator(
-            test_state(),
-            GenerateGuardianKeyRequest::default(),
-            &key_generator,
+        let Json(resp) = generate(
+            State(test_state()),
+            Json(GenerateGuardianKeyRequest::default()),
         )
         .await
         .expect("generate response");
@@ -708,13 +670,15 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let priv_path = dir.path().join("guardian_private.key.installed");
         let pub_path = dir.path().join("guardian_public.key.installed");
-        let key_generator = FakeKeyGenerator::succeeds("PRIVATE", "PUBLIC");
-        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path());
+        let cli_path = write_fake_cli(
+            &dir,
+            "printf 'PRIVATE' > guardian_private.key\nprintf 'PUBLIC' > guardian_public.key\nexit 0",
+        );
+        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path(), Some(&cli_path));
 
-        let Json(resp) = generate_with_key_generator(
-            test_state(),
-            GenerateGuardianKeyRequest::default(),
-            &key_generator,
+        let Json(resp) = generate(
+            State(test_state()),
+            Json(GenerateGuardianKeyRequest::default()),
         )
         .await
         .expect("generate response");
@@ -744,13 +708,12 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let priv_path = dir.path().join("guardian_private.key.installed");
         let pub_path = dir.path().join("guardian_public.key.installed");
-        let key_generator = FakeKeyGenerator::fails("simulated keygen failure");
-        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path());
+        let cli_path = write_fake_cli(&dir, "echo 'simulated keygen failure' >&2\nexit 7");
+        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path(), Some(&cli_path));
 
-        let Json(resp) = generate_with_key_generator(
-            test_state(),
-            GenerateGuardianKeyRequest::default(),
-            &key_generator,
+        let Json(resp) = generate(
+            State(test_state()),
+            Json(GenerateGuardianKeyRequest::default()),
         )
         .await
         .expect("generate response");

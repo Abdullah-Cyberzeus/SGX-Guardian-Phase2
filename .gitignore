@@ -1,7 +1,6 @@
 /target
 /build/
 /dist/
-build/deb/sgx-guardian-client/usr/bin/sgx-guardian
 __pycache__/
 *.pyc
 .vscode/
