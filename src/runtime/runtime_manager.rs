@@ -37,6 +37,11 @@ impl RuntimeManager {
         }
     }
 
+    pub fn get_default_uplink_interface() -> String {
+        let config = ConfigStore::load().unwrap_or_else(|_| GuardianConfig::default());
+        Self::get_uplink_interface(&config).unwrap_or_else(|| "eth0".to_string())
+    }
+
     /// Resolves the uplink interface for NAT purposes.
     /// Uses config.uplink.interface if set; otherwise falls back to detecting
     /// the first active Ethernet interface from the OS. Never reads from

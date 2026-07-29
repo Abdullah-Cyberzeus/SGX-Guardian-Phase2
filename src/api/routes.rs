@@ -157,6 +157,17 @@ pub fn devices_router() -> Router<Arc<AppState>> {
         )
 }
 
+pub fn dusage_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/api/v1/dusage/current", get(handlers::dusage::current))
+        .route("/api/v1/dusage/history", get(handlers::dusage::history))
+        .route(
+            "/api/v1/dusage/quota",
+            get(handlers::dusage::get_quota).put(handlers::dusage::put_quota),
+        )
+        .route("/api/v1/dusage/reset", post(handlers::dusage::reset))
+}
+
 pub fn xfer_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/v1/xfer/send", post(handlers::xfer::send))

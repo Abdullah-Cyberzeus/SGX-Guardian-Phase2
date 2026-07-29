@@ -106,6 +106,14 @@ pub fn build_nft_ruleset(rules: &TranslatedRules) -> Result<String> {
 
     // ---- FILTER TABLE (inet) ----
     out.push_str("table inet sgx_guardian {\n");
+    out.push_str("  counter \"api\" {}\n");
+    out.push_str("  counter \"attestation\" {}\n");
+    out.push_str("  counter \"cert-bootstrap\" {}\n");
+    out.push_str("  counter \"discovery\" {}\n");
+    out.push_str("  counter \"gossip\" {}\n");
+    out.push_str("  counter \"nebula\" {}\n");
+    out.push_str("  counter \"registry\" {}\n");
+    out.push_str("  counter \"xfer\" {}\n\n");
 
     // 1. INPUT CHAIN (API Protection & Host Access)
     out.push_str("  chain input {\n");
@@ -127,24 +135,24 @@ pub fn build_nft_ruleset(rules: &TranslatedRules) -> Result<String> {
     out.push_str("    udp dport 53 accept\n");
     out.push_str("    tcp dport 53 accept\n");
     // Allow local gRPC / node communication (example ports)
-    out.push_str("    tcp dport {50051,50052,50053} accept\n");
+    out.push_str("    tcp dport {50051,50052,50053} counter name \"api\" accept\n");
     // Allow attestation ports
-    out.push_str("    tcp dport {50151,50152,50153} accept\n");
+    out.push_str("    tcp dport {50151,50152,50153} counter name \"attestation\" accept\n");
     // Allow registry sync (Overlay IP assignment)
-    out.push_str("    tcp dport 50062 accept\n");
+    out.push_str("    tcp dport 50062 counter name \"registry\" accept\n");
     // Allow node discovery broadcast (UDP)
-    out.push_str("    udp dport 9000 accept\n");
-    out.push_str("    udp sport 9000 accept\n");
+    out.push_str("    udp dport 9000 counter name \"discovery\" accept\n");
+    out.push_str("    udp sport 9000 counter name \"discovery\" accept\n");
     // Allow config sync (TCP)
     out.push_str("    tcp dport 50070 accept\n");
     // Allow cert bootstrap
-    out.push_str("    tcp dport 50061 accept\n");
+    out.push_str("    tcp dport 50061 counter name \"cert-bootstrap\" accept\n");
 
     // Allow CRL gossip exchange for decentralized revocation propagation
-    out.push_str("    tcp dport 50063 accept\n");
+    out.push_str("    tcp dport 50063 counter name \"gossip\" accept\n");
 
     // Allow in-Circle file transfer (chunked, resumable, signed manifest)
-    out.push_str("    tcp dport 50064 accept\n");
+    out.push_str("    tcp dport 50064 counter name \"xfer\" accept\n");
 
     // Allow CRL emergency revocation broadcast (critical revocations, UDP)
     out.push_str("    udp dport 50064 accept\n");
@@ -153,8 +161,8 @@ pub fn build_nft_ruleset(rules: &TranslatedRules) -> Result<String> {
     // Allow ICMP ping
     out.push_str("    ip protocol icmp accept\n");
     // Allow Nebula overlay mesh traffic (VERY IMPORTANT)
-    out.push_str("    udp dport 4242 accept\n");
-    out.push_str("    udp sport 4242 accept\n");
+    out.push_str("    udp dport 4242 counter name \"nebula\" accept\n");
+    out.push_str("    udp sport 4242 counter name \"nebula\" accept\n");
     // ---- END DEV SAFETY RULES ----
 
     for rule in &rules.enforcement {

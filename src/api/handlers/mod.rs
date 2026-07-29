@@ -6,6 +6,7 @@ pub mod crl;
 pub mod devices;
 pub mod did;
 pub mod dkp;
+pub mod dusage;
 pub mod geofence;
 pub mod guardian_keys;
 pub mod logs;

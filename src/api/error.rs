@@ -89,6 +89,16 @@ impl From<anyhow::Error> for ApiError {
         ApiError::Internal(e.to_string())
     }
 }
+impl From<crate::dusage::errors::DusageError> for ApiError {
+    fn from(e: crate::dusage::errors::DusageError) -> Self {
+        match e {
+            crate::dusage::errors::DusageError::InvalidPeriod(message) => {
+                ApiError::BadRequest(message)
+            }
+            other => ApiError::Internal(other.to_string()),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -3170,6 +3170,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // source and emits alerts/audit events on zone transitions.
     sgx_guardian_client::geofence::spawn(node_id.clone());
 
+    // === Data-usage sampler ===
+    // Periodically snapshots per-interface byte counters, computes per-period
+    // usage (baseline-relative, reset-safe), and rolls history. One background
+    // tokio task; returns immediately; runs on every node role.
+    sgx_guardian_client::dusage::spawn(node_id.clone());
+
     // === In-Circle file transfer ===
     // Chunked, resumable, signed file transfer between Circle members.
     // Listener on SGX_XFER_PORT (default 50064). Spawns one background

@@ -28,6 +28,7 @@ pub enum AuditCategory {
     Notify,
     Circle,
     Rules,
+    Dusage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
