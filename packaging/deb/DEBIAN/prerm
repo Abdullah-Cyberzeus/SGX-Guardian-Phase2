@@ -3,6 +3,19 @@ set -e
 
 echo "SGX Guardian pre-remove started..."
 
+# Do not leave capabilities previously granted to the system-wide nmap binary.
+if command -v nmap >/dev/null && command -v getcap >/dev/null && command -v setcap >/dev/null; then
+    NMAP_PATH=$(command -v nmap)
+    NMAP_CAPS=$(getcap "$NMAP_PATH" 2>/dev/null || true)
+    case "$NMAP_CAPS" in
+        *"cap_net_admin,cap_net_raw=eip"*|*"cap_net_raw,cap_net_admin=eip"*)
+            if ! setcap -r "$NMAP_PATH"; then
+                echo "WARNING: Failed to remove legacy nmap file capabilities." >&2
+            fi
+            ;;
+    esac
+fi
+
 if command -v systemctl >/dev/null; then
     systemctl stop sgx-guardian.service >/dev/null || true
     systemctl disable sgx-guardian.service >/dev/null || true

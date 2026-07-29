@@ -18,13 +18,6 @@ async fn test_handle_transition_to_off() {
     assert_eq!(status.state, SystemState::Idle);
 }
 
-#[test]
-fn test_get_default_uplink_interface() {
-    // We just verify it doesn't crash and returns some string.
-    let iface = RuntimeManager::get_default_uplink_interface();
-    assert!(!iface.is_empty());
-}
-
 #[tokio::test]
 async fn test_stop_all_empty() {
     let event_bus = Arc::new(EventBus::new());

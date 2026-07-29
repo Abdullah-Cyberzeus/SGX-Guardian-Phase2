@@ -759,8 +759,7 @@ mod unit_tests {
 
         let mut missing_one = full.clone();
         missing_one.pop();
-        let err =
-            validate_permissions_for_role(&CredentialRole::Owner, &missing_one).unwrap_err();
+        let err = validate_permissions_for_role(&CredentialRole::Owner, &missing_one).unwrap_err();
         assert!(matches!(err, VcError::InvalidStructure(_)));
     }
 

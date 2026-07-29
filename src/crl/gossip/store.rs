@@ -396,7 +396,9 @@ pub fn entries_matching(
 #[cfg(test)]
 mod unit_tests {
     use super::*;
-    use crate::crl::entry::{RevocationReason, RevokerRole, Severity, CRL_CONTEXT_CORE, CRL_CONTEXT_SGX};
+    use crate::crl::entry::{
+        RevocationReason, RevokerRole, Severity, CRL_CONTEXT_CORE, CRL_CONTEXT_SGX,
+    };
     use crate::did::document::Proof;
 
     fn sample_entry(id: &str, revoked_did: &str, timestamp: &str) -> CrlEntry {

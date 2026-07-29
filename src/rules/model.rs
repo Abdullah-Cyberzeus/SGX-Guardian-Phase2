@@ -567,7 +567,10 @@ mod unit_tests {
     #[test]
     fn rule_action_label_formats_variants() {
         assert_eq!(
-            RuleAction::RaiseAlert { severity: "high".to_string() }.label(),
+            RuleAction::RaiseAlert {
+                severity: "high".to_string()
+            }
+            .label(),
             "RaiseAlert(high)"
         );
         assert_eq!(
@@ -583,8 +586,14 @@ mod unit_tests {
         assert!(RuleAction::RevokeDid.destructive());
         assert!(RuleAction::LockTransport.destructive());
         assert!(RuleAction::EmergencyKeyRotation.destructive());
-        assert!(!RuleAction::RaiseAlert { severity: "low".to_string() }.destructive());
-        assert!(!RuleAction::Notify { severity: "low".to_string() }.destructive());
+        assert!(!RuleAction::RaiseAlert {
+            severity: "low".to_string()
+        }
+        .destructive());
+        assert!(!RuleAction::Notify {
+            severity: "low".to_string()
+        }
+        .destructive());
     }
 
     #[test]
@@ -691,10 +700,16 @@ mod unit_tests {
             proof_value: "sig".to_string(),
             ..Proof::default()
         };
-        assert_eq!(baseline, registry.canonical_bytes_for_sign().expect("canonical"));
+        assert_eq!(
+            baseline,
+            registry.canonical_bytes_for_sign().expect("canonical")
+        );
 
         registry.sequence = 2;
-        assert_ne!(baseline, registry.canonical_bytes_for_sign().expect("canonical"));
+        assert_ne!(
+            baseline,
+            registry.canonical_bytes_for_sign().expect("canonical")
+        );
     }
 
     #[test]
@@ -756,7 +771,10 @@ mod unit_tests {
     #[test]
     fn device_status_name_maps_every_variant() {
         assert_eq!(device_status_name(DeviceStatus::Approved), "approved");
-        assert_eq!(device_status_name(DeviceStatus::Unauthorized), "unauthorized");
+        assert_eq!(
+            device_status_name(DeviceStatus::Unauthorized),
+            "unauthorized"
+        );
         assert_eq!(device_status_name(DeviceStatus::Drifted), "drifted");
         assert_eq!(device_status_name(DeviceStatus::Stale), "stale");
     }

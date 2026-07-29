@@ -38,9 +38,15 @@ Analytics frontend console, which connects from a separate host.
 
 ## Risk acceptance
 
-- **Accepted by:** Asad Ali — *(please confirm/adjust; PR73_Round2 also names Pouya Barrach-Yousefi as a stakeholder)*
-- **Date:** 2026-07-13
-- **Scope:** Development/testing only — NOT production.
+- **Accepted by:** Asad Ali (2026-07-13); confirmed by Pouya Barrach-Yousefi (2026-07-14) as named stakeholder.
+- **Date:** 2026-07-14
+- **Scope:** Development/testing only — NOT production. The `0.0.0.0:8443`
+  admin API stays behind the compensating controls above (isolated LAN,
+  nftables peer allowlist, no production deploy) until JWT auth merges.
+- **Override applied:** `security-override` label on `feat/62-CRL` (PR #73)
+  makes the gate advisory for finding S1 only; #94/#95 fixed inline. This
+  override does not carry past the auth-branch merge, which must re-run the
+  gate clean.
 
 ## Consequences
 

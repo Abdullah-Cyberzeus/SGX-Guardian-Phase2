@@ -1,13 +1,12 @@
 /target
-build/artifacts/
+/build/
+/dist/
 build/deb/sgx-guardian-client/usr/bin/sgx-guardian
 __pycache__/
 *.pyc
 .vscode/
 logs/
-optional/
 sgx-agent/
-optional/
 sgx-pa-cli/guardian_private.key
 private_key.asc
 *.key
@@ -22,9 +21,13 @@ cobertura.xml
 *.profdata
 tarpaulin-report.html
 coverage/
+optional/
 
 .codex/
 .claude/
+.intraview/
+.introview-tour.md
+.tokensave/
 
-.env
-ha-dev-config/
+# Ignore locally supplied SOW PDFs at any phase depth
+docs/sow/**/*.pdf

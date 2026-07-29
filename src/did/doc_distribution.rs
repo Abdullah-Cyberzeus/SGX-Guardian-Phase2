@@ -10,6 +10,40 @@ use tokio::net::TcpStream;
 
 const REQ_TIMEOUT_SECS: u64 = 10;
 
+#[cfg(test)]
+static TEST_REGISTRY_SYNC_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+
+fn registry_sync_port() -> u16 {
+    #[cfg(test)]
+    {
+        let test_port = TEST_REGISTRY_SYNC_PORT.load(std::sync::atomic::Ordering::SeqCst);
+        if test_port != 0 {
+            return test_port;
+        }
+    }
+
+    REGISTRY_SYNC_PORT
+}
+
+#[cfg(test)]
+pub(crate) struct TestRegistrySyncPortGuard {
+    previous: u16,
+}
+
+#[cfg(test)]
+impl Drop for TestRegistrySyncPortGuard {
+    fn drop(&mut self) {
+        TEST_REGISTRY_SYNC_PORT.store(self.previous, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn use_test_registry_sync_port(port: u16) -> TestRegistrySyncPortGuard {
+    assert_ne!(port, 0, "test registry sync port must be non-zero");
+    let previous = TEST_REGISTRY_SYNC_PORT.swap(port, std::sync::atomic::Ordering::SeqCst);
+    TestRegistrySyncPortGuard { previous }
+}
+
 pub async fn publish_to_ca(
     ca_host: &str,
     node_name: &str,
@@ -121,7 +155,7 @@ pub async fn send_request(
     ca_host: &str,
     req: &RegistryRequest,
 ) -> Result<RegistryResponse, DidError> {
-    let addr = format!("{}:{}", ca_host, REGISTRY_SYNC_PORT);
+    let addr = format!("{}:{}", ca_host, registry_sync_port());
     let stream = tokio::time::timeout(
         std::time::Duration::from_secs(REQ_TIMEOUT_SECS),
         TcpStream::connect(&addr),

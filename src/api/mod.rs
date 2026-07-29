@@ -387,7 +387,7 @@ mod tests {
     use crate::did::persistence::{DerivationProof, DidRecord};
     use crate::did::Did;
     use crate::key_manager::KeyManager;
-    use crate::nebula::registry_sync::{RegistryRequest, RegistryResponse, REGISTRY_SYNC_PORT};
+    use crate::nebula::registry_sync::{RegistryRequest, RegistryResponse};
     use crate::threat::threat_alert::{Severity, ThreatAlert, ThreatCategory};
     use crate::vc::{issue, persistence};
     use chrono::Utc;
@@ -1267,11 +1267,12 @@ mod tests {
 
     async fn spawn_mock_ca_publish_server(
         expected_node_name: &'static str,
-    ) -> tokio::task::JoinHandle<()> {
-        let listener = TcpListener::bind(("127.0.0.1", REGISTRY_SYNC_PORT))
+    ) -> (u16, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0))
             .await
             .expect("bind mock ca");
-        tokio::spawn(async move {
+        let port = listener.local_addr().expect("mock ca address").port();
+        let handle = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.expect("accept publish");
             let (reader, mut writer) = stream.into_split();
             let mut buffered = BufReader::new(reader);
@@ -1295,7 +1296,8 @@ mod tests {
                 .write_all(response.as_bytes())
                 .await
                 .expect("write publish response");
-        })
+        });
+        (port, handle)
     }
 
     fn write_threat_alerts(path: &Path, alerts: &[ThreatAlert]) {
@@ -2503,7 +2505,9 @@ mod tests {
             .expect("write self floor version");
         doc_persistence::save_peer(&peer_doc).expect("save peer doc");
 
-        let publish_handle = spawn_mock_ca_publish_server("nodeB").await;
+        let (registry_port, publish_handle) = spawn_mock_ca_publish_server("nodeB").await;
+        let _registry_port =
+            crate::did::doc_distribution::use_test_registry_sync_port(registry_port);
         let (base_url, client, handle) = spawn_authed_api().await;
 
         let summary: Value = client
