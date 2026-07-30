@@ -1,10 +1,13 @@
 use crate::api::handlers;
 use crate::api::state::AppState;
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{get, patch, post},
     Router,
 };
 use std::sync::Arc;
+
+const VAULT_UPLOAD_BODY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
 
 pub fn crl_router() -> Router<Arc<AppState>> {
     Router::new()
@@ -43,10 +46,14 @@ pub fn vault_router() -> Router<Arc<AppState>> {
         .route("/api/v1/vault/quota", get(handlers::vault::quota_status))
         .route("/api/v1/vault/tree", get(handlers::vault::tree))
         .route("/api/v1/vault/search", get(handlers::vault::search))
-        .route("/api/v1/vault/upload", post(handlers::vault::upload))
+        .route(
+            "/api/v1/vault/upload",
+            post(handlers::vault::upload)
+                .layer(DefaultBodyLimit::max(VAULT_UPLOAD_BODY_LIMIT_BYTES)),
+        )
         .route(
             "/api/v1/vault/folders",
-            post(handlers::vault::create_folder),
+            get(handlers::vault::list_folders).post(handlers::vault::create_folder),
         )
         .route(
             "/api/v1/vault/folders/{folder_id}",

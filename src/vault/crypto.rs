@@ -7,6 +7,8 @@ use rand::RngCore;
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
 use sha2::{Digest, Sha256};
 use std::io::{BufReader, BufWriter, Read, Write};
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
 const NONCE_PREFIX_BYTES: usize = 7;
@@ -55,6 +57,20 @@ fn make_key(bytes: &[u8; 32]) -> Result<LessSafeKey, VaultError> {
     let key = UnboundKey::new(&AES_256_GCM, bytes)
         .map_err(|_| VaultError::Crypto("invalid AES-256-GCM key".to_string()))?;
     Ok(LessSafeKey::new(key))
+}
+
+fn create_plaintext_output(path: &Path) -> Result<std::fs::File, VaultError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).write(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let file = options.open(path)?;
+    #[cfg(unix)]
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(file)
 }
 
 pub fn encrypt_file(
@@ -209,10 +225,7 @@ pub fn decrypt_file(
     let chunk_count = expected_chunk_count(record.size_plain, record.enc.chunk_bytes);
 
     let input = std::fs::File::open(input_path)?;
-    if let Some(parent) = output_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let output = std::fs::File::create(output_path)?;
+    let output = create_plaintext_output(output_path)?;
 
     let mut reader = BufReader::new(input);
     let mut writer = BufWriter::new(output);

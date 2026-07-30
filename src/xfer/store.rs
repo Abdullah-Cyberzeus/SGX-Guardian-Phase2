@@ -261,7 +261,7 @@ pub async fn mark_receiver_failed(
 
 pub async fn create_outbox(
     peer_did: &str,
-    file_path: &std::path::Path,
+    file_path: &str,
     manifest: &FileManifest,
 ) -> Result<SenderProgress, XferError> {
     let _guard = XFER_WRITE_LOCK.lock().await;
@@ -270,7 +270,7 @@ pub async fn create_outbox(
         circle_id: manifest.circle_id.clone(),
         peer_did: peer_did.to_string(),
         filename: manifest.filename.clone(),
-        file_path: file_path.display().to_string(),
+        file_path: file_path.to_string(),
         size: manifest.size,
         chunk_bytes: manifest.chunk_bytes,
         chunk_count: manifest.chunk_count,

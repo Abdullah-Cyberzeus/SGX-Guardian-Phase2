@@ -3,6 +3,7 @@
 //! Port: 8443 (separate listener from the :50051 mTLS gRPC endpoint).
 
 use axum::{
+    http::{header, HeaderName},
     routing::{get, post},
     Json, Router,
 };
@@ -27,16 +28,26 @@ pub use tls::AdminTls;
 
 /// Build the full axum router with all v1 routes.
 pub fn build_router(state: Arc<AppState>) -> Router {
+    // The admin UI may be hosted separately during development (for example,
+    // http://localhost:3000). Keep origins open for separately deployed admin
+    // consoles, but explicitly advertise every header the frontend sends so
+    // browser preflight requests are accepted consistently.
     let cors = CorsLayer::new()
         .allow_origin(tower_http::cors::Any)
         .allow_methods([
             axum::http::Method::GET,
             axum::http::Method::POST,
             axum::http::Method::PUT,
+            axum::http::Method::PATCH,
             axum::http::Method::DELETE,
             axum::http::Method::OPTIONS,
         ])
-        .allow_headers(tower_http::cors::Any);
+        .allow_headers([
+            header::ACCEPT,
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            HeaderName::from_static("ngrok-skip-browser-warning"),
+        ]);
 
     Router::new()
         // Phase 1 - read endpoints
@@ -705,6 +716,56 @@ mod tests {
         (base_url, client, handle)
     }
 
+    async fn upload_vault_bytes(
+        client: &reqwest::Client,
+        base_url: &str,
+        filename: &str,
+        payload: Vec<u8>,
+    ) -> reqwest::Response {
+        let boundary = format!("sgx-boundary-{}", uuid::Uuid::new_v4());
+        let mut body = Vec::new();
+        body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+        body.extend_from_slice(
+            format!(
+                "Content-Disposition: form-data; name=\"file\"; filename=\"{}\"\r\n",
+                filename
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
+        body.extend_from_slice(&payload);
+        body.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
+        client
+            .post(format!("{}/api/v1/vault/upload", base_url))
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={}", boundary),
+            )
+            .body(body)
+            .send()
+            .await
+            .expect("vault upload request")
+    }
+
+    async fn wait_for_xfer_outbox_to_settle(transfer_id: &str) {
+        for _ in 0..20 {
+            let Some(progress) = crate::xfer::store::load_outbox(transfer_id)
+                .await
+                .expect("load xfer outbox")
+            else {
+                return;
+            };
+            if !matches!(
+                progress.status,
+                crate::xfer::store::TransferStatus::Queued
+                    | crate::xfer::store::TransferStatus::Connecting
+            ) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
     async fn spawn_secured_api_with_state(
         state: Arc<AppState>,
     ) -> (String, tokio::task::JoinHandle<()>) {
@@ -1125,6 +1186,402 @@ mod tests {
         assert_eq!(body.quota_bytes, 500);
         assert_eq!(body.remaining_bytes, 300);
         assert_eq!(body.usage_percent, 40.0);
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn vault_upload_endpoint_accepts_large_multipart_payloads_up_to_50_mib_plus_one() {
+        let _env_lock = crate::test_support::async_env_lock().await;
+        let _vault_lock = crate::vault::lock_test_env().await;
+        let td = TempDir::new().expect("tempdir");
+        let vault_base = td.path().join("vault");
+        let vault_base_value = vault_base.to_string_lossy().to_string();
+        let _vault_base = ScopedEnvVar::set(crate::vault::VAULT_BASE_ENV, &vault_base_value);
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let (base_url, client, handle) = spawn_authed_api().await;
+        for size in [
+            crate::xfer::MAX_TRANSFER_FILE_BYTES as usize,
+            crate::xfer::MAX_TRANSFER_FILE_BYTES as usize + 1,
+        ] {
+            let response = upload_vault_bytes(
+                &client,
+                &base_url,
+                &format!("vault-upload-{}.bin", size),
+                vec![0x5A; size],
+            )
+            .await;
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "vault upload should accept {} bytes on Friday, July 24, 2026",
+                size
+            );
+            let body: Value = response.json().await.expect("vault upload body");
+            assert_eq!(body["record"]["size_plain"], size as u64);
+        }
+
+        handle.abort();
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn xfer_send_endpoint_accepts_exact_limit_and_rejects_oversize_inputs() {
+        let _env_lock = crate::test_support::async_env_lock().await;
+        let _vault_lock = crate::vault::lock_test_env().await;
+        let _xfer_lock = crate::xfer::lock_test_env().await;
+        let env = VcEnvGuard::new();
+        let xfer_base = env._td.path().join("xfer");
+        let xfer_base_value = xfer_base.to_string_lossy().to_string();
+        let vault_base = env._td.path().join("vault");
+        let vault_base_value = vault_base.to_string_lossy().to_string();
+        let _xfer_base =
+            ScopedEnvVar::set(crate::xfer::persistence::XFER_BASE_ENV, &xfer_base_value);
+        let _vault_base = ScopedEnvVar::set(crate::vault::VAULT_BASE_ENV, &vault_base_value);
+
+        let (km_dir, _km, issuer, doc) = make_vc_material("nodeA", 61, "127.0.0.1/32");
+        install_vc_runtime_material(&env, &km_dir, &issuer, &doc);
+        let (_peer_km_dir, _peer_km, peer_record, peer_doc) =
+            make_vc_material("nodeB", 62, "127.0.0.1/32");
+        doc_persistence::save_peer(&peer_doc).expect("save xfer peer doc");
+
+        let exact_path = env._td.path().join("xfer-exact.bin");
+        std::fs::File::create(&exact_path)
+            .expect("create exact xfer file")
+            .set_len(crate::xfer::MAX_TRANSFER_FILE_BYTES)
+            .expect("size exact xfer file");
+        let oversize_path = env._td.path().join("xfer-oversize.bin");
+        std::fs::File::create(&oversize_path)
+            .expect("create oversize xfer file")
+            .set_len(crate::xfer::MAX_TRANSFER_FILE_BYTES + 1)
+            .expect("size oversize xfer file");
+
+        let oversize_record = crate::vault::VaultRecord {
+            vault_id: "urn:uuid:xfer-oversize-api".into(),
+            namespace: crate::vault::VaultNamespace::PERSONAL_STORAGE_KEY.to_string(),
+            circle_id: String::new(),
+            filename: "oversize.bin".into(),
+            mime: "application/octet-stream".into(),
+            size_plain: crate::xfer::MAX_TRANSFER_FILE_BYTES + 1,
+            size_cipher: 1,
+            sha256_plain: "aa".repeat(32),
+            sender_did: issuer.did.clone(),
+            received_at: "2026-07-24T00:00:00Z".into(),
+            source: crate::vault::VaultSource::Upload,
+            folder_id: String::new(),
+            starred: false,
+            enc: crate::vault::EncMeta {
+                algo: "AES-256-GCM/STREAM-BE32".into(),
+                chunk_bytes: crate::vault::VaultConfig::DEFAULT_CHUNK_BYTES,
+                base_nonce_b64: "bm9uY2VwcmU=".into(),
+                wrapped_dek_b64: "d3JhcHBlZA==".into(),
+                wrap_scheme: "software-hkdf".into(),
+                wrap_key_id: "software-master-v1".into(),
+            },
+        };
+        crate::vault::persistence::save_record(
+            &crate::vault::VaultConfig::from_env(),
+            &oversize_record,
+        )
+        .await
+        .expect("save oversize vault record");
+
+        let (base_url, client, handle) = spawn_authed_api_with_state(env.state()).await;
+        let send_url = format!("{}/api/v1/xfer/send", base_url);
+
+        let exact = client
+            .post(&send_url)
+            .json(&serde_json::json!({
+                "peer_did": peer_record.did,
+                "path": exact_path
+            }))
+            .send()
+            .await
+            .expect("exact xfer request");
+        assert_eq!(exact.status(), StatusCode::OK);
+        let exact_body: Value = exact.json().await.expect("exact xfer body");
+        assert_eq!(exact_body["status"], "accepted");
+        let transfer_id = exact_body["transfer_id"]
+            .as_str()
+            .expect("exact transfer id")
+            .to_string();
+        wait_for_xfer_outbox_to_settle(&transfer_id).await;
+
+        let missing = client
+            .post(&send_url)
+            .json(&serde_json::json!({
+                "peer_did": "did:guardian:peer"
+            }))
+            .send()
+            .await
+            .expect("missing source request");
+        assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+        let missing_body: Value = missing.json().await.expect("missing source body");
+        assert_eq!(missing_body["error"]["code"], "BAD_REQUEST");
+
+        let both = client
+            .post(&send_url)
+            .json(&serde_json::json!({
+                "peer_did": "did:guardian:peer",
+                "path": "/tmp/source.bin",
+                "vault_id": "urn:uuid:also-source"
+            }))
+            .send()
+            .await
+            .expect("both source request");
+        assert_eq!(both.status(), StatusCode::BAD_REQUEST);
+        let both_body: Value = both.json().await.expect("both source body");
+        assert_eq!(both_body["error"]["code"], "BAD_REQUEST");
+
+        let unknown = client
+            .post(&send_url)
+            .json(&serde_json::json!({
+                "peer_did": "did:guardian:peer",
+                "vault_id": "urn:uuid:missing"
+            }))
+            .send()
+            .await
+            .expect("unknown vault request");
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        let unknown_body: Value = unknown.json().await.expect("unknown vault body");
+        assert_eq!(unknown_body["error"]["code"], "NOT_FOUND");
+
+        let oversize_path_response = client
+            .post(&send_url)
+            .json(&serde_json::json!({
+                "peer_did": peer_record.did,
+                "path": oversize_path
+            }))
+            .send()
+            .await
+            .expect("oversize path request");
+        assert_eq!(
+            oversize_path_response.status(),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+        let oversize_path_body: Value = oversize_path_response
+            .json()
+            .await
+            .expect("oversize path body");
+        assert_eq!(oversize_path_body["error"]["code"], "PAYLOAD_TOO_LARGE");
+
+        let oversize_vault_response = client
+            .post(&send_url)
+            .json(&serde_json::json!({
+                "peer_did": peer_record.did,
+                "vault_id": oversize_record.vault_id
+            }))
+            .send()
+            .await
+            .expect("oversize vault request");
+        assert_eq!(
+            oversize_vault_response.status(),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+        let oversize_vault_body: Value = oversize_vault_response
+            .json()
+            .await
+            .expect("oversize vault body");
+        assert_eq!(oversize_vault_body["error"]["code"], "PAYLOAD_TOO_LARGE");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn vault_folder_list_endpoint_returns_empty_list_for_empty_storage() {
+        let _env_lock = crate::test_support::async_env_lock().await;
+        let _vault_lock = crate::vault::lock_test_env().await;
+        let td = TempDir::new().expect("tempdir");
+        let vault_base = td.path().join("vault");
+        let key_dir = td.path().join("keys");
+        let vault_base_value = vault_base.to_string_lossy().to_string();
+        let key_dir_value = key_dir.to_string_lossy().to_string();
+        let _vault_base = ScopedEnvVar::set(crate::vault::VAULT_BASE_ENV, &vault_base_value);
+        let _key_dir = ScopedEnvVar::set(crate::vc::issue::DEVICE_KEY_DIR_ENV, &key_dir_value);
+
+        let (base_url, client, handle) = spawn_authed_api().await;
+        let response = client
+            .get(format!("{}/api/v1/vault/folders", base_url))
+            .send()
+            .await
+            .expect("empty folders request");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value = response.json().await.expect("empty folders body");
+        assert_eq!(body["count"], 0);
+        assert_eq!(body["folders"].as_array().map(Vec::len), Some(0));
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn vault_folder_list_endpoint_returns_root_child_hierarchy_and_namespace_filters() {
+        let _env_lock = crate::test_support::async_env_lock().await;
+        let _vault_lock = crate::vault::lock_test_env().await;
+        let td = TempDir::new().expect("tempdir");
+        let vault_base = td.path().join("vault");
+        let key_dir = td.path().join("keys");
+        let vault_base_value = vault_base.to_string_lossy().to_string();
+        let key_dir_value = key_dir.to_string_lossy().to_string();
+        let _vault_base = ScopedEnvVar::set(crate::vault::VAULT_BASE_ENV, &vault_base_value);
+        let _key_dir = ScopedEnvVar::set(crate::vc::issue::DEVICE_KEY_DIR_ENV, &key_dir_value);
+
+        let (base_url, client, handle) = spawn_authed_api().await;
+        let folders_url = format!("{}/api/v1/vault/folders", base_url);
+
+        let personal_root: Value = client
+            .post(&folders_url)
+            .json(&serde_json::json!({
+                "name": "Personal Root"
+            }))
+            .send()
+            .await
+            .expect("create personal root")
+            .json()
+            .await
+            .expect("personal root body");
+        let personal_root_id = personal_root["folder_id"]
+            .as_str()
+            .expect("personal root id")
+            .to_string();
+
+        let personal_child: Value = client
+            .post(&folders_url)
+            .json(&serde_json::json!({
+                "namespace": "personal",
+                "parent_id": personal_root_id,
+                "name": "Personal Child"
+            }))
+            .send()
+            .await
+            .expect("create personal child")
+            .json()
+            .await
+            .expect("personal child body");
+
+        let circle_root: Value = client
+            .post(&folders_url)
+            .json(&serde_json::json!({
+                "namespace": "guardian-circle-alpha",
+                "name": "Circle Root"
+            }))
+            .send()
+            .await
+            .expect("create circle root")
+            .json()
+            .await
+            .expect("circle root body");
+        let circle_root_id = circle_root["folder_id"]
+            .as_str()
+            .expect("circle root id")
+            .to_string();
+
+        let all = client
+            .get(&folders_url)
+            .send()
+            .await
+            .expect("list all folders");
+        assert_eq!(all.status(), StatusCode::OK);
+        let all_body: Value = all.json().await.expect("all folders body");
+        assert_eq!(all_body["count"], 3);
+        let all_items = all_body["folders"].as_array().expect("folder array");
+        let listed_personal_root = all_items
+            .iter()
+            .find(|folder| folder["folder_id"] == personal_root["folder_id"])
+            .expect("personal root listed");
+        assert_eq!(listed_personal_root["parent_id"], "");
+        assert_eq!(listed_personal_root["namespace"], "personal");
+        assert_eq!(listed_personal_root["circle_id"], "");
+        assert!(listed_personal_root["created_at"].as_str().is_some());
+
+        let listed_personal_child = all_items
+            .iter()
+            .find(|folder| folder["folder_id"] == personal_child["folder_id"])
+            .expect("personal child listed");
+        assert_eq!(
+            listed_personal_child["parent_id"],
+            personal_root["folder_id"]
+        );
+        assert_eq!(listed_personal_child["namespace"], "personal");
+        assert_eq!(listed_personal_child["circle_id"], "");
+
+        let listed_circle_root = all_items
+            .iter()
+            .find(|folder| folder["folder_id"] == circle_root["folder_id"])
+            .expect("circle root listed");
+        assert_eq!(listed_circle_root["parent_id"], "");
+        assert_eq!(listed_circle_root["namespace"], "guardian-circle-alpha");
+        assert_eq!(listed_circle_root["circle_id"], "guardian-circle-alpha");
+
+        let personal_only = client
+            .get(&folders_url)
+            .query(&[("namespace", "personal")])
+            .send()
+            .await
+            .expect("list personal folders");
+        assert_eq!(personal_only.status(), StatusCode::OK);
+        let personal_only_body: Value = personal_only.json().await.expect("personal folders body");
+        assert_eq!(personal_only_body["count"], 2);
+        assert!(personal_only_body["folders"]
+            .as_array()
+            .expect("personal folders array")
+            .iter()
+            .all(|folder| folder["namespace"] == "personal" && folder["circle_id"] == ""));
+
+        let circle_only = client
+            .get(&folders_url)
+            .query(&[("circle_id", "guardian-circle-alpha")])
+            .send()
+            .await
+            .expect("list circle folders");
+        assert_eq!(circle_only.status(), StatusCode::OK);
+        let circle_only_body: Value = circle_only.json().await.expect("circle folders body");
+        assert_eq!(circle_only_body["count"], 1);
+        assert_eq!(
+            circle_only_body["folders"][0]["folder_id"],
+            serde_json::Value::String(circle_root_id.clone())
+        );
+
+        let personal_children = client
+            .get(&folders_url)
+            .query(&[
+                ("namespace", "personal"),
+                (
+                    "parent_id",
+                    personal_root["folder_id"]
+                        .as_str()
+                        .expect("personal root id query"),
+                ),
+            ])
+            .send()
+            .await
+            .expect("list personal children");
+        assert_eq!(personal_children.status(), StatusCode::OK);
+        let personal_children_body: Value = personal_children
+            .json()
+            .await
+            .expect("personal children body");
+        assert_eq!(personal_children_body["count"], 1);
+        assert_eq!(
+            personal_children_body["folders"][0]["folder_id"],
+            personal_child["folder_id"]
+        );
+
+        let circle_children = client
+            .get(&folders_url)
+            .query(&[
+                ("namespace", "guardian-circle-alpha"),
+                ("parent_id", circle_root_id.as_str()),
+            ])
+            .send()
+            .await
+            .expect("list empty circle children");
+        assert_eq!(circle_children.status(), StatusCode::OK);
+        let circle_children_body: Value =
+            circle_children.json().await.expect("circle children body");
+        assert_eq!(circle_children_body["count"], 0);
+
+        handle.abort();
     }
 
     fn make_vc_material(
@@ -2839,3 +3296,4 @@ mod tests {
         assert!(response.is_err(), "plaintext HTTP unexpectedly succeeded");
     }
 }
+

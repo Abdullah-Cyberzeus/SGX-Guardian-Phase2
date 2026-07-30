@@ -7,6 +7,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
+#[cfg(test)]
+use std::sync::atomic::{AtomicI8, Ordering};
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
@@ -15,12 +17,15 @@ pub struct AuthenticatedSession {
     pub token: String,
 }
 
+#[cfg(test)]
+static TEST_DISABLE_LOGIN_OVERRIDE: AtomicI8 = AtomicI8::new(-1);
+
 pub async fn require_auth(
     State(state): State<Arc<AppState>>,
     mut req: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
-    if crate::runtime_gates::GATES.disable_login {
+    if login_disabled() {
         return next.run(req).await;
     }
     if is_public_route(req.method(), req.uri().path()) || is_cors_preflight(req.headers()) {
@@ -64,6 +69,17 @@ pub async fn require_auth(
     next.run(req).await
 }
 
+fn login_disabled() -> bool {
+    #[cfg(test)]
+    match TEST_DISABLE_LOGIN_OVERRIDE.load(Ordering::Relaxed) {
+        0 => return false,
+        1 => return true,
+        _ => {}
+    }
+
+    crate::runtime_gates::GATES.disable_login
+}
+
 fn is_public_route(method: &Method, path: &str) -> bool {
     matches!(
         (method, path),
@@ -80,6 +96,25 @@ fn is_cors_preflight(headers: &HeaderMap) -> bool {
 
 fn unauthorized(message: &str) -> Response {
     crate::api::error::ApiError::Unauthorized(message.to_string()).into_response()
+}
+
+#[cfg(test)]
+pub(crate) struct TestDisableLoginGuard {
+    previous: i8,
+}
+
+#[cfg(test)]
+pub(crate) fn test_force_disable_login(disabled: bool) -> TestDisableLoginGuard {
+    let next = if disabled { 1 } else { 0 };
+    let previous = TEST_DISABLE_LOGIN_OVERRIDE.swap(next, Ordering::Relaxed);
+    TestDisableLoginGuard { previous }
+}
+
+#[cfg(test)]
+impl Drop for TestDisableLoginGuard {
+    fn drop(&mut self) {
+        TEST_DISABLE_LOGIN_OVERRIDE.store(self.previous, Ordering::Relaxed);
+    }
 }
 
 #[cfg(test)]

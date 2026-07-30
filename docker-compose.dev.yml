@@ -12,6 +12,7 @@ x-guardian-common: &guardian-common
   environment: &guardian-env
     RUST_LOG: info
     SGX_FORCE_SOFTWARE_KEYS: "1"
+    SGX_DISABLE_LOGIN: "1"
     SGX_DISABLE_SECURE_BOOT_CHECK: "1"
     SGX_DISABLE_READ_OCOTP: "1"
     SGX_DISABLE_DKP_ROTATION: "1"

@@ -22,6 +22,14 @@ pub fn outbox_dir() -> PathBuf {
     base_dir().join("outbox")
 }
 
+pub fn staging_dir() -> PathBuf {
+    base_dir().join("staging")
+}
+
+pub fn staging_transfer_dir(staging_id: &str) -> PathBuf {
+    staging_dir().join(staging_id)
+}
+
 pub fn inbox_transfer_dir(circle_id: &str, transfer_id: &str) -> PathBuf {
     inbox_dir().join(circle_id).join(transfer_id)
 }
@@ -48,6 +56,17 @@ pub fn outbox_path(transfer_id: &str) -> PathBuf {
 
 pub fn safe_file_name(name: &str) -> String {
     crate::xfer::manifest::safe_manifest_name(name)
+}
+
+pub async fn create_secure_staging_dir(staging_id: &str) -> Result<PathBuf, XferError> {
+    let dir = staging_transfer_dir(staging_id);
+    tokio::fs::create_dir_all(&dir).await?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).await?;
+    }
+    Ok(dir)
 }
 
 pub async fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), XferError> {

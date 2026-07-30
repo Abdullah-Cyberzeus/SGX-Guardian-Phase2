@@ -180,29 +180,46 @@ async fn ingest_file_with_namespace(
 
 pub async fn decrypt_record_to_temp(record: &VaultRecord) -> Result<PathBuf, VaultError> {
     let config = VaultConfig::from_env();
-    let blob_path = persistence::record_blob_path(&config, record);
+    let temp_path = persistence::decrypt_temp_path(&config, &record.vault_id);
+    decrypt_record_to_path_with_config(&config, record, &temp_path).await?;
+    Ok(temp_path)
+}
+
+pub async fn decrypt_record_to_path(
+    record: &VaultRecord,
+    output_path: &Path,
+) -> Result<(), VaultError> {
+    let config = VaultConfig::from_env();
+    decrypt_record_to_path_with_config(&config, record, output_path).await
+}
+
+async fn decrypt_record_to_path_with_config(
+    config: &VaultConfig,
+    record: &VaultRecord,
+    output_path: &Path,
+) -> Result<(), VaultError> {
+    let blob_path = persistence::record_blob_path(config, record);
     if !tokio::fs::try_exists(&blob_path).await? {
         return Err(VaultError::NotFound(record.vault_id.clone()));
     }
 
-    let temp_path = persistence::decrypt_temp_path(&config, &record.vault_id);
     let config_for_task = config.clone();
     let record_for_task = record.clone();
     let blob_for_task = blob_path.clone();
-    let temp_for_task = temp_path.clone();
+    let output_for_task = output_path.to_path_buf();
     let outcome = tokio::task::spawn_blocking(move || {
         let wrapper = wrapper::wrapper_for_record(&config_for_task, &record_for_task)?;
-        crypto::decrypt_file(&blob_for_task, &temp_for_task, &record_for_task, &wrapper)
+        crypto::decrypt_file(&blob_for_task, &output_for_task, &record_for_task, &wrapper)
     })
     .await
     .map_err(|error| VaultError::InvalidStructure(format!("decrypt task: {}", error)))?;
 
     if let Err(error) = outcome {
-        let _ = tokio::fs::remove_file(&temp_path).await;
+        let _ = tokio::fs::remove_file(output_path).await;
         return Err(error);
     }
 
-    Ok(temp_path)
+    Ok(())
 }
 
 pub async fn cleanup_plaintext(path: &Path) -> Result<(), VaultError> {
