@@ -21,4 +21,5 @@ pub mod vc;
 pub mod vid;
 pub mod xfer;
 
+pub mod cert;
 pub mod discovery;

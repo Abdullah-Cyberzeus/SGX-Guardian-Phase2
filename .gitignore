@@ -28,3 +28,4 @@ coverage/
 
 .env
 ha-dev-config/
+telemetry/

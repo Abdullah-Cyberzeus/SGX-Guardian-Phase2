@@ -17,7 +17,11 @@ pub struct TunnelState;
 
 impl TunnelState {
     pub async fn poll_all_peers() -> Vec<PeerConnectionState> {
-        let body = match reqwest::get("http://127.0.0.1:8625/metrics").await {
+        let client = match reqwest::Client::builder().no_proxy().build() {
+            Ok(c) => c,
+            Err(_) => return Vec::new(),
+        };
+        let body = match client.get("http://127.0.0.1:8625/metrics").send().await {
             Ok(resp) => match resp.text().await {
                 Ok(t) => t,
                 Err(_) => return Vec::new(),

@@ -101,33 +101,34 @@ struct TrustedPeer {
 }
 /// Stores the most recent attestation result for a peer with full identity +
 /// state evidence so post-mortems can reconstruct WHAT was verified.
-#[derive(Serialize, Deserialize)]
-struct LastAttestation {
-    peer_id: String,
-    policy_digest: String,
-    result: String,
-    timestamp: String,
+#[derive(Serialize, Deserialize, Clone)]
+pub struct LastAttestation {
+    pub peer_id: String,
+    pub policy_digest: String,
+    pub result: String,
+    pub timestamp: String,
     // Fix 2: peer identity at the moment of attestation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    peer_did: Option<String>,
+    pub peer_did: Option<String>,
     // Session-scoped VID actually verified.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    virtual_id: Option<String>,
+    pub virtual_id: Option<String>,
     // SHA-256 fingerprint of peer's DKP pubkey (12-byte hex prefix for
     // human readability; the cache still stores the full digest).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    dkp_pubkey_sha256_b16: Option<String>,
+    pub dkp_pubkey_sha256_b16: Option<String>,
     // PCR composite digest at time of attestation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pcr_composite_digest: Option<String>,
+    pub pcr_composite_digest: Option<String>,
     // Initiator nonce used (already covered by the signed evidence; kept
     // here for ops correlation with peer logs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    nonce: Option<String>,
+    pub nonce: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    nonce_i: Option<String>,
+    pub nonce_i: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    nonce_r: Option<String>,
+    pub nonce_r: Option<String>,
+    pub count: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -533,6 +534,29 @@ fn remove_trusted_peer(peer_id: &str) {
     }
     merge_parent_peer_file_with_dirs(&primary_dir, &fallback_dir);
 }
+fn load_last_attestation_list(primary_file: &Path, fallback_file: &Path) -> Vec<LastAttestation> {
+    let data = fs::read_to_string(primary_file)
+        .or_else(|_| fs::read_to_string(fallback_file))
+        .unwrap_or_else(|_| "[]".to_string());
+
+    if data.trim().is_empty() {
+        return Vec::new();
+    }
+
+    if let Ok(list) = serde_json::from_str::<Vec<LastAttestation>>(&data) {
+        return list;
+    }
+
+    // Try parsing as single legacy object
+    if let Ok(single) = serde_json::from_str::<LastAttestation>(&data) {
+        let mut migrated = single;
+        migrated.count = 1;
+        return vec![migrated];
+    }
+
+    Vec::new()
+}
+
 /// Writes the most recent attestation outcome for a peer.
 /// `ev` is the *peer's* evidence (so DID/VID/DKP/PCR reflect THEM, not us).
 /// Pass `None` only when we couldn't decode the evidence (e.g. connect
@@ -566,23 +590,46 @@ fn write_last_attestation(
         }
     };
 
+    let (primary_dir, fallback_dir) = current_log_dirs();
+    let (primary_file, fallback_file) = last_attestation_paths(&primary_dir, &fallback_dir);
+
+    let mut list = load_last_attestation_list(&primary_file, &fallback_file);
+
+    let match_index = list.iter().position(|r| {
+        let is_peer_match = match (&r.peer_did, &peer_did) {
+            (Some(stored_did), Some(new_did)) => stored_did == new_did,
+            _ => r.peer_id == peer_id,
+        };
+        is_peer_match && r.result == result
+    });
+
+    let count = match match_index {
+        Some(idx) => list[idx].count + 1,
+        None => 1,
+    };
+
     let record = LastAttestation {
         peer_id: peer_id.to_string(),
         policy_digest: policy_digest.to_string(),
         result: result.to_string(),
         timestamp: Utc::now().to_rfc3339(),
-        peer_did,
+        peer_did: peer_did.clone(),
         virtual_id,
         dkp_pubkey_sha256_b16: dkp_fp,
         pcr_composite_digest: pcr_digest,
         nonce,
         nonce_i,
         nonce_r,
+        count,
     };
 
-    if let Ok(json) = serde_json::to_string_pretty(&record) {
-        let (primary_dir, fallback_dir) = current_log_dirs();
-        let (primary_file, fallback_file) = last_attestation_paths(&primary_dir, &fallback_dir);
+    if let Some(idx) = match_index {
+        list[idx] = record;
+    } else {
+        list.push(record);
+    }
+
+    if let Ok(json) = serde_json::to_string_pretty(&list) {
         write_string(&primary_file, &json);
         write_string(&fallback_file, &json);
     } else {

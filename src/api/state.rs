@@ -172,7 +172,6 @@ impl AppState {
         })
     }
 
-    #[cfg(test)]
     pub fn for_tests(
         base_dir: &std::path::Path,
         node_id: &str,
@@ -238,5 +237,49 @@ impl AppState {
             login_rate_limiter: Arc::new(LoginRateLimiter::default()),
             auth_providers: ProviderRegistry::from_env(),
         })
+    }
+
+    /// Seeds an Owner admin user and returns a `reqwest::Client` carrying a
+    /// valid bearer token for it, for integration tests exercising routes
+    /// behind `auth::middleware::require_auth`.
+    pub async fn authed_client_for_tests(state: &Arc<Self>) -> reqwest::Client {
+        use crate::api::auth::store::{NewUser, UserRole};
+
+        let user = state
+            .admin
+            .users
+            .create(NewUser {
+                name: "API Test Admin".into(),
+                email: format!("api-test-{}@example.com", uuid::Uuid::new_v4()),
+                pw_hash: "test-hash".into(),
+                role: UserRole::Owner,
+            })
+            .await
+            .expect("seed API test user");
+        let (token, _, session_rec) = crate::api::auth::session::issue(
+            state.signer.clone(),
+            &state.device_did,
+            &user,
+            std::time::Duration::from_secs(300),
+        )
+        .await
+        .expect("issue API test token");
+        state
+            .admin
+            .sessions
+            .put(session_rec)
+            .await
+            .expect("store API test session");
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))
+                .expect("authorization header"),
+        );
+        reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .expect("authorized API test client")
     }
 }

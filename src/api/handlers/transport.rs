@@ -422,12 +422,10 @@ fn cot_lock_dir() -> String {
 mod tests {
     use super::*;
     use axum::extract::State;
-    use once_cell::sync::Lazy;
     use std::ffi::OsString;
     use tempfile::TempDir;
-    use tokio::sync::Mutex;
 
-    static TEST_ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+    use crate::test_utils::TEST_ENV_LOCK;
 
     struct EnvGuard {
         sys_net_prev: Option<OsString>,

@@ -448,9 +448,8 @@ mod tests {
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
     use tempfile::TempDir;
-    use tokio::sync::Mutex;
 
-    static TEST_ENV_LOCK: Mutex<()> = Mutex::const_new(());
+    use crate::test_utils::TEST_ENV_LOCK;
 
     struct EnvGuard {
         priv_prev: Option<OsString>,

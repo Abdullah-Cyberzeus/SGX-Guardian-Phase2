@@ -4,6 +4,8 @@
 //! and listing trusted peers.
 pub mod attest_quote;
 pub mod attestation;
+pub mod audit_logs;
+pub mod audit_verify;
 pub mod boot_status;
 pub mod crl;
 pub mod did;

@@ -8,7 +8,7 @@ public_key: "placeholder-key-A"
 relay:
   enabled: false
   max_peers: 5
-  max_bandwidth_mbps: 10
+  max_bandwidth_mbps: 0
   alert_threshold_pct: 80
 
 api:

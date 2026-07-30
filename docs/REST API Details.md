@@ -123,6 +123,8 @@ Transport notes:
 | 104 | GET | `/crl/offline/status` | Offline CRL sync status, counters, and per-peer version-vector view |
 | 105 | GET | `/crl/offline/pending` | List queued offline revocations with retry metadata |
 | 106 | POST | `/crl/offline/sync` | Trigger one offline CRL sync cycle immediately |
+| 79 | GET | `/cert/requests` | List all active/pending node certificate requests |
+| 80 | POST | `/cert/approve` | Approve or reject a pending certificate request |
 
 
 ## 2. NEW Endpoints 
@@ -158,6 +160,18 @@ Transport notes:
 | GET | `/crl/offline/status` | Return offline sync enablement, counters, and peer sync-state snapshot |
 | GET | `/crl/offline/pending` | Return queued revocations with attempts, timestamps, and parked state |
 | POST | `/crl/offline/sync` | Run one offline fetch-and-flush cycle on demand |
+| GET | `/vc/files/own` | List local own-VC file metadata |
+| GET | `/vc/files/peers` | List peer-VC file metadata |
+| GET | `/vc/files/issued/{vc_id}` | Fetch the stored issued VC JSON document |
+| GET | `/vc/files/own/{vc_id}` | Fetch the stored own VC JSON document |
+| GET | `/vc/files/peer/{did}` | Fetch the stored peer VC JSON document by DID |
+| GET | `/vc/status-list` | Fetch the stored VC status-list credential JSON |
+| GET | `/vc/status-list-index` | Fetch the stored status-list next-index JSON |
+| GET | `/vc/summary` | Return aggregate VC cache and lifecycle counts |
+| GET | `/vc/audit` | Return VC audit-log entries with optional filtering |
+| GET | `/vid/show` | Show the single current nonce-bound VirtualID and its input digests |
+| GET | `/vid/peers` | List cached peer VirtualIDs and last observed rotation reasons |
+| GET | `/audit/logs` | Fetch secure tamper-evident audit logs with filters |
 ---
 
 ## 2. Standard Error Envelope
@@ -728,17 +742,26 @@ Error responses:
 ### 3.6 GET `/attestation`
 
 - Request:
-  - Query params: none
+  - Query params:
+    - `peer_did` (optional, string): Filter by peer DID.
+    - `result` (optional, string: `success`, `failed`): Filter by attestation status.
   - Body: none
 - Success response (`200 OK`):
 
 ```json
-{
-  "peerId": "nodeB",
-  "policyDigest": "sha256:...",
-  "result": "PASS",
-  "timestamp": "2026-05-21T09:58:00Z"
-}
+[
+  {
+    "peerId": "192.168.134.129:50051",
+    "policyDigest": "10b2dc837e9a2a766d57edc1be6676b79f24828d5745ef0fb9930306766e8a26",
+    "result": "success",
+    "timestamp": "2026-07-01T15:30:46.123456+00:00",
+    "peerDid": "did:guardian:nodeB",
+    "virtualId": "vid:94f4a30e8c899c72e61a6c11db84e9d564fa78cb103f6ebc9a3d4632c02741ab",
+    "dkpPubkeySha256B16": "a3b9d07fbc16b8e3a241ee83d9876251b5c9288f61c3608104dfc8091a18274d",
+    "pcrCompositeDigest": "a9deb3227421cb1b3c990264b3ef81c81ef40d89280d84a7e937dbeab10372df",
+    "count": 5
+  }
+]
 ```
 
 - Error responses:
@@ -3590,6 +3613,15 @@ Peer DID resolution response (`?did=did:guardian:...`):
 - Full path: `/api/v1/crl/list`
 - Request:
   - Query params: none
+### 3.75 GET `/audit/logs`
+
+- Request:
+  - Query params:
+    - `node` (string, optional): Node ID to query (e.g. `nodeA`, `nodeB`). Defaults to the local node.
+    - `tail` (integer, optional): Number of recent log lines to fetch from the end of the file.
+    - `category` (string, optional): Filter by event category (e.g. `Node`, `Network`, `Tls`, `Attestation`). Case-insensitive.
+    - `severity` (string, optional): Filter by severity level (`info`, `warn` / `warning`, `error` / `critical`, or `all` to disable filtering). Case-insensitive.
+    - `search` (string, optional): Search keyword to filter messages containing this string. Case-insensitive.
   - Body: none
 - Success response (`200 OK`):
 
@@ -3604,6 +3636,18 @@ Peer DID resolution response (`?did=did:guardian:...`):
       "reason": "compromised",
       "severity": "critical",
       "revoker_did": "did:guardian:OWNER"
+  "items": [
+    {
+      "event": {
+        "timestamp": 1782890986,
+        "node_id": "nodeA",
+        "category": "Network",
+        "severity": "Info",
+        "action": "Started",
+        "message": "Outbound TLS ping attempt to 127.0.0.1:50053"
+      },
+      "hash": "15bf4c872ab11b791f441e30048be704769c94fd2f635d18f03312d7ea768063",
+      "previous_hash": "ab349eda70ce23a12db7293365bccf6f4adcfd3649fb0ece1e23b30425642777"
     }
   ]
 }
@@ -3696,6 +3740,15 @@ Peer DID resolution response (`?did=did:guardian:...`):
 ### 3.80 GET `/crl/root`
 
 - Full path: `/api/v1/crl/root`
+- Notes:
+  - Reads secure tamper-evident audit logs from `/var/log/sgx-guardian/audit-{node}.log` (production) or `logs/audit-{node}.log` (development).
+  - Returns entries in reverse chronological order (newest first).
+- Error responses:
+  - `404 NOT_FOUND`: no audit log file found for node `{node}`
+  - `500 INTERNAL_SERVER_ERROR`: failed to open, read, or parse audit log file
+
+### 3.76 GET `/cert/requests`
+
 - Request:
   - Query params: none
   - Body: none
@@ -3716,6 +3769,23 @@ Peer DID resolution response (`?did=did:guardian:...`):
 ### 3.81 POST `/crl/unrevoke`
 
 - Full path: `/api/v1/crl/unrevoke`
+[
+  {
+    "node_id": "nodeB",
+    "requested_at": "2026-07-02T12:00:00.000Z",
+    "overlay_ip": "192.168.100.2/24",
+    "public_key_fingerprint": "ca8594035f65f328",
+    "requested_role": "member",
+    "approve": "false"
+  }
+]
+```
+
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: Failed to read requests directory or files.
+
+### 3.77 POST `/cert/approve`
+
 - Request:
   - Query params: none
   - JSON body:
@@ -3726,6 +3796,13 @@ Peer DID resolution response (`?did=did:guardian:...`):
 }
 ```
 
+  "node_id": "nodeB",
+  "decision": "member"
+}
+```
+
+  - Required fields: `node_id`, `decision`
+  - Valid `decision` values: `"false"`, `"reject"`, `"deny"`, `"member"`, `"lighthouse"`, `"relay"`, `"lh_relay"`.
 - Success response (`200 OK`):
 
 ```json
@@ -4120,3 +4197,12 @@ curl -X GET http://localhost:8443/api/v1/wifi/clients
   - Retrieves the list of active network clients currently connected to the local Hotspot by parsing dynamic DHCP leases assigned by `dnsmasq`.
 - Error responses:
   - `500 INTERNAL_SERVER_ERROR`: Failed to parse DHCP lease table
+  "message": "Request for node nodeB set to Member"
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: Invalid `node_id` path traversal or invalid `decision` value.
+  - `404 NOT_FOUND`: Request YAML file not found for specified `node_id`.
+  - `500 INTERNAL_SERVER_ERROR`: Failed to read/write/parse request file on disk.
+
