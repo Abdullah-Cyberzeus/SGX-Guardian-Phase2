@@ -21,3 +21,7 @@ tarpaulin-report.html
 coverage/
 
 .codex/
+
+.env
+ha-dev-config/
+telemetry/

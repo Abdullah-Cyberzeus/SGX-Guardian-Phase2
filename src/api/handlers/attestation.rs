@@ -1,17 +1,35 @@
 use crate::api::{error::ApiError, state::AppState};
-use axum::{extract::State, Json};
-use serde::Serialize;
+use axum::{
+    extract::{Query, State},
+    Json,
+};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
 
 #[derive(Serialize)]
-pub struct LastAttestation {
+pub struct ApiLastAttestation {
     #[serde(rename = "peerId")]
     pub peer_id: String,
     #[serde(rename = "policyDigest")]
     pub policy_digest: String,
     pub result: String,
     pub timestamp: String,
+    #[serde(rename = "peerDid", skip_serializing_if = "Option::is_none")]
+    pub peer_did: Option<String>,
+    #[serde(rename = "virtualId", skip_serializing_if = "Option::is_none")]
+    pub virtual_id: Option<String>,
+    #[serde(rename = "dkpPubkeySha256B16", skip_serializing_if = "Option::is_none")]
+    pub dkp_pubkey_sha256_b16: Option<String>,
+    #[serde(rename = "pcrCompositeDigest", skip_serializing_if = "Option::is_none")]
+    pub pcr_composite_digest: Option<String>,
+    pub count: u64,
+}
+
+#[derive(Deserialize)]
+pub struct AttestationQuery {
+    pub peer_did: Option<String>,
+    pub result: Option<String>,
 }
 
 /// Read a JSON file from a base directory with path-traversal protection.
@@ -31,34 +49,64 @@ async fn read_json_from_dir(base_dir: &str, filename: &str) -> Result<String, Ap
         .map_err(|_| ApiError::NotFound("file unreadable".into()))
 }
 
-pub async fn last(State(s): State<Arc<AppState>>) -> Result<Json<LastAttestation>, ApiError> {
+pub async fn last(
+    State(s): State<Arc<AppState>>,
+    Query(q): Query<AttestationQuery>,
+) -> Result<Json<Vec<ApiLastAttestation>>, ApiError> {
     let text = match read_json_from_dir(&s.log_dir_primary, "last_attestation.json").await {
         Ok(t) => t,
         Err(_) => read_json_from_dir(&s.log_dir_fallback, "last_attestation.json")
             .await
             .map_err(|_| ApiError::NotFound("no attestation result recorded yet".into()))?,
     };
-    let v: serde_json::Value = serde_json::from_str(&text)?;
-    Ok(Json(LastAttestation {
-        peer_id: v
-            .get("peer_id")
-            .and_then(|x| x.as_str())
-            .unwrap_or("")
-            .to_string(),
-        policy_digest: v
-            .get("policy_digest")
-            .and_then(|x| x.as_str())
-            .unwrap_or("")
-            .to_string(),
-        result: v
-            .get("result")
-            .and_then(|x| x.as_str())
-            .unwrap_or("unknown")
-            .to_string(),
-        timestamp: v
-            .get("timestamp")
-            .and_then(|x| x.as_str())
-            .unwrap_or("")
-            .to_string(),
-    }))
+
+    let list = if text.trim().is_empty() {
+        Vec::new()
+    } else if let Ok(parsed_list) =
+        serde_json::from_str::<Vec<crate::attestation_service::LastAttestation>>(&text)
+    {
+        parsed_list
+    } else if let Ok(single) =
+        serde_json::from_str::<crate::attestation_service::LastAttestation>(&text)
+    {
+        let mut migrated = single;
+        migrated.count = 1;
+        vec![migrated]
+    } else {
+        Vec::new()
+    };
+
+    let mut response_list = Vec::new();
+    for item in list {
+        if let Some(ref peer_did_filter) = q.peer_did {
+            match &item.peer_did {
+                Some(did) => {
+                    if !did.eq_ignore_ascii_case(peer_did_filter) {
+                        continue;
+                    }
+                }
+                None => continue,
+            }
+        }
+
+        if let Some(ref result_filter) = q.result {
+            if !item.result.eq_ignore_ascii_case(result_filter) {
+                continue;
+            }
+        }
+
+        response_list.push(ApiLastAttestation {
+            peer_id: item.peer_id,
+            policy_digest: item.policy_digest,
+            result: item.result,
+            timestamp: item.timestamp,
+            peer_did: item.peer_did,
+            virtual_id: item.virtual_id,
+            dkp_pubkey_sha256_b16: item.dkp_pubkey_sha256_b16,
+            pcr_composite_digest: item.pcr_composite_digest,
+            count: item.count,
+        });
+    }
+
+    Ok(Json(response_list))
 }

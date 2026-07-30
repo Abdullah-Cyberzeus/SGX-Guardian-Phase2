@@ -87,6 +87,8 @@
 | 76 | PUT | `/discovery/whitelist` | Replace discovery whitelist and refresh inventory statuses |
 | 77 | GET | `/discovery/schedule` | Fetch scheduled NMAP discovery configuration |
 | 78 | PUT | `/discovery/schedule` | Update scheduled NMAP discovery configuration |
+| 79 | GET | `/cert/requests` | List all active/pending node certificate requests |
+| 80 | POST | `/cert/approve` | Approve or reject a pending certificate request |
 
 
 ## 2. NEW Endpoints 
@@ -104,6 +106,7 @@
 | GET | `/vc/audit` | Return VC audit-log entries with optional filtering |
 | GET | `/vid/show` | Show the single current nonce-bound VirtualID and its input digests |
 | GET | `/vid/peers` | List cached peer VirtualIDs and last observed rotation reasons |
+| GET | `/audit/logs` | Fetch secure tamper-evident audit logs with filters |
 ---
 
 ## 2. Standard Error Envelope
@@ -265,17 +268,26 @@ Field notes:
 ### 3.6 GET `/attestation`
 
 - Request:
-  - Query params: none
+  - Query params:
+    - `peer_did` (optional, string): Filter by peer DID.
+    - `result` (optional, string: `success`, `failed`): Filter by attestation status.
   - Body: none
 - Success response (`200 OK`):
 
 ```json
-{
-  "peerId": "nodeB",
-  "policyDigest": "sha256:...",
-  "result": "PASS",
-  "timestamp": "2026-05-21T09:58:00Z"
-}
+[
+  {
+    "peerId": "192.168.134.129:50051",
+    "policyDigest": "10b2dc837e9a2a766d57edc1be6676b79f24828d5745ef0fb9930306766e8a26",
+    "result": "success",
+    "timestamp": "2026-07-01T15:30:46.123456+00:00",
+    "peerDid": "did:guardian:nodeB",
+    "virtualId": "vid:94f4a30e8c899c72e61a6c11db84e9d564fa78cb103f6ebc9a3d4632c02741ab",
+    "dkpPubkeySha256B16": "a3b9d07fbc16b8e3a241ee83d9876251b5c9288f61c3608104dfc8091a18274d",
+    "pcrCompositeDigest": "a9deb3227421cb1b3c990264b3ef81c81ef40d89280d84a7e937dbeab10372df",
+    "count": 5
+  }
+]
 ```
 
 - Error responses:
@@ -2422,3 +2434,96 @@ Peer DID resolution response (`?did=did:guardian:...`):
   }
 }
 ```
+
+### 3.75 GET `/audit/logs`
+
+- Request:
+  - Query params:
+    - `node` (string, optional): Node ID to query (e.g. `nodeA`, `nodeB`). Defaults to the local node.
+    - `tail` (integer, optional): Number of recent log lines to fetch from the end of the file.
+    - `category` (string, optional): Filter by event category (e.g. `Node`, `Network`, `Tls`, `Attestation`). Case-insensitive.
+    - `severity` (string, optional): Filter by severity level (`info`, `warn` / `warning`, `error` / `critical`, or `all` to disable filtering). Case-insensitive.
+    - `search` (string, optional): Search keyword to filter messages containing this string. Case-insensitive.
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "count": 1,
+  "items": [
+    {
+      "event": {
+        "timestamp": 1782890986,
+        "node_id": "nodeA",
+        "category": "Network",
+        "severity": "Info",
+        "action": "Started",
+        "message": "Outbound TLS ping attempt to 127.0.0.1:50053"
+      },
+      "hash": "15bf4c872ab11b791f441e30048be704769c94fd2f635d18f03312d7ea768063",
+      "previous_hash": "ab349eda70ce23a12db7293365bccf6f4adcfd3649fb0ece1e23b30425642777"
+    }
+  ]
+}
+```
+
+- Notes:
+  - Reads secure tamper-evident audit logs from `/var/log/sgx-guardian/audit-{node}.log` (production) or `logs/audit-{node}.log` (development).
+  - Returns entries in reverse chronological order (newest first).
+- Error responses:
+  - `404 NOT_FOUND`: no audit log file found for node `{node}`
+  - `500 INTERNAL_SERVER_ERROR`: failed to open, read, or parse audit log file
+
+### 3.76 GET `/cert/requests`
+
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`):
+
+```json
+[
+  {
+    "node_id": "nodeB",
+    "requested_at": "2026-07-02T12:00:00.000Z",
+    "overlay_ip": "192.168.100.2/24",
+    "public_key_fingerprint": "ca8594035f65f328",
+    "requested_role": "member",
+    "approve": "false"
+  }
+]
+```
+
+- Error responses:
+  - `500 INTERNAL_SERVER_ERROR`: Failed to read requests directory or files.
+
+### 3.77 POST `/cert/approve`
+
+- Request:
+  - Query params: none
+  - JSON body:
+
+```json
+{
+  "node_id": "nodeB",
+  "decision": "member"
+}
+```
+
+  - Required fields: `node_id`, `decision`
+  - Valid `decision` values: `"false"`, `"reject"`, `"deny"`, `"member"`, `"lighthouse"`, `"relay"`, `"lh_relay"`.
+- Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "message": "Request for node nodeB set to Member"
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: Invalid `node_id` path traversal or invalid `decision` value.
+  - `404 NOT_FOUND`: Request YAML file not found for specified `node_id`.
+  - `500 INTERNAL_SERVER_ERROR`: Failed to read/write/parse request file on disk.
+

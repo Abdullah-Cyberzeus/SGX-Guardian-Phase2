@@ -607,11 +607,9 @@ mod tests {
     use axum::extract::State;
     use base64::engine::general_purpose;
     use base64::Engine as _;
-    use once_cell::sync::Lazy;
     use std::ffi::OsString;
-    use tokio::sync::Mutex;
 
-    static TEST_ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+    use crate::test_utils::TEST_ENV_LOCK;
 
     struct EnvGuard {
         did_prev: Option<OsString>,

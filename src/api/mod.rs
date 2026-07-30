@@ -41,6 +41,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/peers", get(handlers::peers::list))
         .route("/api/v1/attestation", get(handlers::attestation::last))
         .route("/api/v1/logs", get(handlers::logs::tail))
+        .route("/api/v1/audit/logs", get(handlers::logs::audit_logs))
         .route("/api/v1/dkp/status", get(handlers::dkp::status))
         .route("/api/v1/pcr/status", get(handlers::pcr::status))
         .route("/api/v1/did/status", get(handlers::did::status))
@@ -140,6 +141,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/discovery/schedule",
             axum::routing::put(handlers::discovery::put_schedule),
+        )
+        // Cert request & approval endpoints
+        .route("/api/v1/cert/requests", get(handlers::cert::list_requests))
+        .route(
+            "/api/v1/cert/approve",
+            post(handlers::cert::approve_request),
         )
         // Phase 2 - action endpoints
         .route("/api/v1/dkp/rotate", post(handlers::dkp::rotate))
@@ -251,7 +258,6 @@ mod tests {
     use crate::nebula::registry_sync::{RegistryRequest, RegistryResponse, REGISTRY_SYNC_PORT};
     use crate::vc::{issue, persistence};
     use chrono::Utc;
-    use once_cell::sync::Lazy;
     use reqwest::StatusCode;
     use serde_json::Value;
     use std::ffi::OsString;
@@ -260,10 +266,9 @@ mod tests {
     use tempfile::TempDir;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
-    use tokio::sync::Mutex;
 
     const DEPLOYED_SIG_PATH: &str = "/etc/sgx-guardian/policies/policy.sig";
-    static TEST_ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+    use crate::test_utils::TEST_ENV_LOCK;
 
     struct EnvGuard {
         self_doc_prev: Option<OsString>,

@@ -54,16 +54,24 @@ impl AuditVerifier {
             let payload =
                 serde_json::to_string(&canonical_event).map_err(|_| "Failed to serialize event")?;
 
-            // Detect segment boundary: very first line OR stored_prev != chain.last_hash().
-            // On boundary, ANCHOR the chain to stored_prev and start a new segment.
-            // Inside a segment, any mismatch is a tamper.
             let chain_state_matches = chain.last_hash() == stored_prev;
             let is_first_line = current_segment_start.is_none();
 
-            if is_first_line || !chain_state_matches {
+            if is_first_line {
                 chain.set_last_hash(stored_prev.to_string());
                 segment_count += 1;
                 current_segment_start = Some(line_no);
+            } else if !chain_state_matches {
+                if stored_prev == "GENESIS" {
+                    chain.set_last_hash(stored_prev.to_string());
+                    segment_count += 1;
+                    current_segment_start = Some(line_no);
+                } else {
+                    return Err(format!(
+                        "AUDIT LOG TAMPER DETECTED at line {}: broken chain (expected prev: {}, got: {})",
+                        line_no, chain.last_hash(), stored_prev
+                    ));
+                }
             }
 
             let computed = chain.next_hash(&payload);

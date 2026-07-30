@@ -137,7 +137,8 @@ firewall:
             &endpoint,
         );
 
-        Self::generate_config_with_lighthouse(node_name, pool, &lh_registry, config_dir)
+        Self::generate_config_with_lighthouse(node_name, pool, &lh_registry, config_dir)?;
+        Ok(())
     }
 
     /// Multi-lighthouse config generation.
@@ -146,7 +147,7 @@ firewall:
         pool: &OverlayPool,
         lh_registry: &LighthouseRegistry,
         config_dir: &str,
-    ) -> Result<(), std::io::Error> {
+    ) -> Result<bool, std::io::Error> {
         let config_path = format!("{}/nebula.yaml", config_dir);
         fs::create_dir_all(config_dir)?;
 
@@ -406,21 +407,32 @@ firewall:
             relay = relay_section,
         );
 
-        // Always overwrite — we want fresh IPs on every start.
-        let tmp_path = format!("{}.tmp", config_path);
-        let mut file = fs::File::create(&tmp_path)?;
-        file.write_all(config_content.as_bytes())?;
-        drop(file);
-        fs::rename(&tmp_path, &config_path)?;
+        let mut changed = true;
+        if Path::new(&config_path).exists() {
+            if let Ok(existing) = fs::read_to_string(&config_path) {
+                if existing == config_content {
+                    changed = false;
+                }
+            }
+        }
+
+        if changed {
+            fs::create_dir_all(config_dir)?;
+            let tmp_path = format!("{}.tmp", config_path);
+            let mut file = fs::File::create(&tmp_path)?;
+            file.write_all(config_content.as_bytes())?;
+            drop(file);
+            fs::rename(&tmp_path, &config_path)?;
+        }
 
         let _endpoint_label = lh_registry
             .primary_physical_endpoint()
             .unwrap_or_else(|| "self".to_string());
         // println!(
-        //     "✅ Nebula config written: {} → {} (tun: nebula0, lighthouse_lan: {})",
-        //     node_name, overlay_ip, _endpoint_label
+        //     "✅ Nebula config written: {} → {} (tun: nebula0, lighthouse_lan: {}, changed={})",
+        //     node_name, overlay_ip, _endpoint_label, changed
         // );
-        Ok(())
+        Ok(changed)
     }
 
     fn valid_lighthouse_lan_ip(ip: &str) -> bool {
