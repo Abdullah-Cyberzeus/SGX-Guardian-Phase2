@@ -1,0 +1,215 @@
+================================================================================
+GUARDIAN DEMO ENVIRONMENT SETUP GUIDE
+================================================================================
+
+COMPLETE FILES INCLUDED:
+
+1. modbus_plc_simulator.py (580 lines)
+   - Python-based Modbus TCP PLC simulator
+   - 4 virtual industrial PLCs (injection molding, conveyor, quality)
+   - Realistic behavior simulation (setpoints, sensor values, state management)
+   - Programmable anomaly injection (invalid commands, supply chain implants)
+   - Threading-based simulation loop
+
+2. Dockerfile.modbus
+   - Container definition for Modbus PLC simulator
+   - Python 3.11-slim base
+   - Exposes ports 5020-5023 for 4 PLC instances
+
+3. docker-compose-guardian-demo.yml
+   - Orchestration file for Guardian + Modbus Simulator
+   - Guardian SG-X service (web UI on 8443, API on 5000)
+   - Modbus Simulator service (PLCs on 5020-5023)
+   - Shared Docker network for communication
+   - Health checks and volume management
+
+4. demo_scenario_controller.py (350 lines)
+   - Interactive scenario selection and execution
+   - 5 pre-built demo scenarios:
+     a) Normal Operation (baseline)
+     b) Single Device Anomaly Detection
+     c) Multi-Device Cascade Attack
+     d) Supply Chain Implant Detection
+     e) Insider Threat - Unauthorized Command
+   - Realistic timing and event sequences
+   - Output logging for presentation
+
+5. README_GUARDIAN_DEMO.md (comprehensive guide)
+   - Architecture overview
+   - Getting started (quick start in 5 steps)
+   - Virtual PLC specifications
+   - Detailed scenario descriptions
+   - Guardian monitoring procedures
+   - Demo workflow for presentations
+   - Troubleshooting guide
+
+================================================================================
+QUICK START (5 MINUTES)
+================================================================================
+
+Prerequisites:
+- Docker & Docker Compose installed
+- 2GB+ disk space
+- Ports 8443, 5000, 5020-5023 available
+
+Steps:
+
+1. Copy all files to a directory:
+   mkdir ~/guardian-demo
+   cp * ~/guardian-demo/
+   cd ~/guardian-demo
+
+2. Start containers:
+   docker-compose -f docker-compose-guardian-demo.yml up -d
+
+3. Verify containers running:
+   docker-compose -f docker-compose-guardian-demo.yml ps
+
+4. Open Guardian Web UI:
+   https://localhost:8443
+
+5. Run a demo scenario:
+   docker exec modbus_plc_simulator python3 demo_scenario_controller.py
+   (Select scenario 1-5 or 6 to run all)
+
+================================================================================
+VIRTUAL PLCS INCLUDED
+================================================================================
+
+PLC 1: Injection Molding (Primary)
+  Port: 5020, Setpoint: 250°C (200-300°C valid)
+  
+PLC 2: Injection Molding (Secondary)
+  Port: 5021, Setpoint: 220°C (180-280°C valid)
+  
+PLC 3: Packaging Conveyor
+  Port: 5022, Speed: 50 units (20-100 valid)
+  
+PLC 4: Quality Inspection
+  Port: 5023, Enable: 1 (0-1 binary)
+
+================================================================================
+DEMO SCENARIOS (5 TOTAL)
+================================================================================
+
+Scenario 1: Normal Operation (60 sec)
+  - Baseline behavior, all PLCs operating normally
+  - Shows Guardian passive monitoring capability
+
+Scenario 2: Single Device Anomaly (45 sec)
+  - Unauthorized setpoint change on PLC 1
+  - Guardian detects, validates via Byzantine consensus, quarantines <3 sec
+  - Key: Autonomous response without SOC triage
+
+Scenario 3: Multi-Device Cascade Attack (60 sec)
+  - Coordinated attack across PLC 3 (conveyor) and PLC 4 (quality)
+  - Guardian detects pattern, isolates both, preserves uncompromised devices
+  - Key: Cross-device threat correlation
+
+Scenario 4: Supply Chain Implant Detection (50 sec)
+  - New equipment (compromised during manufacturing) attempts enrollment
+  - Guardian validates TPM 2.0 attestation, detects tampering, denies enrollment
+  - Key: Hardware-rooted trust prevents implants at root
+
+Scenario 5: Insider Threat (55 sec)
+  - Trusted operator with legitimate access attempts invalid command
+  - Guardian blocks command via Byzantine consensus despite trusted source
+  - Key: Device-layer policy overrides trusted credentials
+
+================================================================================
+KEY FEATURES
+================================================================================
+
+✅ 4 Realistic Virtual PLCs
+   - Industrial-grade Modbus TCP protocol
+   - Realistic sensor values and state management
+   - Valid parameter ranges with enforcement
+
+✅ Programmable Anomalies
+   - Invalid setpoints (outside operating ranges)
+   - Unauthorized commands (unauthorized writes)
+   - Protocol violations (protected register access)
+   - Supply chain implants (TPM attestation)
+   - Insider threats (trusted-but-invalid commands)
+
+✅ Live Demonstrations
+   - Run pre-built or custom scenarios
+   - Queue anomalies with precise timing
+   - Stream events to console for audience narration
+   - Guardian responds in real-time
+
+✅ Guardian Integration
+   - Standalone Guardian container included
+   - Web UI for management (https://localhost:8443)
+   - RESTful API for programmatic access
+   - Audit logs for forensic investigation
+
+✅ Presentation Ready
+   - Demo workflow guide for live presentations
+   - Segment-by-segment narrative
+   - Q&A talking points
+   - Metrics to collect post-demo
+
+================================================================================
+TYPICAL PRESENTATION FLOW
+================================================================================
+
+Pre-Demo (10 min before):
+  - Start containers
+  - Verify all 4 PLCs discovered in Guardian
+  - Open Guardian dashboard in browser
+
+During Demo (30-40 min):
+  1. Baseline (2 min): Show all PLCs operating normally
+  2. Single Anomaly (3 min): Run Scenario 2
+  3. Multi-Device Attack (3 min): Run Scenario 3
+  4. Supply Chain (3 min): Run Scenario 4
+  5. Insider Threat (3 min): Run Scenario 5
+  6. Q&A (10-15 min): Review audit logs, discuss deployment
+
+Post-Demo:
+  1. Collect metrics (detection time, response time)
+  2. Review audit trail in Cylenium Cloud
+  3. Discuss phased rollout to customer's plants
+  4. Propose free 2-week passive assessment
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+Containers won't start:
+  docker-compose -f docker-compose-guardian-demo.yml logs
+  Check ports: lsof -i :8443, lsof -i :5020-5023
+
+Guardian not discovering PLCs:
+  docker exec guardian_sg_x nc -zv modbus_plc_simulator 5020
+  docker logs modbus_plc_simulator | tail -20
+
+Anomalies not triggering:
+  docker logs modbus_plc_simulator | grep ANOMALY
+  Check scenario controller output
+
+Clean rebuild:
+  docker-compose -f docker-compose-guardian-demo.yml down --volumes
+  docker system prune -a
+  docker-compose -f docker-compose-guardian-demo.yml up -d --build
+
+================================================================================
+NEXT STEPS
+================================================================================
+
+1. Run through Scenario 2 (Single Anomaly) to verify everything works
+2. Customize anomaly injection for your specific threats
+3. Integrate with actual Guardian deployment for A/B testing
+4. Collect metrics on detection latency and false positive rates
+5. Use as reference architecture for customer proof-of-concepts
+
+================================================================================
+CONTACT & SUPPORT
+================================================================================
+
+For custom scenarios, Guardian integration, or presentation questions:
+Contact Cervais Security Team
+
+================================================================================
+Guardian + Cylenium Cloud: Device-layer security that scales.

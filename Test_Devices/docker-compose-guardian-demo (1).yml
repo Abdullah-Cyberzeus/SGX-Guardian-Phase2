@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  # Guardian SG-X (simplified - assumes Guardian image exists)
+  guardian:
+    image: cervais/guardian:latest
+    container_name: guardian_sg_x
+    ports:
+      - "8443:8443"  # Guardian Web UI
+      - "5000:5000"  # Guardian API
+    environment:
+      GUARDIAN_MODE: "edge"
+      GUARDIAN_DEVICE_NAME: "Guardian_Demo_Device"
+    networks:
+      - guardian_network
+    volumes:
+      - guardian_data:/opt/guardian/data
+    depends_on:
+      - modbus_plc_simulator
+
+  # Modbus TCP PLC Simulator
+  modbus_plc_simulator:
+    build:
+      context: .
+      dockerfile: Dockerfile.modbus
+    container_name: modbus_plc_simulator
+    ports:
+      - "5020:5020"  # PLC 1: Injection_Molding_PLC_1
+      - "5021:5021"  # PLC 2: Injection_Molding_PLC_2
+      - "5022:5022"  # PLC 3: Packaging_Conveyor_PLC
+      - "5023:5023"  # PLC 4: Quality_Inspection_PLC
+    networks:
+      - guardian_network
+    environment:
+      LOG_LEVEL: "INFO"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('localhost', 5020), timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+networks:
+  guardian_network:
+    driver: bridge
+
+volumes:
+  guardian_data:

@@ -119,9 +119,16 @@ impl Blocker {
         // This catches IPs that pass the config-level CIDR exempts but are still
         // system-critical (e.g. board IP changed, gateway changed since last deploy).
         if let Ok(ip) = alert.src_ip.parse::<IpAddr>() {
+            // Fast-path: IPv6 link-local (fe80::/10) — always local, never block, no log.
+            if let IpAddr::V6(v6) = ip {
+                if (v6.segments()[0] & 0xffc0) == 0xfe80 {
+                    return Ok(false);
+                }
+            }
+
             let protected_nets = collect_protected_networks().await;
             if protected_nets.iter().any(|net| net.contains(&ip)) {
-                tracing::warn!(
+                tracing::debug!(
                     ip = %alert.src_ip,
                     sid = alert.signature_id,
                     "suppressed block: IP is within a local interface subnet"
@@ -181,6 +188,16 @@ impl Blocker {
             .parse::<std::net::IpAddr>()
             .map_err(|_| ThreatError::InvalidCidr(ip.into()))?;
         let ip = ip_addr.to_string();
+
+        // Fast-path: IPv6 link-local never needs blocking.
+        if let IpAddr::V6(v6) = ip_addr {
+            if (v6.segments()[0] & 0xffc0) == 0xfe80 {
+                return Ok(BlockAttempt {
+                    blocked: false,
+                    reason: Some(format!("{} is IPv6 link-local", ip)),
+                });
+            }
+        }
 
         let protected_nets = collect_protected_networks().await;
         if protected_nets.iter().any(|net| net.contains(&ip_addr)) {

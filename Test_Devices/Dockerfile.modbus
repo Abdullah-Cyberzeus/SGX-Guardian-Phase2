@@ -1,0 +1,15 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+RUN pip install --no-cache-dir pymodbus==3.5.0
+
+# Copy simulator script
+COPY modbus_plc_simulator.py /app/modbus_plc_simulator.py
+
+# Expose Modbus ports (devices 1-4)
+EXPOSE 5020 5021 5022 5023
+
+# Run simulator
+CMD ["python3", "modbus_plc_simulator.py"]
