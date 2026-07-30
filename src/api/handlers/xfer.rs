@@ -1,5 +1,7 @@
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
+use crate::vault::namespace::validate_vault_id;
+use crate::vault::{persistence as vault_persistence, VaultConfig};
 use crate::xfer::errors::XferError;
 use crate::xfer::store::{self, ReceiverState, SenderProgress};
 use axum::{
@@ -13,7 +15,8 @@ use std::sync::Arc;
 #[derive(Debug, Deserialize)]
 pub struct SendRequest {
     pub peer_did: String,
-    pub path: String,
+    pub path: Option<String>,
+    pub vault_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -72,24 +75,75 @@ pub async fn send(
     State(state): State<Arc<AppState>>,
     Json(body): Json<SendRequest>,
 ) -> Result<Json<SendResponse>, ApiError> {
+    let config = crate::xfer::XferConfig::from_env();
     let peer_did = body.peer_did.trim();
     if peer_did.is_empty() {
         return Err(ApiError::BadRequest(
             "peer_did must not be empty".to_string(),
         ));
     }
-    let path = body.path.trim();
-    if path.is_empty() {
-        return Err(ApiError::BadRequest("path must not be empty".to_string()));
-    }
-    let transfer_id = crate::xfer::engine::send_file(
-        state.node_id.clone(),
-        crate::xfer::XferConfig::from_env(),
-        peer_did.to_string(),
-        PathBuf::from(path),
-    )
-    .await
-    .map_err(map_xfer_error)?;
+    let transfer_id = match (body.path, body.vault_id) {
+        (Some(path), None) => {
+            let path = path.trim();
+            if path.is_empty() {
+                return Err(ApiError::BadRequest("path must not be empty".to_string()));
+            }
+            let metadata = tokio::fs::metadata(path).await.map_err(|error| {
+                if error.kind() == std::io::ErrorKind::NotFound {
+                    ApiError::BadRequest(error.to_string())
+                } else {
+                    ApiError::Internal(error.to_string())
+                }
+            })?;
+            if !metadata.is_file() {
+                return Err(ApiError::BadRequest(
+                    "path must reference a regular file".to_string(),
+                ));
+            }
+            if metadata.len() > config.max_file_bytes {
+                return Err(ApiError::PayloadTooLarge(format!(
+                    "file too large: {} > {}",
+                    metadata.len(),
+                    config.max_file_bytes
+                )));
+            }
+            crate::xfer::engine::send_file(
+                state.node_id.clone(),
+                config,
+                peer_did.to_string(),
+                PathBuf::from(path),
+            )
+            .await
+            .map_err(map_xfer_error)?
+        }
+        (None, Some(vault_id)) => {
+            let vault_id = validate_vault_id(vault_id.trim())
+                .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+            let record = vault_persistence::find_record(&VaultConfig::from_env(), &vault_id)
+                .await
+                .map_err(|error| ApiError::Internal(error.to_string()))?
+                .ok_or_else(|| ApiError::NotFound(format!("vault file not found: {}", vault_id)))?;
+            if record.size_plain > config.max_file_bytes {
+                return Err(ApiError::PayloadTooLarge(format!(
+                    "file too large: {} > {}",
+                    record.size_plain, config.max_file_bytes
+                )));
+            }
+            crate::xfer::engine::send_vault_record(
+                state.node_id.clone(),
+                config,
+                peer_did.to_string(),
+                vault_id,
+            )
+            .await
+            .map_err(map_xfer_error)?
+        }
+        (Some(_), Some(_)) | (None, None) => {
+            return Err(ApiError::BadRequest(
+                "exactly one of path or vault_id must be provided".to_string(),
+            ))
+        }
+    };
     Ok(Json(SendResponse {
         status: "accepted".to_string(),
         transfer_id,
@@ -216,11 +270,13 @@ fn receiver_summary(state: ReceiverState) -> TransferSummary {
 
 fn map_xfer_error(error: XferError) -> ApiError {
     match error {
-        XferError::TransferNotFound(message) => ApiError::NotFound(message),
+        XferError::SourceNotFound(message) | XferError::TransferNotFound(message) => {
+            ApiError::NotFound(message)
+        }
         XferError::PeerNotFound(message) => ApiError::BadRequest(message),
         XferError::InvalidStructure(message) => ApiError::BadRequest(message),
         XferError::FileTooLarge { size, max } => {
-            ApiError::BadRequest(format!("file too large: {} > {}", size, max))
+            ApiError::PayloadTooLarge(format!("file too large: {} > {}", size, max))
         }
         XferError::RevokedPeer(message) => ApiError::Forbidden(message),
         XferError::Conflict(message) | XferError::Cancelled(message) => ApiError::Conflict(message),

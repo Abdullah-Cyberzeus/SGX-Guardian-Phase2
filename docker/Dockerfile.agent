@@ -22,7 +22,7 @@ WORKDIR /src
 COPY . .
 
 # Keep the workspace contract aligned with CI and scripts/build.sh.
-RUN cargo build --release --workspace --locked
+RUN cargo build --release --workspace --locked --features tpm
 
 # =============================================================================
 # Nebula is fetched per-TARGETARCH (not vendored) so the same Dockerfile is
@@ -73,8 +73,17 @@ FROM ${RUNTIME_IMAGE} AS runtime
 # ca-certificates : outbound TLS trust
 # curl            : healthchecks + in-container smoke tests
 # nmap            : discovery scheduler/API shell out to it at runtime
+# tpm2-tools      : TPM diagnostics and runtime verification
+# libtss2-*       : TPM2 TSS runtime libraries and device TCTI support
 RUN apt-get update && apt-get install -y --no-install-recommends \
         nftables ca-certificates procps iproute2 curl nmap \
+        tpm2-tools \
+        libtss2-esys-3.0.2-0 \
+        libtss2-tcti-device0 \
+        libtss2-tctildr0 \
+        libtss2-mu0 \
+        libtss2-rc0 \
+        libtss2-sys1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Nebula fetched + checksum + ELF-arch verified per TARGETARCH in nebula-fetch (see above).

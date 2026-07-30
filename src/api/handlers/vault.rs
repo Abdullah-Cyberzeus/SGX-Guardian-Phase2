@@ -63,6 +63,13 @@ pub struct VaultNamespaceQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct VaultFolderListQuery {
+    pub namespace: Option<String>,
+    pub circle_id: Option<String>,
+    pub parent_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct VaultDeleteFolderQuery {
     pub ns: Option<String>,
     pub recursive: Option<bool>,
@@ -158,6 +165,22 @@ pub struct VaultUploadResponse {
 pub struct VaultActionResponse {
     pub success: bool,
     pub message: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct VaultFolderEntry {
+    pub folder_id: String,
+    pub parent_id: String,
+    pub name: String,
+    pub namespace: String,
+    pub circle_id: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct VaultFolderListResponse {
+    pub count: usize,
+    pub folders: Vec<VaultFolderEntry>,
 }
 
 #[derive(Debug, Serialize)]
@@ -539,6 +562,89 @@ pub async fn create_folder(
     );
 
     Ok(Json(folder))
+}
+
+pub async fn list_folders(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<VaultFolderListQuery>,
+) -> Result<Json<VaultFolderListResponse>, ApiError> {
+    let config = VaultConfig::from_env();
+    let namespace_filter =
+        optional_namespace(query.namespace.as_deref(), query.circle_id.as_deref())?;
+    let parent_filter = query
+        .parent_id
+        .as_deref()
+        .map(validate_folder_id)
+        .transpose()
+        .map_err(map_vault_error)?;
+
+    let namespaces = if let Some(namespace) = namespace_filter.clone() {
+        vec![namespace]
+    } else {
+        folders::list_namespaces(&config)
+            .await
+            .map_err(map_vault_error)?
+    };
+
+    let mut found_parent = parent_filter
+        .as_ref()
+        .map(|parent_id| parent_id.is_empty())
+        .unwrap_or(false);
+    let mut entries = Vec::new();
+
+    for namespace in namespaces {
+        let namespace_key = namespace.storage_key();
+        let index = folders::load_index(&config, &namespace, &state.node_id)
+            .await
+            .map_err(map_vault_error)?;
+        if let Some(parent_id) = parent_filter.as_deref() {
+            if !parent_id.is_empty() && index.contains_folder(parent_id) {
+                found_parent = true;
+            }
+        }
+        for folder in index.folders {
+            if parent_filter
+                .as_ref()
+                .is_some_and(|parent_id| folder.parent_id != *parent_id)
+            {
+                continue;
+            }
+            entries.push(VaultFolderEntry {
+                folder_id: folder.folder_id,
+                parent_id: folder.parent_id,
+                name: folder.name,
+                namespace: namespace_key.clone(),
+                circle_id: if namespace.is_personal() {
+                    String::new()
+                } else {
+                    namespace_key.clone()
+                },
+                created_at: folder.created_at,
+            });
+        }
+    }
+
+    if let Some(parent_id) = parent_filter {
+        if !parent_id.is_empty() && !found_parent {
+            return Err(ApiError::NotFound(format!(
+                "folder not found: {}",
+                parent_id
+            )));
+        }
+    }
+
+    entries.sort_by(|left, right| {
+        namespace_sort_key(&left.namespace)
+            .cmp(&namespace_sort_key(&right.namespace))
+            .then_with(|| left.parent_id.cmp(&right.parent_id))
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+            .then_with(|| left.folder_id.cmp(&right.folder_id))
+    });
+
+    Ok(Json(VaultFolderListResponse {
+        count: entries.len(),
+        folders: entries,
+    }))
 }
 
 pub async fn rename_or_move_folder(

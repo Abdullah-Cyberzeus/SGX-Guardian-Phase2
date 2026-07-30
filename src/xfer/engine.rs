@@ -15,18 +15,20 @@ use crate::audit::logger::log_audit;
 use crate::crl::gossip::engine::{active_gossip_peers, did_record_path, GossipPeer};
 use crate::did::{DidRecord, Resolver};
 use crate::key_manager::KeyManager;
+use crate::vault::namespace::validate_vault_id;
 use base64::{engine::general_purpose, Engine as _};
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
+use uuid::Uuid;
 
 static TRANSFERS_SENT: AtomicU64 = AtomicU64::new(0);
 static TRANSFERS_RECEIVED: AtomicU64 = AtomicU64::new(0);
@@ -52,6 +54,19 @@ struct PreparedTransfer {
     peer: GossipPeer,
     manifest: FileManifest,
     file_path: PathBuf,
+    staged_plaintext: Option<StagedPlaintext>,
+}
+
+#[derive(Debug, Clone)]
+struct StagedPlaintext {
+    dir_path: PathBuf,
+    file_path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub enum SendSource {
+    Path(PathBuf),
+    VaultId(String),
 }
 
 pub fn transfers_sent() -> u64 {
@@ -91,12 +106,30 @@ pub async fn send_file(
     peer_did: String,
     path: PathBuf,
 ) -> Result<String, XferError> {
+    send_source(node_id, config, peer_did, SendSource::Path(path)).await
+}
+
+pub async fn send_vault_record(
+    node_id: String,
+    config: XferConfig,
+    peer_did: String,
+    vault_id: String,
+) -> Result<String, XferError> {
+    send_source(node_id, config, peer_did, SendSource::VaultId(vault_id)).await
+}
+
+pub async fn send_source(
+    node_id: String,
+    config: XferConfig,
+    peer_did: String,
+    source: SendSource,
+) -> Result<String, XferError> {
     if !config.enabled {
         return Err(XferError::Conflict(
             "file transfer is disabled via SGX_XFER_ENABLED".to_string(),
         ));
     }
-    let prepared = prepare_outbound(&node_id, &peer_did, &path, &config).await?;
+    let prepared = prepare_outbound_from_source(&node_id, &peer_did, source, &config).await?;
     let transfer_id = prepared.manifest.transfer_id.clone();
     if ACTIVE_SENDS.contains_key(&transfer_id) {
         return Err(XferError::Conflict(format!(
@@ -162,10 +195,10 @@ pub async fn cancel_transfer(transfer_id: &str) -> Result<bool, XferError> {
     Ok(found)
 }
 
-async fn prepare_outbound(
+async fn prepare_outbound_from_source(
     node_id: &str,
     peer_did: &str,
-    path: &Path,
+    source: SendSource,
     config: &XferConfig,
 ) -> Result<PreparedTransfer, XferError> {
     let (record, km, circle_id) = load_identity(node_id)?;
@@ -173,30 +206,155 @@ async fn prepare_outbound(
         .into_iter()
         .find(|peer| peer.did == peer_did)
         .ok_or_else(|| XferError::PeerNotFound(peer_did.to_string()))?;
-    let path = path.to_path_buf();
-    if path.as_os_str().is_empty() {
-        return Err(XferError::InvalidStructure(
-            "file path must not be empty".to_string(),
-        ));
-    }
     let chunk_bytes = config.chunk_bytes;
     let max_file_bytes = config.max_file_bytes;
-    let inspect_path = path.clone();
-    let material = tokio::task::spawn_blocking(move || {
-        inspect_file_blocking(inspect_path, chunk_bytes, max_file_bytes)
-    })
-    .await
-    .map_err(|error| XferError::InvalidStructure(format!("inspect file task: {}", error)))??;
+    let (path, file_path_display, material, staged_plaintext) =
+        prepare_outbound_material(source, chunk_bytes, max_file_bytes).await?;
     let vm_ref = format!("{}#dkp-v{}", record.did, record.current_dkp_version.max(1));
     let manifest =
         FileManifest::build_signed(&circle_id, &record.did, material, chunk_bytes, &km, &vm_ref)?;
-    store::create_outbox(peer_did, &path, &manifest).await?;
+    let create_result = store::create_outbox(peer_did, &file_path_display, &manifest).await;
+    if let Err(error) = create_result {
+        if let Some(staged_plaintext) = &staged_plaintext {
+            let _ = cleanup_outbound_staging(staged_plaintext).await;
+        }
+        return Err(error);
+    }
     Ok(PreparedTransfer {
         node_id: node_id.to_string(),
         peer,
         manifest,
         file_path: path,
+        staged_plaintext,
     })
+}
+
+async fn prepare_outbound_material(
+    source: SendSource,
+    chunk_bytes: u32,
+    max_file_bytes: u64,
+) -> Result<
+    (
+        PathBuf,
+        String,
+        crate::xfer::manifest::FileMaterial,
+        Option<StagedPlaintext>,
+    ),
+    XferError,
+> {
+    match source {
+        SendSource::Path(path) => {
+            if path.as_os_str().is_empty() {
+                return Err(XferError::InvalidStructure(
+                    "file path must not be empty".to_string(),
+                ));
+            }
+            let inspect_path = path.clone();
+            let material = tokio::task::spawn_blocking(move || {
+                inspect_file_blocking(inspect_path, chunk_bytes, max_file_bytes)
+            })
+            .await
+            .map_err(|error| {
+                XferError::InvalidStructure(format!("inspect file task: {}", error))
+            })??;
+            let file_path_display = path.display().to_string();
+            Ok((path, file_path_display, material, None))
+        }
+        SendSource::VaultId(vault_id) => {
+            let staged_plaintext = stage_vault_record(&vault_id, max_file_bytes).await?;
+            let inspect_path = staged_plaintext.file_path.clone();
+            let material_result = tokio::task::spawn_blocking(move || {
+                inspect_file_blocking(inspect_path, chunk_bytes, max_file_bytes)
+            })
+            .await
+            .map_err(|error| XferError::InvalidStructure(format!("inspect file task: {}", error)));
+            let material = match material_result {
+                Ok(Ok(material)) => material,
+                Ok(Err(error)) => {
+                    let _ = cleanup_outbound_staging(&staged_plaintext).await;
+                    return Err(error);
+                }
+                Err(error) => {
+                    let _ = cleanup_outbound_staging(&staged_plaintext).await;
+                    return Err(error);
+                }
+            };
+            Ok((
+                staged_plaintext.file_path.clone(),
+                format!("vault:{}", vault_id),
+                material,
+                Some(staged_plaintext),
+            ))
+        }
+    }
+}
+
+async fn stage_vault_record(
+    vault_id: &str,
+    max_file_bytes: u64,
+) -> Result<StagedPlaintext, XferError> {
+    let vault_id = validate_vault_id(vault_id)
+        .map_err(|error| XferError::InvalidStructure(error.to_string()))?;
+    let config = crate::vault::VaultConfig::from_env();
+    let record = crate::vault::persistence::find_record(&config, &vault_id)
+        .await
+        .map_err(map_vault_error)?
+        .ok_or_else(|| XferError::SourceNotFound(format!("vault file not found: {}", vault_id)))?;
+    if record.size_plain > max_file_bytes {
+        return Err(XferError::FileTooLarge {
+            size: record.size_plain,
+            max: max_file_bytes,
+        });
+    }
+
+    let staging_id = format!("vault-send-{}", Uuid::new_v4());
+    let dir_path = persistence::create_secure_staging_dir(&staging_id).await?;
+    let file_path = dir_path.join(crate::xfer::manifest::safe_manifest_name(&record.filename));
+    if let Err(error) = crate::vault::ingest::decrypt_record_to_path(&record, &file_path)
+        .await
+        .map_err(map_vault_error)
+    {
+        let staged_plaintext = StagedPlaintext {
+            dir_path,
+            file_path,
+        };
+        let _ = cleanup_outbound_staging(&staged_plaintext).await;
+        return Err(error);
+    }
+
+    Ok(StagedPlaintext {
+        dir_path,
+        file_path,
+    })
+}
+
+async fn cleanup_outbound_staging(staged_plaintext: &StagedPlaintext) -> Result<(), XferError> {
+    if let Err(error) = crate::vault::ingest::cleanup_plaintext(&staged_plaintext.file_path).await {
+        if !matches!(error, crate::vault::VaultError::Io(ref io) if io.kind() == std::io::ErrorKind::NotFound)
+        {
+            return Err(map_vault_error(error));
+        }
+    }
+    match tokio::fs::remove_dir_all(&staged_plaintext.dir_path).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn map_vault_error(error: crate::vault::VaultError) -> XferError {
+    match error {
+        crate::vault::VaultError::NotFound(message) => XferError::SourceNotFound(message),
+        crate::vault::VaultError::InvalidStructure(message) => XferError::InvalidStructure(message),
+        crate::vault::VaultError::Conflict(message) => XferError::Conflict(message),
+        crate::vault::VaultError::Integrity { expected, got } => {
+            XferError::HashMismatch { expected, got }
+        }
+        crate::vault::VaultError::Io(io) if io.kind() == std::io::ErrorKind::NotFound => {
+            XferError::SourceNotFound(io.to_string())
+        }
+        other => XferError::Conflict(other.to_string()),
+    }
 }
 
 async fn run_outbound(
@@ -223,7 +381,29 @@ async fn run_outbound(
     let (read_half, mut write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
 
-    run_outbound_stream(prepared, &mut reader, &mut write_half, cancel_flag).await
+    run_outbound_stream_with_cleanup(prepared, &mut reader, &mut write_half, cancel_flag).await
+}
+
+async fn run_outbound_stream_with_cleanup<R, W>(
+    prepared: PreparedTransfer,
+    reader: &mut BufReader<R>,
+    writer: &mut W,
+    cancel_flag: Arc<AtomicBool>,
+) -> Result<(), XferError>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let staged_plaintext = prepared.staged_plaintext.clone();
+    let outcome = run_outbound_stream(prepared, reader, writer, cancel_flag).await;
+    if let Some(staged_plaintext) = staged_plaintext {
+        match cleanup_outbound_staging(&staged_plaintext).await {
+            Ok(()) => outcome,
+            Err(cleanup_error) => outcome.and(Err(cleanup_error)),
+        }
+    } else {
+        outcome
+    }
 }
 
 async fn run_outbound_stream<R, W>(
@@ -1395,7 +1575,7 @@ mod tests {
             &format!("{}#dkp-v1", sender.did),
         )
         .expect("build manifest");
-        store::create_outbox(&receiver.did, &file_path, &manifest)
+        store::create_outbox(&receiver.did, &file_path.display().to_string(), &manifest)
             .await
             .expect("create outbox");
         PreparedTransfer {
@@ -1407,11 +1587,39 @@ mod tests {
             },
             manifest,
             file_path,
+            staged_plaintext: None,
         }
     }
 
     fn test_payload(len: usize) -> Vec<u8> {
         (0..len).map(|index| (index % 251) as u8).collect()
+    }
+
+    async fn create_sender_vault_record(
+        temp: &TempDir,
+        sender: &TestIdentity,
+        filename: &str,
+        payload: &[u8],
+    ) -> crate::vault::VaultRecord {
+        let path = temp.path().join(format!("vault-source-{}", filename));
+        tokio::fs::write(&path, payload)
+            .await
+            .expect("write vault source");
+        crate::vault::ingest::ingest_upload_file(
+            crate::vault::VaultNamespace::Personal,
+            &sender.did,
+            &path,
+            crate::vault::ingest::IngestMeta {
+                filename: filename.to_string(),
+                mime: crate::vault::ingest::infer_mime(filename),
+                sha256_plain: hex::encode(sha2::Sha256::digest(payload)),
+                size_plain: payload.len() as u64,
+                chunk_bytes: crate::vault::VaultConfig::DEFAULT_CHUNK_BYTES,
+            },
+            String::new(),
+        )
+        .await
+        .expect("store sender vault record")
     }
 
     #[tokio::test]
@@ -1757,6 +1965,325 @@ mod tests {
                 .await
                 .expect("load manifest")
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn xfer_vault_source_transfer_completes_and_preserves_sender_record() {
+        let _env_lock = crate::xfer::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let sender = make_identity(&temp, "nodeA", 0x77, "127.0.0.1");
+        let receiver = make_identity(&temp, "nodeB", 0x88, "127.0.0.1");
+        let _env = configure_receiver_env(&temp, &receiver, &sender);
+        let payload = test_payload(12 * 1024);
+        let sender_record =
+            create_sender_vault_record(&temp, &sender, "vault-send.bin", &payload).await;
+        let sender_record_before = sender_record.clone();
+        let vault_config = crate::vault::VaultConfig::from_env();
+        let sender_blob_path =
+            crate::vault::persistence::record_blob_path(&vault_config, &sender_record);
+        let sender_blob_before = tokio::fs::read(&sender_blob_path)
+            .await
+            .expect("read sender blob");
+
+        let staged_plaintext = stage_vault_record(
+            &sender_record.vault_id,
+            crate::xfer::MAX_TRANSFER_FILE_BYTES,
+        )
+        .await
+        .expect("stage sender vault record");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let dir_mode = tokio::fs::metadata(&staged_plaintext.dir_path)
+                .await
+                .expect("staging dir metadata")
+                .permissions()
+                .mode()
+                & 0o777;
+            let file_mode = tokio::fs::metadata(&staged_plaintext.file_path)
+                .await
+                .expect("staging file metadata")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(dir_mode, 0o700);
+            assert_eq!(file_mode, 0o600);
+        }
+
+        let material = inspect_file_blocking(
+            staged_plaintext.file_path.clone(),
+            1024,
+            crate::xfer::MAX_TRANSFER_FILE_BYTES,
+        )
+        .expect("inspect staged plaintext");
+        let manifest = FileManifest::build_signed(
+            crate::crl::issue::DEFAULT_CIRCLE_ID,
+            &sender.did,
+            material,
+            1024,
+            &sender.km,
+            &format!("{}#dkp-v1", sender.did),
+        )
+        .expect("build manifest");
+        store::create_outbox(
+            &receiver.did,
+            &format!("vault:{}", sender_record.vault_id),
+            &manifest,
+        )
+        .await
+        .expect("create outbox");
+        let prepared = PreparedTransfer {
+            node_id: "nodeA".into(),
+            peer: GossipPeer {
+                did: receiver.did.clone(),
+                node_name: "nodeB".into(),
+                overlay_ip: "127.0.0.1".into(),
+            },
+            manifest: manifest.clone(),
+            file_path: staged_plaintext.file_path.clone(),
+            staged_plaintext: Some(staged_plaintext.clone()),
+        };
+
+        let (sender_stream, receiver_stream) = tokio::io::duplex(1 << 20);
+        let receiver_task = spawn_receiver(receiver_stream);
+        let (sender_read, sender_write) = tokio::io::split(sender_stream);
+        let mut sender_reader = BufReader::new(sender_read);
+        let mut sender_writer = sender_write;
+
+        run_outbound_stream_with_cleanup(
+            prepared,
+            &mut sender_reader,
+            &mut sender_writer,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+        .expect("vault source transfer should complete");
+        receiver_task
+            .await
+            .expect("receiver join")
+            .expect("receiver result");
+
+        assert!(
+            !tokio::fs::try_exists(&staged_plaintext.dir_path)
+                .await
+                .expect("check staging dir"),
+            "sender staging directory should be removed"
+        );
+
+        let sender_record_after =
+            crate::vault::persistence::find_record(&vault_config, &sender_record.vault_id)
+                .await
+                .expect("find sender record")
+                .expect("sender record exists");
+        assert_eq!(sender_record_after, sender_record_before);
+        assert_eq!(
+            tokio::fs::read(&sender_blob_path)
+                .await
+                .expect("read sender blob after"),
+            sender_blob_before
+        );
+
+        let receiver_state = store::load_receiver_state(&manifest.circle_id, &manifest.transfer_id)
+            .await
+            .expect("load receiver state")
+            .expect("receiver state");
+        let receiver_vault_id = receiver_state.vault_id.expect("receiver vault id");
+        assert_ne!(receiver_vault_id, sender_record.vault_id);
+
+        let receiver_record =
+            crate::vault::persistence::find_record(&vault_config, &receiver_vault_id)
+                .await
+                .expect("find receiver record")
+                .expect("receiver vault record");
+        let decrypted = crate::vault::ingest::decrypt_record_to_temp(&receiver_record)
+            .await
+            .expect("decrypt receiver record");
+        assert_eq!(
+            tokio::fs::read(&decrypted)
+                .await
+                .expect("read receiver payload"),
+            payload
+        );
+    }
+
+    #[tokio::test]
+    async fn xfer_vault_source_cleanup_runs_when_receiver_rejects() {
+        let _env_lock = crate::xfer::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let sender = make_identity(&temp, "nodeA", 0x79, "127.0.0.1");
+        let receiver = make_identity(&temp, "nodeB", 0x8A, "127.0.0.1");
+        let _env = configure_receiver_env(&temp, &receiver, &sender);
+        let payload = test_payload(4 * 1024);
+        let sender_record =
+            create_sender_vault_record(&temp, &sender, "vault-reject.bin", &payload).await;
+        let staged_plaintext = stage_vault_record(
+            &sender_record.vault_id,
+            crate::xfer::MAX_TRANSFER_FILE_BYTES,
+        )
+        .await
+        .expect("stage sender vault record");
+        let material = inspect_file_blocking(
+            staged_plaintext.file_path.clone(),
+            1024,
+            crate::xfer::MAX_TRANSFER_FILE_BYTES,
+        )
+        .expect("inspect staged plaintext");
+        let manifest = FileManifest::build_signed(
+            crate::crl::issue::DEFAULT_CIRCLE_ID,
+            &sender.did,
+            material,
+            1024,
+            &sender.km,
+            &format!("{}#dkp-v1", sender.did),
+        )
+        .expect("build manifest");
+        store::create_outbox(
+            &receiver.did,
+            &format!("vault:{}", sender_record.vault_id),
+            &manifest,
+        )
+        .await
+        .expect("create outbox");
+        let prepared = PreparedTransfer {
+            node_id: "nodeA".into(),
+            peer: GossipPeer {
+                did: receiver.did.clone(),
+                node_name: "nodeB".into(),
+                overlay_ip: "127.0.0.1".into(),
+            },
+            manifest: manifest.clone(),
+            file_path: staged_plaintext.file_path.clone(),
+            staged_plaintext: Some(staged_plaintext.clone()),
+        };
+
+        let (sender_stream, peer_stream) = tokio::io::duplex(1 << 20);
+        let peer_did = receiver.did.clone();
+        let reject_task = tokio::spawn(async move {
+            let (read_half, mut write_half) = tokio::io::split(peer_stream);
+            let mut reader = BufReader::new(read_half);
+            let line = protocol::read_json_line(&mut reader)
+                .await
+                .expect("read offer");
+            let offer: XferOffer = serde_json::from_str(line.trim()).expect("decode offer");
+            let reject = XferAccept {
+                kind: KIND_ACCEPT.to_string(),
+                circle_id: offer.circle_id,
+                sender_did: peer_did,
+                transfer_id: offer.manifest.transfer_id,
+                accept: false,
+                have_chunks: Vec::new(),
+                error: Some("vault quota exceeded".to_string()),
+            };
+            protocol::write_json_line(&mut write_half, &reject)
+                .await
+                .expect("write reject");
+        });
+        let (sender_read, sender_write) = tokio::io::split(sender_stream);
+        let mut sender_reader = BufReader::new(sender_read);
+        let mut sender_writer = sender_write;
+
+        let error = run_outbound_stream_with_cleanup(
+            prepared,
+            &mut sender_reader,
+            &mut sender_writer,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+        .expect_err("transfer should be rejected");
+        assert!(error.to_string().contains("vault quota exceeded"));
+        reject_task.await.expect("reject task join");
+
+        assert!(
+            !tokio::fs::try_exists(&staged_plaintext.dir_path)
+                .await
+                .expect("check staging dir"),
+            "sender staging directory should be removed after rejection"
+        );
+    }
+
+    #[tokio::test]
+    async fn xfer_size_limit_accepts_exact_50_mib_and_rejects_oversize_sources() {
+        let _env_lock = crate::xfer::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let sender = make_identity(&temp, "nodeA", 0x7B, "127.0.0.1");
+        let receiver = make_identity(&temp, "nodeB", 0x8C, "127.0.0.1");
+        let _env = configure_receiver_env(&temp, &receiver, &sender);
+        let limit = crate::xfer::MAX_TRANSFER_FILE_BYTES;
+
+        let exact_path = temp.path().join("exact-50mib.bin");
+        std::fs::File::create(&exact_path)
+            .expect("create exact file")
+            .set_len(limit)
+            .expect("size exact file");
+        let (_path, _display, material, staged) =
+            prepare_outbound_material(SendSource::Path(exact_path), 524_288, limit)
+                .await
+                .expect("exact 50 MiB path source should be accepted");
+        assert_eq!(material.size, limit);
+        assert!(staged.is_none());
+
+        let oversize_path = temp.path().join("oversize-path.bin");
+        std::fs::File::create(&oversize_path)
+            .expect("create oversize file")
+            .set_len(limit + 1)
+            .expect("size oversize file");
+        let error = prepare_outbound_material(SendSource::Path(oversize_path), 524_288, limit)
+            .await
+            .expect_err("oversize path source must be rejected");
+        assert!(matches!(
+            error,
+            XferError::FileTooLarge {
+                size,
+                max
+            } if size == limit + 1 && max == limit
+        ));
+
+        let oversize_record = crate::vault::VaultRecord {
+            vault_id: format!("urn:uuid:{}", Uuid::new_v4()),
+            namespace: crate::vault::VaultNamespace::PERSONAL_STORAGE_KEY.to_string(),
+            circle_id: String::new(),
+            filename: "oversize-vault.bin".into(),
+            mime: "application/octet-stream".into(),
+            size_plain: limit + 1,
+            size_cipher: 1,
+            sha256_plain: "aa".repeat(32),
+            sender_did: sender.did.clone(),
+            received_at: chrono::Utc::now().to_rfc3339(),
+            source: crate::vault::VaultSource::Upload,
+            folder_id: String::new(),
+            starred: false,
+            enc: crate::vault::EncMeta {
+                algo: "AES-256-GCM/STREAM-BE32".into(),
+                chunk_bytes: crate::vault::VaultConfig::DEFAULT_CHUNK_BYTES,
+                base_nonce_b64: "bm9uY2VwcmU=".into(),
+                wrapped_dek_b64: "d3JhcHBlZA==".into(),
+                wrap_scheme: "software-hkdf".into(),
+                wrap_key_id: "software-master-v1".into(),
+            },
+        };
+        crate::vault::persistence::save_record(
+            &crate::vault::VaultConfig::from_env(),
+            &oversize_record,
+        )
+        .await
+        .expect("save oversize vault record");
+        let error = stage_vault_record(&oversize_record.vault_id, limit)
+            .await
+            .expect_err("oversize vault source must be rejected");
+        assert!(matches!(
+            error,
+            XferError::FileTooLarge {
+                size,
+                max
+            } if size == limit + 1 && max == limit
+        ));
+        assert!(
+            !tokio::fs::try_exists(&crate::xfer::persistence::staging_dir())
+                .await
+                .expect("check staging base"),
+            "oversize vault records should be rejected before staging"
         );
     }
 }

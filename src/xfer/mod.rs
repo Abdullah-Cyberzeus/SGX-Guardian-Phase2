@@ -12,6 +12,8 @@ pub mod verify;
 #[path = "tests/mod.rs"]
 mod tests;
 
+pub const MAX_TRANSFER_FILE_BYTES: u64 = 52_428_800;
+
 #[cfg(test)]
 static TEST_ENV_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
 
@@ -35,7 +37,7 @@ pub struct XferConfig {
 impl XferConfig {
     pub const DEFAULT_PORT: u16 = 50064;
     pub const DEFAULT_CHUNK_BYTES: u32 = 262_144;
-    pub const DEFAULT_MAX_FILE_BYTES: u64 = 104_857_600;
+    pub const DEFAULT_MAX_FILE_BYTES: u64 = MAX_TRANSFER_FILE_BYTES;
 
     pub fn from_env() -> Self {
         Self {
@@ -73,6 +75,7 @@ pub(crate) fn parse_max_file_bytes(raw: Option<String>) -> u64 {
     raw.and_then(|value| value.trim().parse::<u64>().ok())
         .filter(|size| *size > 0)
         .unwrap_or(XferConfig::DEFAULT_MAX_FILE_BYTES)
+        .min(MAX_TRANSFER_FILE_BYTES)
 }
 
 /// Entry point called from `main.rs` after the REST API spawn.

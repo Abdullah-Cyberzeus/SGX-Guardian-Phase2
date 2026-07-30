@@ -12,6 +12,8 @@ pub enum XferError {
     RevokedPeer(String),
     #[error("peer not found in local directory: {0}")]
     PeerNotFound(String),
+    #[error("source not found: {0}")]
+    SourceNotFound(String),
     #[error("transfer not found: {0}")]
     TransferNotFound(String),
     #[error("hash mismatch: expected {expected}, got {got}")]
