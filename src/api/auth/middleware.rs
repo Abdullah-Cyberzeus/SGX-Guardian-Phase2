@@ -125,6 +125,7 @@ mod tests {
         store::{NewUser, UserRole},
     };
     use crate::api::state::AppState;
+    use crate::test_support::async_env_lock;
     use axum::{routing::get, Json, Router};
     use reqwest::StatusCode;
     use serde_json::json;
@@ -236,5 +237,19 @@ mod tests {
             .expect("preflight route");
         handle.abort();
         assert_ne!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn private_route_allows_requests_when_login_is_disabled() {
+        let _test_lock = async_env_lock().await;
+        let _guard = test_force_disable_login(true);
+        let (base_url, _token, handle) = spawn_secured_app().await;
+        let response = reqwest::Client::new()
+            .get(format!("{}/api/v1/private", base_url))
+            .send()
+            .await
+            .expect("private route with login disabled");
+        handle.abort();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }

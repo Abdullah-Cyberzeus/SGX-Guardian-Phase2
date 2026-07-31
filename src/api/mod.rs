@@ -3307,4 +3307,3 @@ mod tests {
         assert!(response.is_err(), "plaintext HTTP unexpectedly succeeded");
     }
 }
-

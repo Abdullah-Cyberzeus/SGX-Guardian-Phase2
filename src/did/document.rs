@@ -326,15 +326,18 @@ mod unit_tests {
         assert!(doc
             .service
             .iter()
-            .any(|svc| svc.svc_type == "SGXNebulaMesh" && svc.service_endpoint.contains("10.10.0.5/24")));
+            .any(|svc| svc.svc_type == "SGXNebulaMesh"
+                && svc.service_endpoint.contains("10.10.0.5/24")));
         assert!(doc
             .service
             .iter()
             .any(|svc| svc.svc_type == "SGXAttestation" && svc.service_endpoint.contains("9000")));
-        assert!(doc
-            .service
-            .iter()
-            .any(|svc| svc.svc_type == "SGXCertBootstrap" && svc.service_endpoint.contains("9001")));
+        assert!(
+            doc.service
+                .iter()
+                .any(|svc| svc.svc_type == "SGXCertBootstrap"
+                    && svc.service_endpoint.contains("9001"))
+        );
     }
 
     #[test]

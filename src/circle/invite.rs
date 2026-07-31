@@ -375,10 +375,16 @@ mod unit_tests {
             proof_purpose: "assertionMethod".to_string(),
             proof_value: "signature".to_string(),
         };
-        assert_eq!(baseline, token.canonical_bytes_for_sign().expect("canonical"));
+        assert_eq!(
+            baseline,
+            token.canonical_bytes_for_sign().expect("canonical")
+        );
 
         token.max_uses = 5;
-        assert_ne!(baseline, token.canonical_bytes_for_sign().expect("canonical"));
+        assert_ne!(
+            baseline,
+            token.canonical_bytes_for_sign().expect("canonical")
+        );
     }
 
     #[test]
@@ -440,15 +446,15 @@ mod unit_tests {
 
         // Wrong circle_id must be rejected before any persistence lookup runs.
         circle_owner_mismatch.circle_id = "other-circle".to_string();
-        let err = assert_redeemable(&circle_owner_mismatch, &token, "did:guardian:joiner")
-            .unwrap_err();
+        let err =
+            assert_redeemable(&circle_owner_mismatch, &token, "did:guardian:joiner").unwrap_err();
         assert!(matches!(err, CircleError::Invalid(_)));
 
         // Wrong owner_did must likewise be rejected up front.
         circle_owner_mismatch.circle_id = token.circle_id.clone();
         circle_owner_mismatch.owner_did = "did:guardian:someone-else".to_string();
-        let err = assert_redeemable(&circle_owner_mismatch, &token, "did:guardian:joiner")
-            .unwrap_err();
+        let err =
+            assert_redeemable(&circle_owner_mismatch, &token, "did:guardian:joiner").unwrap_err();
         assert!(matches!(err, CircleError::Invalid(_)));
     }
 }

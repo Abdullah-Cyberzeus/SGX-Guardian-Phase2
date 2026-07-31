@@ -212,8 +212,9 @@ mod unit_tests {
         let rng = SystemRandom::new();
         let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
             .expect("generate keypair");
-        let keypair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &rng)
-            .expect("load keypair");
+        let keypair =
+            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &rng)
+                .expect("load keypair");
         let public_key = keypair.public_key().as_ref().to_vec();
 
         let canonical = b"canonical-bytes-for-signing";

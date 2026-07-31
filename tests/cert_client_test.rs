@@ -113,7 +113,7 @@ async fn test_request_cert_connection_failure() {
             "test-pubkey".to_string(),
             false,
             false,
-        None,
+            None,
         )
         .await;
     });
@@ -201,7 +201,7 @@ async fn test_request_cert_already_present() {
             "test-pubkey".to_string(),
             false,
             false,
-        None,
+            None,
         )
         .await;
 
@@ -321,7 +321,7 @@ async fn test_request_cert_approved_flow() {
             "test-pubkey".to_string(),
             true,
             true,
-        None,
+            None,
         )
         .await;
 

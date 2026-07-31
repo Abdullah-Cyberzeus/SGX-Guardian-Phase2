@@ -360,7 +360,13 @@ mod unit_tests {
     #[test]
     fn bit_position_rejects_index_beyond_bitset_size() {
         let err = bit_position(64, 8).unwrap_err();
-        assert!(matches!(err, VcError::IndexOutOfRange { index: 64, size: 64 }));
+        assert!(matches!(
+            err,
+            VcError::IndexOutOfRange {
+                index: 64,
+                size: 64
+            }
+        ));
         assert!(bit_position(63, 8).is_ok());
     }
 

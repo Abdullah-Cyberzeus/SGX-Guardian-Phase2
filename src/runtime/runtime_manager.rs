@@ -591,6 +591,9 @@ impl RuntimeManager {
 #[cfg(test)]
 mod tests {
     use super::RuntimeManager;
+    use crate::network_selector::set_selected_interface;
+    use crate::runtime::models::GuardianConfig;
+    use crate::test_support::blocking_env_lock;
 
     #[test]
     fn detects_suricata_wifi_capture_references() {
@@ -601,5 +604,34 @@ mod tests {
         assert!(!RuntimeManager::references_wifi_capture(
             "- interface: eth0"
         ));
+    }
+
+    #[test]
+    fn prefers_configured_uplink_interface() {
+        let _test_lock = blocking_env_lock();
+        set_selected_interface(None);
+
+        let mut config = GuardianConfig::default();
+        config.uplink.interface = "eth9".to_string();
+
+        assert_eq!(
+            RuntimeManager::get_uplink_interface(&config).as_deref(),
+            Some("eth9")
+        );
+    }
+
+    #[test]
+    fn falls_back_to_selected_uplink_interface() {
+        let _test_lock = blocking_env_lock();
+        set_selected_interface(Some("eth7".to_string()));
+
+        let config = GuardianConfig::default();
+
+        assert_eq!(
+            RuntimeManager::get_uplink_interface(&config).as_deref(),
+            Some("eth7")
+        );
+
+        set_selected_interface(None);
     }
 }

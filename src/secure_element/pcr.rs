@@ -186,8 +186,15 @@ pub fn canonical_baseline_signing_payload(
     Ok(Sha256::digest(&sign_input).to_vec())
 }
 
+fn signature_is_asn1(sig_bytes: &[u8]) -> bool {
+    match sig_bytes.len() {
+        64 => false,
+        _ => sig_bytes.first() == Some(&0x30),
+    }
+}
+
 pub fn signature_format(sig_bytes: &[u8]) -> &'static str {
-    if !sig_bytes.is_empty() && sig_bytes[0] == 0x30 {
+    if signature_is_asn1(sig_bytes) {
         "ecdsa-p256-sha256-asn1"
     } else {
         "ecdsa-p256-sha256-fixed"
@@ -198,12 +205,11 @@ pub fn verify_baseline_signature_bytes(payload: &[u8], sig_bytes: &[u8], pubkey:
     use ring::signature;
 
     // Auto-detect signature format (same as attestation_service.rs)
-    let algo: &dyn signature::VerificationAlgorithm =
-        if !sig_bytes.is_empty() && sig_bytes[0] == 0x30 {
-            &signature::ECDSA_P256_SHA256_ASN1
-        } else {
-            &signature::ECDSA_P256_SHA256_FIXED
-        };
+    let algo: &dyn signature::VerificationAlgorithm = if signature_is_asn1(sig_bytes) {
+        &signature::ECDSA_P256_SHA256_ASN1
+    } else {
+        &signature::ECDSA_P256_SHA256_FIXED
+    };
 
     let key = signature::UnparsedPublicKey::new(algo, pubkey);
     key.verify(payload, sig_bytes).is_ok()
@@ -749,6 +755,16 @@ mod tests {
         }];
         let critical = errors.iter().any(|e| e.pcr_index == 0 || e.pcr_index == 2);
         assert!(critical);
+    }
+
+    #[test]
+    fn test_fixed_signature_length_takes_priority_over_der_prefix() {
+        let mut fixed_sig = vec![0u8; 64];
+        fixed_sig[0] = 0x30;
+        assert_eq!(signature_format(&fixed_sig), "ecdsa-p256-sha256-fixed");
+
+        let asn1_sig = [0x30, 0x44, 0x02, 0x20];
+        assert_eq!(signature_format(&asn1_sig), "ecdsa-p256-sha256-asn1");
     }
 
     fn se_config_with_dkp_base(dkp_key_id_base: u32) -> crate::secure_element::config::SeConfig {

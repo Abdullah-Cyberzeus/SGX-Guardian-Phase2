@@ -64,12 +64,8 @@ async fn test_audit_logs_api() {
     // Set SGX_GUARDIAN_AUDIT_LOG_PATH to our explicit mock file so it resolves correctly
     std::env::set_var("SGX_GUARDIAN_AUDIT_LOG_PATH", &audit_log_path);
 
-    let mut state = Arc::try_unwrap(AppState::for_tests(
-        temp_dir.path(),
-        "nodeA",
-        "/tmp/config",
-    ))
-    .unwrap_or_else(|_| unreachable!("sole Arc owner"));
+    let mut state = Arc::try_unwrap(AppState::for_tests(temp_dir.path(), "nodeA", "/tmp/config"))
+        .unwrap_or_else(|_| unreachable!("sole Arc owner"));
     state.log_dir_primary = log_dir_primary;
     state.log_dir_fallback = "logs".into();
     let state = Arc::new(state);
@@ -167,12 +163,8 @@ async fn test_raw_logs_api() {
     let log_dir_primary = temp_dir.path().to_string_lossy().to_string();
 
     // Setup state
-    let mut state = Arc::try_unwrap(AppState::for_tests(
-        temp_dir.path(),
-        "nodeA",
-        "/tmp/config",
-    ))
-    .unwrap_or_else(|_| unreachable!("sole Arc owner"));
+    let mut state = Arc::try_unwrap(AppState::for_tests(temp_dir.path(), "nodeA", "/tmp/config"))
+        .unwrap_or_else(|_| unreachable!("sole Arc owner"));
     state.log_dir_primary = log_dir_primary.clone();
     state.log_dir_fallback = "logs-fallback".into();
     let state = Arc::new(state);
