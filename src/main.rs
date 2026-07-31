@@ -810,7 +810,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let selected = sgx_guardian_client::tpm::pcr::selected_indices(&cfg.pcr_selection);
             println!("  PCR mode: TPM 2.0 native ({})", cfg.pcr_selection);
 
-            match sgx_guardian_client::tpm::pcr::read_snapshot(&cfg) {
+            match sgx_guardian_client::tpm::pcr::read_snapshot(
+                &cfg,
+                sgx_guardian_client::tpm::dkp::DKP_PUB_PATH,
+            ) {
                 Ok(mut snapshot) => {
                     for (position, value) in snapshot.pcr_values.iter().enumerate() {
                         let pcr_index = selected.get(position).copied().unwrap_or(position as u32);

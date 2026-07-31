@@ -31,6 +31,7 @@ pub struct TpmConfig {
     pub ek_handle: u32,
     pub pcr_selection: String,
     pub owner_auth: Option<String>,
+    pub key_auth: Option<String>,
 }
 
 impl Default for TpmConfig {
@@ -49,6 +50,9 @@ impl Default for TpmConfig {
             pcr_selection: std::env::var("SGX_TPM_PCR_SELECTION")
                 .unwrap_or_else(|_| "sha256:0,2,4,7".to_string()),
             owner_auth: std::env::var("SGX_TPM_OWNER_AUTH")
+                .ok()
+                .filter(|value| !value.trim().is_empty()),
+            key_auth: std::env::var("SGX_TPM_KEY_AUTH")
                 .ok()
                 .filter(|value| !value.trim().is_empty()),
         }

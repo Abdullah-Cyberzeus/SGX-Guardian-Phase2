@@ -65,6 +65,7 @@ impl TpmDkpManager {
                 &public_key_path,
                 "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|sign",
                 cfg.owner_auth.as_deref(),
+                cfg.key_auth.as_deref(),
             )?;
         }
 
@@ -128,6 +129,7 @@ impl TpmDkpManager {
                 &self.public_key_path,
                 "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|sign",
                 self.config.owner_auth.as_deref(),
+                self.config.key_auth.as_deref(),
             )?;
         }
 

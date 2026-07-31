@@ -27,6 +27,7 @@ pub fn ensure(cfg: &TpmConfig) -> Result<Vec<u8>, TpmError> {
             DIK_PUB_PATH,
             "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|sign",
             cfg.owner_auth.as_deref(),
+            cfg.key_auth.as_deref(),
         )?;
     }
 

@@ -69,7 +69,7 @@ pub fn read_pcr_values(cfg: &TpmConfig) -> Result<Vec<(u32, String)>, TpmError> 
     Ok(ordered)
 }
 
-pub fn read_snapshot(cfg: &TpmConfig) -> Result<PcrSnapshot, TpmError> {
+pub fn read_snapshot(cfg: &TpmConfig, dkp_pub_path: &str) -> Result<PcrSnapshot, TpmError> {
     let values = read_pcr_values(cfg)?;
     let mut composite_input = Vec::new();
     for (_, value) in &values {
@@ -84,7 +84,7 @@ pub fn read_snapshot(cfg: &TpmConfig) -> Result<PcrSnapshot, TpmError> {
         composite_signature: None,
         nonce: String::new(),
         measured_at: chrono::Utc::now().to_rfc3339(),
-        device_uid: ek::uid_hex(cfg)?,
+        device_uid: ek::node_uid_hex(cfg, dkp_pub_path)?,
         key_version: read_dkp_key_version(),
         firmware_version: None,
         measurement_errors: Vec::<PcrMeasurementError>::new(),

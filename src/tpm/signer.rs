@@ -5,12 +5,14 @@ use std::fs;
 
 pub struct TpmSigner {
     cli: Tpm2Cli,
+    key_auth: Option<String>,
 }
 
 impl TpmSigner {
     pub fn new(cfg: &TpmConfig) -> Self {
         Self {
             cli: Tpm2Cli::new(cfg.clone()),
+            key_auth: cfg.key_auth.clone(),
         }
     }
 
@@ -22,8 +24,12 @@ impl TpmSigner {
         let sig_path_str = sig_path.to_string_lossy().to_string();
 
         fs::write(&input_path, data)?;
-        self.cli
-            .sign_plain(handle, &input_path_str, &sig_path_str)?;
+        self.cli.sign_plain(
+            handle,
+            &input_path_str,
+            &sig_path_str,
+            self.key_auth.as_deref(),
+        )?;
         let sig = fs::read(&sig_path)?;
         normalize_signature(sig)
     }

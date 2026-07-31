@@ -73,6 +73,7 @@ impl Tpm2Cli {
         out_pub_path: &str,
         attributes: &str,
         owner_auth: Option<&str>,
+        key_auth: Option<&str>,
     ) -> Result<(), TpmError> {
         let dir = tempfile::tempdir()?;
         let primary_ctx = dir.path().join("primary.ctx");
@@ -96,6 +97,7 @@ impl Tpm2Cli {
                     &key_priv_str,
                     attributes,
                     "ecc256",
+                    key_auth,
                 ),
                 self.create_args(
                     &primary_ctx_str,
@@ -103,6 +105,7 @@ impl Tpm2Cli {
                     &key_priv_str,
                     attributes,
                     "ecc:nist_p256",
+                    key_auth,
                 ),
             ],
             None,
@@ -159,55 +162,59 @@ impl Tpm2Cli {
         handle: u32,
         input_path: &str,
         sig_path: &str,
+        key_auth: Option<&str>,
     ) -> Result<(), TpmError> {
         let handle_text = format!("0x{:08X}", handle);
-        self.run_candidates(
-            "tpm2_sign",
-            &[
-                vec![
-                    "-c".to_string(),
-                    handle_text.clone(),
-                    "-g".to_string(),
-                    "sha256".to_string(),
-                    "-s".to_string(),
-                    "ecdsa".to_string(),
-                    "-f".to_string(),
-                    "plain".to_string(),
-                    "-o".to_string(),
-                    sig_path.to_string(),
-                    "-m".to_string(),
-                    input_path.to_string(),
-                ],
-                vec![
-                    "-c".to_string(),
-                    handle_text.clone(),
-                    "-g".to_string(),
-                    "sha256".to_string(),
-                    "-s".to_string(),
-                    "ecdsa".to_string(),
-                    "-f".to_string(),
-                    "plain".to_string(),
-                    "-o".to_string(),
-                    sig_path.to_string(),
-                    input_path.to_string(),
-                ],
-                vec![
-                    "-c".to_string(),
-                    handle_text,
-                    "--message".to_string(),
-                    input_path.to_string(),
-                    "-g".to_string(),
-                    "sha256".to_string(),
-                    "-s".to_string(),
-                    "ecdsa".to_string(),
-                    "-f".to_string(),
-                    "plain".to_string(),
-                    "-o".to_string(),
-                    sig_path.to_string(),
-                ],
+        let mut candidates = vec![
+            vec![
+                "-c".to_string(),
+                handle_text.clone(),
+                "-g".to_string(),
+                "sha256".to_string(),
+                "-s".to_string(),
+                "ecdsa".to_string(),
+                "-f".to_string(),
+                "plain".to_string(),
+                "-o".to_string(),
+                sig_path.to_string(),
+                "-m".to_string(),
+                input_path.to_string(),
             ],
-            None,
-        )?;
+            vec![
+                "-c".to_string(),
+                handle_text.clone(),
+                "-g".to_string(),
+                "sha256".to_string(),
+                "-s".to_string(),
+                "ecdsa".to_string(),
+                "-f".to_string(),
+                "plain".to_string(),
+                "-o".to_string(),
+                sig_path.to_string(),
+                input_path.to_string(),
+            ],
+            vec![
+                "-c".to_string(),
+                handle_text,
+                "--message".to_string(),
+                input_path.to_string(),
+                "-g".to_string(),
+                "sha256".to_string(),
+                "-s".to_string(),
+                "ecdsa".to_string(),
+                "-f".to_string(),
+                "plain".to_string(),
+                "-o".to_string(),
+                sig_path.to_string(),
+            ],
+        ];
+        if let Some(auth) = key_auth {
+            for args in candidates.iter_mut() {
+                args.push("-p".to_string());
+                args.push(auth.to_string());
+            }
+        }
+        self.run_candidates("tpm2_sign", &candidates, None)?;
         Ok(())
     }
 
@@ -258,8 +265,9 @@ impl Tpm2Cli {
         key_priv: &str,
         attributes: &str,
         curve: &str,
+        key_auth: Option<&str>,
     ) -> Vec<String> {
-        vec![
+        let mut args = vec![
             "-C".to_string(),
             primary_ctx.to_string(),
             "-g".to_string(),
@@ -272,7 +280,12 @@ impl Tpm2Cli {
             key_priv.to_string(),
             "-a".to_string(),
             attributes.to_string(),
-        ]
+        ];
+        if let Some(auth) = key_auth {
+            args.push("-p".to_string());
+            args.push(auth.to_string());
+        }
+        args
     }
 
     fn persistent_handles_text(&self) -> Result<String, TpmError> {
