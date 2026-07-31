@@ -146,7 +146,7 @@ Transport notes:
 | 80 | POST | `/cert/approve` | Approve or reject a pending certificate request |
 
 
-## 2. NEW Endpoints 
+## 2. NEW Endpoints
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -210,6 +210,11 @@ Transport notes:
 | POST | `/managed-devices/{device_id}/reject` | Reject and Block Managed Device |
 | POST | `/managed-devices/{device_id}/block` | Block Device Using nftables |
 | POST | `/managed-devices/{device_id}/unblock` | Unblock Device and Remove nftables Rule |
+| GET | `/dusage/current` | Return current-period bandwidth usage snapshot |
+| GET | `/dusage/history` | Return completed period usage history |
+| GET | `/dusage/quota` | Return configured signed data-usage quota |
+| PUT | `/dusage/quota` | Update configured signed data-usage quota |
+| POST | `/dusage/reset` | Reset or re-baseline the current usage period |
 ---
 
 ## 6. Backup & Restore Endpoint Contracts

@@ -106,14 +106,14 @@ pub fn build_nft_ruleset(rules: &TranslatedRules) -> Result<String> {
 
     // ---- FILTER TABLE (inet) ----
     out.push_str("table inet sgx_guardian {\n");
-    out.push_str("  counter \"api\" {}\n");
-    out.push_str("  counter \"attestation\" {}\n");
-    out.push_str("  counter \"cert-bootstrap\" {}\n");
-    out.push_str("  counter \"discovery\" {}\n");
-    out.push_str("  counter \"gossip\" {}\n");
-    out.push_str("  counter \"nebula\" {}\n");
-    out.push_str("  counter \"registry\" {}\n");
-    out.push_str("  counter \"xfer\" {}\n\n");
+    out.push_str("  counter api {}\n");
+    out.push_str("  counter attestation {}\n");
+    out.push_str("  counter cert-bootstrap {}\n");
+    out.push_str("  counter discovery {}\n");
+    out.push_str("  counter gossip {}\n");
+    out.push_str("  counter nebula {}\n");
+    out.push_str("  counter registry {}\n");
+    out.push_str("  counter xfer {}\n\n");
 
     // 1. INPUT CHAIN (API Protection & Host Access)
     out.push_str("  chain input {\n");

@@ -125,3 +125,10 @@ pub(crate) fn local_integrity_proof(payload: &[u8]) -> Proof {
         proof_value: hex::encode(Sha256::digest(payload)),
     }
 }
+
+/// Recomputes the integrity digest over `payload` and checks it against `proof`.
+/// `payload` must be the same `without_proof()` byte encoding used at seal time.
+pub(crate) fn verify_local_integrity_proof(payload: &[u8], proof: &Proof) -> bool {
+    let expected = hex::encode(Sha256::digest(payload));
+    proof.proof_value.eq_ignore_ascii_case(&expected)
+}

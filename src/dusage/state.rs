@@ -1,5 +1,9 @@
+use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use crate::audit::logger::log_audit;
 use crate::dusage::errors::DusageResult;
-use crate::dusage::model::{local_integrity_proof, DusageQuota, DusageState, UsageSnapshot};
+use crate::dusage::model::{
+    local_integrity_proof, verify_local_integrity_proof, DusageQuota, DusageState, UsageSnapshot,
+};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -27,7 +31,14 @@ pub fn quota_path() -> PathBuf {
 }
 
 pub async fn load_state() -> DusageResult<Option<DusageState>> {
-    read_json_optional(&state_path()).await
+    let Some(state) = read_json_optional::<DusageState>(&state_path()).await? else {
+        return Ok(None);
+    };
+    if !verify_state_integrity(&state) {
+        reject_tampered("Dusage state invalid: integrity proof mismatch, rejecting tampered state");
+        return Ok(None);
+    }
+    Ok(Some(state))
 }
 
 pub async fn save_state(state: &mut DusageState) -> DusageResult<()> {
@@ -36,7 +47,14 @@ pub async fn save_state(state: &mut DusageState) -> DusageResult<()> {
 }
 
 pub async fn load_quota() -> DusageResult<Option<DusageQuota>> {
-    read_json_optional(&quota_path()).await
+    let Some(quota) = read_json_optional::<DusageQuota>(&quota_path()).await? else {
+        return Ok(None);
+    };
+    if !verify_quota_integrity(&quota) {
+        reject_tampered("Dusage quota invalid: integrity proof mismatch, rejecting tampered quota");
+        return Ok(None);
+    }
+    Ok(Some(quota))
 }
 
 pub async fn save_quota(quota: &mut DusageQuota) -> DusageResult<()> {
@@ -87,6 +105,31 @@ pub fn seal_quota(quota: &mut DusageQuota) -> DusageResult<()> {
     let bytes = serde_json::to_vec(&quota.without_proof())?;
     quota.proof = local_integrity_proof(&bytes);
     Ok(())
+}
+
+fn verify_state_integrity(state: &DusageState) -> bool {
+    match serde_json::to_vec(&state.without_proof()) {
+        Ok(bytes) => verify_local_integrity_proof(&bytes, &state.proof),
+        Err(_) => false,
+    }
+}
+
+fn verify_quota_integrity(quota: &DusageQuota) -> bool {
+    match serde_json::to_vec(&quota.without_proof()) {
+        Ok(bytes) => verify_local_integrity_proof(&bytes, &quota.proof),
+        Err(_) => false,
+    }
+}
+
+fn reject_tampered(message: &str) {
+    let node_id = std::env::args().nth(1).unwrap_or_else(|| "unknown-node".to_string());
+    log_audit(
+        &node_id,
+        AuditCategory::Dusage,
+        AuditSeverity::Critical,
+        AuditAction::Rejected,
+        message,
+    );
 }
 
 async fn read_json_optional<T>(path: &Path) -> DusageResult<Option<T>>

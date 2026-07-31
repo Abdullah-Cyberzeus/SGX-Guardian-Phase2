@@ -36,6 +36,8 @@ services:
       SGX_TPM_DKP_HANDLE_BASE: "0x81000010"
       SGX_TPM_DIK_HANDLE: "0x81000100"
       SGX_TPM_KEY_AUTH: "${NODEA_TPM_KEY_AUTH:-}"
+      SGX_DUSAGE_SAMPLE_SECS: "15"
+      SGX_DUSAGE_CATEGORIES_ENABLED: "1"
     networks:
       sgxnet:
         ipv4_address: 172.31.250.10
@@ -46,7 +48,7 @@ services:
       - nodeA-lib:/var/lib/sgx-guardian
       - nodeA-log:/var/log/sgx-guardian
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8443/api/v1/crl/root"]
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8443/api/v1/health"]
       interval: 10s
       timeout: 5s
       retries: 12
