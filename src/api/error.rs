@@ -17,6 +17,7 @@ pub enum ApiError {
     Forbidden(String),
     Conflict(String),
     PayloadTooLarge(String),
+    ServiceUnavailable { code: &'static str, message: String },
     Internal(String),
 }
 
@@ -54,6 +55,10 @@ impl IntoResponse for ApiError {
             ApiError::PayloadTooLarge(m) => {
                 let body = Json(json!({ "error": { "code": "PAYLOAD_TOO_LARGE", "message": m } }));
                 (StatusCode::PAYLOAD_TOO_LARGE, body).into_response()
+            }
+            ApiError::ServiceUnavailable { code, message } => {
+                let body = Json(json!({ "error": { "code": code, "message": message } }));
+                (StatusCode::SERVICE_UNAVAILABLE, body).into_response()
             }
             ApiError::Internal(msg) => {
                 eprintln!("API Internal Error: {}", msg);

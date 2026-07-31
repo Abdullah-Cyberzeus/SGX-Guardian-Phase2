@@ -22,6 +22,7 @@ pub enum AuditCategory {
     Cloud,
     /// Network discovery, whitelist mismatches, and vulnerability-triage handoff.
     Discovery,
+    Geofence,
     Vault,
     Xfer,
     Notify,

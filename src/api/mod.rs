@@ -277,6 +277,7 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         .route("/api/v1/threat/config", post(handlers::threat::set_config))
         .route("/api/v1/threat/start", post(handlers::threat::start))
         .merge(routes::crl_router())
+        .merge(routes::geofence_router())
         .route("/api/v1/auth/signup", post(handlers::auth::signup))
         .route("/api/v1/auth/login", post(handlers::auth::login))
         .route("/api/v1/auth/logout", post(handlers::auth::logout))

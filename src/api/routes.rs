@@ -57,6 +57,37 @@ pub fn crl_router() -> Router<Arc<AppState>> {
         )
 }
 
+pub fn geofence_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route(
+            "/api/v1/geofence/zones",
+            get(handlers::geofence::list_zones).post(handlers::geofence::create_zone),
+        )
+        .route(
+            "/api/v1/geofence/zones/{id}",
+            patch(handlers::geofence::edit_zone).delete(handlers::geofence::delete_zone),
+        )
+        .route(
+            "/api/v1/geofence/zones/{id}/capture-rf",
+            post(handlers::geofence::capture_rf),
+        )
+        .route(
+            "/api/v1/geofence/location",
+            get(handlers::geofence::get_location).post(handlers::geofence::report_location),
+        )
+        .route("/api/v1/geofence/status", get(handlers::geofence::status))
+        .route("/api/v1/geofence/events", get(handlers::geofence::events))
+        .route("/api/v1/geofence/alerts", get(handlers::geofence::alerts))
+        .route(
+            "/api/v1/geofence/zones/{id}/actions",
+            get(handlers::geofence::get_actions).put(handlers::geofence::put_actions),
+        )
+        .route(
+            "/api/v1/geofence/actions/test",
+            post(handlers::geofence::test_actions),
+        )
+}
+
 pub fn xfer_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/v1/xfer/send", post(handlers::xfer::send))

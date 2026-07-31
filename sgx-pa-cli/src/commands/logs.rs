@@ -61,7 +61,7 @@ pub fn run(args: LogsArgs) {
     println!("Reading from latest log file: {:?}\n", log_path);
     let file = File::open(&log_path).expect("Could not open log file");
     let reader = BufReader::new(file);
-    let lines: Vec<_> = reader.lines().filter_map(Result::ok).collect();
+    let lines: Vec<_> = reader.lines().map_while(Result::ok).collect();
     let start = if lines.len() > args.tail {
         lines.len() - args.tail
     } else {

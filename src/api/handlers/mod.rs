@@ -5,6 +5,7 @@ pub mod crl;
 pub mod devices;
 pub mod did;
 pub mod dkp;
+pub mod geofence;
 pub mod guardian_keys;
 pub mod logs;
 pub mod node;

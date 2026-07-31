@@ -600,6 +600,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn append_manual_history(
     started_at: chrono::DateTime<chrono::Utc>,
     completed_at: chrono::DateTime<chrono::Utc>,

@@ -35,6 +35,7 @@ mod verify_tests;
 struct TestEnv {
     _crl_base: TempDir,
     _vc_base: TempDir,
+    _did_base: TempDir,
     _peer_docs: TempDir,
     _key_dir: TempDir,
 }
@@ -59,16 +60,26 @@ impl TestEnv {
     fn new() -> Self {
         let crl_base = TempDir::new().expect("crl tempdir");
         let vc_base = TempDir::new().expect("vc tempdir");
+        let did_base = TempDir::new().expect("did tempdir");
         let peer_docs = TempDir::new().expect("peer docs tempdir");
         let key_dir = TempDir::new().expect("key tempdir");
 
         env::set_var(crate::crl::persistence::CRL_BASE_ENV, crl_base.path());
         env::set_var(crate::vc::persistence::VC_BASE_ENV, vc_base.path());
+        env::set_var(
+            doc_persistence::SELF_DOC_PATH_ENV,
+            did_base.path().join("did_doc.json"),
+        );
         env::set_var(doc_persistence::PEERS_DOC_DIR_ENV, peer_docs.path());
+        env::set_var(
+            doc_persistence::CA_AGGREGATE_PATH_ENV,
+            did_base.path().join("circle_did_docs.json"),
+        );
 
         Self {
             _crl_base: crl_base,
             _vc_base: vc_base,
+            _did_base: did_base,
             _peer_docs: peer_docs,
             _key_dir: key_dir,
         }
@@ -83,7 +94,9 @@ impl Drop for TestEnv {
     fn drop(&mut self) {
         env::remove_var(crate::crl::persistence::CRL_BASE_ENV);
         env::remove_var(crate::vc::persistence::VC_BASE_ENV);
+        env::remove_var(doc_persistence::SELF_DOC_PATH_ENV);
         env::remove_var(doc_persistence::PEERS_DOC_DIR_ENV);
+        env::remove_var(doc_persistence::CA_AGGREGATE_PATH_ENV);
     }
 }
 

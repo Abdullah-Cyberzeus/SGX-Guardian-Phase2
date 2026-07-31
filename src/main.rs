@@ -133,6 +133,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
     }
+    let geofence_dir = sgx_guardian_client::geofence::persistence::base_dir();
+    if let Err(e) = std::fs::create_dir_all(&geofence_dir) {
+        eprintln!(
+            "⚠️ Failed to create {}: {} (may cause issues later)",
+            geofence_dir.display(),
+            e
+        );
+    }
 
     if node_id == "nodeA" {
         let requests_dir = "/var/lib/sgx-guardian/nebula/requests";
@@ -3144,6 +3152,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Spawns two background tokio tasks; returns immediately; runs on
     // every node role (nodeA is an ordinary gossip peer, not a hub).
     sgx_guardian_client::crl::gossip::spawn(node_id.clone(), did_resolver.clone());
+
+    // === Geofence evaluation ===
+    // Periodically evaluates persisted zones against the current location
+    // source and emits alerts/audit events on zone transitions.
+    sgx_guardian_client::geofence::spawn(node_id.clone());
 
     // === In-Circle file transfer ===
     // Chunked, resumable, signed file transfer between Circle members.

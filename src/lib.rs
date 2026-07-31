@@ -15,6 +15,7 @@ pub mod crl;
 pub mod did;
 pub mod discovery; // Network discovery module
 pub mod enforcement;
+pub mod geofence;
 pub mod key_manager;
 pub mod logging;
 pub mod metrics;
