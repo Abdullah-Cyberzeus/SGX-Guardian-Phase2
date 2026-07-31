@@ -482,7 +482,9 @@ impl KeyManager {
             SigningBackend::Software => 1,
             #[cfg(feature = "secure-element")]
             SigningBackend::Hardware { key_id, .. } => {
-                key_id.saturating_sub(crate::secure_element::dkp::DKP_BASE_KEY_ID) + 1
+                key_id.saturating_sub(
+                    crate::secure_element::config::SeConfig::default().dkp_key_id_base,
+                ) + 1
             }
             #[cfg(feature = "tpm")]
             SigningBackend::Tpm { dkp_handle, .. } => {

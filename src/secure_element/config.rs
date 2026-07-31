@@ -20,6 +20,15 @@ pub struct SeConfig {
     pub auth_type: String,
     /// Connection type: "se05x" (SE050 family)
     pub connection_type: String,
+    /// DKP base key id (v1; version N = base + N - 1). Defaults to the
+    /// long-standing hardcoded slot `dkp::DKP_BASE_KEY_ID`. Only override via
+    /// `SGX_SE_DKP_KEY_ID_BASE` when several containers share one physical
+    /// SE050 chip and must not collide on the same slot.
+    pub dkp_key_id_base: u32,
+    /// DIK key id. Defaults to the long-standing hardcoded slot
+    /// `dik::DIK_KEY_ID`. Only override via `SGX_SE_DIK_KEY_ID` for the same
+    /// multi-node-on-one-chip scenario as `dkp_key_id_base`.
+    pub dik_key_id: u32,
 }
 
 impl Default for SeConfig {
@@ -30,8 +39,27 @@ impl Default for SeConfig {
             interface: "t1oi2c".to_string(),
             auth_type: "PlatformSCP".to_string(),
             connection_type: "se05x".to_string(),
+            dkp_key_id_base: parse_key_id(
+                "SGX_SE_DKP_KEY_ID_BASE",
+                crate::secure_element::dkp::DKP_BASE_KEY_ID,
+            ),
+            dik_key_id: parse_key_id("SGX_SE_DIK_KEY_ID", crate::secure_element::dik::DIK_KEY_ID),
         }
     }
+}
+
+fn parse_key_id(var: &str, default: u32) -> u32 {
+    std::env::var(var)
+        .ok()
+        .and_then(|value| {
+            let value = value.trim();
+            let value = value
+                .strip_prefix("0x")
+                .or_else(|| value.strip_prefix("0X"))
+                .unwrap_or(value);
+            u32::from_str_radix(value, 16).ok()
+        })
+        .unwrap_or(default)
 }
 
 // ── Unit Tests (3 tests) ────────────────────────────────────

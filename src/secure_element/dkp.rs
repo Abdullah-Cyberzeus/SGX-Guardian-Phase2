@@ -21,6 +21,7 @@ use std::path::Path;
 use tracing::{info, warn};
 
 pub const DKP_BASE_KEY_ID: u32 = 0x20000010;
+pub const DKP_PUB_PATH: &str = "/var/lib/sgx-guardian/keys/dkp_pub.der";
 
 /// Probe the SE050 for a slot with bounded retries. Between attempts, clear
 /// the stale ssscli session pickle so connect() re-establishes a fresh
@@ -230,7 +231,7 @@ impl DkpManager {
     }
 
     fn generate_dkp(config: &SeConfig, public_key_path: &str) -> Result<KeyMetadata, SeError> {
-        let key_id = DKP_BASE_KEY_ID;
+        let key_id = config.dkp_key_id_base;
         let key_id_hex = format!("0x{:08X}", key_id);
 
         let storage = SeKeyStorage::new(config)?;
@@ -265,7 +266,7 @@ impl DkpManager {
                 .trim_start_matches("0X"),
             16,
         )
-        .unwrap_or(DKP_BASE_KEY_ID)
+        .unwrap_or(self.config.dkp_key_id_base)
     }
 
     /// Create a SeSigner for signing operations.
@@ -298,7 +299,7 @@ impl DkpManager {
         let old_key_id = active.key_id.clone();
 
         let new_version = old_version + 1;
-        let new_id = DKP_BASE_KEY_ID + new_version - 1;
+        let new_id = self.config.dkp_key_id_base + new_version - 1;
         let new_hex = format!("0x{:08X}", new_id);
         let new_label = format!("dkp-v{}", new_version);
 

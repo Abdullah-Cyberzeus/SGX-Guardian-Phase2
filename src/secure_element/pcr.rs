@@ -413,6 +413,38 @@ pub fn read_device_uid(fallback: &str) -> String {
     }
 }
 
+/// Node-unique device UID for the multi-node-on-one-chip scenario: several
+/// containers sharing a single physical SE050 board would otherwise all
+/// report the exact same `ssscli se05x uid` value.
+///
+/// This only diverges from the raw hardware UID when `config.dkp_key_id_base`
+/// has been explicitly overridden away from `dkp::DKP_BASE_KEY_ID` (i.e. only
+/// when `SGX_SE_DKP_KEY_ID_BASE` is set for a multi-node container cohort).
+/// Every existing single-node deployment — bare metal or containerized —
+/// leaves that env var unset, so `read_device_uid` alone is returned exactly
+/// as before and device_uid values already relied on (baselines, audit logs,
+/// revocation records) do not change.
+pub fn node_device_uid(
+    config: &crate::secure_element::config::SeConfig,
+    dkp_pub_path: &str,
+    fallback: &str,
+) -> String {
+    let hw_uid = read_device_uid(fallback);
+    if config.dkp_key_id_base == crate::secure_element::dkp::DKP_BASE_KEY_ID {
+        return hw_uid;
+    }
+
+    match fs::read(dkp_pub_path) {
+        Ok(dkp_der) => {
+            let mut hasher = Sha256::new();
+            hasher.update(hw_uid.as_bytes());
+            hasher.update(&dkp_der);
+            hex::encode(hasher.finalize())
+        }
+        Err(_) => hw_uid,
+    }
+}
+
 /// Read DKP key version from metadata. Returns 1 as default.
 pub fn read_dkp_key_version() -> u32 {
     let path = "/var/lib/sgx-guardian/keys/dkp_metadata.json";
@@ -717,5 +749,48 @@ mod tests {
         }];
         let critical = errors.iter().any(|e| e.pcr_index == 0 || e.pcr_index == 2);
         assert!(critical);
+    }
+
+    fn se_config_with_dkp_base(dkp_key_id_base: u32) -> crate::secure_element::config::SeConfig {
+        crate::secure_element::config::SeConfig {
+            dkp_key_id_base,
+            ..crate::secure_element::config::SeConfig::default()
+        }
+    }
+
+    #[test]
+    fn node_device_uid_default_key_id_matches_raw_hardware_uid() {
+        // No env-var overrides, no ssscli on this machine — both sides fall
+        // back to the caller-supplied fallback string identically.
+        let cfg = se_config_with_dkp_base(crate::secure_element::dkp::DKP_BASE_KEY_ID);
+        let expected = read_device_uid("nodeA-fallback");
+        let actual = node_device_uid(&cfg, "/nonexistent/dkp_pub.der", "nodeA-fallback");
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn node_device_uid_overridden_key_id_without_dkp_pub_falls_back_to_hw_uid() {
+        let cfg = se_config_with_dkp_base(crate::secure_element::dkp::DKP_BASE_KEY_ID + 0x10);
+        let expected = read_device_uid("nodeB-fallback");
+        let actual = node_device_uid(&cfg, "/nonexistent/dkp_pub.der", "nodeB-fallback");
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn node_device_uid_overridden_key_id_with_dkp_pub_diverges_from_hw_uid() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dkp_pub_path = dir.path().join("dkp_pub.der");
+        std::fs::write(&dkp_pub_path, b"fake-dkp-pubkey-der").expect("write dkp pub");
+
+        let cfg = se_config_with_dkp_base(crate::secure_element::dkp::DKP_BASE_KEY_ID + 0x10);
+        let hw_uid = read_device_uid("nodeC-fallback");
+        let node_uid = node_device_uid(
+            &cfg,
+            dkp_pub_path.to_str().expect("utf8 path"),
+            "nodeC-fallback",
+        );
+
+        assert_ne!(node_uid, hw_uid);
+        assert_eq!(node_uid.len(), 64); // SHA256 hex
     }
 }

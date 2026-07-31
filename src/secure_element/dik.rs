@@ -36,7 +36,8 @@ impl DeviceIdentityKey {
     /// - Slot absent but metadata exists: hard error (avoid identity split).
     /// - SE unreachable: use cached DIK pubkey if available.
     pub fn ensure(config: &SeConfig) -> Result<Vec<u8>, SeError> {
-        let key_hex = format!("0x{:08X}", DIK_KEY_ID);
+        let dik_key_id = config.dik_key_id;
+        let key_hex = format!("0x{:08X}", dik_key_id);
         let probe = Self::probe_slot(config, &key_hex, 4);
         let pub_path = Self::pub_path();
         let pub_path_str = pub_path.to_string_lossy().to_string();
@@ -45,9 +46,9 @@ impl DeviceIdentityKey {
         match probe {
             Some(true) => {
                 if let Ok(store) = SeKeyStorage::new(config) {
-                    let _ = store.export_public_key(DIK_KEY_ID, &pub_path_str);
+                    let _ = store.export_public_key(dik_key_id, &pub_path_str);
                 }
-                Self::ensure_metadata(&meta_path);
+                Self::ensure_metadata(&meta_path, dik_key_id);
                 Self::read_pub_or_err(&pub_path)
             }
             Some(false) => {
@@ -66,9 +67,9 @@ impl DeviceIdentityKey {
                     key_hex
                 );
                 let store = SeKeyStorage::new(config)?;
-                store.create_key_slot(DIK_KEY_ID - 0x20000000, "dik", "ecdsa")?;
-                store.export_public_key(DIK_KEY_ID, &pub_path_str)?;
-                Self::write_metadata(&meta_path);
+                store.create_key_slot(dik_key_id - 0x20000000, "dik", "ecdsa")?;
+                store.export_public_key(dik_key_id, &pub_path_str)?;
+                Self::write_metadata(&meta_path, dik_key_id);
                 Self::read_pub_or_err(&pub_path)
             }
             None => {
@@ -107,9 +108,9 @@ impl DeviceIdentityKey {
         None
     }
 
-    fn write_metadata(path: &Path) {
+    fn write_metadata(path: &Path, dik_key_id: u32) {
         let meta = DikMetadata {
-            key_id: format!("0x{:08X}", DIK_KEY_ID),
+            key_id: format!("0x{:08X}", dik_key_id),
             algorithm: "ECDSA-P256".into(),
             created_at: chrono::Utc::now().to_rfc3339(),
             non_rotating: true,
@@ -123,9 +124,9 @@ impl DeviceIdentityKey {
         }
     }
 
-    fn ensure_metadata(path: &Path) {
+    fn ensure_metadata(path: &Path, dik_key_id: u32) {
         if !path.exists() {
-            Self::write_metadata(path);
+            Self::write_metadata(path, dik_key_id);
         }
     }
 

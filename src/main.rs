@@ -1030,7 +1030,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut snapshot = pcr_engine.snapshot();
             snapshot.measurement_errors = measurement_errors;
             snapshot.integrity_status = integrity_status;
-            snapshot.device_uid = sgx_guardian_client::key_manager::runtime_device_uid(&node_id);
+            #[cfg(feature = "secure-element")]
+            let se_node_uid = if km.backend_name() == "SE050" {
+                let se_cfg = sgx_guardian_client::secure_element::config::SeConfig::default();
+                Some(node_device_uid(
+                    &se_cfg,
+                    "/var/lib/sgx-guardian/keys/dkp_pub.der",
+                    &node_id,
+                ))
+            } else {
+                None
+            };
+            #[cfg(not(feature = "secure-element"))]
+            let se_node_uid: Option<String> = None;
+
+            snapshot.device_uid = se_node_uid
+                .unwrap_or_else(|| sgx_guardian_client::key_manager::runtime_device_uid(&node_id));
             snapshot.key_version = read_dkp_key_version();
 
             // Generate nonce + timestamp
