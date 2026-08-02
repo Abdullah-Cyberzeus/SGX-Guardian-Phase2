@@ -1,4 +1,4 @@
-# SG-X Guardian - Circle of Trust & Policy Automation
+# G-X Guardian - Circle of Trust & Policy Automation
 
 **Project**: SG-X Guardian Client (On-Premise Core)
 

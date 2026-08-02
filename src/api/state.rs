@@ -6,9 +6,11 @@ use crate::call::nebula_signaling::NebulaClient;
 use crate::call::{
     CallSignalHub, DidPeerIdentityResolver, GroupSessionManager, NebulaSignaling, SessionManager,
 };
+use crate::chat::models::ChatEvent;
 use crate::key_manager::KeyManager;
 use dashmap::DashMap;
 use std::sync::Arc;
+use tokio::sync::broadcast;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AuthLockoutConfig {
@@ -127,6 +129,7 @@ pub struct AppState {
     pub call_signal_hub: Arc<CallSignalHub>,
     pub call_nebula_signaling: Arc<NebulaSignaling>,
     pub group_session_manager: Arc<GroupSessionManager>,
+    pub chat_events: broadcast::Sender<ChatEvent>,
     pub device_pubkey_point: Vec<u8>,
     pub device_did: String,
     pub session_ttl_secs: u64,
@@ -179,6 +182,7 @@ impl AppState {
                 call_identity_resolver,
             )),
             group_session_manager: Arc::new(GroupSessionManager::default()),
+            chat_events: broadcast::channel(100).0,
             device_pubkey_point,
             device_did,
             session_ttl_secs: std::env::var("SGX_GUARDIAN_SESSION_TTL_SECS")
@@ -256,6 +260,7 @@ impl AppState {
             group_session_manager: Arc::new(GroupSessionManager::new(
                 log_dir.join("group_calls.log"),
             )),
+            chat_events: broadcast::channel(100).0,
             device_pubkey_point,
             device_did,
             session_ttl_secs: 3600,

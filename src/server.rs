@@ -113,6 +113,47 @@ pub async fn start_server(
     Ok(())
 }
 
+/// Starts a dedicated PLAINTEXT gRPC server for the Chat service only.
+/// Uses no TLS — security is provided by the Nebula overlay VPN which
+/// already authenticates and encrypts all inter-node traffic.
+/// Runs on a port derived from the attestation port (att_port - 100).
+pub async fn start_chat_plaintext_server(
+    addr: String,
+    api_state: Arc<crate::api::state::AppState>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
+
+    println!(
+        "💬 Chat plaintext gRPC server starting on {} (Nebula-secured)",
+        addr
+    );
+
+    log_audit(
+        &node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Started,
+        &format!("Chat plaintext gRPC server starting on {}", addr),
+    );
+
+    let chat_service = crate::chat::grpc_server::MyChatService { state: api_state };
+
+    Server::builder()
+        .add_service(crate::proto::sgx::chat_service_server::ChatServiceServer::new(chat_service))
+        .serve(addr.parse()?)
+        .await
+        .inspect_err(|_e| {
+            log_audit(
+                &node_id,
+                AuditCategory::Network,
+                AuditSeverity::Critical,
+                AuditAction::Failed,
+                "Chat plaintext gRPC server failed to start",
+            );
+        })?;
+    Ok(())
+}
+
 /// Starts a plaintext gRPC server for CertService ONLY (bootstrap endpoint).
 /// No TLS — used for initial certificate requests before nodes have trusted certs.
 /// Runs on nodeA only, on a dedicated port (e.g., 50061).

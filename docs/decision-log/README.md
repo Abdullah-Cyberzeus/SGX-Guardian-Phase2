@@ -38,12 +38,13 @@ This decision log tracks all significant architectural, tactical, and procedural
 | D018 | Branch Protection and Development Workflow | Process - Development Workflow | Accepted | Sprint 1 |
 | D019 | Test Strategy - Unit, Integration, and E2E | Quality - Testing | Accepted | Sprint 1 |
 | D020 | Feature Deferrals to Phase 2+ | Scope - Prioritization | Accepted | Sprint 1 |
+| D021 | Message Encryption Algorithm - ECIES | Architecture - Security | Accepted | Sprint 4 |
 
 ### Decisions by Category
 
 | Category | Count | Decisions |
 | -------- | ----- | --------- |
-| **Architecture** | 9 | D001, D002, D003, D004, D005, D006, D007, D008, D013, D014, D016 |
+| **Architecture** | 10 | D001, D002, D003, D004, D005, D006, D007, D008, D013, D014, D016, D021 |
 | **Implementation** | 3 | D011, D012, D015 |
 | **Deployment** | 2 | D009, D010 |
 | **DevOps** | 1 | D017 |
@@ -58,6 +59,7 @@ This decision log tracks all significant architectural, tactical, and procedural
 | **Core Language** | Rust | D001 | Memory safety, fearless concurrency, and high performance are non-negotiable for security |
 | **P2P Communication** | gRPC over mTLS | D002 | High-performance, strongly-typed RPC framework. mTLS ensures mutual authentication and encryption with forward secrecy |
 | **Cryptography** | ECDSA P-256 | D003 | Standardized, efficient elliptic curve algorithm for FIPS-compliant device identity and policy signing |
+| **Message Encryption** | ECIES (ECDH + AES-256-GCM) | D021 | Fast bulk data encryption with asymmetric key exchange, identical to Signal/iMessage |
 | **Peer Discovery** | mDNS | D004 | Zero-configuration discovery on local networks without central infrastructure |
 | **Enforcement** | nftables | D005 | Modern, kernel-level successor to iptables for deterministic, high-performance L3/L4 policy enforcement |
 | **Service Management** | systemd | D009 | Standard for enterprise Linux deployments, providing robust service lifecycle management |
@@ -1142,6 +1144,38 @@ Defer the following features to Phase 2 and beyond:
 - APIs designed for extensibility
 - Documentation notes future capabilities
 - Client expectations managed regarding scope
+
+---
+
+### D021: Message Encryption Algorithm - ECIES (ECDH + AES-256-GCM)
+
+**Date**: July 2026
+**Status**: Accepted
+**Category**: Architecture - Security
+
+**Context**:
+The chat module and inter-node messaging features require robust end-to-end encryption for payloads of arbitrary size. We need a cryptographic mechanism that allows two nodes to encrypt and decrypt messages without ever transmitting symmetric keys over the network, while preserving perfect forward secrecy and high performance.
+
+**Decision**:
+Use the Elliptic Curve Integrated Encryption Scheme (ECIES). Specifically, use ECDH (Elliptic Curve Diffie-Hellman) on the P-256 curve to establish a shared secret, derive a key via SHA-256, and encrypt the payload using AES-256-GCM. 
+
+**Rationale**:
+- **Security**: This is the industry standard (used by Signal, WhatsApp, iMessage) for end-to-end message encryption.
+- **Performance**: Asymmetric algorithms (like RSA) are too slow and have severe payload size limits. AES-256-GCM offers massive throughput and hardware acceleration.
+- **Integrity**: GCM (Galois/Counter Mode) acts as an Authenticated Encryption with Associated Data (AEAD) cipher, providing built-in MACs (Message Authentication Codes) to detect any tampering or bit-flipping during transit.
+- **No Shared Keys**: ECDH allows the nodes to agree on a symmetric key using only their public keys, eliminating the need to ever transmit a private or symmetric key.
+
+**Alternatives Considered**:
+- **Pure Asymmetric Encryption (RSA)**: Rejected due to severe payload size limits (e.g., 245 bytes for 2048-bit RSA) and massive performance overhead.
+- **Pre-shared Symmetric Keys**: Rejected due to the operational complexity and security risk of securely distributing symmetric keys to all peers out-of-band.
+
+**Implications**:
+- All nodes must support ECDH and AES-GCM (which is native in standard crypto libraries like `ring`).
+- Message payloads must include the sender's ephemeral public key and the AES nonce to enable decryption by the recipient.
+
+**Related Decisions**: D003
+
+---
 
 **Deferred Features Summary**:
 

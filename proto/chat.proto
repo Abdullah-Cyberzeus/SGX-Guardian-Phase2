@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package sgx;
+
+service ChatService {
+  // Pushes a secure, hardware-signed chat message to a peer node
+  rpc PushMessage(PushMessageRequest) returns (PushMessageResponse);
+
+  // Pushes a read receipt to the original sender over the P2P tunnel
+  rpc PushReceipt(PushReceiptRequest) returns (PushReceiptResponse);
+
+  // Synchronizes missed messages using server-side streaming
+  rpc SyncMessages(SyncRequest) returns (stream PushMessageRequest);
+}
+
+message PushMessageRequest {
+  string message_id = 1;
+  string sender_did = 2;
+  string recipient_did = 3;
+  int64 timestamp = 4;
+  uint64 seq_no = 5;
+  string encrypted_payload = 6;
+  string signature = 7;
+  string group_id = 8;
+}
+
+message PushMessageResponse {
+  string message_id = 1;
+  string status = 2; // e.g., "delivered", "error"
+}
+
+message PushReceiptRequest {
+  string message_id = 1;
+  string reader_did = 2; // The DID of the peer who read the message
+  int64 timestamp = 3;   // The UTC epoch timestamp of when it was read
+  string group_id = 4;   // Group ID (e.g., "circle"), or empty for P2P
+}
+
+message PushReceiptResponse {
+  string message_id = 1;
+  string status = 2; // e.g., "receipt_logged"
+}
+
+message SyncRequest {
+  string requester_did = 1;
+  uint64 last_known_seq_no = 2;
+}

@@ -313,6 +313,19 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             "/api/v1/devices/{id}/unpair",
             post(handlers::devices::unpair),
         )
+        .route("/api/v1/chat/send", post(handlers::chat::send_message))
+        .route("/api/v1/chat/read", post(handlers::chat::mark_as_read))
+        .route("/api/v1/chat/sync", post(handlers::chat::trigger_sync))
+        .route("/api/v1/chat/history", get(handlers::chat::get_history))
+        .route("/api/v1/chat/ws", get(handlers::chat::ws_handler))
+        .route(
+            "/api/v1/chat/upload",
+            post(handlers::chat_attachments::upload_attachment),
+        )
+        .route(
+            "/api/v1/chat/download/{attachment_id}",
+            get(handlers::chat_attachments::download_attachment),
+        )
         .route("/api/v1/call/initiate", post(handlers::call::initiate_call))
         .route("/api/v1/calls", get(handlers::call::list_calls))
         .route(

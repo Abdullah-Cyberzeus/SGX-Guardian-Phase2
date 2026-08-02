@@ -130,6 +130,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "/var/lib/sgx-guardian/identity",
         "/var/lib/sgx-guardian/identity/peers",
         "/var/lib/sgx-guardian/admin",
+        "/var/lib/sgx-guardian/chat/p2p",
+        "/var/lib/sgx-guardian/chat/group",
+        "/var/lib/sgx-guardian/chat/attachments",
         "/var/lib/sgx-guardian/nebula/ca",
         "/var/lib/sgx-guardian/nebula/nodes",
         "/var/lib/sgx-guardian/nebula/requests",
@@ -3109,6 +3112,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         device_did,
         device_pubkey_point,
     );
+    if GATES.disable_grpc_server {
+        tracing::warn!("Chat gRPC server disabled by SGX_DISABLE_GRPC_SERVER");
+    } else {
+        tokio::spawn({
+            let chat_addr = format!("0.0.0.0:{}", this_node.port + 200);
+            let state = api_state.clone();
+            async move {
+                if let Err(error) =
+                    sgx_guardian_client::server::start_chat_plaintext_server(
+                        chat_addr.clone(),
+                        state,
+                    )
+                    .await
+                {
+                    eprintln!("❌ Chat gRPC server failed on {}: {:?}", chat_addr, error);
+                }
+            }
+        });
+    }
     // Every enrolled node receives authenticated Nebula-based call signaling.
     tokio::spawn({
         let signaling = api_state.call_nebula_signaling.clone();

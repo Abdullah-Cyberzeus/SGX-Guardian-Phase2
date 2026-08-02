@@ -161,6 +161,12 @@ pub fn build_nft_ruleset(rules: &TranslatedRules) -> Result<String> {
     out.push_str("    udp dport 50064 accept\n");
     out.push_str("    udp sport 50064 accept\n");
 
+    // Allow chat gRPC plaintext (base_port + 200 offset)
+    out.push_str("    tcp dport {50251,50252,50253} accept\n");
+
+    // Allow REST API
+    out.push_str("    tcp dport 8443 accept\n");
+
     // Allow ICMP ping
     out.push_str("    ip protocol icmp accept\n");
     // Allow Nebula overlay mesh traffic (VERY IMPORTANT)

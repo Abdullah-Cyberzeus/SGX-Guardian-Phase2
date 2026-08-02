@@ -2,6 +2,8 @@
 
 // Core modules
 pub mod api;
+pub mod chat;
+
 pub mod attestation_service;
 pub mod audit;
 pub mod backup;

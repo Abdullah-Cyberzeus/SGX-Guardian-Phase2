@@ -6,6 +6,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=proto/cert.proto");
     println!("cargo:rerun-if-changed=proto/peer.proto");
     println!("cargo:rerun-if-changed=proto/policy.proto");
+    println!("cargo:rerun-if-changed=proto/chat.proto");
     tonic_prost_build::configure()
         .build_client(true)
         .build_server(true)
@@ -15,6 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "proto/policy.proto",
                 "proto/ping.proto",
                 "proto/cert.proto",
+                "proto/chat.proto",
             ],
             &["proto"],
         )?;
