@@ -19,7 +19,10 @@ use std::time::Duration;
 fn devices_config_for_state(state: &AppState) -> crate::devices::DevicesConfig {
     let mut cfg = crate::devices::DevicesConfig::from_env();
     if std::env::var_os(crate::devices::DEVICES_BASE_ENV).is_none() {
-        if let Some(root) = PathBuf::from(&state.keys_dir).parent().map(|path| path.to_path_buf()) {
+        if let Some(root) = PathBuf::from(&state.keys_dir)
+            .parent()
+            .map(|path| path.to_path_buf())
+        {
             cfg.base_dir = root.join("devices");
         }
     }

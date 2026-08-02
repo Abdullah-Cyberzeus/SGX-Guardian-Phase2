@@ -37,15 +37,13 @@ fn test_all_state_transitions_are_exhaustive() {
                     state,
                     next
                 );
-            } else {
-                if *state != CallState::EndCall || *next != CallState::EndCall {
-                    assert!(
-                        result.is_err(),
-                        "Invalid transition from {} to {} was accepted",
-                        state,
-                        next
-                    );
-                }
+            } else if *state != CallState::EndCall || *next != CallState::EndCall {
+                assert!(
+                    result.is_err(),
+                    "Invalid transition from {} to {} was accepted",
+                    state,
+                    next
+                );
             }
         }
     }

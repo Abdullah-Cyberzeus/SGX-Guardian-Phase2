@@ -202,6 +202,11 @@ impl IncidentManager {
     pub fn all_incidents(&self) -> Vec<Incident> {
         self.incidents.values().cloned().collect()
     }
+
+    /// Get the peer id this manager was created for
+    pub fn peer_id(&self) -> &str {
+        &self.peer_id
+    }
 }
 
 #[cfg(test)]
@@ -235,7 +240,7 @@ mod tests {
     #[test]
     fn test_incident_manager_creation() {
         let manager = IncidentManager::new("test_peer".to_string());
-        assert_eq!(manager.peer_id, "test_peer");
+        assert_eq!(manager.peer_id(), "test_peer");
     }
 
     #[test]

@@ -1,0 +1,98 @@
+flowchart TD
+ START([Open Settings tab]) --> ST01[ST-01 Settings Root]
+
+ ST01 --> GUARDIAN_CARD[Guardian Selector Card at top\nDevice name + connected status\nDID preview]
+ GUARDIAN_CARD --> GUARDIAN_TAP[Tap card] --> ST02[ST-02 Guardian Info + DID]
+
+ %% DID Management
+ ST02 --> DID_SECTION[MY DECENTRALIZED IDENTIFIER section\nFull DID string in monospace]
+ DID_SECTION --> DID_ACTION{Action}
+ DID_ACTION -- Tap Copy --> COPY_DID[ Copy DID to clipboard]
+ COPY_DID --> TOAST_DID[ Toast: DID copied]
+ DID_ACTION -- Tap What is a DID? --> DID_EXPLAIN[Expandable explainer:\nplain language description]
+ DID_EXPLAIN --> DID_ACTION
+
+ ST02 --> CONN_TYPE[Connection Type\nAuto-detected: WiFi / Cellular / Satellite]
+ ST02 --> SIGNAL[Signal Strength\nExcellent / Good / Poor / No signal]
+
+ %% Account Group
+ ST01 --> ACCOUNT_GROUP[Account section]
+ ACCOUNT_GROUP --> PROFILE[ST-03 Profile\nName + Email + Avatar]
+ PROFILE --> EDIT_PROFILE{Edit?}
+ EDIT_PROFILE -- Yes --> PROFILE_EDIT[Edit mode\nInline field editing]
+ PROFILE_EDIT --> SAVE_PROFILE[Tap Save\n PATCH /api/user/profile]
+ SAVE_PROFILE --> SAVE_RESULT{Result}
+ SAVE_RESULT -- Success --> TOAST_PROFILE[ Toast: Profile updated]
+ SAVE_RESULT -- Error --> ERR_PROFILE[ Error saving\nRetry]
+ TOAST_PROFILE --> PROFILE
+ EDIT_PROFILE -- No --> PROFILE
+
+ ACCOUNT_GROUP --> DATA_USAGE[ST-04 Data Usage\nApp + Guardian sync stats]
+ ACCOUNT_GROUP --> BACKUP[ST-05 Backup and Restore\nBackup / restore Guardian config]
+
+ BACKUP --> BACKUP_ACTION{Action}
+ BACKUP_ACTION -- Create Backup --> BACKUP_API[ POST /api/backup\nCreates encrypted backup file]
+ BACKUP_ACTION -- Restore from Backup --> RESTORE_ACTION[File picker\nSelect backup file]
+ BACKUP_API --> BACKUP_RESULT{Result}
+ BACKUP_RESULT -- Success --> TOAST_BACKUP[ Toast: Backup created]
+ BACKUP_RESULT -- Error --> ERR_BACKUP[ Backup failed]
+ RESTORE_ACTION --> RESTORE_CONFIRM[Confirmation:\nRestoring will overwrite current config\nContinue?]
+ RESTORE_CONFIRM --> RESTORE_API[ POST /api/restore]
+
+ %% Network Group
+ ST01 --> NETWORK_GROUP[Network section]
+ NETWORK_GROUP --> TOPOLOGY[ST-06 Network Topology\nFull-screen visual graph of\nGuardian + connected peers]
+
+ %% Physical Security
+ ST01 --> PHYSICAL_GROUP[Physical Security section]
+ PHYSICAL_GROUP --> GEO[ST-07 Location and Geofencing\nDefine safe zones\nGuardian behavior on enter/leave]
+ GEO --> GEO_ACTION{Configure?}
+ GEO_ACTION -- Add zone --> ADD_ZONE[Map view\nDraw geofence boundary]
+ ADD_ZONE --> SAVE_ZONE[ POST /api/geofence]
+ GEO_ACTION -- Edit existing --> EDIT_ZONE[Modify boundary or rules]
+ GEO_ACTION -- Delete zone --> DELETE_ZONE[Confirmation + DELETE /api/geofence/id]
+
+ %% Device Group
+ ST01 --> DEVICE_GROUP[Device section]
+ DEVICE_GROUP --> PAIRING[ST-08 Device Pairing\nRe-pair Guardian hardware]
+ PAIRING --> PAIR_METHOD{Method}
+ PAIR_METHOD -- Scan QR --> QR_PAIR[Camera → QR scan]
+ PAIR_METHOD -- Serial number --> SERIAL_PAIR[Manual serial entry]
+ QR_PAIR --> PAIR_API[ POST /api/pair\nSame as onboarding]
+ SERIAL_PAIR --> PAIR_API
+
+ DEVICE_GROUP --> MANAGE_G[ST-09 Manage Guardians\nList of paired Guardian devices]
+ MANAGE_G --> ADD_NEW_G[Tap Add Guardian\n→ goes to ST-08 Pairing flow]
+ MANAGE_G --> SET_PRIMARY[Tap Set as Primary\non a Guardian card]
+ MANAGE_G --> REMOVE_G[Tap Remove Guardian\nConfirmation sheet]
+
+ DEVICE_GROUP --> DEV_SETTINGS[ST-10 Device Settings\nGuardian-specific config]
+ DEVICE_GROUP --> DUAL_WIFI[ST-11 Dual WiFi Mode\nConfigure dual band settings]
+
+ %% Notifications Group
+ ST01 --> NOTIF_GROUP[Notifications section]
+ NOTIF_GROUP --> NOTIF_PREF[ST-12 Notification Preferences]
+ NOTIF_PREF --> NOTIF_TOGGLES[Toggles per severity:\nHIGH alerts — on by default\nMEDIUM alerts — on by default\nLOW alerts — off by default\nDevice events — configurable\nCircle messages — configurable]
+ NOTIF_TOGGLES --> SAVE_NOTIF[ Auto-save on toggle change]
+
+ NOTIF_GROUP --> CUSTOM_RULES[ST-13 Custom Alert Rules]
+ CUSTOM_RULES --> RULE_LIST{Existing rules?}
+ RULE_LIST -- Yes --> RULE_ITEMS[List of custom rules\nEdit / Delete options]
+ RULE_LIST -- No --> RULE_EMPTY[Empty state\nCreate your first rule CTA]
+ RULE_ITEMS --> CREATE_RULE[Tap + New Rule\nRule builder form]
+ RULE_EMPTY --> CREATE_RULE
+ CREATE_RULE --> RULE_BUILDER[Event type + Threshold\n+ Action + Notification]
+ RULE_BUILDER --> SAVE_RULE[ POST /api/alert-rules]
+
+ %% Help Group
+ ST01 --> HELP_GROUP[Help and Support section]
+ HELP_GROUP --> QUICK_START[ST-14 Quick Start Guide\nIn-app help content\nKey concepts + how-to guides\nGlossary including DID explanation]
+ HELP_GROUP --> APP_VERSION[ST-15 App Version\nVersion number + build date]
+
+ %% Logout
+ ST01 --> LOGOUT_BTN[Tap Logout\nRed button at bottom]
+ LOGOUT_BTN --> ST16[ST-16 Logout Confirmation\nAre you sure?\nYou will need to log in again]
+ ST16 --> LOGOUT_ACTION{Confirm?}
+ LOGOUT_ACTION -- Confirm --> LOGOUT_API[ POST /api/auth/logout\nClear local session + tokens]
+ LOGOUT_ACTION -- Cancel --> ST01
+ LOGOUT_API --> OB06([OB-06 Account Setup\nLogin screen])

@@ -41,7 +41,8 @@ pub async fn upload_attachment(
             let file_name = field.file_name().unwrap_or("unknown").to_string();
             attachment_id = Uuid::new_v4().to_string();
 
-            let base_dir = std::env::var("CHAT_STORAGE_DIR").unwrap_or_else(|_| "/var/lib/sgx-guardian/chat".to_string());
+            let base_dir = std::env::var("CHAT_STORAGE_DIR")
+                .unwrap_or_else(|_| "/var/lib/sgx-guardian/chat".to_string());
             let attachments_dir = std::path::Path::new(&base_dir).join("attachments");
             if let Err(e) = tokio::fs::create_dir_all(&attachments_dir).await {
                 return Err(ApiError::Internal(format!(
@@ -63,7 +64,7 @@ pub async fn upload_attachment(
             let mut total_size = 0;
 
             const MAX_ATTACHMENT_BYTES: usize = 50 * 1024 * 1024; // 50 MB
-            // Task 4.2: Stream the chunks directly to disk and hash simultaneously
+                                                                  // Task 4.2: Stream the chunks directly to disk and hash simultaneously
             while let Some(chunk) = field
                 .chunk()
                 .await
@@ -73,7 +74,9 @@ pub async fn upload_attachment(
                 if total_size > MAX_ATTACHMENT_BYTES {
                     drop(file);
                     let _ = tokio::fs::remove_file(&file_path).await;
-                    return Err(ApiError::BadRequest("File exceeds maximum allowed size (50MB)".to_string()));
+                    return Err(ApiError::BadRequest(
+                        "File exceeds maximum allowed size (50MB)".to_string(),
+                    ));
                 }
                 hasher.update(&chunk);
                 file.write_all(&chunk)
@@ -125,11 +128,16 @@ pub async fn download_attachment(
 ) -> Result<Response, ApiError> {
     // 1. Basic Path Traversal Prevention
     if uuid::Uuid::parse_str(&attachment_id).is_err() {
-        return Err(ApiError::BadRequest("Invalid attachment ID format".to_string()));
+        return Err(ApiError::BadRequest(
+            "Invalid attachment ID format".to_string(),
+        ));
     }
 
-    let base_dir = std::env::var("CHAT_STORAGE_DIR").unwrap_or_else(|_| "/var/lib/sgx-guardian/chat".to_string());
-    let file_path = std::path::Path::new(&base_dir).join("attachments").join(&attachment_id);
+    let base_dir = std::env::var("CHAT_STORAGE_DIR")
+        .unwrap_or_else(|_| "/var/lib/sgx-guardian/chat".to_string());
+    let file_path = std::path::Path::new(&base_dir)
+        .join("attachments")
+        .join(&attachment_id);
 
     // 2. Open the file
     let file = match File::open(&file_path).await {
@@ -148,7 +156,8 @@ pub async fn download_attachment(
 
     // Fetch original filename from metadata, fallback to attachment_id if missing
     let mut filename = attachment_id.clone();
-    if let Ok(Some(metadata)) = crate::chat::storage::get_attachment_metadata(&attachment_id).await {
+    if let Ok(Some(metadata)) = crate::chat::storage::get_attachment_metadata(&attachment_id).await
+    {
         filename = metadata.file_name;
     }
 

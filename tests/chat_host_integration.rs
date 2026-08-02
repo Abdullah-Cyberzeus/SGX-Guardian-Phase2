@@ -147,7 +147,9 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
     assert_eq!(receipt.status, "read_logged");
     let receipt_path = temp.path().join("chat/read_receipts.jsonl");
     for _ in 0..50 {
-        let text = tokio::fs::read_to_string(&receipt_path).await.unwrap_or_default();
+        let text = tokio::fs::read_to_string(&receipt_path)
+            .await
+            .unwrap_or_default();
         if text.contains(&response.message_id) && text.contains(&did_b) {
             break;
         }
@@ -179,15 +181,11 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
             .filter(|m| m.message_id == group_response.message_id)
             .collect::<Vec<_>>();
         if group_deliveries.len() == 3 {
-            assert!(group_deliveries.iter().all(
-                |m| m.encrypted_payload
-                    == r#"{"attachment_id":null,"content":"host group message"}"#
-            ));
-            assert!(
-                group_deliveries
-                    .iter()
-                    .any(|m| m.recipient_did == "group:host-test")
-            );
+            assert!(group_deliveries.iter().all(|m| m.encrypted_payload
+                == r#"{"attachment_id":null,"content":"host group message"}"#));
+            assert!(group_deliveries
+                .iter()
+                .any(|m| m.recipient_did == "group:host-test"));
             assert!(group_deliveries.iter().any(|m| m.recipient_did == did_b));
             assert!(group_deliveries.iter().any(|m| m.recipient_did == did_c));
             break;
@@ -216,8 +214,8 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
             group_id: None,
             timestamp: 1_700_000_000,
             seq_no: 99,
-            encrypted_payload:
-                r#"{"attachment_id":null,"content":"replayed after reconnect"}"#.to_string(),
+            encrypted_payload: r#"{"attachment_id":null,"content":"replayed after reconnect"}"#
+                .to_string(),
             signature: String::new(),
             status: MessageStatus::Delivered,
             read_by: Vec::new(),

@@ -1,0 +1,93 @@
+flowchart TD
+ %% Entry
+ START([Sofia opens Network tab]) --> NW01[NW-01 Circles List]
+
+ NW01 --> EXISTING{Existing circles?}
+ EXISTING -- Yes --> NW01_LIST[Shows circle cards\nwith member count + online status]
+ EXISTING -- No --> NW01_EMPTY[Empty state\nNo circles yet\nCreate your first Circle CTA]
+
+ NW01_LIST --> CHOICE{Sofia's goal}
+ NW01_EMPTY --> CHOICE
+
+ CHOICE -- Create new Circle --> CREATE
+ CHOICE -- Invite to existing Circle --> NW06_EXIST[Tap existing Circle\nNW-06 Circle Detail → Members tab]
+ NW06_EXIST --> INVITE_MODAL
+
+ %% Create Circle Flow
+ CREATE[Tap + Create] --> NW02[NW-02 Create Circle Form]
+ NW02 --> FORM_FILL[Sofia enters:\nCircle Name required\nDescription optional]
+ FORM_FILL --> WHAT_IS{Tap What is a Circle?}
+ WHAT_IS -- Yes --> EXPLAINER[Expandable explainer\nplain language description]
+ EXPLAINER --> FORM_FILL
+ WHAT_IS -- No / continues --> SUBMIT
+
+ SUBMIT[Tap Create Circle] --> VALIDATE{Form valid?}
+ VALIDATE -- Name empty --> VAL_ERR[ Inline error\nCircle name is required]
+ VAL_ERR --> FORM_FILL
+ VALIDATE -- Valid --> API_CREATE[ POST /api/circles\nname + description]
+
+ API_CREATE --> NW03[NW-03 Loading State\nInitializing Circle network...\nGenerating Certificate Authority]
+ NW03 --> CREATE_RESULT{Result}
+ CREATE_RESULT -- Success --> NW06[NW-06 Circle Detail\nLands on Members tab\nSofia listed as Owner]
+ CREATE_RESULT -- Error --> CREATE_ERR[Error screen\nFailed to create Circle\nRetry / Cancel]
+ CREATE_ERR --> NW02
+
+ %% Invite Member Flow
+ NW06 --> INVITE_BTN[Tap Invite Member\nfull-width teal button]
+ INVITE_BTN --> INVITE_MODAL[NW-09 Invite Modal\nDefault: Share Link tab]
+
+ INVITE_MODAL --> INVITE_CHOICE{Invite method}
+
+ %% Method 1 — Share Link (Default)
+ INVITE_CHOICE -- Share Link tab --> NW10[NW-10 Share Link Tab\nInvite code displayed\nShareable URL shown]
+ NW10 --> SHARE_ACTION{Sofia's action}
+ SHARE_ACTION -- Tap Copy Code --> COPY_CODE[ Copy invite code to clipboard\n Toast: Code copied]
+ SHARE_ACTION -- Tap Copy Link --> COPY_LINK[ Copy full URL to clipboard\n Toast: Link copied]
+ SHARE_ACTION -- Tap Share Invite --> SHARE_SHEET[ Native browser share sheet\niOS or Android]
+ SHARE_ACTION -- Record by email --> EMAIL_RECORD[Enter email address\nTap Record\n Invitation logged in system]
+ SHARE_SHEET --> SHARED[ Link shared via\nSMS / Email / WhatsApp / etc]
+ COPY_CODE --> CLOSE_MODAL
+ COPY_LINK --> CLOSE_MODAL
+ SHARED --> CLOSE_MODAL
+ EMAIL_RECORD --> CLOSE_MODAL
+
+ %% Method 2 — QR Code
+ INVITE_CHOICE -- QR Code tab --> NW11[NW-11 QR Code Tab\nQR code generated + displayed]
+ NW11 --> QR_ACTION{Sofia's action}
+ QR_ACTION -- Show screen to invitee --> QR_SCAN[Invitee scans QR\nwith their device]
+ QR_ACTION -- Tap Share QR Code --> QR_SHARE[ Native share sheet\nQR image shared]
+ QR_SCAN --> CLOSE_MODAL
+ QR_SHARE --> CLOSE_MODAL
+
+ %% Method 3 — Search DIDs (Advanced)
+ INVITE_CHOICE -- Search DIDs tab --> NW12[NW-12 Search DIDs Tab\nAdvanced method\nDID explainer shown]
+ NW12 --> DID_INPUT[Sofia enters DID or user ID\ne.g. did:guardian:sgx05-xyz]
+ DID_INPUT --> DID_SEARCH[ GET /api/users/search?did=...]
+ DID_SEARCH --> DID_RESULT{Search result}
+ DID_RESULT -- User found --> DID_FOUND[User profile shown\nName + DID confirmed]
+ DID_RESULT -- Not found --> DID_NOT_FOUND[ No user found\nCheck DID and try again]
+ DID_RESULT -- Invalid format --> DID_INVALID[ Invalid DID format\nHelper text shown]
+ DID_NOT_FOUND --> DID_INPUT
+ DID_INVALID --> DID_INPUT
+ DID_FOUND --> SEND_INVITE[Tap Send Invite]
+ SEND_INVITE --> INVITE_API[ POST /api/circles/id/invites\n&#123; did: target_did &#125;]
+ INVITE_API --> INVITE_RESULT{Result}
+ INVITE_RESULT -- Sent --> INVITE_SENT[ Toast: Invite sent to user]
+ INVITE_RESULT -- Already member --> ALREADY[ This user is already\na member of this Circle]
+ INVITE_RESULT -- Error --> INVITE_ERR[ Failed to send invite\nRetry]
+ INVITE_SENT --> CLOSE_MODAL
+ ALREADY --> NW12
+
+ %% Close modal + result
+ CLOSE_MODAL[Modal dismissed\nSwipe down or X button] --> NW06_UPDATED[NW-06 Members Tab\nPending invite shown OR\nnew member listed]
+
+ %% Remove Member Sub-flow
+ NW06_UPDATED --> REMOVE{Sofia wants to\nremove a member?}
+ REMOVE -- Yes --> NW13[NW-13 Remove Member\nConfirmation sheet]
+ NW13 --> REMOVE_CONFIRM{Confirm remove?}
+ REMOVE_CONFIRM -- Confirm --> REMOVE_API[ DELETE /api/circles/id/members/userId]
+ REMOVE_CONFIRM -- Cancel --> NW06_UPDATED
+ REMOVE_API --> REMOVE_RESULT{Result}
+ REMOVE_RESULT -- Success --> TOAST_REMOVE[ Toast: Member removed]
+ REMOVE_RESULT -- Error --> ERR_REMOVE[ Failed to remove member\nRetry]
+ TOAST_REMOVE --> NW06_UPDATED

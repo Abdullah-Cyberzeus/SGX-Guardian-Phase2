@@ -1,0 +1,12 @@
+flowchart TD
+ A([Push notification received\nHIGH — Service Account Abuse]) --> B[Tap notification]
+ B --> C[ Deep link opens app\nto AL-06 Alert Detail]
+ C --> D[AL-06 Alert Detail\nFull Screen]
+ D --> E[Marcus reads:\nEvent type + Severity + Timestamp\nAffected device + IP + Protocol\nAI Recommendation summary]
+ E --> F[Tap View AI Recommendation]
+ F --> G[AL-07 AI Recommendation Panel\nWhat happened + Why it matters\nStep-by-step remediation]
+ G --> H[Marcus understands threat\nDecides to archive - already resolved]
+ H --> I[Tap Archive Event]
+ I --> J[ Alert status updated\nto Archived on Guardian]
+ J --> K[ Toast: Alert archived]
+ K --> L([Returns to AL-01\nActive Alerts List\nAlert removed from list])

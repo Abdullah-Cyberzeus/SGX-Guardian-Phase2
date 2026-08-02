@@ -30,7 +30,7 @@ impl Role {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_str(s: &str) -> Option<Self> {
         match s {
             "admin" => Some(Role::Admin),
             "operator" => Some(Role::Operator),
@@ -59,7 +59,7 @@ impl MediaType {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_str(s: &str) -> Option<Self> {
         match s {
             "voice" => Some(MediaType::Voice),
             "video" => Some(MediaType::Video),
@@ -344,20 +344,20 @@ mod tests {
     #[test]
     fn test_role_string_conversion() {
         assert_eq!(Role::Admin.as_str(), "admin");
-        assert_eq!(Role::from_str("admin"), Some(Role::Admin));
-        assert_eq!(Role::from_str("operator"), Some(Role::Operator));
-        assert_eq!(Role::from_str("invalid"), None);
+        assert_eq!(Role::parse_str("admin"), Some(Role::Admin));
+        assert_eq!(Role::parse_str("operator"), Some(Role::Operator));
+        assert_eq!(Role::parse_str("invalid"), None);
     }
 
     #[test]
     fn test_media_type_string_conversion() {
         assert_eq!(MediaType::Voice.as_str(), "voice");
-        assert_eq!(MediaType::from_str("voice"), Some(MediaType::Voice));
-        assert_eq!(MediaType::from_str("video"), Some(MediaType::Video));
+        assert_eq!(MediaType::parse_str("voice"), Some(MediaType::Voice));
+        assert_eq!(MediaType::parse_str("video"), Some(MediaType::Video));
         assert_eq!(
-            MediaType::from_str("screen_share"),
+            MediaType::parse_str("screen_share"),
             Some(MediaType::ScreenShare)
         );
-        assert_eq!(MediaType::from_str("invalid"), None);
+        assert_eq!(MediaType::parse_str("invalid"), None);
     }
 }

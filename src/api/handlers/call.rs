@@ -851,7 +851,7 @@ pub async fn initiate_call(
     }
 
     // Update session state to OfferSent
-    if let Err(_) = state
+    if state
         .call_session_manager
         .update_session_state(
             &session_id,
@@ -859,6 +859,7 @@ pub async fn initiate_call(
             "Offer sent".to_string(),
         )
         .await
+        .is_err()
     {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1006,7 +1007,7 @@ pub async fn accept_call(
     }
 
     // Update session state
-    if let Err(_) = state
+    if state
         .call_session_manager
         .update_session_state(
             &req.session_id,
@@ -1014,6 +1015,7 @@ pub async fn accept_call(
             "Call accepted".to_string(),
         )
         .await
+        .is_err()
     {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1119,7 +1121,7 @@ pub async fn reject_call(
     }
 
     // Update session state
-    if let Err(_) = state
+    if state
         .call_session_manager
         .update_session_state(
             &req.session_id,
@@ -1127,6 +1129,7 @@ pub async fn reject_call(
             "Call rejected".to_string(),
         )
         .await
+        .is_err()
     {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1174,10 +1177,11 @@ pub async fn end_call(
                 }
             }
             // End the session
-            if let Err(_) = state
+            if state
                 .call_session_manager
                 .end_session(&req.session_id)
                 .await
+                .is_err()
             {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -1211,7 +1215,7 @@ pub async fn end_call(
 /// Check if a call is authorized by UEP (Unified Enforcement Point) policy
 pub async fn policy_check(Json(req): Json<PolicyCheckRequest>) -> axum::response::Response {
     // Parse roles and media type
-    let caller_role = match Role::from_str(&req.caller_role) {
+    let caller_role = match Role::parse_str(&req.caller_role) {
         Some(role) => role,
         None => {
             return (
@@ -1224,7 +1228,7 @@ pub async fn policy_check(Json(req): Json<PolicyCheckRequest>) -> axum::response
         }
     };
 
-    let target_role = match Role::from_str(&req.target_role) {
+    let target_role = match Role::parse_str(&req.target_role) {
         Some(role) => role,
         None => {
             return (

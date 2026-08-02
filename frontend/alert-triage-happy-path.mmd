@@ -1,0 +1,86 @@
+flowchart TD
+ %% Entry Points
+ PUSH([Entry Point A\nPush notification]) -- Tap notification --> DEEP[ Deep link\nopens Alert Detail]
+ NAV([Entry Point B\nTap Alerts tab]) --> AL01[AL-01 Alerts Root\nAI Panel + Active list]
+ DASH([Entry Point C\nHome Dashboard\nTap View All Alerts]) --> AL01
+
+ DEEP --> AL06[AL-06 Alert Detail\nFull Screen]
+ AL01 --> AL02{Filter / Browse}
+ AL02 -- No filter --> LIST[Active alerts list\nDefault view]
+ AL02 -- Apply filter --> AL02F[AL-02 Filtered alerts list\nFilter chips shown]
+ LIST --> AL05[AL-05 Tap alert row\nIn-line expand]
+ AL02F --> AL05
+ AL05 -- Tap View Full Detail --> AL06
+ AL05 -- Tap Archive --> ARCH_QUICK[ Quick archive\nno full detail needed]
+ ARCH_QUICK --> TOAST_ARCH[ Toast: Alert archived]
+ TOAST_ARCH --> AL01
+
+ %% Alert Detail Screen
+ AL06 --> READ[Marcus reads:\nEvent + Severity + Time\nDevice + IP + Protocol\nStatus + AI summary snippet]
+ READ --> ACTION{What does Marcus do?}
+
+ %% Path A — View AI Recommendation
+ ACTION -- Wants more context --> AL07[AL-07 AI Recommendation\nFull analysis + remediation steps]
+ AL07 --> DECIDE{Decision after reading}
+ DECIDE -- Threat resolved / low risk --> ARCH[Archive Event]
+ DECIDE -- Needs to block device --> BLOCK
+ DECIDE -- Needs to scan device --> SCAN
+ DECIDE -- Not sure — escalate --> ESC[Escalate to team\nvia Circle chat]
+ ESC --> CIRCLE[NW-04 Circle Chat\nSend message to team]
+ CIRCLE --> DONE([Flow continues\nin Circle])
+
+ %% Path B — Take Action Directly
+ ACTION -- Knows what to do --> AL08[AL-08 Remediation Actions\nBottom sheet]
+ AL08 --> REMED{Choose action}
+
+ %% Archive
+ REMED -- Archive Event --> ARCH
+ ARCH --> ARCH_API[ PATCH /api/alerts/id\nstatus: archived]
+ ARCH_API --> ARCH_SUCCESS{Result}
+ ARCH_SUCCESS -- Success --> TOAST_A[ Toast: Event archived]
+ ARCH_SUCCESS -- Error --> ERR_A[ Toast: Failed to archive\nRetry button]
+ TOAST_A --> AL01_CLEAN[AL-01 Active list\nAlert removed]
+
+ %% Block Device
+ REMED -- Block Device --> BLOCK[Block from Network\nConfirmation sheet]
+ BLOCK --> BLOCK_CONFIRM{Confirm?}
+ BLOCK_CONFIRM -- Confirm --> BLOCK_API[ POST /api/devices/id/block]
+ BLOCK_CONFIRM -- Cancel --> AL06
+ BLOCK_API --> BLOCK_RESULT{Result}
+ BLOCK_RESULT -- Success --> TOAST_B[ Toast: Device blocked]
+ BLOCK_RESULT -- Error --> ERR_B[ Error: Could not block device]
+ TOAST_B --> AL01_CLEAN
+
+ %% Run Security Scan
+ REMED -- Run Security Scan --> SCAN[DV-06 Security Scan\nIn progress]
+ SCAN --> SCAN_API[ POST /api/devices/id/scan]
+ SCAN_API --> SCAN_RESULT{Scan result}
+ SCAN_RESULT -- Complete --> DV07[DV-07 Scan Results\nVulnerabilities found]
+ SCAN_RESULT -- Error --> ERR_S[ Scan failed\nRetry]
+ DV07 --> POST_SCAN{Next action}
+ POST_SCAN -- View device --> DV03[DV-03 Device Detail]
+ POST_SCAN -- Archive alert --> ARCH
+ POST_SCAN -- Done --> AL01_CLEAN
+
+ %% View Affected Device
+ ACTION -- Tap affected device link --> DV03[DV-03 Device Detail\nFull device info]
+ DV03 --> DV03_ACTION{Action on device}
+ DV03_ACTION -- Run scan --> SCAN
+ DV03_ACTION -- Block device --> BLOCK
+ DV03_ACTION -- Back to alert --> AL06
+
+ %% Bulk Actions
+ AL01 --> BULK{Bulk select mode?}
+ BULK -- Tap Select --> AL03[AL-03 Bulk Select Mode\nCheckboxes appear + Select All]
+ AL03 --> BULK_ACTION{Bulk action}
+ BULK_ACTION -- Archive Selected --> BULK_ARCH[ Bulk archive API call]
+ BULK_ACTION -- Delete Selected --> BULK_DEL[Confirmation sheet\nthen delete]
+ BULK_ACTION -- Cancel --> AL01
+ BULK_ARCH --> TOAST_BULK[ Toast: X alerts archived]
+ TOAST_BULK --> AL01_CLEAN
+
+ %% Archived view
+ AL01 --> SWITCH_ARCH[Tap View Archived] --> AL04[AL-04 Archived Alerts\nSame layout different list]
+ AL04 --> AL04_DETAIL[AL-06 Alert Detail\nArchived state]
+ AL04_DETAIL --> UNARCH[Unarchive option available]
+ UNARCH --> ARCH_API

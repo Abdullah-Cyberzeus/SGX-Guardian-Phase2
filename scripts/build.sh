@@ -10,6 +10,8 @@ set -euo pipefail
 
 TARGET_TRIPLE="aarch64-unknown-linux-gnu"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+FRONTEND_DIR="${REPO_ROOT}/frontend"
+FRONTEND_DIST_DIR="${FRONTEND_DIR}/dist"
 ARTIFACT_DIR="${REPO_ROOT}/build/artifacts/arm64"
 DAEMON_BINARY_NAME="sgx_guardian_client"
 
@@ -266,6 +268,30 @@ print_versions() {
   aarch64-linux-gnu-gcc --version | head -n 1
 }
 
+ensure_frontend_dist() {
+  if [[ -s "${FRONTEND_DIST_DIR}/index.html" ]]; then
+    log "Using existing embedded frontend bundle at ${FRONTEND_DIST_DIR}"
+    return 0
+  fi
+
+  [[ -f "${FRONTEND_DIR}/package.json" ]] \
+    || die "Frontend dist missing and ${FRONTEND_DIR}/package.json was not found"
+  [[ -f "${FRONTEND_DIR}/package-lock.json" ]] \
+    || die "Frontend dist missing and ${FRONTEND_DIR}/package-lock.json was not found"
+
+  need_cmd node || die "Frontend dist missing and Node.js is not installed"
+  need_cmd npm || die "Frontend dist missing and npm is not installed"
+
+  log "Building embedded frontend bundle..."
+  retry_forever \
+    "npm ci (frontend)" \
+    npm --prefix "${FRONTEND_DIR}" ci --no-audit --no-fund
+  VITE_API_URL=/api/v1 npm --prefix "${FRONTEND_DIR}" run build
+
+  [[ -s "${FRONTEND_DIST_DIR}/index.html" ]] \
+    || die "Frontend build did not produce ${FRONTEND_DIST_DIR}/index.html"
+}
+
 build_workspace() {
   cd "${REPO_ROOT}"
   local out_dir="${REPO_ROOT}/target/${TARGET_TRIPLE}/release"
@@ -355,6 +381,7 @@ main() {
   install_apt_prereqs
   install_rust_toolchain
   print_versions
+  ensure_frontend_dist
   build_workspace
   collect_artifacts
   log "Done."

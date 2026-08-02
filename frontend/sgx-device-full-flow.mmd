@@ -1,0 +1,11 @@
+flowchart TD
+ A([Marcus opens Settings tab]) --> B[ST-01 Settings Root\nGuardian card at top\nGrouped settings list]
+ B --> C[Guardian card shows:\nHome Guardian — Connected \nDID: did:guardian:sgx05-ml4vwppi]
+ C --> D[Tap Guardian card]
+ D --> E[ST-02 Guardian Info + DID Screen]
+ E --> F[Sees full DID string:\ndid:guardian:sgx05-ml4vwppi\nin monospace code block]
+ F --> G[Tap Copy button next to DID]
+ G --> H[ DID copied to clipboard]
+ H --> I[ Toast: DID copied to clipboard]
+ I --> J[Marcus shares DID via\nWhatsApp / SMS to teammate]
+ J --> K([Teammate uses DID\nto invite Marcus to their Circle])

@@ -90,7 +90,7 @@ impl PeerScorer {
         let decay = 0.95; // 5% decay per update
         let increment = anomaly_score * weight;
         score.score = (score.score * decay) + increment;
-        score.score = score.score.min(100.0).max(0.0);
+        score.score = score.score.clamp(0.0, 100.0);
 
         // Auto-block if score exceeds threshold
         if score.should_block() {
@@ -158,7 +158,7 @@ impl PeerScorer {
     pub fn unblock_peer(&mut self, peer_id: &str) -> ThreatResult<()> {
         if let Some(score) = self.scores.get_mut(peer_id) {
             score.is_blocked = false;
-            score.score = score.score * 0.5; // Reduce score by half when unblocked
+            score.score *= 0.5; // Reduce score by half when unblocked
             Ok(())
         } else {
             Err(ThreatError::PeerNotFound(peer_id.to_string()))

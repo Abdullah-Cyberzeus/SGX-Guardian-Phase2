@@ -148,6 +148,26 @@ Transport notes:
 
 ## 2. NEW Endpoints
 
+### 2.1 Auth, Session & Paired Devices
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/auth/signup` | Create the initial operator account when no local admin exists yet |
+| POST | `/auth/login` | Authenticate an operator and issue a bearer session token |
+| GET | `/auth/session` | Validate the current session token and return operator/session summary |
+| POST | `/auth/logout` | Revoke the current session token |
+| GET | `/audit/logs` | Fetch secure tamper-evident audit logs with filters |
+| GET | `/devices` | List all paired Guardian devices visible to the signed-in operator |
+| GET | `/devices/paired` | Alias of paired-device list for frontend compatibility |
+| POST | `/devices/pair` | Submit pairing proof and bind a Guardian device to the current operator |
+| GET | `/devices/pairing-code` | Generate a short-lived pairing code for QR or serial onboarding |
+| GET | `/devices/pairing-status` | Poll pairing/bootstrap status for a device serial |
+| GET | `/devices/{device_id}` | Return one paired device detail by device ID |
+| GET | `/devices/paired/{device_id}` | Alias of paired-device detail lookup |
+| POST | `/devices/{id}/unpair` | Unpair one Guardian device from the current operator account |
+
+### 2.2 Discovery & Threat
+
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/discovery/summary` | Aggregate inventory stats: totals, open ports, risk counts, last_seen_at |
@@ -165,6 +185,11 @@ Transport notes:
 | GET | `/threat/config` | Read full Guardian threat config as JSON |
 | POST | `/threat/config` | Patch threat config fields; live-reloaded within 5 seconds |
 | POST | `/threat/start` | Start Suricata if offline via `systemctl start suricata` |
+
+### 2.3 Identity, CRL & Network Control
+
+| Method | Path | Purpose |
+|---|---|---|
 | POST | `/crl/revoke` | Issue a CRL revocation entry for a DID |
 | GET | `/crl/list` | Return all CRL entries |
 | GET | `/crl/entry` | Return one CRL entry by `id` |
@@ -172,13 +197,20 @@ Transport notes:
 | POST | `/crl/verify` | Verify CRL signatures, role rules, and Merkle root |
 | GET | `/crl/root` | Return CRL sequence and Merkle root |
 | POST | `/crl/unrevoke` | Reverse a mistaken revocation (Circle Owner only) |
+| GET | `/crl/gossip/status` | Return CRL gossip engine counters, thresholds, and last-round summary |
+| POST | `/crl/gossip/trigger` | Trigger one CRL gossip round immediately |
+| GET | `/crl/emergency/status` | Return emergency revocation channel health and last-notice summary |
+| POST | `/crl/emergency/broadcast` | Broadcast a critical CRL revocation immediately to active peers |
+| GET | `/crl/emergency/notifications` | Return the durable emergency-revocation notification feed |
+| GET | `/crl/emergency/debug/session` | Inspect seeded emergency session state for a DID |
+| POST | `/crl/emergency/debug/session` | Seed a test emergency session for debug validation |
+| GET | `/crl/offline/status` | Return offline sync enablement, counters, and peer sync-state snapshot |
+| GET | `/crl/offline/pending` | Return queued revocations with attempts, timestamps, and parked state |
+| POST | `/crl/offline/sync` | Run one offline fetch-and-flush cycle on demand |
 | GET | `/wifi/mode` | Retrieve active network orchestration mode, status, and module configurations |
 | POST | `/wifi/mode` | Update network orchestration mode (DualWifi, HotspotOnly, ClientOnly, Off) |
 | GET | `/wifi/scan` | Perform Wi-Fi scan for visible access points in range |
 | GET | `/wifi/clients` | Retrieve active hotspot connected DHCP client leases |
-| GET | `/crl/offline/status` | Return offline sync enablement, counters, and peer sync-state snapshot |
-| GET | `/crl/offline/pending` | Return queued revocations with attempts, timestamps, and parked state |
-| POST | `/crl/offline/sync` | Run one offline fetch-and-flush cycle on demand |
 | GET | `/vc/files/own` | List local own-VC file metadata |
 | GET | `/vc/files/peers` | List peer-VC file metadata |
 | GET | `/vc/files/issued/{vc_id}` | Fetch the stored issued VC JSON document |
@@ -190,7 +222,34 @@ Transport notes:
 | GET | `/vc/audit` | Return VC audit-log entries with optional filtering |
 | GET | `/vid/show` | Show the single current nonce-bound VirtualID and its input digests |
 | GET | `/vid/peers` | List cached peer VirtualIDs and last observed rotation reasons |
-| GET | `/audit/logs` | Fetch secure tamper-evident audit logs with filters |
+| GET | `/dusage/current` | Return current-period bandwidth usage snapshot |
+| GET | `/dusage/history` | Return completed period usage history |
+| GET | `/dusage/quota` | Return configured signed data-usage quota |
+| PUT | `/dusage/quota` | Update configured signed data-usage quota |
+| POST | `/dusage/reset` | Reset or re-baseline the current usage period |
+
+### 2.4 Geofencing
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/geofence/zones` | List configured geofence zones |
+| POST | `/geofence/zones` | Create a new geofence zone |
+| PATCH | `/geofence/zones/{id}` | Edit one geofence zone definition |
+| DELETE | `/geofence/zones/{id}` | Delete one geofence zone |
+| POST | `/geofence/zones/{id}/capture-rf` | Capture RF fingerprint data for a zone |
+| GET | `/geofence/location` | Return the current computed device/location state |
+| POST | `/geofence/location` | Report or update the latest observed location sample |
+| GET | `/geofence/status` | Return current geofence engine status and active zone decision |
+| GET | `/geofence/events` | List geofence transition events |
+| GET | `/geofence/alerts` | List geofence alert history |
+| GET | `/geofence/zones/{id}/actions` | Return configured actions for one geofence zone |
+| PUT | `/geofence/zones/{id}/actions` | Replace or update action rules for one geofence zone |
+| POST | `/geofence/actions/test` | Trigger a dry-run/test execution of geofence actions |
+
+### 2.5 Backup & Restore
+
+| Method | Path | Purpose |
+|---|---|---|
 | POST | `/backup/create` | Create an encrypted backup bundle |
 | GET | `/backup/history` | List local backup bundle history |
 | GET | `/backup/download/{id}` | Download one encrypted backup bundle |
@@ -201,20 +260,126 @@ Transport notes:
 | GET | `/restore/status` | Return current restore journal status |
 | POST | `/restore/apply` | Apply a confirmed restore transaction |
 | POST | `/restore/undo` | Undo the last committed restore from its snapshot |
+
+### 2.6 Device Security & Fleet Operations
+
+| Method | Path | Purpose |
+|---|---|---|
 | GET | `/managed-devices` | List Managed Devices |
+| GET | `/managed-devices/summary` | Return managed-device fleet totals, risk posture, and block counters |
 | GET | `/managed-devices/{device_id}` | Get Managed Device Details and Scores |
 | POST | `/managed-devices` | Create Manual Managed Device |
+| PATCH | `/managed-devices/{device_id}` | Edit managed-device metadata or operator-maintained fields |
 | DELETE | `/managed-devices/{device_id}` | Remove Managed Device |
 | POST | `/managed-devices/{device_id}/scan` | Start Per-Device Security Scan |
 | GET | `/managed-devices/{device_id}/scan/{scan_id}` | Get Live Per-Device Scan Progress and Final Report |
 | POST | `/managed-devices/{device_id}/reject` | Reject and Block Managed Device |
 | POST | `/managed-devices/{device_id}/block` | Block Device Using nftables |
 | POST | `/managed-devices/{device_id}/unblock` | Unblock Device and Remove nftables Rule |
-| GET | `/dusage/current` | Return current-period bandwidth usage snapshot |
-| GET | `/dusage/history` | Return completed period usage history |
-| GET | `/dusage/quota` | Return configured signed data-usage quota |
-| PUT | `/dusage/quota` | Update configured signed data-usage quota |
-| POST | `/dusage/reset` | Reset or re-baseline the current usage period |
+
+### 2.7 Circles, Notifications & Automation Rules
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/circles` | List circles available to the current operator |
+| POST | `/circles` | Create a new circle |
+| GET | `/circles/{id}` | Return one circle detail and membership summary |
+| PATCH | `/circles/{id}` | Edit one circle's metadata or settings |
+| POST | `/circles/{id}/archive` | Archive an existing circle |
+| GET | `/circles/{id}/members` | List members of a circle |
+| POST | `/circles/{id}/members` | Add a member to a circle |
+| PATCH | `/circles/{id}/members/{did}` | Change one member's circle role |
+| DELETE | `/circles/{id}/members/{did}` | Remove one member from a circle |
+| GET | `/circles/{id}/invites` | List active circle invites |
+| POST | `/circles/{id}/invites` | Mint a new invite for a circle |
+| DELETE | `/circles/{id}/invites/{invite_id}` | Revoke one circle invite |
+| POST | `/circles/join/preview` | Validate or preview an inbound circle invite before joining |
+| POST | `/circles/join` | Join a circle using invite material |
+| POST | `/circles/redeem` | Redeem a circle invite token |
+| GET | `/notifications/stream` | Open the live notification event stream |
+| GET | `/notifications` | List notification history |
+| GET | `/notifications/unread-count` | Return unread notification counters |
+| POST | `/notifications/{id}/read` | Mark one notification as read |
+| POST | `/notifications/read-all` | Mark all notifications as read |
+| GET | `/notifications/prefs` | Fetch notification preference settings |
+| PUT | `/notifications/prefs` | Update notification preference settings |
+| GET | `/rules` | List automation rules |
+| POST | `/rules` | Create a new automation rule |
+| GET | `/rules/executions` | List automation rule execution history |
+| GET | `/rules/{id}` | Return one automation rule definition |
+| PATCH | `/rules/{id}` | Edit one automation rule |
+| DELETE | `/rules/{id}` | Delete one automation rule |
+| POST | `/rules/{id}/enable` | Enable or disable one automation rule |
+| POST | `/rules/{id}/test` | Execute a dry-run test for one automation rule |
+
+### 2.8 File Transfer & Vault
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/xfer/send` | Send a file transfer to an in-circle peer |
+| GET | `/xfer/transfers` | List file transfer jobs and statuses |
+| GET | `/xfer/transfers/{id}` | Return one file transfer detail |
+| POST | `/xfer/transfers/{id}/cancel` | Cancel an in-flight file transfer |
+| GET | `/xfer/inbox` | List received file transfers or inbox items |
+| GET | `/vault/overview` | Return encrypted vault overview and storage totals |
+| GET | `/vault/quota` | Return vault quota usage and remaining capacity |
+| GET | `/vault/tree` | Return the vault folder tree |
+| GET | `/vault/search` | Search vault files and folders |
+| POST | `/vault/upload` | Upload a file into the encrypted vault |
+| GET | `/vault/folders` | List vault folders |
+| POST | `/vault/folders` | Create a vault folder |
+| PATCH | `/vault/folders/{folder_id}` | Rename or move a vault folder |
+| DELETE | `/vault/folders/{folder_id}` | Delete a vault folder |
+| GET | `/vault/files` | List vault files |
+| GET | `/vault/files/{id}` | Return one vault file detail |
+| PATCH | `/vault/files/{id}` | Rename or move a vault file |
+| DELETE | `/vault/files/{id}` | Delete a vault file |
+| GET | `/vault/files/{id}/download` | Download one vault file |
+| GET | `/vault/files/{id}/preview` | Stream or render a vault file preview |
+| POST | `/vault/files/{id}/star` | Toggle the starred state for a vault file |
+
+### 2.9 Chat & Calling
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/chat/send` | Send a chat message to a peer or conversation |
+| POST | `/chat/read` | Mark one or more chat messages as read |
+| POST | `/chat/sync` | Trigger chat sync across nodes/peers |
+| GET | `/chat/history` | Return chat history for the requested conversation view |
+| GET | `/chat/ws` | Open the live chat WebSocket stream |
+| POST | `/chat/upload` | Upload a chat attachment |
+| GET | `/chat/download/{attachment_id}` | Download a stored chat attachment |
+| POST | `/call/initiate` | Initiate a direct call session |
+| GET | `/calls` | List call sessions |
+| POST | `/calls/initiate` | Initiate a browser/WebRTC call session |
+| GET | `/calls/active` | List active call sessions |
+| GET | `/calls/events` | Stream or poll live call events |
+| GET | `/calls/ice-servers` | Return ICE/TURN server configuration for call setup |
+| POST | `/call/{session_id}/signal` | Submit a signaling message for a call session |
+| GET | `/call/{session_id}/signals` | Read buffered signaling messages for a call session |
+| GET | `/call/{session_id}/ws` | Open the call signaling WebSocket channel |
+| POST | `/call/{session_id}/media-ready` | Mark direct-call media readiness for a session |
+| POST | `/call/{session_id}/quality` | Report call quality metrics for a session |
+| POST | `/call/accept` | Accept a direct call invitation |
+| POST | `/call/{session_id}/accept` | Accept a browser/WebRTC call session |
+| POST | `/call/reject` | Reject a direct call invitation |
+| POST | `/call/{session_id}/reject` | Reject a browser/WebRTC call session |
+| POST | `/call/end` | End a direct call session |
+| GET | `/call/{session_id}/status` | Return current status for one call session |
+| POST | `/call/policy-check` | Verify whether a call may proceed under active policy |
+| POST | `/group-calls` | Create a group call session |
+| GET | `/group-calls/active` | List active group call sessions |
+| GET | `/group-calls/events` | Stream or poll live group-call events |
+| POST | `/group-call/{group_id}/join` | Join a group call |
+| POST | `/group-call/{group_id}/decline` | Decline a group call invite |
+| POST | `/group-call/{group_id}/leave` | Leave a group call session |
+| POST | `/group-call/{group_id}/end` | End a group call session |
+| POST | `/group-call/{group_id}/moderate` | Perform moderator actions for a group call |
+| POST | `/group-call/{group_id}/signal` | Submit a signaling message for a group call |
+| GET | `/group-call/{group_id}/signals` | Read buffered signaling messages for a group call |
+| POST | `/group-call/{group_id}/media-ready` | Mark group-call media readiness |
+| POST | `/group-call/{group_id}/heartbeat` | Send a presence heartbeat for a group call participant |
+| GET | `/group-call/{group_id}/ws` | Open the group-call WebSocket signaling channel |
 ---
 
 ## 6. Backup & Restore Endpoint Contracts

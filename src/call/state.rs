@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn test_valid_transitions() {
         // Happy path: Idle -> LocalPolicyCheck -> OfferSent -> Verifying -> Authorizing -> Accepted -> MediaNegotiation -> Connected -> EndCall
-        let states = vec![
+        let states = [
             CallState::Idle,
             CallState::LocalPolicyCheck,
             CallState::OfferSent,
