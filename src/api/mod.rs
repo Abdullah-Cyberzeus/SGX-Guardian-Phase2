@@ -313,6 +313,106 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             "/api/v1/devices/{id}/unpair",
             post(handlers::devices::unpair),
         )
+        .route("/api/v1/call/initiate", post(handlers::call::initiate_call))
+        .route("/api/v1/calls", get(handlers::call::list_calls))
+        .route(
+            "/api/v1/calls/initiate",
+            post(handlers::call::initiate_browser_call),
+        )
+        .route("/api/v1/calls/active", get(handlers::call::active_calls))
+        .route("/api/v1/calls/events", get(handlers::call::call_events))
+        .route(
+            "/api/v1/calls/ice-servers",
+            get(handlers::call::ice_servers),
+        )
+        .route("/api/v1/group-calls", post(handlers::group_call::create))
+        .route(
+            "/api/v1/group-calls/active",
+            get(handlers::group_call::active),
+        )
+        .route(
+            "/api/v1/group-calls/events",
+            get(handlers::group_call::events),
+        )
+        .route(
+            "/api/v1/group-call/{group_id}/join",
+            post(handlers::group_call::join),
+        )
+        .route(
+            "/api/v1/group-call/{group_id}/decline",
+            post(handlers::group_call::decline),
+        )
+        .route(
+            "/api/v1/group-call/{group_id}/leave",
+            post(handlers::group_call::leave),
+        )
+        .route(
+            "/api/v1/group-call/{group_id}/end",
+            post(handlers::group_call::end),
+        )
+        .route(
+            "/api/v1/group-call/{group_id}/moderate",
+            post(handlers::group_call::moderate),
+        )
+        .route(
+            "/api/v1/group-call/{group_id}/signal",
+            post(handlers::group_call::submit_signal),
+        )
+        .route(
+            "/api/v1/group-call/{group_id}/signals",
+            get(handlers::group_call::signals),
+        )
+        .route(
+            "/api/v1/group-call/{group_id}/media-ready",
+            post(handlers::group_call::media_ready),
+        )
+        .route(
+            "/api/v1/group-call/{group_id}/heartbeat",
+            post(handlers::group_call::heartbeat),
+        )
+        .route(
+            "/api/v1/group-call/{group_id}/ws",
+            get(handlers::group_call::socket),
+        )
+        .route(
+            "/api/v1/call/{session_id}/signal",
+            post(handlers::call::submit_signal),
+        )
+        .route(
+            "/api/v1/call/{session_id}/signals",
+            get(handlers::call::list_signals),
+        )
+        .route(
+            "/api/v1/call/{session_id}/ws",
+            get(handlers::call::signal_socket),
+        )
+        .route(
+            "/api/v1/call/{session_id}/media-ready",
+            post(handlers::call::media_ready),
+        )
+        .route(
+            "/api/v1/call/{session_id}/quality",
+            post(handlers::call::report_quality),
+        )
+        .route("/api/v1/call/accept", post(handlers::call::accept_call))
+        .route(
+            "/api/v1/call/{session_id}/accept",
+            post(handlers::call::accept_browser_call),
+        )
+        .route("/api/v1/call/reject", post(handlers::call::reject_call))
+        .route(
+            "/api/v1/call/{session_id}/reject",
+            post(handlers::call::reject_browser_call),
+        )
+        .route("/api/v1/call/end", post(handlers::call::end_call))
+        .route(
+            "/api/v1/call/{session_id}/status",
+            get(handlers::call::call_status),
+        )
+        .route(
+            "/api/v1/call/policy-check",
+            post(handlers::call::policy_check),
+        )
         .merge(routes::vault_router())
         .merge(routes::xfer_router())
         .merge(routes::circle_router())
@@ -341,6 +441,31 @@ pub async fn serve(
     tls: Option<AdminTls>,
     wifi_router: Router,
 ) -> anyhow::Result<()> {
+    let presence_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            for session in presence_state
+                .group_session_manager
+                .expire_stale_for_host(&presence_state.node_id)
+                .await
+            {
+                if let Err(error) = presence_state
+                    .call_nebula_signaling
+                    .broadcast_group_snapshot(&session, &presence_state.node_id)
+                    .await
+                {
+                    tracing::warn!(
+                        group_id = %session.group_id,
+                        %error,
+                        "Failed to propagate group presence timeout"
+                    );
+                }
+            }
+        }
+    });
+
     let app = build_router(state, wifi_router);
 
     match tls {

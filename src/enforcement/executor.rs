@@ -138,6 +138,9 @@ pub fn build_nft_ruleset(rules: &TranslatedRules) -> Result<String> {
     out.push_str("    tcp dport {50051,50052,50053} counter name \"api\" accept\n");
     // Allow attestation ports
     out.push_str("    tcp dport {50151,50152,50153} counter name \"attestation\" accept\n");
+    // Allow authenticated Nebula call signaling on a dedicated port so it
+    // does not collide with CRL gossip.
+    out.push_str("    iifname \"nebula0\" tcp dport 50065 accept\n");
     // Allow registry sync (Overlay IP assignment)
     out.push_str("    tcp dport 50062 counter name \"registry\" accept\n");
     // Allow node discovery broadcast (UDP)

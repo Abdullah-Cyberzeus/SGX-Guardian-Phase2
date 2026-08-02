@@ -13,18 +13,29 @@
 //! and writes are atomic (temp file + rename).
 
 pub mod ai_bridge;
+pub mod analytics;
+pub mod anomaly;
 pub mod blocker;
 pub mod config;
 pub mod error;
+pub mod errors;
 pub mod eve_parser;
 pub mod eve_tailer;
+pub mod incident;
 pub mod inventory;
+pub mod peer_scorer;
 pub mod rule_manager;
 pub mod service;
+pub mod threat_rules;
 pub mod threat_alert;
 
+pub use analytics::{ThreatAnalytics, ThreatEvent};
+pub use anomaly::{AnomalyDetector, AnomalyScore, AnomalyType};
 pub use config::{BlockMode, SuricataConfig};
 pub use error::{ThreatError, ThreatResult};
+pub use incident::{Incident, IncidentManager, IncidentResponse, IncidentSeverity};
 pub use inventory::AlertInventory;
+pub use peer_scorer::{PeerScorer, PeerThreatScore};
 pub use service::ThreatService;
+pub use threat_rules::{ThreatAction, ThreatRule, ThreatRuleEngine};
 pub use threat_alert::{Severity, ThreatAlert, ThreatCategory};

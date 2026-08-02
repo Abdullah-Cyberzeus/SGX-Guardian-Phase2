@@ -1,6 +1,8 @@
 // src/policy_state.rs
+use crate::enforcement::uep::{MediaType, RbacRule, Role};
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -125,6 +127,72 @@ pub fn rollback_policy() -> Result<()> {
     Ok(())
 }
 
+/// Load RBAC rules from the active policy YAML
+///
+/// Expects the policy YAML to have a structure like:
+/// ```yaml
+/// policy_id: "..."
+/// version: "..."
+/// rbac_rules:
+///   - caller_role: admin
+///     target_role: operator
+///     allowed_media_types:
+///       - voice
+///       - video
+/// ```
+pub fn load_rbac_rules() -> Result<Vec<RbacRule>> {
+    let active_path = active_policy_path();
+
+    // If no active policy, return default rules
+    if !active_path.exists() {
+        return Ok(crate::enforcement::uep::UepEngine::default_rules());
+    }
+
+    let policy_yaml =
+        fs::read_to_string(&active_path).context("Failed to read active policy for RBAC rules")?;
+
+    let policy: serde_yaml::Value =
+        serde_yaml::from_str(&policy_yaml).context("Failed to parse active policy YAML")?;
+
+    // Try to extract rbac_rules from the policy
+    let rbac_rules = policy
+        .get("rbac_rules")
+        .and_then(|v| v.as_sequence())
+        .map(|seq| {
+            seq.iter()
+                .filter_map(|rule_val| {
+                    let caller_role = rule_val
+                        .get("caller_role")
+                        .and_then(|v| v.as_str())
+                        .and_then(Role::from_str)?;
+                    let target_role = rule_val
+                        .get("target_role")
+                        .and_then(|v| v.as_str())
+                        .and_then(Role::from_str)?;
+
+                    let allowed_media_types = rule_val
+                        .get("allowed_media_types")
+                        .and_then(|v| v.as_sequence())
+                        .map(|seq| {
+                            seq.iter()
+                                .filter_map(|mt_val| mt_val.as_str().and_then(MediaType::from_str))
+                                .collect::<HashSet<_>>()
+                        })
+                        .unwrap_or_default();
+
+                    Some(RbacRule {
+                        caller_role,
+                        target_role,
+                        allowed_media_types,
+                    })
+                })
+                .collect()
+        });
+
+    // If rules found in policy, return them; otherwise use defaults
+    Ok(rbac_rules.unwrap_or_else(|| crate::enforcement::uep::UepEngine::default_rules()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,5 +269,47 @@ mod tests {
             old_active_yaml
         );
         assert!(!pending_path.exists(), "pending policy should be promoted");
+    }
+
+    #[test]
+    fn load_rbac_rules_with_explicit_rules() {
+        let td = tempdir().expect("failed to create temp dir");
+        std::env::set_var("SGX_GUARDIAN_POLICY_DIR", td.path());
+
+        let policy_with_rbac = r#"
+policy_id: test
+version: "1.0"
+rbac_rules:
+  - caller_role: admin
+    target_role: operator
+    allowed_media_types:
+      - voice
+      - video
+  - caller_role: operator
+    target_role: camera
+    allowed_media_types:
+      - voice
+"#;
+
+        ensure_policy_dir().expect("create policy dir");
+        let active_path = active_policy_path();
+        fs::write(&active_path, policy_with_rbac).expect("write policy");
+
+        let rules = load_rbac_rules().expect("load rbac rules");
+        assert!(!rules.is_empty());
+        assert_eq!(rules.len(), 2);
+    }
+
+    #[test]
+    fn load_rbac_rules_returns_defaults_when_missing() {
+        let td = tempdir().expect("failed to create temp dir");
+        std::env::set_var("SGX_GUARDIAN_POLICY_DIR", td.path());
+
+        ensure_policy_dir().expect("create policy dir");
+        // Don't write a policy file
+
+        let rules = load_rbac_rules().expect("load default rbac rules");
+        // Should get default rules when no active policy exists
+        assert!(!rules.is_empty());
     }
 }

@@ -66,3 +66,38 @@ pub fn log_audit(
         let _ = guard.append(&event);
     }
 }
+
+/// Log a UEP (Unified Enforcement Point) authorization decision.
+///
+/// This logs both allowed and denied call authorization attempts.
+pub fn log_uep_decision(
+    node_id: &str,
+    caller_role: &str,
+    target_role: &str,
+    media_type: &str,
+    allowed: bool,
+    reason: &str,
+) {
+    let (severity, action) = if allowed {
+        (AuditSeverity::Info, AuditAction::Succeeded)
+    } else {
+        (AuditSeverity::Warning, AuditAction::Rejected)
+    };
+
+    let message = format!(
+        "UEP call authorization: {} calling {} via {} - {} ({})",
+        caller_role,
+        target_role,
+        media_type,
+        if allowed { "ALLOWED" } else { "DENIED" },
+        reason
+    );
+
+    log_audit(
+        node_id,
+        AuditCategory::Enforcement,
+        severity,
+        action,
+        &message,
+    );
+}

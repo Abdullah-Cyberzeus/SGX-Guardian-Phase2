@@ -29,3 +29,8 @@ coverage/
 .env
 ha-dev-config/
 telemetry/
+
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+/SGX Frontend/

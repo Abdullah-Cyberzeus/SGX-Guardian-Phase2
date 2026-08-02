@@ -2300,7 +2300,7 @@ impl AttestationService {
 
         println!("Peer {} successfully attested and trusted", addr);
         write_trusted_peer(
-            &addr,
+            &peer_ev.node_id,
             &peer_ip,
             &peer_ev,
             current_rotation_reason_for_peer(&peer_ev.subject_did),

@@ -2199,6 +2199,7 @@ dependencies = [
  "dashmap",
  "flate2",
  "futures-core",
+ "futures-util",
  "hex",
  "hyper-util",
  "ipnet",

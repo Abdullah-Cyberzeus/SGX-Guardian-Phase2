@@ -32,16 +32,23 @@ pub async fn require_auth(
         return next.run(req).await;
     }
 
-    let Some(value) = req.headers().get(header::AUTHORIZATION) else {
+    let token = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(str::to_owned)
+        .or_else(|| {
+            ((req.uri().path().starts_with("/api/v1/group-call/")
+                && req.uri().path().ends_with("/ws"))
+                || (req.uri().path().starts_with("/api/v1/call/")
+                    && req.uri().path().ends_with("/ws")))
+            .then(|| query_parameter(req.uri().query(), "access_token"))
+            .flatten()
+        });
+    let Some(token) = token else {
         return unauthorized("missing bearer token");
     };
-    let Ok(value) = value.to_str() else {
-        return unauthorized("invalid authorization header");
-    };
-    let Some(token) = value.strip_prefix("Bearer ") else {
-        return unauthorized("missing bearer token");
-    };
-    let token = token.to_string();
 
     let claims = match session::verify(&state.device_pubkey_point, &token) {
         Ok(claims) => claims,
@@ -80,7 +87,28 @@ fn login_disabled() -> bool {
     crate::runtime_gates::login_disabled()
 }
 
+fn query_parameter(query: Option<&str>, name: &str) -> Option<String> {
+    query?
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find_map(|(key, value)| (key == name).then(|| value.to_string()))
+}
+
 fn is_public_route(method: &Method, path: &str) -> bool {
+    let public_call_api = matches!(method, &Method::GET | &Method::POST)
+        && (path == "/api/v1/calls"
+            || path == "/api/v1/calls/active"
+            || path == "/api/v1/calls/events"
+            || path == "/api/v1/calls/initiate"
+            || path == "/api/v1/calls/ice-servers"
+            || path == "/api/v1/call/end"
+            || path.starts_with("/api/v1/call/")
+            || path == "/api/v1/group-calls"
+            || path == "/api/v1/group-calls/active"
+            || path == "/api/v1/group-calls/events"
+            || path.starts_with("/api/v1/group-call/"));
+    let public_frontend = method == Method::GET && !path.starts_with("/api/");
+
     matches!(
         (method, path),
         (&Method::POST, "/api/v1/auth/signup")
@@ -88,7 +116,8 @@ fn is_public_route(method: &Method, path: &str) -> bool {
             | (&Method::POST, "/api/v1/restore/validate")
             | (&Method::GET, "/api/v1/restore/status")
             | (&Method::GET, "/api/v1/health")
-    )
+    ) || public_call_api
+        || public_frontend
 }
 
 fn is_cors_preflight(headers: &HeaderMap) -> bool {
@@ -253,5 +282,15 @@ mod tests {
             .expect("private route with login disabled");
         handle.abort();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn call_compatibility_routes_include_group_and_websocket_paths() {
+        assert!(is_public_route(&Method::POST, "/api/v1/group-calls"));
+        assert!(is_public_route(
+            &Method::GET,
+            "/api/v1/group-call/group-1/ws"
+        ));
+        assert!(is_public_route(&Method::GET, "/api/v1/call/session-1/ws"));
     }
 }

@@ -38,6 +38,7 @@ services:
       SGX_TPM_KEY_AUTH: "${NODEA_TPM_KEY_AUTH:-}"
       SGX_DUSAGE_SAMPLE_SECS: "15"
       SGX_DUSAGE_CATEGORIES_ENABLED: "1"
+      SGX_CALL_SIGNALING_PORT: "50065"
     networks:
       sgxnet:
         ipv4_address: 172.31.250.10
@@ -65,6 +66,7 @@ services:
       SGX_TPM_DKP_HANDLE_BASE: "0x81000020"
       SGX_TPM_DIK_HANDLE: "0x81000110"
       SGX_TPM_KEY_AUTH: "${NODEB_TPM_KEY_AUTH:-}"
+      SGX_CALL_SIGNALING_PORT: "50065"
     networks:
       sgxnet:
         ipv4_address: 172.31.250.11
@@ -89,6 +91,7 @@ services:
       SGX_TPM_DKP_HANDLE_BASE: "0x81000030"
       SGX_TPM_DIK_HANDLE: "0x81000120"
       SGX_TPM_KEY_AUTH: "${NODEC_TPM_KEY_AUTH:-}"
+      SGX_CALL_SIGNALING_PORT: "50065"
     networks:
       sgxnet:
         ipv4_address: 172.31.250.12

@@ -2,6 +2,10 @@
 //! Keeps all filesystem paths in one place so tests can swap them out.
 
 use crate::api::auth::{provider::ProviderRegistry, store::AdminStores};
+use crate::call::nebula_signaling::NebulaClient;
+use crate::call::{
+    CallSignalHub, DidPeerIdentityResolver, GroupSessionManager, NebulaSignaling, SessionManager,
+};
 use crate::key_manager::KeyManager;
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -119,6 +123,10 @@ pub struct AppState {
     pub admin_dir: String,            // /var/lib/sgx-guardian/admin
     pub admin: Arc<AdminStores>,
     pub signer: Arc<KeyManager>,
+    pub call_session_manager: Arc<SessionManager>,
+    pub call_signal_hub: Arc<CallSignalHub>,
+    pub call_nebula_signaling: Arc<NebulaSignaling>,
+    pub group_session_manager: Arc<GroupSessionManager>,
     pub device_pubkey_point: Vec<u8>,
     pub device_did: String,
     pub session_ttl_secs: u64,
@@ -137,6 +145,11 @@ impl AppState {
         device_did: String,
         device_pubkey_point: Vec<u8>,
     ) -> Arc<Self> {
+        let call_identity_resolver = Arc::new(DidPeerIdentityResolver::new(
+            did_resolver.clone(),
+            "/var/log/sgx-guardian",
+            "logs",
+        ));
         Arc::new(Self {
             node_id,
             config_dir: "/etc/sgx-guardian/config".into(),
@@ -157,7 +170,15 @@ impl AppState {
             threat_state_dir: "/var/lib/sgx-guardian/threat".into(),
             admin_dir: "/var/lib/sgx-guardian/admin".into(),
             admin,
-            signer,
+            signer: signer.clone(),
+            call_session_manager: Arc::new(SessionManager::new()),
+            call_signal_hub: Arc::new(CallSignalHub::default()),
+            call_nebula_signaling: Arc::new(NebulaSignaling::new_secure(
+                Arc::new(NebulaClient),
+                signer.clone(),
+                call_identity_resolver,
+            )),
+            group_session_manager: Arc::new(GroupSessionManager::default()),
             device_pubkey_point,
             device_did,
             session_ttl_secs: std::env::var("SGX_GUARDIAN_SESSION_TTL_SECS")
@@ -229,6 +250,12 @@ impl AppState {
             admin_dir: admin_dir.to_string_lossy().to_string(),
             admin: AdminStores::new(&admin_dir),
             signer,
+            call_session_manager: Arc::new(SessionManager::new()),
+            call_signal_hub: Arc::new(CallSignalHub::default()),
+            call_nebula_signaling: Arc::new(NebulaSignaling::new(Arc::new(NebulaClient))),
+            group_session_manager: Arc::new(GroupSessionManager::new(
+                log_dir.join("group_calls.log"),
+            )),
             device_pubkey_point,
             device_did,
             session_ttl_secs: 3600,

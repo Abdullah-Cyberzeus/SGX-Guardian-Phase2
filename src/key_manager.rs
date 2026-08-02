@@ -385,6 +385,13 @@ impl KeyManager {
         }
     }
 
+    /// Verify a raw or DER-framed ECDSA P-256 signature against the supplied
+    /// message bytes and trusted public key export.
+    pub fn verify_signature(data: &[u8], sig: &[u8], public_key_der: &[u8]) -> Result<()> {
+        crate::did::doc_sign::ecdsa_p256_verify_der_or_raw(public_key_der, data, sig)
+            .map_err(|e| anyhow!("Signature verification failed: {}", e))
+    }
+
     /// Returns the node's public key as raw EC point bytes (65 bytes: 04||x||y).
     /// Software: from ring keypair. Hardware: from exported DKP DER file.
     pub fn pubkey_der(&self) -> Result<Vec<u8>> {

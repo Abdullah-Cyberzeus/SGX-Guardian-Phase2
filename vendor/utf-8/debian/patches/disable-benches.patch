@@ -1,0 +1,21 @@
+Description: Disable benches that reference files not present in the crate
+Author: Peter Michael Green <plugwash@debian.org>
+
+Index: utf-8/benches/from_utf8_lossy.rs
+===================================================================
+--- utf-8.orig/benches/from_utf8_lossy.rs
++++ utf-8/benches/from_utf8_lossy.rs
+@@ -2,7 +2,7 @@
+ 
+ extern crate test;
+ extern crate utf8;
+-
++/*
+ #[path = "../tests/shared/data.rs"]
+ mod data;
+ 
+@@ -28,3 +28,4 @@ fn bench_std_string_from_utf8_lossy(benc
+         }
+     })
+ }
++*/

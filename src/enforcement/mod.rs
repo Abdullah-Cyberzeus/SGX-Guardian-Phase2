@@ -8,6 +8,7 @@
 pub mod executor;
 pub mod model;
 pub mod translator;
+pub mod uep;
 pub mod validator;
 
 use crate::policy::Policy;

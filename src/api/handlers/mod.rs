@@ -1,6 +1,7 @@
 pub mod attestation;
 pub mod auth;
 pub mod backup;
+pub mod call;
 pub mod circle;
 pub mod crl;
 pub mod devices;
@@ -9,6 +10,7 @@ pub mod dkp;
 pub mod dusage;
 pub mod geofence;
 pub mod guardian_keys;
+pub mod group_call;
 pub mod logs;
 pub mod node;
 pub mod notify;

@@ -3109,6 +3109,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         device_did,
         device_pubkey_point,
     );
+    // Every enrolled node receives authenticated Nebula-based call signaling.
+    tokio::spawn({
+        let signaling = api_state.call_nebula_signaling.clone();
+        let sessions = api_state.call_session_manager.clone();
+        let signal_hub = api_state.call_signal_hub.clone();
+        let group_sessions = api_state.group_session_manager.clone();
+        let local_node_id = node_id.clone();
+        async move {
+            if let Err(error) = signaling
+                .run_listener(sessions, signal_hub, group_sessions, local_node_id)
+                .await
+            {
+                eprintln!("❌ Nebula call signaling listener stopped: {}", error);
+            }
+        }
+    });
     {
         let api_bind: std::net::SocketAddr = "0.0.0.0:8443".parse().unwrap();
         let mut tls_cfg = this_node
