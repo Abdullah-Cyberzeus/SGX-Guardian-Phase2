@@ -21,7 +21,7 @@ impl AudioCodec {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_str(s: &str) -> Option<Self> {
         match s {
             "opus" => Some(AudioCodec::Opus),
             "g711" => Some(AudioCodec::G711),
@@ -64,7 +64,7 @@ impl VideoCodec {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_str(s: &str) -> Option<Self> {
         match s {
             "vp9" => Some(VideoCodec::VP9),
             "av1" => Some(VideoCodec::AV1),
@@ -159,9 +159,9 @@ mod tests {
 
     #[test]
     fn test_audio_codec_from_str() {
-        assert_eq!(AudioCodec::from_str("opus"), Some(AudioCodec::Opus));
-        assert_eq!(AudioCodec::from_str("g711"), Some(AudioCodec::G711));
-        assert_eq!(AudioCodec::from_str("unknown"), None);
+        assert_eq!(AudioCodec::parse_str("opus"), Some(AudioCodec::Opus));
+        assert_eq!(AudioCodec::parse_str("g711"), Some(AudioCodec::G711));
+        assert_eq!(AudioCodec::parse_str("unknown"), None);
     }
 
     #[test]
@@ -180,10 +180,10 @@ mod tests {
 
     #[test]
     fn test_video_codec_from_str() {
-        assert_eq!(VideoCodec::from_str("vp9"), Some(VideoCodec::VP9));
-        assert_eq!(VideoCodec::from_str("av1"), Some(VideoCodec::AV1));
-        assert_eq!(VideoCodec::from_str("h264"), Some(VideoCodec::H264));
-        assert_eq!(VideoCodec::from_str("invalid"), None);
+        assert_eq!(VideoCodec::parse_str("vp9"), Some(VideoCodec::VP9));
+        assert_eq!(VideoCodec::parse_str("av1"), Some(VideoCodec::AV1));
+        assert_eq!(VideoCodec::parse_str("h264"), Some(VideoCodec::H264));
+        assert_eq!(VideoCodec::parse_str("invalid"), None);
     }
 
     #[test]

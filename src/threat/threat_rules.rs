@@ -1,7 +1,6 @@
 /// Threat Detection Rules Engine
 /// Evaluates events against pre-configured threat rules
 use crate::threat::errors::{ThreatError, ThreatResult};
-use std::collections::HashMap;
 
 /// Threat action to take
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -172,7 +171,7 @@ impl ThreatRuleEngine {
         }
 
         // Sort by severity (highest first)
-        matching_rules.sort_by(|a, b| b.severity_level().cmp(&a.severity_level()));
+        matching_rules.sort_by_key(|b| std::cmp::Reverse(b.severity_level()));
 
         Ok(Some(matching_rules[0].action.clone()))
     }

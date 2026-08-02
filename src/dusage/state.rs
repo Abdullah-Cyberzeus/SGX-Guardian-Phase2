@@ -122,7 +122,9 @@ fn verify_quota_integrity(quota: &DusageQuota) -> bool {
 }
 
 fn reject_tampered(message: &str) {
-    let node_id = std::env::args().nth(1).unwrap_or_else(|| "unknown-node".to_string());
+    let node_id = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "unknown-node".to_string());
     log_audit(
         &node_id,
         AuditCategory::Dusage,

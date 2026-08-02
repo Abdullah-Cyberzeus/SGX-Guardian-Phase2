@@ -1,6 +1,6 @@
 /// Real-time Anomaly Detection
 /// Detects unusual patterns and behavior
-use crate::threat::errors::{ThreatError, ThreatResult};
+use crate::threat::errors::ThreatResult;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -44,7 +44,7 @@ pub struct AnomalyScore {
 
 /// Peer activity tracking
 #[derive(Debug, Clone)]
-struct PeerActivity {
+pub struct PeerActivity {
     auth_failures: Vec<u64>,
     call_attempts: Vec<u64>,
     policy_violations: Vec<u64>,
@@ -168,7 +168,7 @@ impl AnomalyDetector {
 
         Ok(AnomalyScore {
             anomaly_type,
-            score: score.min(100.0).max(0.0),
+            score: score.clamp(0.0, 100.0),
             timestamp,
         })
     }
@@ -189,6 +189,11 @@ impl AnomalyDetector {
     pub fn get_activity(&self, peer_id: &str) -> Option<&PeerActivity> {
         self.peer_activities.get(peer_id)
     }
+
+    /// Get the peer id this detector was created for
+    pub fn peer_id(&self) -> &str {
+        &self.peer_id
+    }
 }
 
 #[cfg(test)]
@@ -198,7 +203,7 @@ mod tests {
     #[test]
     fn test_anomaly_detector_creation() {
         let detector = AnomalyDetector::new("test_peer".to_string());
-        assert_eq!(detector.peer_id, "test_peer");
+        assert_eq!(detector.peer_id(), "test_peer");
     }
 
     #[test]
@@ -269,7 +274,7 @@ mod tests {
         let _ = detector.detect("peer_f", "auth_failure", "");
         detector.cleanup_old_events();
         // Should not panic, old events cleaned up
-        assert!(detector.peer_activities.len() >= 0);
+        let _ = detector.peer_activities.len();
     }
 
     #[test]

@@ -1,6 +1,6 @@
 /// Threat Analytics & Historical Reporting
 /// Track threat events over time for reporting and analysis
-use crate::threat::errors::{ThreatError, ThreatResult};
+use crate::threat::errors::ThreatResult;
 use std::collections::HashMap;
 
 /// Individual threat event record
@@ -143,6 +143,11 @@ impl ThreatAnalytics {
     pub fn event_count(&self) -> usize {
         self.events.len()
     }
+
+    /// Get the peer id this analytics tracker was created for
+    pub fn peer_id(&self) -> &str {
+        &self.peer_id
+    }
 }
 
 /// Threat statistics summary
@@ -176,7 +181,7 @@ mod tests {
     #[test]
     fn test_threat_analytics_creation() {
         let analytics = ThreatAnalytics::new("test_peer".to_string());
-        assert_eq!(analytics.peer_id, "test_peer");
+        assert_eq!(analytics.peer_id(), "test_peer");
         assert_eq!(analytics.event_count(), 0);
     }
 
@@ -295,7 +300,7 @@ mod tests {
 
         // Cleanup events older than 1 second (should not remove recently added)
         analytics.cleanup_old_events(1);
-        assert!(analytics.event_count() >= 0);
+        let _ = analytics.event_count();
     }
 
     #[test]

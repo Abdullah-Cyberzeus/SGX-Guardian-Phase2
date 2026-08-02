@@ -109,12 +109,7 @@ impl MediaGate {
         }
 
         self.attestation_verified = true;
-
-        if !self.requirements.require_attestation {
-            self.state = VerificationState::AttestationComplete;
-        } else {
-            self.state = VerificationState::AttestationComplete;
-        }
+        self.state = VerificationState::AttestationComplete;
 
         self.transition_state()?;
         Ok(())

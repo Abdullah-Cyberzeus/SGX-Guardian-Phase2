@@ -20,7 +20,8 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
+use tokio::sync::Mutex;
 
 #[test]
 fn encrypted_bundle_round_trips_and_rejects_wrong_secret_or_tamper() {
@@ -538,7 +539,7 @@ fn destructive_restore_is_enabled_by_default_without_environment_gate() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn restore_apply_is_available_by_default_and_requires_confirm_then_commits() {
-    let _lock = policy_env_lock().lock().expect("restore test lock");
+    let _lock = policy_env_lock().lock().await;
     let (temp, state) = test_state("nodeA");
     write_seed(
         temp.path().join("identity/crl/crl.json"),
@@ -617,7 +618,7 @@ async fn restore_apply_is_available_by_default_and_requires_confirm_then_commits
 
 #[tokio::test(flavor = "current_thread")]
 async fn restore_apply_denies_policy_rollback_as_atomic_skip() {
-    let _lock = policy_env_lock().lock().expect("policy env lock");
+    let _lock = policy_env_lock().lock().await;
     let case = policy_restore_case("1.0.0", "1.0.1")
         .await
         .expect("policy restore case");
@@ -643,7 +644,7 @@ async fn restore_apply_denies_policy_rollback_as_atomic_skip() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn restore_apply_allows_same_policy_version() {
-    let _lock = policy_env_lock().lock().expect("policy env lock");
+    let _lock = policy_env_lock().lock().await;
     let case = policy_restore_case("1.0.1", "1.0.1")
         .await
         .expect("policy restore case");
@@ -659,7 +660,7 @@ async fn restore_apply_allows_same_policy_version() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn restore_apply_allows_newer_policy_version() {
-    let _lock = policy_env_lock().lock().expect("policy env lock");
+    let _lock = policy_env_lock().lock().await;
     let case = policy_restore_case("1.0.2", "1.0.1")
         .await
         .expect("policy restore case");
@@ -675,7 +676,7 @@ async fn restore_apply_allows_newer_policy_version() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn restore_apply_allows_authorised_policy_rollback() {
-    let _lock = policy_env_lock().lock().expect("policy env lock");
+    let _lock = policy_env_lock().lock().await;
     let case = policy_restore_case("1.0.0", "1.0.1")
         .await
         .expect("policy restore case");

@@ -26,8 +26,8 @@ pub mod inventory;
 pub mod peer_scorer;
 pub mod rule_manager;
 pub mod service;
-pub mod threat_rules;
 pub mod threat_alert;
+pub mod threat_rules;
 
 pub use analytics::{ThreatAnalytics, ThreatEvent};
 pub use anomaly::{AnomalyDetector, AnomalyScore, AnomalyType};
@@ -37,5 +37,5 @@ pub use incident::{Incident, IncidentManager, IncidentResponse, IncidentSeverity
 pub use inventory::AlertInventory;
 pub use peer_scorer::{PeerScorer, PeerThreatScore};
 pub use service::ThreatService;
-pub use threat_rules::{ThreatAction, ThreatRule, ThreatRuleEngine};
 pub use threat_alert::{Severity, ThreatAlert, ThreatCategory};
+pub use threat_rules::{ThreatAction, ThreatRule, ThreatRuleEngine};

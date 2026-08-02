@@ -1,0 +1,17 @@
+flowchart TD
+ A([Marcus opens Devices tab]) --> B[DV-01 Devices List\nAll Devices tab]
+ B --> C[Tap Scan Network]
+ C --> D[ POST /api/devices/scan\nNetwork scan initiated]
+ D --> E[Loading state\nScanning network...\nprogress animation]
+ E --> F[ Scan complete\nNew device found: WORKSTATION-07]
+ F --> G[DV-02 Pending Tab\nDevice appears in pending list]
+ G --> H[Marcus taps device\nPending Approval Detail]
+ H --> I[Reviews device info:\nMAC address + IP + device type detected]
+ I --> J[Tap Approve]
+ J --> K[ PATCH /api/devices/id\nstatus: approved]
+ K --> L[ Toast: Device approved\nDevice moved to All Devices]
+ L --> M[DV-03 Device Detail\nSecurity + Privacy scores shown]
+ M --> N[Tap Run Security Scan]
+ N --> O[DV-06 Scan In Progress\nScanning WORKSTATION-07...]
+ O --> P[ DV-07 Scan Results\n2 vulnerabilities found]
+ P --> Q([Marcus reviews\nremediation recommendations])

@@ -232,6 +232,12 @@ pub struct SessionManager {
     events: broadcast::Sender<CallSessionEvent>,
 }
 
+impl Default for SessionManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SessionManager {
     /// Create new session manager
     pub fn new() -> Self {
@@ -895,7 +901,7 @@ mod tests {
         assert_eq!(session.duration_seconds(), 0);
 
         session.started_at = Some(Utc::now());
-        assert!(session.duration_seconds() >= 0);
+        let _ = session.duration_seconds();
     }
 
     #[test]

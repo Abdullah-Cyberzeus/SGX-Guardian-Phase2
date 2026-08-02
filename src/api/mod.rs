@@ -18,6 +18,7 @@ use tower_http::trace::TraceLayer;
 
 pub mod auth;
 pub mod error;
+pub mod frontend;
 pub mod handlers;
 pub mod routes;
 pub mod state;
@@ -445,6 +446,9 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         .with_state(state)
         // SGX Guardian Wi-Fi Runtime Sub-Router (must be applied after .with_state returns Router<()>)
         .nest("/api/v1/wifi", wifi_router)
+        // Added after API + auth layers so embedded frontend assets and
+        // client-side routes resolve from the same backend listener.
+        .fallback(frontend::serve)
 }
 
 /// Entry point. Spawned from main.rs as a tokio task.

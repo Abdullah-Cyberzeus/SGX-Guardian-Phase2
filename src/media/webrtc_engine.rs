@@ -129,10 +129,27 @@ pub struct WebRtcEngine {
 }
 
 #[derive(Debug, Clone)]
-struct MediaStreamInfo {
+pub struct MediaStreamInfo {
     id: String,
     audio_enabled: bool,
     video_enabled: bool,
+}
+
+impl MediaStreamInfo {
+    /// Get stream id
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Check if audio is enabled on this stream
+    pub fn audio_enabled(&self) -> bool {
+        self.audio_enabled
+    }
+
+    /// Check if video is enabled on this stream
+    pub fn video_enabled(&self) -> bool {
+        self.video_enabled
+    }
 }
 
 impl WebRtcEngine {
@@ -217,6 +234,16 @@ impl WebRtcEngine {
             },
         );
         Ok(())
+    }
+
+    /// Get media stream info by id
+    pub fn get_media_stream(&self, stream_id: &str) -> Option<&MediaStreamInfo> {
+        self.media_streams.get(stream_id)
+    }
+
+    /// Get number of active media streams
+    pub fn media_stream_count(&self) -> usize {
+        self.media_streams.len()
     }
 
     /// Close peer connection
@@ -310,6 +337,11 @@ mod tests {
         let mut engine = WebRtcEngine::new("test");
         let result = engine.create_media_stream("stream-1".to_string(), true, true);
         assert!(result.is_ok());
+
+        let stream = engine.get_media_stream("stream-1").unwrap();
+        assert_eq!(stream.id(), "stream-1");
+        assert!(stream.audio_enabled());
+        assert!(stream.video_enabled());
     }
 
     #[test]
@@ -325,5 +357,6 @@ mod tests {
         assert!(engine.close().is_ok());
         assert_eq!(engine.state(), PeerConnectionState::Closed);
         assert_eq!(engine.local_candidates().len(), 0);
+        assert_eq!(engine.media_stream_count(), 0);
     }
 }

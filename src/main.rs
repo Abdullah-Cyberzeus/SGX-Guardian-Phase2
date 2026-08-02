@@ -3119,12 +3119,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let chat_addr = format!("0.0.0.0:{}", this_node.port + 200);
             let state = api_state.clone();
             async move {
-                if let Err(error) =
-                    sgx_guardian_client::server::start_chat_plaintext_server(
-                        chat_addr.clone(),
-                        state,
-                    )
-                    .await
+                if let Err(error) = sgx_guardian_client::server::start_chat_plaintext_server(
+                    chat_addr.clone(),
+                    state,
+                )
+                .await
                 {
                     eprintln!("❌ Chat gRPC server failed on {}: {:?}", chat_addr, error);
                 }
@@ -3148,7 +3147,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     {
-        let api_bind: std::net::SocketAddr = "0.0.0.0:8443".parse().unwrap();
+        let api_bind: std::net::SocketAddr = std::env::var("SGX_ADMIN_BIND")
+            .unwrap_or_else(|_| "0.0.0.0:8443".to_string())
+            .parse()
+            .unwrap_or_else(|e| {
+                eprintln!("⚠️ Invalid SGX_ADMIN_BIND value ({e}); using 0.0.0.0:8443");
+                "0.0.0.0:8443".parse().expect("valid default admin bind")
+            });
         let mut tls_cfg = this_node
             .api
             .clone()
@@ -3190,7 +3195,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
             let scheme = if tls_cfg.enabled { "https" } else { "http" };
             println!(
-                "✅ REST admin API ({}) starting on {}://{}/api/v1",
+                "✅ Embedded admin console ({}) starting on {}://{} (API: /api/v1)",
                 node_id, scheme, api_bind
             );
         }

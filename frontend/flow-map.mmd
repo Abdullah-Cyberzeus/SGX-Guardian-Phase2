@@ -1,0 +1,17 @@
+flowchart TD
+ A([Sofia opens Network tab]) --> B[NW-01 Circles List\nEmpty or existing circles]
+ B --> C[Tap + Create button]
+ C --> D[NW-02 Create Circle Form\nEnter name + description]
+ D --> E[Sofia types Circle name:\nIncident Response Team]
+ E --> F[Tap Create Circle]
+ F --> G[ POST /api/circles\nCertificate Authority generated\nCircle network initialized]
+ G --> H[NW-03 Loading\nInitializing Circle network...]
+ H --> I[ NW-06 Circle Detail\nMembers Tab — Sofia listed as Owner]
+ I --> J[Tap Invite Member]
+ J --> K[NW-09 Invite Modal\nShare Link tab shown by default]
+ K --> L[NW-10 Share Link Tab\nInvite code + shareable URL displayed]
+ L --> M[Tap Share Invite]
+ M --> N[ Native browser share sheet\niOS/Android share options appear]
+ N --> O[Sofia shares link via\nWhatsApp / Email / SMS]
+ O --> P[ Toast: Invite link shared]
+ P --> Q([Returns to NW-06\nMembers Tab\nPending invite shown])

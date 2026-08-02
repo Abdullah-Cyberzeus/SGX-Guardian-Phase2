@@ -111,7 +111,7 @@ async fn test_full_call_lifecycle_happy_path() {
         .await
         .expect("retrieve session");
     assert_eq!(session.state, CallState::EndCall);
-    assert!(session.duration_seconds() >= 0);
+    let _ = session.duration_seconds();
     assert!(
         session
             .get_state_history()

@@ -256,10 +256,8 @@ pub async fn send_message(
         if let Ok(history) = crate::chat::storage::read_group_history(&req.recipient_did).await {
             seq_no = history.iter().map(|m| m.seq_no).max().unwrap_or(0) + 1;
         }
-    } else {
-        if let Ok(history) = crate::chat::storage::read_p2p_history(&req.recipient_did).await {
-            seq_no = history.iter().map(|m| m.seq_no).max().unwrap_or(0) + 1;
-        }
+    } else if let Ok(history) = crate::chat::storage::read_p2p_history(&req.recipient_did).await {
+        seq_no = history.iter().map(|m| m.seq_no).max().unwrap_or(0) + 1;
     }
 
     // 4. Save outbound message locally (plaintext JSON, no encryption)
@@ -327,8 +325,7 @@ pub async fn send_message(
                     group_id: g_id,
                 };
 
-                match crate::chat::grpc_client::push_message_to_peer(addr.clone(), grpc_req).await
-                {
+                match crate::chat::grpc_client::push_message_to_peer(addr.clone(), grpc_req).await {
                     Ok(()) => println!("💬 ✅ Message delivered to {}", addr),
                     Err(e) => eprintln!("❌ Chat delivery failed to {}: {}", addr, e),
                 }
@@ -380,19 +377,18 @@ pub async fn mark_as_read(
                 "Group conversation history not found".to_string(),
             ));
         }
-    } else {
-        if let Ok(history) = crate::chat::storage::read_p2p_history(&req.original_sender_did).await
-        {
-            if !history.iter().any(|m| m.message_id == req.message_id) {
-                return Err(ApiError::BadRequest(
-                    "Message not found in conversation history".to_string(),
-                ));
-            }
-        } else {
+    } else if let Ok(history) =
+        crate::chat::storage::read_p2p_history(&req.original_sender_did).await
+    {
+        if !history.iter().any(|m| m.message_id == req.message_id) {
             return Err(ApiError::BadRequest(
-                "Conversation history not found".to_string(),
+                "Message not found in conversation history".to_string(),
             ));
         }
+    } else {
+        return Err(ApiError::BadRequest(
+            "Conversation history not found".to_string(),
+        ));
     }
 
     // 2. Log the receipt locally
@@ -409,10 +405,7 @@ pub async fn mark_as_read(
 
     // Also update read_by in local storage file for this node
     let is_group = req.group_id.is_some();
-    let target_file_id = req
-        .group_id
-        .as_deref()
-        .unwrap_or(&req.original_sender_did);
+    let target_file_id = req.group_id.as_deref().unwrap_or(&req.original_sender_did);
     let _ = crate::chat::storage::update_message_read_by(
         is_group,
         target_file_id,

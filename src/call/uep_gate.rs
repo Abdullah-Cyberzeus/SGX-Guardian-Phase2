@@ -85,7 +85,7 @@ pub fn extract_role_from_subject(subject: &str) -> Option<Role> {
     for part in subject.split(',') {
         let trimmed = part.trim();
         if let Some(value) = trimmed.strip_prefix("role=") {
-            return Role::from_str(value);
+            return Role::parse_str(value);
         }
     }
     None

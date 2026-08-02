@@ -164,18 +164,18 @@ pub fn load_rbac_rules() -> Result<Vec<RbacRule>> {
                     let caller_role = rule_val
                         .get("caller_role")
                         .and_then(|v| v.as_str())
-                        .and_then(Role::from_str)?;
+                        .and_then(Role::parse_str)?;
                     let target_role = rule_val
                         .get("target_role")
                         .and_then(|v| v.as_str())
-                        .and_then(Role::from_str)?;
+                        .and_then(Role::parse_str)?;
 
                     let allowed_media_types = rule_val
                         .get("allowed_media_types")
                         .and_then(|v| v.as_sequence())
                         .map(|seq| {
                             seq.iter()
-                                .filter_map(|mt_val| mt_val.as_str().and_then(MediaType::from_str))
+                                .filter_map(|mt_val| mt_val.as_str().and_then(MediaType::parse_str))
                                 .collect::<HashSet<_>>()
                         })
                         .unwrap_or_default();
@@ -190,7 +190,7 @@ pub fn load_rbac_rules() -> Result<Vec<RbacRule>> {
         });
 
     // If rules found in policy, return them; otherwise use defaults
-    Ok(rbac_rules.unwrap_or_else(|| crate::enforcement::uep::UepEngine::default_rules()))
+    Ok(rbac_rules.unwrap_or_else(crate::enforcement::uep::UepEngine::default_rules))
 }
 
 #[cfg(test)]

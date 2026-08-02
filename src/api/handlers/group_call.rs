@@ -117,13 +117,13 @@ fn operation_key(
         .then(|| format!("{node_id}:{action}:{}:{value}", group_id.unwrap_or("new")))
 }
 
-fn local_virtual_id(state: &AppState) -> Result<String, axum::response::Response> {
+fn local_virtual_id(state: &AppState) -> Result<String, Box<axum::response::Response>> {
     match crate::virtual_id::read_runtime_virtual_id_status(&state.node_id, None) {
         Ok(status) if !status.virtual_id.trim().is_empty() => Ok(status.virtual_id),
-        _ => Err(error(
+        _ => Err(Box::new(error(
             StatusCode::SERVICE_UNAVAILABLE,
             "Local attested VirtualID is unavailable",
-        )),
+        ))),
     }
 }
 
@@ -180,7 +180,7 @@ pub async fn create(
     }
     let virtual_id = match local_virtual_id(&state) {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let trusted = match trusted_group_peers(&state).await {
         Ok(peers) => peers,

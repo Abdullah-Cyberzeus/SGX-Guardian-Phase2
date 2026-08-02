@@ -1,15 +1,15 @@
 use crate::chat::models::{AttachmentRecord, ChatMessageRecord, ReadReceiptRecord};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
-use dashmap::DashMap;
 
 /// Fine-grained locks per file path to ensure thread-safe append-only writes.
-static FILE_LOCKS: Lazy<DashMap<PathBuf, Arc<Mutex<()>>>> = Lazy::new(|| DashMap::new());
+static FILE_LOCKS: Lazy<DashMap<PathBuf, Arc<Mutex<()>>>> = Lazy::new(DashMap::new);
 
 /// Base directory for all persisted chat history and attachments.
 static BASE_DIR: Lazy<String> = Lazy::new(|| {
@@ -22,7 +22,6 @@ pub async fn append_p2p_message(
     peer_did: &str,
     record: &ChatMessageRecord,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-
     let path = PathBuf::from(&*BASE_DIR)
         .join("p2p")
         .join(safe_filename(peer_did));
@@ -36,7 +35,6 @@ pub async fn append_group_message(
     group_id: &str,
     record: &ChatMessageRecord,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-
     let path = PathBuf::from(&*BASE_DIR)
         .join("group")
         .join(safe_filename(group_id));
@@ -48,7 +46,6 @@ pub async fn append_group_message(
 pub async fn append_attachment_metadata(
     record: &AttachmentRecord,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-
     let path = PathBuf::from(&*BASE_DIR).join("attachments.jsonl");
     let json_line = serde_json::to_string(record)?;
 
@@ -92,7 +89,6 @@ pub async fn get_attachment_metadata(
 pub async fn append_read_receipt(
     record: &ReadReceiptRecord,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-
     let path = PathBuf::from(&*BASE_DIR).join("read_receipts.jsonl");
     let json_line = serde_json::to_string(record)?;
 
@@ -211,11 +207,11 @@ pub async fn update_message_read_by(
         let trimmed = line.trim();
         if !trimmed.is_empty() {
             if let Ok(mut record) = serde_json::from_str::<ChatMessageRecord>(trimmed) {
-                if record.message_id == message_id {
-                    if !record.read_by.contains(&reader_did.to_string()) {
-                        record.read_by.push(reader_did.to_string());
-                        modified = true;
-                    }
+                if record.message_id == message_id
+                    && !record.read_by.contains(&reader_did.to_string())
+                {
+                    record.read_by.push(reader_did.to_string());
+                    modified = true;
                 }
                 updated_lines.push(serde_json::to_string(&record)?);
             } else {

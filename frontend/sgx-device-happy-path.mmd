@@ -1,0 +1,103 @@
+flowchart TD
+ START([Marcus opens Devices tab]) --> DV01[DV-01 Devices List\nAll Devices tab]
+
+ DV01 --> TABS{Filter tabs}
+ TABS -- All --> ALL[All approved devices list]
+ TABS -- Regular --> REG[Regular devices only]
+ TABS -- Drones --> DRN[Drone devices only]
+ TABS -- Smart Home --> SH[Smart Home devices only]
+ TABS -- Pending --> PEND[DV-02 Pending approvals\nwith badge count]
+ TABS -- Service Access --> SVCACC[Service access management]
+
+ DV01 --> ADD_METHOD{How to add device?}
+
+ %% Auto Discovery Path
+ ADD_METHOD -- Scan Network --> SCAN_BTN[Tap Scan Network button]
+ SCAN_BTN --> SCAN_API[ POST /api/devices/scan\nGuardian scans local network]
+ SCAN_API --> SCAN_STATE[Loading state\nScanning network...\nanimated progress]
+ SCAN_STATE --> SCAN_RESULT{Scan result}
+ SCAN_RESULT -- New devices found --> PEND_UPDATE[DV-02 Pending tab updated\nbadge count incremented]
+ SCAN_RESULT -- No new devices --> TOAST_NONE[Toast: No new devices found\nAll devices already registered]
+ SCAN_RESULT -- Scan error --> SCAN_ERR[ Error: Scan failed\nGuardian may be offline\nRetry button]
+ TOAST_NONE --> DV01
+ SCAN_ERR --> DV01
+
+ %% Pending Approval Flow
+ PEND_UPDATE --> PEND[DV-02 Pending Tab]
+ PEND --> PEND_ITEM[Marcus taps a pending device]
+ PEND_ITEM --> PEND_DETAIL[Pending Device Detail\nMAC + IP + detected device type\nFirst seen timestamp]
+ PEND_DETAIL --> PEND_ACTION{Action}
+ PEND_ACTION -- Approve --> APPROVE[ PATCH /api/devices/id\nstatus: approved]
+ PEND_ACTION -- Reject --> REJECT[ PATCH /api/devices/id\nstatus: rejected]
+ PEND_ACTION -- Ignore for now --> PEND
+
+ APPROVE --> APPROVE_RESULT{Result}
+ APPROVE_RESULT -- Success --> TOAST_APPROVE[ Toast: Device approved\nand added to monitoring]
+ APPROVE_RESULT -- Error --> ERR_APPROVE[ Error toast + retry]
+ TOAST_APPROVE --> DV03[DV-03 Device Detail\nInfo tab]
+
+ REJECT --> REJECT_CONFIRM[Confirmation sheet\nReject this device?\nIt will be blocked from Guardian monitoring]
+ REJECT_CONFIRM --> REJECT_CONFIRM_ACTION{Confirm?}
+ REJECT_CONFIRM_ACTION -- Confirm --> REJECT_API[ Status updated to rejected]
+ REJECT_CONFIRM_ACTION -- Cancel --> PEND_DETAIL
+ REJECT_API --> PEND
+
+ %% Manual Add Path
+ ADD_METHOD -- Add Manually --> DV10[DV-10 Add Device Form\nBottom sheet modal]
+ DV10 --> FORM[Fill in:\nDevice Name required\nDevice Type dropdown\nConnection Method dropdown\nMAC Address required\nIP Address optional\nManufacturer optional\nModel optional\nOS optional]
+ FORM --> VALIDATE{Form valid?}
+ VALIDATE -- Name or MAC empty --> FORM_ERR[ Inline validation errors]
+ FORM_ERR --> FORM
+ VALIDATE -- Valid --> MANUAL_API[ POST /api/devices\nDevice registered manually]
+ MANUAL_API --> MANUAL_RESULT{Result}
+ MANUAL_RESULT -- Success --> TOAST_MANUAL[ Toast: Device added]
+ MANUAL_RESULT -- MAC already exists --> DUP_ERR[ A device with this MAC\naddress already exists]
+ MANUAL_RESULT -- Error --> ERR_MANUAL[ Error toast + retry]
+ DUP_ERR --> FORM
+ TOAST_MANUAL --> DV03
+
+ %% Device Detail Flow
+ DV03 --> DV03_TABS{Device detail view}
+ DV03_TABS -- Info tab --> DV03_INFO[Security Score + Privacy Score\nVuln Count cards\nDevice information table\nGuardian Monitoring toggle]
+ DV03_TABS -- Security Features tab --> DV04[DV-04 Security Features\nEncryption + Auto-update + Connectivity\nVulnerability panel with recommendations]
+ DV03_TABS -- Actions tab --> DV05[DV-05 Actions\nRun Security Scan\nBlock from Network\nRemove Device]
+
+ %% Security Scan
+ DV05 --> SCAN_ACTION{Action chosen}
+ SCAN_ACTION -- Run Security Scan --> DV06[DV-06 Scan In Progress\nScanning device name...\nprogress bar]
+ DV06 --> SCAN_POLL[ Poll GET /api/devices/id/scan/latest\nevery 2 seconds]
+ SCAN_POLL --> SCAN_DONE{Scan complete?}
+ SCAN_DONE -- In progress --> SCAN_POLL
+ SCAN_DONE -- Complete --> DV07[DV-07 Scan Results\nVulnerability count\nSeverity breakdown\nRecommendations list]
+ SCAN_DONE -- Error --> SCAN_ERR2[ Scan failed\nRetry button]
+ DV07 --> POST_SCAN{Next action}
+ POST_SCAN -- View recommendations --> DV04
+ POST_SCAN -- Alert was created --> AL06[AL-06 Alert Detail\ncross-section link]
+ POST_SCAN -- Done --> DV03
+
+ %% Block Device
+ SCAN_ACTION -- Block from Network --> DV08[DV-08 Block Confirmation\nAre you sure?\nDevice will lose network access]
+ DV08 --> BLOCK_CONFIRM{Confirm?}
+ BLOCK_CONFIRM -- Confirm --> BLOCK_API[ POST /api/devices/id/block]
+ BLOCK_CONFIRM -- Cancel --> DV05
+ BLOCK_API --> BLOCK_RESULT{Result}
+ BLOCK_RESULT -- Success --> TOAST_BLOCK[ Toast: Device blocked\nfrom network]
+ BLOCK_RESULT -- Error --> ERR_BLOCK[ Error toast + retry]
+ TOAST_BLOCK --> DV01
+
+ %% Remove Device
+ SCAN_ACTION -- Remove Device --> DV09[DV-09 Remove Confirmation\nRemove device from Guardian?\nThis cannot be undone]
+ DV09 --> REMOVE_CONFIRM{Confirm?}
+ REMOVE_CONFIRM -- Confirm --> REMOVE_API[ DELETE /api/devices/id]
+ REMOVE_CONFIRM -- Cancel --> DV05
+ REMOVE_API --> REMOVE_RESULT{Result}
+ REMOVE_RESULT -- Success --> TOAST_REMOVE[ Toast: Device removed]
+ REMOVE_RESULT -- Error --> ERR_REMOVE[ Error toast + retry]
+ TOAST_REMOVE --> DV01
+
+ %% Guardian Monitoring Toggle
+ DV03_INFO --> MONITOR_TOGGLE{Guardian Monitoring toggle}
+ MONITOR_TOGGLE -- Turn off --> MONITOR_WARN[Warning: This device will no\nlonger be protected by Guardian.\nAre you sure?]
+ MONITOR_WARN -- Confirm --> MONITOR_OFF[ PATCH /api/devices/id\nmonitoring: false]
+ MONITOR_WARN -- Cancel --> DV03_INFO
+ MONITOR_OFF --> TOAST_MONITOR[Toast: Guardian monitoring disabled]
