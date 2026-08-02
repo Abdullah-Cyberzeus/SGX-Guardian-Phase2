@@ -114,6 +114,7 @@ fn is_public_route(method: &Method, path: &str) -> bool {
         (method, path),
         (&Method::POST, "/api/v1/auth/signup")
             | (&Method::POST, "/api/v1/auth/login")
+            | (&Method::POST, "/api/v1/circles/redeem")
             | (&Method::POST, "/api/v1/restore/validate")
             | (&Method::GET, "/api/v1/restore/status")
             | (&Method::GET, "/api/v1/health")
@@ -293,5 +294,10 @@ mod tests {
             "/api/v1/group-call/group-1/ws"
         ));
         assert!(is_public_route(&Method::GET, "/api/v1/call/session-1/ws"));
+    }
+
+    #[test]
+    fn circle_redeem_route_is_public() {
+        assert!(is_public_route(&Method::POST, "/api/v1/circles/redeem"));
     }
 }
