@@ -33,6 +33,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             axum::http::Method::GET,
             axum::http::Method::POST,
             axum::http::Method::PUT,
+            axum::http::Method::PATCH,
             axum::http::Method::DELETE,
             axum::http::Method::OPTIONS,
         ])
@@ -259,11 +260,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/threat/config", post(handlers::threat::set_config))
         .route("/api/v1/threat/start", post(handlers::threat::start))
         .merge(routes::crl_router())
+        .merge(routes::devices_router())
         .route("/api/v1/auth/signup", post(handlers::auth::signup))
         .route("/api/v1/auth/login", post(handlers::auth::login))
         .route("/api/v1/auth/logout", post(handlers::auth::logout))
         .route("/api/v1/auth/session", get(handlers::auth::session))
-        .route("/api/v1/devices", get(handlers::devices::list))
+        .route("/api/v1/devices", get(handlers::devices::index))
+        .route(
+            "/api/v1/devices/paired",
+            get(handlers::devices::paired_list),
+        )
         .route("/api/v1/devices/pair", post(handlers::devices::pair))
         .route(
             "/api/v1/devices/pairing-code",
@@ -275,7 +281,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/v1/devices/{device_id}",
-            get(handlers::devices::detail),
+            get(handlers::devices::paired_detail),
+        )
+        .route(
+            "/api/v1/devices/paired/{device_id}",
+            get(handlers::devices::paired_detail),
         )
         .route(
             "/api/v1/devices/{id}/unpair",

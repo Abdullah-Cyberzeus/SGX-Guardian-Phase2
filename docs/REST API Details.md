@@ -116,37 +116,33 @@ Transport notes:
 | 97 | POST | `/crl/verify` | Verify CRL entry signatures and aggregate root |
 | 98 | GET | `/crl/root` | Return current CRL sequence and Merkle root |
 | 99 | POST | `/crl/unrevoke` | Reverse a mistaken revocation (Circle Owner only) |
+| 100 | GET | `/managed-devices` | List Managed Devices |
+| 101 | GET | `/managed-devices/{device_id}` | Get Managed Device Details and Scores |
+| 102 | POST | `/managed-devices` | Create Manual Managed Device |
+| 103 | DELETE | `/managed-devices/{device_id}` | Remove Managed Device |
+| 104 | POST | `/managed-devices/{device_id}/scan` | Start Per-Device Security Scan |
+| 105 | GET | `/managed-devices/{device_id}/scan/{scan_id}` | Get Live Per-Device Scan Progress and Final Report |
+| 106 | POST | `/managed-devices/{device_id}/reject` | Reject and Block Managed Device |
+| 107 | POST | `/managed-devices/{device_id}/block` | Block Device Using nftables |
+| 108 | POST | `/managed-devices/{device_id}/unblock` | Unblock Device and Remove nftables Rule |
 
 
 ## 2. NEW Endpoints 
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/discovery/summary` | Aggregate inventory stats: totals, open ports, risk counts, last_seen_at |
-| GET | `/discovery/devices/{device_id}` | Full device detail with risk_level, risk_reasons, and flagged_ports |
-| GET | `/discovery/runs?view=raw` | Actual scan run history from raw XML archive (default mode) |
-| GET | `/discovery/runs?view=history` | Persisted NMAP discovery scan run history |
-| GET | `/threat/status` | Suricata service state, block mode, alert and block counts |
-| GET | `/threat/alerts` | Read recent Suricata alerts with optional `limit` and `severity` filters |
-| GET | `/threat/modbus` | Group recent Modbus alerts into the 5 Guardian Modbus rule buckets |
-| GET | `/threat/blocks` | Return the currently blocked IP list from nftables or persisted state |
-| POST | `/threat/blocks` | Manually block an IP with nftables + persisted TTL |
-| POST | `/threat/blocks/unblock` | Remove a blocked IP and rebuild the threat nftables chain |
-| POST | `/threat/rules/update` | Run `sgx-pa-cli threat rules-update` and return command output |
-| POST | `/threat/validate` | Run `sgx-pa-cli threat validate` to validate threat + Suricata config |
-| GET | `/threat/config` | Read full Guardian threat config as JSON |
-| POST | `/threat/config` | Patch threat config fields; live-reloaded within 5 seconds |
-| POST | `/threat/start` | Start Suricata if offline via `systemctl start suricata` |
-| POST | `/crl/revoke` | Issue a CRL revocation entry for a DID |
-| GET | `/crl/list` | Return all CRL entries |
-| GET | `/crl/entry` | Return one CRL entry by `id` |
-| GET | `/crl/check` | Return `{ revoked, entry }` for a DID |
-| POST | `/crl/verify` | Verify CRL signatures, role rules, and Merkle root |
-| GET | `/crl/root` | Return CRL sequence and Merkle root |
-| POST | `/crl/unrevoke` | Reverse a mistaken revocation (Circle Owner only) |
+| GET | `/managed-devices` | List Managed Devices |
+| GET | `/managed-devices/{device_id}` | Get Managed Device Details and Scores |
+| POST | `/managed-devices` | Create Manual Managed Device |
+| DELETE | `/managed-devices/{device_id}` | Remove Managed Device |
+| POST | `/managed-devices/{device_id}/scan` | Start Per-Device Security Scan |
+| GET | `/managed-devices/{device_id}/scan/{scan_id}` | Get Live Per-Device Scan Progress and Final Report |
+| POST | `/managed-devices/{device_id}/reject` | Reject and Block Managed Device |
+| POST | `/managed-devices/{device_id}/block` | Block Device Using nftables |
+| POST | `/managed-devices/{device_id}/unblock` | Unblock Device and Remove nftables Rule |
 ---
 
-## 2. Standard Error Envelope
+## Standard Error Envelope
 
 All handler-generated API errors use this JSON envelope:
 
@@ -171,7 +167,7 @@ Typical HTTP status mapping:
 - `500 INTERNAL_SERVER_ERROR`
 
 
-### 2.1 Standard ActionResponse Schema
+### Standard ActionResponse Schema
 
 Used by command/action endpoints that execute CLI-backed operations.
 
@@ -195,7 +191,7 @@ Field notes:
 
 ---
 
-## 2.2 Guardian Admin Console Phase A-C (Authoritative)
+## Guardian Admin Console Phase A-C (Authoritative)
 
 This section is the authoritative contract for the operator-facing admin-console flow covering:
 
@@ -2697,12 +2693,23 @@ Peer DID resolution response (`?did=did:guardian:...`):
 ### 3.68 POST `/discovery/scan/standard`
 
 - Request:
-  - Same optional `target` query param / JSON body as `POST /discovery/scan`
+  - Query params:
+    - `target` (optional string): subnet or single host override passed to the CLI as `--target`
+  - JSON body (optional; when present, it takes precedence over the query param):
+
+```json
+{
+  "target": "192.168.50.44"
+}
+```
+
 - Success response (`200 OK`):
   - Same schema as `POST /discovery/scan`
 - Notes:
   - Executes `sgx-pa-cli discovery scan --intensity standard`
+  - The standard discovery scan already existed and is not part of the Connected Devices `/managed-devices` endpoint set.
 - Error responses:
+  - `400 BAD_REQUEST`: invalid JSON body (`invalid discovery scan request body: ...`)
   - `500 INTERNAL_SERVER_ERROR`: `sgx-pa-cli` not found or command spawn failed
 
 ### 3.69 POST `/discovery/scan/aggressive`
@@ -2841,12 +2848,15 @@ Peer DID resolution response (`?did=did:guardian:...`):
 
 - Notes:
   - Adds or updates the MAC inside `/etc/sgx-guardian/discovery/whitelist.yaml`
+  - Normalizes MAC addresses to uppercase colon-separated form after accepting `AA:BB:CC:11:22:33`, `AA-BB-CC-11-22-33`, or a 12-hex compact value
   - If `label` is omitted, the API attempts to infer a readable label from the matching inventory vendor or hostname
   - Immediately reclassifies matching non-stale inventory records so approved devices become authorized without waiting for the next scan
   - Returns current inventory matches for that MAC in `current_devices`
+  - If a matching Connected Devices registry record was previously rejected/blocked, approval first removes the active nftables block with the threat blocker, then clears `rejected`, `rejection_reason`, and `blocked` in the signed device registry. If nftables unblock fails, registry rejection state is not cleared.
 - Error responses:
-  - `400 BAD_REQUEST`: invalid or empty MAC address
-  - `500 INTERNAL_SERVER_ERROR`: whitelist read/write or inventory refresh failure
+  - `400 BAD_REQUEST`: invalid or empty MAC address (`mac must be a valid 6-byte hexadecimal address`)
+  - `403 FORBIDDEN`: nftables unblock refused a protected local, gateway, or overlay address while clearing prior rejection
+  - `500 INTERNAL_SERVER_ERROR`: whitelist read/write, inventory refresh, device registry integrity, threat restore, nftables, or registry persistence failure
   - `415`/`422`: invalid JSON body
 
 ### 3.71 GET `/discovery/whitelist`
@@ -3734,3 +3744,726 @@ Peer DID resolution response (`?did=did:guardian:...`):
   - `403 FORBIDDEN`: caller's local role is Member, not Owner
   - `404 NOT_FOUND`: DID is not currently revoked
   - `500 INTERNAL_SERVER_ERROR`: local DID/key/audit/persistence failure
+
+## 6. Connected Devices Management Endpoint Contracts
+
+All paths below are under `/api/v1`. Unless the deployment explicitly disables login, these routes pass through the admin API authentication middleware. Handler errors use the standard envelope:
+
+```json
+{
+  "error": {
+    "code": "BAD_REQUEST | FORBIDDEN | NOT_FOUND | INTERNAL",
+    "message": "human-readable message"
+  }
+}
+```
+
+Implementation notes common to these endpoints:
+
+- Managed-device responses merge `/var/lib/sgx-guardian/discovery/inventory.json` with the signed Connected Devices registry at `SGX_GUARDIAN_DEVICES_BASE/registry.json`, or `/var/lib/sgx-guardian/devices/registry.json` by default. Per-device scan progress is stored in `scans.jsonl` in the same base directory. Fields annotated with `skip_serializing_if = Option::is_none` are omitted rather than returned as `null`.
+- Registry load verifies the persisted content signature. Tampering returns `500 INTERNAL_SERVER_ERROR` with `device registry integrity check failed`.
+- Computed scoring fields are flattened into each device response: `security_score`, `security_reasons`, `privacy_score`, `privacy_reasons`, `privacy_basis`, `risk_level`, and `computed_at`.
+- Blocking, reject, and unblock use the Suricata threat blocker state directory and nftables `inet sgx_threat input` chain. Manual Connected Devices blocks bypass Suricata severity and `enabled` checks, but still use the configured block TTL and persist to `blocked_ips.json`.
+- Platform limitation: nftables operations require the host `nft` tooling and sufficient process privileges. On unsupported platforms, containers without nftables, or systems without the `ip` command for protected-address discovery, enforcement can fail with `500 INTERNAL_SERVER_ERROR`. Per-device scans require NMAP support through the discovery runner and use `SGX_DEVICES_SCAN_TIMEOUT_SECS` or the default 180-second outer timeout.
+- Protected-address rules for block/reject are runtime host protections: loopback and unspecified IPs, local interface IPs from `ip addr show`, the active default gateway from `ip route show default`, and assigned Nebula overlay IPs in `overlay_registry.json` under `SGX_NEBULA_DIR`, `SGX_GUARDIAN_NEBULA_DIR`, or `/var/lib/sgx-guardian/nebula`. Remote physical LAN peer IPs are intentionally blockable.
+
+### 6.1 GET `/managed-devices`
+
+Purpose:
+List managed devices by merging the signed Connected Devices registry with the latest discovery inventory and computed score fields.
+
+Path parameters:
+None.
+
+Request body:
+None.
+
+Validation:
+None. Missing inventory is treated as an empty list; registry-only manual records are still returned.
+
+Success response:
+`200 OK`
+
+```json
+[
+  {
+    "device_id": "device-id",
+    "ip": "192.168.1.44",
+    "mac": "AA:BB:CC:DD:EE:44",
+    "vendor": "Acme",
+    "hostname": "sensor-44",
+    "display_name": "Camera 44",
+    "manual": false,
+    "monitoring_enabled": true,
+    "blocked": false,
+    "rejected": false,
+    "status": "unauthorized",
+    "os_fingerprint": "Linux",
+    "os_cpe": [],
+    "open_ports": [
+      {
+        "port": 80,
+        "protocol": "tcp",
+        "service": "http",
+        "product_version": null,
+        "cpe": [],
+        "scripts": []
+      }
+    ],
+    "host_scripts": [],
+    "first_seen": "2026-07-24T00:00:00Z",
+    "last_seen": "2026-07-24T00:00:00Z",
+    "last_scan_intensity": "standard",
+    "security_score": 60,
+    "security_reasons": [],
+    "privacy_score": 70,
+    "privacy_reasons": [],
+    "privacy_basis": "network_observable",
+    "risk_level": "medium",
+    "computed_at": "2026-07-27T12:00:00Z"
+  }
+]
+```
+
+Error responses:
+
+- `500 INTERNAL_SERVER_ERROR`
+
+```json
+{
+  "error": {
+    "code": "INTERNAL",
+    "message": "inventory parse: ..."
+  }
+}
+```
+
+Also returned for registry integrity failures as `device registry integrity check failed`.
+
+### 6.2 GET `/managed-devices/{device_id}`
+
+Purpose:
+Return one managed device with inventory fields and computed security/privacy scores.
+
+Path parameters:
+
+- `device_id` (required string): managed device identifier.
+
+Request body:
+None.
+
+Validation:
+The device must exist in the merged managed-device view.
+
+Success response:
+`200 OK`
+
+```json
+{
+  "device_id": "device-id",
+  "ip": "192.168.1.44",
+  "manual": false,
+  "monitoring_enabled": true,
+  "blocked": false,
+  "rejected": false,
+  "open_ports": [],
+  "host_scripts": [],
+  "os_cpe": [],
+  "security_score": null,
+  "security_reasons": [],
+  "privacy_score": null,
+  "privacy_reasons": [],
+  "privacy_basis": "insufficient_data",
+  "risk_level": "unknown",
+  "computed_at": "2026-07-27T12:00:00Z"
+}
+```
+
+Error responses:
+
+- `404 NOT_FOUND`
+
+```json
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "device not found"
+  }
+}
+```
+
+- `500 INTERNAL_SERVER_ERROR` for inventory or registry load failures.
+
+### 6.3 POST `/managed-devices`
+
+Purpose:
+Create a manual managed-device registry record.
+
+Path parameters:
+None.
+
+Request body:
+
+```json
+{
+  "display_name": "Lab Printer",
+  "ip": "192.168.1.77",
+  "mac": "AA:BB:CC:DD:EE:77",
+  "manufacturer": "Acme",
+  "notes": "North lab"
+}
+```
+
+Validation:
+
+- At least one of `ip` or `mac` must be non-empty.
+- Optional strings are trimmed.
+- Blank optional strings are stored as absent.
+- MAC is uppercased before persistence.
+- `device_id` is generated as `manual-` plus the first 8 bytes of SHA-256 over trimmed uppercased MAC when present, otherwise trimmed IP, otherwise a UUID fallback.
+
+Success response:
+`200 OK`
+
+```json
+{
+  "device_id": "manual-...",
+  "display_name": "Lab Printer",
+  "manual": true,
+  "ip": "192.168.1.77",
+  "mac": "AA:BB:CC:DD:EE:77",
+  "manufacturer": "Acme",
+  "monitoring_enabled": true,
+  "blocked": false,
+  "rejected": false,
+  "notes": "North lab",
+  "created_at": "2026-07-27T12:00:00Z",
+  "updated_at": "2026-07-27T12:00:00Z"
+}
+```
+
+Error responses:
+
+- `400 BAD_REQUEST`
+
+```json
+{
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "manual device requires ip or mac"
+  }
+}
+```
+
+- `500 INTERNAL_SERVER_ERROR` for registry integrity or persistence failures.
+
+### 6.4 DELETE `/managed-devices/{device_id}`
+
+Purpose:
+Remove a manual or persisted managed-device registry record and best-effort remove a matching discovery whitelist entry.
+
+Path parameters:
+
+- `device_id` (required string): managed device identifier.
+
+Request body:
+None.
+
+Validation:
+None. Removal is idempotent. After registry save, the handler best-effort removes a matching MAC entry from discovery `whitelist.yaml`; whitelist failures are ignored for this DELETE path.
+
+Success response:
+`200 OK`
+
+```json
+{
+  "device_id": "device-id",
+  "success": true,
+  "message": "device registry record removed"
+}
+```
+
+When no registry record existed:
+
+```json
+{
+  "device_id": "device-id",
+  "success": false,
+  "message": "device had no registry record"
+}
+```
+
+Error responses:
+
+- `500 INTERNAL_SERVER_ERROR` for registry integrity or persistence failures.
+
+### 6.5 POST `/managed-devices/{device_id}/scan`
+
+Purpose:
+Start a per-device security scan and return the initial live progress record.
+
+Path parameters:
+
+- `device_id` (required string): managed device identifier.
+
+Request body:
+None.
+
+Validation:
+
+- The device must exist.
+- If the device has no IP target, the immediate response is still the initial `step: 1` running record, then the handler persists a failed `step: 1` scan record with findings and an unsupported `firmware_assessment`.
+
+Success response:
+`200 OK`
+
+```json
+{
+  "scan_id": "uuid",
+  "device_id": "device-id",
+  "step": 1,
+  "step_label": "Firmware Fingerprint",
+  "state": "running",
+  "started_at": "2026-07-27T12:00:00Z",
+  "updated_at": "2026-07-27T12:00:00Z",
+  "findings": [],
+  "recommendations": [],
+  "progress_history": [
+    {
+      "step": 1,
+      "step_label": "Firmware Fingerprint",
+      "state": "running",
+      "timestamp": "2026-07-27T12:00:00Z"
+    }
+  ]
+}
+```
+
+Live scan sequence:
+
+- Step 1 Firmware Fingerprint: records the initial running stage, collects firmware identity evidence, then persists step 1 complete.
+- Step 2 Open Ports and Services: runs the targeted Connected Devices NMAP security scan and records observed service findings, or persists step 2 failed if NMAP fails or the target is absent from scan output.
+- Step 3 Encryption Assessment: records cleartext exposure (`http`, `ftp`, `telnet`, `pop3`, `imap`), TLS evidence (`https`, `ssl`, `tls`, `imaps`, `pop3s`, or script IDs containing `ssl`), or lack of encryption evidence.
+- Step 4 Known Vulnerability Analysis: records NMAP script evidence when script IDs contain `vuln` or `cve`; otherwise records no observed known-vulnerability script findings.
+- Step 5 Final Security Report: computes security/privacy scores, deduplicates findings, and builds final recommendations.
+- Step 5 Complete: the final persisted record keeps `step: 5`, changes `step_label` to `Complete`, sets `state: "complete"`, and sets `finished_at`.
+
+The implementation appends a scan record before each stage. It preserves the optimized Connected Devices NMAP profile by calling the per-device security scan runner instead of changing the discovery profiles.
+
+No-IP persisted failure details:
+
+```json
+{
+  "step": 1,
+  "step_label": "Firmware Fingerprint",
+  "state": "failed",
+  "findings": ["device has no IP target"],
+  "recommendations": ["add an IP address before running a targeted scan"],
+  "firmware_assessment": {
+    "status": "unsupported",
+    "confidence": 0.0,
+    "integrity_verified": false,
+    "findings": ["device has no IP target for firmware evidence collection"],
+    "recommendations": ["provide a reachable IP or authenticated firmware source"],
+    "evidence_sources": []
+  }
+}
+```
+
+Error responses:
+
+- `404 NOT_FOUND`
+
+```json
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "device not found"
+  }
+}
+```
+
+- `500 INTERNAL_SERVER_ERROR` for scan history persistence failures.
+
+### 6.6 GET `/managed-devices/{device_id}/scan/{scan_id}`
+
+Purpose:
+Return live per-device scan progress or the final scan report.
+
+Path parameters:
+
+- `device_id` (required string): managed device identifier.
+- `scan_id` (required string): scan UUID returned by the start endpoint.
+
+Request body:
+None.
+
+Validation:
+The scan history must contain a matching `device_id` and `scan_id`. The handler does not separately verify the current device registry/inventory; it reads scan history by both path values.
+
+Success response:
+`200 OK`
+
+```json
+{
+  "scan_id": "uuid",
+  "device_id": "device-id",
+  "step": 5,
+  "step_label": "Complete",
+  "state": "complete",
+  "started_at": "2026-07-27T12:00:00Z",
+  "updated_at": "2026-07-27T12:01:00Z",
+  "finished_at": "2026-07-27T12:01:00Z",
+  "findings": [
+    "observed open http service on tcp/80"
+  ],
+  "recommendations": [
+    "prefer encrypted management protocols for exposed services"
+  ],
+  "firmware_assessment": {
+    "status": "observed",
+    "vendor": "Acme",
+    "product": "linux kernel",
+    "version": "5",
+    "platform": "Linux 5.x",
+    "evidence_sources": [
+      {
+        "source": "nmap:mac-vendor",
+        "value": "Acme"
+      },
+      {
+        "source": "nmap:os-cpe",
+        "value": "cpe:/o:linux:linux_kernel:5"
+      }
+    ],
+    "confidence": 0.35,
+    "integrity_verified": false,
+    "findings": [
+      "remote firmware identity is inferred only from network-observable metadata"
+    ],
+    "recommendations": [
+      "confirm firmware version with authenticated device or vendor management evidence"
+    ]
+  },
+  "progress_history": [
+    {
+      "step": 1,
+      "step_label": "Firmware Fingerprint",
+      "state": "running",
+      "timestamp": "2026-07-27T12:00:00Z"
+    },
+    {
+      "step": 1,
+      "step_label": "Firmware Fingerprint",
+      "state": "complete",
+      "timestamp": "2026-07-27T12:00:05Z"
+    },
+    {
+      "step": 2,
+      "step_label": "Open Ports and Services",
+      "state": "running",
+      "timestamp": "2026-07-27T12:00:05Z"
+    },
+    {
+      "step": 2,
+      "step_label": "Open Ports and Services",
+      "state": "complete",
+      "timestamp": "2026-07-27T12:00:35Z"
+    },
+    {
+      "step": 3,
+      "step_label": "Encryption Assessment",
+      "state": "running",
+      "timestamp": "2026-07-27T12:00:35Z"
+    },
+    {
+      "step": 3,
+      "step_label": "Encryption Assessment",
+      "state": "complete",
+      "timestamp": "2026-07-27T12:00:36Z"
+    },
+    {
+      "step": 4,
+      "step_label": "Known Vulnerability Analysis",
+      "state": "running",
+      "timestamp": "2026-07-27T12:00:36Z"
+    },
+    {
+      "step": 4,
+      "step_label": "Known Vulnerability Analysis",
+      "state": "complete",
+      "timestamp": "2026-07-27T12:00:37Z"
+    },
+    {
+      "step": 5,
+      "step_label": "Final Security Report",
+      "state": "running",
+      "timestamp": "2026-07-27T12:00:37Z"
+    },
+    {
+      "step": 5,
+      "step_label": "Complete",
+      "state": "complete",
+      "timestamp": "2026-07-27T12:01:00Z"
+    }
+  ]
+}
+```
+
+Firmware assessment:
+
+- `status` is one of `verified`, `observed`, `unknown`, or `unsupported`.
+- `vendor`, `product`, `version`, and `platform` are omitted when unknown.
+- `evidence_sources` is an array of `{ "source", "value" }`.
+- Local Guardian scans may use local board/OS evidence such as `/etc/os-release` and device-tree model data.
+- Remote device scans use only network-observable evidence such as NMAP MAC vendor, OS fingerprint/CPE, service CPE, and service banners.
+- Service banners are evidence only; they do not make a firmware version verified.
+- `integrity_verified` remains `false` unless reliable integrity proof exists. The current scan path does not claim verification without that proof.
+
+Progress history:
+
+- `progress_history` is reconstructed from all persisted records matching `device_id` and `scan_id`.
+- Each item has exact fields `step`, `step_label`, `state`, and `timestamp`.
+- Consecutive duplicate transitions with the same step, label, and state are collapsed.
+- For the final successful scan, the complete transition is `step: 5`, `step_label: "Complete"`, `state: "complete"`.
+
+Error responses:
+
+- `404 NOT_FOUND`
+
+```json
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "device not found"
+  }
+}
+```
+
+- `404 NOT_FOUND` is returned when no scan history row matches both `device_id` and `scan_id`.
+- `500 INTERNAL_SERVER_ERROR` for scan history read or parse failures.
+
+### 6.7 POST `/managed-devices/{device_id}/reject`
+
+Purpose:
+Reject a managed device, apply an nftables block, persist rejection state, and remove the device from the discovery whitelist.
+
+Path parameters:
+
+- `device_id` (required string): managed device identifier.
+
+Request body:
+
+```json
+{
+  "reason": "Unauthorized device"
+}
+```
+
+The body is optional. `reason` is optional and blank values are ignored by the registry layer.
+
+Validation:
+
+- The device must exist.
+- The device must have an IP target.
+- The target IP must not be protected.
+
+nftables behavior:
+The handler calls the threat blocker first. Registry state is persisted only after nftables insertion succeeds. This preserves fail-closed behavior.
+
+Protected-address behavior:
+Reject is refused for local device IPs, the active default gateway IP, loopback/unspecified addresses, and actual Nebula overlay IPs. Remote physical LAN peer IPs are blockable.
+If the device IP cannot be parsed, reject treats it as protected and returns the same `403 FORBIDDEN` protected-address message.
+
+Success response:
+`200 OK`
+
+```json
+{
+  "device_id": "device-id",
+  "success": true,
+  "message": "device rejected and marked blocked"
+}
+```
+
+Error responses:
+
+- `400 BAD_REQUEST`
+
+```json
+{
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "device has no IP target"
+  }
+}
+```
+
+- `403 FORBIDDEN`
+
+```json
+{
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "refused to reject protected local, gateway, or overlay address"
+  }
+}
+```
+
+- `404 NOT_FOUND`
+
+```json
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "device not found"
+  }
+}
+```
+
+- `500 INTERNAL_SERVER_ERROR` for nftables, registry, whitelist, or persistence failures.
+
+### 6.8 POST `/managed-devices/{device_id}/block`
+
+Purpose:
+Block a managed device IP using nftables and persist `blocked: true`.
+
+Path parameters:
+
+- `device_id` (required string): managed device identifier.
+
+Request body:
+None.
+
+Validation:
+
+- The device must exist.
+- The device must have an IP target.
+- The target IP must not be protected.
+
+nftables behavior:
+The handler calls the threat blocker before saving the registry. The registry is marked blocked only after nftables enforcement succeeds.
+
+Protected-address behavior:
+Block is refused for local device IPs, the active default gateway IP, loopback/unspecified addresses, and actual Nebula overlay IPs. Physical LAN IPs for remote managed peers remain blockable.
+If the device IP cannot be parsed, block treats it as protected and returns the same `403 FORBIDDEN` protected-address message.
+
+Success response:
+`200 OK`
+
+```json
+{
+  "device_id": "device-id",
+  "success": true,
+  "message": "device blocked (nftables) and persisted"
+}
+```
+
+Error responses:
+
+- `400 BAD_REQUEST`
+
+```json
+{
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "device has no IP target"
+  }
+}
+```
+
+- `403 FORBIDDEN`
+
+```json
+{
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "refused to block protected local, gateway, or overlay address"
+  }
+}
+```
+
+- `404 NOT_FOUND`
+
+```json
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "device not found"
+  }
+}
+```
+
+- `500 INTERNAL_SERVER_ERROR` for nftables, registry, or persistence failures.
+
+### 6.9 POST `/managed-devices/{device_id}/unblock`
+
+Purpose:
+Remove a managed device IP from the threat blocker/nftables chain and persist `blocked: false`.
+
+Path parameters:
+
+- `device_id` (required string): managed device identifier.
+
+Request body:
+None.
+
+Validation:
+
+- The device must exist.
+- The device must have an IP target.
+
+nftables behavior:
+The handler removes the active block through the threat blocker before saving registry state. Registry state is updated only after nftables rebuild/removal succeeds.
+
+Protected-address behavior:
+Unblock does not reject protected addresses; it only requires a valid existing device IP target.
+If the persisted IP cannot be parsed by the threat blocker, unblock returns `400 BAD_REQUEST` with `invalid IP: ...`.
+
+Success response:
+`200 OK`
+
+```json
+{
+  "device_id": "device-id",
+  "success": true,
+  "message": "device unblocked (nftables) and persisted"
+}
+```
+
+Error responses:
+
+- `400 BAD_REQUEST`
+
+```json
+{
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "device has no IP target"
+  }
+}
+```
+
+Also returned by the threat blocker as:
+
+```json
+{
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "invalid IP: ..."
+  }
+}
+```
+
+- `404 NOT_FOUND`
+
+```json
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "device not found"
+  }
+}
+```
+
+- `500 INTERNAL_SERVER_ERROR` for nftables, registry, or persistence failures.

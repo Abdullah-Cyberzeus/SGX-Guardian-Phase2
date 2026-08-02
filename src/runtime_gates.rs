@@ -175,6 +175,10 @@ impl RuntimeGates {
 
 pub static GATES: Lazy<RuntimeGates> = Lazy::new(RuntimeGates::load);
 
+pub fn login_disabled() -> bool {
+    GATES.disable_login
+}
+
 /// Sleep the configured cooldown (if > 0). Use between heavy subsystem starts.
 pub async fn cooldown() {
     let ms = GATES.startup_cooldown_ms;

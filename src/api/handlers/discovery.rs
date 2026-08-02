@@ -349,7 +349,7 @@ pub async fn approve_device(
         }
         None => {
             let entry = WhitelistEntry {
-                mac: normalized_mac,
+                mac: normalized_mac.clone(),
                 label: resolved_label,
                 expected_os: None,
                 expected_ports: Vec::new(),
@@ -367,6 +367,7 @@ pub async fn approve_device(
     let yaml = serde_yaml::to_string(&doc)
         .map_err(|e| ApiError::Internal(format!("whitelist serialization error: {}", e)))?;
     atomic_write_bytes(&whitelist_file, yaml.as_bytes(), "yaml.tmp")?;
+    clear_device_registry_rejection(s.as_ref(), &normalized_mac).await?;
 
     let inventory_updated =
         refresh_inventory_statuses(&inventory_path(&s), &runtime_whitelist(&doc))?;
@@ -384,6 +385,96 @@ pub async fn approve_device(
         entry,
         current_devices,
     }))
+}
+
+async fn clear_device_registry_rejection(state: &AppState, mac: &str) -> Result<(), ApiError> {
+    let cfg = crate::devices::DevicesConfig::from_env();
+    let path = cfg.registry_path();
+    let mut registry = crate::devices::registry::DeviceRegistry::load(&path)
+        .await
+        .map_err(|err| match err {
+            crate::devices::errors::DevicesError::TamperedRegistry => {
+                ApiError::Internal("device registry integrity check failed".into())
+            }
+            other => ApiError::Internal(other.to_string()),
+        })?;
+
+    // Before mutating registry state, ensure any active nftables threat block
+    // is removed. This keeps "re-approve" atomic from the API perspective:
+    // if nftables enforcement fails, we don't clear `rejected/blocked`.
+    let normalized_for_match = normalize_mac_for_match(mac);
+    let maybe_blocked_ip = registry
+        .devices
+        .values()
+        .find(|record| {
+            record
+                .mac
+                .as_deref()
+                .map(normalize_mac_for_match)
+                .is_some_and(|record_mac| record_mac == normalized_for_match)
+        })
+        .and_then(|record| {
+            if record.blocked {
+                record.ip.as_deref()
+            } else {
+                None
+            }
+        })
+        .map(|s| s.to_string());
+
+    if let Some(ip) = maybe_blocked_ip {
+        let blocker = build_threat_blocker(state).await?;
+        blocker
+            .unblock_ip(&ip)
+            .await
+            .map_err(api_error_from_threat_blocker_error)?;
+    }
+
+    if registry.clear_rejection_for_mac(mac).is_some() {
+        registry
+            .save_atomic(&path)
+            .await
+            .map_err(|err| ApiError::Internal(err.to_string()))?;
+    }
+    Ok(())
+}
+
+fn normalize_mac_for_match(mac: &str) -> String {
+    mac.chars()
+        .filter(|ch| ch.is_ascii_hexdigit())
+        .flat_map(|ch| ch.to_uppercase())
+        .collect()
+}
+
+async fn build_threat_blocker(
+    state: &AppState,
+) -> Result<crate::threat::blocker::Blocker, ApiError> {
+    let cfg = crate::threat::config::SuricataConfig::load(std::path::Path::new(
+        &state.threat_config_path,
+    ))
+    .map_err(|err| ApiError::Internal(format!("load threat config: {err}")))?;
+
+    let cfg_shared = Arc::new(tokio::sync::Mutex::new(cfg));
+    let blocker = crate::threat::blocker::Blocker::new(
+        cfg_shared,
+        state.node_id.clone(),
+        PathBuf::from(&state.threat_state_dir),
+    );
+
+    blocker
+        .restore_state()
+        .await
+        .map_err(|err| ApiError::Internal(format!("threat restore_state: {err}")))?;
+    Ok(blocker)
+}
+
+fn api_error_from_threat_blocker_error(err: crate::threat::error::ThreatError) -> ApiError {
+    match err {
+        crate::threat::error::ThreatError::ProtectedIp(_) => ApiError::Forbidden(
+            "refused to block protected local, gateway, or overlay address".into(),
+        ),
+        other => ApiError::Internal(other.to_string()),
+    }
 }
 
 pub async fn get_schedule(State(s): State<Arc<AppState>>) -> Result<Json<ScheduleDoc>, ApiError> {

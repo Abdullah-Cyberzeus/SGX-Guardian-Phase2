@@ -249,6 +249,49 @@ impl NmapConfig {
         self.nmap_args_for_intensity(target, self.ad_hoc_intensity())
     }
 
+    /// Connected Devices per-device security scan (targeted `/32`-style).
+    ///
+    /// Lighter than discovery `Aggressive` single-host (`-p 1-65535` + high
+    /// version intensity), which times out on ARM boards. Still runs NSE
+    /// `vuln` scripts and emits XML on stdout for the existing parser.
+    pub fn nmap_args_for_device_security_scan(&self, target: &str) -> Vec<String> {
+        let mut args: Vec<String> = [
+            "-sS",
+            "-O",
+            "-sV",
+            "--version-light",
+            "-T4",
+            "--top-ports",
+            "1000",
+            "--script",
+            "vuln",
+            "--script-timeout",
+            "15s",
+            "--max-retries",
+            "1",
+            "--host-timeout",
+            "150s",
+            "--max-rate",
+            "500",
+            "--min-rate",
+            "100",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+
+        // Always: XML output to stdout, no DNS, no privileged probes we didn't ask for.
+        args.extend(["-oX", "-"].iter().map(|s| s.to_string()));
+        args.push("-n".to_string());
+        for ex in &self.exclude {
+            args.push("--exclude".to_string());
+            args.push(ex.clone());
+        }
+        args.push("--".to_string());
+        args.push(target.to_string());
+        args
+    }
+
     pub fn nmap_args_for_intensity(&self, target: &str, intensity: ScanIntensity) -> Vec<String> {
         // Adaptive sizing: a /24 (~254 hosts) needs tighter per-host budget than a /32.
         // We treat any target that is NOT a /32 (single-IP, single-CIDR, or hostname)
@@ -676,6 +719,59 @@ schedules:
         assert!(args
             .windows(2)
             .any(|w| w[0] == "--script" && w[1] == "vuln"));
+    }
+
+    #[test]
+    fn device_security_scan_uses_bounded_vuln_profile() {
+        let cfg = NmapConfig::default();
+        let args = cfg.nmap_args_for_device_security_scan("192.168.50.103");
+
+        for flag in ["-sS", "-O", "-sV", "--version-light", "-T4", "-n"] {
+            assert!(
+                args.iter().any(|a| a == flag),
+                "missing device-security flag {flag}"
+            );
+        }
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--top-ports" && w[1] == "1000"));
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--script" && w[1] == "vuln"));
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--script-timeout" && w[1] == "15s"));
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--max-retries" && w[1] == "1"));
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--host-timeout" && w[1] == "150s"));
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--max-rate" && w[1] == "500"));
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--min-rate" && w[1] == "100"));
+        assert!(args.windows(2).any(|w| w[0] == "-oX" && w[1] == "-"));
+        assert!(!args.windows(2).any(|w| w[0] == "-p" && w[1] == "1-65535"));
+        assert!(!args.iter().any(|a| a == "--version-intensity"));
+        assert_eq!(args[args.len() - 2], "--");
+        assert_eq!(args.last().map(String::as_str), Some("192.168.50.103"));
+    }
+
+    #[test]
+    fn device_security_scan_does_not_alter_discovery_aggressive_args() {
+        let cfg = NmapConfig::default();
+        let discovery = cfg.nmap_args_for_intensity("192.168.50.103/32", ScanIntensity::Aggressive);
+        let device = cfg.nmap_args_for_device_security_scan("192.168.50.103");
+        assert!(discovery
+            .windows(2)
+            .any(|w| w[0] == "-p" && w[1] == "1-65535"));
+        assert!(device
+            .windows(2)
+            .any(|w| w[0] == "--top-ports" && w[1] == "1000"));
+        assert_ne!(discovery, device);
     }
 
     #[test]

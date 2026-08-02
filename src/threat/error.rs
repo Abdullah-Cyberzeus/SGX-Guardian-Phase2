@@ -23,6 +23,11 @@ pub enum ThreatError {
     #[error("invalid CIDR/IP: {0}")]
     InvalidCidr(String),
 
+    /// Used by manual block operations to signal that the IP must never be
+    /// blocked (self IP, gateway, or actual Nebula overlay IP).
+    #[error("refused to block protected IP: {0}")]
+    ProtectedIp(String),
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 

@@ -24,6 +24,20 @@ impl NmapRunner {
         target: &str,
         intensity: ScanIntensity,
     ) -> DiscoveryResult<String> {
+        let args = cfg.nmap_args_for_intensity(target, intensity);
+        Self::run_with_args(cfg, &args).await
+    }
+
+    /// Connected Devices targeted security scan — bounded profile for ARM boards.
+    pub async fn run_device_security_scan(
+        cfg: &NmapConfig,
+        target: &str,
+    ) -> DiscoveryResult<String> {
+        let args = cfg.nmap_args_for_device_security_scan(target);
+        Self::run_with_args(cfg, &args).await
+    }
+
+    async fn run_with_args(cfg: &NmapConfig, args: &[String]) -> DiscoveryResult<String> {
         if let Some(xml) = load_test_fixture_xml()? {
             return Ok(xml);
         }
@@ -33,9 +47,8 @@ impl NmapRunner {
             return Err(DiscoveryError::BinaryMissing);
         }
 
-        let args = cfg.nmap_args_for_intensity(target, intensity);
         let child = Command::new("nmap")
-            .args(&args)
+            .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)

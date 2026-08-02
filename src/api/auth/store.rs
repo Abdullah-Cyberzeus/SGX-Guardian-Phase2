@@ -138,6 +138,7 @@ pub trait DeviceStore: Send + Sync {
     async fn upsert(&self, device: PairedDevice) -> Result<()>;
     async fn get(&self, device_id: &str) -> Result<Option<PairedDevice>>;
     async fn list(&self, owner_user_id: &str) -> Result<Vec<PairedDevice>>;
+    async fn list_all(&self) -> Result<Vec<PairedDevice>>;
     async fn unbind(&self, owner_user_id: &str, device_id: &str) -> Result<()>;
 }
 
@@ -829,6 +830,16 @@ impl DeviceStore for JsonDeviceStore {
             .await?
             .into_iter()
             .filter(|device| device.owner_user_id == owner_user_id && device.status != "unpaired")
+            .collect())
+    }
+
+    async fn list_all(&self) -> Result<Vec<PairedDevice>> {
+        Ok(self
+            .file
+            .read()
+            .await?
+            .into_iter()
+            .filter(|device| device.status != "unpaired")
             .collect())
     }
 

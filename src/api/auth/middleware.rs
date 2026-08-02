@@ -20,7 +20,7 @@ pub async fn require_auth(
     mut req: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
-    if crate::runtime_gates::GATES.disable_login {
+    if crate::runtime_gates::login_disabled() {
         return next.run(req).await;
     }
     if is_public_route(req.method(), req.uri().path()) || is_cors_preflight(req.headers()) {
