@@ -360,7 +360,7 @@ fn load_active_baseline_signer(node_id: &str) -> anyhow::Result<Box<dyn Baseline
                 "SE050 DKP metadata exists, but active SE050 DKP signer is unavailable; refusing software fallback"
             );
         }
-        return signer_from_key_manager(km);
+        signer_from_key_manager(km)
     }
 
     #[cfg(not(feature = "secure-element"))]

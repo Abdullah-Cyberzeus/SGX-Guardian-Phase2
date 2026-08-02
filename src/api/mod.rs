@@ -47,6 +47,7 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             header::ACCEPT,
             header::AUTHORIZATION,
             header::CONTENT_TYPE,
+            HeaderName::from_static("idempotency-key"),
             HeaderName::from_static("ngrok-skip-browser-warning"),
         ]);
 
@@ -849,6 +850,36 @@ mod tests {
             .await;
         });
         (format!("http://{}", addr), handle)
+    }
+
+    #[tokio::test]
+    async fn cors_preflight_allows_idempotency_key_header() {
+        let (base_url, handle) = spawn_api_with_state(test_state()).await;
+        let response = reqwest::Client::new()
+            .request(
+                reqwest::Method::OPTIONS,
+                format!("{}/api/v1/geofence/location", base_url),
+            )
+            .header(reqwest::header::ORIGIN, "http://localhost:3000")
+            .header(reqwest::header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+            .header(
+                reqwest::header::ACCESS_CONTROL_REQUEST_HEADERS,
+                "content-type,idempotency-key",
+            )
+            .send()
+            .await
+            .expect("preflight request");
+        handle.abort();
+
+        assert!(response.status().is_success());
+        let allow_headers = response
+            .headers()
+            .get(reqwest::header::ACCESS_CONTROL_ALLOW_HEADERS)
+            .expect("allow headers")
+            .to_str()
+            .expect("allow headers utf8")
+            .to_ascii_lowercase();
+        assert!(allow_headers.contains("idempotency-key"));
     }
 
     async fn authed_client_for_state(state: &Arc<AppState>) -> reqwest::Client {

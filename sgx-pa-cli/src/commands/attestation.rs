@@ -76,7 +76,7 @@ pub fn run(args: AttestationArgs) -> Result<()> {
 
     let len = filtered_list.len();
     let display_list = if let Some(t) = args.tail {
-        let start = if len > t { len - t } else { 0 };
+        let start = len.saturating_sub(t);
         &filtered_list[start..]
     } else {
         &filtered_list[..]

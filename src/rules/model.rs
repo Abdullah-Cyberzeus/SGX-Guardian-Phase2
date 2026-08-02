@@ -9,8 +9,9 @@ use uuid::Uuid;
 pub const DEFAULT_COOLDOWN_SECS: u64 = 300;
 pub const DEFAULT_MAX_ACTIONS_PER_HOUR: u32 = 20;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum RuleTrigger {
+    #[default]
     ThreatAlert,
     DeviceDiscovered,
     DeviceUnauthorized,
@@ -18,12 +19,6 @@ pub enum RuleTrigger {
     GeofenceExit,
     AttestationFailed,
     CrlRevocation,
-}
-
-impl Default for RuleTrigger {
-    fn default() -> Self {
-        Self::ThreatAlert
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
