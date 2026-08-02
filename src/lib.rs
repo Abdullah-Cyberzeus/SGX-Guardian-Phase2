@@ -13,6 +13,7 @@ pub mod cloud;
 pub mod config_loader;
 pub mod cot;
 pub mod crl;
+pub mod devices;
 pub mod did;
 pub mod discovery; // Network discovery module
 pub mod enforcement;

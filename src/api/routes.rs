@@ -119,6 +119,44 @@ pub fn restore_destructive_router() -> Router<Arc<AppState>> {
         .route("/api/v1/restore/undo", post(handlers::restore::undo))
 }
 
+pub fn devices_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route(
+            "/api/v1/managed-devices",
+            get(handlers::devices::list).post(handlers::devices::add_manual),
+        )
+        .route(
+            "/api/v1/managed-devices/summary",
+            get(handlers::devices::summary),
+        )
+        .route(
+            "/api/v1/managed-devices/{device_id}",
+            get(handlers::devices::detail)
+                .patch(handlers::devices::edit)
+                .delete(handlers::devices::remove),
+        )
+        .route(
+            "/api/v1/managed-devices/{device_id}/scan",
+            post(handlers::devices::start_scan),
+        )
+        .route(
+            "/api/v1/managed-devices/{device_id}/scan/{scan_id}",
+            get(handlers::devices::scan_status),
+        )
+        .route(
+            "/api/v1/managed-devices/{device_id}/block",
+            post(handlers::devices::block),
+        )
+        .route(
+            "/api/v1/managed-devices/{device_id}/reject",
+            post(handlers::devices::reject),
+        )
+        .route(
+            "/api/v1/managed-devices/{device_id}/unblock",
+            post(handlers::devices::unblock),
+        )
+}
+
 pub fn xfer_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/v1/xfer/send", post(handlers::xfer::send))

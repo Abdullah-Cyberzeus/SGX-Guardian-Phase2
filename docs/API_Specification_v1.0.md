@@ -75,3 +75,4 @@ The **API Specification v1.0** defines:
 - Full interaction flow validated through the **sequence diagram above**.
 
 Together, these elements satisfy the **API Spec v1.0 deliverable** of Phase 1.
+---

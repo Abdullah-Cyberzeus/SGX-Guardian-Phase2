@@ -201,7 +201,6 @@ pub fn set_test_login_disabled(value: Option<bool>) {
     };
     TEST_DISABLE_LOGIN_OVERRIDE.store(encoded, Ordering::SeqCst);
 }
-
 /// Sleep the configured cooldown (if > 0). Use between heavy subsystem starts.
 pub async fn cooldown() {
     let ms = GATES.startup_cooldown_ms;

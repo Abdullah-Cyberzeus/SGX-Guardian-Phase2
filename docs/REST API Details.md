@@ -133,6 +133,15 @@ Transport notes:
 | 114 | GET | `/restore/status` | Return current restore journal status |
 | 115 | POST | `/restore/apply` | Apply a confirmed restore transaction |
 | 116 | POST | `/restore/undo` | Undo the last committed restore from its snapshot |
+| 117 | GET | `/managed-devices` | List Managed Devices |
+| 118 | GET | `/managed-devices/{device_id}` | Get Managed Device Details and Scores |
+| 119 | POST | `/managed-devices` | Create Manual Managed Device |
+| 120 | DELETE | `/managed-devices/{device_id}` | Remove Managed Device |
+| 121 | POST | `/managed-devices/{device_id}/scan` | Start Per-Device Security Scan |
+| 122 | GET | `/managed-devices/{device_id}/scan/{scan_id}` | Get Live Per-Device Scan Progress and Final Report |
+| 123 | POST | `/managed-devices/{device_id}/reject` | Reject and Block Managed Device |
+| 124 | POST | `/managed-devices/{device_id}/block` | Block Device Using nftables |
+| 125 | POST | `/managed-devices/{device_id}/unblock` | Unblock Device and Remove nftables Rule |
 | 79 | GET | `/cert/requests` | List all active/pending node certificate requests |
 | 80 | POST | `/cert/approve` | Approve or reject a pending certificate request |
 
@@ -192,6 +201,15 @@ Transport notes:
 | GET | `/restore/status` | Return current restore journal status |
 | POST | `/restore/apply` | Apply a confirmed restore transaction |
 | POST | `/restore/undo` | Undo the last committed restore from its snapshot |
+| GET | `/managed-devices` | List Managed Devices |
+| GET | `/managed-devices/{device_id}` | Get Managed Device Details and Scores |
+| POST | `/managed-devices` | Create Manual Managed Device |
+| DELETE | `/managed-devices/{device_id}` | Remove Managed Device |
+| POST | `/managed-devices/{device_id}/scan` | Start Per-Device Security Scan |
+| GET | `/managed-devices/{device_id}/scan/{scan_id}` | Get Live Per-Device Scan Progress and Final Report |
+| POST | `/managed-devices/{device_id}/reject` | Reject and Block Managed Device |
+| POST | `/managed-devices/{device_id}/block` | Block Device Using nftables |
+| POST | `/managed-devices/{device_id}/unblock` | Unblock Device and Remove nftables Rule |
 ---
 
 ## 6. Backup & Restore Endpoint Contracts
@@ -4565,3 +4583,26 @@ curl -X GET http://localhost:8443/api/v1/wifi/clients
   - `400 BAD_REQUEST`: Invalid `node_id` path traversal or invalid `decision` value.
   - `404 NOT_FOUND`: Request YAML file not found for specified `node_id`.
   - `500 INTERNAL_SERVER_ERROR`: Failed to read/write/parse request file on disk.
+
+## 7. Connected Devices Management
+
+Detailed request/response reference for the managed-device surface is maintained in `docs/device.md`.
+
+Covered endpoints:
+
+- `GET /api/v1/managed-devices`
+- `GET /api/v1/managed-devices/{device_id}`
+- `POST /api/v1/managed-devices`
+- `DELETE /api/v1/managed-devices/{device_id}`
+- `POST /api/v1/managed-devices/{device_id}/scan`
+- `GET /api/v1/managed-devices/{device_id}/scan/{scan_id}`
+- `POST /api/v1/managed-devices/{device_id}/reject`
+- `POST /api/v1/managed-devices/{device_id}/block`
+- `POST /api/v1/managed-devices/{device_id}/unblock`
+
+Operational notes:
+
+- Managed-device responses merge the signed device registry with discovery inventory enrichment and computed security/privacy scoring.
+- Per-device scan progress is persisted and can be polled by `scan_id`.
+- Block, reject, and unblock operations reuse the threat blocker state and nftables enforcement path.
+- Protected-address checks prevent blocking this host, the active default gateway, loopback/unspecified addresses, and assigned Nebula overlay IPs.
