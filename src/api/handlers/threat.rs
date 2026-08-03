@@ -287,13 +287,17 @@ fn severity_matches(actual: Severity, expected: &str) -> bool {
 
 async fn load_alerts(state: &AppState) -> Result<Vec<ThreatAlert>, ApiError> {
     let path = PathBuf::from(&state.threat_state_dir).join("alerts.jsonl");
-    let bytes = tokio::fs::read(&path).await.map_err(|err| {
-        if err.kind() == ErrorKind::NotFound {
-            ApiError::NotFound("no alerts yet - has Suricata produced events?".into())
-        } else {
-            ApiError::Internal(format!("failed to read {}: {}", path.display(), err))
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => {
+            return Err(ApiError::Internal(format!(
+                "failed to read {}: {}",
+                path.display(),
+                err
+            )))
         }
-    })?;
+    };
 
     Ok(bytes
         .split(|byte| *byte == b'\n')

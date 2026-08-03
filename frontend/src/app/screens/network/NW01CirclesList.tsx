@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { Archive, Plus, MessageSquare, Users, Shield, Network, Send, X, ChevronRight, Loader2, Phone, Video, PhoneCall, FolderOpen, Copy, Check, Link } from "lucide-react";
 import { mockCircles, mockUser } from "../../data/mockData";
@@ -91,7 +91,7 @@ function CircleDetailPanel({ circle }: { circle: typeof mockCircles[0] }) {
   const vault = useVault();
 
   const [activeTab, setActiveTab] =
-    useState<"chat" | "calls" | "files" | "members">("chat");
+    useState<"chat" | "calls" | "files" | "members">("members");
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<any[]>(seed.messages || circle.messages || []);
   const [calls, setCalls] = useState<any[]>(seed.calls || circle.calls || []);
@@ -366,6 +366,15 @@ function CircleDetailPanel({ circle }: { circle: typeof mockCircles[0] }) {
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
                   <button
+                    onClick={() => navigate(`/network/${circle.id}?tab=chat&peer=${encodeURIComponent(member.did || "")}`)}
+                    disabled={!member.did}
+                    aria-label={`Message ${member.name}`}
+                    className="flex items-center justify-center rounded-full transition-opacity active:opacity-70 disabled:cursor-not-allowed disabled:opacity-35"
+                    style={{ width: "34px", height: "34px", backgroundColor: "color-mix(in srgb, var(--primary) 12%, transparent)", border: "1px solid color-mix(in srgb, var(--primary) 25%, transparent)", cursor: member.did ? "pointer" : "not-allowed" }}
+                  >
+                    <MessageSquare size={15} style={{ color: "var(--primary)" }} />
+                  </button>
+                  <button
                     onClick={() => startMemberCall("voice", { id: member.id, name: member.name })}
                     aria-label={`Voice call ${member.name}`}
                     className="flex items-center justify-center rounded-full transition-opacity active:opacity-70"
@@ -456,16 +465,19 @@ function CircleDetailPanel({ circle }: { circle: typeof mockCircles[0] }) {
 export function NW01CirclesList() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [selectedCircleId, setSelectedCircleId] = useState<string | null>(() => searchParams.get("circle"));
+  const selectedCircleId = searchParams.get("circle");
   const [topologyCircleId, setTopologyCircleId] = useState<string | null>(null);
 
-  // Fetch circles from API with fallback to mock data
+  useEffect(() => {
+    if (selectedCircleId) {
+      navigate(`/network/${encodeURIComponent(selectedCircleId)}`, { replace: true });
+    }
+  }, [navigate, selectedCircleId]);
+
+  // Circle and member records come only from the Guardian API.
   const { data: circlesData, loading } = useCircles();
 
-  const circles = useMemo(() => {
-    if (!circlesData) return mockCircles;
-    return Array.isArray(circlesData) ? circlesData : mockCircles;
-  }, [circlesData]);
+  const circles: any[] = useMemo(() => Array.isArray(circlesData) ? circlesData : [], [circlesData]);
 
   const activeCircles = useMemo(() => circles.filter((circle: any) => circle.status !== "archived"), [circles]);
   const archivedCircles = useMemo(() => circles.filter((circle: any) => circle.status === "archived"), [circles]);
@@ -516,7 +528,7 @@ export function NW01CirclesList() {
         ) : (<>
           <div className="border-b border-border px-5 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Active Circles · {activeCircles.length}</div>
           {activeCircles.length === 0 && <p className="border-b border-border px-5 py-5 text-sm text-muted-foreground">No active Circles.</p>}
-          {activeCircles.map((circle: any) => <CircleRow key={circle.id} circle={circle} isSelected={selectedCircleId === circle.id} onSelect={() => setSelectedCircleId(circle.id)} onViewTopology={() => setTopologyCircleId(circle.id)} />)}
+          {activeCircles.map((circle: any) => <CircleRow key={circle.id} circle={circle} isSelected={selectedCircleId === circle.id} onSelect={() => navigate(`/network/${circle.id}`)} onViewTopology={() => setTopologyCircleId(circle.id)} />)}
           <div className="border-b border-border bg-muted/30 px-5 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Archived Circles · {archivedCircles.length}</div>
           {archivedCircles.length === 0 && <p className="px-5 py-5 text-sm text-muted-foreground">No archived Circles.</p>}
           {archivedCircles.map((circle: any) => <CircleRow key={circle.id} circle={circle} isSelected={selectedCircleId === circle.id} onSelect={() => navigate(`/network/${circle.id}/manage`)} onViewTopology={() => navigate(`/network/${circle.id}/manage`)} />)}
