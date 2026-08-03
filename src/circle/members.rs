@@ -201,6 +201,65 @@ pub fn remove_member(
     Ok(revoked_ids)
 }
 
+pub fn delete_circle(
+    node_id: &str,
+    circle_id: &str,
+    reason: &str,
+) -> Result<Vec<String>, CircleError> {
+    let circle = store::get_circle(node_id, circle_id)?;
+    if circle.is_mesh() {
+        return Err(CircleError::Conflict(
+            "Mesh Circle cannot be deleted".to_string(),
+        ));
+    }
+
+    let (issuer, km) = store::load_runtime_signing_context(node_id)?;
+    issue::ensure_circle_owner(&issuer, circle_id, VcAdminAction::Revoke, false)?;
+
+    let matches = crate::vc::persistence::list_issued()?
+        .into_iter()
+        .filter(|vc| vc.credential_subject.circle_id == circle_id)
+        .collect::<Vec<_>>();
+
+    let mut status_list = StatusListManager::load_or_create(&issuer, &km)?;
+    let mut revoked_ids = Vec::new();
+    for vc in matches {
+        let state = classify_vc_state(&vc, &status_list, Utc::now())?;
+        if matches!(state, VcLifecycleState::Revoked) {
+            continue;
+        }
+        let index = vc
+            .credential_status
+            .status_list_index
+            .parse::<u64>()
+            .map_err(|err| CircleError::Invalid(format!("vc status index: {}", err)))?;
+        status_list.set_revoked(index, true)?;
+        revoked_ids.push(vc.id.clone());
+    }
+
+    if !revoked_ids.is_empty() {
+        let vm_ref = format!("{}#dkp-v{}", issuer.did, issuer.current_dkp_version.max(1));
+        status_list.commit(&km, &vm_ref)?;
+    }
+
+    store::delete_circle(node_id, circle_id)?;
+
+    crate::audit::logger::log_audit(
+        node_id,
+        crate::audit::event::AuditCategory::Circle,
+        crate::audit::event::AuditSeverity::Warning,
+        crate::audit::event::AuditAction::Revoked,
+        &format!(
+            "Circle deleted: {} members_revoked={} reason={}",
+            circle_id,
+            revoked_ids.len(),
+            reason
+        ),
+    );
+
+    Ok(revoked_ids)
+}
+
 pub fn change_role(
     node_id: &str,
     circle_id: &str,
