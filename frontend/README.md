@@ -1,175 +1,161 @@
-# E2E Test Report — SG-X Guardian Admin Console
+# SG-X Guardian — Admin Console
 
-**Run date:** 2026-04-16
-**Branch:** `NodeServerValues`
-**Test runner:** Playwright
-**Browser:** Chromium
-**Total runtime:** 6.1 minutes
-**Result:** **140 / 140 passed (100%)**
+**Project**: SG-X Guardian Mobile Web App
 
----
+**Phase**: Phase 1 — Full Ground-Up Redesign & Production Build
 
-## Summary
+**Stack**: React 18 + React Router 7 + TypeScript + Vite
 
-| Suite | File | Tests | Passed | Failed |
-|---|---|---|---|---|
-| Integrity Dashboard | `e2e/integrity-dashboard.spec.ts` | 27 | 27 | 0 |
-| Key Management | `e2e/key-management.spec.ts` | 28 | 28 | 0 |
-| Security Pages | `e2e/security-pages.spec.ts` | 42 | 42 | 0 |
-| Navigation | `e2e/navigation.spec.ts` | 43 | 43 | 0 |
-| **Total** | | **140** | **140** | **0** |
+**Document Date**: May 2026
 
----
+## Executive Summary
 
-## CLI Command Coverage
+The SG-X Guardian is the companion mobile web application for the Cervais SG-X Gateway Device — a hardware security appliance that protects critical infrastructure edge environments across energy, healthcare, federal/defense, transportation, manufacturing, and agriculture sectors.
 
-All 15 CLI commands have corresponding UI pages covered by E2E tests.
+This repository contains the production — a mobile browser-based web app (PWA-compatible) that enables field security engineers and circle admins to monitor Guardian health, triage alerts, manage Circle of Trust membership, control connected devices, and configure system settings.
 
-| CLI Command | UI Route | Suite |
-|---|---|---|
-| `status` | `/home/guardian` | Navigation |
-| `boot-status` | `/settings/boot-status` | Security Pages |
-| `peers` | `/home/topology` | Navigation |
-| `attestation` | `/settings/attestation` | Security Pages |
-| `logs` | `/settings/logs` | Security Pages |
-| `keygen` | `/settings/keys` | Key Management |
-| `sign` | `/settings/policy` | Security Pages |
-| `verify` | `/settings/policy` | Security Pages |
-| `dkp-status` | `/settings/keys` | Key Management |
-| `dkp-rotate` | `/settings/keys` | Key Management |
-| `dkp-revoke` | `/settings/keys` | Key Management |
-| `emergency-rotate` | `/settings/keys` | Key Management |
-| `pcr-status` | `/settings/integrity` | Integrity Dashboard |
-| `pcr-baseline-create` | `/settings/integrity` | Integrity Dashboard |
-| `pcr-baseline-verify` | `/settings/integrity` | Integrity Dashboard |
+## Value Proposition
 
----
+| Area | Value Delivered |
+|------|----------------|
+| **Security at a Glance** | Health Score dashboard communicates Guardian status in under 3 seconds |
+| **Alert Triage** | View → understand → act on threats in under 4 taps with AI recommendations |
+| **Circle of Trust** | Manage cryptographically verified peer groups, secure chat, voice/video calls |
+| **Device Management** | Full control over connected devices, smart home integrations, and automation rules |
+| **Field-First Design** | Mobile-optimized, one-handed use, low-light environments, WCAG AA compliant |
 
-## Suite Breakdown
+## Technical Architecture
 
-### Integrity Dashboard (27 tests)
-Covers `pcr-status`, `pcr-baseline-create`, `pcr-baseline-verify`.
+### Core Components
 
-- Page load & direct URL access (`/integrity`, `/settings/integrity`)
-- PCR status display (PCR 0–7 registers)
-- Baseline creation flow with confirmation dialog
-- Baseline verification results
-- Tamper detection banner
-- Refresh action
-- Error boundary resilience
+| Component | Technology | Purpose |
+|-----------|-----------|---------|
+| **UI Framework** | React 18 | Component-based UI with concurrent rendering |
+| **Routing** | React Router 7 | Client-side routing with nested layouts |
+| **Backend API** | SGX Guardian (`new-guardian`) | Rust/Axum REST API on `http://127.0.0.1:8443/api/v1` |
+| **Language** | TypeScript | Type-safe development |
+| **Build Tool** | Vite 6 | Fast dev server and optimized production builds |
+| **Styling** | Tailwind CSS | Utility-first CSS with Cervais brand tokens |
 
-### Key Management (28 tests)
-Covers `dkp-status`, `dkp-rotate`, `dkp-revoke`, `emergency-rotate`, `keygen`.
+### Platform Specification
 
-- Page load & dual route access (`/keys`, `/settings/keys`)
-- Three-tab layout (DKP Status / History / Emergency)
-- Active key info (version, algorithm ECDSA-P256, total versions)
-- DKP rotate confirmation + success toast + daemon restart banner
-- History tab with version cards and status badges
-- Revoke action (Deprecated keys only, 30-day grace period warning)
-- Emergency rotation (all critical keys warning)
-- StatusBadge fallback — regression test for "Cannot destructure property 'bg' of config[status]"
+| Attribute | Specification |
+|-----------|--------------|
+| **Type** | Mobile browser-based web app (PWA-compatible) |
+| **Distribution** | Browser URL (not App Store / Play Store) |
+| **Primary Target** | iOS Safari, Android Chrome |
+| **Base Design Width** | 390px (iPhone 14) |
+| **Responsive Range** | 360px – 430px mobile viewport |
+| **Accessibility** | WCAG AA |
 
-### Security Pages (42 tests)
-Covers `boot-status`, `attestation`, `logs`, `sign`, `verify`.
+### App Structure
 
-**Boot Status:**
-- Secure boot chain banner (Intact / Compromised)
-- HAB Status, Device Mode, Boot Chain state
-- Device Information (model, hash, timestamp)
-- Trust chain visualization (Boot ROM → HAB → U-Boot → Kernel → RootFS → Guardian → SE050)
-- Refresh action with loading + success states
+The app is organized into 6 functional zones:
 
-**Attestation:**
-- Last attestation result banner
-- Attestation statistics (Total / Passed / Failed)
-- Peer attestation history
-- Re-attest action
+| Zone | Access | Description |
+|------|--------|-------------|
+| **Onboarding** | First run only | Hardware pairing, account setup, first Circle creation |
+| **Home** | Bottom nav tab 1 | Guardian health score, alert summary, quick actions |
+| **Alerts** | Bottom nav tab 2 | Full alert management, AI threat intelligence |
+| **Network** | Bottom nav tab 3 | Circle of Trust — team, chat, calls, topology |
+| **Devices** | Bottom nav tab 4 | Connected device management, smart home integration |
+| **Settings** | Bottom nav tab 5 | Guardian config, account, DID, preferences |
 
-**Logs:**
-- Log entries with level tags (INFO / WARN / ERROR / DEBUG)
-- Timestamp formatting
-- Filter controls
-- Search & Export functionality
+## Getting Started
 
-**Policy Management:**
-- Three tabs (Policies / Sign / Keys)
-- Signed policies list with verification badges
-- Policy upload & key selector (sign flow)
-- Policy Authority keys
+### Prerequisites
 
-### Navigation (43 tests)
-Covers cross-cutting routing and settings menu.
+- Node.js (v18+)
+- npm
+- SGX Guardian backend (`new-guardian`) running on port 8443
+- Nebula mesh daemon running (`sudo nebula -config /var/lib/sgx-guardian/nebula/nebula.yaml`)
 
-- Settings root page — Security & Keys section visible
-- All 6 security menu items accessible
-- Navigation to each security page from Settings
-- Back navigation (Key Management, Integrity → Settings)
-- Direct URL navigation — standalone routes (`/keys`, `/integrity`, `/boot-status`, `/attestation`, `/policy`, `/logs`)
-- Direct URL navigation — prefixed routes (`/settings/*`)
-- Bottom navigation (Home ↔ Settings)
-- CLI-to-UI mapping for all 15 commands
-- Error handling (invalid routes, page refresh)
-
----
-
-## Bug Fixes Verified by This Run
-
-### 1. StatusBadge Destructure Error
-**Issue:** `Cannot destructure property 'bg' of 'config[status]' as it is undefined`
-**File:** `src/app/screens/keys/KM01KeyManagement.tsx`
-**Fix:** Added fallback `UNKNOWN` style when status lookup misses
-**Verification:** `Key Management › StatusBadge Fallback (Bug Fix Verification)` suite — 1 test passing
-
-### 2. Vercel SPA Deep-Link 404
-**Issue:** `404: NOT_FOUND` when navigating directly to routes like `/onboarding`, `/settings/keys`
-**File:** `vercel.json`
-**Fix:** Added `{ "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }] }`
-**Verification:** User confirmed working — Direct URL navigation suite (12 tests) all pass
-
----
-
-## Test Pattern Adopted
-
-The suites were standardized on a resilient locator pattern to avoid strict-mode violations and visibility issues:
-
-| Old (brittle) | New (resilient) |
-|---|---|
-| `page.locator('text=X')` | `expect(page.locator('body')).toContainText('X')` |
-| `page.click('button:has-text("X")')` | `page.getByRole('button', { name: 'X' }).first().click()` |
-| `page.locator('h1:has-text("X")')` | `page.getByRole('heading', { name: 'X' })` |
-| `page.locator('[role="dialog"] button')` | `page.getByRole('button', { name: 'X' }).last()` *(custom ConfirmDialog has no `role="dialog"`)* |
-| `page.click('button svg.lucide-arrow-left')` | `page.goBack()` *(icon-only buttons report as not visible)* |
-
----
-
-## Running the Tests
+### Environment Variables
 
 ```bash
-# Install browsers (first run only)
-npx playwright install chromium
-
-# Full suite
-npm run test:chromium
-
-# Individual suites
-npx playwright test e2e/integrity-dashboard.spec.ts --project=chromium
-npx playwright test e2e/key-management.spec.ts --project=chromium
-npx playwright test e2e/security-pages.spec.ts --project=chromium
-npx playwright test e2e/navigation.spec.ts --project=chromium
-
-# HTML report
-npx playwright show-report
+cp .env.example .env.local
 ```
 
-Playwright config (`playwright.config.ts`) spawns both:
-- Vite dev server on `http://localhost:5173`
-- Mock API server on `http://localhost:3001`
+Required variables:
 
----
+```
+VITE_API_URL=http://127.0.0.1:8443/api/v1
+```
 
-## Known Quirks
+### Development
 
-- **Custom `ConfirmDialog`** — rendered as a styled `<div>` without `role="dialog"`. Tests target the confirm button via `.last()` after the dialog opens (two buttons with identical names exist: the page trigger + the dialog confirm).
-- **Back navigation** — header back buttons are icon-only `<svg>` children. Playwright sometimes reports them as not visible due to size/overflow calculations. Tests use `page.goBack()` (browser history API) instead for reliability.
-- **`networkidle` + 1s buffer** — pages use long-polling / toast animations. All navigations wait for `networkidle` plus a 1-second settle to avoid racing React state updates.
+```bash
+# 1. Start Nebula daemon (required for backend)
+sudo nebula -config /var/lib/sgx-guardian/nebula/nebula.yaml > /tmp/nebula.log 2>&1 &
+
+# 2. Start backend nodes (from new-guardian directory)
+cargo run -- nodeA   # CA/Lighthouse — starts REST API on :8443
+cargo run -- nodeB
+cargo run -- nodeC
+
+# 3. Start frontend (from SGX-gaurdian-admi-console-FE/next-app or root)
+npm install
+npm run dev          # Vite dev server on http://localhost:5173
+```
+
+### Build
+
+```bash
+# Production build
+npm run build
+
+# Preview production build
+npm run preview
+```
+
+## Project Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Product Brief](docs/product/product-brief.md) | Executive summary, problem statement, product vision, full feature set |
+| [User Personas](docs/product/user-personas.md) | Field Security Engineer and Circle Admin persona definitions |
+| [Screen Inventory](docs/product/screen-inventory.md) | Master catalog of every screen, modal, and state |
+| [Information Architecture](docs/information-architecture.md) | Full sitemap, navigation structure, state architecture |
+| [API Requirements](docs/api-requirements.md) | Every API endpoint the frontend requires from the backend |
+| [Auth & Realtime](docs/auth-and-realtime.md) | Authentication flows + WebSocket real-time requirements |
+| [User Flows Overview](docs/flows/README.md) | Introduction to user flow documentation |
+| [Onboarding Flow](docs/flows/onboarding.md) | First-run hardware pairing and account setup |
+| [Alert Triage Flow](docs/flows/alert-triage.md) | Threat detection → investigation → resolution |
+| [Circle Flow](docs/flows/circle.md) | Circle creation, member management, communication |
+| [SG-X Device Flow](docs/flows/sgx-device.md) | Guardian device management and configuration |
+| [Smart Home Flow](docs/flows/smart-home-integration.md) | Hub/dongle/cloud service integration |
+| [Settings Flow](docs/flows/settings.md) | App and Guardian configuration |
+
+## Development Workflow
+
+### Repository & Branching
+
+- **Repository**: Cervais GitHub Organization
+- **Branching Strategy**: Main branch protected, requires PR approval
+- **Status Checks**: All CI/CD checks must pass before merge
+
+### API Integration
+
+- **Base URL**: `http://127.0.0.1:8443/api/v1` (configured via `VITE_API_URL`)
+- **Backend**: SGX Guardian Rust/Axum server — start with `cargo run -- nodeA` from `new-guardian/`
+- **Mock Data**: `/src/app/data/mockData.ts` — used only as null fallback for endpoints not yet on the backend (alerts, circles, threat intel). All security-critical screens (PCR, DKP, boot status, attestation, policy, logs) use live API data.
+
+## Security
+
+This is a security-critical application managing industrial edge infrastructure. All contributions must:
+
+- Pass linting and type checks
+- Include appropriate test coverage
+- Be reviewed and approved before merging
+- Follow secure coding practices (no XSS, no token leakage, no sensitive data in client state)
+
+## License
+
+[License information to be added]
+
+## Contact
+
+For questions or issues, please contact:
+
+- **Client**: Pouya Barrach-Yousefi <pouya@cervais.com>
+- **Design & Frontend**: Lightning Leap Analytics Pvt. Ltd.

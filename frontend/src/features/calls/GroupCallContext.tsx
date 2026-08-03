@@ -1,0 +1,214 @@
+import {
+  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode,
+} from "react";
+import { groupCallsApi, openGroupSignalSocket } from "../../api/groupCalls";
+import type {
+  GroupModerationAction, GroupSession, GroupSignal, MediaType,
+} from "./call.types";
+import { GroupWebRtcService } from "./group-webrtc.service";
+
+interface GroupCallValue {
+  group?: GroupSession; incoming?: GroupSession; localStream?: MediaStream;
+  remoteStreams: Record<string, MediaStream>; error?: string; muted: boolean; cameraEnabled: boolean;
+  createGroup(memberIds: string[], callAll: boolean, media: MediaType[], title?: string): Promise<void>;
+  acceptGroup(): Promise<void>; rejoinGroup(): Promise<void>; declineGroup(): Promise<void>; leaveGroup(): Promise<void>;
+  endGroup(): Promise<void>; moderate(action: GroupModerationAction): Promise<void>;
+  toggleMute(): void; toggleCamera(): void; shareScreen(): Promise<void>;
+}
+
+const Context = createContext<GroupCallValue | null>(null);
+
+export function GroupCallProvider({ children, localDevice }: { children: ReactNode; localDevice?: string }) {
+  const [group, setGroup] = useState<GroupSession>();
+  const [localStream, setLocalStream] = useState<MediaStream>();
+  const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
+  const [error, setError] = useState<string>();
+  const [muted, setMuted] = useState(false);
+  const [cameraEnabled, setCameraEnabled] = useState(true);
+  const rtc = useRef(new GroupWebRtcService());
+  const signalCursor = useRef(0);
+  const pollingSignals = useRef(false);
+  const connectedPeers = useRef(new Set<string>());
+  const mediaReadySent = useRef(false);
+  const socketConnected = useRef(false);
+  const signalApplyChain = useRef(Promise.resolve());
+  const localParticipantState = localDevice ? group?.participants[localDevice]?.state : undefined;
+
+  useEffect(() => {
+    groupCallsApi.iceServers()
+      .then(({ ice_servers }) => rtc.current.configureIceServers(ice_servers))
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "ICE configuration failed"));
+  }, []);
+
+  const refresh = useCallback(async () => {
+    const response = await groupCallsApi.active();
+    const next = response.groups[0];
+    setGroup(next);
+    if (!next) {
+      rtc.current.close(); setLocalStream(undefined); setRemoteStreams({}); return;
+    }
+    const local = localDevice ? next.participants[localDevice] : undefined;
+    if (!local || ["kicked", "declined"].includes(local.state)) {
+      rtc.current.close(); setLocalStream(undefined); setRemoteStreams({}); return;
+    }
+    if (local.state === "joined" && localStream && rtc.current.isReadyForPeers()) {
+      rtc.current.setAudio(local.audio_allowed && !muted);
+      rtc.current.setVideo(local.video_allowed && cameraEnabled);
+      for (const participant of Object.values(next.participants)) {
+        if (
+          participant.device_id !== localDevice
+          && participant.state === "joined"
+        ) {
+          await rtc.current.ensurePeer(
+            participant.device_id,
+            (localDevice ?? "").localeCompare(participant.device_id) < 0,
+          );
+        } else if (["kicked", "left", "declined"].includes(participant.state)) {
+          rtc.current.removePeer(participant.device_id);
+          setRemoteStreams((current) => {
+            const copy = { ...current }; delete copy[participant.device_id]; return copy;
+          });
+        }
+      }
+    }
+  }, [cameraEnabled, localDevice, localStream, muted]);
+
+  useEffect(() => {
+    let stopped = false;
+    const load = () => refresh().catch((reason) => {
+      if (!stopped) setError(reason instanceof Error ? reason.message : "Group status failed");
+    });
+    void load();
+    const timer = window.setInterval(load, 1000);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!group || !localDevice || !localStream || localParticipantState !== "joined") return;
+    rtc.current.configure({
+      sendSignal: (target, type, payload, id) =>
+        groupCallsApi.signal(group.group_id, target, type, payload, id).then(() => undefined),
+      onRemoteStream: (peerId, stream) => setRemoteStreams((current) => ({ ...current, [peerId]: stream })),
+      onConnectionState: (peerId, state) => {
+        if (state === "connected") connectedPeers.current.add(peerId);
+        else connectedPeers.current.delete(peerId);
+        const expected = Object.values(group.participants)
+          .filter((participant) => participant.device_id !== localDevice && participant.state === "joined").length;
+        if (expected > 0 && connectedPeers.current.size >= expected && !mediaReadySent.current) {
+          mediaReadySent.current = true;
+          groupCallsApi.mediaReady(group.group_id).catch((reason) => setError(reason.message));
+        }
+      },
+    });
+    let cancelled = false;
+    const applySignal = (signal: GroupSignal) => {
+      signalApplyChain.current = signalApplyChain.current.then(async () => {
+        if (signal.id <= signalCursor.current) return;
+        await rtc.current.apply(signal);
+        signalCursor.current = Math.max(signalCursor.current, signal.id);
+      }).catch((reason) => {
+        setError(reason instanceof Error ? reason.message : "Group media signaling failed");
+      });
+    };
+    const closeSocket = openGroupSignalSocket(
+      group.group_id,
+      signalCursor.current,
+      applySignal,
+      (connected) => { socketConnected.current = connected; },
+    );
+    const poll = async () => {
+      if (cancelled || socketConnected.current || pollingSignals.current) return;
+      pollingSignals.current = true;
+      try {
+        const response = await groupCallsApi.signals(group.group_id, signalCursor.current);
+        response.signals.forEach(applySignal);
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : "Group media signaling failed");
+      } finally {
+        pollingSignals.current = false;
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 1_000);
+    const heartbeat = window.setInterval(() => {
+      if (!socketConnected.current) {
+        groupCallsApi.heartbeat(group.group_id).catch(() => undefined);
+      }
+    }, 5_000);
+    return () => {
+      cancelled = true; socketConnected.current = false; closeSocket();
+      window.clearInterval(timer); window.clearInterval(heartbeat);
+    };
+  }, [group?.group_id, localDevice, localParticipantState, localStream]);
+
+  const prepare = async (media: MediaType[]) => {
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Camera and microphone access requires HTTPS or localhost.");
+      }
+      const stream = await rtc.current.prepare(media);
+      setLocalStream(stream); setRemoteStreams({}); signalCursor.current = 0;
+      connectedPeers.current.clear(); mediaReadySent.current = false;
+    } catch (reason) {
+      rtc.current.close();
+      setLocalStream(undefined);
+      const message = reason instanceof DOMException && reason.name === "NotAllowedError"
+        ? "Camera or microphone permission was denied. Allow access in the browser site settings, then try again."
+        : reason instanceof Error ? reason.message : "Camera or microphone could not be started.";
+      setError(message);
+      throw new Error(message);
+    }
+  };
+  const createGroup = async (memberIds: string[], callAll: boolean, media: MediaType[], title = "") => {
+    setError(undefined); await prepare(media);
+    try { setGroup((await groupCallsApi.create(title, memberIds, callAll, media)).session); }
+    catch (reason) { rtc.current.close(); setLocalStream(undefined); throw reason; }
+  };
+  const acceptGroup = async () => {
+    if (!group) return;
+    setError(undefined);
+    await prepare(group.requested_media);
+    setGroup(await groupCallsApi.join(group.group_id));
+  };
+  const rejoinGroup = async () => {
+    if (!group) return;
+    setError(undefined);
+    await prepare(group.requested_media);
+    setGroup(await groupCallsApi.join(group.group_id));
+  };
+  const declineGroup = async () => {
+    if (!group) return; await groupCallsApi.decline(group.group_id); setGroup(undefined);
+  };
+  const leaveGroup = async () => {
+    if (!group) return; await groupCallsApi.leave(group.group_id); rtc.current.close(); setGroup(undefined);
+  };
+  const endGroup = async () => {
+    if (!group) return; await groupCallsApi.end(group.group_id); rtc.current.close(); setGroup(undefined);
+  };
+  const moderate = async (action: GroupModerationAction) => {
+    if (group) setGroup(await groupCallsApi.moderate(group.group_id, action));
+  };
+  const toggleMute = () => {
+    const next = !muted; setMuted(next);
+    const allowed = !!(group && localDevice && group.participants[localDevice]?.audio_allowed);
+    rtc.current.setAudio(allowed && !next);
+  };
+  const toggleCamera = () => {
+    const next = !cameraEnabled; setCameraEnabled(next);
+    const allowed = !!(group && localDevice && group.participants[localDevice]?.video_allowed);
+    rtc.current.setVideo(allowed && next);
+  };
+  const incoming = group && localDevice && group.participants[localDevice]?.state === "invited" ? group : undefined;
+  const value = useMemo(() => ({
+    group, incoming, localStream, remoteStreams, error, muted, cameraEnabled, createGroup,
+    acceptGroup, rejoinGroup, declineGroup, leaveGroup, endGroup, moderate, toggleMute, toggleCamera,
+    shareScreen: () => rtc.current.shareScreen(),
+  }), [group, incoming, localStream, remoteStreams, error, muted, cameraEnabled]);
+  return <Context.Provider value={value}>{children}</Context.Provider>;
+}
+
+export function useGroupCall(): GroupCallValue {
+  const value = useContext(Context);
+  if (!value) throw new Error("useGroupCall must be inside GroupCallProvider");
+  return value;
+}

@@ -1,76 +1,68 @@
-import api from './api';
-
-function formatTimeAgo(isoDate: string): string {
-  const diff = Date.now() - new Date(isoDate).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'Just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
-
-export interface Peer {
-  id: string;
-  peerId: string;
-  ip: string;
-  port: number;
-  status: 'verified' | 'pending' | 'failed';
-  lastSeen: string;
-  lastSeenAgo: string;
-  attestationCount: number;
-  online: boolean;
-  callAvailable: boolean;
-  callUnavailableReason?: string;
-}
-
-export interface AttestResponse {
-  success: boolean;
-  peerId: string;
-  message: string;
-  timestamp: string;
-}
-
-interface PeersResponse {
-  peers: Array<{
-    peerId: string;
-    ip: string;
-    status: string;
-    lastSeen: string;
-    online?: boolean;
-    callAvailable?: boolean;
-    callUnavailableReason?: string;
-  }>;
-  total: number;
-  timestamp: string;
-}
-
-export const peerService = {
-  // GET /api/peers - sgx-guardian peers
-  getAll: async (): Promise<Peer[]> => {
-    const res = await api.get<PeersResponse>('/peers');
-    return (res.peers || []).map((p, i) => ({
-      id: `peer_${String(i + 1).padStart(3, '0')}`,
-      peerId: p.peerId,
-      ip: p.ip,
-      port: 0,
-      status: (p.status === 'verified' || p.status === 'trusted' || p.status === 'success'
-        ? 'verified'
-        : p.status === 'failed' ? 'failed' : 'pending') as Peer['status'],
-      lastSeen: p.lastSeen,
-      lastSeenAgo: p.lastSeen ? formatTimeAgo(p.lastSeen) : 'Unknown',
-      attestationCount: 0,
-      online: p.online ?? Boolean(p.lastSeen),
-      callAvailable: p.callAvailable ?? true,
-      callUnavailableReason: p.callUnavailableReason,
-    }));
+{
+  "name": "@figma/my-make-file",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "test:chromium": "playwright test --project=chromium",
+    "test:firefox": "playwright test --project=firefox",
+    "test:webkit": "playwright test --project=webkit",
+    "test:mobile": "playwright test --project=mobile-chrome --project=mobile-safari",
+    "test:report": "playwright show-report",
+    "test:install": "playwright install"
   },
-
-  // GET /api/peers/:id
-  getById: (id: string) => api.get<Peer>(`/peers/${id}`),
-
-  // POST /api/peers/:id/attest
-  attest: (id: string) => api.post<AttestResponse>(`/peers/${id}/attest`),
-};
-
-export default peerService;
+  "dependencies": {
+    "@radix-ui/react-alert-dialog": "1.1.6",
+    "@radix-ui/react-dialog": "1.1.6",
+    "@radix-ui/react-progress": "1.1.2",
+    "@radix-ui/react-slot": "1.1.2",
+    "@radix-ui/react-switch": "1.1.3",
+    "@supabase/supabase-js": "^2.99.2",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "d3-selection": "^3.0.0",
+    "d3-transition": "^3.0.1",
+    "d3-zoom": "^3.0.0",
+    "jsqr": "^1.4.0",
+    "lucide-react": "0.487.0",
+    "qrcode.react": "^4.2.0",
+    "react-router": "7.13.0",
+    "sonner": "2.0.3",
+    "tailwind-merge": "3.2.0",
+    "tw-animate-css": "1.3.8"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "@tailwindcss/vite": "4.1.12",
+    "@types/d3-selection": "^3.0.11",
+    "@types/d3-transition": "^3.0.9",
+    "@types/d3-zoom": "^3.0.8",
+    "@vitejs/plugin-react": "4.7.0",
+    "docx": "^9.7.1",
+    "exceljs": "^4.4.0",
+    "tailwindcss": "4.1.12",
+    "vite": "6.3.5"
+  },
+  "peerDependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
+  },
+  "pnpm": {
+    "overrides": {
+      "vite": "6.3.5"
+    }
+  }
+}

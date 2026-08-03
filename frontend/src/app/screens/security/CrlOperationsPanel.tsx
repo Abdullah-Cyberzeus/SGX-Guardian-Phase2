@@ -1,0 +1,155 @@
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { AlertTriangle, BellRing, Bug, CheckCircle2, Clock3, CloudOff, Eye, Inbox, Loader2, Radio, RefreshCw, Send, Wifi } from "lucide-react";
+import { toast } from "sonner";
+import { crlService, type CrlOperationalResponse } from "../../services/crlService";
+
+type Operation = "gossip" | "broadcast" | "seed" | "sync" | null;
+
+function messageOf(error: unknown) {
+  return error instanceof Error ? error.message : "The CRL operation failed.";
+}
+
+function countFrom(value: unknown): number | null {
+  if (Array.isArray(value)) return value.length;
+  if (typeof value === "number") return value;
+  return null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function extractItems(data: unknown, keys: string[]): Record<string, unknown>[] {
+  const value = Array.isArray(data)
+    ? data
+    : keys.map((key) => asRecord(data)?.[key]).find(Array.isArray) ?? [];
+  return value.map((item, index) => asRecord(item) ?? { value: item, index });
+}
+
+function displayValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (Array.isArray(value)) return value.length ? value.map(displayValue).join(", ") : "None";
+  if (typeof value === "object") return Object.entries(value as Record<string, unknown>)
+    .map(([key, nested]) => `${key.replaceAll("_", " ")}: ${displayValue(nested)}`).join(" · ");
+  return String(value);
+}
+
+function itemTitle(item: Record<string, unknown>, fallback: string) {
+  return displayValue(item.revoked_did ?? item.did ?? item.title ?? item.id ?? item.entry_id ?? fallback);
+}
+
+function ItemCards({ data, keys, emptyTitle, emptyMessage, itemLabel }: { data: unknown; keys: string[]; emptyTitle: string; emptyMessage: string; itemLabel: string }) {
+  const items = extractItems(data, keys);
+  if (!items.length) return <div className="mt-3 flex flex-col items-center rounded-lg border border-dashed border-border bg-background/40 px-4 py-8 text-center"><span className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground"><Inbox size={18} /></span><p className="text-sm font-semibold">{emptyTitle}</p><p className="mt-1 max-w-md text-xs leading-5 text-muted-foreground">{emptyMessage}</p></div>;
+
+  return <div className="mt-3 grid gap-3 md:grid-cols-2">{items.map((item, index) => {
+    const hidden = new Set(["id", "entry_id", "did", "revoked_did", "title"]);
+    const fields = Object.entries(item).filter(([key, value]) => !hidden.has(key) && value !== undefined).slice(0, 8);
+    return <article key={String(item.id ?? item.entry_id ?? item.did ?? index)} className="rounded-lg border border-border bg-background/60 p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{itemLabel} {index + 1}</p><h3 className="mt-1 break-all text-sm font-semibold">{itemTitle(item, `${itemLabel} ${index + 1}`)}</h3></div><CheckCircle2 size={17} className="shrink-0 text-primary" /></div>
+      {fields.length > 0 && <dl className="mt-3 grid gap-2">{fields.map(([key, value]) => <div key={key} className="flex items-start justify-between gap-4 border-t border-border/60 pt-2 text-xs"><dt className="shrink-0 capitalize text-muted-foreground">{key.replaceAll("_", " ")}</dt><dd className="break-all text-right font-medium">{displayValue(value)}</dd></div>)}</dl>}
+    </article>;
+  })}</div>;
+}
+
+function Summary({ data }: { data: CrlOperationalResponse | null }) {
+  if (!data) return <p className="text-sm text-muted-foreground">No status has been loaded.</p>;
+  const metrics = Object.entries(data).filter(([, value]) => ["string", "number", "boolean"].includes(typeof value)).slice(0, 8);
+  return metrics.length ? <dl className="grid gap-2 sm:grid-cols-2">{metrics.map(([key, value]) => <div key={key} className="rounded-md border border-border bg-background/60 p-3"><dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{key.replaceAll("_", " ")}</dt><dd className="mt-1 break-words text-sm font-medium">{String(value)}</dd></div>)}</dl> : <pre className="max-h-64 overflow-auto rounded-md bg-background p-3 text-xs">{JSON.stringify(data, null, 2)}</pre>;
+}
+
+function Card({ title, subtitle, icon: Icon, actions, children }: { title: string; subtitle: string; icon: typeof Radio; actions?: ReactNode; children: ReactNode }) {
+  return <section className="rounded-xl border border-border bg-card p-4 shadow-sm md:p-5"><div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div className="flex gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><Icon size={18} /></span><div><h2 className="font-semibold">{title}</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">{subtitle}</p></div></div>{actions}</div>{children}</section>;
+}
+
+function Button({ children, onClick, busy, danger = false, disabled = false }: { children: ReactNode; onClick: () => void; busy?: boolean; danger?: boolean; disabled?: boolean }) {
+  return <button type="button" onClick={onClick} disabled={busy || disabled} className={`inline-flex min-h-9 items-center justify-center gap-2 rounded-md border px-3 text-sm font-medium transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50 ${danger ? "border-destructive/35 bg-destructive/10 text-destructive" : "border-primary/30 bg-primary/10 text-primary"}`}>{busy && <Loader2 size={14} className="animate-spin" />}{children}</button>;
+}
+
+function Confirm({ title, message, confirmLabel, busy, onClose, onConfirm }: { title: string; message: string; confirmLabel: string; busy: boolean; onClose: () => void; onConfirm: () => void }) {
+  return <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/65 p-4" role="dialog" aria-modal="true" onClick={onClose}><div className="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="flex gap-3"><AlertTriangle className="shrink-0 text-destructive" size={22} /><div><h2 className="font-semibold">{title}</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">{message}</p></div></div><div className="mt-5 flex justify-end gap-2"><button className="rounded-md border border-border px-4 py-2 text-sm" onClick={onClose} disabled={busy}>Cancel</button><Button danger busy={busy} onClick={onConfirm}>{confirmLabel}</Button></div></div></div>;
+}
+
+export function CrlOperationsPanel() {
+  const [gossip, setGossip] = useState<CrlOperationalResponse | null>(null);
+  const [emergency, setEmergency] = useState<CrlOperationalResponse | null>(null);
+  const [notifications, setNotifications] = useState<CrlOperationalResponse | null>(null);
+  const [offline, setOffline] = useState<CrlOperationalResponse | null>(null);
+  const [pending, setPending] = useState<CrlOperationalResponse | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<Operation>(null);
+  const [confirm, setConfirm] = useState<Exclude<Operation, null> | null>(null);
+  const [did, setDid] = useState("");
+  const [reason, setReason] = useState("compromised");
+  const [debugResult, setDebugResult] = useState<CrlOperationalResponse | null>(null);
+
+  const load = useCallback(async (announce = false) => {
+    setLoading(true);
+    const requests = await Promise.allSettled([crlService.gossipStatus(), crlService.emergencyStatus(), crlService.emergencyNotifications(), crlService.offlineStatus(), crlService.offlinePending()]);
+    const setters = [setGossip, setEmergency, setNotifications, setOffline, setPending];
+    const names = ["gossip", "emergency", "notifications", "offline", "pending"];
+    const nextErrors: Record<string, string> = {};
+    requests.forEach((result, index) => result.status === "fulfilled" ? setters[index](result.value) : nextErrors[names[index]] = messageOf(result.reason));
+    setErrors(nextErrors);
+    setLoading(false);
+    if (announce) Object.keys(nextErrors).length ? toast.warning("Some CRL services are unavailable", { description: Object.values(nextErrors)[0] }) : toast.success("CRL propagation status refreshed");
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { const timer = window.setInterval(() => void load(), 30000); return () => window.clearInterval(timer); }, [load]);
+
+  const pendingCount = useMemo(() => countFrom(pending?.pending ?? pending?.entries ?? pending?.count), [pending]);
+  const notificationCount = useMemo(() => countFrom(notifications?.notifications ?? notifications?.entries ?? notifications?.count), [notifications]);
+
+  async function execute(operation: Exclude<Operation, null>) {
+    setBusy(operation);
+    try {
+      if (operation === "gossip") {
+        await crlService.triggerGossip();
+        toast.success("Gossip round triggered");
+      } else if (operation === "sync") {
+        await crlService.syncOffline();
+        toast.success("Offline synchronization completed");
+      } else if (operation === "broadcast") {
+        await crlService.broadcastEmergency({ did: did.trim(), reason, severity: "critical" });
+        toast.success("Emergency revocation broadcast sent", { description: did.trim() });
+      } else {
+        const result = await crlService.seedEmergencyDebugSession({ did: did.trim() });
+        setDebugResult(result);
+        toast.success("Debug emergency session seeded");
+      }
+      setConfirm(null);
+      await load();
+    } catch (error) { toast.error("CRL operation failed", { description: messageOf(error) }); }
+    finally { setBusy(null); }
+  }
+
+  async function inspectDebug() {
+    if (!did.trim().startsWith("did:")) return toast.error("Enter a valid DID");
+    setBusy("seed");
+    try { setDebugResult(await crlService.getEmergencyDebugSession(did.trim())); toast.success("Debug session loaded"); }
+    catch (error) { toast.error("Debug session lookup failed", { description: messageOf(error) }); }
+    finally { setBusy(null); }
+  }
+
+  const validDid = did.trim().startsWith("did:");
+  return <div className="flex flex-col gap-4">
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4"><div><h2 className="font-semibold">CRL propagation control center</h2><p className="mt-1 text-xs text-muted-foreground">Status refreshes automatically every 30 seconds.</p></div><Button onClick={() => void load(true)} busy={loading}><RefreshCw size={14} />Refresh all</Button></div>
+    {Object.keys(errors).length > 0 && <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive"><strong>Partial service failure.</strong> {Object.entries(errors).map(([key, value]) => `${key}: ${value}`).join(" · ")}</div>}
+    <Card title="Gossip engine" subtitle="Peer propagation counters, thresholds, and the latest gossip round." icon={Radio} actions={<Button onClick={() => setConfirm("gossip")} disabled={loading}><RefreshCw size={14} />Trigger round</Button>}><Summary data={gossip} /></Card>
+    <Card title="Emergency revocation channel" subtitle={`Critical peer broadcast and durable notifications${notificationCount !== null ? ` · ${notificationCount} notifications` : ""}.`} icon={BellRing}>
+      <Summary data={emergency} />
+      <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_190px_auto]"><input className="rounded-md border border-border bg-input-background px-3 py-2 text-sm" value={did} onChange={(event) => setDid(event.target.value)} placeholder="did:guardian:..." aria-label="Emergency DID" /><select className="rounded-md border border-border bg-input-background px-3 py-2 text-sm" value={reason} onChange={(event) => setReason(event.target.value)} aria-label="Emergency reason"><option value="compromised">Compromised</option><option value="lost">Lost</option><option value="stolen">Stolen</option><option value="policy_violation">Policy violation</option></select><Button danger disabled={!validDid} onClick={() => setConfirm("broadcast")}><Send size={14} />Broadcast</Button></div>
+      <div className="mt-4 rounded-md border border-border p-3"><div className="flex items-center gap-2 text-sm font-medium"><BellRing size={15} />Emergency notifications</div><ItemCards data={notifications} keys={["notifications", "entries", "items"]} itemLabel="Notification" emptyTitle="No emergency notifications" emptyMessage="This is expected until an emergency revocation is received or broadcast and the backend stores a notification." /></div>
+    </Card>
+    <Card title="Emergency debug session" subtitle="Inspect or seed test session state for backend validation. Debug controls should only be used in non-production environments." icon={Bug}>
+      <div className="flex flex-wrap gap-2"><Button disabled={!validDid} busy={busy === "seed"} onClick={() => void inspectDebug()}><Eye size={14} />Inspect session</Button><Button disabled={!validDid} onClick={() => setConfirm("seed")}><Bug size={14} />Seed test session</Button></div>{debugResult && <pre className="mt-4 max-h-72 overflow-auto rounded-md bg-background p-3 text-xs">{JSON.stringify(debugResult, null, 2)}</pre>}
+    </Card>
+    <Card title="Offline synchronization" subtitle={`Queued revocations, peer synchronization state, and fetch-and-flush controls${pendingCount !== null ? ` · ${pendingCount} pending` : ""}.`} icon={CloudOff} actions={<Button onClick={() => setConfirm("sync")} disabled={loading}><Wifi size={14} />Sync now</Button>}><Summary data={offline} /><div className="mt-4 rounded-md border border-border p-3"><div className="flex items-center gap-2 text-sm font-medium"><Clock3 size={15} />Pending revocations</div><ItemCards data={pending} keys={["pending", "revocations", "entries", "items", "queue"]} itemLabel="Revocation" emptyTitle="No pending revocations" emptyMessage="The offline queue is clear. New revocations appear here when they cannot be delivered to peers immediately." /></div></Card>
+    {confirm && <Confirm title={confirm === "broadcast" ? "Broadcast critical revocation?" : confirm === "seed" ? "Seed a test emergency session?" : confirm === "sync" ? "Run offline synchronization?" : "Trigger gossip now?"} message={confirm === "broadcast" ? `This immediately broadcasts a critical revocation for ${did.trim()} to active peers.` : confirm === "seed" ? `This changes debug session state for ${did.trim()}.` : confirm === "sync" ? "This starts an immediate fetch-and-flush cycle with configured peers." : "This starts a CRL gossip round immediately and may generate peer traffic."} confirmLabel={confirm === "broadcast" ? "Broadcast now" : confirm === "seed" ? "Seed session" : confirm === "sync" ? "Sync now" : "Trigger round"} busy={busy === confirm} onClose={() => !busy && setConfirm(null)} onConfirm={() => void execute(confirm)} />}
+  </div>;
+}

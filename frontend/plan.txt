@@ -1,81 +1,594 @@
-import api from './api';
+# Feature Request: Enterprise Live Attack Topology Visualization
 
-export interface RelayNode {
-  node: string;
-  overlayIp: string;
-  active: boolean;
-  relayEnabled?: boolean;
-  lighthouseEnabled?: boolean;
-  maxPeers: number;
-  maxBandwidthMbps: number;
-  currentMbps: number;
-}
+## Objective
 
-// Lighthouse/member entries omit relay runtime fields (peers/bandwidth)
-export interface RegistryNode {
-  node: string;
-  overlayIp: string;
-  active: boolean;
-  relayEnabled: boolean;
-  lighthouseEnabled: boolean;
-}
+Design and implement a world-class **Live Attack Topology Visualization** for the Guardian Admin Console that transforms real-time Suricata alerts into an interactive cyber-physical attack map.
 
-export interface RelayListResponse {
-  relays: RelayNode[];
-}
+The experience should resemble premium SOC platforms such as **Microsoft Defender XDR, Palo Alto Cortex XDR, CrowdStrike Falcon, Dragos, Nozomi Networks, Claroty, and Splunk Enterprise Security**, with smooth animations, modern UI, and highly interactive network visualization.
 
-export interface LighthouseListResponse {
-  lighthouses: RegistryNode[];
-}
+---
 
-export interface MemberListResponse {
-  members: RegistryNode[];
-}
+# Primary Goal
 
-export interface RelayLighthouseListResponse {
-  relayLighthouses: RelayNode[];
-}
+Replace static alert monitoring with a **living digital twin** of the OT/ICS environment where analysts can instantly understand:
 
-export interface RelayLimitsResponse {
-  ok: boolean;
-  node: string;
-  maxPeers: number;
-  maxBandwidthMbps: number;
-  pcrSafe: boolean;
-}
+- Attack origin
+- Attack destination
+- Attack path
+- Guardian protection status
+- PLC/Sensor health
+- Device relationships
+- Threat propagation
+- Real-time network activity
 
-export interface RelayToggleResponse {
-  ok: boolean;
-  node: string;
-  enabled: boolean;
-  message: string;
-}
+The visualization should feel alive even when no attacks are occurring.
 
-export const relayService = {
-  // GET /api/v1/relay/list
-  getList: () => api.get<RelayListResponse>('/relay/list'),
+---
 
-  // GET /api/v1/lighthouse/list
-  getLighthouseList: () => api.get<LighthouseListResponse>('/lighthouse/list'),
+# New Navigation
 
-  // GET /api/v1/member/list
-  getMemberList: () => api.get<MemberListResponse>('/member/list'),
+Add a new tab on the Alerts page.
 
-  // GET /api/v1/relay-lighthouse/list
-  getRelayLighthouseList: () =>
-    api.get<RelayLighthouseListResponse>('/relay-lighthouse/list'),
+```
+Alerts
+│
+├── Alert List
+├── Live Attack Topology
+└── (Future) Attack Timeline
+```
 
-  // POST /api/v1/relay/limits
-  setLimits: (node: string, maxPeers: number, maxBandwidthMbps: number) =>
-    api.post<RelayLimitsResponse>('/relay/limits', { node, maxPeers, maxBandwidthMbps }),
+---
 
-  // POST /api/v1/relay/toggle
-  toggle: (node: string, enabled: boolean) =>
-    api.post<RelayToggleResponse>('/relay/toggle', { node, enabled }),
+# Technology
 
-  // POST /api/v1/lighthouse/toggle
-  toggleLighthouse: (node: string, enabled: boolean) =>
-    api.post<RelayToggleResponse>('/lighthouse/toggle', { node, enabled }),
-};
+Use the existing project stack.
 
-export default relayService;
+- React
+- TypeScript
+- D3.js
+- SVG
+- d3-selection
+- d3-transition
+- d3-zoom
+
+Do NOT introduce heavy visualization libraries unless absolutely necessary.
+
+Keep rendering highly optimized.
+
+---
+
+# Component Architecture
+
+Create modular components.
+
+```
+AL09LiveAttackTopology.tsx
+
+AL10GuardianNode.tsx
+
+AL11SensorNode.tsx
+
+AL12AttackBeam.tsx
+
+AL13NetworkLinks.tsx
+
+AL14TopologyControls.tsx
+
+AL15AttackSidebar.tsx
+
+AL16AttackTimeline.tsx
+
+AL17StatisticsPanel.tsx
+
+AL18Legend.tsx
+```
+
+Avoid one large component.
+
+---
+
+# Topology Layout
+
+Design a premium cyber visualization.
+
+```
+                    Internet
+
+           Hacker A      Hacker B
+
+                \        /
+
+                 \      /
+
+             Firewall Gateway
+
+                     |
+
+             Guardian Node
+
+        /        |        \
+
+     PLC      Gateway     RTU
+
+   /  |  \
+
+Coil Register Logic
+
+      |
+
+ Temperature Sensor
+
+      |
+
+ Pressure Sensor
+```
+
+Future support should allow multiple Guardian Nodes and multiple industrial sites.
+
+---
+
+# Guardian Node
+
+The Guardian should be the visual centerpiece.
+
+Requirements
+
+- Animated glow
+- Glassmorphism
+- Rotating shield ring
+- Security pulse
+- Health indicator
+- Live packet counter
+- Threat counter
+- CPU usage
+- Connection status
+
+Idle animation should continuously "breathe."
+
+During attacks the Guardian should react.
+
+Example
+
+Blue Glow
+
+↓
+
+Orange
+
+↓
+
+Red Flash
+
+↓
+
+Recovery
+
+---
+
+# Sensor Nodes
+
+Every OT component should have its own visual identity.
+
+Include
+
+- PLC
+- RTU
+- Gateway
+- Coil
+- Coil Array
+- Holding Register
+- Input Register
+- Firmware
+- Logic Module
+- Ethernet Interface
+- Modbus TCP
+- Safety Controller
+
+Each node displays
+
+- Name
+- Status
+- Health
+- Last attack
+- Threat score
+
+---
+
+# Network Links
+
+Connections should continuously display subtle traffic.
+
+Examples
+
+Moving packets
+
+Animated gradients
+
+Flow indicators
+
+Bandwidth glow
+
+Link activity
+
+---
+
+# Live Attack Engine
+
+Incoming Suricata alerts should immediately trigger attack animations.
+
+Each attack should include
+
+- Attacker identification
+- Packet animation
+- Attack beam
+- Target highlight
+- Severity color
+- Impact animation
+- Recovery animation
+
+Multiple attacks must animate simultaneously.
+
+---
+
+# Alert Mapping
+
+Map Suricata signatures to topology targets.
+
+| Signature | Target |
+|-----------|--------|
+| FC5 | Coil |
+| FC15 | Coil Array |
+| FC6 | Holding Register |
+| FC16 | Holding Register |
+| FC65 | PLC Logic |
+| FC66 | PLC Logic |
+| FC67 | Firmware Module |
+| FC68 | Firmware Module |
+| Exception Response | Modbus Interface |
+| Time Audit | Coil |
+
+Create a configurable mapping object instead of hardcoding logic.
+
+---
+
+# Attack Visualization
+
+Each attack should include multiple animation stages.
+
+## Stage 1
+
+Source node glows.
+
+## Stage 2
+
+Attack beam launches.
+
+Use
+
+- SVG path
+- Animated particles
+- Laser effect
+- Gradient trail
+
+## Stage 3
+
+Impact
+
+Target receives
+
+- Explosion ripple
+- Pulse
+- Flash
+- Glow
+
+## Stage 4
+
+Recovery
+
+Node gradually returns to normal.
+
+---
+
+# Severity Colors
+
+Informative
+
+```
+Healthy
+
+Blue
+
+Information
+
+Cyan
+
+Low
+
+Green
+
+Medium
+
+Yellow
+
+High
+
+Orange
+
+Critical
+
+Red
+
+Compromised
+
+Purple
+```
+
+Colors should remain consistent across the application.
+
+---
+
+# Dynamic Threat Score
+
+Each node should maintain a live threat score.
+
+Example
+
+Low
+
++5
+
+Medium
+
++10
+
+High
+
++15
+
+Critical
+
++20
+
+Threat score slowly decreases over time.
+
+Node color changes accordingly.
+
+---
+
+# Live Statistics Panel
+
+Include a dashboard showing
+
+- Active attacks
+- Guardian health
+- Connected devices
+- PLC status
+- Active sessions
+- Alerts today
+- Critical alerts
+- Attack rate
+- Packets/sec
+- Blocked attacks
+- Response latency
+
+Update in real time.
+
+---
+
+# Interactive Features
+
+Hover node
+
+Show tooltip
+
+- Device name
+- IP
+- MAC
+- Protocol
+- Last Seen
+- Last Alert
+- Threat Score
+- Health
+
+Click node
+
+Open side panel
+
+- Device details
+- Alert history
+- Attack timeline
+- Suricata logs
+- MITRE ATT&CK mapping
+- Risk assessment
+
+Double click
+
+Center topology.
+
+---
+
+# Controls
+
+Toolbar
+
+- Play
+- Pause
+- Replay
+- Reset
+- Zoom In
+- Zoom Out
+- Center
+- Auto Layout
+- Fullscreen
+- Simulation Mode
+- Filter Severity
+- Filter Device
+- Filter Protocol
+- Animation Speed
+
+---
+
+# Timeline
+
+Maintain a rolling attack history.
+
+Allow replay of
+
+- Last minute
+- Last five minutes
+- Last hour
+
+Analysts should be able to scrub through attack history.
+
+---
+
+# Heat Map
+
+Nodes should become progressively hotter based on attack frequency.
+
+Healthy
+
+↓
+
+Warm
+
+↓
+
+Hot
+
+↓
+
+Critical
+
+↓
+
+Compromised
+
+Heat gradually fades over time.
+
+---
+
+# Idle Animations
+
+The topology should never appear static.
+
+Continuously animate
+
+- Network packets
+- Guardian breathing
+- Sensor heartbeat
+- Connection glow
+- Rotating security ring
+- Flow indicators
+- Background particles
+
+---
+
+# Visual Effects
+
+Use premium SVG effects.
+
+Include
+
+- Neon glows
+- Glassmorphism
+- Drop shadows
+- Soft bloom
+- Animated gradients
+- Pulse rings
+- Motion blur
+- Particle systems
+- Ripple effects
+
+Avoid excessive effects that reduce performance.
+
+---
+
+# Performance Requirements
+
+Support
+
+- 100+ nodes
+- 1000+ alerts
+- Smooth 60 FPS
+- Minimal React re-renders
+- Efficient SVG updates
+
+Use
+
+- requestAnimationFrame
+- D3 transitions
+- Memoization
+- Data-driven rendering
+
+Avoid unnecessary component rerenders.
+
+---
+
+# Accessibility
+
+Support
+
+- Keyboard navigation
+- Screen readers
+- High contrast mode
+- Reduced motion preference
+- Color-blind safe palette
+
+---
+
+# Data Source
+
+Primary
+
+```
+GET /api/v1/threat/alerts
+```
+
+Support two modes.
+
+## Production Mode
+
+Use live API polling.
+
+## Demo Mode
+
+Generate realistic Modbus attack traffic.
+
+Provide a toggle between modes.
+
+---
+
+# Future Roadmap
+
+Design the architecture so it can later support
+
+- WebSockets
+- Multi-site Guardian deployments
+- Multiple industrial plants
+- Attack replay
+- Historical playback
+- AI anomaly detection
+- Threat prediction
+- Digital Twin
+- Geographic attack map
+- 3D topology
+- Device dependency graph
+- MITRE ATT&CK overlays
+- SIEM integrations
+
+---
+
+# Success Criteria
+
+The implementation should deliver an enterprise-grade SOC experience where analysts can:
+
+- Visualize attacks in real time.
+- Observe attack paths from source to destination.
+- Monitor Guardian and sensor health.
+- Inspect devices interactively.
+- Replay historical attacks.
+- Filter and analyze threats.
+- Handle multiple simultaneous attacks smoothly.
+- Maintain excellent performance with large datasets.
+- Follow a clean, modular, and scalable architecture suitable for future expansion.
