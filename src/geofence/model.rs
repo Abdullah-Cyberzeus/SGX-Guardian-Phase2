@@ -166,6 +166,8 @@ pub struct GeofenceEvent {
     pub fix_summary: String,
     pub at: String,
     pub severity: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 impl GeofenceEvent {
@@ -179,6 +181,7 @@ impl GeofenceEvent {
             fix_summary: fix.summary(),
             at: now.to_rfc3339(),
             severity: zone.severity.clone(),
+            origin: None,
         }
     }
 }

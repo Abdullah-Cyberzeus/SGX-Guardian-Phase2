@@ -35,6 +35,31 @@ pub async fn dispatch(node_id: &str, zone: &GeofenceZone, transition: &str, conf
     }
 }
 
+pub async fn dispatch_without_state(
+    node_id: &str,
+    zone: &GeofenceZone,
+    transition: &str,
+    confidence: f64,
+) {
+    let actions = if transition == "entry" {
+        &zone.automation.on_entry
+    } else {
+        &zone.automation.on_exit
+    };
+
+    for action in actions {
+        if let Err(error) = execute(node_id, zone, transition, confidence, action.clone()).await {
+            log_audit(
+                node_id,
+                AuditCategory::Geofence,
+                AuditSeverity::Warning,
+                AuditAction::Failed,
+                &format!("geofence action {:?} failed: {}", action, error),
+            );
+        }
+    }
+}
+
 pub async fn execute(
     node_id: &str,
     zone: &GeofenceZone,
@@ -58,8 +83,7 @@ pub async fn execute(
         return Ok(());
     }
 
-    let dry_run =
-        std::env::var("SGX_GEOFENCE_ACTIONS_DRYRUN").unwrap_or_else(|_| "1".into()) != "0";
+    let dry_run = dry_run_enabled();
     if dry_run {
         log_audit(
             node_id,
@@ -86,6 +110,10 @@ pub async fn execute(
         ),
     );
     Ok(())
+}
+
+pub fn dry_run_enabled() -> bool {
+    std::env::var("SGX_GEOFENCE_ACTIONS_DRYRUN").unwrap_or_else(|_| "1".into()) != "0"
 }
 
 async fn run_live(node_id: &str, action: GeofenceAction) -> Result<(), String> {

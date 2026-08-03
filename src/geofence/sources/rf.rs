@@ -65,11 +65,11 @@ async fn scan_with(backend: &dyn RfBackend) -> GeofenceResult<Vec<ApObservation>
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    tracing::info!(?override_iface, "rf interface override configuration");
+    tracing::debug!(?override_iface, "rf interface override configuration");
 
     let discovered = backend.discover_interfaces().await?;
     let default_route_iface = backend.default_route_interface().await?;
-    tracing::info!(
+    tracing::debug!(
         ?default_route_iface,
         "rf default-route management interface"
     );
@@ -79,12 +79,12 @@ async fn scan_with(backend: &dyn RfBackend) -> GeofenceResult<Vec<ApObservation>
         Some(client_ip) => backend.route_interface_for_ip(client_ip).await?,
         None => None,
     };
-    tracing::info!(?ssh_iface, "rf ssh management interface");
+    tracing::debug!(?ssh_iface, "rf ssh management interface");
 
     let management_ifaces = management_interfaces(default_route_iface, ssh_iface);
 
     let candidates = select_candidates(&discovered, override_iface.as_deref(), &management_ifaces);
-    tracing::info!(
+    tracing::debug!(
         candidates = ?candidates.iter().map(|candidate| &candidate.name).collect::<Vec<_>>(),
         "rf discovered scan candidates"
     );
@@ -101,7 +101,7 @@ async fn scan_with(backend: &dyn RfBackend) -> GeofenceResult<Vec<ApObservation>
     for candidate in candidates {
         attempted.push(candidate.name.clone());
         if candidate.is_down && !is_management_interface(&candidate.name, &management_ifaces) {
-            tracing::info!(interface = %candidate.name, "bringing spare rf interface up before scan");
+            tracing::debug!(interface = %candidate.name, "bringing spare rf interface up before scan");
             if let Err(error) = backend.bring_up(&candidate.name).await {
                 tracing::warn!(
                     interface = %candidate.name,
@@ -113,7 +113,7 @@ async fn scan_with(backend: &dyn RfBackend) -> GeofenceResult<Vec<ApObservation>
 
         match scan_candidate_with_retries(backend, &candidate.name).await {
             Ok(aps) if !aps.is_empty() => {
-                tracing::info!(
+                tracing::debug!(
                     interface = %candidate.name,
                     ap_count = aps.len(),
                     "selected rf scan interface"
@@ -121,10 +121,10 @@ async fn scan_with(backend: &dyn RfBackend) -> GeofenceResult<Vec<ApObservation>
                 return Ok(aps);
             }
             Ok(_) => {
-                tracing::warn!(interface = %candidate.name, "rf scan returned no AP observations");
+                tracing::debug!(interface = %candidate.name, "rf scan returned no AP observations");
             }
             Err(error) => {
-                tracing::warn!(interface = %candidate.name, error = %error, "rf scan failure");
+                tracing::debug!(interface = %candidate.name, error = %error, "rf scan failure");
             }
         }
     }
@@ -148,7 +148,7 @@ async fn scan_candidate_with_retries(
                     .get(attempt - 1)
                     .copied()
                     .unwrap_or_else(|| Duration::from_millis(250));
-                tracing::warn!(
+                tracing::debug!(
                     interface = %iface,
                     attempt,
                     max_attempts = SCAN_MAX_ATTEMPTS,
@@ -175,32 +175,32 @@ async fn locked_scan_once(
 ) -> GeofenceResult<Vec<ApObservation>> {
     let lock = shared_scan_lock();
     let wait_start = Instant::now();
-    tracing::info!(
+    tracing::trace!(
         interface = %iface,
         attempt,
         "rf scan waiting for shared lock"
     );
     let _guard = lock.lock().await;
     let waited = wait_start.elapsed();
-    tracing::info!(
+    tracing::trace!(
         interface = %iface,
         attempt,
         wait_ms = waited.as_millis(),
         "rf scan lock acquired"
     );
 
-    tracing::info!(interface = %iface, attempt, "rf scan start");
+    tracing::debug!(interface = %iface, attempt, "rf scan start");
     let scan_start = Instant::now();
     let result = backend.scan(iface).await;
     match &result {
-        Ok(aps) => tracing::info!(
+        Ok(aps) => tracing::debug!(
             interface = %iface,
             attempt,
             ap_count = aps.len(),
             elapsed_ms = scan_start.elapsed().as_millis(),
             "rf scan success"
         ),
-        Err(error) => tracing::warn!(
+        Err(error) => tracing::debug!(
             interface = %iface,
             attempt,
             elapsed_ms = scan_start.elapsed().as_millis(),
@@ -402,7 +402,7 @@ fn select_candidates(
     management_ifaces: &[String],
 ) -> Vec<CandidateInterface> {
     if let Some(override_iface) = override_iface {
-        tracing::info!(interface = %override_iface, "using configured rf interface override");
+        tracing::debug!(interface = %override_iface, "using configured rf interface override");
         return vec![CandidateInterface {
             name: override_iface.to_string(),
             is_down: interfaces
@@ -416,7 +416,7 @@ fn select_candidates(
     let mut candidates = Vec::new();
     for interface in interfaces {
         if let Some(reason) = rejection_reason(interface) {
-            tracing::info!(
+            tracing::debug!(
                 interface = %interface.name,
                 iw_type = %interface.iw_type,
                 reason,
