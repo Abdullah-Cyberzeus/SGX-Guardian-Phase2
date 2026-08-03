@@ -188,6 +188,17 @@ pub fn evaluate_zone(zone: &GeofenceZone, fix: &Fix) -> ZoneStatus {
     status
 }
 
+pub fn status_without_fix(zone: &GeofenceZone) -> ZoneStatus {
+    ZoneStatus {
+        zone_id: zone.zone_id.clone(),
+        zone_name: zone.name.clone(),
+        enabled: zone.enabled,
+        inside: None,
+        distance_m: None,
+        rf_score: None,
+    }
+}
+
 pub fn haversine_m(lat1: f64, lng1: f64, lat2: f64, lng2: f64) -> f64 {
     let dlat = (lat2 - lat1).to_radians();
     let dlng = (lng2 - lng1).to_radians();
@@ -290,12 +301,27 @@ fn load_or_seed_registry_unlocked() -> GeofenceResult<GeofenceRegistry> {
         return Ok(registry);
     }
     let mut registry = GeofenceRegistry {
-        zones: seed_zones(),
+        zones: if demo_seed_enabled() {
+            seed_zones()
+        } else {
+            Vec::new()
+        },
         ..GeofenceRegistry::default()
     };
     seal_registry(&mut registry)?;
     persistence::save_registry(&registry)?;
     Ok(registry)
+}
+
+fn demo_seed_enabled() -> bool {
+    std::env::var("SGX_GEOFENCE_SEED_DEMO_ZONES")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false)
 }
 
 fn seed_zones() -> Vec<GeofenceZone> {
@@ -439,5 +465,106 @@ mod tests {
             verify_registry(&registry),
             Err(GeofenceError::InvalidProof)
         ));
+    }
+
+    #[test]
+    fn fresh_storage_starts_with_zero_zones() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _env = EnvGuard::set_many(
+            &[(
+                crate::geofence::persistence::GEOFENCE_BASE_ENV,
+                temp.path().to_str().expect("temp path"),
+            )],
+            &["SGX_GEOFENCE_SEED_DEMO_ZONES"],
+        );
+
+        let registry = load_or_seed_registry().expect("registry");
+
+        assert!(registry.zones.is_empty());
+        assert!(list_zones().expect("zones after restart").is_empty());
+    }
+
+    #[test]
+    fn user_created_zones_survive_restart_without_demo_seed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _env = EnvGuard::set_many(
+            &[(
+                crate::geofence::persistence::GEOFENCE_BASE_ENV,
+                temp.path().to_str().expect("temp path"),
+            )],
+            &["SGX_GEOFENCE_SEED_DEMO_ZONES"],
+        );
+        let zone = create_zone(new_zone(NewZoneInput {
+            name: "User Zone".to_string(),
+            kind: ZoneKind::Coordinate,
+            center_lat: Some(24.8607),
+            center_lng: Some(67.0011),
+            radius_m: Some(100.0),
+            rf_signature: None,
+            on_entry: true,
+            on_exit: true,
+            severity: "high".to_string(),
+            automation: ZoneAutomation::default(),
+            enabled: true,
+        }))
+        .expect("create zone");
+
+        let restarted = load_or_seed_registry().expect("registry after restart");
+
+        assert_eq!(restarted.zones.len(), 1);
+        assert_eq!(restarted.zones[0].zone_id, zone.zone_id);
+        assert_eq!(restarted.zones[0].name, "User Zone");
+    }
+
+    struct EnvGuard {
+        original: Vec<(&'static str, Option<String>)>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl EnvGuard {
+        fn set_many(set: &[(&'static str, &str)], remove: &[&'static str]) -> Self {
+            let lock = crate::geofence::persistence::TEST_ENV_LOCK
+                .lock()
+                .expect("env lock poisoned");
+            let mut keys = Vec::new();
+            for (key, _) in set {
+                if !keys.contains(key) {
+                    keys.push(*key);
+                }
+            }
+            for key in remove {
+                if !keys.contains(key) {
+                    keys.push(*key);
+                }
+            }
+            let original = keys
+                .into_iter()
+                .map(|key| (key, std::env::var(key).ok()))
+                .collect::<Vec<_>>();
+            for (key, value) in set {
+                std::env::set_var(key, value);
+            }
+            for key in remove {
+                if !set.iter().any(|(set_key, _)| set_key == key) {
+                    std::env::remove_var(key);
+                }
+            }
+            Self {
+                original,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in &self.original {
+                if let Some(value) = value {
+                    std::env::set_var(key, value);
+                } else {
+                    std::env::remove_var(key);
+                }
+            }
+        }
     }
 }

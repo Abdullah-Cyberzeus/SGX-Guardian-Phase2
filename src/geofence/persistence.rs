@@ -33,6 +33,10 @@ pub fn reported_location_path() -> PathBuf {
     base_dir().join("reported_location.json")
 }
 
+pub fn rf_location_path() -> PathBuf {
+    base_dir().join("rf_location.json")
+}
+
 pub fn events_path() -> PathBuf {
     base_dir().join("events.jsonl")
 }
@@ -121,6 +125,30 @@ pub fn save_reported_location(location: &StoredLocation) -> GeofenceResult<()> {
         &reported_location_path(),
         &serde_json::to_vec_pretty(location)?,
     )
+}
+
+pub fn load_rf_location() -> GeofenceResult<Option<StoredLocation>> {
+    let path = rf_location_path();
+    if !path.exists() {
+        return Ok(None);
+    }
+    Ok(Some(serde_json::from_slice(&fs::read(path)?)?))
+}
+
+pub fn save_rf_location(location: &StoredLocation) -> GeofenceResult<()> {
+    write_atomic(&rf_location_path(), &serde_json::to_vec_pretty(location)?)
+}
+
+pub fn load_coordinate_location() -> GeofenceResult<Option<StoredLocation>> {
+    if let Some(location) = load_reported_location()? {
+        if matches!(location.fix, crate::geofence::model::Fix::Coordinate { .. }) {
+            return Ok(Some(location));
+        }
+    }
+    Ok(load_location()?.filter(|location| {
+        matches!(location.fix, crate::geofence::model::Fix::Coordinate { .. })
+            && matches!(location.source.as_str(), "reported" | "manual" | "gnss")
+    }))
 }
 
 pub fn load_statuses() -> GeofenceResult<Option<Vec<ZoneStatus>>> {

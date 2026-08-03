@@ -12,8 +12,7 @@ impl LocationSource for ManualSource {
     }
 
     async fn current(&self) -> Option<Fix> {
-        persistence::load_location_async()
-            .await
+        persistence::load_coordinate_location()
             .ok()
             .flatten()
             .filter(|location| location.source == "manual")

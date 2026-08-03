@@ -1,6 +1,6 @@
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
-use crate::geofence::actions::ZoneAutomation;
+use crate::geofence::actions::{GeofenceAction, ZoneAutomation};
 use crate::geofence::errors::GeofenceError;
 use crate::geofence::model::{
     Fix, GeofenceEvent, GeofenceZone, RfSignature, StoredLocation, ZoneKind, ZoneStatus,
@@ -187,7 +187,7 @@ pub async fn get_location(
     State(_state): State<Arc<AppState>>,
 ) -> Result<Json<LocationResponse>, ApiError> {
     Ok(Json(LocationResponse {
-        location: persistence::load_location().map_err(api_error)?,
+        location: persistence::load_coordinate_location().map_err(api_error)?,
     }))
 }
 
@@ -220,7 +220,7 @@ pub async fn report_location(
 
 pub async fn status(State(_state): State<Arc<AppState>>) -> Result<Json<StatusResponse>, ApiError> {
     let configured_source = sources::SourceKind::from_env().unwrap_or(sources::SourceKind::Auto);
-    let location = persistence::load_location().map_err(api_error)?;
+    let location = persistence::load_coordinate_location().map_err(api_error)?;
     let selection = persistence::load_source_selection().map_err(api_error)?;
     let selection_mode = selection
         .as_ref()
@@ -256,25 +256,12 @@ pub async fn status(State(_state): State<Arc<AppState>>) -> Result<Json<StatusRe
         Some(statuses) => statuses,
         None => {
             let registry = zones::load_or_seed_registry().map_err(api_error)?;
-            match location.as_ref().map(|location| &location.fix) {
-                Some(fix) => registry
-                    .zones
-                    .iter()
-                    .map(|zone| zones::evaluate_zone(zone, fix))
-                    .collect(),
-                None => registry
-                    .zones
-                    .iter()
-                    .map(|zone| ZoneStatus {
-                        zone_id: zone.zone_id.clone(),
-                        zone_name: zone.name.clone(),
-                        enabled: zone.enabled,
-                        inside: None,
-                        distance_m: None,
-                        rf_score: None,
-                    })
-                    .collect(),
-            }
+            let rf_location = persistence::load_rf_location().map_err(api_error)?;
+            crate::geofence::eval::evaluate_registry_with_observations(
+                &registry,
+                location.as_ref().map(|location| &location.fix),
+                rf_location.as_ref().map(|location| &location.fix),
+            )
         }
     };
     Ok(Json(StatusResponse {
@@ -346,12 +333,38 @@ pub async fn test_actions(
             "transition must be entry or exit".to_string(),
         ));
     }
+    if !request.confidence.is_finite() || !(0.0..=1.0).contains(&request.confidence) {
+        return Err(ApiError::BadRequest(
+            "confidence must be between 0.0 and 1.0".to_string(),
+        ));
+    }
     let zone = zones::list_zones()
         .map_err(api_error)?
         .into_iter()
         .find(|zone| zone.zone_id == request.zone_id)
         .ok_or_else(|| ApiError::NotFound(request.zone_id.clone()))?;
-    crate::geofence::actions::executor::dispatch(
+    zones::validate_zone(&zone).map_err(api_error)?;
+    let dry_run = crate::geofence::actions::executor::dry_run_enabled();
+    let fix = simulated_fix_for_zone(&zone);
+    if !dry_run {
+        let mut event = GeofenceEvent::new(&zone, &request.transition, &fix);
+        event.origin = Some("manual_test".to_string());
+        persistence::append_event(&event).map_err(api_error)?;
+        if transition_actions(&zone, &request.transition)
+            .iter()
+            .any(|action| matches!(action, GeofenceAction::RaiseAlert { .. }))
+        {
+            geofence_alerts::emit_transition_alert(
+                &state.node_id,
+                &zone,
+                &request.transition,
+                &fix,
+            )
+            .await
+            .map_err(api_error)?;
+        }
+    }
+    crate::geofence::actions::executor::dispatch_without_state(
         &state.node_id,
         &zone,
         &request.transition,
@@ -362,6 +375,31 @@ pub async fn test_actions(
         zone_id: zone.zone_id,
         automation: zone.automation,
     }))
+}
+
+fn simulated_fix_for_zone(zone: &GeofenceZone) -> Fix {
+    match zone.kind {
+        ZoneKind::Coordinate => Fix::coordinate(
+            zone.center_lat.unwrap_or_default(),
+            zone.center_lng.unwrap_or_default(),
+            None,
+        ),
+        ZoneKind::RfSignature => Fix::RfSignature {
+            aps: zone
+                .rf_signature
+                .as_ref()
+                .map(|signature| signature.aps.clone())
+                .unwrap_or_default(),
+        },
+    }
+}
+
+fn transition_actions<'a>(zone: &'a GeofenceZone, transition: &str) -> &'a [GeofenceAction] {
+    if transition == "entry" {
+        &zone.automation.on_entry
+    } else {
+        &zone.automation.on_exit
+    }
 }
 
 fn default_true() -> bool {
@@ -394,5 +432,236 @@ fn api_error(error: GeofenceError) -> ApiError {
         }
         GeofenceError::Io(error) => ApiError::Internal(format!("geofence io: {}", error)),
         GeofenceError::Json(error) => ApiError::Internal(format!("geofence json: {}", error)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::geofence::actions::{GeofenceAction, ZoneAutomation};
+    use crate::geofence::model::{GeofenceRegistry, ZoneKind};
+    use std::sync::MutexGuard;
+
+    struct EnvGuard {
+        original: Vec<(&'static str, Option<String>)>,
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    impl EnvGuard {
+        fn set_many(set: &[(&'static str, &str)], remove: &[&'static str]) -> Self {
+            let lock = persistence::TEST_ENV_LOCK
+                .lock()
+                .expect("env lock poisoned");
+            let mut keys = Vec::new();
+            for (key, _) in set {
+                if !keys.contains(key) {
+                    keys.push(*key);
+                }
+            }
+            for key in remove {
+                if !keys.contains(key) {
+                    keys.push(*key);
+                }
+            }
+            let original = keys
+                .into_iter()
+                .map(|key| (key, std::env::var(key).ok()))
+                .collect::<Vec<_>>();
+            for (key, value) in set {
+                std::env::set_var(key, value);
+            }
+            for key in remove {
+                if !set.iter().any(|(set_key, _)| set_key == key) {
+                    std::env::remove_var(key);
+                }
+            }
+            Self {
+                original,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in &self.original {
+                if let Some(value) = value {
+                    std::env::set_var(key, value);
+                } else {
+                    std::env::remove_var(key);
+                }
+            }
+        }
+    }
+
+    fn test_state(temp: &tempfile::TempDir) -> Arc<AppState> {
+        let config_dir = temp.path().join("config");
+        std::fs::create_dir_all(&config_dir).expect("config dir");
+        AppState::for_tests(temp.path(), "nodeA", config_dir.display().to_string())
+    }
+
+    fn save_zone(automation: ZoneAutomation) -> GeofenceZone {
+        let zone = zones::new_zone(zones::NewZoneInput {
+            name: "Coordinate Zone".to_string(),
+            kind: ZoneKind::Coordinate,
+            center_lat: Some(24.8607),
+            center_lng: Some(67.0011),
+            radius_m: Some(100.0),
+            rf_signature: None,
+            on_entry: true,
+            on_exit: true,
+            severity: "high".to_string(),
+            automation,
+            enabled: true,
+        });
+        let mut registry = GeofenceRegistry {
+            zones: vec![zone.clone()],
+            ..GeofenceRegistry::default()
+        };
+        zones::seal_registry(&mut registry).expect("seal registry");
+        persistence::save_registry(&registry).expect("save registry");
+        zone
+    }
+
+    async fn simulate(state: Arc<AppState>, zone_id: &str, transition: &str) -> ActionsResponse {
+        let axum::Json(response) = test_actions(
+            axum::extract::State(state),
+            axum::Json(TestActionsRequest {
+                zone_id: zone_id.to_string(),
+                transition: transition.to_string(),
+                confidence: 1.0,
+            }),
+        )
+        .await
+        .expect("test actions");
+        response
+    }
+
+    #[tokio::test]
+    async fn dry_run_simulation_creates_no_event_or_alert() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _env = EnvGuard::set_many(
+            &[
+                (
+                    persistence::GEOFENCE_BASE_ENV,
+                    temp.path().to_str().expect("temp path"),
+                ),
+                ("SGX_GEOFENCE_ACTIONS_DRYRUN", "1"),
+            ],
+            &[],
+        );
+        let zone = save_zone(ZoneAutomation::default());
+
+        simulate(test_state(&temp), &zone.zone_id, "exit").await;
+
+        assert!(persistence::list_events().expect("events").is_empty());
+        assert!(geofence_alerts::list_alerts().expect("alerts").is_empty());
+    }
+
+    #[tokio::test]
+    async fn live_entry_simulation_creates_one_simulated_event() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _env = EnvGuard::set_many(
+            &[
+                (
+                    persistence::GEOFENCE_BASE_ENV,
+                    temp.path().to_str().expect("temp path"),
+                ),
+                ("SGX_GEOFENCE_ACTIONS_DRYRUN", "0"),
+            ],
+            &[],
+        );
+        let zone = save_zone(ZoneAutomation::default());
+
+        simulate(test_state(&temp), &zone.zone_id, "entry").await;
+
+        let events = persistence::list_events().expect("events");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].transition, "entry");
+        assert_eq!(events[0].origin.as_deref(), Some("manual_test"));
+        assert!(geofence_alerts::list_alerts().expect("alerts").is_empty());
+    }
+
+    #[tokio::test]
+    async fn live_exit_with_raise_alert_creates_one_event_and_one_alert() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _env = EnvGuard::set_many(
+            &[
+                (
+                    persistence::GEOFENCE_BASE_ENV,
+                    temp.path().to_str().expect("temp path"),
+                ),
+                ("SGX_GEOFENCE_ACTIONS_DRYRUN", "0"),
+            ],
+            &[],
+        );
+        let zone = save_zone(ZoneAutomation::default());
+
+        simulate(test_state(&temp), &zone.zone_id, "exit").await;
+
+        let events = persistence::list_events().expect("events");
+        let alerts = geofence_alerts::list_alerts().expect("alerts");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].transition, "exit");
+        assert_eq!(events[0].origin.as_deref(), Some("manual_test"));
+        assert_eq!(alerts.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn notify_simulation_does_not_create_security_alert() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _env = EnvGuard::set_many(
+            &[
+                (
+                    persistence::GEOFENCE_BASE_ENV,
+                    temp.path().to_str().expect("temp path"),
+                ),
+                ("SGX_GEOFENCE_ACTIONS_DRYRUN", "0"),
+            ],
+            &[],
+        );
+        let zone = save_zone(ZoneAutomation {
+            on_entry: vec![GeofenceAction::Notify { severity: None }],
+            on_exit: Vec::new(),
+            allow_destructive: false,
+            min_confidence: 0.0,
+        });
+
+        simulate(test_state(&temp), &zone.zone_id, "entry").await;
+
+        assert_eq!(persistence::list_events().expect("events").len(), 1);
+        assert!(geofence_alerts::list_alerts().expect("alerts").is_empty());
+    }
+
+    #[tokio::test]
+    async fn simulation_does_not_change_real_zone_status() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _env = EnvGuard::set_many(
+            &[
+                (
+                    persistence::GEOFENCE_BASE_ENV,
+                    temp.path().to_str().expect("temp path"),
+                ),
+                ("SGX_GEOFENCE_ACTIONS_DRYRUN", "0"),
+            ],
+            &[],
+        );
+        let zone = save_zone(ZoneAutomation::default());
+        persistence::save_statuses(&[ZoneStatus {
+            zone_id: zone.zone_id.clone(),
+            zone_name: zone.name.clone(),
+            enabled: true,
+            inside: Some(true),
+            distance_m: Some(0.0),
+            rf_score: None,
+        }])
+        .expect("save statuses");
+
+        simulate(test_state(&temp), &zone.zone_id, "exit").await;
+
+        let statuses = persistence::load_statuses()
+            .expect("statuses")
+            .expect("stored statuses");
+        assert_eq!(statuses[0].inside, Some(true));
     }
 }
