@@ -336,8 +336,11 @@ async fn handle_notice(
         };
     }
 
-    // Critical-only side effects: terminate sessions + user notification.
-    if matches!(notice.entry.severity, Severity::Critical) && newly_merged {
+    // Gated on severity alone, NOT `newly_merged` — the fingerprint dedup
+    // above already caps this block to one run per entry. Routine gossip
+    // racing this notice and winning the CRL-merge lock must not skip
+    // session termination, since gossip itself never terminates sessions.
+    if matches!(notice.entry.severity, Severity::Critical) {
         let terminated = terminate_sessions_for_did(&notice.entry.revoked_did).await;
         if terminated > 0 {
             SESSIONS_TERMINATED.fetch_add(terminated as u64, Ordering::Relaxed);
