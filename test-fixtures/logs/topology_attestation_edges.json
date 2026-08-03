@@ -1,0 +1,23 @@
+{
+  "circle_id": "guardian-circle-alpha",
+  "generated_at": "2026-07-27T15:30:00Z",
+  "fixture": true,
+  "edges": [
+    {
+      "source": "nodeA",
+      "target": "nodeB",
+      "status": "verified",
+      "last_attested_at": "2026-07-27T15:29:10Z",
+      "policy_digest": "fixture-policy-digest-node-b",
+      "pcr_status": "pass"
+    },
+    {
+      "source": "nodeA",
+      "target": "nodeC",
+      "status": "verified",
+      "last_attested_at": "2026-07-27T15:25:48Z",
+      "policy_digest": "fixture-policy-digest-node-c",
+      "pcr_status": "pass"
+    }
+  ]
+}
