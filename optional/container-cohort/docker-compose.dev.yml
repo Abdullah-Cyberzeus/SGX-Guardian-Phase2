@@ -1,0 +1,110 @@
+name: sgx-guardian-dev
+
+x-guardian-common: &guardian-common
+  build:
+    context: ../..
+    dockerfile: optional/container-cohort/docker/Dockerfile.agent
+  image: sgx-guardian:dev
+  cap_add:
+    - NET_ADMIN
+  devices:
+    - /dev/net/tun:/dev/net/tun
+  environment: &guardian-env
+    RUST_LOG: info
+    SGX_PLATFORM_MODE: "virtual"
+    SGX_DISABLE_COT_BLUETOOTH: "1"
+    SGX_DISABLE_COT_CELLULAR: "1"
+    SGX_DISABLE_COT_SATELLITE: "1"
+    SGX_SIM_MODE: "true"
+    SGX_DISABLE_POLICY_ENFORCEMENT: "1"
+  restart: unless-stopped
+
+services:
+  nodeA:
+    <<: *guardian-common
+    container_name: sgx-nodeA
+    hostname: sgx-nodeA
+    environment:
+      <<: *guardian-env
+      NODE_ID: nodeA
+      SGX_SOFTHSM_PIN: "${NODEA_HSM_PIN:-123456}"
+      SGX_DUSAGE_SAMPLE_SECS: "15"
+      SGX_DUSAGE_CATEGORIES_ENABLED: "1"
+      SGX_DISABLE_POLICY_ENFORCEMENT: "0"
+    networks:
+      sgxnet:
+        ipv4_address: 172.31.250.10
+    ports:
+      - "${NODEA_REST_PORT:-18443}:8443"
+    volumes:
+      - nodeA-etc:/etc/sgx-guardian
+      - nodeA-lib:/var/lib/sgx-guardian
+      - nodeA-log:/var/log/sgx-guardian
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8443/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  nodeB:
+    <<: *guardian-common
+    container_name: sgx-nodeB
+    hostname: sgx-nodeB
+    environment:
+      <<: *guardian-env
+      NODE_ID: nodeB
+      SGX_SOFTHSM_PIN: "${NODEB_HSM_PIN:-123457}"
+      SGX_LIGHTHOUSE_IP: 172.31.250.10
+    networks:
+      sgxnet:
+        ipv4_address: 172.31.250.11
+    ports:
+      - "${NODEB_REST_PORT:-28443}:8443"
+    volumes:
+      - nodeB-etc:/etc/sgx-guardian
+      - nodeB-lib:/var/lib/sgx-guardian
+      - nodeB-log:/var/log/sgx-guardian
+    depends_on:
+      nodeA:
+        condition: service_healthy
+
+  nodeC:
+    <<: *guardian-common
+    container_name: sgx-nodeC
+    hostname: sgx-nodeC
+    environment:
+      <<: *guardian-env
+      NODE_ID: nodeC
+      SGX_SOFTHSM_PIN: "${NODEC_HSM_PIN:-123458}"
+      SGX_LIGHTHOUSE_IP: 172.31.250.10
+    networks:
+      sgxnet:
+        ipv4_address: 172.31.250.12
+    ports:
+      - "${NODEC_REST_PORT:-38443}:8443"
+    volumes:
+      - nodeC-etc:/etc/sgx-guardian
+      - nodeC-lib:/var/lib/sgx-guardian
+      - nodeC-log:/var/log/sgx-guardian
+    depends_on:
+      nodeA:
+        condition: service_healthy
+
+networks:
+  sgxnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.250.0/24
+
+volumes:
+  nodeA-etc: {}
+  nodeA-lib: {}
+  nodeA-log: {}
+  nodeB-etc: {}
+  nodeB-lib: {}
+  nodeB-log: {}
+  nodeC-etc: {}
+  nodeC-lib: {}
+  nodeC-log: {}

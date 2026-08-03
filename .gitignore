@@ -5,9 +5,10 @@ __pycache__/
 *.pyc
 .vscode/
 logs/
-optional/
 sgx-agent/
-optional/
+optional/*
+!optional/container-cohort/
+!optional/container-cohort/**
 sgx-pa-cli/guardian_private.key
 private_key.asc
 *.key

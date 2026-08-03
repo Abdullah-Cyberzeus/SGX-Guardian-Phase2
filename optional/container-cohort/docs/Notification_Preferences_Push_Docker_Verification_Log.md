@@ -637,3 +637,52 @@ Verification complete for this Docker run:
 - APIs: `5/5`
 
 Final cleanup/restore should still be run if it was not already run after API 5.
+
+---
+
+## ✅ Fresh API 1-5 Recheck - 2026-08-03
+
+**Mode:** Temporary `SGX_DISABLE_LOGIN=1` Docker verification mode on `sgx-nodeA`, followed by normal auth-enabled restore.
+
+**Result:**
+```text
+API 1 - SSE:
+SSE received id=13 kind=alert_high read=false
+body includes "API1 fresh SSE 1785749196"
+
+API 2 - prefs GET/PUT:
+before_sequence: 6
+guardian_offline false -> true
+PUT response sequence: 7
+disk prefs.json proof_present: True
+restart preserved guardian_offline=true
+restored guardian_offline=false, sequence: 8
+
+API 3 - history + unread-count:
+total returned: 13
+latest: 13 alert_high False
+computed_unread: 1
+unread-count: {"unread": 1}
+
+API 4 - mark-read + read-all:
+fresh event body includes "API4 fresh mark-read 1785749318"
+before_unread: 2
+selected_id: 14
+POST /notifications/14/read -> {"updated": true, "unread": 1}
+POST /notifications/read-all -> {"marked": 1, "unread": 0}
+after restart unread-count -> {"unread": 0}
+latest_read_state_after_restart: 14 True
+
+API 5 - tampered prefs rejected:
+tampered alerts.high True -> False with old proof still present
+GET /notifications/prefs after tamper -> HTTP 500
+error: notify: did: DID document signature invalid
+restored signed prefs -> HTTP 200
+
+Final restore:
+normal compose nodeA health -> HTTP 200
+SGX_DISABLE_LOGIN=<unset>
+unauthenticated prefs endpoint -> HTTP 401
+```
+
+**Verdict:** PASS - APIs 1-5 were re-tested end-to-end; tampered prefs were rejected and the Docker cohort ended back in normal auth-enabled mode.
