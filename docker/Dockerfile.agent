@@ -22,7 +22,15 @@ WORKDIR /src
 COPY . .
 
 # Keep the workspace contract aligned with CI and scripts/build.sh.
-RUN cargo build --release --workspace --locked --features tpm
+# Cache mounts persist cargo's registry + incremental build artifacts across
+# `docker build` invocations even though `COPY . .` above invalidates the
+# layer cache on every source change. They're excluded from the committed
+# layer, so the built binaries are copied out to /out before this RUN ends.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/target \
+    cargo build --release --workspace --locked --features tpm && \
+    mkdir -p /out && \
+    cp target/release/sgx_guardian_client target/release/sgx-pa-cli /out/
 
 # =============================================================================
 # Nebula is fetched per-TARGETARCH (not vendored) so the same Dockerfile is
@@ -92,8 +100,8 @@ COPY --from=nebula-fetch /nebula-src/nebula-cert /usr/local/bin/nebula-cert
 RUN chmod 0755 /usr/local/bin/nebula /usr/local/bin/nebula-cert
 
 # Keep canonical binary names so existing workflows and logs stay familiar.
-COPY --from=builder /src/target/release/sgx_guardian_client /usr/local/bin/sgx_guardian_client
-COPY --from=builder /src/target/release/sgx-pa-cli /usr/local/bin/sgx-pa-cli
+COPY --from=builder /out/sgx_guardian_client /usr/local/bin/sgx_guardian_client
+COPY --from=builder /out/sgx-pa-cli /usr/local/bin/sgx-pa-cli
 COPY docker/entrypoint.sh /usr/local/bin/sgx-entrypoint
 RUN chmod 0755 /usr/local/bin/sgx-entrypoint
 

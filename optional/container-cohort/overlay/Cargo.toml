@@ -12,13 +12,14 @@ tonic-prost = "0.14.5"
 prost = "0.14.3"
 prost-types = "0.14.3"
 tokio = { version = "1.37", features = ["full"] }
-tokio-stream = "0.1"
+tokio-stream = { version = "0.1", features = ["net"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "json", "chrono"] }
 tracing-appender = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
+semver = "1"
 windows-sys = { version = "0.52", features = ["Win32_System_Console"] }
 anyhow = "1"
 argon2 = "0.5"
@@ -26,6 +27,7 @@ ring = "0.17.14"
 rand = "0.8"
 base64 = "0.22"
 flate2 = "1"
+futures-util = "0.3"
 serde_json = "1"
 sha2 = "0.10"
 hex = "0.4"
@@ -52,6 +54,7 @@ tempfile = "3.8"
 quick-xml = { version = "0.41", features = ["serialize"] }
 which = "8"
 socket2 = "0.5"
+tokio-util = { version = "0.7.18", features = ["io"] }
 
 [build-dependencies]
 tonic-prost-build = "0.14.5"
