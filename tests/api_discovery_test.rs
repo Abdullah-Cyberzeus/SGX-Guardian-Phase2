@@ -69,6 +69,15 @@ async fn spawn_api(
 #[tokio::test]
 async fn test_discovery_endpoints() {
     let temp_dir = TempDir::new().unwrap();
+
+    // clear_device_registry_rejection() (invoked by the approve endpoint) reads
+    // devices registry config via DevicesConfig::from_env(), which otherwise
+    // defaults to the real /var/lib/sgx-guardian/devices path. Point it at the
+    // sandboxed temp dir so the test doesn't depend on real filesystem permissions.
+    let devices_base = temp_dir.path().join("devices");
+    std::fs::create_dir_all(&devices_base).unwrap();
+    std::env::set_var("SGX_GUARDIAN_DEVICES_BASE", &devices_base);
+
     let (base_url, _handle, state) = spawn_api(temp_dir.path()).await;
     let client = AppState::authed_client_for_tests(&state).await;
 

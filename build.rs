@@ -59,7 +59,10 @@ fn generate_embedded_frontend() -> Result<(), Box<dyn std::error::Error>> {
          match path {\n",
     );
     for file in files {
-        let relative = file.strip_prefix(&dist_dir)?.to_string_lossy().replace('\\', "/");
+        let relative = file
+            .strip_prefix(&dist_dir)?
+            .to_string_lossy()
+            .replace('\\', "/");
         let absolute = file.canonicalize()?.to_string_lossy().into_owned();
         generated.push_str(&format!(
             "        {:?} => Some((include_bytes!({:?}), {:?})),\n",
