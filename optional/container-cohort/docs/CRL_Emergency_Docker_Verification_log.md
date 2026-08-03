@@ -130,7 +130,7 @@ echo "$DID_C"
 - [ ] Requirement 2 - Critical local revoke triggers immediate one-to-many emergency broadcast
 - [ ] Requirement 3 - Receiving Guardian re-verifies and merges notice through the existing locked CRL path
 - [ ] Requirement 4 - Receiver re-broadcast is bounded by TTL and fingerprint dedup
-- [ ] Requirement 5 - Critical revoke terminates active CoT sessions for the revoked DID
+- [x] Requirement 5 - Critical revoke terminates active CoT sessions for the revoked DID
 - [ ] Requirement 6 - Durable emergency notification feed is recorded for frontend/mobile push
 - [ ] Requirement 7 - Emergency observability and manual rebroadcast endpoints work
 - [ ] Requirement 8 - Emergency path coexists with routine gossip and enforcement; Merkle roots still converge
@@ -410,38 +410,59 @@ Pass condition:
 
 ---
 
-## ⏳ CRL-029 - Critical revoke terminates active CoT sessions
+## ✅ CRL-029 - Critical revoke terminates active CoT sessions
+
+**Code fix (2026-08-03):** Board hardware run (`docs/CRL_Emergency_Verification_Log.md`) had exposed a real race: `src/crl/gossip/emergency.rs` gated the critical session-termination side effect on `newly_merged` (i.e. did THIS emergency notice's own `merge_verified_records` call add the entry). If routine gossip won the `CRL_WRITE_LOCK` race and merged the same critical entry a moment earlier, `newly_merged` came back `false` and session termination was silently skipped — permanently, since routine gossip itself never terminates sessions. Fixed by gating the side-effect block on severity alone; the existing fingerprint `seen_is_new` dedup (line 295) already caps this block to one run per entry regardless of which channel merged it first, and `terminate_sessions_for_did` is naturally idempotent (0 sessions if none active). `cargo check` + `cargo test --lib crl::` (55/55) clean after the change.
 
 **Commands:**
 ```bash
-# If DID_C was previously revoked, clear it first
-execA sgx-pa-cli crl unrevoke --did "$DID_C"
+# nodeA
+DID_C="did:guardian:CJqUJZ5FXazMtGp3bsnoi1eYXs7mHb5d5urkbvWt6ECR"
 
+# nodeB - seed debug CoT session for nodeC
 curl -s -X POST "$B/api/v1/crl/emergency/debug/session" \
   -H 'Content-Type: application/json' \
   -d '{"did":"'"$DID_C"'","transport":"Ethernet"}' \
   | python3 -m json.tool
-
 curl -s "$B/api/v1/crl/emergency/debug/session?did=$DID_C" | python3 -m json.tool
 
-execA sgx-pa-cli crl revoke --did "$DID_C" --reason compromised --severity critical --note "CRL-029"
+# nodeA - critical revoke of nodeC's real DID
+docker exec -e SGX_FORCE_SOFTWARE_KEYS=1 sgx-nodeA sgx-pa-cli crl revoke --did "$DID_C" --reason compromised --severity critical --note "R5-fix-retest docker"
 sleep 3
 
+# nodeB - post-revoke checks
 curl -s "$B/api/v1/crl/emergency/debug/session?did=$DID_C" | python3 -m json.tool
 curl -s $B/api/v1/crl/emergency/status | python3 -m json.tool
-docker compose -f optional/container-cohort/docker-compose.dev.yml -f /tmp/cc-softkeys.yml logs --since 2m nodeB | grep 'sessions_terminated='
+docker exec sgx-nodeB sh -lc 'grep -a "sessions_terminated\|EMERGENCY" /var/log/sgx-guardian/audit-nodeB.log | tail -10'
+
+# cleanup - restore clean cohort state
+docker exec -e SGX_FORCE_SOFTWARE_KEYS=1 sgx-nodeA sgx-pa-cli crl unrevoke --did "$DID_C"
 ```
 
 **Result:**
 ```text
-Pass condition:
-- before revoke: debug/session shows exists=true and active session present
-- after revoke: debug/session shows exists=false and session=null
-- nodeB emergency status shows sessions_terminated > 0
-- nodeB logs show EMERGENCY applied ... sessions_terminated=1
+nodeB pre-revoke debug session:
+  exists=true, total_sessions=1, active_sessions=1, state=Active
+
+nodeA critical revoke:
+  CRL entry issued: urn:uuid:7f4f26f5-aeb7-439d-88fc-7f695c8b56bf (sequence=8)
+  EMERGENCY broadcast revoked_did=<DID_C> -> 1 peers (nodeC itself correctly excluded as target)
+
+nodeB post-revoke debug session:
+  exists=false, total_sessions=0, active_sessions=0, session=null
+
+nodeB post-revoke emergency status:
+  notices_received=1, notices_merged=1, sessions_terminated=1
+  last_notice: direction=received, revoked_did=<DID_C>, merged=true
+
+nodeB audit log:
+  "EMERGENCY revocation applied revoked_did=<DID_C> sessions_terminated=1 via_origin=<nodeA DID>"
+
+Cleanup: nodeA unrevoke + 3 forced gossip rounds -> nodeA/nodeB/nodeC all converged on
+merkle_root=10480554d90c925eafc8c6fa88f2adb498398005e8fd6d66ca97a882ab961d26, DID_C revoked=false on all three.
 ```
 
-**Verdict:** ⏳ Fill after rerun. Successful 2026-07-19 Docker run satisfied all four pass conditions.
+**Verdict:** ✅ PASS (2026-08-03, Docker cohort, post-fix) — all four pass conditions met: active session existed before revoke, session was gone after, `sessions_terminated` counter incremented, and the audit log recorded the applied side effect. Note: this run did not land in the exact race window (`merged=true` here), so it directly proves the CLI/session-termination path end-to-end; the code fix itself (removing the `newly_merged` gate) is what specifically closes the race window seen on the board run, verified by code inspection + the dedup argument above, not by forcing the race live. **Board hardware retest of R5 in `docs/CRL_Emergency_Verification_Log.md` is still outstanding** — that log's boxes should only flip once rerun on the physical iMX8MP boards with the fixed binary.
 
 ---
 
