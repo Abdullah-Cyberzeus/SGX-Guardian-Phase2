@@ -1,331 +1,1106 @@
-import api from './api';
+# Network Topology Page — Detailed UI/UX Design Specification (AI Generation Guide)
 
-// ── Shared VC shape ────────────────────────────────────────────────────────────
+---
 
-export interface VcCredentialStatus {
-  id: string;
-  type: string;
-  statusPurpose: string;
-  statusListIndex: string;
-  statusListCredential: string;
-}
+# Overview
 
-export interface VcProof {
-  type: string;
-  verificationMethod: string;
-  created: string;
-  proofValue: string;
-}
+The Network Topology page is the operational command center of the Circle Mesh network.
 
-export interface VcCredentialSubject {
-  id: string;
-  role: string;
-  permissions: string[];
-  joinDate: string;
-  circleId: string;
-  membershipStatus: string;
-}
+Unlike a traditional network diagram, this page visualizes the live state of an organization's distributed mesh infrastructure on top of a real-world geographic map. Every node displayed represents a real device, relay, lighthouse, or trusted endpoint received from backend APIs.
 
-export interface VerifiableCredential {
-  '@context': string[];
-  id: string;
-  type: string[];
-  issuer: string;
-  issuanceDate: string;
-  expirationDate: string;
-  credentialSubject: VcCredentialSubject;
-  credentialStatus: VcCredentialStatus;
-  proof: VcProof;
-}
+The design should feel like a modern Security Operations Center (SOC), Mission Control dashboard, or military command interface.
 
-// ── Shared metadata item ───────────────────────────────────────────────────────
+The interface must prioritize:
 
-export interface VcMetaItem {
-  vc_id: string;
-  subject: string;
-  issuer: string;
-  role: string;
-  circle_id: string;
-  membership_status: string;
-  issuance_date: string;
-  expiration_date: string;
-  status_list_index: string;
-  revoked: boolean;
-  source_scope: string;
-}
+- Situational awareness
+- Live operational status
+- Geographic understanding
+- Trust relationships
+- Mesh routing visibility
+- Geofence awareness
+- Backend health
+- Immediate readability
 
-// ── POST /vc/issue ─────────────────────────────────────────────────────────────
+The page should never look like a colorful infographic.
 
-export interface IssueVcRequest {
-  to: string;
-  role?: 'owner' | 'member';
-  permissions?: string[];
-  days?: number;
-}
+It should look professional, dense, minimal, and operational.
 
-export interface IssueVcResponse {
-  status: string;
-  message: string;
-  vc_id: string;
-  subject: string;
-  role: string;
-  expires: string;
-  reused: boolean;
-  vc: VerifiableCredential;
-}
+---
 
-// ── POST /vc/renew ─────────────────────────────────────────────────────────────
+# Overall Theme
 
-export interface RenewVcRequest {
-  id: string;
-  days: number;
-}
+The visual style should resemble:
 
-export interface RenewVcResponse {
-  status: string;
-  message: string;
-  vc_id: string;
-  old_expiration: string;
-  new_expiration: string;
-  vc: VerifiableCredential;
-}
+- Enterprise SOC dashboards
+- Satellite command systems
+- Dark cyber intelligence interfaces
+- Kubernetes observability dashboards
+- Cloudflare Radar
+- Azure Network Watcher
+- Cisco ThousandEyes
+- Datadog Network Maps
 
-// ── POST /vc/revoke ────────────────────────────────────────────────────────────
+Avoid:
 
-export interface RevokeVcRequest {
-  id: string;
-  reason?: string;
-}
+- Gaming UI
+- Neon cyberpunk
+- Purple themes
+- Cartoon styling
+- Excessive gradients
+- Large glowing elements
 
-export interface RevokeVcResponse {
-  success: boolean;
-  status: string;
-  message: string;
-  vc_id: string;
-  revoked: boolean;
-  reason: string;
-}
+Everything should communicate precision.
 
-// ── POST /vc/verify ────────────────────────────────────────────────────────────
+---
 
-export interface VerifyVcResponse {
-  status: string;
-  valid: boolean;
-  vc_id: string;
-  reason: string | null;
-}
+# Color Palette
 
-// ── GET /vc/show ───────────────────────────────────────────────────────────────
+Background
 
-export interface VcShowFilters {
-  scope?: 'issued' | 'own' | 'peers' | 'all';
-  role?: 'owner' | 'member';
-  status?: 'active' | 'revoked' | 'expired' | 'all';
-}
+Deep charcoal
 
-export interface VcShowResponse {
-  status: string;
-  count: number;
-  items: VcMetaItem[];
-}
+#070707
 
-// ── GET /vc/status/{vc_id} ─────────────────────────────────────────────────────
+Panels
 
-export interface VcStatusResponse {
-  status: string;
-  id: string;
-  vc_id: string;
-  subject_did: string;
-  issuer_did: string;
-  active: boolean;
-  revoked: boolean;
-  expired: boolean;
-  membership_status: string;
-  status_list_index: string;
-  reason: string | null;
-}
+#151617
 
-// ── POST /vc/status-list/pull ──────────────────────────────────────────────────
+Secondary Panels
 
-export interface PullStatusListRequest {
-  ca_host?: string;
-}
+#1B1D1F
 
-export interface PullStatusListResponse {
-  success: boolean;
-  status: string;
-  message: string;
-  ca_host: string;
-  issuer: string;
-  sgx_next_index: number;
-}
+Borders
 
-// ── GET /vc/files/issued|own|peers ─────────────────────────────────────────────
+rgba(255,255,255,0.08)
 
-export interface VcFilesIssuedResponse {
-  status: string;
-  count: number;
-  items: VcMetaItem[];
-}
+Grid Lines
 
-export interface VcFilesOwnResponse {
-  status: string;
-  count: number;
-  items: VcMetaItem[];
-}
+rgba(255,255,255,0.04)
 
-export interface VcFilesPeersResponse {
-  status: string;
-  count: number;
-  items: VcMetaItem[];
-}
+Primary Accent
 
-// ── GET /vc/status-list (spec 3.55) ────────────────────────────────────────────
-// Returns the raw VC status-list credential as stored on disk.
-// The structure is a W3C VC envelope; FE treats it as opaque JSON for display.
+#20C7D9
 
-export interface VcStatusListResponse {
-  '@context': string[];
-  id: string;
-  type: string[];
-  issuer: string;
-  issuanceDate: string;
-  credentialSubject: {
-    id: string;
-    type: string;
-    statusPurpose: string;
-    encodedList: string;
-  };
-  proof: VcProof;
-  sgxNextIndex: number;
-}
+Secondary Accent
 
-// ── GET /vc/status-list-index (spec 3.56) ──────────────────────────────────────
+#18B5C8
 
-export interface VcStatusListIndexResponse {
-  next_index: number;
-}
+Healthy
 
-// ── GET /vc/summary (spec 3.57) ────────────────────────────────────────────────
+#3AC569
 
-export interface VcSummaryResponse {
-  status: string;
-  issued_total: number;
-  own_total: number;
-  peer_total: number;
-  active_total: number;
-  revoked_total: number;
-  expired_total: number;
-  next_index: number;
-  owner_did: string;
-  circle_id: string;
-}
+Warning
 
-// ── GET /vc/audit (spec 3.58) ──────────────────────────────────────────────────
+#F4B640
 
-export interface VcAuditFilters {
-  limit?: number;
-  action?: string;
-}
+Offline
 
-export type VcAuditAction =
-  | 'VC_ISSUED'
-  | 'VC_REUSED_NO_CHANGE'
-  | 'VC_RENEWED'
-  | 'VC_REVOKED'
-  | 'VC_VERIFY_SUCCESS'
-  | 'VC_VERIFY_FAILED'
-  | 'VC_FILE_READ'
-  | 'VC_SUMMARY_READ'
-  | 'VC_STATUS_LIST_PULLED'
-  | string;
+#7A7A7A
 
-export type VcAuditSeverity = 'Info' | 'Warn' | 'Error' | string;
+Critical
 
-export interface VcAuditItem {
-  timestamp: number;
-  node_id: string;
-  severity: VcAuditSeverity;
-  action: VcAuditAction;
-  message: string;
-}
+#E14D4D
 
-export interface VcAuditResponse {
-  status: string;
-  count: number;
-  items: VcAuditItem[];
-}
+Text Primary
 
-// ── Service ────────────────────────────────────────────────────────────────────
+#F2F2F2
 
-export const vcService = {
-  // POST /api/v1/vc/issue
-  issue: (req: IssueVcRequest) =>
-    api.post<IssueVcResponse>('/vc/issue', req),
+Text Secondary
 
-  // POST /api/v1/vc/renew
-  renew: (req: RenewVcRequest) =>
-    api.post<RenewVcResponse>('/vc/renew', req),
+#B3B3B3
 
-  // POST /api/v1/vc/revoke
-  revoke: (req: RevokeVcRequest) =>
-    api.post<RevokeVcResponse>('/vc/revoke', req),
+Muted
 
-  // POST /api/v1/vc/verify
-  verify: (id: string) =>
-    api.post<VerifyVcResponse>('/vc/verify', { id }),
+#7A7A7A
 
-  // GET /api/v1/vc/show
-  show: (filters?: VcShowFilters) =>
-    api.get<VcShowResponse>('/vc/show', filters),
+Map Labels
 
-  // GET /api/v1/vc/status/{vc_id}
-  getStatus: (vc_id: string) =>
-    api.get<VcStatusResponse>(`/vc/status/${encodeURIComponent(vc_id)}`),
+Light gray
 
-  // POST /api/v1/vc/status-list/pull
-  pullStatusList: (req?: PullStatusListRequest) =>
-    api.post<PullStatusListResponse>('/vc/status-list/pull', req ?? {}),
+No purple colors anywhere.
 
-  // GET /api/v1/vc/files/issued
-  getFilesIssued: () =>
-    api.get<VcFilesIssuedResponse>('/vc/files/issued'),
+---
 
-  // GET /api/v1/vc/files/own
-  getFilesOwn: () =>
-    api.get<VcFilesOwnResponse>('/vc/files/own'),
+# Layout Structure
 
-  // GET /api/v1/vc/files/peers
-  getFilesPeers: () =>
-    api.get<VcFilesPeersResponse>('/vc/files/peers'),
+The page consists of five primary regions.
 
-  // GET /api/v1/vc/files/issued/{vc_id}
-  getIssuedFile: (vc_id: string) =>
-    api.get<VerifiableCredential>(`/vc/files/issued/${encodeURIComponent(vc_id)}`),
+```
+-------------------------------------------------------------
+ Top Navigation
+-------------------------------------------------------------
+ Left Sidebar |            Interactive Map            | Right
+              |                                       | Panel
+              |                                       |
+              |                                       |
+              |                                       |
+-------------------------------------------------------------
+ Bottom Status Bar
+-------------------------------------------------------------
+```
 
-  // GET /api/v1/vc/files/own/{vc_id}
-  getOwnFile: (vc_id: string) =>
-    api.get<VerifiableCredential>(`/vc/files/own/${encodeURIComponent(vc_id)}`),
+The map occupies roughly 70–75% of the page width.
 
-  // GET /api/v1/vc/files/peer/{did}
-  getPeerFile: (did: string) =>
-    api.get<VerifiableCredential>(`/vc/files/peer/${encodeURIComponent(did)}`),
+The side panel occupies approximately 25–30%.
 
-  // GET /api/v1/vc/status-list
-  getStatusList: () =>
-    api.get<VcStatusListResponse>('/vc/status-list'),
+The map is always the visual focus.
 
-  // GET /api/v1/vc/status-list-index
-  getStatusListIndex: () =>
-    api.get<VcStatusListIndexResponse>('/vc/status-list-index'),
+---
 
-  // GET /api/v1/vc/summary
-  getSummary: () =>
-    api.get<VcSummaryResponse>('/vc/summary'),
+# Header
 
-  // GET /api/v1/vc/audit
-  getAudit: (filters?: VcAuditFilters) =>
-    api.get<VcAuditResponse>('/vc/audit', filters),
-};
+The top header should remain compact.
 
-export default vcService;
+Contents:
+
+- Network Topology title
+- Environment badge
+- Live/Fallback badge
+- Last synchronization timestamp
+- Refresh button
+- Search box
+- Filter button
+
+Example
+
+```
+Network Topology
+
+Environment: Production
+
+Status: LIVE
+
+Updated:
+13:04:51 UTC
+
+Refresh
+```
+
+The LIVE badge should glow subtly.
+
+Fallback mode should display amber.
+
+---
+
+# Live Status Indicator
+
+Top right corner.
+
+Small pill badge.
+
+States:
+
+Live
+
+Color:
+
+Green
+
+Text:
+
+LIVE
+
+Meaning:
+
+Backend currently supplying real topology.
+
+---
+
+Fallback
+
+Amber
+
+Text:
+
+FIXTURE
+
+Meaning:
+
+Rendering fallback topology.
+
+---
+
+Loading
+
+Blue spinner
+
+Text:
+
+SYNCING
+
+---
+
+Offline
+
+Gray
+
+Text:
+
+DISCONNECTED
+
+---
+
+# Main Map
+
+The centerpiece.
+
+Uses:
+
+Dark CARTO tiles
+
+OpenStreetMap data
+
+No Google Maps dependency.
+
+Projection:
+
+Web Mercator
+
+The map should resemble:
+
+Cloudflare Radar
+
+Dark Earth
+
+Azure Maps Dark
+
+Map characteristics:
+
+Minimal roads
+
+Minimal labels
+
+Dark oceans
+
+Dark landmass
+
+Thin borders
+
+No unnecessary saturation
+
+---
+
+# Zoom
+
+Supported zoom:
+
+1–16
+
+Behavior
+
+Far Zoom
+
+Small node dots
+
+Hidden labels
+
+Only major mesh visible
+
+---
+
+Medium Zoom
+
+Node labels appear
+
+Role icons appear
+
+Mesh routes visible
+
+---
+
+Near Zoom
+
+Node information expands
+
+Overlay IP shown
+
+Attestation badges visible
+
+Relay details visible
+
+Connection animations become easier to inspect
+
+---
+
+Marker Scaling
+
+Markers should counter-scale.
+
+As zoom increases:
+
+Icons stay approximately the same visual size.
+
+Countries should never become hidden behind icons.
+
+---
+
+# Nodes
+
+Every backend peer becomes one node.
+
+Nodes should look clean.
+
+Circular.
+
+Flat.
+
+Professional.
+
+---
+
+Node Size
+
+Far zoom
+
+6 px
+
+Medium
+
+10 px
+
+Near
+
+14 px
+
+Hover
+
+18 px
+
+---
+
+Node Roles
+
+Each node displays a role icon.
+
+Primary Lighthouse
+
+Compass icon
+
+Largest
+
+Highest priority
+
+---
+
+Lighthouse
+
+Beacon icon
+
+---
+
+Relay
+
+Bidirectional arrows
+
+---
+
+Member
+
+Simple circle
+
+---
+
+Unknown
+
+Question icon
+
+---
+
+# Node Status
+
+Online
+
+Green
+
+---
+
+Stale
+
+Amber
+
+---
+
+Offline
+
+Gray
+
+---
+
+Unknown
+
+Dark gray
+
+---
+
+# Trust State
+
+Trusted
+
+Thin cyan outer ring
+
+---
+
+Attested
+
+Double cyan ring
+
+Tiny shield icon
+
+---
+
+Untrusted
+
+Red outline
+
+---
+
+Pending
+
+Amber dashed outline
+
+---
+
+# Hover Card
+
+Hovering any node opens an information card.
+
+Contains:
+
+Hostname
+
+Peer ID
+
+Overlay IP
+
+Public IP
+
+Node role
+
+Online state
+
+Trust state
+
+Last seen
+
+Version
+
+Operating system
+
+Connected peers
+
+Relay
+
+Mesh latency
+
+Geofence state
+
+Attestation
+
+Example
+
+```
+Lighthouse-01
+
+Role:
+Primary Lighthouse
+
+Overlay:
+100.64.10.2
+
+Public:
+34.83.x.x
+
+Trust:
+Attested
+
+Status:
+Healthy
+
+Latency:
+11 ms
+
+Peers:
+46
+
+Version:
+2.1.0
+```
+
+---
+
+# Selected Node
+
+Clicking a node:
+
+Highlights it
+
+Centers map
+
+Expands right-side detail panel
+
+All connected edges become emphasized.
+
+Other nodes dim slightly.
+
+---
+
+# Links
+
+Three different connection types.
+
+---
+
+Mesh Link
+
+Solid cyan line
+
+Animated packets
+
+Represents normal peer communication.
+
+---
+
+Relay Link
+
+Dashed teal line
+
+Thicker
+
+Arrow direction
+
+Represents relay routing.
+
+---
+
+Attestation Link
+
+White thin line
+
+Shield pulse animation
+
+Represents verified trust relationship.
+
+---
+
+Link Animations
+
+Tiny packet dots travel continuously.
+
+Animation speed reflects connection quality.
+
+Fast
+
+Healthy
+
+Slow
+
+High latency
+
+Stopped
+
+Offline
+
+---
+
+# Node Clustering
+
+When zoomed far out:
+
+Nearby nodes cluster.
+
+Cluster displays
+
+```
+18
+```
+
+instead of many nodes.
+
+Expands automatically while zooming.
+
+---
+
+# Search
+
+Search box should instantly locate:
+
+Hostname
+
+Peer ID
+
+Overlay IP
+
+Public IP
+
+Relay
+
+Lighthouse
+
+Selecting result:
+
+Centers map
+
+Highlights node
+
+---
+
+# Filters
+
+Operator should filter by:
+
+Role
+
+Status
+
+Trust
+
+Relay
+
+Lighthouse
+
+Online
+
+Offline
+
+Untrusted
+
+Attested
+
+Geofence
+
+Mesh segment
+
+Organization
+
+Site
+
+---
+
+# Right Sidebar
+
+This is the operational intelligence panel.
+
+Contains multiple collapsible cards.
+
+---
+
+## Network Summary
+
+Displays:
+
+Total Nodes
+
+Online
+
+Offline
+
+Relays
+
+Lighthouses
+
+Members
+
+Attested
+
+Untrusted
+
+Mesh Links
+
+Average Latency
+
+Example
+
+```
+Nodes
+148
+
+Online
+132
+
+Offline
+16
+
+Relays
+9
+
+Lighthouses
+2
+
+Mesh Links
+514
+```
+
+---
+
+## Selected Node Details
+
+Shows complete backend information.
+
+Actions
+
+View Peer
+
+Copy Overlay IP
+
+Ping
+
+Trace
+
+Inspect
+
+---
+
+## Trust Overview
+
+Pie chart
+
+Attested
+
+Pending
+
+Failed
+
+Unknown
+
+---
+
+## Relay Health
+
+Displays
+
+Relay load
+
+Traffic
+
+Connected peers
+
+CPU
+
+Heartbeat
+
+---
+
+## Lighthouse Status
+
+Displays
+
+Primary
+
+Secondary
+
+Election state
+
+Discovery health
+
+Connected members
+
+---
+
+## Mesh Health
+
+Displays
+
+Average latency
+
+Packet loss
+
+Disconnected peers
+
+Reconnections
+
+Topology age
+
+---
+
+# Geofence Section
+
+One of the most important sections.
+
+Contains:
+
+Current location
+
+Source
+
+Backend state
+
+Zone count
+
+Current zone
+
+Automation enabled
+
+RF capture
+
+Latest event
+
+Alert count
+
+---
+
+# Geofence Visualization
+
+Zones appear as translucent circles.
+
+Fill
+
+Very subtle cyan
+
+Border
+
+Dashed cyan
+
+Selected zone
+
+Solid border
+
+Slight glow
+
+---
+
+Zone States
+
+Inside
+
+Green outline
+
+Outside
+
+Gray
+
+Violation
+
+Red pulse
+
+Pending
+
+Amber
+
+---
+
+# Zone Card
+
+Displays
+
+Zone Name
+
+Radius
+
+Automation
+
+RF Enabled
+
+Created
+
+Updated
+
+Actions
+
+Edit
+
+Delete
+
+Capture RF
+
+Test
+
+---
+
+# Geofence Toolbar
+
+Buttons
+
+Report Location
+
+Create Zone
+
+Toggle Automation
+
+Capture RF
+
+Refresh
+
+Test Actions
+
+---
+
+# Bottom Status Bar
+
+Persistent.
+
+Displays:
+
+Backend connection
+
+WebSocket
+
+Peer count
+
+Relay count
+
+Topology version
+
+Current zoom
+
+Cursor coordinates
+
+Example
+
+```
+Backend Connected
+
+Peers 146
+
+Relays 8
+
+Zoom 7
+
+WebSocket Healthy
+
+Topology v2.1
+```
+
+---
+
+# Animations
+
+Animations should be subtle.
+
+Allowed
+
+Packet movement
+
+Node pulse
+
+Trust pulse
+
+Selection glow
+
+Panel fade
+
+Loading spinner
+
+Not allowed
+
+Bouncing
+
+Flashing
+
+Heavy glows
+
+Random movement
+
+Particle explosions
+
+---
+
+# Empty State
+
+If backend returns no peers:
+
+Display:
+
+"No live topology available."
+
+Below:
+
+Rendering fallback demonstration topology.
+
+Map remains interactive.
+
+Fallback badge becomes visible.
+
+---
+
+# Loading State
+
+Map loads first.
+
+Then
+
+Nodes
+
+Then
+
+Links
+
+Then
+
+Geofence
+
+Then
+
+Sidebar metrics
+
+Skeleton placeholders appear while loading.
+
+---
+
+# Responsiveness
+
+Desktop
+
+Primary experience.
+
+Tablet
+
+Sidebar collapses into drawer.
+
+Mobile
+
+Map fills screen.
+
+Sidebar becomes bottom sheet.
+
+---
+
+# Accessibility
+
+High contrast text
+
+Keyboard navigation
+
+Screen reader labels
+
+Color-independent status indicators
+
+Minimum 4.5:1 contrast
+
+---
+
+# Performance
+
+Support:
+
+500+ nodes
+
+2000+ edges
+
+Smooth pan
+
+Smooth zoom
+
+60 FPS target
+
+Efficient clustering
+
+Virtual rendering
+
+Lazy loading
+
+Canvas/WebGL rendering preferred over SVG for large datasets.
+
+---
+
+# Design Principles
+
+The interface should communicate:
+
+- Operational awareness over aesthetics.
+- Geographic context over abstract diagrams.
+- Trust relationships over decorative visuals.
+- Real-time infrastructure health over static reporting.
+- Dense but readable information.
+- Minimal color usage with meaningful status indicators.
+- Smooth interaction without distracting animations.
+- Enterprise-grade professionalism suitable for SOC analysts and network operators.
