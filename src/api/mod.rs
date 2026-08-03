@@ -1046,6 +1046,103 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn restore_undo_persists_rolled_back_journal_and_status() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _login = ScopedLoginMode::disabled(true);
+        let temp = TempDir::new().expect("restore undo tempdir");
+        let state = AppState::for_tests(
+            temp.path(),
+            "nodeA",
+            temp.path().join("config").to_string_lossy().to_string(),
+        );
+        let backup_config = crate::backup::BackupConfig {
+            base_dir: temp.path().join("backup"),
+            max_bundle_bytes: 1024 * 1024,
+        };
+        let _backup_base = ScopedEnvVar::set(
+            crate::backup::BACKUP_BASE_ENV,
+            backup_config.base_dir.to_str().expect("backup base path"),
+        );
+        let restore_id = "restore-api-undo";
+        let snapshot_path = backup_config.pre_restore_dir().join(restore_id);
+        std::fs::create_dir_all(&snapshot_path).expect("snapshot dir");
+        let target_path = temp.path().join("state/file.txt");
+        let snapshot_file = snapshot_path.join("file.bak");
+        std::fs::create_dir_all(target_path.parent().expect("target parent"))
+            .expect("target parent dir");
+        std::fs::write(&target_path, b"post-restore").expect("target file");
+        std::fs::write(&snapshot_file, b"pre-restore").expect("snapshot file");
+        std::fs::write(
+            snapshot_path.join("targets.json"),
+            serde_json::to_vec_pretty(&serde_json::json!([
+                {
+                    "target": target_path.to_string_lossy(),
+                    "snapshot_file": snapshot_file.to_string_lossy()
+                }
+            ]))
+            .expect("snapshot records"),
+        )
+        .expect("write snapshot records");
+        crate::backup::restore::journal::write_journal(
+            &backup_config,
+            &crate::backup::restore::journal::RestoreJournal {
+                restore_id: restore_id.to_string(),
+                bundle_id: "bak-api-undo".to_string(),
+                node_id: "nodeA".to_string(),
+                phase: crate::backup::restore::journal::RestorePhase::Committed,
+                component_index: None,
+                snapshot_path: Some(snapshot_path.to_string_lossy().to_string()),
+                updated_at: Utc::now().to_rfc3339(),
+                message: Some("restore committed; applied 1 files".to_string()),
+            },
+        )
+        .expect("write committed restore journal");
+        let (base_url, handle) = spawn_api_with_state(state).await;
+        let client = reqwest::Client::new();
+
+        let undo = client
+            .post(format!("{}/api/v1/restore/undo", base_url))
+            .json(&serde_json::json!({ "confirm": true }))
+            .send()
+            .await
+            .expect("restore undo request");
+
+        assert_eq!(undo.status(), StatusCode::OK);
+        let undo_body: Value = undo.json().await.expect("restore undo body");
+        assert_eq!(undo_body["status"], "undone");
+        assert_eq!(
+            std::fs::read_to_string(&target_path).expect("restored target"),
+            "pre-restore"
+        );
+        let journal = crate::backup::restore::journal::load_current(&backup_config)
+            .expect("load journal")
+            .expect("journal present");
+        assert_eq!(
+            journal.phase,
+            crate::backup::restore::journal::RestorePhase::RolledBack
+        );
+        assert_eq!(
+            journal.message.as_deref(),
+            Some("restore undone from pre-restore snapshot")
+        );
+
+        let status = client
+            .get(format!("{}/api/v1/restore/status", base_url))
+            .send()
+            .await
+            .expect("restore status request");
+        assert_eq!(status.status(), StatusCode::OK);
+        let status_body: Value = status.json().await.expect("restore status body");
+        assert_eq!(status_body["journal"]["phase"], "rolled_back");
+        assert_eq!(
+            status_body["journal"]["message"],
+            "restore undone from pre-restore snapshot"
+        );
+
+        handle.abort();
+    }
+
+    #[tokio::test]
     async fn restore_apply_and_undo_require_authentication_without_missing_extension_500() {
         let _lock = crate::test_support::async_env_lock().await;
         let _login = ScopedLoginMode::disabled(false);

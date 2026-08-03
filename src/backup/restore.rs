@@ -253,16 +253,20 @@ pub async fn undo_restore(
     let _restore_guard = restore_lock().try_lock().map_err(|_| {
         BackupError::InvalidRequest("restore operation already in progress".to_string())
     })?;
-    let Some(journal) = journal::load_current(&config)? else {
+    let Some(mut journal) = journal::load_current(&config)? else {
         return Err(BackupError::NotFound("restore journal".to_string()));
     };
-    let Some(snapshot_path) = journal.snapshot_path else {
+    let Some(snapshot_path) = journal.snapshot_path.clone() else {
         return Err(BackupError::InvalidRequest(
             "restore journal does not contain a snapshot path".to_string(),
         ));
     };
     let rollback = load_snapshot_records(Path::new(&snapshot_path)).await?;
     rollback_targets(&rollback).await?;
+    journal.phase = RestorePhase::RolledBack;
+    journal.updated_at = Utc::now().to_rfc3339();
+    journal.message = Some("restore undone from pre-restore snapshot".to_string());
+    journal::write_journal(&config, &journal)?;
     Ok(RestoreReport {
         status: "undone".to_string(),
         message: format!("restore {} undone from snapshot", journal.restore_id),
