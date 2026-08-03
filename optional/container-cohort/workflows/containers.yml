@@ -1,0 +1,25 @@
+name: Container Validation
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-validate:
+    if: ${{ hashFiles('optional/container-cohort/docker-compose.dev.yml') != '' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build PAL-enabled agent image
+        run: docker build -f optional/container-cohort/docker/Dockerfile.agent -t sgx-guardian:pal-dev .
+
+      - name: Validate compose file
+        run: docker compose -f optional/container-cohort/docker-compose.dev.yml config >/tmp/sgx-compose.yaml
+
+      - name: Confirm virtual-platform feature is enabled in the image build
+        run: docker history --no-trunc sgx-guardian:pal-dev | grep "virtual-platform"
