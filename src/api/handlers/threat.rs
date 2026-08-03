@@ -1,12 +1,15 @@
 use super::dkp::{run_cli, ActionResponse};
 use crate::api::{error::ApiError, state::AppState};
+use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use crate::audit::logger::log_audit;
 use crate::threat::{
+    advisory::{AdvisoryStatus, SecurityAdvisory},
     blocker::load_block_records,
     config::{BlockMode, SuricataConfig},
     threat_alert::{Severity, ThreatAlert},
 };
 use axum::{
-    extract::{Query, State},
+    extract::{Path as AxumPath, Query, State},
     Json,
 };
 use chrono::Utc;
@@ -403,4 +406,81 @@ fn parse_nft_block_ip(line: &str) -> Option<String> {
         .windows(3)
         .find(|window| (window[0] == "ip" || window[0] == "ip6") && window[1] == "saddr")
         .map(|window| window[2].trim_end_matches(',').to_string())
+}
+
+#[derive(Deserialize)]
+pub struct AdvisoryQuery {
+    pub status: Option<String>,
+}
+
+pub async fn list_advisories(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<AdvisoryQuery>,
+) -> Result<Json<Vec<SecurityAdvisory>>, ApiError> {
+    let store = state.advisory_store.lock().await;
+    let filter = query.status.as_deref().and_then(|s| match s {
+        "pending" => Some(AdvisoryStatus::Pending),
+        "auto_executed" => Some(AdvisoryStatus::AutoExecuted),
+        "approved" => Some(AdvisoryStatus::Approved),
+        "rejected" => Some(AdvisoryStatus::Rejected),
+        _ => None,
+    });
+    Ok(Json(store.list(filter)))
+}
+
+pub async fn get_advisory(
+    State(state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<SecurityAdvisory>, ApiError> {
+    let store = state.advisory_store.lock().await;
+    match store.get_by_id(&id) {
+        Some(advisory) => Ok(Json(advisory.clone())),
+        None => Err(ApiError::NotFound(format!("Advisory {} not found", id))),
+    }
+}
+
+pub async fn approve_advisory(
+    State(state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<SecurityAdvisory>, ApiError> {
+    let mut store = state.advisory_store.lock().await;
+    match store.approve(&id) {
+        Some(advisory) => {
+            log_audit(
+                &state.node_id,
+                AuditCategory::Network,
+                AuditSeverity::Info,
+                AuditAction::Applied,
+                &format!("advisory {} approved by admin: {}", id, advisory.title),
+            );
+            Ok(Json(advisory))
+        }
+        None => Err(ApiError::NotFound(format!(
+            "Pending advisory {} not found",
+            id
+        ))),
+    }
+}
+
+pub async fn reject_advisory(
+    State(state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<SecurityAdvisory>, ApiError> {
+    let mut store = state.advisory_store.lock().await;
+    match store.reject(&id) {
+        Some(advisory) => {
+            log_audit(
+                &state.node_id,
+                AuditCategory::Network,
+                AuditSeverity::Info,
+                AuditAction::Rejected,
+                &format!("advisory {} rejected by admin: {}", id, advisory.title),
+            );
+            Ok(Json(advisory))
+        }
+        None => Err(ApiError::NotFound(format!(
+            "Pending advisory {} not found",
+            id
+        ))),
+    }
 }

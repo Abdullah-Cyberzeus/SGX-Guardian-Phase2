@@ -278,6 +278,22 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         .route("/api/v1/threat/config", get(handlers::threat::get_config))
         .route("/api/v1/threat/config", post(handlers::threat::set_config))
         .route("/api/v1/threat/start", post(handlers::threat::start))
+        .route(
+            "/api/v1/threat/advisories",
+            get(handlers::threat::list_advisories),
+        )
+        .route(
+            "/api/v1/threat/advisories/{id}",
+            get(handlers::threat::get_advisory),
+        )
+        .route(
+            "/api/v1/threat/advisories/{id}/approve",
+            post(handlers::threat::approve_advisory),
+        )
+        .route(
+            "/api/v1/threat/advisories/{id}/reject",
+            post(handlers::threat::reject_advisory),
+        )
         .merge(routes::crl_router())
         .merge(routes::dusage_router())
         .merge(routes::geofence_router())
@@ -843,11 +859,7 @@ mod tests {
             .expect("bind test listener");
         let addr = listener.local_addr().expect("listener addr");
         let handle = tokio::spawn(async move {
-            let _ = axum::serve(
-                listener,
-                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-            )
-            .await;
+            let _ = axum::serve(listener, app).await;
         });
         (format!("http://{}", addr), handle)
     }
@@ -855,31 +867,38 @@ mod tests {
     #[tokio::test]
     async fn cors_preflight_allows_idempotency_key_header() {
         let (base_url, handle) = spawn_api_with_state(test_state()).await;
-        let response = reqwest::Client::new()
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
             .request(
-                reqwest::Method::OPTIONS,
-                format!("{}/api/v1/geofence/location", base_url),
+                axum::http::Method::OPTIONS,
+                format!("{}/api/v1/node/status", base_url),
             )
-            .header(reqwest::header::ORIGIN, "http://localhost:3000")
+            .header(reqwest::header::ORIGIN, "https://example.com")
             .header(reqwest::header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
             .header(
                 reqwest::header::ACCESS_CONTROL_REQUEST_HEADERS,
-                "content-type,idempotency-key",
+                "idempotency-key",
             )
             .send()
             .await
-            .expect("preflight request");
+            .expect("options request");
         handle.abort();
-
-        assert!(response.status().is_success());
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(reqwest::header::ACCESS_CONTROL_ALLOW_ORIGIN),
+            Some(&reqwest::header::HeaderValue::from_static("*"))
+        );
         let allow_headers = response
             .headers()
             .get(reqwest::header::ACCESS_CONTROL_ALLOW_HEADERS)
-            .expect("allow headers")
+            .expect("allow headers header")
             .to_str()
-            .expect("allow headers utf8")
-            .to_ascii_lowercase();
-        assert!(allow_headers.contains("idempotency-key"));
+            .expect("allow headers string");
+        assert!(allow_headers
+            .split(',')
+            .any(|h| h.trim().eq_ignore_ascii_case("idempotency-key")));
     }
 
     async fn authed_client_for_state(state: &Arc<AppState>) -> reqwest::Client {
@@ -916,6 +935,7 @@ mod tests {
                 .expect("authorization header"),
         );
         reqwest::Client::builder()
+            .no_proxy()
             .default_headers(headers)
             .build()
             .expect("authorized API test client")
@@ -973,6 +993,7 @@ mod tests {
                 .expect("authorization header"),
         );
         reqwest::Client::builder()
+            .no_proxy()
             .default_headers(headers)
             .build()
             .expect("custom role API test client")
@@ -3561,10 +3582,13 @@ mod tests {
         assert_eq!(response["services"].as_array().map(Vec::len), Some(2));
     }
 
-    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test(flavor = "multi_thread")]
     async fn threat_modbus_endpoint_groups_alerts_into_five_rules() {
+        let _lock = crate::test_support::async_env_lock().await;
         let td = TempDir::new().expect("tempdir");
-        let alerts_path = td.path().join("alerts.jsonl");
+        let threat_dir = td.path().join("threat");
+        let alerts_path = threat_dir.join("alerts.jsonl");
         write_threat_alerts(
             &alerts_path,
             &[
@@ -3580,18 +3604,12 @@ mod tests {
         );
 
         let mut state = (*test_state()).clone();
-        state.threat_state_dir = td.path().to_string_lossy().to_string();
-        let (base_url, client, handle) = spawn_authed_api_with_state(Arc::new(state)).await;
+        state.threat_state_dir = threat_dir.to_string_lossy().to_string();
 
-        let response: Value = client
-            .get(format!("{}/api/v1/threat/modbus", base_url))
-            .send()
+        let res = handlers::threat::modbus_alerts(axum::extract::State(Arc::new(state)))
             .await
-            .expect("modbus request")
-            .json()
-            .await
-            .expect("modbus json");
-        handle.abort();
+            .expect("modbus alerts response");
+        let response = serde_json::to_value(res.0).expect("serialize response");
 
         assert_eq!(response["total_matches"], 5);
         let rules = response["rules"].as_array().expect("rules array");

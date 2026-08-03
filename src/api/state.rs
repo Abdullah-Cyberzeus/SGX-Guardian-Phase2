@@ -137,6 +137,7 @@ pub struct AppState {
     pub auth_rate_limit: AuthRateLimitConfig,
     pub login_rate_limiter: Arc<LoginRateLimiter>,
     pub auth_providers: Arc<ProviderRegistry>,
+    pub advisory_store: Arc<tokio::sync::Mutex<crate::threat::advisory::AdvisoryStore>>,
 }
 
 impl AppState {
@@ -194,6 +195,9 @@ impl AppState {
             auth_rate_limit: AuthRateLimitConfig::from_env(),
             login_rate_limiter: Arc::new(LoginRateLimiter::default()),
             auth_providers: ProviderRegistry::from_env(),
+            advisory_store: Arc::new(tokio::sync::Mutex::new(
+                crate::threat::advisory::AdvisoryStore::default(),
+            )),
         })
     }
 
@@ -268,6 +272,9 @@ impl AppState {
             auth_rate_limit: AuthRateLimitConfig::default(),
             login_rate_limiter: Arc::new(LoginRateLimiter::default()),
             auth_providers: ProviderRegistry::from_env(),
+            advisory_store: Arc::new(tokio::sync::Mutex::new(
+                crate::threat::advisory::AdvisoryStore::default(),
+            )),
         })
     }
 
@@ -310,6 +317,7 @@ impl AppState {
                 .expect("authorization header"),
         );
         reqwest::Client::builder()
+            .no_proxy()
             .default_headers(headers)
             .build()
             .expect("authorized API test client")

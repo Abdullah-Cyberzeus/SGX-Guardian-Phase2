@@ -12,7 +12,9 @@
 //! All subprocesses use `tokio::process::Command`, the tailer uses `tokio::fs`,
 //! and writes are atomic (temp file + rename).
 
+pub mod advisory;
 pub mod ai_bridge;
+pub mod alert_scorer;
 pub mod analytics;
 pub mod anomaly;
 pub mod blocker;
@@ -24,11 +26,14 @@ pub mod eve_tailer;
 pub mod incident;
 pub mod inventory;
 pub mod peer_scorer;
+pub mod remediation;
 pub mod rule_manager;
 pub mod service;
 pub mod threat_alert;
 pub mod threat_rules;
 
+pub use advisory::{format_advisory, AdvisoryStatus, AdvisoryStore, SecurityAdvisory};
+pub use alert_scorer::{process_feature, AlertAnomalyScore, AlertScorerState};
 pub use analytics::{ThreatAnalytics, ThreatEvent};
 pub use anomaly::{AnomalyDetector, AnomalyScore, AnomalyType};
 pub use config::{BlockMode, SuricataConfig};
@@ -36,6 +41,7 @@ pub use error::{ThreatError, ThreatResult};
 pub use incident::{Incident, IncidentManager, IncidentResponse, IncidentSeverity};
 pub use inventory::AlertInventory;
 pub use peer_scorer::{PeerScorer, PeerThreatScore};
+pub use remediation::{generate_plan, ActionType, RemediationPlan};
 pub use service::ThreatService;
 pub use threat_alert::{Severity, ThreatAlert, ThreatCategory};
 pub use threat_rules::{ThreatAction, ThreatRule, ThreatRuleEngine};

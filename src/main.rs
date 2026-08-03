@@ -3273,6 +3273,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             config_path: cfg_path,
             state_dir,
             inventory: std::sync::Arc::new(tokio::sync::Mutex::new(AlertInventory::default())),
+            advisory_store: api_state.advisory_store.clone(),
         };
         service.start();
         println!("✅ Threat service spawned (SUR-series, Sprint 8)");

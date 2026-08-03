@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {
     Info,
@@ -24,13 +24,15 @@ impl Severity {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum ThreatCategory {
     Malware,
     Exploit,
     PolicyViolation,
     Reconnaissance,
+    AttestationMismatch,
+    CertificateIssue,
     Anomaly,
     Other,
 }
@@ -42,6 +44,8 @@ impl ThreatCategory {
             ThreatCategory::Exploit => "exploit",
             ThreatCategory::PolicyViolation => "policy_violation",
             ThreatCategory::Reconnaissance => "reconnaissance",
+            ThreatCategory::AttestationMismatch => "attestation_mismatch",
+            ThreatCategory::CertificateIssue => "certificate_issue",
             ThreatCategory::Anomaly => "anomaly",
             ThreatCategory::Other => "other",
         }

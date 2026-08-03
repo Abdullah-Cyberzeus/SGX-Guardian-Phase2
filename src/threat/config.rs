@@ -69,7 +69,7 @@ fn default_exempt() -> Vec<String> {
 impl Default for SuricataConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             interface: None,
             eve_path: default_eve_path(),
             suricata_yaml: default_suricata_yaml(),

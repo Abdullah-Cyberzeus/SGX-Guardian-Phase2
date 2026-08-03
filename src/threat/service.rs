@@ -1,11 +1,14 @@
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::threat::{
+    advisory::{format_advisory, AdvisoryStore},
     ai_bridge,
+    alert_scorer::{process_feature, AlertScorerState},
     blocker::Blocker,
     config::SuricataConfig,
     eve_tailer::EveTailer,
     inventory::{AlertInventory, IngestOutcome},
+    remediation::generate_plan,
     rule_manager::RuleManager,
 };
 use std::path::{Path, PathBuf};
@@ -18,9 +21,25 @@ pub struct ThreatService {
     pub config_path: PathBuf,
     pub state_dir: PathBuf,
     pub inventory: Arc<Mutex<AlertInventory>>,
+    pub advisory_store: Arc<Mutex<AdvisoryStore>>,
 }
 
 impl ThreatService {
+    pub fn new(
+        node_id: String,
+        config_path: PathBuf,
+        state_dir: PathBuf,
+        inventory: Arc<Mutex<AlertInventory>>,
+        advisory_store: Arc<Mutex<AdvisoryStore>>,
+    ) -> Self {
+        Self {
+            node_id,
+            config_path,
+            state_dir,
+            inventory,
+            advisory_store,
+        }
+    }
     pub fn start(self) {
         tokio::spawn(async move {
             let cfg = match SuricataConfig::load(&self.config_path) {
@@ -71,6 +90,9 @@ impl ThreatService {
                 tracing::warn!("failed to restore threat blocks: {}", err);
             }
 
+            // Subscribe to AI feature tap BEFORE spawning tailer to ensure no alerts are dropped at startup
+            let mut ai_rx = ai_bridge::subscribe();
+
             let (tx, mut rx) = mpsc::channel(1024);
             let tailer = EveTailer {
                 path: PathBuf::from(&cfg.eve_path),
@@ -90,6 +112,49 @@ impl ThreatService {
                     loop {
                         tick.tick().await;
                         let _ = blocker.sweep_expired().await;
+                    }
+                });
+            }
+
+            // Spawn AI Anomaly Scoring & Remediation Advisory Task
+            {
+                let node_id_ai = self.node_id.clone();
+                let advisory_store_ai = self.advisory_store.clone();
+
+                tokio::spawn(async move {
+                    let mut scorer_state = AlertScorerState::default();
+
+                    while let Ok(feature) = ai_rx.recv().await {
+                        if let Some(score) = process_feature(&feature, &mut scorer_state) {
+                            if let Some(plan) = generate_plan(score) {
+                                let advisory = format_advisory(plan.clone());
+
+                                // System is advisory-only: no actions are executed automatically.
+                                // All recommendations in requires_approval await admin approval
+                                // via the REST API (POST /advisories/{id}/approve) or CLI.
+
+                                let audit_sev = if advisory.severity_label == "critical" {
+                                    AuditSeverity::Critical
+                                } else {
+                                    AuditSeverity::Warning
+                                };
+
+                                log_audit(
+                                    &node_id_ai,
+                                    AuditCategory::Network,
+                                    audit_sev,
+                                    AuditAction::Created,
+                                    &format!(
+                                        "security advisory {} generated: {} - {}",
+                                        advisory.advisory_id,
+                                        advisory.title,
+                                        advisory.plan.justification
+                                    ),
+                                );
+
+                                advisory_store_ai.lock().await.upsert_or_push(advisory);
+                            }
+                        }
                     }
                 });
             }
@@ -142,7 +207,6 @@ impl ThreatService {
                         match inventory.ingest(alert.clone()) {
                             IngestOutcome::Inserted => {
                                 dirty = true;
-                                ai_bridge::forward_to_ai(&self.node_id, &alert);
                                 crate::notify::publish_alert(&self.node_id, &alert);
                             }
                             IngestOutcome::Updated => {
@@ -150,6 +214,7 @@ impl ThreatService {
                             }
                             IngestOutcome::Duplicate => {}
                         }
+                        ai_bridge::forward_to_ai(&self.node_id, &alert);
                     }
                     _ = config_refresh_tick.tick() => {
                         if let Err(err) = refresh_runtime_config(

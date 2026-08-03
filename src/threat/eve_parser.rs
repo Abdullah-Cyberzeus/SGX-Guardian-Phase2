@@ -123,7 +123,11 @@ fn severity_from_raw(raw: u8, category: ThreatCategory, signature: &str) -> Seve
 
 fn classify(signature: &str) -> ThreatCategory {
     let lowered = signature.to_lowercase();
-    if lowered.contains("malware") || lowered.contains("trojan") || lowered.contains("ransom") {
+    if lowered.contains("attestation") || lowered.contains("pcr") {
+        ThreatCategory::AttestationMismatch
+    } else if lowered.contains("certificate") || lowered.contains("pki") || lowered.contains("cert") {
+        ThreatCategory::CertificateIssue
+    } else if lowered.contains("malware") || lowered.contains("trojan") || lowered.contains("ransom") {
         ThreatCategory::Malware
     } else if lowered.contains("exploit") || lowered.contains("cve") || lowered.contains("rce") {
         ThreatCategory::Exploit
