@@ -1,22 +1,25 @@
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router";
 import { PageHeader } from "../../components/PageHeader";
-import { mockCircles, mockUser } from "../../data/mockData";
-import { useCircles } from "../../hooks/useApiData";
+import { useCircles, usePeers } from "../../hooks/useApiData";
 import {
   Send, Phone, Video, UserPlus, Copy, Check, X, ChevronRight,
   Link, QrCode, Search, MessageSquare, Users, PhoneCall,
-  Trash2, AlertTriangle, FolderOpen, Settings
+  Trash2, AlertTriangle, FolderOpen, Settings, Loader2, ArrowLeft
 } from "lucide-react";
 import { StatusBadge } from "../../components/SeverityBadge";
 import * as Dialog from "@radix-ui/react-dialog";
-import { CallScreen } from "../../components/circle/CallScreen";
 import { AttachmentMenu } from "../../components/circle/AttachmentMenu";
 import { MessageAttachment } from "../../components/circle/MessageAttachment";
 import { FilesTab } from "../../components/circle/FilesTab";
 import { collectSharedFiles } from "../../components/circle/types";
-import type { CallMode, CallRecord } from "../../components/circle/types";
 import { useVault } from "../../contexts/VaultContext";
+import { useCall } from "../../../features/calls/CallContext";
+import { useGroupCall } from "../../../features/calls/GroupCallContext";
+import type { MediaType } from "../../../features/calls/call.types";
+import chatService from "../../services/chatService";
+import circleService, { type CircleInvite } from "../../services/circleService";
+import { toast } from "sonner";
 
 type Tab = "chat" | "calls" | "files" | "members";
 
@@ -28,46 +31,97 @@ export function NW04CircleDetail() {
   const navigate = useNavigate();
   const vault = useVault();
   const requestedTab = searchParams.get("tab") as Tab | null;
-  const activeTab: Tab = requestedTab && circleDetailTabs.includes(requestedTab) ? requestedTab : "chat";
+  const activeTab: Tab = requestedTab && circleDetailTabs.includes(requestedTab) ? requestedTab : "members";
 
-  // Fetch circles from API with fallback to mock data
-  const { data: circlesData } = useCircles();
-
-  const circles = useMemo(() => {
-    if (!circlesData) return mockCircles;
-    return Array.isArray(circlesData) ? circlesData : mockCircles;
-  }, [circlesData]);
+  const { data: circlesData, loading: circlesLoading, error: circlesError, refetch: refetchCircles } = useCircles();
+  const { data: peersData, loading: peersLoading, error: peersError } = usePeers();
+  const circles: any[] = Array.isArray(circlesData) ? circlesData : [];
+  const trustedPeers = Array.isArray(peersData) ? peersData : [];
 
   const circle = useMemo(() => {
-    return circles.find((c: any) => c.id === circleId) || circles[0];
+    return circles.find((c: any) => c.id === circleId) || null;
   }, [circles, circleId]);
 
   const [message, setMessage] = useState("");
-  const [messages, setMessages] = useState(circle?.messages || []);
+  const [messages, setMessages] = useState<any[]>([]);
   const [sheetTab, setSheetTab] = useState<"link" | "qr" | "search">("link");
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [activeInvite, setActiveInvite] = useState<CircleInvite | null>(null);
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
   const [memberDetailOpen, setMemberDetailOpen] = useState<string | null>(null);
   const [removeDialogOpen, setRemoveDialogOpen] = useState<string | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
-  const [activeCall, setActiveCall] = useState<
-    { mode: CallMode; title: string; participants: { id: string; name: string }[]; group: boolean } | null
-  >(null);
+  const { startCall, call, currentDevice } = useCall();
+  const groupCalling = useGroupCall();
+  const [startingCall, setStartingCall] = useState<string | null>(null);
+  const [directMember, setDirectMember] = useState<any | null>(null);
+  const [directMessages, setDirectMessages] = useState<any[]>([]);
+  const [directLoading, setDirectLoading] = useState(false);
+  const [sendingDirect, setSendingDirect] = useState(false);
 
   const members = circle?.members || [];
-  const [calls, setCalls] = useState(circle?.calls || []);
-  const selectedMember = members.find((m) => m.id === memberDetailOpen);
-  const memberToRemove = members.find((m) => m.id === removeDialogOpen);
+  const [calls] = useState<any[]>([]);
+  const selectedMember = members.find((m: any) => String(m.did || m.id) === memberDetailOpen);
+  const memberToRemove = members.find((m: any) => String(m.did || m.id) === removeDialogOpen);
 
-  const setTab = (tab: Tab) => setSearchParams({ tab });
+  const setTab = (tab: Tab) => {
+    setDirectMember(null);
+    setDirectMessages([]);
+    setSearchParams({ tab });
+  };
 
   const handleCopy = (text: string, field: string) => {
+    if (!text) return;
     navigator.clipboard.writeText(text).catch(() => {});
     setCopiedField(field);
     setTimeout(() => setCopiedField(null), 2000);
   };
 
-  const sendMessage = () => {
+  const openInviteSheet = async () => {
+    if (!circleId) return;
+    setInviteOpen(true);
+    setInviteLoading(true);
+    setInviteError(null);
+    try {
+      const invites = await circleService.getInvites(circleId);
+      const now = Date.now();
+      let invite = invites.find((item) => !item.expiresAt || new Date(item.expiresAt).getTime() > now);
+      if (!invite) {
+        invite = await circleService.createInvite(circleId, {
+          role: "member",
+          expiresInMinutes: 24 * 60,
+          maxUses: 10,
+          ownerHost: window.location.origin,
+        });
+      }
+      setActiveInvite(invite);
+    } catch (cause) {
+      setInviteError(cause instanceof Error ? cause.message : "Unable to load a Circle invite.");
+    } finally {
+      setInviteLoading(false);
+    }
+  };
+
+  const sendMessage = async () => {
     if (!message.trim()) return;
+    if (directMember) {
+      const content = message.trim();
+      setSendingDirect(true);
+      try {
+        const response = await chatService.sendDirect(directMember.did, content);
+        setDirectMessages((prev) => [...prev, {
+          id: response.message_id, sender: "Me", initials: "ME",
+          content, timestamp: "Now", isMe: true, read: false,
+        }]);
+        setMessage("");
+      } catch (cause) {
+        toast.error("Message was not sent", { description: cause instanceof Error ? cause.message : "The member may be offline." });
+      } finally {
+        setSendingDirect(false);
+      }
+      return;
+    }
     setMessages((prev) => [...prev, {
       id: `msg_${Date.now()}`, sender: "Me", initials: "MR",
       content: message.trim(), timestamp: "Now", isMe: true, read: false,
@@ -75,35 +129,121 @@ export function NW04CircleDetail() {
     setMessage("");
   };
 
-  // Online members (excluding the current user) become the call participants.
-  const callParticipants = useMemo(() => {
-    const others = members.filter((m: any) => m.name !== mockUser.name);
-    const online = others.filter((m: any) => m.status === "online");
-    return online.map((m: any) => ({ id: m.id, name: m.name }));
-  }, [members]);
+  const nodeIdsForMember = (member: any) => {
+    const explicit = [
+      member?.nodeHint, member?.node_hint, member?.device_id,
+      member?.deviceId, member?.peerId, member?.peer_id,
+    ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean);
+    if (explicit.length) return explicit;
+    const memberDid = String(member?.did || "").trim().toLowerCase();
+    if (!memberDid) return [];
+    return circles
+      .flatMap((candidateCircle) => Array.isArray(candidateCircle?.members) ? candidateCircle.members : [])
+      .filter((candidateMember: any) => String(candidateMember?.did || "").trim().toLowerCase() === memberDid)
+      .flatMap((candidateMember: any) => [candidateMember?.nodeHint, candidateMember?.node_hint])
+      .map((value: unknown) => String(value || "").trim().toLowerCase())
+      .filter(Boolean);
+  };
+
+  const peerForMember = (member: any) => {
+    const candidates = nodeIdsForMember(member);
+    const explicitNodeMatch = candidates.length
+      ? trustedPeers.find((peer) => candidates.includes(peer.peerId.trim().toLowerCase()))
+      : undefined;
+    if (explicitNodeMatch) return explicitNodeMatch;
+    const memberDid = String(member?.did || "").trim().toLowerCase();
+    return memberDid
+      ? trustedPeers.find((peer) => String(peer.did || "").trim().toLowerCase() === memberDid)
+      : undefined;
+  };
+  const callableMemberIds = useMemo(() => Array.from(new Set(
+    members
+      .map((member: any) => peerForMember(member))
+      .filter((peer): peer is NonNullable<typeof peer> => Boolean(peer?.callAvailable))
+      .map((peer) => peer.peerId)
+      .filter((id: string) => id !== currentDevice),
+  )) as string[], [members, trustedPeers, currentDevice]);
 
   // Files tab content = whatever was shared in the chat.
   const sharedFiles = useMemo(() => collectSharedFiles(messages), [messages]);
 
-  const startGroupCall = (mode: CallMode) =>
-    setActiveCall({ mode, title: circle.name, participants: callParticipants, group: true });
-
-  const startMemberCall = (mode: CallMode, member: { id: string; name: string }) =>
-    setActiveCall({ mode, title: member.name, participants: [{ id: member.id, name: member.name }], group: false });
-
-  const handleCallEnd = (record: CallRecord) => {
-    setCalls((prev) => [
-      {
-        id: `call_${Date.now()}`,
-        type: record.type,
-        participant: record.participant,
-        duration: record.duration,
-        timestamp: "Just now",
-      },
-      ...prev,
-    ]);
-    setActiveCall(null);
+  const ensureCallAvailable = () => {
+    if (call || groupCalling.group) {
+      toast.error("Guardian is busy", { description: "End or leave the current call before starting another." });
+      return false;
+    }
+    return true;
   };
+
+  const startMemberCall = async (media: MediaType[], member: any) => {
+    if (nodeIdsForMember(member).includes(String(currentDevice || "").trim().toLowerCase())) {
+      toast.info("This member is the current Guardian", { description: "Choose another Circle member to start a call." });
+      return;
+    }
+    const trustedPeer = peerForMember(member);
+    const target = trustedPeer?.peerId || "";
+    if (!trustedPeer) { toast.error("This Circle member is not linked to a trusted Guardian peer."); return; }
+    if (!trustedPeer.callAvailable) { toast.error("This trusted peer is not available for calls.", { description: trustedPeer.callUnavailableReason }); return; }
+    if (!ensureCallAvailable()) return;
+    setStartingCall(`${target}:${media.includes("video") ? "video" : "audio"}`);
+    try {
+      await startCall(target, media);
+    } catch (cause) {
+      toast.error("Call could not start", { description: cause instanceof Error ? cause.message : "The member may be offline or unavailable." });
+    } finally {
+      setStartingCall(null);
+    }
+  };
+
+  const startGroupCall = async (media: MediaType[]) => {
+    if (!callableMemberIds.length) { toast.error("No callable Circle members were found."); return; }
+    if (!ensureCallAvailable()) return;
+    const key = `group:${media.includes("video") ? "video" : "audio"}`;
+    setStartingCall(key);
+    try {
+      await groupCalling.createGroup(callableMemberIds, false, media, `${circle?.name || "Circle"} Circle call`);
+      toast.success(`Calling ${callableMemberIds.length} Circle member${callableMemberIds.length === 1 ? "" : "s"}`);
+    } catch (cause) {
+      toast.error("Circle call could not start", { description: cause instanceof Error ? cause.message : "One or more members may be unavailable." });
+    } finally {
+      setStartingCall(null);
+    }
+  };
+
+  const openDirectChat = (member: any) => {
+    if (!member.did) { toast.error("This member has no DID for secure messaging."); return; }
+    setDirectMember(member);
+    setSearchParams({ tab: "chat", peer: member.did });
+  };
+
+  useEffect(() => {
+    const requestedPeerDid = searchParams.get("peer");
+    if (!requestedPeerDid || directMember?.did === requestedPeerDid) return;
+    const requestedMember = members.find((member: any) => member.did === requestedPeerDid);
+    if (requestedMember) setDirectMember(requestedMember);
+  }, [searchParams, members, directMember?.did]);
+
+  useEffect(() => {
+    if (!directMember?.did) return;
+    let cancelled = false;
+    setDirectLoading(true);
+    chatService.history(directMember.did)
+      .then(({ messages: history }) => {
+        if (cancelled) return;
+        setDirectMessages(history.map((item) => ({
+          id: item.message_id,
+          sender: item.sender_did === directMember.did ? directMember.name : "Me",
+          initials: item.sender_did === directMember.did ? String(directMember.name || "M").slice(0, 2).toUpperCase() : "ME",
+          content: "Encrypted historical message",
+          timestamp: new Date(item.timestamp * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          isMe: item.sender_did !== directMember.did,
+          read: item.status === "read",
+        })));
+      })
+      .catch((cause) => { if (!cancelled) toast.error("Direct-message history unavailable", { description: cause instanceof Error ? cause.message : undefined }); })
+      .finally(() => { if (!cancelled) setDirectLoading(false); });
+    return () => { cancelled = true; };
+  }, [directMember?.did]);
 
   // Picked file → an attachment chat message (object URL, session-only).
   // Also mirrored into All Files so it syncs to the device storage.
@@ -130,7 +270,7 @@ export function NW04CircleDetail() {
         },
       } as any,
     ]);
-    const circleFolder = vault.folders.find((folder) => folder.circleId === circle.id);
+    const circleFolder = vault.folders.find((folder) => folder.circleId === circle?.id);
     void vault.uploadFile(file, circleFolder?.id).catch((cause) => {
       console.error("Vault attachment upload failed", cause);
     });
@@ -142,14 +282,54 @@ export function NW04CircleDetail() {
     { id: "files", label: "Files", icon: FolderOpen },
     { id: "members", label: "Members", icon: Users },
   ];
+  const visibleMessages = directMember ? directMessages : messages;
+  const inviteShareValue = activeInvite?.url || activeInvite?.qrPayload || (activeInvite?.token
+    ? `sgx-guardian://circle/join?owner_host=${encodeURIComponent(window.location.origin)}&token=${encodeURIComponent(activeInvite.token)}`
+    : "");
+  const inviteDisplayCode = String(activeInvite?.id || "")
+    .replace(/^urn:uuid:/, "")
+    .split("-")
+    .filter(Boolean)
+    .slice(0, 3);
+
+  const shareInvite = async () => {
+    if (!inviteShareValue) return;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `Join ${circle?.name || "my Circle"}`, text: "Join this SG-X Guardian Circle.", url: inviteShareValue });
+      } else {
+        await navigator.clipboard.writeText(inviteShareValue);
+        toast.success("Invite copied");
+      }
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === "AbortError") return;
+      toast.error("Invite could not be shared");
+    }
+  };
+
+  if (circlesLoading) {
+    return <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 size={20} className="animate-spin" /> Loading Circle members…</div>;
+  }
+  if (circlesError || !circle) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+        <AlertTriangle size={28} className="text-destructive" />
+        <p className="text-sm font-semibold">Circle could not be loaded</p>
+        <p className="max-w-sm text-xs text-muted-foreground">{circlesError?.message || "This Circle was not returned by the Guardian API."}</p>
+        <button onClick={() => void refetchCircles()} className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">Retry</button>
+      </div>
+    );
+  }
+
+  const onlineMemberCount = members.filter((member: any) => peerForMember(member)?.online).length;
 
   return (
     <>
       <div className="flex flex-col h-full">
         <PageHeader
           title={circle.name}
-          subtitle={`${circle.onlineCount} of ${circle.memberCount} online`}
-          onBack={() => navigate(`/network?circle=${encodeURIComponent(circle.id)}`, { replace: true })}
+          subtitle={`${onlineMemberCount} of ${members.length} online`}
+          onBack={() => navigate("/network", { replace: true })}
           right={
             <div className="flex items-center gap-1">
               <button
@@ -161,20 +341,22 @@ export function NW04CircleDetail() {
                 <Settings size={20} style={{ color: "var(--foreground)" }} />
               </button>
               <button
-                onClick={() => startGroupCall("voice")}
+                onClick={() => void startGroupCall(["audio"])}
+                disabled={!!startingCall || callableMemberIds.length === 0}
                 aria-label="Start voice call"
                 className="flex items-center justify-center rounded-full transition-opacity active:opacity-60"
                 style={{ width: "40px", height: "40px", background: "none", border: "none", cursor: "pointer" }}
               >
-                <Phone size={20} style={{ color: "var(--foreground)" }} />
+                {startingCall === "group:audio" ? <Loader2 size={20} className="animate-spin" /> : <Phone size={20} style={{ color: "var(--foreground)" }} />}
               </button>
               <button
-                onClick={() => startGroupCall("video")}
+                onClick={() => void startGroupCall(["audio", "video"])}
+                disabled={!!startingCall || callableMemberIds.length === 0}
                 aria-label="Start video call"
                 className="flex items-center justify-center rounded-full transition-opacity active:opacity-60"
                 style={{ width: "40px", height: "40px", background: "none", border: "none", cursor: "pointer" }}
               >
-                <Video size={20} style={{ color: "var(--foreground)" }} />
+                {startingCall === "group:video" ? <Loader2 size={20} className="animate-spin" /> : <Video size={20} style={{ color: "var(--foreground)" }} />}
               </button>
             </div>
           }
@@ -205,9 +387,23 @@ export function NW04CircleDetail() {
           {/* CHAT TAB */}
           {activeTab === "chat" && (
             <>
+              {directMember && (
+                <div className="flex items-center gap-3 border-b border-border bg-card px-4 py-3">
+                  <button
+                    onClick={() => { setDirectMember(null); setDirectMessages([]); setSearchParams({ tab: "members" }); }}
+                    className="grid h-9 w-9 place-items-center rounded-full hover:bg-muted"
+                    aria-label="Back to Circle members"
+                  ><ArrowLeft size={17} /></button>
+                  <div className="grid h-9 w-9 place-items-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
+                    {String(directMember.name || "M").split(" ").map((part: string) => part[0]).join("").slice(0, 2)}
+                  </div>
+                  <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{directMember.name}</p><p className="truncate text-[11px] text-muted-foreground">Private encrypted conversation · {directMember.did}</p></div>
+                </div>
+              )}
               <div className="flex-1 overflow-y-auto">
                 <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col gap-3 p-4 md:p-6">
-                {messages.length === 0 && (
+                {directLoading && <div className="flex flex-1 items-center justify-center gap-2 py-12 text-sm text-muted-foreground"><Loader2 size={18} className="animate-spin" /> Loading secure conversation…</div>}
+                {!directLoading && visibleMessages.length === 0 && (
                   <div className="flex flex-col items-center justify-center flex-1 py-12 gap-3 text-center">
                     <MessageSquare size={36} style={{ color: "var(--muted-foreground)" }} />
                     <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", color: "var(--foreground)" }}>No messages yet</p>
@@ -216,7 +412,7 @@ export function NW04CircleDetail() {
                     </p>
                   </div>
                 )}
-                {messages.map((msg) => (
+                {visibleMessages.map((msg) => (
                   <div key={msg.id} className={`flex flex-col ${msg.isMe ? "items-end" : "items-start"}`}>
                     {!msg.isMe && (
                       <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginBottom: "3px", marginLeft: "4px" }}>{msg.sender}</span>
@@ -255,12 +451,13 @@ export function NW04CircleDetail() {
               </div>
               <div className="px-3 md:px-6 py-3 border-t border-border" style={{ backgroundColor: "var(--card)", flexShrink: 0 }}>
                 <div className="mx-auto flex w-full max-w-2xl items-center gap-2">
-                <AttachmentMenu onPick={handleAttach} />
+                {!directMember && <AttachmentMenu onPick={handleAttach} />}
                 <input
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-                  placeholder="Secure message..."
+                  onKeyDown={(e) => { if (e.key === "Enter") void sendMessage(); }}
+                  placeholder={directMember ? `Message ${directMember.name}` : "Secure Circle message..."}
+                  disabled={sendingDirect}
                   className="flex-1 px-4 outline-none"
                   style={{
                     height: "44px", backgroundColor: "var(--input-background)", border: "1px solid var(--border)",
@@ -268,11 +465,12 @@ export function NW04CircleDetail() {
                   }}
                 />
                 <button
-                  onClick={sendMessage}
+                  onClick={() => void sendMessage()}
+                  disabled={sendingDirect || !message.trim()}
                   className="flex items-center justify-center rounded-full transition-opacity active:opacity-70"
                   style={{ width: "44px", height: "44px", backgroundColor: "var(--primary)", border: "none", cursor: "pointer", flexShrink: 0 }}
                 >
-                  <Send size={18} style={{ color: "var(--primary-foreground)" }} />
+                  {sendingDirect ? <Loader2 size={18} className="animate-spin" style={{ color: "var(--primary-foreground)" }} /> : <Send size={18} style={{ color: "var(--primary-foreground)" }} />}
                 </button>
                 </div>
               </div>
@@ -319,7 +517,7 @@ export function NW04CircleDetail() {
             <div className="flex-1 overflow-y-auto">
               <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col gap-4 p-4 md:p-6">
               <button
-                onClick={() => setInviteOpen(true)}
+                onClick={() => void openInviteSheet()}
                 className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80"
                 style={{ height: "48px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", border: "none", cursor: "pointer", borderRadius: "var(--radius)" }}
               >
@@ -327,36 +525,64 @@ export function NW04CircleDetail() {
               </button>
 
               <div className="rounded-lg border border-border overflow-hidden" style={{ backgroundColor: "var(--card)" }}>
-                {members.map((member, i) => (
-                  <button
-                    key={member.id}
-                    onClick={() => setMemberDetailOpen(member.id)}
+                {members.length === 0 && (
+                  <div className="p-8 text-center">
+                    <Users size={28} className="mx-auto mb-3 text-muted-foreground" />
+                    <p className="text-sm font-medium">No active members returned</p>
+                    <p className="mt-1 text-xs text-muted-foreground">This list comes directly from the Circle members API.</p>
+                  </div>
+                )}
+                {members.map((member, i) => {
+                  const trustedPeer = peerForMember(member);
+                  const target = trustedPeer?.peerId || "";
+                  const busy = !!startingCall;
+                  const isCurrentMember = nodeIdsForMember(member).includes(String(currentDevice || "").trim().toLowerCase());
+                  const callUnavailableReason = isCurrentMember
+                    ? "Current Guardian"
+                    : peersLoading
+                    ? "Checking trusted peers…"
+                    : peersError
+                      ? "Trusted peer registry is unavailable"
+                      : !trustedPeer
+                        ? "Member is not linked to a trusted Guardian peer"
+                        : trustedPeer.callUnavailableReason || (!trustedPeer.callAvailable ? "Peer is not available for calls" : "");
+                  const callsDisabled = busy || isCurrentMember || !target || target === currentDevice || !trustedPeer?.callAvailable;
+                  const memberName = String(member.name || member.nodeHint || member.did || "Guardian member");
+                  const memberKey = String(member.did || member.id || `${memberName}-${i}`);
+                  return (
+                  <div
+                    key={memberKey}
                     className="w-full flex items-center gap-3 px-4 py-3.5 text-left transition-opacity active:opacity-70"
-                    style={{ backgroundColor: "transparent", border: "none", borderBottom: i < members.length - 1 ? "1px solid var(--border)" : undefined, cursor: "pointer" }}
+                    style={{ backgroundColor: "transparent", borderBottom: i < members.length - 1 ? "1px solid var(--border)" : undefined }}
                   >
                     <div
                       className="rounded-full flex items-center justify-center flex-shrink-0"
                       style={{ width: "40px", height: "40px", backgroundColor: "color-mix(in srgb, var(--primary) 20%, transparent)", border: "1px solid color-mix(in srgb, var(--primary) 30%, transparent)" }}
                     >
-                      <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--primary)" }}>{member.name.split(" ").map((n) => n[0]).join("")}</span>
+                      <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--primary)" }}>{memberName.split(" ").map((n) => n[0]).join("").slice(0, 2)}</span>
                     </div>
-                    <div className="flex-1 min-w-0">
+                    <button className="flex-1 min-w-0 text-left" onClick={() => setMemberDetailOpen(memberKey)}>
                       <div className="flex items-center gap-2">
-                        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{member.name}</p>
+                        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{memberName}</p>
                         {(member as any).pending && <StatusBadge status="Pending" variant="warning" />}
                         {member.role.toLowerCase() === "owner" && <StatusBadge status="Admin" variant="info" />}
                       </div>
-                      <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{member.email}</p>
+                      <p className="truncate" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{member.email || member.did}</p>
                       <div className="flex items-center gap-1.5 mt-0.5">
-                        <div style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: member.status === "online" ? "var(--chart-2)" : "var(--muted-foreground)" }} />
+                        <div style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: trustedPeer?.online ? "var(--chart-2)" : "var(--muted-foreground)" }} />
                         <span style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--muted-foreground)" }}>
-                          {member.status === "online" ? "online" : `offline · ${member.lastSeen}`}
+                          {trustedPeer ? `${trustedPeer.online ? "online" : "offline"} · ${trustedPeer.peerId}` : callUnavailableReason}
                         </span>
                       </div>
+                    </button>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button aria-label={`Message ${memberName}`} title="Private message" disabled={!member.did} onClick={() => openDirectChat(member)} className="grid h-9 w-9 place-items-center rounded-full border hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35"><MessageSquare size={15} /></button>
+                      <button aria-label={`Voice call ${memberName}`} title={callsDisabled ? callUnavailableReason || "Call unavailable" : `Voice call ${target}`} disabled={callsDisabled} onClick={() => void startMemberCall(["audio"], member)} className="grid h-9 w-9 place-items-center rounded-full border hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === `${target}:audio` ? <Loader2 size={15} className="animate-spin" /> : <Phone size={15} />}</button>
+                      <button aria-label={`Video call ${memberName}`} title={callsDisabled ? callUnavailableReason || "Call unavailable" : `Video call ${target}`} disabled={callsDisabled} onClick={() => void startMemberCall(["audio", "video"], member)} className="grid h-9 w-9 place-items-center rounded-full border hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === `${target}:video` ? <Loader2 size={15} className="animate-spin" /> : <Video size={15} />}</button>
+                      <button aria-label={`View ${memberName}`} onClick={() => setMemberDetailOpen(memberKey)} className="grid h-9 w-8 place-items-center rounded-full hover:bg-muted"><ChevronRight size={16} style={{ color: "var(--muted-foreground)" }} /></button>
                     </div>
-                    <ChevronRight size={16} style={{ color: "var(--muted-foreground)" }} />
-                  </button>
-                ))}
+                  </div>
+                );})}
               </div>
               </div>
             </div>
@@ -386,6 +612,18 @@ export function NW04CircleDetail() {
               ))}
             </div>
             <div className="flex-1 overflow-y-auto p-5">
+              {inviteLoading && (
+                <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground"><Loader2 size={18} className="animate-spin" /> Preparing secure invite…</div>
+              )}
+              {!inviteLoading && inviteError && (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+                  <p className="font-semibold">Invite unavailable</p>
+                  <p className="mt-1 text-xs">{inviteError}</p>
+                  <button onClick={() => void openInviteSheet()} className="mt-3 rounded-md border border-destructive/30 px-3 py-1.5 text-xs font-semibold">Retry</button>
+                </div>
+              )}
+              {!inviteLoading && !inviteError && activeInvite && (
+              <>
               {sheetTab === "link" && (
                 <div className="flex flex-col gap-4">
                   <div className="rounded-lg border border-border p-4" style={{ backgroundColor: "var(--background)" }}>
@@ -397,7 +635,7 @@ export function NW04CircleDetail() {
                   <div>
                     <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginBottom: "12px" }}>Invite Code</p>
                     <div className="flex items-center justify-center gap-2 flex-wrap mb-3">
-                      {circle.inviteCode.split("-").map((segment, i) => (
+                      {inviteDisplayCode.map((segment, i) => (
                         <div
                           key={i}
                           className="flex items-center justify-center rounded-lg"
@@ -416,7 +654,7 @@ export function NW04CircleDetail() {
                       ))}
                     </div>
                     <button
-                      onClick={() => handleCopy(circle.inviteCode, "code")}
+                      onClick={() => handleCopy(inviteShareValue, "code")}
                       className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80"
                       style={{ height: "44px", backgroundColor: copiedField === "code" ? "color-mix(in srgb, var(--chart-2) 15%, var(--secondary))" : "var(--secondary)", color: copiedField === "code" ? "var(--chart-2)" : "var(--secondary-foreground)", border: "1px solid var(--border)", cursor: "pointer", borderRadius: "var(--radius)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)" }}
                     >
@@ -428,13 +666,13 @@ export function NW04CircleDetail() {
                   <div>
                     <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginBottom: "6px" }}>Shareable Link</p>
                     <div className="flex items-center gap-2 rounded-lg border border-border px-4 py-3" style={{ backgroundColor: "var(--card)" }}>
-                      <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px", color: "var(--muted-foreground)", flex: 1, wordBreak: "break-all" }}>{circle.inviteLink}</span>
-                      <button onClick={() => handleCopy(circle.inviteLink, "link")} style={{ background: "none", border: "none", cursor: "pointer", flexShrink: 0 }}>
+                      <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px", color: "var(--muted-foreground)", flex: 1, wordBreak: "break-all" }}>{inviteShareValue}</span>
+                      <button onClick={() => handleCopy(inviteShareValue, "link")} style={{ background: "none", border: "none", cursor: "pointer", flexShrink: 0 }}>
                         {copiedField === "link" ? <Check size={16} style={{ color: "var(--chart-2)" }} /> : <Copy size={16} style={{ color: "var(--muted-foreground)" }} />}
                       </button>
                     </div>
                   </div>
-                  <button className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80" style={{ height: "48px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", border: "none", cursor: "pointer", borderRadius: "var(--radius)" }}>
+                  <button onClick={() => void shareInvite()} className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80" style={{ height: "48px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", border: "none", cursor: "pointer", borderRadius: "var(--radius)" }}>
                     <Link size={16} /> Share Invite
                   </button>
                   <div className="h-px" style={{ backgroundColor: "var(--border)" }} />
@@ -460,8 +698,8 @@ export function NW04CircleDetail() {
                     </svg>
                   </div>
                   <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", textAlign: "center" }}>Share this QR code for quick access</p>
-                  <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-sm)", color: "var(--foreground)", letterSpacing: "0.12em" }}>{circle.inviteCode}</p>
-                  <button className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80" style={{ height: "48px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", border: "none", cursor: "pointer", borderRadius: "var(--radius)" }}>
+                  <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-sm)", color: "var(--foreground)", letterSpacing: "0.12em" }}>{inviteDisplayCode.join("-")}</p>
+                  <button onClick={() => void shareInvite()} className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80" style={{ height: "48px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", border: "none", cursor: "pointer", borderRadius: "var(--radius)" }}>
                     <QrCode size={16} /> Share QR Code
                   </button>
                 </div>
@@ -480,6 +718,8 @@ export function NW04CircleDetail() {
                   </div>
                   <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", textAlign: "center", marginTop: "24px" }}>Search results will appear here</p>
                 </div>
+              )}
+              </>
               )}
             </div>
           </div>
@@ -519,23 +759,28 @@ export function NW04CircleDetail() {
               ))}
               <div className="flex gap-2 mt-1">
                 <button
-                  onClick={() => { startMemberCall("voice", { id: selectedMember.id, name: selectedMember.name }); setMemberDetailOpen(null); }}
+                  onClick={() => { openDirectChat(selectedMember); setMemberDetailOpen(null); }}
+                  className="flex-1 flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80"
+                  style={{ height: "48px", backgroundColor: "var(--secondary)", color: "var(--foreground)", border: "1px solid var(--border)", cursor: "pointer", borderRadius: "var(--radius)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)" }}
+                ><MessageSquare size={16} /> Chat</button>
+                <button
+                  onClick={() => { void startMemberCall(["audio"], selectedMember); setMemberDetailOpen(null); }}
                   className="flex-1 flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80"
                   style={{ height: "48px", backgroundColor: "color-mix(in srgb, var(--primary) 15%, transparent)", color: "var(--primary)", border: "1.5px solid color-mix(in srgb, var(--primary) 30%, transparent)", cursor: "pointer", borderRadius: "var(--radius)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)" }}
                 >
-                  <Phone size={16} /> Voice Call
+                  <Phone size={16} /> Voice
                 </button>
                 <button
-                  onClick={() => { startMemberCall("video", { id: selectedMember.id, name: selectedMember.name }); setMemberDetailOpen(null); }}
+                  onClick={() => { void startMemberCall(["audio", "video"], selectedMember); setMemberDetailOpen(null); }}
                   className="flex-1 flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80"
                   style={{ height: "48px", backgroundColor: "color-mix(in srgb, var(--primary) 15%, transparent)", color: "var(--primary)", border: "1.5px solid color-mix(in srgb, var(--primary) 30%, transparent)", cursor: "pointer", borderRadius: "var(--radius)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)" }}
                 >
-                  <Video size={16} /> Video Call
+                  <Video size={16} /> Video
                 </button>
               </div>
               {selectedMember.role.toLowerCase() !== "owner" && (
                 <button
-                  onClick={() => { setMemberDetailOpen(null); setRemoveDialogOpen(selectedMember.id); }}
+                  onClick={() => { setMemberDetailOpen(null); setRemoveDialogOpen(String(selectedMember.did || selectedMember.id)); }}
                   className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80 mt-2"
                   style={{ height: "48px", backgroundColor: "color-mix(in srgb, var(--destructive) 12%, transparent)", color: "var(--destructive)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", border: "1px solid color-mix(in srgb, var(--destructive) 30%, transparent)", cursor: "pointer", borderRadius: "var(--radius)" }}
                 >
@@ -582,16 +827,6 @@ export function NW04CircleDetail() {
         </Dialog.Portal>
       </Dialog.Root>
 
-      {/* Active call overlay */}
-      {activeCall && (
-        <CallScreen
-          mode={activeCall.mode}
-          title={activeCall.title}
-          participants={activeCall.participants}
-          group={activeCall.group}
-          onEnd={handleCallEnd}
-        />
-      )}
     </>
   );
 }

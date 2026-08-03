@@ -12,21 +12,10 @@ import {
   Copy,
   Check,
   ChevronRight,
-  Phone,
-  Video,
-  Users,
 } from "lucide-react";
 import { usePeers } from "../../hooks/useApiData";
 import { peerService, type Peer } from "../../services/peerService";
 import { toast } from "sonner";
-import { useCall } from "../../../features/calls/CallContext";
-import { useGroupCall } from "../../../features/calls/GroupCallContext";
-import type { MediaType } from "../../../features/calls/call.types";
-import { Button } from "../../components/ui/button";
-import { Input } from "../../components/ui/input";
-import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
-} from "../../components/ui/dialog";
 
 type FilterTab = "all" | "verified" | "pending" | "failed";
 
@@ -72,16 +61,10 @@ function StatusBadge({ status }: { status: Peer["status"] }) {
 function PeerCard({
   peer,
   onAttest,
-  onCall,
-  selected,
-  onSelect,
   attesting,
 }: {
   peer: Peer;
   onAttest: (id: string) => void;
-  onCall: (peerId: string, media: MediaType[]) => void;
-  selected: boolean;
-  onSelect: (peerId: string) => void;
   attesting: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -214,31 +197,6 @@ function PeerCard({
 
           {/* Actions */}
           <div className="flex gap-2">
-            {peer.callAvailable && (
-              <button
-                onClick={(event) => { event.stopPropagation(); onSelect(peer.peerId); }}
-                className="flex items-center justify-center rounded-lg px-3"
-                style={{ height: 40, background: selected ? "var(--primary)" : "var(--secondary)", color: selected ? "var(--primary-foreground)" : "var(--foreground)", border: "1px solid var(--border)", cursor: "pointer" }}
-              >{selected ? "Selected" : "Add to group"}</button>
-            )}
-            {peer.callAvailable && <>
-              <button
-                onClick={(event) => { event.stopPropagation(); onCall(peer.peerId, ["audio"]); }}
-                aria-label={`Voice call ${peer.peerId}`}
-                className="flex items-center justify-center rounded-lg"
-                disabled={!peer.callAvailable}
-                title={peer.callUnavailableReason}
-                style={{ width: 40, height: 40, background: "var(--secondary)", border: "1px solid var(--border)", color: "var(--foreground)", cursor: peer.callAvailable ? "pointer" : "not-allowed", opacity: peer.callAvailable ? 1 : .45 }}
-              ><Phone size={15} /></button>
-              <button
-                onClick={(event) => { event.stopPropagation(); onCall(peer.peerId, ["audio", "video"]); }}
-                aria-label={`Video call ${peer.peerId}`}
-                className="flex items-center justify-center rounded-lg"
-                disabled={!peer.callAvailable}
-                title={peer.callUnavailableReason}
-                style={{ width: 40, height: 40, background: "var(--secondary)", border: "1px solid var(--border)", color: "var(--foreground)", cursor: peer.callAvailable ? "pointer" : "not-allowed", opacity: peer.callAvailable ? 1 : .45 }}
-              ><Video size={15} /></button>
-            </>}
             <button
               onClick={copyPeerId}
               className="flex-1 flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80"
@@ -297,61 +255,6 @@ export function NW03PeersList() {
   const [filter, setFilter] = useState<FilterTab>("all");
   const [attestingId, setAttestingId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const { startCall, call } = useCall();
-  const groupCalling = useGroupCall();
-  const [selectedPeers, setSelectedPeers] = useState<string[]>([]);
-  const [groupDialogOpen, setGroupDialogOpen] = useState(false);
-  const [groupTitle, setGroupTitle] = useState("Guardian group call");
-  const [groupMedia, setGroupMedia] = useState<MediaType[]>(["audio", "video"]);
-  const [startingGroup, setStartingGroup] = useState(false);
-
-  const handleCall = async (peerId: string, media: MediaType[]) => {
-    if (call) {
-      toast.error("Guardian is busy", { description: "End the current call before starting another." });
-      return;
-    }
-    if (groupCalling.group) {
-      toast.error("A group session is still open", {
-        description: "Rejoin it or leave/end that session before starting a new call.",
-      });
-      return;
-    }
-    try {
-      await startCall(peerId, media);
-    } catch (cause) {
-      toast.error("Call could not start", {
-        description: cause instanceof Error ? cause.message : "The remote Guardian may be offline or busy.",
-      });
-    }
-  };
-
-  const toggleGroupPeer = (peerId: string) => {
-    setSelectedPeers((current) => current.includes(peerId)
-      ? current.filter((item) => item !== peerId)
-      : [...current, peerId]);
-  };
-
-  const startGroupCall = async (media: MediaType[]) => {
-    if (!selectedPeers.length) return;
-    if (call || groupCalling.group) {
-      toast.error("Guardian is busy", {
-        description: "End, leave, or dismiss the current call session first.",
-      });
-      return;
-    }
-    setStartingGroup(true);
-    try {
-      await groupCalling.createGroup(selectedPeers, false, media, groupTitle.trim() || "Guardian group call");
-      setSelectedPeers([]);
-      setGroupDialogOpen(false);
-    } catch (cause) {
-      toast.error("Group call could not start", {
-        description: cause instanceof Error ? cause.message : "One or more Guardians may be unavailable.",
-      });
-    } finally {
-      setStartingGroup(false);
-    }
-  };
 
   const peers: Peer[] = useMemo(() => {
     if (!peersData) return [];
@@ -369,10 +272,6 @@ export function NW03PeersList() {
     pending: peers.filter((p) => p.status === "pending").length,
     failed: peers.filter((p) => p.status === "failed").length,
   }), [peers]);
-  const callablePeers = useMemo(
-    () => peers.filter((peer) => peer.callAvailable && peer.online),
-    [peers],
-  );
 
   const handleAttest = async (peerId: string) => {
     setAttestingId(peerId);
@@ -486,21 +385,6 @@ export function NW03PeersList() {
           </div>
         </div>
 
-        <div className="px-4 pt-4">
-          <Button
-            className="h-11 w-full gap-2"
-            disabled={callablePeers.length === 0 || !!call || !!groupCalling.group}
-            onClick={() => setGroupDialogOpen(true)}
-          >
-            <Users size={17} /> Create group call
-          </Button>
-          {(call || groupCalling.group) && (
-            <p className="mt-2 text-center text-xs text-muted-foreground">
-              Finish or leave the current call before creating another.
-            </p>
-          )}
-        </div>
-
         {/* Filter tabs */}
         <div className="px-4 py-3">
           <div className="flex p-1 rounded-lg" style={{ backgroundColor: "var(--muted)" }}>
@@ -573,9 +457,6 @@ export function NW03PeersList() {
                 key={peer.id}
                 peer={peer}
                 onAttest={handleAttest}
-                onCall={(peerId, media) => void handleCall(peerId, media)}
-                selected={selectedPeers.includes(peer.peerId)}
-                onSelect={toggleGroupPeer}
                 attesting={attestingId === peer.id}
               />
             ))
@@ -691,104 +572,6 @@ export function NW03PeersList() {
         </div>
         </div>
       </div>
-
-      <Dialog open={groupDialogOpen} onOpenChange={(open) => { if (!startingGroup) setGroupDialogOpen(open); }}>
-        <DialogContent className="max-h-[85vh] overflow-hidden sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle>Create a group call</DialogTitle>
-            <DialogDescription>
-              Choose trusted online members and the media they may use. You will be the host and can control participant microphones, cameras, and membership.
-            </DialogDescription>
-          </DialogHeader>
-
-          <label className="space-y-1.5 text-xs font-medium">
-            Call name
-            <Input value={groupTitle} maxLength={80} onChange={(event) => setGroupTitle(event.target.value)} placeholder="Guardian group call" />
-          </label>
-
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              variant={groupMedia.includes("audio") ? "default" : "outline"}
-              className="flex-1 gap-2"
-              aria-pressed={groupMedia.includes("audio")}
-              onClick={() => setGroupMedia((current) =>
-                current.includes("audio") ? current.filter((item) => item !== "audio") : [...current, "audio"]
-              )}
-            >
-              <Phone size={15} /> Voice
-            </Button>
-            <Button
-              type="button"
-              variant={groupMedia.includes("video") ? "default" : "outline"}
-              className="flex-1 gap-2"
-              aria-pressed={groupMedia.includes("video")}
-              onClick={() => setGroupMedia((current) =>
-                current.includes("video") ? current.filter((item) => item !== "video") : [...current, "video"]
-              )}
-            >
-              <Video size={15} /> Video
-            </Button>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium">Invite members</p>
-              <p className="text-xs text-muted-foreground">{selectedPeers.length} of {callablePeers.length} selected</p>
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => setSelectedPeers(
-                selectedPeers.length === callablePeers.length ? [] : callablePeers.map((peer) => peer.peerId)
-              )}
-            >
-              {selectedPeers.length === callablePeers.length ? "Clear all" : "Select all"}
-            </Button>
-          </div>
-
-          <div className="max-h-64 space-y-2 overflow-y-auto rounded-lg border border-border p-2">
-            {callablePeers.map((peer) => {
-              const selected = selectedPeers.includes(peer.peerId);
-              return (
-                <button
-                  type="button"
-                  key={peer.peerId}
-                  aria-pressed={selected}
-                  onClick={() => toggleGroupPeer(peer.peerId)}
-                  className="flex w-full items-center gap-3 rounded-md p-3 text-left hover:bg-muted/60"
-                  style={{ background: selected ? "color-mix(in srgb, var(--primary) 12%, transparent)" : undefined }}
-                >
-                  <span
-                    className="grid h-5 w-5 shrink-0 place-items-center rounded border"
-                    style={{ borderColor: selected ? "var(--primary)" : "var(--border)", background: selected ? "var(--primary)" : "transparent", color: "var(--primary-foreground)" }}
-                  >
-                    {selected && <Check size={13} />}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <strong className="block truncate text-sm">{peer.peerId}</strong>
-                    <span className="block truncate text-xs text-muted-foreground">{peer.ip} · Online and verified</span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" disabled={startingGroup} onClick={() => setGroupDialogOpen(false)}>Cancel</Button>
-            <Button
-              type="button"
-              disabled={startingGroup || selectedPeers.length === 0 || groupMedia.length === 0}
-              onClick={() => void startGroupCall(groupMedia)}
-              className="gap-2"
-            >
-              {startingGroup ? <Loader2 size={15} className="animate-spin" /> : <Users size={15} />}
-              {startingGroup ? "Starting secure call…" : `Call ${selectedPeers.length} member${selectedPeers.length === 1 ? "" : "s"}`}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <style>{`
         @keyframes spin {

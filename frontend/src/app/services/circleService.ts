@@ -116,6 +116,7 @@ function normalizeMember(value: any): CircleMember {
     name: String(value?.name || nodeHint || did.split(':').pop() || 'Guardian member'),
     did,
     role: String(value?.role || 'member').toLowerCase() as CircleRole,
+    nodeHint: nodeHint ? String(nodeHint) : undefined,
     status: lifecycle,
     joinedAt: value?.joinDate || value?.join_date || value?.joinedAt,
   };

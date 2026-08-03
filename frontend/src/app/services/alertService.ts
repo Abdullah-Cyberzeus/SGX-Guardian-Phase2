@@ -2,13 +2,18 @@ import api from './api';
 
 export interface Alert {
   id: string;
-  severity: 'critical' | 'warning' | 'info';
-  status: 'unread' | 'read' | 'dismissed';
+  severity: 'HIGH' | 'MEDIUM' | 'LOW';
+  status: 'Active' | 'Acknowledged' | 'Blocked';
   title: string;
-  message: string;
-  source: string;
+  description: string;
+  eventType: string;
   timestamp: string;
-  metadata?: Record<string, unknown>;
+  date: string;
+  device: string;
+  deviceIp: string;
+  os: string;
+  aiSummary: string;
+  archived: boolean;
 }
 
 export interface AlertsResponse {
@@ -39,10 +44,52 @@ export interface AlertSummary {
   timestamp: string;
 }
 
+interface ThreatAlertApi {
+  alert_id: string;
+  timestamp: string;
+  src_ip: string;
+  dst_ip: string;
+  protocol: string;
+  signature: string;
+  category: string;
+  severity: string;
+  event_type: string;
+  blocked?: boolean;
+}
+
+function normalizeThreatAlert(alert: ThreatAlertApi): Alert {
+  const severity = alert.severity === 'critical' || alert.severity === 'high'
+    ? 'HIGH'
+    : alert.severity === 'medium' ? 'MEDIUM' : 'LOW';
+  const parsedTimestamp = new Date(alert.timestamp);
+  const validTimestamp = !Number.isNaN(parsedTimestamp.getTime());
+  return {
+    id: alert.alert_id,
+    severity,
+    status: alert.blocked ? 'Blocked' : 'Active',
+    title: alert.signature || 'Network threat detected',
+    description: `${alert.category || 'Network'} event from ${alert.src_ip || 'unknown source'} to ${alert.dst_ip || 'unknown destination'}`,
+    eventType: alert.event_type || alert.category || 'Threat alert',
+    timestamp: validTimestamp ? parsedTimestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Unknown',
+    date: validTimestamp ? parsedTimestamp.toLocaleDateString() : '',
+    device: alert.src_ip || 'Unknown source',
+    deviceIp: alert.src_ip || '',
+    os: alert.protocol || 'Unknown protocol',
+    aiSummary: `Suricata detected ${alert.signature || 'suspicious traffic'} targeting ${alert.dst_ip || 'an unknown destination'}.`,
+    archived: false,
+  };
+}
+
 export const alertService = {
-  // GET /api/alerts
-  getAll: (filters?: AlertFilters) =>
-    api.get<AlertsResponse>('/alerts', filters as Record<string, string | number>),
+  // The backend's implemented alert source is Suricata threat alerts.
+  async getAll(filters?: AlertFilters): Promise<AlertsResponse> {
+    const raw = await api.get<ThreatAlertApi[]>('/threat/alerts', {
+      ...(filters?.severity ? { severity: filters.severity.toLowerCase() } : {}),
+      ...(filters?.limit ? { limit: filters.limit } : {}),
+    });
+    const alerts = raw.map(normalizeThreatAlert);
+    return { alerts, total: alerts.length, unread: alerts.length, timestamp: new Date().toISOString() };
+  },
 
   // GET /api/alerts/:id
   getById: (id: string) => api.get<Alert>(`/alerts/${id}`),

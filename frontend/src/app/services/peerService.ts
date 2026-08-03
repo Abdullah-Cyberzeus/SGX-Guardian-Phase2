@@ -13,6 +13,7 @@ function formatTimeAgo(isoDate: string): string {
 export interface Peer {
   id: string;
   peerId: string;
+  did?: string;
   ip: string;
   port: number;
   status: 'verified' | 'pending' | 'failed';
@@ -34,6 +35,7 @@ export interface AttestResponse {
 interface PeersResponse {
   peers: Array<{
     peerId: string;
+    did?: string;
     ip: string;
     status: string;
     lastSeen: string;
@@ -52,6 +54,7 @@ export const peerService = {
     return (res.peers || []).map((p, i) => ({
       id: `peer_${String(i + 1).padStart(3, '0')}`,
       peerId: p.peerId,
+      did: p.did,
       ip: p.ip,
       port: 0,
       status: (p.status === 'verified' || p.status === 'trusted' || p.status === 'success'

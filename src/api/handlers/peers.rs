@@ -7,6 +7,8 @@ use std::sync::Arc;
 pub struct Peer {
     #[serde(rename = "peerId")]
     pub peer_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub did: Option<String>,
     pub ip: String,
     pub status: String,
     #[serde(rename = "lastSeen")]
@@ -69,7 +71,39 @@ pub async fn list(State(s): State<Arc<AppState>>) -> Result<Json<PeersResponse>,
             .await
             .unwrap_or_else(|| "[]".into()),
     };
-    let raw: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap_or_default();
+    let mut raw: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap_or_default();
+    // The merged registry may omit DID metadata while the node-specific
+    // registry retains it. Enrich matching trusted entries so API consumers
+    // can safely correlate Circle membership DIDs with call peer IDs.
+    let per_node_filename = format!("trusted_peers_{}.json", s.node_id);
+    let per_node_text = match safe_read(&per_node_filename, &s.log_dir_primary).await {
+        Some(text) => text,
+        None => safe_read(&per_node_filename, &s.log_dir_fallback)
+            .await
+            .unwrap_or_else(|| "[]".into()),
+    };
+    let per_node_raw: Vec<serde_json::Value> =
+        serde_json::from_str(&per_node_text).unwrap_or_default();
+    for peer in &mut raw {
+        if peer.get("did").and_then(|value| value.as_str()).is_some() {
+            continue;
+        }
+        let peer_id = peer.get("peer_id").and_then(|value| value.as_str());
+        let Some(peer_id) = peer_id else { continue };
+        let did = per_node_raw.iter().find_map(|candidate| {
+            let same_peer = candidate
+                .get("peer_id")
+                .and_then(|value| value.as_str())
+                .is_some_and(|value| value == peer_id);
+            same_peer
+                .then(|| candidate.get("did").and_then(|value| value.as_str()))
+                .flatten()
+                .filter(|value| !value.trim().is_empty())
+        });
+        if let Some(did) = did {
+            peer["did"] = serde_json::Value::String(did.to_string());
+        }
+    }
     let candidates: Vec<(serde_json::Value, String)> = raw
         .into_iter()
         .filter_map(|v| {
@@ -87,6 +121,12 @@ pub async fn list(State(s): State<Arc<AppState>>) -> Result<Json<PeersResponse>,
         .collect();
     let peers: Vec<Peer> =
         futures_util::future::join_all(candidates.into_iter().map(|(v, peer_id)| async move {
+            let did = v
+                .get("did")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
             let ip = v
                 .get("ip")
                 .and_then(|x| x.as_str())
@@ -121,6 +161,7 @@ pub async fn list(State(s): State<Arc<AppState>>) -> Result<Json<PeersResponse>,
             };
             Peer {
                 peer_id,
+                did,
                 ip,
                 status,
                 last_seen: v
