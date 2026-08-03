@@ -1,0 +1,40 @@
+{
+  "circle_id": "guardian-circle-alpha",
+  "generated_at": "2026-07-27T15:30:00Z",
+  "fixture": true,
+  "nodes": [
+    {
+      "node_id": "nodeA",
+      "hostname": "guardian-node-a",
+      "ip": "192.168.1.101",
+      "overlay_ip": "192.168.100.1",
+      "presence_status": "online",
+      "last_announcement_at": "2026-07-27T15:29:51Z",
+      "last_probe_succeeded_at": "2026-07-27T15:29:54Z",
+      "roles": ["lighthouse", "relay"],
+      "primary_lighthouse": true
+    },
+    {
+      "node_id": "nodeB",
+      "hostname": "guardian-node-b",
+      "ip": "192.168.1.102",
+      "overlay_ip": "192.168.100.2",
+      "presence_status": "online",
+      "last_announcement_at": "2026-07-27T15:29:47Z",
+      "last_probe_succeeded_at": "2026-07-27T15:29:53Z",
+      "roles": ["lighthouse"],
+      "primary_lighthouse": false
+    },
+    {
+      "node_id": "nodeC",
+      "hostname": "guardian-node-c",
+      "ip": "192.168.1.103",
+      "overlay_ip": "192.168.100.3",
+      "presence_status": "offline",
+      "last_announcement_at": "2026-07-27T15:26:12Z",
+      "last_probe_succeeded_at": "2026-07-27T15:26:15Z",
+      "roles": ["relay"],
+      "primary_lighthouse": false
+    }
+  ]
+}
