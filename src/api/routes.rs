@@ -273,11 +273,17 @@ pub fn circle_router() -> Router<Arc<AppState>> {
         )
         .route(
             "/api/v1/circles/{id}",
-            get(handlers::circle::detail).patch(handlers::circle::edit),
+            get(handlers::circle::detail)
+                .patch(handlers::circle::edit)
+                .delete(handlers::circle::delete),
         )
         .route(
             "/api/v1/circles/{id}/archive",
             post(handlers::circle::archive),
+        )
+        .route(
+            "/api/v1/circles/{id}/unarchive",
+            post(handlers::circle::unarchive),
         )
         .route(
             "/api/v1/circles/{id}/members",

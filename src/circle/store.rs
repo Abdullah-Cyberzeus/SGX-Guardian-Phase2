@@ -139,6 +139,51 @@ pub fn archive_circle(node_id: &str, circle_id: &str) -> Result<Circle, CircleEr
     Ok(archived)
 }
 
+pub fn unarchive_circle(node_id: &str, circle_id: &str) -> Result<Circle, CircleError> {
+    let _guard = CIRCLE_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    let mut registry = load_or_seed_unlocked(node_id)?;
+    let circle = registry
+        .circles
+        .iter_mut()
+        .find(|circle| circle.circle_id == circle_id)
+        .ok_or_else(|| CircleError::NotFound(circle_id.to_string()))?;
+    if !circle.is_archived() {
+        return Err(CircleError::Conflict(format!(
+            "circle {} is not archived",
+            circle_id
+        )));
+    }
+    circle.status = CircleStatus::Active;
+    circle.updated_at = Utc::now().to_rfc3339();
+    let unarchived = circle.clone();
+    registry.sequence += 1;
+    save_registry(node_id, &mut registry)?;
+    Ok(unarchived)
+}
+
+pub fn delete_circle(node_id: &str, circle_id: &str) -> Result<Circle, CircleError> {
+    let _guard = CIRCLE_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    let mut registry = load_or_seed_unlocked(node_id)?;
+    let position = registry
+        .circles
+        .iter()
+        .position(|circle| circle.circle_id == circle_id)
+        .ok_or_else(|| CircleError::NotFound(circle_id.to_string()))?;
+    if registry.circles[position].is_mesh() {
+        return Err(CircleError::Conflict(
+            "Mesh Circle cannot be deleted".to_string(),
+        ));
+    }
+    let removed = registry.circles.remove(position);
+    registry.sequence += 1;
+    save_registry(node_id, &mut registry)?;
+    Ok(removed)
+}
+
 pub fn upsert_circle(node_id: &str, circle: Circle) -> Result<Circle, CircleError> {
     let _guard = CIRCLE_WRITE_LOCK
         .lock()

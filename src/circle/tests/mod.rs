@@ -1,4 +1,5 @@
 use crate::circle::invite::{self, InviteToken};
+use crate::circle::members;
 use crate::circle::persistence::CIRCLE_BASE_ENV;
 use crate::circle::store;
 use crate::did::doc_persistence::{
@@ -228,6 +229,49 @@ fn registry_roundtrip_and_tamper_detection() {
         .find(|circle| circle.circle_id == "circle-ops")
         .expect("circle in registry");
     assert!(circle.is_archived());
+
+    let mesh_unarchive_err = store::unarchive_circle("nodeA", issue::DEFAULT_CIRCLE_ID)
+        .expect_err("mesh is not archived");
+    assert!(matches!(
+        mesh_unarchive_err,
+        crate::circle::CircleError::Conflict(_)
+    ));
+
+    let unarchived = store::unarchive_circle("nodeA", "circle-ops").expect("unarchive circle");
+    assert!(matches!(
+        unarchived.status,
+        crate::circle::CircleStatus::Active
+    ));
+
+    let registry = store::load_or_seed("nodeA").expect("reload registry after unarchive");
+    let circle = registry
+        .circles
+        .iter()
+        .find(|circle| circle.circle_id == "circle-ops")
+        .expect("circle in registry");
+    assert!(!circle.is_archived());
+
+    let member_vc =
+        members::add_member("nodeA", "circle-ops", &owner.did, CredentialRole::Owner, 30)
+            .expect("add member before delete")
+            .vc;
+
+    let mesh_delete_err = members::delete_circle("nodeA", issue::DEFAULT_CIRCLE_ID, "test")
+        .expect_err("mesh cannot be deleted");
+    assert!(matches!(
+        mesh_delete_err,
+        crate::circle::CircleError::Conflict(_)
+    ));
+
+    let revoked_ids =
+        members::delete_circle("nodeA", "circle-ops", "test cleanup").expect("delete circle");
+    assert!(revoked_ids.contains(&member_vc.id));
+
+    let registry = store::load_or_seed("nodeA").expect("reload registry after delete");
+    assert!(!registry
+        .circles
+        .iter()
+        .any(|circle| circle.circle_id == "circle-ops"));
 
     let path = crate::circle::persistence::registry_path();
     let mut tampered: crate::circle::CircleRegistry =

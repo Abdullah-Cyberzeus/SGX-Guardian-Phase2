@@ -286,6 +286,8 @@ Transport notes:
 | GET | `/circles/{id}` | Return one circle detail and membership summary |
 | PATCH | `/circles/{id}` | Edit one circle's metadata or settings |
 | POST | `/circles/{id}/archive` | Archive an existing circle |
+| POST | `/circles/{id}/unarchive` | Unarchive an archived circle and return it to active state |
+| DELETE | `/circles/{id}` | Delete a non-mesh circle and revoke every membership VC issued for that circle |
 | GET | `/circles/{id}/members` | List members of a circle |
 | POST | `/circles/{id}/members` | Add a member to a circle |
 | PATCH | `/circles/{id}/members/{did}` | Change one member's circle role |

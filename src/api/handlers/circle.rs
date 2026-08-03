@@ -55,6 +55,14 @@ pub struct CircleMutationResponse {
 }
 
 #[derive(Serialize)]
+pub struct CircleDeleteResponse {
+    pub status: String,
+    pub message: String,
+    pub circle_id: String,
+    pub revoked_vc_ids: Vec<String>,
+}
+
+#[derive(Serialize)]
 pub struct MemberListResponse {
     pub status: String,
     pub count: usize,
@@ -308,6 +316,51 @@ pub async fn archive(
         status: "success".to_string(),
         message: "Circle archived".to_string(),
         circle,
+    }))
+}
+
+pub async fn unarchive(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<CircleMutationResponse>, ApiError> {
+    ensure_circle_owner_access(&state, &id, VcAdminAction::Issue)?;
+    let circle = store::unarchive_circle(&state.node_id, &id).map_err(map_circle_error)?;
+    log_audit(
+        &state.node_id,
+        AuditCategory::Circle,
+        AuditSeverity::Info,
+        AuditAction::Updated,
+        &format!("Circle unarchived: {} ({})", circle.circle_id, circle.name),
+    );
+    Ok(Json(CircleMutationResponse {
+        status: "success".to_string(),
+        message: "Circle unarchived".to_string(),
+        circle,
+    }))
+}
+
+pub async fn delete(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<CircleDeleteResponse>, ApiError> {
+    let revoked_vc_ids =
+        members::delete_circle(&state.node_id, &id, "circle deleted").map_err(map_circle_error)?;
+    log_audit(
+        &state.node_id,
+        AuditCategory::Circle,
+        AuditSeverity::Warning,
+        AuditAction::Revoked,
+        &format!(
+            "Circle deleted: {} members_revoked={}",
+            id,
+            revoked_vc_ids.len()
+        ),
+    );
+    Ok(Json(CircleDeleteResponse {
+        status: "success".to_string(),
+        message: "Circle deleted".to_string(),
+        circle_id: id,
+        revoked_vc_ids,
     }))
 }
 
