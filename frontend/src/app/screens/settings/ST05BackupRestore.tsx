@@ -127,6 +127,13 @@ export function ST05BackupRestore() {
   const [portable, setPortable] = useState(true);
   const [creating, setCreating] = useState(false);
 
+  // Import backup
+  const [importOpen, setImportOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importPassphrase, setImportPassphrase] = useState("");
+  const [importPassphraseVisible, setImportPassphraseVisible] = useState(false);
+  const [importing, setImporting] = useState(false);
+
   // Delete
   const [deleteTarget, setDeleteTarget] = useState<BackupRecord | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -199,6 +206,35 @@ export function ST05BackupRestore() {
       toast.error("Backup failed", { description: errorMessage(error, "Could not create a backup") });
     } finally {
       setCreating(false);
+    }
+  };
+
+  const openImport = () => {
+    setImportFile(null);
+    setImportPassphrase("");
+    setImportPassphraseVisible(false);
+    setImportOpen(true);
+  };
+
+  const closeImport = () => {
+    if (importing) return;
+    setImportOpen(false);
+  };
+
+  const handleImportBackup = async () => {
+    if (!importFile || !importPassphrase.trim() || importing) return;
+    setImporting(true);
+    try {
+      const record = await backupService.importBackup({ file: importFile, passphrase: importPassphrase.trim() });
+      toast.success("Backup imported", { description: record?.id || undefined });
+      setImportOpen(false);
+      setImportFile(null);
+      setImportPassphrase("");
+      await loadHistory();
+    } catch (error) {
+      toast.error("Import failed", { description: errorMessage(error, "Could not import the backup") });
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -435,6 +471,24 @@ export function ST05BackupRestore() {
                 {creating ? <Loader2 size={18} className="animate-spin" /> : <Database size={18} />}
                 {creating ? "Creating Backup..." : "Create Backup"}
               </button>
+
+              <button
+                onClick={openImport}
+                className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80"
+                style={{
+                  height: "46px",
+                  backgroundColor: "var(--secondary)",
+                  color: "var(--secondary-foreground)",
+                  border: "1px solid var(--border)",
+                  cursor: "pointer",
+                  borderRadius: "var(--radius-card)",
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "var(--text-sm)",
+                  fontWeight: "var(--font-weight-semibold)",
+                }}
+              >
+                <UploadCloud size={16} /> Import Backup
+              </button>
             </div>
 
             {/* Restore journal status */}
@@ -622,6 +676,68 @@ export function ST05BackupRestore() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Import backup dialog */}
+      <Dialog.Root open={importOpen} onOpenChange={(open) => !open && closeImport()}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[60]" style={{ backgroundColor: "rgba(0,0,0,0.7)" }} />
+          <Dialog.Content
+            className="fixed z-[70] rounded-xl border border-border p-6 flex flex-col gap-4"
+            style={{ backgroundColor: "var(--card)", left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: "calc(100% - 48px)", maxWidth: "420px", maxHeight: "85vh", overflowY: "auto" }}
+          >
+            <Dialog.Title style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
+              Import Backup
+            </Dialog.Title>
+
+            <input
+              type="file"
+              accept=".sgxbak"
+              onChange={(event) => setImportFile(event.target.files?.[0] ?? null)}
+              disabled={importing}
+              className={inputClass}
+              style={{ paddingTop: "10px" }}
+            />
+
+            <PassphraseField
+              value={importPassphrase}
+              onChange={setImportPassphrase}
+              visible={importPassphraseVisible}
+              onToggleVisible={() => setImportPassphraseVisible((v) => !v)}
+              autoFocus
+            />
+
+            <div className="flex gap-3">
+              <button
+                onClick={closeImport}
+                disabled={importing}
+                className="flex-1 flex items-center justify-center rounded-lg transition-opacity active:opacity-80"
+                style={{ height: "46px", backgroundColor: "var(--secondary)", color: "var(--secondary-foreground)", border: "1px solid var(--border)", cursor: importing ? "default" : "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleImportBackup}
+                disabled={!importFile || !importPassphrase.trim() || importing}
+                className="flex-1 flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80"
+                style={{
+                  height: "46px",
+                  backgroundColor: "var(--primary)",
+                  color: "var(--primary-foreground)",
+                  border: "none",
+                  cursor: !importFile || !importPassphrase.trim() || importing ? "default" : "pointer",
+                  opacity: !importFile || !importPassphrase.trim() ? 0.6 : 1,
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "var(--text-sm)",
+                  fontWeight: "var(--font-weight-semibold)",
+                }}
+              >
+                {importing ? <Loader2 size={16} className="animate-spin" /> : <UploadCloud size={16} />}
+                {importing ? "Importing..." : "Import"}
+              </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       {/* Undo confirmation */}
       <AlertDialog open={undoConfirmOpen} onOpenChange={(open) => !open && !undoing && setUndoConfirmOpen(false)}>

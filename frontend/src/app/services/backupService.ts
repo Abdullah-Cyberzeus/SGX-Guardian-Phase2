@@ -22,6 +22,11 @@ export interface CreateBackupRequest {
   portable?: boolean;
 }
 
+export interface ImportBackupRequest {
+  file: File;
+  passphrase: string;
+}
+
 export interface DeleteBackupResponse {
   status: string;
   id: string;
@@ -115,6 +120,14 @@ export const ALL_BACKUP_COMPONENTS: BackupComponent[] = ["policy", "config", "cr
 export const backupService = {
   // POST /api/v1/backup/create
   create: (data: CreateBackupRequest) => api.post<BackupRecord>("/backup/create", data),
+
+  // POST /api/v1/backup/import
+  importBackup: (data: ImportBackupRequest) => {
+    const form = new FormData();
+    form.append("file", data.file);
+    form.append("passphrase", data.passphrase);
+    return api.post<BackupRecord>("/backup/import", form);
+  },
 
   // GET /api/v1/backup/history
   history: () => api.get<BackupHistoryResponse>("/backup/history"),
