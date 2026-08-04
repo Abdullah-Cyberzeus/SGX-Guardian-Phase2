@@ -1,5 +1,4 @@
 use crate::chat::models::{AttachmentRecord, ChatMessageRecord, ReadReceiptRecord};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use std::path::PathBuf;
@@ -303,5 +302,5 @@ async fn read_history_file(
 }
 
 fn safe_filename(id: &str) -> String {
-    format!("{}.jsonl", URL_SAFE_NO_PAD.encode(id.as_bytes()))
+    format!("{}.jsonl", id)
 }
