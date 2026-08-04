@@ -226,7 +226,9 @@ export function ST05BackupRestore() {
     setImporting(true);
     try {
       const record = await backupService.importBackup({ file: importFile, passphrase: importPassphrase.trim() });
-      toast.success("Backup imported", { description: record?.id || undefined });
+      toast.success("Backup imported", {
+        description: record?.id ? record.id : undefined,
+      });
       setImportOpen(false);
       setImportFile(null);
       setImportPassphrase("");
@@ -383,17 +385,28 @@ export function ST05BackupRestore() {
         <PageHeader
           title="Backup & Restore"
           right={
-            <button
-              onClick={() => {
-                loadHistory();
-                loadStatus();
-              }}
-              aria-label="Refresh"
-              className="flex items-center justify-center rounded-md transition-opacity active:opacity-60"
-              style={{ minWidth: "40px", minHeight: "40px" }}
-            >
-              <RefreshCw size={17} style={{ color: "var(--foreground)" }} className={historyLoading || statusLoading ? "animate-spin" : ""} />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={openImport}
+                aria-label="Import backup"
+                title="Import backup"
+                className="flex items-center justify-center rounded-md transition-opacity active:opacity-60"
+                style={{ minWidth: "40px", minHeight: "40px" }}
+              >
+                <UploadCloud size={17} style={{ color: "var(--foreground)" }} />
+              </button>
+              <button
+                onClick={() => {
+                  loadHistory();
+                  loadStatus();
+                }}
+                aria-label="Refresh"
+                className="flex items-center justify-center rounded-md transition-opacity active:opacity-60"
+                style={{ minWidth: "40px", minHeight: "40px" }}
+              >
+                <RefreshCw size={17} style={{ color: "var(--foreground)" }} className={historyLoading || statusLoading ? "animate-spin" : ""} />
+              </button>
+            </div>
           }
         />
         <div className="flex-1 overflow-y-auto">
@@ -685,9 +698,11 @@ export function ST05BackupRestore() {
             className="fixed z-[70] rounded-xl border border-border p-6 flex flex-col gap-4"
             style={{ backgroundColor: "var(--card)", left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: "calc(100% - 48px)", maxWidth: "420px", maxHeight: "85vh", overflowY: "auto" }}
           >
-            <Dialog.Title style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
-              Import Backup
-            </Dialog.Title>
+            <div className="flex items-center justify-between">
+              <Dialog.Title style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
+                Import Backup
+              </Dialog.Title>
+            </div>
 
             <input
               type="file"
