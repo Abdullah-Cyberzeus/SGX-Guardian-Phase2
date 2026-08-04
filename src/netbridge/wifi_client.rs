@@ -23,24 +23,51 @@ impl WifiClientOrchestrator {
     pub fn scan_networks(
         &self,
     ) -> Result<Vec<crate::netbridge::types::WifiNetwork>, NetbridgeError> {
-        let output = Command::new("iw")
+        // Attempt active scan first; if hardware radio is busy (e.g. AP mode active on uap1
+        // or wpa_supplicant operating), trigger wpa_cli scan and fall back to iw scan dump.
+        let active_output = Command::new("iw")
             .arg("dev")
             .arg(&self.settings.interface)
             .arg("scan")
-            .output()
-            .map_err(NetbridgeError::IoError)?;
+            .output();
 
-        if !output.status.success() {
-            let err = str::from_utf8(&output.stderr).unwrap_or("Unknown error");
-            return Err(NetbridgeError::ProcessExecutionFailed(format!(
-                "iw scan failed: {}",
-                err
-            )));
-        }
+        let output_string;
+        let output_str = match active_output {
+            Ok(ref out) if out.status.success() => {
+                str::from_utf8(&out.stdout).unwrap_or("")
+            }
+            _ => {
+                // Active scan failed (e.g. EBUSY -16).
+                // Trigger wpa_cli scan asynchronously so wpa_supplicant updates cache
+                let _ = Command::new("wpa_cli")
+                    .arg("-i")
+                    .arg(&self.settings.interface)
+                    .arg("scan")
+                    .output();
+
+                // Fallback to reading the kernel BSS scan cache
+                let dump_output = Command::new("iw")
+                    .arg("dev")
+                    .arg(&self.settings.interface)
+                    .arg("scan")
+                    .arg("dump")
+                    .output()
+                    .map_err(NetbridgeError::IoError)?;
+
+                if !dump_output.status.success() {
+                    let err = str::from_utf8(&dump_output.stderr).unwrap_or("Unknown error");
+                    return Err(NetbridgeError::ProcessExecutionFailed(format!(
+                        "iw scan dump failed: {}",
+                        err
+                    )));
+                }
+
+                output_string = String::from_utf8_lossy(&dump_output.stdout).to_string();
+                &output_string
+            }
+        };
 
         let mut networks = Vec::new();
-        let output_str = str::from_utf8(&output.stdout).unwrap_or("");
-
         let mut current_ssid = String::new();
         let mut current_bssid = String::new();
         let mut current_signal = 0;
