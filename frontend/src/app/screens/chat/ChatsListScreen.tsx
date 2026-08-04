@@ -1,0 +1,90 @@
+import { useEffect, useMemo, useState } from "react";
+import { Loader2, MessageSquare, RefreshCw, Search, ShieldCheck } from "lucide-react";
+import { useNavigate } from "react-router";
+import { PageHeader } from "../../components/PageHeader";
+import { usePeers } from "../../hooks/useApiData";
+import chatService, { parseChatPayload } from "../../services/chatService";
+import type { Peer } from "../../services/peerService";
+
+type Preview = { text: string; timestamp: number };
+
+function initials(peer: Peer) {
+  return peer.peerId.split(/[-_:]/).filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "P";
+}
+
+function displayName(peer: Peer) {
+  return peer.peerId || peer.did || "Trusted peer";
+}
+
+function previewTime(timestamp?: number) {
+  if (!timestamp) return "";
+  const date = new Date(timestamp > 10_000_000_000 ? timestamp : timestamp * 1000);
+  const today = new Date();
+  return date.toDateString() === today.toDateString()
+    ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : date.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+export function ChatsListScreen() {
+  const navigate = useNavigate();
+  const { data, loading, error, refetch } = usePeers();
+  const [query, setQuery] = useState("");
+  const [previews, setPreviews] = useState<Record<string, Preview>>({});
+  const [refreshing, setRefreshing] = useState(false);
+  const peers = useMemo(() => (Array.isArray(data) ? data : []).filter((peer: Peer) => peer.status === "verified" && Boolean(peer.did)), [data]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all(peers.map(async (peer: Peer) => {
+      try {
+        const { messages } = await chatService.directHistory(peer.did!);
+        const latest = [...messages].sort((a, b) => b.timestamp - a.timestamp)[0];
+        if (!latest) return null;
+        const payload = parseChatPayload(latest);
+        return [peer.did!, { text: payload.attachment_id ? `File: ${payload.content || "Attachment"}` : payload.content || "Message", timestamp: latest.timestamp }] as const;
+      } catch { return null; }
+    })).then((items) => {
+      if (!cancelled) setPreviews(Object.fromEntries(items.filter((item): item is NonNullable<typeof item> => Boolean(item))));
+    });
+    return () => { cancelled = true; };
+  }, [peers]);
+
+  const visible = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    const filtered = needle ? peers.filter((peer: Peer) => `${peer.peerId} ${peer.did} ${peer.ip}`.toLowerCase().includes(needle)) : peers;
+    return [...filtered].sort((a, b) => (previews[b.did!]?.timestamp || 0) - (previews[a.did!]?.timestamp || 0));
+  }, [peers, previews, query]);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    await refetch();
+    setRefreshing(false);
+  };
+
+  return <div className="flex h-full flex-col">
+    <PageHeader title="Chats" subtitle={`${peers.length} attested peer${peers.length === 1 ? "" : "s"}`} right={
+      <button aria-label="Refresh peers" onClick={() => void refresh()} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted"><RefreshCw size={18} className={refreshing ? "animate-spin" : ""} /></button>
+    } />
+    <div className="shrink-0 border-b border-border bg-card p-3 md:px-6">
+      <div className="mx-auto flex max-w-3xl gap-2"><button onClick={() => navigate("/calls")} className="rounded-full border border-border px-4 text-sm font-medium">Calls</button><label className="flex h-11 flex-1 items-center gap-2 rounded-full border border-border bg-input-background px-4">
+        <Search size={17} className="text-muted-foreground" />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search attested peers" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+      </label></div>
+    </div>
+    <div className="flex-1 overflow-y-auto">
+      <div className="mx-auto w-full max-w-3xl divide-y divide-border">
+        {loading && <div className="flex items-center justify-center gap-2 p-12 text-sm text-muted-foreground"><Loader2 size={20} className="animate-spin" /> Loading chats…</div>}
+        {!loading && error && <div className="p-8 text-center text-sm text-destructive">Attested peers could not be loaded.</div>}
+        {!loading && !error && visible.length === 0 && <div className="flex flex-col items-center gap-3 p-12 text-center"><MessageSquare size={40} className="text-muted-foreground" /><p className="text-sm font-semibold">{query ? "No peers found" : "No attested peers yet"}</p><p className="max-w-xs text-xs text-muted-foreground">Once a peer is successfully attested and has a DID, you can message them here without sharing a Circle.</p></div>}
+        {visible.map((peer: Peer) => {
+          const preview = previews[peer.did!];
+          return <button key={peer.did} onClick={() => navigate(`/chats/${encodeURIComponent(peer.did!)}`)} className="flex w-full items-center gap-3 bg-transparent px-4 py-3.5 text-left hover:bg-muted/50 md:px-6">
+            <div className="relative grid h-12 w-12 shrink-0 place-items-center rounded-full bg-primary/15 font-semibold text-primary">{initials(peer)}<span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-background" style={{ background: peer.online ? "var(--chart-2)" : "var(--muted-foreground)" }} /></div>
+            <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="truncate text-sm font-semibold">{displayName(peer)}</p><ShieldCheck size={14} className="shrink-0 text-primary" /></div><p className="truncate text-xs text-muted-foreground">{preview?.text || `${peer.online ? "Online" : peer.lastSeenAgo} · Tap to start chatting`}</p></div>
+            <div className="shrink-0 self-start pt-1 text-[10px] text-muted-foreground">{previewTime(preview?.timestamp)}</div>
+          </button>;
+        })}
+      </div>
+    </div>
+  </div>;
+}

@@ -46,6 +46,8 @@ const NW02CreateCircle = screen(() => import("./screens/network/NW02CreateCircle
 const NW03PeersList = screen(() => import("./screens/network/NW03PeersList"), "NW03PeersList");
 const NW04CircleDetail = screen(() => import("./screens/network/NW04CircleDetail"), "NW04CircleDetail");
 const ChatConversationScreen = screen(() => import("./screens/network/ChatConversationScreen"), "ChatConversationScreen");
+const ChatsListScreen = screen(() => import("./screens/chat/ChatsListScreen"), "ChatsListScreen");
+const CallsHistoryScreen = screen(() => import("./screens/calls/CallsHistoryScreen"), "CallsHistoryScreen");
 const CircleManagementScreen = screen(() => import("./screens/network/CircleManagementScreen"), "CircleManagementScreen");
 const CircleJoinScreen = screen(() => import("./screens/network/CircleJoinScreen"), "CircleJoinScreen");
 
@@ -171,6 +173,11 @@ export const router = createBrowserRouter([
 
             // Full notification history
             { path: "notifications", Component: NT01Notifications },
+
+            // Standalone peer-to-peer messaging (Circle membership is not required)
+            { path: "chats", Component: ChatsListScreen },
+            { path: "chats/:peerDid", Component: ChatConversationScreen },
+            { path: "calls", Component: CallsHistoryScreen },
 
             // Network / Circles tab
             {

@@ -20,6 +20,7 @@ import type { MediaType } from "../../../features/calls/call.types";
 import chatService from "../../services/chatService";
 import circleService, { type CircleInvite } from "../../services/circleService";
 import { toast } from "sonner";
+import { useCallHistory } from "../../hooks/useCallHistory";
 
 type Tab = "chat" | "calls" | "files" | "members";
 
@@ -61,7 +62,7 @@ export function NW04CircleDetail() {
   const [sendingDirect, setSendingDirect] = useState(false);
 
   const members = circle?.members || [];
-  const [calls] = useState<any[]>([]);
+  const callHistory = useCallHistory();
   const selectedMember = members.find((m: any) => String(m.did || m.id) === memberDetailOpen);
   const memberToRemove = members.find((m: any) => String(m.did || m.id) === removeDialogOpen);
 
@@ -167,6 +168,20 @@ export function NW04CircleDetail() {
       .map((peer) => peer.peerId)
       .filter((id: string) => id !== currentDevice),
   )) as string[], [members, trustedPeers, currentDevice]);
+  const circleCallParticipantIds = useMemo(() => new Set(members.flatMap((member: any) => [
+    member.did,
+    ...nodeIdsForMember(member),
+    peerForMember(member)?.peerId,
+  ]).filter(Boolean)), [members, trustedPeers]);
+  const calls = useMemo(() => callHistory
+    .filter((record) => record.title.startsWith(`${circle?.name || ""} Circle call`) || record.participantIds.some((id) => circleCallParticipantIds.has(id)))
+    .map((record) => ({
+      id: record.id,
+      type: record.media.includes("video") ? "video" : "voice",
+      participant: record.kind === "group" ? record.title : record.participantIds[0],
+      duration: record.outcome === "completed" ? `${Math.floor(record.durationSeconds / 60)}m ${record.durationSeconds % 60}s` : record.outcome,
+      timestamp: new Date(record.startedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }),
+    })), [callHistory, circle?.name, circleCallParticipantIds]);
 
   // Files tab content = whatever was shared in the chat.
   const sharedFiles = useMemo(() => collectSharedFiles(messages), [messages]);
@@ -216,7 +231,7 @@ export function NW04CircleDetail() {
 
   const openDirectChat = (member: any) => {
     if (!member.did) { toast.error("This member has no DID for secure messaging."); return; }
-    navigate(`/network/${circleId}/members/${encodeURIComponent(member.did)}/chat`);
+    navigate(`/chats/${encodeURIComponent(member.did)}`);
   };
 
   useEffect(() => {
