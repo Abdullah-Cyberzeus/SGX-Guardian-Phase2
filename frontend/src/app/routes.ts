@@ -45,6 +45,7 @@ const NW01CirclesList = screen(() => import("./screens/network/NW01CirclesList")
 const NW02CreateCircle = screen(() => import("./screens/network/NW02CreateCircle"), "NW02CreateCircle");
 const NW03PeersList = screen(() => import("./screens/network/NW03PeersList"), "NW03PeersList");
 const NW04CircleDetail = screen(() => import("./screens/network/NW04CircleDetail"), "NW04CircleDetail");
+const ChatConversationScreen = screen(() => import("./screens/network/ChatConversationScreen"), "ChatConversationScreen");
 const CircleManagementScreen = screen(() => import("./screens/network/CircleManagementScreen"), "CircleManagementScreen");
 const CircleJoinScreen = screen(() => import("./screens/network/CircleJoinScreen"), "CircleJoinScreen");
 
@@ -180,6 +181,8 @@ export const router = createBrowserRouter([
                 { path: "create", Component: NW02CreateCircle },
                 { path: "join", Component: CircleJoinScreen },
                 { path: ":circleId/manage", Component: CircleManagementScreen },
+                { path: ":circleId/chat", Component: ChatConversationScreen },
+                { path: ":circleId/members/:peerDid/chat", Component: ChatConversationScreen },
                 { path: "transport", Component: NW05TransportStatus },
                 { path: "relay", Component: NW06RelayList },
                 { path: "discovery", Component: NW07Discovery },

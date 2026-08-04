@@ -66,6 +66,10 @@ export function NW04CircleDetail() {
   const memberToRemove = members.find((m: any) => String(m.did || m.id) === removeDialogOpen);
 
   const setTab = (tab: Tab) => {
+    if (tab === "chat" && circleId) {
+      navigate(`/network/${circleId}/chat`);
+      return;
+    }
     setDirectMember(null);
     setDirectMessages([]);
     setSearchParams({ tab });
@@ -212,8 +216,7 @@ export function NW04CircleDetail() {
 
   const openDirectChat = (member: any) => {
     if (!member.did) { toast.error("This member has no DID for secure messaging."); return; }
-    setDirectMember(member);
-    setSearchParams({ tab: "chat", peer: member.did });
+    navigate(`/network/${circleId}/members/${encodeURIComponent(member.did)}/chat`);
   };
 
   useEffect(() => {
