@@ -30,7 +30,7 @@ curl -X POST http://localhost:8443/api/v1/chat/send \
 ### Step 2: Verify it Worked
 **On Node A:**
 - Run `journalctl -u sgx-guardian -f` and watch for: `💬 Chat: target peer found — sending to <NODE_B_IP>`
-- Verify the local file `/var/lib/sgx-guardian/chat/p2p/<BASE64_PEER_DID>.jsonl` was created and contains the message.
+- Verify the local file `/var/lib/sgx-guardian/chat/p2p/<PEER_DID>.jsonl` was created and contains the message.
 
 **On Node B:**
 - Run `journalctl -u sgx-guardian -f` and watch for: `💬 Chat message received from did:guardian:C2txwUBkHG5GukHRgvbZQqvxtv7CNkNDvdRAQfx9VQkE`
@@ -148,14 +148,13 @@ curl -X GET "http://localhost:8443/api/v1/chat/history?peer_did=did:guardian:C2t
 Test sending a broadcast message to all verified peers in the Circle of Trust with unified group history and per-member read receipt tracking.
 
 ### Step 1: Send Group Message (Execute on Node A)
-Set `"is_group": true` and use a group identifier (e.g., `"group1"`) as the `recipient_did`:
+Set `"is_group": true` and use the circle identifier (e.g., `"circle-1234"`) as the `recipient_did`:
 ```bash
 curl -X POST http://localhost:8443/api/v1/chat/send \
   -H "Content-Type: application/json" \
   -d '{
-    "recipient_did": "group1",
-    "content": "Hello Group! This is a broadcast message.",
-    "attachment_id": null,
+    "recipient_did": "circle-1234",
+    "content": "Hello Dev Team! This is a secure circle broadcast.",
     "is_group": true
   }'
 ```
@@ -163,18 +162,18 @@ curl -X POST http://localhost:8443/api/v1/chat/send \
 > Save the `message_id` returned in the JSON response.
 
 ### Step 2: Verify Group History on Node A (Sender)
-Query history on Node A using `group_id=group1`:
+Query history on Node A using `group_id=circle-1234`:
 ```bash
-curl -X GET "http://localhost:8443/api/v1/chat/history?group_id=group1"
+curl -X GET "http://localhost:8443/api/v1/chat/history?group_id=circle-1234"
 ```
-* **Validation:** The message is saved in `/var/lib/sgx-guardian/chat/group/<group_id_b64>.jsonl` with `"read_by": []` and `"status": "pending"`.
+* **Validation:** The message is saved in `/var/lib/sgx-guardian/chat/group/circle-1234.jsonl` with `"read_by": []` and `"status": "pending"`.
 
 ### Step 3: Verify Group History on Node B (Recipient)
-Query group history directly on Node B using `group_id=group1`:
+Query group history directly on Node B using `group_id=circle-1234`:
 ```bash
-curl -X GET "http://localhost:8443/api/v1/chat/history?group_id=group1"
+curl -X GET "http://localhost:8443/api/v1/chat/history?group_id=circle-1234"
 ```
-* **Validation:** Node B receives the message via gRPC fan-out and stores it under the shared group thread (`/var/lib/sgx-guardian/chat/group/<group_id_b64>.jsonl`) with `"status": "delivered"`.
+* **Validation:** Node B receives the message via gRPC fan-out and stores it under the shared group thread (`/var/lib/sgx-guardian/chat/group/circle-1234.jsonl`) with `"status": "delivered"`.
 
 ### Step 4: Mark Group Message as Read (Execute on Node B)
 Simulate Node B reading the group message:
@@ -184,13 +183,13 @@ curl -X POST http://localhost:8443/api/v1/chat/read \
   -d '{
     "message_id": "<MESSAGE_ID_FROM_STEP_1>",
     "original_sender_did": "did:guardian:C2txwUBkHG5GukHRgvbZQqvxtv7CNkNDvdRAQfx9VQkE",
-    "group_id": "group1"
+    "group_id": "circle-1234"
   }'
 ```
 
 ### Step 5: Verify Per-Member Read Receipt Tracking (Execute on Node A)
 Re-query the group history on Node A:
 ```bash
-curl -X GET "http://localhost:8443/api/v1/chat/history?group_id=group1"
+curl -X GET "http://localhost:8443/api/v1/chat/history?group_id=circle-1234"
 ```
 * **Validation:** Node B's DID will be added to the message's `"read_by": ["did:guardian:3uda..."]` array. Status remains `"delivered"` until **all** circle members have read it.

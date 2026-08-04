@@ -30,30 +30,6 @@ impl ExpiryMonitor {
                             "Nebula certificate expired",
                         );
 
-                        // Forward real PKI certificate expiration anomaly to AI Threat Pipeline
-                        let alert = crate::threat::threat_alert::ThreatAlert {
-                            alert_id: crate::threat::threat_alert::ThreatAlert::compute_id(
-                                3000002,
-                                "127.0.0.1",
-                                "local",
-                            ),
-                            timestamp: chrono::Utc::now(),
-                            src_ip: "127.0.0.1".to_string(),
-                            src_port: 0,
-                            dst_ip: "local".to_string(),
-                            dst_port: 0,
-                            protocol: "pki".to_string(),
-                            signature_id: 3000002,
-                            signature: "PKI Invalid Certificate / Expired Handshake".to_string(),
-                            category: crate::threat::threat_alert::ThreatCategory::CertificateIssue,
-                            severity: crate::threat::threat_alert::Severity::Critical,
-                            rev: 1,
-                            gid: 1,
-                            event_type: "anomaly".to_string(),
-                            blocked: false,
-                        };
-                        crate::threat::ai_bridge::forward_to_ai(&node_name, &alert);
-
                         // === Auto delete expired cert ===
                         let nodes_dir = format!("{}/nodes", nebula_base_dir);
                         let cert_path = format!("{}/{}.crt", nodes_dir, node_name);

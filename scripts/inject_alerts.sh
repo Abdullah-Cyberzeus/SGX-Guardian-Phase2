@@ -18,8 +18,6 @@ case "$CATEGORY" in
     "exploit")               SID=2019401; SIG="ET EXPLOIT OpenSSL Heartbleed Response" ;;
     "malware")               SID=2001219; SIG="ET MALWARE ELF.Mirai Variant Checkin" ;;
     "policy-violation"|"policy_violation") SID=2014819; SIG="ET POLICY Suspicious Outbound Connection" ;;
-    "attestation_mismatch")  SID=3000001; SIG="ATTESTATION TPM PCR Mismatch Detected" ;;
-    "certificate_issue")     SID=3000002; SIG="PKI Invalid Certificate / Expired Handshake" ;;
     "anomaly")               SID=2260002; SIG="SURICATA Anomaly Invalid TCP" ;;
     *)                       SID=2009358; SIG="ET SCAN Generic Scan" ;;
 esac

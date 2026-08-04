@@ -112,8 +112,6 @@ pub fn process_feature(
     let category_weight = match top_cat {
         ThreatCategory::Exploit => 1.0,
         ThreatCategory::Malware => 0.9,
-        ThreatCategory::AttestationMismatch => 0.85,
-        ThreatCategory::CertificateIssue => 0.8,
         ThreatCategory::Reconnaissance => 0.8,
         ThreatCategory::PolicyViolation => 0.7,
         ThreatCategory::Anomaly => 0.7,

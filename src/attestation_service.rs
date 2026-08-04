@@ -1718,30 +1718,6 @@ impl SignedQuote {
             }
             if !result.pcr_match {
                 result.reason = "PCR mismatch against baseline".into();
-                // Forward real hardware PCR mismatch anomaly to AI Threat Pipeline
-                let peer_id = "attestation_peer";
-                let alert = crate::threat::threat_alert::ThreatAlert {
-                    alert_id: crate::threat::threat_alert::ThreatAlert::compute_id(
-                        3000001,
-                        peer_id,
-                        "local",
-                    ),
-                    timestamp: chrono::Utc::now(),
-                    src_ip: peer_id.to_string(),
-                    src_port: 0,
-                    dst_ip: "local".to_string(),
-                    dst_port: 0,
-                    protocol: "attestation".to_string(),
-                    signature_id: 3000001,
-                    signature: "ATTESTATION TPM PCR Mismatch Detected".to_string(),
-                    category: crate::threat::threat_alert::ThreatCategory::AttestationMismatch,
-                    severity: crate::threat::threat_alert::Severity::High,
-                    rev: 1,
-                    gid: 1,
-                    event_type: "anomaly".to_string(),
-                    blocked: false,
-                };
-                crate::threat::ai_bridge::forward_to_ai("local", &alert);
             }
         } else {
             result.pcr_match = true; // No baseline = skip comparison

@@ -31,8 +31,6 @@ pub enum ThreatCategory {
     Exploit,
     PolicyViolation,
     Reconnaissance,
-    AttestationMismatch,
-    CertificateIssue,
     Anomaly,
     Other,
 }
@@ -44,8 +42,6 @@ impl ThreatCategory {
             ThreatCategory::Exploit => "exploit",
             ThreatCategory::PolicyViolation => "policy_violation",
             ThreatCategory::Reconnaissance => "reconnaissance",
-            ThreatCategory::AttestationMismatch => "attestation_mismatch",
-            ThreatCategory::CertificateIssue => "certificate_issue",
             ThreatCategory::Anomaly => "anomaly",
             ThreatCategory::Other => "other",
         }

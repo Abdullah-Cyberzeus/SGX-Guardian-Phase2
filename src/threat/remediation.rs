@@ -138,23 +138,6 @@ pub fn generate_plan(score: AlertAnomalyScore) -> Option<RemediationPlan> {
                     rule_delta: format!("deny ip saddr {} drop;", target_ip),
                 });
             }
-            ThreatCategory::AttestationMismatch => {
-                requires_approval.push(ActionType::TightenAttestation { interval_secs: 15 });
-                requires_approval.push(ActionType::QuarantinePeer {
-                    peer_id: format!("peer-{}", target_ip),
-                });
-                requires_approval.push(ActionType::EnableDebugLogging {
-                    interface: "eth0".to_string(),
-                });
-            }
-            ThreatCategory::CertificateIssue => {
-                requires_approval.push(ActionType::ProposePolicyUpdate {
-                    rule_delta: format!("renew_or_rotate_cert for {};", target_ip),
-                });
-                requires_approval.push(ActionType::EnableDebugLogging {
-                    interface: "eth0".to_string(),
-                });
-            }
             ThreatCategory::Anomaly => {
                 requires_approval.push(ActionType::TightenAttestation { interval_secs: 30 });
                 requires_approval.push(ActionType::ProposePolicyUpdate {
@@ -296,34 +279,5 @@ mod tests {
         let plan2 = generate_plan(score2).unwrap();
 
         assert_ne!(plan1.plan_id, plan2.plan_id);
-    }
-
-    #[test]
-    fn test_attestation_mismatch_recommendations() {
-        let score = make_score(0.85, ThreatCategory::AttestationMismatch);
-        let plan = generate_plan(score).expect("should generate plan");
-
-        assert_eq!(plan.auto_execute.len(), 1);
-        assert_eq!(plan.auto_execute[0], ActionType::AlertOnly);
-        assert!(plan
-            .requires_approval
-            .contains(&ActionType::TightenAttestation { interval_secs: 15 }));
-        assert!(plan
-            .requires_approval
-            .iter()
-            .any(|a| matches!(a, ActionType::QuarantinePeer { .. })));
-    }
-
-    #[test]
-    fn test_certificate_issue_recommendations() {
-        let score = make_score(0.80, ThreatCategory::CertificateIssue);
-        let plan = generate_plan(score).expect("should generate plan");
-
-        assert_eq!(plan.auto_execute.len(), 1);
-        assert_eq!(plan.auto_execute[0], ActionType::AlertOnly);
-        assert!(plan
-            .requires_approval
-            .iter()
-            .any(|a| matches!(a, ActionType::ProposePolicyUpdate { .. })));
     }
 }
