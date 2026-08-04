@@ -18,6 +18,8 @@ export { default as vcService } from './vcService';
 export { default as vidService } from './vidService';
 export { default as discoveryService } from './discoveryService';
 export { default as crlService } from './crlService';
+export { default as backupService } from './backupService';
+export { default as managedDeviceService } from './managedDeviceService';
 
 // Export types
 export type { NodeStatus, BootStatus } from './nodeService';
@@ -117,3 +119,43 @@ export type {
   CrlRevokeResponse,
   CrlUnrevokeResponse,
 } from './crlService';
+
+export type {
+  BackupComponent,
+  BackupRecord,
+  BackupHistoryResponse,
+  CreateBackupRequest,
+  DeleteBackupResponse,
+  BackupValidateRequest,
+  BackupValidateComponent,
+  BackupValidateResponse,
+  RestoreValidateRequest,
+  RestorePlanStep,
+  RestoreValidateResponse,
+  RestoreApplyRequest,
+  RestoreApplyResponse,
+  RestoreJournal,
+  RestoreStatusResponse,
+  RestoreUndoResponse,
+} from './backupService';
+export { ALL_BACKUP_COMPONENTS } from './backupService';
+
+export type {
+  RiskLevel,
+  ScriptResult,
+  OpenPort as ManagedDeviceOpenPort,
+  DeviceScores,
+  ManagedDevice,
+  ScoreDistribution,
+  ManagedDevicesSummary,
+  DeviceActionResponse,
+  DeviceRecord,
+  AddManualDeviceRequest,
+  DevicePatchRequest,
+  RejectDeviceRequest,
+  FirmwareAssessmentStatus,
+  FirmwareEvidenceSource,
+  FirmwareAssessment,
+  DeviceScanProgressTransition,
+  DeviceScanRun,
+} from './managedDeviceService';
