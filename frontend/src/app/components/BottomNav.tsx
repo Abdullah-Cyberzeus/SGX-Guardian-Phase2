@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "react-router";
-import { Home, Bell, Cpu, Cloud, Settings } from "lucide-react";
+import { Home, Bell, Cpu, Cloud, Settings, MessageSquare } from "lucide-react";
 
 // Custom Network-as-circles icon
 function NetworkCirclesIcon({ size = 20, color = "currentColor", strokeWidth = 1.75 }: { size?: number; color?: string; strokeWidth?: number }) {
@@ -24,6 +24,7 @@ function NetworkCirclesIcon({ size = 20, color = "currentColor", strokeWidth = 1
 const tabs = [
   { label: "Home", icon: Home, path: "/home", custom: false },
   { label: "Alerts", icon: Bell, path: "/alerts", custom: false },
+  { label: "Chats", icon: MessageSquare, path: "/chats", custom: false },
   { label: "Circles", icon: null, path: "/network", custom: true },
   { label: "Devices", icon: Cpu, path: "/devices", custom: false },
   { label: "All Files", icon: Cloud, path: "/storage", custom: false },

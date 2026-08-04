@@ -6,6 +6,7 @@ import type {
   GroupModerationAction, GroupSession, GroupSignal, MediaType,
 } from "./call.types";
 import { GroupWebRtcService } from "./group-webrtc.service";
+import callHistoryService from "../../app/services/callHistoryService";
 
 interface GroupCallValue {
   group?: GroupSession; incoming?: GroupSession; localStream?: MediaStream;
@@ -30,6 +31,7 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
   const pollingSignals = useRef(false);
   const connectedPeers = useRef(new Set<string>());
   const mediaReadySent = useRef(false);
+  const lastGroup = useRef<GroupSession>();
   const socketConnected = useRef(false);
   const signalApplyChain = useRef(Promise.resolve());
   const localParticipantState = localDevice ? group?.participants[localDevice]?.state : undefined;
@@ -43,6 +45,11 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
   const refresh = useCallback(async () => {
     const response = await groupCallsApi.active();
     const next = response.groups[0];
+    if (next) lastGroup.current = next;
+    if (!next && lastGroup.current && localDevice) {
+      callHistoryService.recordGroup(lastGroup.current, localDevice);
+      lastGroup.current = undefined;
+    }
     setGroup(next);
     if (!next) {
       rtc.current.close(); setLocalStream(undefined); setRemoteStreams({}); return;
@@ -177,13 +184,13 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
     setGroup(await groupCallsApi.join(group.group_id));
   };
   const declineGroup = async () => {
-    if (!group) return; await groupCallsApi.decline(group.group_id); setGroup(undefined);
+    if (!group) return; const ended = await groupCallsApi.decline(group.group_id); if (localDevice) callHistoryService.recordGroup(ended, localDevice, "declined"); lastGroup.current = undefined; setGroup(undefined);
   };
   const leaveGroup = async () => {
-    if (!group) return; await groupCallsApi.leave(group.group_id); rtc.current.close(); setGroup(undefined);
+    if (!group) return; const ended = await groupCallsApi.leave(group.group_id); if (localDevice) callHistoryService.recordGroup(ended, localDevice); lastGroup.current = undefined; rtc.current.close(); setGroup(undefined);
   };
   const endGroup = async () => {
-    if (!group) return; await groupCallsApi.end(group.group_id); rtc.current.close(); setGroup(undefined);
+    if (!group) return; const ended = await groupCallsApi.end(group.group_id); if (localDevice) callHistoryService.recordGroup(ended, localDevice); lastGroup.current = undefined; rtc.current.close(); setGroup(undefined);
   };
   const moderate = async (action: GroupModerationAction) => {
     if (group) setGroup(await groupCallsApi.moderate(group.group_id, action));

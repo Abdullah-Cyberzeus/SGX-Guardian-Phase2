@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileText, Loader2, MessageSquare, RefreshCw, Send } from "lucide-react";
+import { FileText, Loader2, MessageSquare, Phone, RefreshCw, Send, Video } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { PageHeader } from "../../components/PageHeader";
@@ -7,9 +7,12 @@ import { AttachmentMenu } from "../../components/circle/AttachmentMenu";
 import { FilesTab } from "../../components/circle/FilesTab";
 import { MessageAttachment } from "../../components/circle/MessageAttachment";
 import type { SharedFile } from "../../components/circle/types";
-import { useCircles } from "../../hooks/useApiData";
+import { useCircles, usePeers } from "../../hooks/useApiData";
 import { didService } from "../../services/didService";
 import chatService, { parseChatPayload, type ChatMessageRecord } from "../../services/chatService";
+import { useCall } from "../../../features/calls/CallContext";
+import { useGroupCall } from "../../../features/calls/GroupCallContext";
+import type { MediaType } from "../../../features/calls/call.types";
 
 type View = "chat" | "files";
 
@@ -23,20 +26,25 @@ export function ChatConversationScreen() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { data: circlesData, loading: circlesLoading } = useCircles();
+  const { data: peersData, loading: peersLoading } = usePeers();
   const circle = (Array.isArray(circlesData) ? circlesData : []).find((item: any) => item.id === circleId);
   const member = circle?.members?.find((item: any) => item.did === peerDid);
-  const isGroup = !peerDid;
+  const peer = (Array.isArray(peersData) ? peersData : []).find((item: any) => item.did === peerDid);
+  const isGroup = Boolean(circleId && !peerDid);
+  const { startCall, call, currentDevice } = useCall();
+  const { group } = useGroupCall();
   const [records, setRecords] = useState<ChatMessageRecord[]>([]);
   const [localDid, setLocalDid] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [startingCall, setStartingCall] = useState<"audio" | "video" | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const view: View = searchParams.get("view") === "files" ? "files" : "chat";
 
   const loadHistory = useCallback(async () => {
-    if (!circleId || (!isGroup && !peerDid)) return;
+    if ((isGroup && !circleId) || (!isGroup && !peerDid)) return;
     setLoading(true);
     try {
       const response = isGroup
@@ -67,7 +75,7 @@ export function ChatConversationScreen() {
     if (!circleId || (!isGroup && !peerDid) || (!content?.trim() && !attachmentId)) return;
     setSending(true);
     try {
-      if (isGroup) await chatService.sendGroup(circleId, content?.trim() || null, attachmentId);
+      if (isGroup) await chatService.sendGroup(circleId!, content?.trim() || null, attachmentId);
       else await chatService.sendDirect(peerDid!, content?.trim() || null, attachmentId);
       setMessage("");
       await loadHistory();
@@ -90,6 +98,31 @@ export function ChatConversationScreen() {
     } finally {
       setSending(false);
       setUploadProgress(null);
+    }
+  };
+
+  const callPeer = async (media: MediaType[]) => {
+    if (isGroup || !peer) return;
+    if (call || group) {
+      toast.error("Guardian is busy", { description: "End or leave the current call before starting another." });
+      return;
+    }
+    if (!peer.callAvailable || !peer.online) {
+      toast.error("Peer is unavailable for calls", { description: peer.callUnavailableReason || "The peer is currently offline." });
+      return;
+    }
+    if (peer.peerId === currentDevice) {
+      toast.info("This is the current Guardian");
+      return;
+    }
+    const mode = media.includes("video") ? "video" : "audio";
+    setStartingCall(mode);
+    try {
+      await startCall(peer.peerId, media);
+    } catch (cause) {
+      toast.error("Call could not start", { description: cause instanceof Error ? cause.message : "The peer may be unavailable." });
+    } finally {
+      setStartingCall(null);
     }
   };
 
@@ -122,15 +155,21 @@ export function ChatConversationScreen() {
     sharedAt: item.timestamp,
   })).reverse(), [messages]);
 
-  if (circlesLoading) return <div className="grid h-full place-items-center"><Loader2 className="animate-spin" /></div>;
-  if (!circle || (!isGroup && !member)) return <div className="grid h-full place-items-center p-6 text-sm text-muted-foreground">Conversation not found.</div>;
+  if ((isGroup && circlesLoading) || (!isGroup && peersLoading)) return <div className="grid h-full place-items-center"><Loader2 className="animate-spin" /></div>;
+  if ((isGroup && !circle) || (!isGroup && !peer && !member)) return <div className="grid h-full place-items-center p-6 text-sm text-muted-foreground">Conversation not found.</div>;
 
-  const title = isGroup ? circle.name : member.name;
+  const title = isGroup ? circle.name : (member?.name || peer?.peerId || peerDid);
   const subtitle = isGroup ? `Secure group chat · ${circle.members?.length || 0} members` : "Private peer-to-peer chat";
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title={title} subtitle={subtitle} onBack={() => navigate(`/network/${circleId}?tab=members`)} right={
-        <button aria-label="Refresh messages" onClick={() => void loadHistory()} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted"><RefreshCw size={18} /></button>
+      <PageHeader title={title} subtitle={subtitle} onBack={() => navigate(isGroup ? `/network/${circleId}?tab=members` : "/chats")} right={
+        <div className="flex items-center gap-1">
+          {!isGroup && <>
+            <button aria-label={`Voice call ${title}`} title="Voice call" disabled={startingCall !== null || !peer?.callAvailable || !peer?.online} onClick={() => void callPeer(["audio"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "audio" ? <Loader2 size={18} className="animate-spin" /> : <Phone size={18} />}</button>
+            <button aria-label={`Video call ${title}`} title="Video call" disabled={startingCall !== null || !peer?.callAvailable || !peer?.online} onClick={() => void callPeer(["audio", "video"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "video" ? <Loader2 size={18} className="animate-spin" /> : <Video size={18} />}</button>
+          </>}
+          <button aria-label="Refresh messages" onClick={() => void loadHistory()} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted"><RefreshCw size={18} /></button>
+        </div>
       } />
       <div className="flex shrink-0 border-b border-border bg-card">
         {(["chat", "files"] as View[]).map((item) => (
@@ -158,7 +197,7 @@ export function ChatConversationScreen() {
           {uploadProgress !== null && <div className="mx-auto mb-2 max-w-2xl text-xs text-muted-foreground">Uploading file… {uploadProgress}%</div>}
           <div className="mx-auto flex max-w-2xl items-center gap-2">
             <AttachmentMenu onPick={(file) => void attach(file)} disabled={sending} />
-            <input value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void send(message); }} disabled={sending} placeholder={isGroup ? "Secure Circle message…" : `Message ${member.name}…`} className="h-11 flex-1 rounded-full border border-border bg-input-background px-4 text-sm outline-none" />
+            <input value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void send(message); }} disabled={sending} placeholder={isGroup ? "Secure Circle message…" : `Message ${member?.name || peer?.peerId || "peer"}…`} className="h-11 flex-1 rounded-full border border-border bg-input-background px-4 text-sm outline-none" />
             <button aria-label="Send message" onClick={() => void send(message)} disabled={sending || !message.trim()} className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground disabled:opacity-40">{sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}</button>
           </div>
         </div>
