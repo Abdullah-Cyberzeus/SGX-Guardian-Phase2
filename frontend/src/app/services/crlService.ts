@@ -83,6 +83,47 @@ export interface CrlUnrevokeResponse {
   merkle_root?: string;
 }
 
+export interface CrlGossipLastRound {
+  direction?: string;
+  peer_did?: string;
+  peer_node?: string;
+  merged?: number;
+  sent?: number;
+  merkle_root?: string;
+  at?: string;
+}
+
+export interface CrlGossipStatusResponse {
+  enabled?: boolean;
+  port?: number;
+  interval_secs?: number;
+  threshold_pct?: number;
+  self_did?: string;
+  circle_id?: string;
+  other_members?: number;
+  threshold_count?: number;
+  sequence?: number;
+  merkle_root?: string;
+  entries?: number;
+  propagated?: number;
+  rounds_initiated?: number;
+  rounds_served?: number;
+  entries_merged?: number;
+  last_round?: CrlGossipLastRound | null;
+}
+
+export interface CrlGossipTriggerResponse {
+  success?: boolean;
+  peer_did?: string;
+  peer_node?: string;
+  merged?: number;
+  pushed?: number;
+  peer_merged?: number;
+  merkle_root?: string;
+  newly_propagated?: string[];
+  message?: string;
+}
+
 export type CrlOperationalResponse = Record<string, unknown>;
 
 export interface CrlEmergencyBroadcastPayload {
@@ -164,8 +205,14 @@ export const crlService = {
   unrevoke: (did: string) => api.post<CrlUnrevokeResponse>('/crl/unrevoke', { did }),
 
   // CRL propagation operations
-  gossipStatus: () => api.get<CrlOperationalResponse>('/crl/gossip/status'),
-  triggerGossip: () => api.post<CrlOperationalResponse>('/crl/gossip/trigger'),
+  gossipStatus: async () => {
+    const response = await api.get<CrlGossipStatusResponse>('/crl/gossip/status');
+    return { ...response, last_round: response.last_round ?? null };
+  },
+  triggerGossip: async () => {
+    const response = await api.post<CrlGossipTriggerResponse>('/crl/gossip/trigger');
+    return { ...response, newly_propagated: response.newly_propagated ?? [] };
+  },
   emergencyStatus: () => api.get<CrlOperationalResponse>('/crl/emergency/status'),
   broadcastEmergency: (payload: CrlEmergencyBroadcastPayload) =>
     api.post<CrlOperationalResponse>('/crl/emergency/broadcast', payload),

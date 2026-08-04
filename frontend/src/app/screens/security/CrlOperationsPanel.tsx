@@ -1,9 +1,20 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { AlertTriangle, BellRing, Bug, CheckCircle2, Clock3, CloudOff, Eye, Inbox, Loader2, Radio, RefreshCw, Send, Wifi } from "lucide-react";
 import { toast } from "sonner";
-import { crlService, type CrlOperationalResponse } from "../../services/crlService";
+import {
+  crlService,
+  type CrlGossipStatusResponse,
+  type CrlGossipTriggerResponse,
+  type CrlOperationalResponse,
+} from "../../services/crlService";
 
 type Operation = "gossip" | "broadcast" | "seed" | "sync" | null;
+
+type Metric = {
+  label: string;
+  value: unknown;
+  mono?: boolean;
+};
 
 function messageOf(error: unknown) {
   return error instanceof Error ? error.message : "The CRL operation failed.";
@@ -61,6 +72,71 @@ function Summary({ data }: { data: CrlOperationalResponse | null }) {
   return metrics.length ? <dl className="grid gap-2 sm:grid-cols-2">{metrics.map(([key, value]) => <div key={key} className="rounded-md border border-border bg-background/60 p-3"><dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{key.replaceAll("_", " ")}</dt><dd className="mt-1 break-words text-sm font-medium">{String(value)}</dd></div>)}</dl> : <pre className="max-h-64 overflow-auto rounded-md bg-background p-3 text-xs">{JSON.stringify(data, null, 2)}</pre>;
 }
 
+function MetricsGrid({ items }: { items: Metric[] }) {
+  const visible = items.filter((item) => item.value !== undefined && item.value !== null && item.value !== "");
+  if (!visible.length) return <p className="text-sm text-muted-foreground">No details available.</p>;
+  return <dl className="grid gap-2 sm:grid-cols-2">{visible.map((item) => <div key={item.label} className="rounded-md border border-border bg-background/60 p-3"><dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{item.label}</dt><dd className={`mt-1 break-words text-sm font-medium ${item.mono ? "font-mono text-xs" : ""}`}>{displayValue(item.value)}</dd></div>)}</dl>;
+}
+
+function InfoSection({ title, subtitle, children }: { title: string; subtitle: string; children: ReactNode }) {
+  return <div className="rounded-lg border border-border bg-background/40 p-4"><div className="mb-3"><h3 className="text-sm font-semibold">{title}</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">{subtitle}</p></div>{children}</div>;
+}
+
+function GossipSummary({ data, latestTrigger }: { data: CrlGossipStatusResponse | null; latestTrigger: CrlGossipTriggerResponse | null }) {
+  if (!data) return <p className="text-sm text-muted-foreground">No gossip status has been loaded yet.</p>;
+
+  return <div className="space-y-4">
+    <MetricsGrid items={[
+      { label: "Enabled", value: data.enabled },
+      { label: "Port", value: data.port },
+      { label: "Interval secs", value: data.interval_secs },
+      { label: "Threshold pct", value: data.threshold_pct },
+      { label: "Self DID", value: data.self_did, mono: true },
+      { label: "Circle ID", value: data.circle_id, mono: true },
+      { label: "Other members", value: data.other_members },
+      { label: "Threshold count", value: data.threshold_count },
+    ]} />
+
+    <InfoSection title="Local CRL state" subtitle="These are the proof fields for what this node currently believes about CRL propagation.">
+      <MetricsGrid items={[
+        { label: "Sequence", value: data.sequence },
+        { label: "Merkle root", value: data.merkle_root, mono: true },
+        { label: "Entries", value: data.entries },
+        { label: "Propagated", value: data.propagated },
+        { label: "Rounds initiated", value: data.rounds_initiated },
+        { label: "Rounds served", value: data.rounds_served },
+        { label: "Entries merged", value: data.entries_merged },
+      ]} />
+    </InfoSection>
+
+    <InfoSection title="Last recorded gossip round" subtitle="Latest round observed by this node, whether initiated here or served for a peer.">
+      {data.last_round ? <MetricsGrid items={[
+        { label: "Direction", value: data.last_round.direction },
+        { label: "Peer node", value: data.last_round.peer_node },
+        { label: "Peer DID", value: data.last_round.peer_did, mono: true },
+        { label: "Merged", value: data.last_round.merged },
+        { label: "Sent", value: data.last_round.sent },
+        { label: "Merkle root", value: data.last_round.merkle_root, mono: true },
+        { label: "At", value: data.last_round.at, mono: true },
+      ]} /> : <p className="text-sm text-muted-foreground">No round has been recorded yet.</p>}
+    </InfoSection>
+
+    <InfoSection title="Latest manual trigger" subtitle="This stores the last Trigger round response from this screen. One trigger talks to one active peer only.">
+      {latestTrigger ? <MetricsGrid items={[
+        { label: "Success", value: latestTrigger.success },
+        { label: "Peer node", value: latestTrigger.peer_node },
+        { label: "Peer DID", value: latestTrigger.peer_did, mono: true },
+        { label: "Merged", value: latestTrigger.merged },
+        { label: "Pushed", value: latestTrigger.pushed },
+        { label: "Peer merged", value: latestTrigger.peer_merged },
+        { label: "Merkle root", value: latestTrigger.merkle_root, mono: true },
+        { label: "Newly propagated", value: latestTrigger.newly_propagated },
+        { label: "Message", value: latestTrigger.message },
+      ]} /> : <p className="text-sm text-muted-foreground">Trigger a round to capture peer selection, merge counts, and the resulting Merkle root.</p>}
+    </InfoSection>
+  </div>;
+}
+
 function Card({ title, subtitle, icon: Icon, actions, children }: { title: string; subtitle: string; icon: typeof Radio; actions?: ReactNode; children: ReactNode }) {
   return <section className="rounded-xl border border-border bg-card p-4 shadow-sm md:p-5"><div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div className="flex gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><Icon size={18} /></span><div><h2 className="font-semibold">{title}</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">{subtitle}</p></div></div>{actions}</div>{children}</section>;
 }
@@ -74,7 +150,8 @@ function Confirm({ title, message, confirmLabel, busy, onClose, onConfirm }: { t
 }
 
 export function CrlOperationsPanel() {
-  const [gossip, setGossip] = useState<CrlOperationalResponse | null>(null);
+  const [gossip, setGossip] = useState<CrlGossipStatusResponse | null>(null);
+  const [latestTrigger, setLatestTrigger] = useState<CrlGossipTriggerResponse | null>(null);
   const [emergency, setEmergency] = useState<CrlOperationalResponse | null>(null);
   const [notifications, setNotifications] = useState<CrlOperationalResponse | null>(null);
   const [offline, setOffline] = useState<CrlOperationalResponse | null>(null);
@@ -90,10 +167,24 @@ export function CrlOperationsPanel() {
   const load = useCallback(async (announce = false) => {
     setLoading(true);
     const requests = await Promise.allSettled([crlService.gossipStatus(), crlService.emergencyStatus(), crlService.emergencyNotifications(), crlService.offlineStatus(), crlService.offlinePending()]);
-    const setters = [setGossip, setEmergency, setNotifications, setOffline, setPending];
-    const names = ["gossip", "emergency", "notifications", "offline", "pending"];
+    const [gossipResult, emergencyResult, notificationsResult, offlineResult, pendingResult] = requests;
     const nextErrors: Record<string, string> = {};
-    requests.forEach((result, index) => result.status === "fulfilled" ? setters[index](result.value) : nextErrors[names[index]] = messageOf(result.reason));
+
+    if (gossipResult.status === "fulfilled") setGossip(gossipResult.value);
+    else nextErrors.gossip = messageOf(gossipResult.reason);
+
+    if (emergencyResult.status === "fulfilled") setEmergency(emergencyResult.value);
+    else nextErrors.emergency = messageOf(emergencyResult.reason);
+
+    if (notificationsResult.status === "fulfilled") setNotifications(notificationsResult.value);
+    else nextErrors.notifications = messageOf(notificationsResult.reason);
+
+    if (offlineResult.status === "fulfilled") setOffline(offlineResult.value);
+    else nextErrors.offline = messageOf(offlineResult.reason);
+
+    if (pendingResult.status === "fulfilled") setPending(pendingResult.value);
+    else nextErrors.pending = messageOf(pendingResult.reason);
+
     setErrors(nextErrors);
     setLoading(false);
     if (announce) Object.keys(nextErrors).length ? toast.warning("Some CRL services are unavailable", { description: Object.values(nextErrors)[0] }) : toast.success("CRL propagation status refreshed");
@@ -109,8 +200,9 @@ export function CrlOperationsPanel() {
     setBusy(operation);
     try {
       if (operation === "gossip") {
-        await crlService.triggerGossip();
-        toast.success("Gossip round triggered");
+        const result = await crlService.triggerGossip();
+        setLatestTrigger(result);
+        toast.success("Gossip round triggered", { description: `${result.peer_node || "peer"} · merged ${result.merged ?? 0}, pushed ${result.pushed ?? 0}` });
       } else if (operation === "sync") {
         await crlService.syncOffline();
         toast.success("Offline synchronization completed");
@@ -124,23 +216,31 @@ export function CrlOperationsPanel() {
       }
       setConfirm(null);
       await load();
-    } catch (error) { toast.error("CRL operation failed", { description: messageOf(error) }); }
-    finally { setBusy(null); }
+    } catch (error) {
+      toast.error("CRL operation failed", { description: messageOf(error) });
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function inspectDebug() {
     if (!did.trim().startsWith("did:")) return toast.error("Enter a valid DID");
     setBusy("seed");
-    try { setDebugResult(await crlService.getEmergencyDebugSession(did.trim())); toast.success("Debug session loaded"); }
-    catch (error) { toast.error("Debug session lookup failed", { description: messageOf(error) }); }
-    finally { setBusy(null); }
+    try {
+      setDebugResult(await crlService.getEmergencyDebugSession(did.trim()));
+      toast.success("Debug session loaded");
+    } catch (error) {
+      toast.error("Debug session lookup failed", { description: messageOf(error) });
+    } finally {
+      setBusy(null);
+    }
   }
 
   const validDid = did.trim().startsWith("did:");
   return <div className="flex flex-col gap-4">
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4"><div><h2 className="font-semibold">CRL propagation control center</h2><p className="mt-1 text-xs text-muted-foreground">Status refreshes automatically every 30 seconds.</p></div><Button onClick={() => void load(true)} busy={loading}><RefreshCw size={14} />Refresh all</Button></div>
     {Object.keys(errors).length > 0 && <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive"><strong>Partial service failure.</strong> {Object.entries(errors).map(([key, value]) => `${key}: ${value}`).join(" · ")}</div>}
-    <Card title="Gossip engine" subtitle="Peer propagation counters, thresholds, and the latest gossip round." icon={Radio} actions={<Button onClick={() => setConfirm("gossip")} disabled={loading}><RefreshCw size={14} />Trigger round</Button>}><Summary data={gossip} /></Card>
+    <Card title="Gossip engine" subtitle="Peer propagation counters, hidden CRL proof fields, and the latest manual trigger result." icon={Radio} actions={<Button onClick={() => setConfirm("gossip")} disabled={loading}><RefreshCw size={14} />Trigger round</Button>}><GossipSummary data={gossip} latestTrigger={latestTrigger} /></Card>
     <Card title="Emergency revocation channel" subtitle={`Critical peer broadcast and durable notifications${notificationCount !== null ? ` · ${notificationCount} notifications` : ""}.`} icon={BellRing}>
       <Summary data={emergency} />
       <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_190px_auto]"><input className="rounded-md border border-border bg-input-background px-3 py-2 text-sm" value={did} onChange={(event) => setDid(event.target.value)} placeholder="did:guardian:..." aria-label="Emergency DID" /><select className="rounded-md border border-border bg-input-background px-3 py-2 text-sm" value={reason} onChange={(event) => setReason(event.target.value)} aria-label="Emergency reason"><option value="compromised">Compromised</option><option value="lost">Lost</option><option value="stolen">Stolen</option><option value="policy_violation">Policy violation</option></select><Button danger disabled={!validDid} onClick={() => setConfirm("broadcast")}><Send size={14} />Broadcast</Button></div>
