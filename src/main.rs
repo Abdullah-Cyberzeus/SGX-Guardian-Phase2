@@ -3154,14 +3154,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("⚠️ Invalid SGX_ADMIN_BIND value ({e}); using 0.0.0.0:8443");
                 "0.0.0.0:8443".parse().expect("valid default admin bind")
             });
-        let mut tls_cfg = this_node
+        let tls_cfg = this_node
             .api
             .clone()
             .map(|config| config.tls)
             .unwrap_or_else(|| default_admin_api_tls(&node_id));
-        tls_cfg.enabled = false;
-        tls_cfg.require_https = false;
-
         if tls_cfg.require_https && !tls_cfg.enabled {
             eprintln!(
                 "❌ REST admin API TLS misconfigured: require_https=true but tls.enabled=false"
