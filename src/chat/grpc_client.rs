@@ -3,7 +3,6 @@ use crate::audit::logger::log_audit;
 use crate::proto::sgx::chat_service_client::ChatServiceClient;
 use crate::proto::sgx::{PushMessageRequest, PushReceiptRequest};
 use anyhow::Error;
-use tonic::transport::Channel;
 
 pub async fn push_message_to_peer(
     addr: String,
@@ -19,9 +18,13 @@ pub async fn push_message_to_peer(
         &format!("Outbound Chat push attempt to {}", addr),
     );
 
-    let channel = Channel::from_shared(format!("http://{}", addr))
+    let channel = tonic::transport::Endpoint::from_shared(format!("http://{}", addr))
         .map_err(|e| Error::msg(format!("Invalid endpoint URI: {}", e)))?
-        .connect_lazy();
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(10))
+        .connect()
+        .await
+        .map_err(|e| Error::msg(format!("gRPC connect to {} failed: {}", addr, e)))?;
 
     let mut client = ChatServiceClient::new(channel);
     let response = match client.push_message(tonic::Request::new(request)).await {
@@ -67,9 +70,13 @@ pub async fn push_receipt_to_peer(
         &format!("Outbound Chat receipt push attempt to {}", addr),
     );
 
-    let channel = Channel::from_shared(format!("http://{}", addr))
+    let channel = tonic::transport::Endpoint::from_shared(format!("http://{}", addr))
         .map_err(|e| Error::msg(format!("Invalid endpoint URI: {}", e)))?
-        .connect_lazy();
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(10))
+        .connect()
+        .await
+        .map_err(|e| Error::msg(format!("gRPC connect to {} failed: {}", addr, e)))?;
 
     let mut client = ChatServiceClient::new(channel);
     let response = match client.push_receipt(tonic::Request::new(request)).await {
@@ -117,9 +124,13 @@ pub async fn request_sync_from_peer(
         ),
     );
 
-    let channel = Channel::from_shared(format!("http://{}", addr))
+    let channel = tonic::transport::Endpoint::from_shared(format!("http://{}", addr))
         .map_err(|e| Error::msg(format!("Invalid endpoint URI: {}", e)))?
-        .connect_lazy();
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(10))
+        .connect()
+        .await
+        .map_err(|e| Error::msg(format!("gRPC connect to {} failed: {}", addr, e)))?;
 
     let mut client = ChatServiceClient::new(channel);
     let request = crate::proto::sgx::SyncRequest {
