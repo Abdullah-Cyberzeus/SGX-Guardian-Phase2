@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "react-router";
-import { Home, Bell, Cpu, Cloud, Settings } from "lucide-react";
+import { Home, Bell, BellRing, Cpu, Cloud, Settings } from "lucide-react";
 import { mockGuardian, mockAlerts, mockDevices } from "../data/mockData";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 import logoSrc from "@/assets/sgx-guardian-logo.png";
@@ -28,6 +28,7 @@ const circlesBadgeCount = 2; // mock pending invites
 const navItems = [
   { label: "Home", icon: Home, path: "/home", custom: false, badge: 0 },
   { label: "Alerts", icon: Bell, path: "/alerts", custom: false, badge: alertBadgeCount },
+  { label: "Notifications", icon: BellRing, path: "/notifications", custom: false, badge: 0 },
   { label: "Circles", icon: null, path: "/network", custom: true, badge: circlesBadgeCount },
   { label: "Devices", icon: Cpu, path: "/devices", custom: false, badge: deviceBadgeCount },
   { label: "All Files", icon: Cloud, path: "/storage", custom: false, badge: 0 },

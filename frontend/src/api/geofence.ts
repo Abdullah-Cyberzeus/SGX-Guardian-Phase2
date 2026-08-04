@@ -73,14 +73,34 @@ export interface GeofenceStatus {
 export interface GeofenceEvent {
   id: string;
   zone_id: string;
-  zone_name: string;
+  zone_name?: string;
   transition: GeofenceTransition;
   fix_summary: string;
-  at: string;
+  at?: string;
+  timestamp?: string;
   severity: GeofenceSeverity;
+  zone_kind?: GeofenceZoneKind;
+  detection_source?: GeofenceSource | string;
+  source?: GeofenceSource | string;
+  rf_score?: number | null;
 }
 
-export type ThreatAlert = Record<string, unknown>;
+export interface ThreatAlert extends Record<string, unknown> {
+  id?: string;
+  severity?: GeofenceSeverity;
+  trigger?: string;
+  signature?: string;
+  zone_id?: string;
+  dst_ip?: string;
+  ref_id?: string;
+  zone_name?: string;
+  zone_kind?: GeofenceZoneKind;
+  source?: GeofenceSource | string;
+  detection_source?: GeofenceSource | string;
+  at?: string;
+  timestamp?: string;
+  created_at?: string;
+}
 
 export type ReportLocationRequest = {
   lat: number;

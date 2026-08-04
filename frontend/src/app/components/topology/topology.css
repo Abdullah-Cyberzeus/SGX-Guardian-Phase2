@@ -236,6 +236,8 @@
   -webkit-backdrop-filter: blur(12px);
   box-shadow: 0 14px 36px rgba(0,0,0,.42), inset 0 0 0 1px rgba(255,255,255,.03);
   color: #dbeafe;
+  max-height: calc(100% - 72px);
+  overflow-y: auto;
 }
 .topo-stage .topo-geofence-head {
   display: flex;
@@ -286,7 +288,7 @@
 }
 .topo-stage .topo-geofence-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
 }
 .topo-stage .topo-geofence-grid div {
@@ -336,6 +338,28 @@
   border-radius: 8px;
   background: rgba(3,8,15,.55);
 }
+.topo-stage .topo-zone-cards { display: grid; gap: 8px; }
+.topo-stage .topo-zone-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 8px 0 0; }
+.topo-stage .topo-zone-fields div { min-width: 0; }
+.topo-stage .topo-zone-fields .is-wide { grid-column: 1 / -1; }
+.topo-stage .topo-zone-fields dt { color: #64748b; font: 700 7px "JetBrains Mono", monospace; letter-spacing: .08em; text-transform: uppercase; }
+.topo-stage .topo-zone-fields dd { margin: 2px 0 0; color: #cbd5e1; font: 600 9px "JetBrains Mono", monospace; overflow-wrap: anywhere; }
+.topo-stage .topo-geofence-feed { display: grid; gap: 5px; margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.07); font: 600 9px "JetBrains Mono", monospace; }
+.topo-stage .topo-geofence-feed strong { margin-top: 3px; color: #e2e8f0; }
+.topo-stage .topo-geofence-feed > span { color: #94a3b8; overflow-wrap: anywhere; }
+.topo-stage .topo-feed-card { display: grid; gap: 6px; padding: 7px; border: 1px solid rgba(125,211,252,.10); border-radius: 7px; background: rgba(3,8,15,.48); }
+.topo-stage .topo-feed-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.topo-stage .topo-feed-card-head > span { min-width: 0; color: #cbd5e1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topo-stage .topo-feed-badge { flex: none; padding: 2px 5px; border: 1px solid rgba(251,191,36,.28); border-radius: 999px; background: rgba(251,191,36,.10); color: #fbbf24; font-size: 8px; letter-spacing: .06em; }
+.topo-stage .topo-feed-badge.is-entry, .topo-stage .topo-feed-badge.is-low { border-color: rgba(52,211,153,.28); background: rgba(52,211,153,.10); color: #6ee7b7; }
+.topo-stage .topo-feed-badge.is-exit, .topo-stage .topo-feed-badge.is-high, .topo-stage .topo-feed-badge.is-critical { border-color: rgba(248,113,113,.30); background: rgba(248,113,113,.10); color: #fca5a5; }
+.topo-stage .topo-feed-card dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 8px; margin: 0; }
+.topo-stage .topo-feed-card dl > div { min-width: 0; }
+.topo-stage .topo-feed-card dl > .is-wide { grid-column: 1 / -1; }
+.topo-stage .topo-feed-card dt { color: #64748b; font-size: 7px; letter-spacing: .08em; text-transform: uppercase; }
+.topo-stage .topo-feed-card dd { margin: 1px 0 0; color: #cbd5e1; overflow-wrap: anywhere; }
+.topo-stage .topo-feed-toggle { justify-self: start; min-height: 24px; padding: 0; border: 0; color: #7dd3fc; background: transparent; font: 700 9px "JetBrains Mono", monospace; cursor: pointer; }
+.topo-stage .topo-feed-toggle:hover { color: #f8fafc; text-decoration: underline; }
 .topo-stage .topo-zone-card-title {
   display: flex;
   justify-content: space-between;

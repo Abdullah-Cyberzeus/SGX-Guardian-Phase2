@@ -333,6 +333,11 @@ export function OB02HardwarePairing() {
     }
   };
 
+  const skipPairing = () => {
+    localStorage.setItem("sgx_onboarded", "1");
+    navigate("/home", { replace: true });
+  };
+
   const requestPairingCode = async (value: string, method: SignupMethod) => {
     const nextSerial = normalizeSerial(value);
     if (!nextSerial) {
@@ -571,6 +576,23 @@ export function OB02HardwarePairing() {
             description="Upload a QR image, take a QR photo, or scan with this device's camera."
             onClick={() => setMode("qr")}
           />
+          <button
+            type="button"
+            onClick={skipPairing}
+            className="self-center mt-1"
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--muted-foreground)",
+              cursor: "pointer",
+              fontFamily: "Inter, sans-serif",
+              fontSize: "var(--text-sm)",
+              textDecoration: "underline",
+              textUnderlineOffset: "3px",
+            }}
+          >
+            Skip pairing for now
+          </button>
         </div>
         <div className="h-8" />
       </div>
