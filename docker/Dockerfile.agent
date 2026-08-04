@@ -7,8 +7,22 @@
 # =============================================================================
 
 ARG RUST_IMAGE=rust:1.90-bookworm
+ARG NODE_IMAGE=node:22-bookworm-slim
 ARG RUNTIME_IMAGE=debian:bookworm-slim
 ARG NEBULA_VERSION=1.10.3
+
+# Build the React application inside Docker. The Rust build embeds this output
+# into the daemon binary, so it must never depend on a stale host-side dist/.
+FROM ${NODE_IMAGE} AS frontend-builder
+
+WORKDIR /src/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build \
+    && test -s dist/index.html \
+    && grep -q 'type="module"' dist/index.html \
+    && ! grep -q '/src/main.tsx' dist/index.html
 
 FROM ${RUST_IMAGE} AS builder
 
@@ -20,6 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /src
 COPY . .
+COPY --from=frontend-builder /src/frontend/dist /src/frontend/dist
 
 # Keep the workspace contract aligned with CI and scripts/build.sh.
 RUN cargo build --release --workspace --locked --features tpm
