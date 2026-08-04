@@ -1288,6 +1288,154 @@ mod tests {
         handle.abort();
     }
 
+    #[tokio::test]
+    async fn backup_import_registers_uploaded_bundle_and_enforces_portable_cross_did() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _login = ScopedLoginMode::disabled(true);
+        let temp = TempDir::new().expect("backup import tempdir");
+        let source_state = AppState::for_tests(
+            &temp.path().join("source"),
+            "nodeA",
+            temp.path()
+                .join("source/config")
+                .to_string_lossy()
+                .to_string(),
+        );
+        write_test_node_config(&source_state);
+        let source_config = crate::backup::BackupConfig {
+            base_dir: temp.path().join("source-backup"),
+            max_bundle_bytes: 1024 * 1024,
+        };
+        let portable_record = crate::backup::create::create_backup(
+            source_state.clone(),
+            source_config.clone(),
+            "correct horse battery staple".to_string(),
+            true,
+        )
+        .await
+        .expect("create portable backup");
+        let portable_bytes =
+            std::fs::read(&portable_record.bundle_path).expect("read portable bundle");
+        let nonportable_record = crate::backup::create::create_backup(
+            source_state.clone(),
+            source_config,
+            "correct horse battery staple".to_string(),
+            false,
+        )
+        .await
+        .expect("create non-portable backup");
+        let nonportable_bytes =
+            std::fs::read(&nonportable_record.bundle_path).expect("read non-portable bundle");
+
+        let target_state = AppState::for_tests(
+            &temp.path().join("target"),
+            "nodeB",
+            temp.path()
+                .join("target/config")
+                .to_string_lossy()
+                .to_string(),
+        );
+        let target_config = crate::backup::BackupConfig {
+            base_dir: temp.path().join("target-backup"),
+            max_bundle_bytes: 1024 * 1024,
+        };
+        let _backup_base = ScopedEnvVar::set(
+            crate::backup::BACKUP_BASE_ENV,
+            target_config.base_dir.to_str().expect("target backup base"),
+        );
+        let (base_url, handle) = spawn_api_with_state(target_state.clone()).await;
+        let client = reqwest::Client::new();
+
+        let imported = post_backup_import(
+            &client,
+            &base_url,
+            &format!("{}.sgxbak", portable_record.id),
+            &portable_bytes,
+            "correct horse battery staple",
+        )
+        .await;
+        assert_eq!(imported.status(), StatusCode::OK);
+        let imported_body: Value = imported.json().await.expect("import response");
+        assert_eq!(imported_body["id"], portable_record.id);
+        assert_eq!(imported_body["source_node_id"], portable_record.source_node_id);
+        assert_eq!(imported_body["source_did"], source_state.device_did);
+        assert_eq!(imported_body["target_did"], target_state.device_did);
+        assert_eq!(imported_body["portable"], true);
+        assert_eq!(imported_body["size_bytes"], portable_bytes.len() as u64);
+        let imported_path = target_config.bundle_path(&portable_record.id);
+        assert_eq!(
+            std::fs::read(&imported_path).expect("read imported bundle"),
+            portable_bytes
+        );
+        let history = crate::backup::create::load_history(&target_config)
+            .await
+            .expect("load import history");
+        assert_eq!(history.records.len(), 1);
+        assert_eq!(history.records[0].id, portable_record.id);
+
+        let duplicate = post_backup_import(
+            &client,
+            &base_url,
+            &format!("{}.sgxbak", portable_record.id),
+            &portable_bytes,
+            "correct horse battery staple",
+        )
+        .await;
+        assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+
+        let nonportable = post_backup_import(
+            &client,
+            &base_url,
+            &format!("{}.sgxbak", nonportable_record.id),
+            &nonportable_bytes,
+            "correct horse battery staple",
+        )
+        .await;
+        assert_eq!(nonportable.status(), StatusCode::CONFLICT);
+        assert!(
+            !target_config.bundle_path(&nonportable_record.id).exists(),
+            "non-portable cross-DID import must not publish bundle"
+        );
+
+        handle.abort();
+    }
+
+    async fn post_backup_import(
+        client: &reqwest::Client,
+        base_url: &str,
+        filename: &str,
+        payload: &[u8],
+        passphrase: &str,
+    ) -> reqwest::Response {
+        let boundary = format!("sgx-boundary-{}", uuid::Uuid::new_v4());
+        let mut body = Vec::new();
+        body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+        body.extend_from_slice(b"Content-Disposition: form-data; name=\"passphrase\"\r\n\r\n");
+        body.extend_from_slice(passphrase.as_bytes());
+        body.extend_from_slice(b"\r\n");
+        body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+        body.extend_from_slice(
+            format!(
+                "Content-Disposition: form-data; name=\"file\"; filename=\"{}\"\r\n",
+                filename
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
+        body.extend_from_slice(payload);
+        body.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
+        client
+            .post(format!("{}/api/v1/backup/import", base_url))
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={}", boundary),
+            )
+            .body(body)
+            .send()
+            .await
+            .expect("backup import request")
+    }
+
     async fn upload_vault_bytes(
         client: &reqwest::Client,
         base_url: &str,

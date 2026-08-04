@@ -6,6 +6,8 @@ pub enum BackupError {
     NotFound(String),
     #[error("invalid backup request: {0}")]
     InvalidRequest(String),
+    #[error("duplicate backup: {0}")]
+    Duplicate(String),
     #[error("backup integrity check failed: {0}")]
     Integrity(String),
     #[error("unsupported backup schema: {0}")]

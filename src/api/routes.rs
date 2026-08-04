@@ -91,6 +91,7 @@ pub fn geofence_router() -> Router<Arc<AppState>> {
 pub fn backup_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/v1/backup/create", post(handlers::backup::create))
+        .route("/api/v1/backup/import", post(handlers::backup::import))
         .route("/api/v1/backup/history", get(handlers::backup::history))
         .route(
             "/api/v1/backup/download/{id}",

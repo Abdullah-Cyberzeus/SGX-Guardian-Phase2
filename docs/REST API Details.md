@@ -124,6 +124,7 @@ Transport notes:
 | 105 | GET | `/crl/offline/pending` | List queued offline revocations with retry metadata |
 | 106 | POST | `/crl/offline/sync` | Trigger one offline CRL sync cycle immediately |
 | 107 | POST | `/backup/create` | Create an encrypted backup bundle |
+| 107a | POST | `/backup/import` | Import an existing encrypted backup bundle |
 | 108 | GET | `/backup/history` | List local backup bundle history |
 | 109 | GET | `/backup/download/{id}` | Download one encrypted backup bundle |
 | 110 | DELETE | `/backup/{id}` | Delete one local backup bundle |
@@ -251,6 +252,7 @@ Transport notes:
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/backup/create` | Create an encrypted backup bundle |
+| POST | `/backup/import` | Import an existing encrypted backup bundle |
 | GET | `/backup/history` | List local backup bundle history |
 | GET | `/backup/download/{id}` | Download one encrypted backup bundle |
 | DELETE | `/backup/{id}` | Delete one local backup bundle |
@@ -420,6 +422,43 @@ Transport notes:
   - `400 BAD_REQUEST`: `passphrase` is empty
   - `413 PAYLOAD_TOO_LARGE`: generated bundle exceeds configured maximum size
   - `500 INTERNAL_SERVER_ERROR`: backup gathering, encryption, filesystem, or history write failure
+
+### 3.86a POST `/backup/import`
+
+- Purpose: Import an existing encrypted `.sgxbak` bundle into the local backup store.
+- Method: `POST`
+- Full path: `/api/v1/backup/import`
+- Request body: `multipart/form-data`
+  - `file` (required): `.sgxbak` bundle upload. Filenames containing paths, traversal, or non-`.sgxbak` names are rejected.
+  - `passphrase` (required): passphrase used to decrypt and validate the bundle.
+- Behavior:
+  - Upload is first written to a temporary import directory under the backup base.
+  - Bundle size is capped by the configured backup bundle limit.
+  - The bundle is decrypted and validated before registration, including HMAC, passphrase, manifest schema, backup ID, source DID, component schemas, and manifest paths.
+  - If the source DID differs from the target DID, the bundle manifest must have `portable: true`.
+  - Existing backup IDs are rejected and existing bundle files are never overwritten.
+  - The validated bundle is atomically published to `/var/lib/sgx-guardian/backup/bundles/<backup-id>.sgxbak` and registered through the backup history persistence model.
+- Success response (`200 OK`):
+
+```json
+{
+  "id": "backup-...",
+  "created_at": "2026-07-27T12:00:00Z",
+  "source_node_id": "nodeA",
+  "source_did": "did:guardian:...",
+  "target_did": "did:guardian:...",
+  "portable": true,
+  "components": ["policy", "config", "credentials", "crl"],
+  "bundle_path": "/var/lib/sgx-guardian/backup/bundles/backup-....sgxbak",
+  "size_bytes": 123456
+}
+```
+
+- Error responses:
+  - `400 BAD_REQUEST`: missing required fields, extra multipart fields, empty passphrase, invalid filename, or unsafe backup ID
+  - `409 CONFLICT`: integrity/schema validation fails, source DID differs and bundle is not portable, or backup ID already exists
+  - `413 PAYLOAD_TOO_LARGE`: uploaded bundle exceeds configured maximum size
+  - `500 INTERNAL_SERVER_ERROR`: filesystem, decrypt, parse, move, or history persistence failure
 
 ### 3.87 GET `/backup/history`
 

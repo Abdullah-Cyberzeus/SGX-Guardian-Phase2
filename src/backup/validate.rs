@@ -1,10 +1,13 @@
 use crate::api::state::AppState;
 use crate::backup::crypto;
 use crate::backup::errors::BackupError;
-use crate::backup::model::{Manifest, ValidateReport, BACKUP_SCHEMA_VERSION};
+use crate::backup::model::{
+    Manifest, ValidateReport, BACKUP_SCHEMA_VERSION, COMPONENT_SCHEMA_VERSION,
+};
 use crate::backup::BackupConfig;
 use sha2::{Digest, Sha256};
 use std::io::Read;
+use std::path::Path;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -57,23 +60,49 @@ pub async fn decode_backup_by_id(
     if !tokio::fs::try_exists(&path).await? {
         return Err(BackupError::NotFound(id.to_string()));
     }
-    let max = config.max_bundle_bytes;
+    decode_backup_file(&path, passphrase, config.max_bundle_bytes).await
+}
+
+pub async fn decode_backup_file(
+    path: &Path,
+    passphrase: &str,
+    max_bytes: u64,
+) -> Result<DecodedBackup, BackupError> {
+    let path = path.to_path_buf();
     let passphrase = passphrase.to_string();
     tokio::task::spawn_blocking(move || {
         let file = std::fs::File::open(path)?;
-        let plaintext = crypto::decrypt_from_reader(file, &passphrase, max)?;
+        let plaintext = crypto::decrypt_from_reader(file, &passphrase, max_bytes)?;
         decode_plaintext(&plaintext)
     })
     .await
     .map_err(|error| BackupError::Crypto(format!("backup validation task failed: {}", error)))?
 }
 
-fn validate_manifest(decoded: &DecodedBackup) -> Result<(), BackupError> {
+pub fn validate_manifest(decoded: &DecodedBackup) -> Result<(), BackupError> {
     if decoded.manifest.schema_version != BACKUP_SCHEMA_VERSION {
         return Err(BackupError::UnsupportedSchema(format!(
             "manifest version {}",
             decoded.manifest.schema_version
         )));
+    }
+    if decoded.manifest.backup_id.trim().is_empty() {
+        return Err(BackupError::Integrity(
+            "manifest backup_id must not be empty".to_string(),
+        ));
+    }
+    if decoded.manifest.source_did.trim().is_empty() {
+        return Err(BackupError::Integrity(
+            "manifest source_did must not be empty".to_string(),
+        ));
+    }
+    for component in &decoded.manifest.components {
+        if component.schema_version != COMPONENT_SCHEMA_VERSION {
+            return Err(BackupError::UnsupportedSchema(format!(
+                "component {:?} version {}",
+                component.component, component.schema_version
+            )));
+        }
     }
     let mut encoded_files = Vec::new();
     for file in &decoded.files {

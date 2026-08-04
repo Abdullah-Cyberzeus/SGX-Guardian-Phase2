@@ -100,6 +100,18 @@ pub async fn save_history(
     secure_write_atomic(&config.history_path(), &serde_json::to_vec_pretty(history)?).await
 }
 
+pub async fn register_imported_backup(
+    config: &BackupConfig,
+    record: BackupRecord,
+) -> Result<(), BackupError> {
+    let mut history = load_history(config).await?;
+    if history.records.iter().any(|existing| existing.id == record.id) {
+        return Err(BackupError::Duplicate(record.id));
+    }
+    history.records.insert(0, record);
+    save_history(config, &history).await
+}
+
 pub async fn delete_backup(config: &BackupConfig, id: &str) -> Result<(), BackupError> {
     let mut history = load_history(config).await?;
     let before = history.records.len();

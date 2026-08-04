@@ -2,6 +2,7 @@ pub mod components;
 pub mod create;
 pub mod crypto;
 pub mod errors;
+pub mod import;
 pub mod init;
 pub mod model;
 pub mod restore;
