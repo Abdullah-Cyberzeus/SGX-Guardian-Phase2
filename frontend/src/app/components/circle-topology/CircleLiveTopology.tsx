@@ -35,6 +35,7 @@ import type {
 } from "./types";
 import { useCircleTopology } from "./useCircleTopology";
 import { geofenceApi, type CreateZoneRequest, type GeofenceEvent, type GeofenceStatus, type GeofenceZone, type ThreatAlert, type ZoneAutomation } from "../../../api/geofence";
+import { alertDetails, configuredActions, eventDetails, locationSourceLabel, sourceLabel, zoneTypeLabel } from "../geofenceDisplay";
 import "./circle-topology.css";
 
 const WIDTH = 1440;
@@ -405,19 +406,34 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
   const [geofenceZones, setGeofenceZones] = useState<GeofenceZone[]>([]);
   const [geofenceEvents, setGeofenceEvents] = useState<GeofenceEvent[]>([]);
   const [geofenceAlerts, setGeofenceAlerts] = useState<ThreatAlert[]>([]);
-  const [zoneAutomation, setZoneAutomation] = useState<ZoneAutomation | null>(null);
   const [geofenceError, setGeofenceError] = useState<string | null>(null);
   const [geofenceBusy, setGeofenceBusy] = useState<string | null>(null);
-  const [geofenceLoaded, setGeofenceLoaded] = useState(false);
+  const [geofenceToast, setGeofenceToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
+  const [showAllGeofenceEvents, setShowAllGeofenceEvents] = useState(false);
+  const [showAllGeofenceAlerts, setShowAllGeofenceAlerts] = useState(false);
+  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
   const [editingZone, setEditingZone] = useState<GeofenceZone | null | undefined>(undefined);
   const zoomLabelRef = useRef<HTMLSpanElement | null>(null);
   const footerZoomRef = useRef<HTMLSpanElement | null>(null);
   const minimapZoomRef = useRef<HTMLSpanElement | null>(null);
+  const locationRequestInFlightRef = useRef(false);
+  const zoneActionInFlightRef = useRef(false);
 
   const nodes = useMemo(() => mapLayoutNodes(snapshot.nodes, geofenceStatus), [snapshot.nodes, geofenceStatus]);
   const zones = useMemo(() => mapZones(geofenceZones, geofenceStatus), [geofenceZones, geofenceStatus]);
   const nodeMap = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const selected = nodes.find((node) => node.id === selectedId) ?? null;
+  const selectedZone = geofenceZones.find((zone) => zone.zone_id === selectedZoneId) ?? null;
+  const orderedGeofenceEvents = useMemo(() => [...geofenceEvents].sort((a, b) => {
+    const right = Date.parse(b.at ?? b.timestamp ?? "") || 0;
+    const left = Date.parse(a.at ?? a.timestamp ?? "") || 0;
+    return right - left;
+  }), [geofenceEvents]);
+  const orderedGeofenceAlerts = useMemo(() => [...geofenceAlerts].sort((a, b) => {
+    const right = Date.parse(String(b.at ?? b.timestamp ?? b.created_at ?? "")) || 0;
+    const left = Date.parse(String(a.at ?? a.timestamp ?? a.created_at ?? "")) || 0;
+    return right - left;
+  }), [geofenceAlerts]);
   const visibleIds = useMemo(() => {
     const q = search.trim().toLowerCase();
     return new Set(nodes.filter((node) => {
@@ -449,28 +465,42 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
     setGeofenceError(null);
     try {
       const [status, location, zoneResult, eventResult, alertResult] = await Promise.all([
-        geofenceApi.status(),
-        geofenceApi.getLocation(),
-        geofenceApi.listZones(),
-        geofenceApi.events(),
-        geofenceApi.alerts(),
+        geofenceApi.status().catch((error) => { throw new Error(`Geofence status request failed: ${error instanceof Error ? error.message : "Unknown error"}`); }),
+        geofenceApi.getLocation().catch((error) => { throw new Error(`Geofence location request failed: ${error instanceof Error ? error.message : "Unknown error"}`); }),
+        geofenceApi.listZones().catch((error) => { throw new Error(`Geofence zones request failed: ${error instanceof Error ? error.message : "Unknown error"}`); }),
+        geofenceApi.events().catch((error) => { throw new Error(`Geofence events request failed: ${error instanceof Error ? error.message : "Unknown error"}`); }),
+        geofenceApi.alerts().catch((error) => { throw new Error(`Geofence alerts request failed: ${error instanceof Error ? error.message : "Unknown error"}`); }),
       ]);
       setGeofenceStatus({ ...status, location: status.location ?? location.location });
       setGeofenceZones(zoneResult.zones);
       setGeofenceEvents(eventResult.events);
       setGeofenceAlerts(alertResult.alerts);
-      setGeofenceLoaded(true);
     } catch (err) {
-      setGeofenceError(err instanceof Error ? err.message : "Geofence API unavailable");
+      setGeofenceError(err instanceof Error ? err.message : "Geofence refresh failed: Unknown error");
     }
   }, []);
 
+  const refreshSimulationResults = useCallback(async () => {
+    const [status, eventResult, alertResult] = await Promise.all([
+      geofenceApi.status().catch((error) => { throw new Error(`Geofence status request failed: ${error instanceof Error ? error.message : "Unknown error"}`); }),
+      geofenceApi.events().catch((error) => { throw new Error(`Geofence events request failed: ${error instanceof Error ? error.message : "Unknown error"}`); }),
+      geofenceApi.alerts().catch((error) => { throw new Error(`Geofence alerts request failed: ${error instanceof Error ? error.message : "Unknown error"}`); }),
+    ]);
+    setGeofenceStatus((current) => ({ ...status, location: status.location ?? current?.location ?? null }));
+    setGeofenceEvents(eventResult.events);
+    setGeofenceAlerts(alertResult.alerts);
+  }, []);
+
   const reportLocation = useCallback(() => {
+    if (locationRequestInFlightRef.current || geofenceBusy) return;
+    setGeofenceToast(null);
     if (!navigator.geolocation) {
-      setGeofenceError("Browser geolocation is unavailable");
+      setGeofenceError("Location unavailable");
       return;
     }
-    setGeofenceBusy("Uploading location");
+    locationRequestInFlightRef.current = true;
+    setGeofenceBusy("Getting location...");
+    setGeofenceError(null);
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         try {
@@ -480,19 +510,28 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
             accuracy_m: position.coords.accuracy,
           });
           await refreshGeofence();
+          setGeofenceToast({ message: "Location updated successfully", tone: "success" });
         } catch (err) {
-          setGeofenceError(err instanceof Error ? err.message : "Could not report location");
+          setGeofenceError(`Location update failed: ${err instanceof Error ? err.message : "Unknown error"}`);
         } finally {
+          locationRequestInFlightRef.current = false;
           setGeofenceBusy(null);
         }
       },
       (err) => {
+        locationRequestInFlightRef.current = false;
         setGeofenceBusy(null);
-        setGeofenceError(err.message || "Location permission denied");
+        setGeofenceError(err.code === err.PERMISSION_DENIED
+          ? "Permission denied"
+          : err.code === err.POSITION_UNAVAILABLE
+            ? "Location unavailable"
+            : err.code === err.TIMEOUT
+              ? "Request timed out"
+              : "Location unavailable");
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
     );
-  }, [refreshGeofence]);
+  }, [geofenceBusy, refreshGeofence]);
 
   const saveZone = async (body: CreateZoneRequest) => {
     setGeofenceBusy("Creating zone");
@@ -502,51 +541,60 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
       setEditingZone(undefined);
       await refreshGeofence();
     } catch (err) {
-      setGeofenceError(err instanceof Error ? err.message : "Could not save zone");
+      setGeofenceError(`Zone save request failed: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setGeofenceBusy(null);
     }
   };
 
-  const firstZone = geofenceZones[0];
-
-  useEffect(() => {
-    if (!firstZone) { setZoneAutomation(null); return; }
-    void geofenceApi.getActions(firstZone.zone_id).then((result) => setZoneAutomation(result.automation)).catch(() => setZoneAutomation(null));
-  }, [firstZone?.zone_id]);
-  const runZoneAction = async (action: "toggle" | "delete" | "rf" | "actions" | "entry" | "exit") => {
-    if (!firstZone) return;
+  const runZoneAction = async (zone: GeofenceZone, action: "toggle" | "delete" | "rf" | "actions" | "entry" | "exit") => {
+    if (geofenceBusy || zoneActionInFlightRef.current) return;
+    zoneActionInFlightRef.current = true;
+    setGeofenceToast(null);
+    setGeofenceError(null);
     setGeofenceBusy(action);
     try {
-      if (action === "toggle") await geofenceApi.editZone(firstZone.zone_id, { enabled: !firstZone.enabled });
-      if (action === "delete") await geofenceApi.deleteZone(firstZone.zone_id);
-      if (action === "rf") await geofenceApi.captureRf(firstZone.zone_id);
+      if (action === "toggle") await geofenceApi.editZone(zone.zone_id, { enabled: !zone.enabled });
+      if (action === "delete") await geofenceApi.deleteZone(zone.zone_id);
+      if (action === "rf") {
+        setGeofenceBusy("Capturing current RF environment...");
+        await geofenceApi.captureRf(zone.zone_id);
+      }
       if (action === "actions") {
-        await geofenceApi.getActions(firstZone.zone_id);
-        await geofenceApi.replaceActions(firstZone.zone_id, firstZone.automation ?? DEFAULT_AUTOMATION);
+        await geofenceApi.getActions(zone.zone_id);
+        await geofenceApi.replaceActions(zone.zone_id, zone.automation ?? DEFAULT_AUTOMATION);
       }
       if (action === "entry" || action === "exit") {
-        await geofenceApi.getActions(firstZone.zone_id);
-        await geofenceApi.testActions({ zone_id: firstZone.zone_id, transition: action, confidence: 1 });
+        await geofenceApi.testActions({ zone_id: zone.zone_id, transition: action, confidence: 1 });
+        await refreshSimulationResults();
+        setGeofenceToast({ message: `Zone ${action.toUpperCase()} simulation completed`, tone: "success" });
+      } else {
+        await refreshGeofence();
       }
-      await refreshGeofence();
     } catch (err) {
-      setGeofenceError(err instanceof Error ? err.message : "Geofence action failed");
+      const requestName = action === "toggle" ? "Zone enable/disable" : action === "delete" ? "Zone delete" : action === "rf" ? "RF capture" : action === "actions" ? "Zone actions update" : `Zone ${action} action test`;
+      const message = `${requestName} request failed: ${err instanceof Error ? err.message : "Unknown error"}`;
+      setGeofenceError(message);
+      if (action === "entry" || action === "exit") setGeofenceToast({ message, tone: "error" });
     } finally {
+      zoneActionInFlightRef.current = false;
       setGeofenceBusy(null);
     }
   };
 
   useEffect(() => {
     void refreshGeofence();
-    const interval = window.setInterval(refreshGeofence, 15000);
-    return () => window.clearInterval(interval);
   }, [refreshGeofence]);
 
   useEffect(() => {
-    if (!geofenceLoaded || geofenceStatus?.location || geofenceError) return;
-    reportLocation();
-  }, [geofenceError, geofenceLoaded, geofenceStatus?.location, reportLocation]);
+    if (selectedZoneId && !geofenceZones.some((zone) => zone.zone_id === selectedZoneId)) setSelectedZoneId(null);
+  }, [geofenceZones, selectedZoneId]);
+
+  useEffect(() => {
+    if (geofenceToast?.tone !== "success") return;
+    const timeout = window.setTimeout(() => setGeofenceToast(null), 4200);
+    return () => window.clearTimeout(timeout);
+  }, [geofenceToast]);
 
   useEffect(() => {
     if (!svgRef.current || !viewportRef.current) return;
@@ -884,25 +932,43 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
         <section className="clt-card">
           <div className="clt-card__head"><span>Geofence</span><MapPin size={13} /></div>
           <div className="clt-compact-list">
-            <div><span>Source</span><b>{geofenceStatus?.source ?? "Unavailable"}</b></div>
-            <div><span>Zones</span><b>{geofenceZones.length}</b></div>
-            <div><span>Current zone</span><b>{geofenceStatus?.zones.find((z) => z.inside)?.zone_name ?? "Outside"}</b></div>
-            <div><span>Location</span><b>{geofenceStatus?.location?.fix && Number.isFinite(geofenceStatus.location.fix.lat) && Number.isFinite(geofenceStatus.location.fix.lng) ? `${geofenceStatus.location.fix.lat.toFixed(3)}, ${geofenceStatus.location.fix.lng.toFixed(3)}` : "Not stored"}</b></div>
+            <div><span>Active Provider</span><b>{sourceLabel(geofenceStatus?.source)}</b></div>
+            <div><span>Location Source</span><b>{locationSourceLabel(geofenceStatus?.location?.source)}</b></div>
+            <div><span>Location Type</span><b>{zoneTypeLabel(geofenceStatus?.location?.fix?.kind)}</b></div>
+            <div><span>Zones Count</span><b>{geofenceZones.length}</b></div>
+            <div><span>Current Zone</span><b>{geofenceStatus?.zones.find((z) => z.inside)?.zone_name ?? "Outside"}</b></div>
+            <div><span>Current Coordinates</span><b>{geofenceStatus?.location?.fix ? `${geofenceStatus.location.fix.lat.toFixed(5)}, ${geofenceStatus.location.fix.lng.toFixed(5)}` : "Not stored"}</b></div>
+            <div><span>Accuracy</span><b>{geofenceStatus?.location?.fix?.accuracy_m != null ? `${Math.round(geofenceStatus.location.fix.accuracy_m)} m` : "Unavailable"}</b></div>
+            <div><span>Last Updated</span><b>{geofenceStatus?.location?.updated_at ? new Date(geofenceStatus.location.updated_at).toLocaleString() : "Never"}</b></div>
           </div>
           <div className="clt-geofence-actions">
-            <button onClick={() => void refreshGeofence()} title="Refresh geofence"><RefreshCw size={12} /></button>
-            <button onClick={reportLocation} title="Report location"><MapPin size={12} /></button>
-            <button onClick={() => setEditingZone(null)} disabled={!geofenceStatus?.location?.fix} title="Create and name a zone"><Plus size={12} /></button>
-            <button onClick={() => setEditingZone(firstZone)} disabled={!firstZone} title="Edit selected zone"><Pencil size={12} /></button>
-            <button onClick={() => void runZoneAction("toggle")} disabled={!firstZone} title="Toggle zone"><ShieldCheck size={12} /></button>
-            <button onClick={() => void runZoneAction("rf")} disabled={!firstZone} title="Capture RF"><Radio size={12} /></button>
-            <button onClick={() => void runZoneAction("actions")} disabled={!firstZone} title="Replace actions"><Zap size={12} /></button>
-            <button onClick={() => void runZoneAction("entry")} disabled={!firstZone} title="Test entry"><CheckCircle2 size={12} /></button>
-            <button onClick={() => void runZoneAction("exit")} disabled={!firstZone} title="Test exit"><WifiOff size={12} /></button>
-            <button onClick={() => void runZoneAction("delete")} disabled={!firstZone} title="Delete zone"><Trash2 size={12} /></button>
+            <button onClick={() => void refreshGeofence()} disabled={!!geofenceBusy} title="Refresh geofence" aria-label="Refresh geofence"><RefreshCw size={12} /></button>
+            <button onClick={reportLocation} disabled={!!geofenceBusy} title="Update browser location" aria-label="Update browser location"><MapPin size={12} /></button>
+            <button onClick={() => setEditingZone(null)} disabled={!!geofenceBusy} title="Create zone" aria-label="Create zone"><Plus size={12} /></button>
+            <button onClick={() => setEditingZone(selectedZone)} disabled={!!geofenceBusy || !selectedZone} title="Edit selected zone" aria-label="Edit selected zone"><Pencil size={12} /></button>
+            <button onClick={() => selectedZone && void runZoneAction(selectedZone, "toggle")} disabled={!!geofenceBusy || !selectedZone} title={selectedZone?.enabled ? "Disable zone" : "Enable zone"} aria-label={selectedZone?.enabled ? "Disable zone" : "Enable zone"}><ShieldCheck size={12} /></button>
+            <button onClick={() => selectedZone && void runZoneAction(selectedZone, "rf")} disabled={!!geofenceBusy || !selectedZone} title={selectedZone?.kind === "rf_signature" ? "Re-capture RF baseline" : "Capture RF for selected zone"} aria-label={selectedZone?.kind === "rf_signature" ? "Re-capture RF baseline" : "Capture RF for selected zone"}><Radio size={12} /></button>
+            <button onClick={() => selectedZone && void runZoneAction(selectedZone, "entry")} disabled={!!geofenceBusy || !selectedZone} title="Test zone action" aria-label="Test zone action"><Zap size={12} /></button>
+            <button onClick={() => selectedZone && void runZoneAction(selectedZone, "entry")} disabled={!!geofenceBusy || !selectedZone} title="Simulate zone entry" aria-label="Simulate zone entry"><CheckCircle2 size={12} /></button>
+            <button onClick={() => selectedZone && void runZoneAction(selectedZone, "exit")} disabled={!!geofenceBusy || !selectedZone} title="Simulate zone exit" aria-label="Simulate zone exit"><WifiOff size={12} /></button>
+            <button onClick={() => selectedZone && void runZoneAction(selectedZone, "delete")} disabled={!!geofenceBusy || !selectedZone} title="Delete zone" aria-label="Delete zone"><Trash2 size={12} /></button>
           </div>
-          {firstZone && <div className="clt-geofence-detail"><b>{firstZone.name}</b><span>{firstZone.enabled ? "Enabled" : "Disabled"} · {geofenceStatus?.zones.find((zone) => zone.zone_id === firstZone.zone_id)?.inside ? "Inside" : "Outside"}</span><span>Actions: {(zoneAutomation?.on_entry ?? []).map((action) => action.action).join(", ") || "None"} on entry · {(zoneAutomation?.on_exit ?? []).map((action) => action.action).join(", ") || "None"} on exit</span></div>}
-          <div className="clt-geofence-feed"><b>Events ({geofenceEvents.length})</b>{geofenceEvents.slice(0, 3).map((event) => <span key={event.id}>{event.transition.toUpperCase()} · {event.zone_name} · {shortTime(event.at)}</span>)}{!geofenceEvents.length && <span>No geofence events</span>}<b>Alerts ({geofenceAlerts.length})</b>{geofenceAlerts.slice(0, 3).map((alert, index) => <span key={index}>{String((alert as { message?: string; title?: string; severity?: string }).title ?? (alert as { message?: string }).message ?? (alert as { severity?: string }).severity ?? "Threat alert")}</span>)}{!geofenceAlerts.length && <span>No geofence alerts</span>}</div>
+          <div className="clt-zone-cards">{geofenceZones.map((zone) => { const evaluation = geofenceStatus?.zones.find((item) => item.zone_id === zone.zone_id); const membership = evaluation?.inside === true ? "Inside" : evaluation?.inside === false ? "Outside" : "Pending"; const selectZone = () => setSelectedZoneId(zone.zone_id); return <div className={`clt-geofence-detail${selectedZoneId === zone.zone_id ? " is-selected" : ""}`} key={zone.zone_id} role="button" tabIndex={0} aria-pressed={selectedZoneId === zone.zone_id} onClick={selectZone} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectZone(); } }}>
+            <b>{zone.name}</b><span>Zone Type: {zoneTypeLabel(zone.kind)}</span><span>{zone.enabled ? "Enabled" : "Disabled"} | {membership}</span>
+            {zone.kind === "coordinate" ? <><span>Radius: {zone.radius_m != null ? `${Math.round(zone.radius_m)} m` : "Not set"}</span><span>Current distance: {evaluation?.distance_m != null ? `${Math.round(evaluation.distance_m)} m` : "Unavailable"}</span></> : <><span>Captured AP count: {zone.rf_signature?.aps?.length ?? 0}</span><span>Current RF score: {evaluation?.rf_score != null ? evaluation.rf_score.toFixed(2) : "Unavailable"}</span><span>Match threshold: {zone.rf_signature?.threshold ?? "Unavailable"}</span></>}
+            <span>Configured actions: {configuredActions(zone)}</span>
+          </div>; })}</div>
+          <div className="clt-geofence-feed">
+            <b>Events ({orderedGeofenceEvents.length})</b>
+            {(showAllGeofenceEvents ? orderedGeofenceEvents : orderedGeofenceEvents.slice(0, 3)).map((event) => { const details = eventDetails(event, geofenceZones); const detection = details.source !== "Not reported" ? details.source : sourceLabel(details.detectionDetails); const timestamp = details.timestamp && !Number.isNaN(new Date(details.timestamp).getTime()) ? new Date(details.timestamp).toLocaleString() : "Not reported"; const showDetectionDetails = details.detectionDetails && details.detectionDetails.toLowerCase() !== detection.toLowerCase(); return <article className="clt-feed-card" key={event.id}><div className="clt-feed-card__head"><b className={`clt-feed-badge is-${event.transition}`}>{event.transition.toUpperCase()}</b></div><dl><div><dt>Zone</dt><dd>{details.zoneName}</dd></div><div><dt>Zone type</dt><dd>{zoneTypeLabel(details.kind)}</dd></div><div><dt>Source</dt><dd>{detection}</dd></div><div><dt>Time</dt><dd>{timestamp}</dd></div>{showDetectionDetails && <div className="is-wide"><dt>Details</dt><dd>{details.detectionDetails}</dd></div>}{event.rf_score != null && <div className="is-wide"><dt>RF score</dt><dd>{event.rf_score.toFixed(2)}</dd></div>}</dl></article>; })}
+            {!orderedGeofenceEvents.length && <span>No geofence events</span>}
+            {orderedGeofenceEvents.length > 3 && <button className="clt-feed-toggle" onClick={() => setShowAllGeofenceEvents((value) => !value)}>{showAllGeofenceEvents ? "Show less" : "View all"}</button>}
+            <b>Alerts ({orderedGeofenceAlerts.length})</b>
+            {(showAllGeofenceAlerts ? orderedGeofenceAlerts : orderedGeofenceAlerts.slice(0, 3)).map((alert, index) => { const details = alertDetails(alert, geofenceZones); const timestamp = details.timestamp !== "Not reported" && !Number.isNaN(new Date(details.timestamp).getTime()) ? new Date(details.timestamp).toLocaleString() : details.timestamp; const rfScore = typeof alert.rf_score === "number" ? alert.rf_score : null; const rfDetails = typeof alert.fix_summary === "string" && alert.fix_summary.trim() ? alert.fix_summary.trim() : null; return <article className="clt-feed-card" key={`${details.id}-${index}`}><div className="clt-feed-card__head"><b className={`clt-feed-badge is-${details.severity.toLowerCase()}`}>{details.severity.toUpperCase()}</b>{details.trigger !== "Not reported" && <span>{details.trigger}</span>}</div><dl><div><dt>Zone</dt><dd>{details.zoneName}</dd></div><div><dt>Zone type</dt><dd>{zoneTypeLabel(details.kind)}</dd></div><div><dt>Source</dt><dd>{details.source}</dd></div><div><dt>Time</dt><dd>{timestamp}</dd></div>{rfDetails && <div className="is-wide"><dt>RF details</dt><dd>{rfDetails}</dd></div>}{rfScore != null && <div className="is-wide"><dt>RF score</dt><dd>{rfScore.toFixed(2)}</dd></div>}</dl></article>; })}
+            {!orderedGeofenceAlerts.length && <span>No geofence alerts</span>}
+            {orderedGeofenceAlerts.length > 3 && <button className="clt-feed-toggle" onClick={() => setShowAllGeofenceAlerts((value) => !value)}>{showAllGeofenceAlerts ? "Show less" : "View all"}</button>}
+          </div>
+          {geofenceToast && <div className={`clt-geofence-toast is-${geofenceToast.tone}`} role="status" aria-live="polite">{geofenceToast.message}</div>}
           {(geofenceError || geofenceBusy) && <p className="clt-card-note">{geofenceBusy ?? geofenceError}</p>}
         </section>
       </aside>
@@ -915,7 +981,7 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
         <span>Relays {summary.relays}</span>
         <span>Zoom <span ref={footerZoomRef}>100%</span></span>
         <span>Topology v2.1</span>
-        <span><Clock3 size={13} />10s refresh</span>
+        <span><Clock3 size={13} />Manual refresh</span>
       </footer>
     </section>
   );

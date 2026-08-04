@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ZoomIn, ZoomOut, RotateCcw, X, Maximize2, MapPin, Radio, RefreshCw, Trash2, TestTube2, Plus, ShieldCheck } from "lucide-react";
 import { TopologyScene, type SelectedNode, type HoverInfo } from "./TopologyScene";
 import { MiniMap } from "./MiniMap";
@@ -9,7 +9,8 @@ import { usePanZoom } from "./hooks/usePanZoom";
 import { useZoomPercent } from "./hooks/useZoomPercent";
 import { useFocusedZone } from "./hooks/useFocusedZone";
 import { GUARDIANS, SHAREDS, CLUSTERS, THREATS, ZONES, VIEW_BOX, type Guardian } from "./lib/topology";
-import { geofenceApi, type CreateZoneRequest, type GeofenceEvent, type GeofenceStatus, type GeofenceZone, type ReportLocationRequest, type ZoneAutomation } from "../../../api/geofence";
+import { geofenceApi, type CreateZoneRequest, type GeofenceEvent, type GeofenceStatus, type GeofenceZone, type ThreatAlert, type ZoneAutomation } from "../../../api/geofence";
+import { alertDetails, configuredActions, eventDetails, locationSourceLabel, sourceLabel, zoneTypeLabel } from "../geofenceDisplay";
 import { buildMapGuardians, buildMapZones, type MapGuardian, type MapZone } from "./lib/geospatial";
 import "./topology.css";
 
@@ -189,28 +190,11 @@ function ZoneForm({ fix, count, busy, onCancel, onSubmit }: { fix: { lat: number
   </form></div>;
 }
 
-function LocationForm({ initial, busy, onCancel, onSubmit }: { initial: ReportLocationRequest | null; busy: boolean; onCancel: () => void; onSubmit: (location: ReportLocationRequest) => void }) {
-  const [lat, setLat] = useState(String(initial?.lat ?? "")); const [lng, setLng] = useState(String(initial?.lng ?? "")); const [accuracy, setAccuracy] = useState(String(initial?.accuracy_m ?? 5));
-  const valid = !!lat.trim() && !!lng.trim() && !!accuracy.trim() && Number(lat) >= -90 && Number(lat) <= 90 && Number(lng) >= -180 && Number(lng) <= 180 && Number(accuracy) >= 0;
-  return <div className="topo-modal-backdrop" onClick={onCancel}><form className="topo-api-form is-location" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); if (valid) onSubmit({ lat: Number(lat), lng: Number(lng), accuracy_m: Number(accuracy) }); }}>
-    <div className="topo-api-form-head"><div><span>REPORT NODE FIX</span><h3>Update map location</h3></div><button type="button" onClick={onCancel}><X size={16} /></button></div>
-    <div className="topo-form-row"><label>Latitude<input autoFocus type="number" min="-90" max="90" step="any" value={lat} onChange={(e) => setLat(e.target.value)} /></label><label>Longitude<input type="number" min="-180" max="180" step="any" value={lng} onChange={(e) => setLng(e.target.value)} /></label></div>
-    <label>Accuracy (metres)<input type="number" min="0" step="any" value={accuracy} onChange={(e) => setAccuracy(e.target.value)} /></label>
-    <div className="topo-form-actions"><button type="button" onClick={onCancel}>Cancel</button><button type="submit" disabled={!valid || busy}>{busy ? "Updating…" : "Update node"}</button></div>
-  </form></div>;
-}
-
-function selectedZone(status: GeofenceStatus | null, zones: GeofenceZone[]): GeofenceZone | null {
-  const active = status?.zones.find((zone) => zone.inside);
-  if (active) return zones.find((zone) => zone.zone_id === active.zone_id) ?? null;
-  return zones[0] ?? null;
-}
-
 function GeofencePanel({
   status,
   zones,
   events,
-  alertCount,
+  alerts,
   loading,
   error,
   busy,
@@ -226,7 +210,7 @@ function GeofencePanel({
   status: GeofenceStatus | null;
   zones: GeofenceZone[];
   events: GeofenceEvent[];
-  alertCount: number;
+  alerts: ThreatAlert[];
   loading: boolean;
   error: string | null;
   busy: string | null;
@@ -239,8 +223,16 @@ function GeofencePanel({
   onTestActions: (zone: GeofenceZone, transition: "entry" | "exit") => void;
   onReplaceActions: (zone: GeofenceZone) => void;
 }) {
-  const zone = selectedZone(status, zones);
   const fix = status?.location?.fix;
+  const activeZone = status?.zones.find((item) => item.inside);
+  const [showAllEvents, setShowAllEvents] = useState(false);
+  const [showAllAlerts, setShowAllAlerts] = useState(false);
+  const orderedEvents = [...events].sort((a, b) => (Date.parse(b.at ?? b.timestamp ?? "") || 0) - (Date.parse(a.at ?? a.timestamp ?? "") || 0));
+  const orderedAlerts = [...alerts].sort((a, b) => {
+    const right = Date.parse(String(b.at ?? b.timestamp ?? b.created_at ?? "")) || 0;
+    const left = Date.parse(String(a.at ?? a.timestamp ?? a.created_at ?? "")) || 0;
+    return right - left;
+  });
   return (
     <div className="topo-geofence-panel" onClick={(e) => e.stopPropagation()}>
       <div className="topo-geofence-head">
@@ -250,20 +242,21 @@ function GeofencePanel({
         </button>
       </div>
       <div className="topo-geofence-grid">
-        <div><span>Source</span><b>{status?.source ?? "unavailable"}</b></div>
-        <div><span>Zones</span><b>{zones.length}</b></div>
-        <div><span>Events</span><b>{events.length}</b></div>
-        <div><span>Alerts</span><b>{alertCount}</b></div>
-      </div>
-      <div className="topo-geofence-fix">
-        {fix ? `${fix.lat.toFixed(5)}, ${fix.lng.toFixed(5)} · +/-${Math.round(fix.accuracy_m ?? 0)}m` : "No saved location fix"}
+        <div><span>Active Provider</span><b>{sourceLabel(status?.source)}</b></div>
+        <div><span>Location Source</span><b>{locationSourceLabel(status?.location?.source)}</b></div>
+        <div><span>Location Type</span><b>{zoneTypeLabel(status?.location?.fix?.kind)}</b></div>
+        <div><span>Zones Count</span><b>{zones.length}</b></div>
+        <div><span>Current Zone</span><b>{activeZone?.zone_name ?? "Outside"}</b></div>
+        <div><span>Current Coordinates</span><b>{fix ? `${fix.lat.toFixed(5)}, ${fix.lng.toFixed(5)}` : "Not stored"}</b></div>
+        <div><span>Accuracy</span><b>{fix?.accuracy_m != null ? `${Math.round(fix.accuracy_m)} m` : "Unavailable"}</b></div>
+        <div><span>Last Updated</span><b>{status?.location?.updated_at ? new Date(status.location.updated_at).toLocaleString() : "Never"}</b></div>
       </div>
       {error && <div className="topo-geofence-error">{error}</div>}
       <div className="topo-geofence-actions">
-        <button onClick={onReportLocation} disabled={!!busy} title="Upload this browser's current location">
+        <button onClick={onReportLocation} disabled={!!busy} title="Update browser location">
           <MapPin size={13} /> Report
         </button>
-        <button onClick={onCreateZone} disabled={!!busy || !fix} title="Create a zone at the current stored location">
+        <button onClick={onCreateZone} disabled={!!busy || !fix} title="Create zone">
           <Plus size={13} /> Zone
         </button>
       </div>
@@ -274,20 +267,34 @@ function GeofencePanel({
           return <div key={item.zone_id}><strong>{item.name}</strong><span className={`is-${membership.toLowerCase()}`}>{membership}</span>{evaluation?.distance_m != null && <small>{Math.round(evaluation.distance_m)}m away</small>}</div>;
         })}
       </div>}
-      {zone && (
-        <div className="topo-zone-card">
+      <div className="topo-zone-cards">
+      {zones.map((zone) => {
+        const evaluation = status?.zones.find((entry) => entry.zone_id === zone.zone_id);
+        const membership = evaluation?.inside === true ? "Inside" : evaluation?.inside === false ? "Outside" : "Pending";
+        return (
+        <div className="topo-zone-card" key={zone.zone_id}>
           <div className="topo-zone-card-title">
             <strong>{zone.name}</strong>
             <span>{zone.enabled ? "enabled" : "disabled"}</span>
           </div>
-          <div className="topo-zone-card-meta">
-            {zone.kind} · {Math.round(zone.radius_m ?? 0)}m · {zone.severity}
-          </div>
+          <dl className="topo-zone-fields">
+            <div><dt>Zone Type</dt><dd>{zoneTypeLabel(zone.kind)}</dd></div>
+            <div><dt>Membership</dt><dd>{membership}</dd></div>
+            {zone.kind === "coordinate" ? <>
+              <div><dt>Radius</dt><dd>{zone.radius_m != null ? `${Math.round(zone.radius_m)} m` : "Not set"}</dd></div>
+              <div><dt>Current Distance</dt><dd>{evaluation?.distance_m != null ? `${Math.round(evaluation.distance_m)} m` : "Unavailable"}</dd></div>
+            </> : <>
+              <div><dt>Captured AP Count</dt><dd>{zone.rf_signature?.aps?.length ?? 0}</dd></div>
+              <div><dt>Current RF Score</dt><dd>{evaluation?.rf_score != null ? evaluation.rf_score.toFixed(2) : "Unavailable"}</dd></div>
+              <div><dt>Match Threshold</dt><dd>{zone.rf_signature?.threshold ?? "Unavailable"}</dd></div>
+            </>}
+            <div className="is-wide"><dt>Configured Actions</dt><dd>{configuredActions(zone)}</dd></div>
+          </dl>
           <div className="topo-geofence-actions">
             <button onClick={() => onToggleZone(zone)} disabled={!!busy} title="Patch zone enabled state">
               <ShieldCheck size={13} /> {zone.enabled ? "Disable" : "Enable"}
             </button>
-            <button onClick={() => onCaptureRf(zone)} disabled={!!busy} title="Capture RF signature for this zone">
+            <button onClick={() => onCaptureRf(zone)} disabled={!!busy} title={zone.kind === "rf_signature" ? "Re-capture RF baseline" : "Capture RF for selected zone"}>
               <Radio size={13} /> RF
             </button>
             <button onClick={() => onReplaceActions(zone)} disabled={!!busy} title="Replace automation actions for this zone">
@@ -304,13 +311,24 @@ function GeofencePanel({
             </button>
           </div>
         </div>
-      )}
-      {events[0] && (
-        <div className="topo-last-event">
-          <span>{events[0].transition}</span>
-          <b>{events[0].zone_name}</b>
-        </div>
-      )}
+      );})}
+      </div>
+      <div className="topo-geofence-feed">
+        <strong>Events ({orderedEvents.length})</strong>
+        {(showAllEvents ? orderedEvents : orderedEvents.slice(0, 3)).map((event) => { const details = eventDetails(event, zones); const detection = details.source !== "Not reported" ? details.source : sourceLabel(details.detectionDetails); const timestamp = details.timestamp && !Number.isNaN(new Date(details.timestamp).getTime()) ? new Date(details.timestamp).toLocaleString() : "Not reported"; const showDetectionDetails = details.detectionDetails && details.detectionDetails.toLowerCase() !== detection.toLowerCase(); return <article className="topo-feed-card" key={event.id}>
+          <div className="topo-feed-card-head"><b className={`topo-feed-badge is-${event.transition}`}>{event.transition.toUpperCase()}</b></div>
+          <dl><div><dt>Zone</dt><dd>{details.zoneName}</dd></div><div><dt>Zone type</dt><dd>{zoneTypeLabel(details.kind)}</dd></div><div><dt>Source</dt><dd>{detection}</dd></div><div><dt>Time</dt><dd>{timestamp}</dd></div>{showDetectionDetails && <div className="is-wide"><dt>Details</dt><dd>{details.detectionDetails}</dd></div>}{event.rf_score != null && <div className="is-wide"><dt>RF score</dt><dd>{event.rf_score.toFixed(2)}</dd></div>}</dl>
+        </article>; })}
+        {!orderedEvents.length && <span>No geofence events</span>}
+        {orderedEvents.length > 3 && <button className="topo-feed-toggle" onClick={() => setShowAllEvents((value) => !value)}>{showAllEvents ? "Show less" : "View all"}</button>}
+        <strong>Alerts ({orderedAlerts.length})</strong>
+        {(showAllAlerts ? orderedAlerts : orderedAlerts.slice(0, 3)).map((alert, index) => { const details = alertDetails(alert, zones); const timestamp = details.timestamp !== "Not reported" && !Number.isNaN(new Date(details.timestamp).getTime()) ? new Date(details.timestamp).toLocaleString() : details.timestamp; const rfScore = typeof alert.rf_score === "number" ? alert.rf_score : null; const rfDetails = typeof alert.fix_summary === "string" && alert.fix_summary.trim() ? alert.fix_summary.trim() : null; return <article className="topo-feed-card" key={`${details.id}-${index}`}>
+          <div className="topo-feed-card-head"><b className={`topo-feed-badge is-${details.severity.toLowerCase()}`}>{details.severity.toUpperCase()}</b>{details.trigger !== "Not reported" && <span>{details.trigger}</span>}</div>
+          <dl><div><dt>Zone</dt><dd>{details.zoneName}</dd></div><div><dt>Zone type</dt><dd>{zoneTypeLabel(details.kind)}</dd></div><div><dt>Source</dt><dd>{details.source}</dd></div><div><dt>Time</dt><dd>{timestamp}</dd></div>{rfDetails && <div className="is-wide"><dt>RF details</dt><dd>{rfDetails}</dd></div>}{rfScore != null && <div className="is-wide"><dt>RF score</dt><dd>{rfScore.toFixed(2)}</dd></div>}</dl>
+        </article>; })}
+        {!orderedAlerts.length && <span>No geofence alerts</span>}
+        {orderedAlerts.length > 3 && <button className="topo-feed-toggle" onClick={() => setShowAllAlerts((value) => !value)}>{showAllAlerts ? "Show less" : "View all"}</button>}
+      </div>
       {busy && <div className="topo-geofence-busy">{busy}</div>}
     </div>
   );
@@ -342,16 +360,16 @@ export function EnterpriseTopology({ variant = "default" }: EnterpriseTopologyPr
   const [geofenceStatus, setGeofenceStatus] = useState<GeofenceStatus | null>(null);
   const [geofenceZones, setGeofenceZones] = useState<GeofenceZone[]>([]);
   const [geofenceEvents, setGeofenceEvents] = useState<GeofenceEvent[]>([]);
-  const [geofenceAlertCount, setGeofenceAlertCount] = useState(0);
+  const [geofenceAlerts, setGeofenceAlerts] = useState<ThreatAlert[]>([]);
   const [geofenceLoading, setGeofenceLoading] = useState(false);
-  const [geofenceLoaded, setGeofenceLoaded] = useState(false);
   const [geofenceError, setGeofenceError] = useState<string | null>(null);
   const [geofenceBusy, setGeofenceBusy] = useState<string | null>(null);
   const [showZoneForm, setShowZoneForm] = useState(false);
-  const [showLocationForm, setShowLocationForm] = useState(false);
   const [detailScreen, setDetailScreen] = useState<"node" | "zones">("node");
   const [place, setPlace] = useState<PlaceLabel | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
+  const locationRequestInFlightRef = useRef(false);
+  const simulationInFlightRef = useRef(false);
 
   const mapGuardians = buildMapGuardians(geofenceStatus);
   const mapZones = buildMapZones(geofenceZones, geofenceStatus);
@@ -381,32 +399,43 @@ export function EnterpriseTopology({ variant = "default" }: EnterpriseTopologyPr
     setGeofenceError(null);
     try {
       const [status, location, zoneResult, eventResult, alertResult] = await Promise.all([
-        geofenceApi.status(),
-        geofenceApi.getLocation(),
-        geofenceApi.listZones(),
-        geofenceApi.events(),
-        geofenceApi.alerts(),
+        geofenceApi.status().catch((error) => { throw new Error(`Geofence status request failed: ${error instanceof Error ? error.message : "Unknown error"}`); }),
+        geofenceApi.getLocation().catch((error) => { throw new Error(`Geofence location request failed: ${error instanceof Error ? error.message : "Unknown error"}`); }),
+        geofenceApi.listZones().catch((error) => { throw new Error(`Geofence zones request failed: ${error instanceof Error ? error.message : "Unknown error"}`); }),
+        geofenceApi.events().catch((error) => { throw new Error(`Geofence events request failed: ${error instanceof Error ? error.message : "Unknown error"}`); }),
+        geofenceApi.alerts().catch((error) => { throw new Error(`Geofence alerts request failed: ${error instanceof Error ? error.message : "Unknown error"}`); }),
       ]);
       setGeofenceStatus({ ...status, location: status.location ?? location.location });
       setGeofenceZones(zoneResult.zones);
       setGeofenceEvents(eventResult.events);
-      setGeofenceAlertCount(alertResult.count);
-      setGeofenceLoaded(true);
-      if (geofenceLoaded) notify("Geofence data refreshed", "info");
+      setGeofenceAlerts(alertResult.alerts);
     } catch (err) {
-      setGeofenceError(err instanceof Error ? err.message : "Geofence API unavailable");
+      setGeofenceError(err instanceof Error ? err.message : "Geofence refresh failed: Unknown error");
       notify("Could not refresh geofence data", "error");
     } finally {
       setGeofenceLoading(false);
     }
-  }, [geofenceLoaded, notify]);
+  }, [notify]);
+
+  const refreshSimulationResults = useCallback(async () => {
+    const [status, eventResult, alertResult] = await Promise.all([
+      geofenceApi.status().catch((error) => { throw new Error(`Geofence status request failed: ${error instanceof Error ? error.message : "Unknown error"}`); }),
+      geofenceApi.events().catch((error) => { throw new Error(`Geofence events request failed: ${error instanceof Error ? error.message : "Unknown error"}`); }),
+      geofenceApi.alerts().catch((error) => { throw new Error(`Geofence alerts request failed: ${error instanceof Error ? error.message : "Unknown error"}`); }),
+    ]);
+    setGeofenceStatus((current) => ({ ...status, location: status.location ?? current?.location ?? null }));
+    setGeofenceEvents(eventResult.events);
+    setGeofenceAlerts(alertResult.alerts);
+  }, []);
 
   const reportBrowserLocation = useCallback(async () => {
+    if (locationRequestInFlightRef.current || geofenceBusy) return;
     if (!navigator.geolocation) {
-      setGeofenceError("Browser geolocation is unavailable");
+      setGeofenceError("Location unavailable");
       return;
     }
-    setGeofenceBusy("Uploading location");
+    locationRequestInFlightRef.current = true;
+    setGeofenceBusy("Getting location...");
     setGeofenceError(null);
     navigator.geolocation.getCurrentPosition(
       async (position) => {
@@ -417,43 +446,34 @@ export function EnterpriseTopology({ variant = "default" }: EnterpriseTopologyPr
             accuracy_m: position.coords.accuracy,
           });
           await refreshGeofence();
+          notify("Location updated successfully");
         } catch (err) {
-          setGeofenceError(err instanceof Error ? err.message : "Could not report location");
+          setGeofenceError(`Location update failed: ${err instanceof Error ? err.message : "Unknown error"}`);
         } finally {
+          locationRequestInFlightRef.current = false;
           setGeofenceBusy(null);
         }
       },
       (err) => {
+        locationRequestInFlightRef.current = false;
         setGeofenceBusy(null);
-        setGeofenceError(err.message || "Location permission denied");
+        const message = err.code === err.PERMISSION_DENIED
+          ? "Permission denied"
+          : err.code === err.POSITION_UNAVAILABLE
+            ? "Location unavailable"
+            : err.code === err.TIMEOUT
+              ? "Request timed out"
+              : "Location unavailable";
+        setGeofenceError(message);
+        notify(message, "error");
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
     );
-  }, [refreshGeofence]);
-
-  const reportLocation = useCallback(async (body: ReportLocationRequest) => {
-    setGeofenceBusy("Updating node location"); setGeofenceError(null);
-    try {
-      const result = await geofenceApi.reportLocation(body);
-      setGeofenceStatus((current) => current ? { ...current, source: result.location.source, location: result.location } : current);
-      setShowLocationForm(false);
-      await refreshGeofence();
-      reset();
-      notify("Node location updated; the map has been repositioned");
-    } catch (err) { setGeofenceError(err instanceof Error ? err.message : "Could not report location"); notify("Node location could not be updated", "error"); }
-    finally { setGeofenceBusy(null); }
-  }, [refreshGeofence, notify, reset]);
+  }, [geofenceBusy, notify, refreshGeofence]);
 
   useEffect(() => {
     void refreshGeofence();
-    const interval = window.setInterval(refreshGeofence, 15000);
-    return () => window.clearInterval(interval);
   }, [refreshGeofence]);
-
-  useEffect(() => {
-    if (!geofenceLoaded || geofenceLoading || geofenceStatus?.location || geofenceError) return;
-    void reportBrowserLocation();
-  }, [geofenceError, geofenceLoaded, geofenceLoading, geofenceStatus?.location, reportBrowserLocation]);
 
   const createZone = useCallback(async (request: CreateZoneRequest) => {
     setGeofenceBusy("Creating zone");
@@ -463,7 +483,7 @@ export function EnterpriseTopology({ variant = "default" }: EnterpriseTopologyPr
       await refreshGeofence();
       notify(`Zone “${result.zone.name}” created and shown on the map`);
     } catch (err) {
-      setGeofenceError(err instanceof Error ? err.message : "Could not create zone");
+      setGeofenceError(`Zone create request failed: ${err instanceof Error ? err.message : "Unknown error"}`);
       notify("Zone could not be created", "error");
     } finally {
       setGeofenceBusy(null);
@@ -477,7 +497,7 @@ export function EnterpriseTopology({ variant = "default" }: EnterpriseTopologyPr
       await refreshGeofence();
       notify(`Zone “${zone.name}” ${zone.enabled ? "disabled" : "enabled"}`);
     } catch (err) {
-      setGeofenceError(err instanceof Error ? err.message : "Could not update zone");
+      setGeofenceError(`Zone enable/disable request failed: ${err instanceof Error ? err.message : "Unknown error"}`);
       notify(`Zone “${zone.name}” could not be updated`, "error");
     } finally {
       setGeofenceBusy(null);
@@ -491,7 +511,7 @@ export function EnterpriseTopology({ variant = "default" }: EnterpriseTopologyPr
       await refreshGeofence();
       notify(`Zone “${zone.name}” deleted from the map`);
     } catch (err) {
-      setGeofenceError(err instanceof Error ? err.message : "Could not delete zone");
+      setGeofenceError(`Zone delete request failed: ${err instanceof Error ? err.message : "Unknown error"}`);
       notify(`Zone “${zone.name}” could not be deleted`, "error");
     } finally {
       setGeofenceBusy(null);
@@ -499,13 +519,13 @@ export function EnterpriseTopology({ variant = "default" }: EnterpriseTopologyPr
   }, [notify, refreshGeofence]);
 
   const captureRf = useCallback(async (zone: GeofenceZone) => {
-    setGeofenceBusy("Capturing RF");
+    setGeofenceBusy("Capturing current RF environment...");
     try {
       await geofenceApi.captureRf(zone.zone_id);
       await refreshGeofence();
       notify(`RF signature captured for “${zone.name}”`);
     } catch (err) {
-      setGeofenceError(err instanceof Error ? err.message : "Could not capture RF");
+      setGeofenceError(`RF capture request failed: ${err instanceof Error ? err.message : "Unknown error"}`);
       notify(`RF capture failed for “${zone.name}”`, "error");
     } finally {
       setGeofenceBusy(null);
@@ -513,19 +533,22 @@ export function EnterpriseTopology({ variant = "default" }: EnterpriseTopologyPr
   }, [notify, refreshGeofence]);
 
   const testActions = useCallback(async (zone: GeofenceZone, transition: "entry" | "exit") => {
+    if (simulationInFlightRef.current || geofenceBusy) return;
+    simulationInFlightRef.current = true;
     setGeofenceBusy(`Testing ${transition}`);
+    setGeofenceError(null);
     try {
-      await geofenceApi.getActions(zone.zone_id);
       await geofenceApi.testActions({ zone_id: zone.zone_id, transition, confidence: 1 });
-      await refreshGeofence();
-      notify(`${transition === "entry" ? "Entry" : "Exit"} automation tested for “${zone.name}”`);
+      await refreshSimulationResults();
+      notify(`Zone ${transition.toUpperCase()} simulation completed for “${zone.name}”`);
     } catch (err) {
-      setGeofenceError(err instanceof Error ? err.message : "Could not test actions");
+      setGeofenceError(`Zone action test request failed: ${err instanceof Error ? err.message : "Unknown error"}`);
       notify(`Automation test failed for “${zone.name}”`, "error");
     } finally {
+      simulationInFlightRef.current = false;
       setGeofenceBusy(null);
     }
-  }, [notify, refreshGeofence]);
+  }, [geofenceBusy, notify, refreshSimulationResults]);
 
   const replaceActions = useCallback(async (zone: GeofenceZone) => {
     setGeofenceBusy("Replacing actions");
@@ -534,7 +557,7 @@ export function EnterpriseTopology({ variant = "default" }: EnterpriseTopologyPr
       await refreshGeofence();
       notify(`Automation actions saved for “${zone.name}”`);
     } catch (err) {
-      setGeofenceError(err instanceof Error ? err.message : "Could not replace actions");
+      setGeofenceError(`Zone actions update request failed: ${err instanceof Error ? err.message : "Unknown error"}`);
       notify(`Automation actions could not be saved for “${zone.name}”`, "error");
     } finally {
       setGeofenceBusy(null);
@@ -617,12 +640,12 @@ export function EnterpriseTopology({ variant = "default" }: EnterpriseTopologyPr
         status={geofenceStatus}
         zones={geofenceZones}
         events={geofenceEvents}
-        alertCount={geofenceAlertCount}
+        alerts={geofenceAlerts}
         loading={geofenceLoading}
         error={geofenceError}
         busy={geofenceBusy}
         onRefresh={() => void refreshGeofence()}
-        onReportLocation={() => { setShowLocationForm(true); notify("Enter the node coordinates to update its map position", "info"); }}
+        onReportLocation={() => void reportBrowserLocation()}
         onCreateZone={() => { setShowZoneForm(true); notify("Name the new zone and set its boundary", "info"); }}
         onToggleZone={(zone) => void toggleZone(zone)}
         onDeleteZone={(zone) => void deleteZone(zone)}
@@ -689,7 +712,6 @@ export function EnterpriseTopology({ variant = "default" }: EnterpriseTopologyPr
         </div>
       )}
       {showZoneForm && <ZoneForm fix={geofenceStatus?.location?.fix ?? null} count={geofenceZones.length} busy={!!geofenceBusy} onCancel={() => setShowZoneForm(false)} onSubmit={(zone) => void createZone(zone)} />}
-      {showLocationForm && <LocationForm initial={geofenceStatus?.location?.fix ?? null} busy={!!geofenceBusy} onCancel={() => setShowLocationForm(false)} onSubmit={(location) => void reportLocation(location)} />}
     </div>
   );
 

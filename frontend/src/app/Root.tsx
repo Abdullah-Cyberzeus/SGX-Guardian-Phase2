@@ -7,7 +7,6 @@ import { DaemonRestartProvider } from "./contexts/DaemonRestartContext";
 import { NotificationProvider, useNotifications } from "./contexts/NotificationContext";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { DaemonRestartBanner } from "./components/DaemonRestartBanner";
-import { NotificationBell } from "./components/notifications/NotificationBell";
 import { NotificationToastStack } from "./components/notifications/NotificationToastStack";
 import { CallProvider, useCall } from "../features/calls/CallContext";
 import { GroupCallProvider } from "../features/calls/GroupCallContext";
@@ -50,7 +49,6 @@ export function Root() {
                   <DaemonRestartProvider>
                     <ErrorBoundary>
                       <DaemonRestartBanner />
-                      <NotificationBell />
                       <NotificationToastStack />
                       <Outlet />
                     </ErrorBoundary>
