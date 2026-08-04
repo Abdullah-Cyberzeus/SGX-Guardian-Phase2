@@ -107,33 +107,34 @@ struct TrustedPeer {
 }
 /// Stores the most recent attestation result for a peer with full identity +
 /// state evidence so post-mortems can reconstruct WHAT was verified.
-#[derive(Serialize, Deserialize)]
-struct LastAttestation {
-    peer_id: String,
-    policy_digest: String,
-    result: String,
-    timestamp: String,
+#[derive(Serialize, Deserialize, Clone)]
+pub struct LastAttestation {
+    pub peer_id: String,
+    pub policy_digest: String,
+    pub result: String,
+    pub timestamp: String,
     // Fix 2: peer identity at the moment of attestation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    peer_did: Option<String>,
+    pub peer_did: Option<String>,
     // Session-scoped VID actually verified.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    virtual_id: Option<String>,
+    pub virtual_id: Option<String>,
     // SHA-256 fingerprint of peer's DKP pubkey (12-byte hex prefix for
     // human readability; the cache still stores the full digest).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    dkp_pubkey_sha256_b16: Option<String>,
+    pub dkp_pubkey_sha256_b16: Option<String>,
     // PCR composite digest at time of attestation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pcr_composite_digest: Option<String>,
+    pub pcr_composite_digest: Option<String>,
     // Initiator nonce used (already covered by the signed evidence; kept
     // here for ops correlation with peer logs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    nonce: Option<String>,
+    pub nonce: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    nonce_i: Option<String>,
+    pub nonce_i: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    nonce_r: Option<String>,
+    pub nonce_r: Option<String>,
+    pub count: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -584,6 +585,7 @@ fn write_last_attestation(
         nonce,
         nonce_i,
         nonce_r,
+        count: 1,
     };
 
     if let Ok(json) = serde_json::to_string_pretty(&record) {

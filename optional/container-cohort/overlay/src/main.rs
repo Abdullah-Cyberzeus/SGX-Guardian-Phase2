@@ -2855,7 +2855,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::spawn({
             let state = api_state.clone();
             async move {
-                if let Err(e) = sgx_guardian_client::api::serve(state, api_bind, None).await {
+                if let Err(e) =
+                    sgx_guardian_client::api::serve(state, api_bind, None, axum::Router::new())
+                        .await
+                {
                     eprintln!("❌ REST API server failed: {:?}", e);
                 }
             }
@@ -2952,7 +2955,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Policy enforcement started",
         );
 
-        match enforcement::enforce_policy(&active_policy) {
+        match enforcement::apply_policy(&active_policy) {
             Ok(_) => {
                 println!("✅ Policy enforcement applied successfully");
 

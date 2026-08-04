@@ -12,6 +12,8 @@
 // =============================================================
 
 use once_cell::sync::Lazy;
+#[cfg(test)]
+use std::sync::atomic::{AtomicI8, Ordering};
 
 fn env_true(key: &str) -> bool {
     matches!(
@@ -178,6 +180,31 @@ impl RuntimeGates {
 }
 
 pub static GATES: Lazy<RuntimeGates> = Lazy::new(RuntimeGates::load);
+
+#[cfg(test)]
+static TEST_DISABLE_LOGIN_OVERRIDE: AtomicI8 = AtomicI8::new(-1);
+
+pub fn login_disabled() -> bool {
+    #[cfg(test)]
+    {
+        match TEST_DISABLE_LOGIN_OVERRIDE.load(Ordering::SeqCst) {
+            0 => return false,
+            1 => return true,
+            _ => {}
+        }
+    }
+    GATES.disable_login
+}
+
+#[cfg(test)]
+pub fn set_test_login_disabled(value: Option<bool>) {
+    let encoded = match value {
+        Some(false) => 0,
+        Some(true) => 1,
+        None => -1,
+    };
+    TEST_DISABLE_LOGIN_OVERRIDE.store(encoded, Ordering::SeqCst);
+}
 
 /// Sleep the configured cooldown (if > 0). Use between heavy subsystem starts.
 pub async fn cooldown() {

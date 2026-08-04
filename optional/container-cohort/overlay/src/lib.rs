@@ -2,8 +2,12 @@
 
 // Core modules
 pub mod api;
+pub mod chat;
+
 pub mod attestation_service;
 pub mod audit;
+pub mod backup;
+pub mod call;
 pub mod cert_client;
 pub mod cert_service;
 pub mod circle;
@@ -12,12 +16,15 @@ pub mod cloud;
 pub mod config_loader;
 pub mod cot;
 pub mod crl;
+pub mod devices;
 pub mod did;
 pub mod discovery; // Network discovery module
 pub mod dusage;
 pub mod enforcement;
+pub mod geofence;
 pub mod key_manager;
 pub mod logging;
+pub mod media;
 pub mod metrics;
 pub mod metrics_server;
 pub mod nebula;
