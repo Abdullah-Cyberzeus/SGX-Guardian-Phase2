@@ -172,6 +172,10 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         // Cert request & approval endpoints
         .route("/api/v1/cert/requests", get(handlers::cert::list_requests))
         .route(
+            "/api/v1/cert/requests/ws",
+            get(handlers::cert::requests_socket),
+        )
+        .route(
             "/api/v1/cert/approve",
             post(handlers::cert::approve_request),
         )
