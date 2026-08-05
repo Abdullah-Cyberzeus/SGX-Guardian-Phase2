@@ -17,6 +17,22 @@ interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean>;
 }
 
+async function extractErrorMessage(response: Response): Promise<string> {
+  const raw = await response.text().catch(() => '');
+  if (!raw) return `HTTP ${response.status}`;
+  try {
+    const parsed = JSON.parse(raw);
+    return (
+      (typeof parsed.message === 'string' && parsed.message) ||
+      (typeof parsed.error === 'string' && parsed.error) ||
+      (typeof parsed.error?.message === 'string' && parsed.error.message) ||
+      raw
+    );
+  } catch {
+    return raw.trim() || `HTTP ${response.status}`;
+  }
+}
+
 class ApiClient {
   private baseUrl: string;
   private isServerAvailable: boolean | null = null;
@@ -102,13 +118,7 @@ class ApiClient {
       if (response.status === 401 && !endpoint.startsWith('/auth/')) {
         window.dispatchEvent(new CustomEvent('sgx:unauthorized'));
       }
-      const error = await response.json().catch(() => ({ message: 'Request failed' }));
-      // Backend wraps errors as { error: { code, message } }
-      const msg =
-        (typeof error.message === 'string' && error.message) ||
-        (typeof error.error === 'string' && error.error) ||
-        (typeof error.error?.message === 'string' && error.error.message) ||
-        `HTTP ${response.status}`;
+      const msg = await extractErrorMessage(response);
       monitoring.trackApiCall(method, endpoint, response.status, duration, msg);
       throw new Error(msg);
     }
@@ -143,8 +153,7 @@ class ApiClient {
       if (response.status === 401 && !endpoint.startsWith('/auth/')) {
         window.dispatchEvent(new CustomEvent('sgx:unauthorized'));
       }
-      const error = await response.json().catch(() => ({ message: 'Request failed' }));
-      throw new Error(String(error?.error?.message || error?.message || error?.error || `HTTP ${response.status}`));
+      throw new Error(await extractErrorMessage(response));
     }
     return response;
   }

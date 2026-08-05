@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "../../components/PageHeader";
-import { useDIDDocumentPeers } from "../../hooks/useApiData";
+import { useDIDDocumentPeers, useVCSummary, useVCShow } from "../../hooks/useApiData";
 import { useCurrentUser } from "../../hooks/useCurrentUser";
 import {
   crlService,
@@ -138,6 +138,17 @@ function activeCrlEntryForDid(entries: CrlEntry[], did?: string) {
   const target = normalize(did);
   if (!target) return undefined;
   return entries.find((entry) => normalize(entry.revoked_did) === target);
+}
+
+function isOwnerDid(did?: string, ownerDid?: string) {
+  const target = normalize(did);
+  return !!target && target === normalize(ownerDid);
+}
+
+function canRevokeDid(role: RoleKind, did?: string, ownerDid?: string) {
+  if (role === "viewer") return false;
+  if (role === "member" && isOwnerDid(did, ownerDid)) return false;
+  return true;
 }
 
 function isActiveDidNode(status?: string) {
@@ -617,6 +628,8 @@ function DidNodesPanel({
   error,
   refreshing,
   canRevoke,
+  localRole,
+  ownerDid,
   onRefresh,
   onRevoke,
   onCheckDid,
@@ -628,6 +641,8 @@ function DidNodesPanel({
   error: Error | null;
   refreshing: boolean;
   canRevoke: boolean;
+  localRole: RoleKind;
+  ownerDid?: string;
   onRefresh: () => void;
   onRevoke: (peer: DIDDocumentPeerSummary) => void;
   onCheckDid: (did: string) => void;
@@ -694,6 +709,7 @@ function DidNodesPanel({
           {sortedPeers.map((peer, index) => {
             const revokedEntry = activeCrlEntryForDid(entries, peer.did);
             const running = isActiveDidNode(peer.status);
+            const protectedOwner = localRole === "member" && isOwnerDid(peer.did, ownerDid);
             const statusColor = revokedEntry ? "var(--destructive)" : running ? "var(--chart-2)" : "var(--muted-foreground)";
             return (
               <div
@@ -713,6 +729,7 @@ function DidNodesPanel({
                       <p className="truncate" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
                         {peer.node_name || "Unnamed node"}
                       </p>
+                      {isOwnerDid(peer.did, ownerDid) && <StatusPill color="var(--primary)">Owner</StatusPill>}
                       <StatusPill color={statusColor}>{revokedEntry ? "Revoked" : peer.status || "Unknown"}</StatusPill>
                       <StatusPill color="var(--muted-foreground)">{`v${peer.version}`}</StatusPill>
                       <StatusPill color="var(--muted-foreground)">{`${peer.services} svc`}</StatusPill>
@@ -731,8 +748,12 @@ function DidNodesPanel({
                     <ActionButton icon={Eye} variant="muted" onClick={() => onViewEntry(revokedEntry)}>
                       View Entry
                     </ActionButton>
+                  ) : protectedOwner ? (
+                    <ActionButton icon={ShieldX} variant="muted" disabled>
+                      Owner Protected
+                    </ActionButton>
                   ) : (
-                    <ActionButton icon={ShieldX} variant="danger" onClick={() => onRevoke(peer)} disabled={!canRevoke}>
+                    <ActionButton icon={ShieldX} variant="danger" onClick={() => onRevoke(peer)} disabled={!canRevoke || !canRevokeDid(localRole, peer.did, ownerDid)}>
                       Revoke
                     </ActionButton>
                   )}
@@ -1581,11 +1602,13 @@ function RawJsonModal({ title, data, onClose }: { title: string; data: unknown; 
 
 function RevokeDialog({
   role,
+  ownerDid,
   onClose,
   onRevoked,
   initialTarget,
 }: {
   role: RoleKind;
+  ownerDid?: string;
   onClose: () => void;
   onRevoked: (entry?: CrlEntry) => Promise<void>;
   initialTarget?: QuickRevokeTarget | null;
@@ -1612,6 +1635,10 @@ function RevokeDialog({
     }
     if (isMember && !securityCritical) {
       setError("Member revocations must use a security-critical reason.");
+      return;
+    }
+    if (isMember && isOwnerDid(did, ownerDid)) {
+      setError("Member nodes cannot revoke the admin/owner DID.");
       return;
     }
     if (isMember && !["critical", "high"].includes(severity)) {
@@ -1839,6 +1866,7 @@ function mapCrlError(message: string) {
   const lower = message.toLowerCase();
   if (lower.includes("already revoked")) return "This DID already has an active CRL entry.";
   if (lower.includes("revoker may not revoke themselves") || lower.includes("self")) return "The local revoker cannot revoke itself.";
+  if (lower.includes("revoke the circle owner")) return "Member nodes cannot revoke the admin/owner DID.";
   if (lower.includes("unauthorized") || lower.includes("not authorized")) return "This node is not authorized to issue that CRL entry.";
   if (lower.includes("only the circle owner") || lower.includes("owner can unrevoke")) return "Only the Circle owner can unrevoke a DID.";
   return message;
@@ -1847,9 +1875,16 @@ function mapCrlError(message: string) {
 export function SC05CRLStatus() {
   const navigate = useNavigate();
   const currentUser = useCurrentUser();
-  const currentRole = roleKind(currentUser.role);
+  const { data: ownVcData } = useVCShow({ scope: "own", status: "active" });
+  const { data: vcSummaryData } = useVCSummary();
+  const localVcRole = useMemo(() => {
+    const activeOwn = ownVcData?.items.find((item) => normalize(item.membership_status) === "active") ?? ownVcData?.items[0];
+    return roleKind(activeOwn?.role);
+  }, [ownVcData]);
+  const currentRole = localVcRole !== "unknown" ? localVcRole : roleKind(currentUser.role);
+  const ownerDid = vcSummaryData?.owner_did;
   const canRevoke = currentRole !== "viewer";
-  const canAttemptUnrevoke = currentRole === "owner" || currentRole === "unknown";
+  const canAttemptUnrevoke = currentRole === "owner";
   const { data: didPeersData, loading: didPeersLoading, error: didPeersError, refetch: refetchDidPeers } = useDIDDocumentPeers();
 
   const [entries, setEntries] = useState<CrlEntry[]>([]);
@@ -2102,6 +2137,10 @@ export function SC05CRLStatus() {
   }
 
   function openPeerRevoke(peer: DIDDocumentPeerSummary) {
+    if (!canRevokeDid(currentRole, peer.did, ownerDid)) {
+      toast.error("Protected DID", { description: "Member nodes cannot revoke the admin/owner DID." });
+      return;
+    }
     setRevokeTarget({ did: peer.did, nodeName: peer.node_name });
     setRevokeOpen(true);
   }
@@ -2189,6 +2228,8 @@ export function SC05CRLStatus() {
                 error={didPeersError}
                 refreshing={peerRefreshing}
                 canRevoke={canRevoke}
+                localRole={currentRole}
+                ownerDid={ownerDid}
                 onRefresh={refreshDidPeers}
                 onRevoke={openPeerRevoke}
                 onCheckDid={(did) => handleCheckDid(did)}
@@ -2273,6 +2314,7 @@ export function SC05CRLStatus() {
       {revokeOpen && (
         <RevokeDialog
           role={currentRole}
+          ownerDid={ownerDid}
           initialTarget={revokeTarget}
           onClose={() => {
             setRevokeOpen(false);

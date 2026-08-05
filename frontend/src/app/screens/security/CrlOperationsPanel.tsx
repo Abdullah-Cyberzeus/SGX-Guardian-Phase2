@@ -161,7 +161,6 @@ export function CrlOperationsPanel() {
   const [busy, setBusy] = useState<Operation>(null);
   const [confirm, setConfirm] = useState<Exclude<Operation, null> | null>(null);
   const [did, setDid] = useState("");
-  const [reason, setReason] = useState("compromised");
   const [debugResult, setDebugResult] = useState<CrlOperationalResponse | null>(null);
 
   const load = useCallback(async (announce = false) => {
@@ -207,8 +206,8 @@ export function CrlOperationsPanel() {
         await crlService.syncOffline();
         toast.success("Offline synchronization completed");
       } else if (operation === "broadcast") {
-        await crlService.broadcastEmergency({ did: did.trim(), reason, severity: "critical" });
-        toast.success("Emergency revocation broadcast sent", { description: did.trim() });
+        await crlService.broadcastEmergency({ did: did.trim() });
+        toast.success("Emergency notice re-broadcast sent", { description: did.trim() });
       } else {
         const result = await crlService.seedEmergencyDebugSession({ did: did.trim() });
         setDebugResult(result);
@@ -236,20 +235,22 @@ export function CrlOperationsPanel() {
     }
   }
 
-  const validDid = did.trim().startsWith("did:");
+  const normalizedDid = did.trim();
+  const validDid = normalizedDid.startsWith("did:") && !/[,\s]/.test(normalizedDid);
   return <div className="flex flex-col gap-4">
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4"><div><h2 className="font-semibold">CRL propagation control center</h2><p className="mt-1 text-xs text-muted-foreground">Status refreshes automatically every 30 seconds.</p></div><Button onClick={() => void load(true)} busy={loading}><RefreshCw size={14} />Refresh all</Button></div>
     {Object.keys(errors).length > 0 && <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive"><strong>Partial service failure.</strong> {Object.entries(errors).map(([key, value]) => `${key}: ${value}`).join(" · ")}</div>}
     <Card title="Gossip engine" subtitle="Peer propagation counters, hidden CRL proof fields, and the latest manual trigger result." icon={Radio} actions={<Button onClick={() => setConfirm("gossip")} disabled={loading}><RefreshCw size={14} />Trigger round</Button>}><GossipSummary data={gossip} latestTrigger={latestTrigger} /></Card>
-    <Card title="Emergency revocation channel" subtitle={`Critical peer broadcast and durable notifications${notificationCount !== null ? ` · ${notificationCount} notifications` : ""}.`} icon={BellRing}>
+    <Card title="Emergency revocation channel" subtitle={`Manual re-broadcast for an existing critical revocation, plus durable receiver notifications${notificationCount !== null ? ` · ${notificationCount} notifications` : ""}.`} icon={BellRing}>
       <Summary data={emergency} />
-      <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_190px_auto]"><input className="rounded-md border border-border bg-input-background px-3 py-2 text-sm" value={did} onChange={(event) => setDid(event.target.value)} placeholder="did:guardian:..." aria-label="Emergency DID" /><select className="rounded-md border border-border bg-input-background px-3 py-2 text-sm" value={reason} onChange={(event) => setReason(event.target.value)} aria-label="Emergency reason"><option value="compromised">Compromised</option><option value="lost">Lost</option><option value="stolen">Stolen</option><option value="policy_violation">Policy violation</option></select><Button danger disabled={!validDid} onClick={() => setConfirm("broadcast")}><Send size={14} />Broadcast</Button></div>
+      <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]"><input className="rounded-md border border-border bg-input-background px-3 py-2 text-sm" value={did} onChange={(event) => setDid(event.target.value)} placeholder="did:guardian:... (single critical revoked DID)" aria-label="Emergency DID" /><Button danger disabled={!validDid} onClick={() => setConfirm("broadcast")}><Send size={14} />Re-broadcast</Button></div>
+      <p className="mt-2 text-xs leading-5 text-muted-foreground">Use one already-revoked <strong>critical</strong> DID only. This control re-sends the emergency notice to active peers; it does not create a new CRL entry.</p>
       <div className="mt-4 rounded-md border border-border p-3"><div className="flex items-center gap-2 text-sm font-medium"><BellRing size={15} />Emergency notifications</div><ItemCards data={notifications} keys={["notifications", "entries", "items"]} itemLabel="Notification" emptyTitle="No emergency notifications" emptyMessage="This is expected until an emergency revocation is received or broadcast and the backend stores a notification." /></div>
     </Card>
     <Card title="Emergency debug session" subtitle="Inspect or seed test session state for backend validation. Debug controls should only be used in non-production environments." icon={Bug}>
       <div className="flex flex-wrap gap-2"><Button disabled={!validDid} busy={busy === "seed"} onClick={() => void inspectDebug()}><Eye size={14} />Inspect session</Button><Button disabled={!validDid} onClick={() => setConfirm("seed")}><Bug size={14} />Seed test session</Button></div>{debugResult && <pre className="mt-4 max-h-72 overflow-auto rounded-md bg-background p-3 text-xs">{JSON.stringify(debugResult, null, 2)}</pre>}
     </Card>
     <Card title="Offline synchronization" subtitle={`Queued revocations, peer synchronization state, and fetch-and-flush controls${pendingCount !== null ? ` · ${pendingCount} pending` : ""}.`} icon={CloudOff} actions={<Button onClick={() => setConfirm("sync")} disabled={loading}><Wifi size={14} />Sync now</Button>}><Summary data={offline} /><div className="mt-4 rounded-md border border-border p-3"><div className="flex items-center gap-2 text-sm font-medium"><Clock3 size={15} />Pending revocations</div><ItemCards data={pending} keys={["pending", "revocations", "entries", "items", "queue"]} itemLabel="Revocation" emptyTitle="No pending revocations" emptyMessage="The offline queue is clear. New revocations appear here when they cannot be delivered to peers immediately." /></div></Card>
-    {confirm && <Confirm title={confirm === "broadcast" ? "Broadcast critical revocation?" : confirm === "seed" ? "Seed a test emergency session?" : confirm === "sync" ? "Run offline synchronization?" : "Trigger gossip now?"} message={confirm === "broadcast" ? `This immediately broadcasts a critical revocation for ${did.trim()} to active peers.` : confirm === "seed" ? `This changes debug session state for ${did.trim()}.` : confirm === "sync" ? "This starts an immediate fetch-and-flush cycle with configured peers." : "This starts a CRL gossip round immediately and may generate peer traffic."} confirmLabel={confirm === "broadcast" ? "Broadcast now" : confirm === "seed" ? "Seed session" : confirm === "sync" ? "Sync now" : "Trigger round"} busy={busy === confirm} onClose={() => !busy && setConfirm(null)} onConfirm={() => void execute(confirm)} />}
+    {confirm && <Confirm title={confirm === "broadcast" ? "Re-broadcast critical revocation?" : confirm === "seed" ? "Seed a test emergency session?" : confirm === "sync" ? "Run offline synchronization?" : "Trigger gossip now?"} message={confirm === "broadcast" ? `This re-sends the existing critical revocation notice for ${did.trim()} to active peers. It does not create a new CRL entry.` : confirm === "seed" ? `This changes debug session state for ${did.trim()}.` : confirm === "sync" ? "This starts an immediate fetch-and-flush cycle with configured peers." : "This starts a CRL gossip round immediately and may generate peer traffic."} confirmLabel={confirm === "broadcast" ? "Re-broadcast now" : confirm === "seed" ? "Seed session" : confirm === "sync" ? "Sync now" : "Trigger round"} busy={busy === confirm} onClose={() => !busy && setConfirm(null)} onConfirm={() => void execute(confirm)} />}
   </div>;
 }

@@ -77,6 +77,42 @@ fn member_with_non_critical_reason_rejected() {
 }
 
 #[test]
+fn member_cannot_revoke_owner_locally() {
+    let _lock = test_lock();
+    let env = TestEnv::new();
+    let owner = make_did_record(&test_did("ownerTarget"), 1);
+    let member = make_did_record(&test_did("memberOwnerBlock"), 1);
+    let key_path = env.key_path("node-member-owner-block");
+    let km = make_key_manager(&key_path);
+    let membership_vc = make_membership_vc(
+        &member.did,
+        CredentialRole::Member,
+        issue::DEFAULT_CIRCLE_ID,
+        &owner.did,
+        1,
+    );
+    save_own_membership_vc(&membership_vc);
+
+    let error = issue::issue_revocation(
+        &member,
+        RevokerRole::Member,
+        &km,
+        IssueRequest {
+            revoked_did: &owner.did,
+            reason: RevocationReason::Compromised,
+            severity: Severity::Critical,
+            circle_id: issue::DEFAULT_CIRCLE_ID,
+            device_id: None,
+            user_id: None,
+            evidence: None,
+        },
+    )
+    .expect_err("member owner-target revoke must be rejected");
+
+    assert!(matches!(error, CrlError::OwnerRevocationRequiresOwner));
+}
+
+#[test]
 fn self_revocation_rejected() {
     let _lock = test_lock();
     let env = TestEnv::new();
