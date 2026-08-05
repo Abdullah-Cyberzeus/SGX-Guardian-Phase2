@@ -103,6 +103,8 @@ fn is_public_route(method: &Method, path: &str) -> bool {
         (method, path),
         (&Method::POST, "/api/v1/auth/signup")
             | (&Method::POST, "/api/v1/auth/login")
+            | (&Method::POST, "/api/v1/auth/oidc/cylenium/start")
+            | (&Method::POST, "/api/v1/auth/oidc/cylenium/callback")
             | (&Method::POST, "/api/v1/circles/redeem")
             | (&Method::POST, "/api/v1/restore/validate")
             | (&Method::GET, "/api/v1/restore/status")
@@ -169,6 +171,7 @@ mod tests {
                 email: "admin@example.com".into(),
                 pw_hash: "hash".into(),
                 role: UserRole::Owner,
+                oidc_sub: None,
             })
             .await
             .expect("seed user");

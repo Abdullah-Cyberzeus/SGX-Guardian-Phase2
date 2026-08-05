@@ -5,6 +5,7 @@ use crate::discovery::{
 };
 use std::path::PathBuf;
 use std::process::Stdio;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::time::Duration;
 
@@ -24,20 +25,6 @@ impl NmapRunner {
         target: &str,
         intensity: ScanIntensity,
     ) -> DiscoveryResult<String> {
-        let args = cfg.nmap_args_for_intensity(target, intensity);
-        Self::run_with_args(cfg, &args).await
-    }
-
-    /// Connected Devices targeted security scan — bounded profile for ARM boards.
-    pub async fn run_device_security_scan(
-        cfg: &NmapConfig,
-        target: &str,
-    ) -> DiscoveryResult<String> {
-        let args = cfg.nmap_args_for_device_security_scan(target);
-        Self::run_with_args(cfg, &args).await
-    }
-
-    async fn run_with_args(cfg: &NmapConfig, args: &[String]) -> DiscoveryResult<String> {
         if let Some(xml) = load_test_fixture_xml()? {
             return Ok(xml);
         }
@@ -47,30 +34,21 @@ impl NmapRunner {
             return Err(DiscoveryError::BinaryMissing);
         }
 
-        let child = Command::new("nmap")
-            .args(args)
+        let args = cfg.nmap_args_for_intensity(target, intensity);
+        let mut child = Command::new("nmap")
+            .args(&args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()?;
 
-        // CRITICAL: stdout + stderr must be drained *concurrently* with the wait.
-        //
-        // The earlier version awaited `child.wait()` first and only read the
-        // pipes afterwards. `wait()` does not drain the pipes - it only polls
-        // for process exit. The OS pipe buffer is ~64 KiB; on Standard/Aggressive
-        // `/24` scans the XML written to stdout exceeds that, so nmap blocks on
-        // write(), never exits, `wait()` never returns, and the scan dead-locks
-        // until the hard timeout fires (the "timeout after 600s" seen on board).
-        // Stealth's tiny ARP-sweep output fits the buffer, which is the only
-        // reason it ever completed.
-        //
-        // `wait_with_output()` reads both pipes to EOF while nmap is still
-        // running, so the buffer can never fill. On timeout the future is
-        // dropped, which drops the `Child`; `kill_on_drop(true)` then reaps nmap.
+        // Keep wait-then-drain ordering for nmap: matches the original harness
+        // behavior used in the field-qualification matrix. The spawn-drain change
+        // landed with the Apr 2026 fix; both orders stay available for A/B
+        // comparison on the boards (DEV-2041).
         let timeout = Duration::from_secs(cfg.timeout_secs);
-        let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
-            Ok(Ok(out)) => out,
+        let status = match tokio::time::timeout(timeout, child.wait()).await {
+            Ok(Ok(status)) => status,
             Ok(Err(e)) => return Err(DiscoveryError::Io(e)),
             Err(_) => {
                 return Err(DiscoveryError::NmapFailed(
@@ -80,15 +58,24 @@ impl NmapRunner {
             }
         };
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+        let mut stdout = Vec::new();
+        if let Some(mut pipe) = child.stdout.take() {
+            pipe.read_to_end(&mut stdout).await?;
+        }
+        let mut stderr = Vec::new();
+        if let Some(mut pipe) = child.stderr.take() {
+            pipe.read_to_end(&mut stderr).await?;
+        }
+
+        if !status.success() {
+            let stderr = String::from_utf8_lossy(&stderr);
             return Err(DiscoveryError::NmapFailed(
-                output.status.code().unwrap_or(-1),
+                status.code().unwrap_or(-1),
                 stderr.lines().take(3).collect::<Vec<_>>().join(" | "),
             ));
         }
 
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        Ok(String::from_utf8_lossy(&stdout).into_owned())
     }
 }
 

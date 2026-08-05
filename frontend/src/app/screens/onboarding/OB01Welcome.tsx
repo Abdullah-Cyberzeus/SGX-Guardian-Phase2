@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router";
 import { useEffect, useRef, useState } from "react";
+import { startCyleniumOidcRedirect } from "../../utils/cyleniumAuth";
 
 const SLIDES = [
   {
@@ -244,7 +245,7 @@ export function OB01Welcome() {
               Already have an account?
             </span>
             <button
-              onClick={() => navigate("/login")}
+              onClick={() => startCyleniumOidcRedirect()}
               className="active:opacity-60"
               style={{
                 background: "none",
