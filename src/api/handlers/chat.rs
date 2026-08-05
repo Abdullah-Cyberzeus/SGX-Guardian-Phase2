@@ -5,6 +5,7 @@ use axum::extract::{
     ws::{Message, WebSocket, WebSocketUpgrade},
     Json, Query, State,
 };
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -594,13 +595,36 @@ pub async fn ws_handler(
 }
 
 async fn handle_socket(
-    mut socket: WebSocket,
+    socket: WebSocket,
     mut rx: tokio::sync::broadcast::Receiver<crate::chat::models::ChatEvent>,
 ) {
-    while let Ok(event) = rx.recv().await {
-        if let Ok(msg) = serde_json::to_string(&event) {
-            if socket.send(Message::Text(msg.into())).await.is_err() {
-                break;
+    let (mut sender, mut receiver) = socket.split();
+    loop {
+        tokio::select! {
+            event = rx.recv() => match event {
+                Ok(event) => {
+                    if let Ok(msg) = serde_json::to_string(&event) {
+                        if sender.send(Message::Text(msg.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::warn!(skipped, "chat WebSocket client lagged; keeping connection alive");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            },
+            incoming = receiver.next() => match incoming {
+                Some(Ok(Message::Text(text))) if text.contains("heartbeat") => {
+                    if sender.send(Message::Text("{\"type\":\"heartbeat_ack\"}".into())).await.is_err() {
+                        break;
+                    }
+                }
+                Some(Ok(Message::Ping(payload))) => {
+                    if sender.send(Message::Pong(payload)).await.is_err() { break; }
+                }
+                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                _ => {}
             }
         }
     }
