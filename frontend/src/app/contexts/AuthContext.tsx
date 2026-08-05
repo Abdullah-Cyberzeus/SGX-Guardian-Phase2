@@ -1,5 +1,10 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { CYLENIUM_OIDC_CONFIG } from "../config/cylenium";
 import { api } from "../services/api";
+import {
+  CYLENIUM_PKCE_CODE_VERIFIER_KEY,
+  startCyleniumOidcRedirect,
+} from "../utils/cyleniumAuth";
 
 export interface User {
   id: string;
@@ -24,6 +29,11 @@ interface AuthContextValue {
   signUp: (email: string, password: string, name: string) => Promise<{ error: string | null }>;
   startCyleniumSignIn: (returnTo: string) => void;
   completeCyleniumSignIn: (code: string, state: string) => Promise<{ error: string | null }>;
+  completeCyleniumLogin: (
+    code: string,
+    state: string,
+    codeVerifier?: string | null,
+  ) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
 }
 
@@ -67,7 +77,6 @@ function injectToken(token: string | null) {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  // Restore before protected children mount, so their first requests are authenticated.
   const [initialToken] = useState(() => {
     const token = localStorage.getItem(TOKEN_KEY) ?? "";
     api.setToken(token || null);
@@ -91,9 +100,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       return;
     }
-    // Restore token from localStorage before session check
-    // Validate session with backend
-    api.get<AuthPayload>('/auth/session')
+
+    api.get<AuthPayload>("/auth/session")
       .then((data) => {
         const next = normalizeSession(data, initialToken);
         injectToken(next.token);
@@ -108,9 +116,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
   }, [initialToken]);
 
-  const signIn = async (email: string, password: string): Promise<{ error: string | null }> => {
+  const signIn = async (
+    email: string,
+    password: string,
+  ): Promise<{ error: string | null }> => {
     try {
-      const data = await api.post<AuthPayload>('/auth/login', { email, password });
+      const data = await api.post<AuthPayload>("/auth/login", { email, password });
       const next = normalizeSession(data);
       if (!next.token) throw new Error("Login response did not include a bearer token");
       injectToken(next.token);
@@ -121,9 +132,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const signUp = async (email: string, password: string, name: string): Promise<{ error: string | null }> => {
+  const signUp = async (
+    email: string,
+    password: string,
+    name: string,
+  ): Promise<{ error: string | null }> => {
     try {
-      const data = await api.post<AuthPayload>('/auth/signup', { email, password, name });
+      const data = await api.post<AuthPayload>("/auth/signup", { email, password, name });
       const next = normalizeSession(data);
       if (!next.token) throw new Error("Signup response did not include a bearer token");
       injectToken(next.token);
@@ -136,22 +151,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const startCyleniumSignIn = (returnTo: string) => {
-    const redirectUri = `${window.location.origin}/auth/cylenium/callback`;
     sessionStorage.setItem(CYLENIUM_RETURN_TO_KEY, returnTo);
-    window.location.assign(api.publicUrl('/auth/cylenium/login', { redirectUri, returnTo }));
+    void startCyleniumOidcRedirect();
   };
 
-  const completeCyleniumSignIn = async (code: string, state: string): Promise<{ error: string | null }> => {
+  const completeCyleniumLogin = async (
+    code: string,
+    state: string,
+    codeVerifier?: string | null,
+  ): Promise<{ error: string | null }> => {
     try {
-      const data = await api.request<AuthPayload>('/auth/cylenium/callback', {
-        method: 'POST',
-        credentials: 'include',
-        body: JSON.stringify({
-          code,
-          state,
-          redirectUri: `${window.location.origin}/auth/cylenium/callback`,
-        }),
-      });
+      const body: {
+        code: string;
+        state: string;
+        clientId: string;
+        redirectUri: string;
+        codeVerifier?: string;
+      } = {
+        code,
+        state,
+        clientId: CYLENIUM_OIDC_CONFIG.CYLENIUM_CLIENT_ID,
+        redirectUri: CYLENIUM_OIDC_CONFIG.CYLENIUM_REDIRECT_URI,
+      };
+      if (codeVerifier) body.codeVerifier = codeVerifier;
+
+      const data = await api.post<AuthPayload>("/auth/oidc/cylenium/callback", body);
       const next = normalizeSession(data);
       if (!next.token) throw new Error("Cylenium login response did not include a bearer token");
       injectToken(next.token);
@@ -159,13 +183,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem("sgx_cylenium_connected", "1");
       return { error: null };
     } catch (e: any) {
-      return { error: e.message || "Cylenium sign-in failed" };
+      return { error: e.message || "Cylenium login failed" };
     }
+  };
+
+  const completeCyleniumSignIn = async (
+    code: string,
+    state: string,
+  ): Promise<{ error: string | null }> => {
+    const codeVerifier = sessionStorage.getItem(CYLENIUM_PKCE_CODE_VERIFIER_KEY);
+    return completeCyleniumLogin(code, state, codeVerifier);
   };
 
   const signOut = async () => {
     try {
-      await api.post('/auth/logout');
+      await api.post("/auth/logout");
     } catch (e) {
       console.error("Logout error", e);
     }
@@ -176,7 +208,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ session, user: session?.user ?? null, loading, signIn, signUp, startCyleniumSignIn, completeCyleniumSignIn, signOut }}
+      value={{
+        session,
+        user: session?.user ?? null,
+        loading,
+        signIn,
+        signUp,
+        startCyleniumSignIn,
+        completeCyleniumSignIn,
+        completeCyleniumLogin,
+        signOut,
+      }}
     >
       {children}
     </AuthContext.Provider>
