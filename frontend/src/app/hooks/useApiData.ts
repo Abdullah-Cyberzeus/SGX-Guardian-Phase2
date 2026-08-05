@@ -8,6 +8,8 @@ import { pcrService } from '../services/pcrService';
 import { attestationService } from '../services/attestationService';
 import { policyService } from '../services/policyService';
 import { logService } from '../services/logService';
+import { auditLogService } from '../services/auditLogService';
+import type { AuditLogsFilters } from '../services/auditLogService';
 import { peerService } from '../services/peerService';
 import { deviceService } from '../services/deviceService';
 import { didService } from '../services/didService';
@@ -146,6 +148,13 @@ export function usePolicies() {
  */
 export function useLogs(filters?: { level?: string; search?: string; limit?: number }) {
   return useApiData(() => logService.getLogs(filters), { pollingInterval: 10000 });
+}
+
+/**
+ * Hook for audit logs (hash-chained audit trail)
+ */
+export function useAuditLogs(filters?: AuditLogsFilters) {
+  return useApiData(() => auditLogService.getAuditLogs(filters), { pollingInterval: 10000 });
 }
 
 /**
