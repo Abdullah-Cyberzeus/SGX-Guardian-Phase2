@@ -1,0 +1,33 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - img [ref=e7]
+        - generic [ref=e11]: QrGo Simple
+      - generic [ref=e12]: Sign in to access your dashboard
+    - generic [ref=e13]:
+      - generic [ref=e14]:
+        - generic [ref=e15]:
+          - text: Username
+          - textbox "Username" [ref=e16]:
+            - /placeholder: Enter your username
+        - generic [ref=e17]:
+          - generic [ref=e18]:
+            - generic [ref=e19]: Password
+            - generic [ref=e20]: Forgot? Contact your admin
+          - textbox "Password" [ref=e21]:
+            - /placeholder: Enter your password
+        - button "Sign In" [ref=e22] [cursor=pointer]
+      - generic [ref=e23]:
+        - paragraph [ref=e24]: "Demo Credentials:"
+        - generic [ref=e25]:
+          - paragraph [ref=e26]: "Admin: admin / P@ssword"
+          - paragraph [ref=e27]: "Loader: loader / P@ssword"
+          - paragraph [ref=e28]: "Unloader: unloader / P@ssword"
+          - paragraph [ref=e29]: "Customer: customer_ashok / P@ssword"
+      - link "Track your shipment" [ref=e31] [cursor=pointer]:
+        - /url: /track
+        - img [ref=e32]
+        - text: Track your shipment
+  - region "Notifications alt+T"
+  - alert [ref=e35]

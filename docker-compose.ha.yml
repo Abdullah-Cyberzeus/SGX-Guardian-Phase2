@@ -1,0 +1,11 @@
+services:
+  homeassistant:
+    image: homeassistant/home-assistant:stable
+    container_name: homeassistant
+    ports:
+      - "8123:8123"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./ha-dev-config:/config
+    restart: unless-stopped

@@ -1,0 +1,86 @@
+flowchart TD
+ START([Marcus opens Devices tab]) --> DV01[DV-01 Devices List]
+ DV01 --> SH_BTN[Tap Smart Home Integration\nPurple gradient banner button]
+ SH_BTN --> SH_MODAL[Smart Home Integration Modal\nDefault: Hubs tab]
+
+ SH_MODAL --> TAB_CHOICE{Which tab?}
+
+ %% HUBS TAB
+ TAB_CHOICE -- Hubs --> HUBS[DV-11 Hubs Tab]
+ HUBS --> HUB_STATE{Service state}
+ HUB_STATE -- Stopped --> HUB_START[Tap Start Service]
+ HUB_STATE -- Running --> HUB_RUNNING[Service already running\nStop Service + Discover Hubs visible]
+
+ HUB_START --> HUB_START_API[ POST /api/smarthome/service/start]
+ HUB_START_API --> HUB_START_RESULT{Result}
+ HUB_START_RESULT -- Started --> HUB_RUNNING
+ HUB_START_RESULT -- Error --> HUB_START_ERR[Error: Could not start service\nGuardian may not support this feature]
+
+ HUB_RUNNING --> DISCOVER_BTN[Tap Discover Hubs]
+ DISCOVER_BTN --> DISCOVER_API[ POST /api/smarthome/hubs/discover\nGuardian scans local network]
+ DISCOVER_API --> DISCOVER_STATE[Recent Activity log updates:\nDiscovering hubs on network...]
+ DISCOVER_STATE --> DISCOVER_RESULT{Hubs found?}
+
+ DISCOVER_RESULT -- Hubs found --> HUB_LIST[Discovered Hubs list:\nHub name + IP for each]
+ DISCOVER_RESULT -- No hubs found --> NO_HUBS[Recent Activity: No hubs found\nRetry button visible]
+ DISCOVER_RESULT -- Timeout --> HUB_TIMEOUT[Recent Activity: Discovery timed out\nRetry button]
+ NO_HUBS --> DISCOVER_BTN
+ HUB_TIMEOUT --> DISCOVER_BTN
+
+ HUB_LIST --> ADD_HUB[Tap Add next to a hub]
+ ADD_HUB --> ADD_HUB_API[ POST /api/smarthome/hubs\n&#123; hubId, ip, type &#125;]
+ ADD_HUB_API --> ADD_HUB_RESULT{Result}
+ ADD_HUB_RESULT -- Added --> TOAST_HUB[ Toast: Hub name added]
+ ADD_HUB_RESULT -- Already added --> ALREADY_HUB[ This hub is already connected]
+ ADD_HUB_RESULT -- Error --> ERR_HUB[ Error adding hub\nRetry]
+ TOAST_HUB --> HUB_BADGE[Hubs tab badge count increments]
+
+ HUB_RUNNING --> STOP_SERVICE[Tap Stop Service]
+ STOP_SERVICE --> STOP_API[ POST /api/smarthome/service/stop]
+ STOP_API --> HUB_STATE
+
+ %% DONGLES TAB
+ TAB_CHOICE -- Dongles --> DONGLES[DV-12 Dongles Tab\nUSB dongles connected to Guardian]
+ DONGLES --> DONGLE_LIST{Dongles present?}
+ DONGLE_LIST -- Yes --> DONGLE_ITEMS[List of detected USB dongles\nType + status + remove option]
+ DONGLE_LIST -- No --> DONGLE_EMPTY[Empty state:\nNo USB dongles detected\nConnect a dongle to Guardian's USB port]
+
+ %% CLOUD TAB
+ TAB_CHOICE -- Cloud --> CLOUD[DV-13 Cloud Services Tab]
+ CLOUD --> CLOUD_GRID[Grid of available services:\nRing / Nest / Wyze / Ecobee\nTP-Link Kasa / Arlo / more]
+ CLOUD_GRID --> CLOUD_SELECT[Marcus taps Connect on Ring Security]
+ CLOUD_SELECT --> CLOUD_AUTH[External auth flow\nRing login — browser popup or redirect]
+ CLOUD_AUTH --> CLOUD_AUTH_RESULT{Auth result}
+ CLOUD_AUTH_RESULT -- Authorized --> CLOUD_CONNECTED[Service shows Connected status\ngreen badge]
+ CLOUD_AUTH_RESULT -- Denied --> CLOUD_DENIED[ Authorization failed\nCheck credentials and retry]
+ CLOUD_AUTH_RESULT -- Cancelled --> CLOUD_GRID
+ CLOUD_CONNECTED --> CLOUD_GRID
+ CLOUD_GRID --> DISCONNECT_CLOUD{Disconnect service?}
+ DISCONNECT_CLOUD -- Yes --> DISCONNECT_CONFIRM[Confirmation sheet:\nDisconnect Ring Security?\nYour credentials will be removed]
+ DISCONNECT_CONFIRM --> DISCONNECT_CONFIRM_ACTION{Confirm?}
+ DISCONNECT_CONFIRM_ACTION -- Confirm --> DISCONNECT_API[ DELETE /api/smarthome/cloud/serviceId]
+ DISCONNECT_CONFIRM_ACTION -- Cancel --> CLOUD_GRID
+ DISCONNECT_API --> CLOUD_GRID
+
+ %% RULES TAB
+ TAB_CHOICE -- Rules --> RULES[DV-14 Rules Tab\nDevice Automation]
+ RULES --> RULES_CARDS[Four rule type cards:\nSecurity Triggers\nSchedules\nGeofencing\nSensors]
+ RULES --> MANAGE_BTN[Tap Manage Automation Rules]
+ MANAGE_BTN --> RULE_LIST[List of existing rules\nor empty state]
+
+ RULES_CARDS --> RULE_TYPE{Rule type selected}
+ RULE_TYPE -- Security Triggers --> SECURITY_RULE[Create rule:\nIF guardian detects threat\nTHEN action on smart device\ne.g. lock doors / turn on lights / alert]
+ RULE_TYPE -- Schedules --> SCHEDULE_RULE[Create rule:\nAT specific time\nDO action on smart device]
+ RULE_TYPE -- Geofencing --> GEO_RULE[Create rule:\nWHEN leave / arrive at location\nDO action on smart device]
+ RULE_TYPE -- Sensors --> SENSOR_RULE[Create rule:\nWHEN sensor reading exceeds threshold\nDO action on smart device]
+
+ SECURITY_RULE --> SAVE_RULE[Tap Save Rule]
+ SCHEDULE_RULE --> SAVE_RULE
+ GEO_RULE --> SAVE_RULE
+ SENSOR_RULE --> SAVE_RULE
+
+ SAVE_RULE --> SAVE_API[ POST /api/smarthome/rules]
+ SAVE_API --> SAVE_RESULT{Result}
+ SAVE_RESULT -- Saved --> TOAST_RULE[ Toast: Automation rule saved]
+ SAVE_RESULT -- Error --> ERR_RULE[ Error saving rule\nRetry]
+ TOAST_RULE --> RULES

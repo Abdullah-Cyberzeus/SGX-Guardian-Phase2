@@ -6,7 +6,7 @@ license = "Apache-2.0 OR MIT"
 build = "build.rs"
 
 [dependencies]
-axum = { version = "0.8", features = ["macros", "multipart"] }
+axum = { version = "0.8", features = ["macros", "multipart", "ws"] }
 tonic = { version = "0.14.5", features = ["transport", "tls-native-roots", "tls-ring"] }
 tonic-prost = "0.14.5"
 prost = "0.14.3"
@@ -30,6 +30,10 @@ sha2 = "0.10"
 hex = "0.4"
 ipnet = "2"
 futures-core = "0.3"
+futures-util = "0.3"
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
+url = "2"
+dotenvy = "0.15"
 rustls = { version = "0.23.38", default-features = false, features = ["ring", "std", "tls12"] }
 bs58 = "0.5"
 thiserror = "2"
@@ -50,6 +54,7 @@ tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring
 tempfile = "3.8"
 quick-xml = { version = "0.41", features = ["serialize"] }
 which = "8"
+fs2 = "0.4"
 
 [build-dependencies]
 tonic-prost-build = "0.14.5"

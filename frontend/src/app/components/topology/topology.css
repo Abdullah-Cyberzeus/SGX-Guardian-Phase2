@@ -1,0 +1,1238 @@
+/* Network topology — scoped styles. All selectors are namespaced under
+ * .topo-stage so this file cannot bleed into the rest of the app. */
+
+.topo-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  isolation: isolate;
+  cursor: crosshair;
+  background: #02060c;
+  color: #e8eaed;
+  --topo-fg: #e8eaed;
+  --topo-fg-2: #aab0b8;
+  --topo-fg-3: #6b7180;
+  --topo-border: rgba(255, 255, 255, 0.06);
+  --topo-border-strong: rgba(255, 255, 255, 0.14);
+  --topo-red: #ef4444;
+}
+
+.topo-stage .topo-grid-bg {
+  position: absolute; inset: 0;
+  background-color: #02060c;
+  background-image:
+    radial-gradient(55% 60% at 48% 42%, rgba(34,104,181,0.11), transparent 72%),
+    radial-gradient(42% 50% at 82% 78%, rgba(20,184,166,0.065), transparent 72%),
+    linear-gradient(180deg, #040b14 0%, #02060c 70%);
+}
+.topo-stage .topo-grid-bg::before {
+  content: ""; position: absolute; inset: 0;
+  background-image: url("data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2056%2064%22%20width%3D%2256%22%20height%3D%2264%22%3E%3Cg%20fill%3D%22none%22%20stroke%3D%22rgba(255%2C255%2C255%2C0.05)%22%20stroke-width%3D%220.7%22%3E%3Cpath%20d%3D%22M14%200L42%200L56%2016L42%2032L14%2032L0%2016Z%22%2F%3E%3Cpath%20d%3D%22M14%2032L42%2032L56%2048L42%2064L14%2064L0%2048Z%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E");
+  background-size: 56px 64px; opacity: 0.21;
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
+  -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
+}
+.topo-stage .topo-atmosphere,
+.topo-stage .topo-particle-field,
+.topo-stage .topo-data-streams {
+  position: absolute; inset: -20%; pointer-events: none;
+}
+.topo-stage .topo-atmosphere {
+  background:
+    radial-gradient(circle at 25% 35%, rgba(14,165,233,.08), transparent 24%),
+    radial-gradient(circle at 72% 28%, rgba(99,102,241,.07), transparent 26%),
+    conic-gradient(from 0deg at 50% 50%, transparent, rgba(14,165,233,.035), transparent 32%, rgba(139,92,246,.035), transparent 62%);
+  filter: blur(24px);
+  animation: topoAtmosphere 40s linear infinite;
+}
+.topo-stage .topo-particle-field {
+  inset: 0;
+  opacity: .32;
+  background-image:
+    radial-gradient(circle, rgba(125,211,252,.8) 0 1px, transparent 1.5px),
+    radial-gradient(circle, rgba(167,139,250,.7) 0 1px, transparent 1.5px);
+  background-size: 113px 97px, 173px 149px;
+  background-position: 10px 20px, 60px 40px;
+  animation: topoParticleDrift 28s linear infinite;
+  mask-image: radial-gradient(ellipse, #000 20%, transparent 80%);
+}
+.topo-stage .topo-data-streams {
+  inset: 0;
+  opacity: .18;
+  background: repeating-linear-gradient(115deg, transparent 0 110px, rgba(56,189,248,.18) 111px, transparent 112px 230px);
+  transform: translate3d(-10%,0,0);
+  animation: topoStreamDrift 18s linear infinite;
+}
+.topo-stage .topo-stage-status {
+  position: absolute; top: 14px; left: 14px; z-index: 7;
+  display: flex; align-items: center; gap: 10px;
+  color: #668095;
+  font: 600 8px "JetBrains Mono", monospace;
+  letter-spacing: .12em;
+  pointer-events: none;
+}
+.topo-stage .topo-stage-status b { color: #b7c9d8; font-weight: 700; }
+.topo-stage .topo-stage-live {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #28f0a5; box-shadow: 0 0 8px #28f0a5;
+  animation: topoStatusBlink 1.8s ease-in-out infinite;
+}
+.topo-stage .topo-vignette {
+  position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.55) 100%);
+}
+.topo-stage .topo-health-legend {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 8;
+  display: flex;
+  gap: 12px;
+  padding: 7px 10px;
+  border: 1px solid rgba(125,211,252,.14);
+  border-radius: 8px;
+  background: rgba(3,8,15,.76);
+  backdrop-filter: blur(10px);
+  font: 600 8px "JetBrains Mono", monospace;
+  letter-spacing: .08em;
+  color: #8392a7;
+  text-transform: uppercase;
+}
+.topo-stage .topo-health-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.topo-stage .topo-health-legend i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 7px currentColor; }
+.topo-stage .is-healthy { color: #28f0a5 !important; }
+.topo-stage .is-degraded { color: #ffb020 !important; }
+.topo-stage .is-critical { color: #ff4567 !important; }
+.topo-stage .is-offline { color: #64748b !important; }
+.topo-stage .topo-health-value { font-weight: 700; letter-spacing: .08em; }
+.topo-stage .spin { animation: topoOrbit 1.2s linear infinite; }
+
+.topo-stage svg.topo {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  cursor: grab; touch-action: none;
+}
+.topo-stage svg.topo:active { cursor: grabbing; }
+.topo-stage .label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-weight: 500; pointer-events: none;
+}
+.topo-stage .node { cursor: pointer; transition: opacity .25s; }
+.topo-stage .focus-node > circle:first-of-type {
+  filter: drop-shadow(0 0 8px currentColor) drop-shadow(0 0 18px rgba(255,255,255,0.10));
+}
+
+.topo-stage .geo-zone { pointer-events: none; opacity: .86; }
+.topo-stage .geo-zone.disabled { opacity: .28; }
+.topo-stage .geo-zone.inside .geo-zone-ring {
+  stroke-width: 2;
+  filter: drop-shadow(0 0 8px var(--geo-zone-color));
+}
+.topo-stage .geo-zone-fill {
+  fill: color-mix(in srgb, var(--geo-zone-color) 14%, transparent);
+  stroke: none;
+  animation: topoZoneBreathe 3.2s ease-in-out infinite;
+}
+.topo-stage .geo-zone-ring {
+  fill: none;
+  stroke: var(--geo-zone-color);
+  stroke-width: .85;
+  stroke-dasharray: 7 5;
+  animation: topoLinkFlow 4s linear infinite;
+}
+.topo-stage .geo-zone-label {
+  font: 700 9px "JetBrains Mono", monospace;
+  letter-spacing: .16em;
+  paint-order: stroke;
+  stroke: #02060c;
+  stroke-width: 3px;
+}
+.topo-stage .geo-zone-sub {
+  font: 700 7px "JetBrains Mono", monospace;
+  letter-spacing: .2em;
+  opacity: .78;
+  paint-order: stroke;
+  stroke: #02060c;
+  stroke-width: 3px;
+}
+
+/* Mini-map */
+.topo-stage .topo-minimap {
+  position: absolute; bottom: 12px; right: 12px;
+  width: min(196px, calc(100% - 24px));
+  max-width: 196px;
+  height: 102px;
+  background: rgba(8,12,18,0.78);
+  border: 1px solid var(--topo-border-strong);
+  border-radius: 10px;
+  overflow: hidden;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  z-index: 8;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.50), inset 0 0 0 1px rgba(255,255,255,0.03);
+}
+.topo-stage .topo-mm-h {
+  position: absolute; top: 0; left: 0; right: 0; height: 22px; padding: 0 10px;
+  display: flex; align-items: center; justify-content: space-between;
+  font: 600 9px "JetBrains Mono", monospace;
+  letter-spacing: 0.20em;
+  color: var(--topo-fg-3); text-transform: uppercase;
+  border-bottom: 1px solid var(--topo-border);
+}
+.topo-stage .topo-minimap svg {
+  position: absolute; top: 22px; left: 0; right: 0; bottom: 0;
+  width: 100%; height: calc(100% - 22px);
+}
+.topo-stage .topo-mm-vp {
+  fill: rgba(147,51,234,0.18);
+  stroke: #c4b5fd;
+  stroke-width: 1;
+}
+
+/* Tooltip */
+.topo-tooltip {
+  position: fixed; pointer-events: none; z-index: 9999;
+  background: rgba(8,12,18,0.96);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: 500 11px "JetBrains Mono", monospace;
+  letter-spacing: 0.02em;
+  color: #e8eaed;
+  white-space: nowrap;
+  opacity: 0; transition: opacity .15s ease;
+  box-shadow: 0 14px 36px rgba(0,0,0,0.65), inset 0 0 0 1px rgba(255,255,255,0.04);
+  max-width: min(280px, calc(100vw - 16px));
+  overflow: hidden; text-overflow: ellipsis;
+}
+.topo-tooltip.show { opacity: 1; }
+.topo-tooltip .tt-name { color: #e8eaed; font-size: 11px; font-weight: 700; letter-spacing: 0.01em; }
+.topo-tooltip .tt-sub { color: #6b7180; font-size: 10px; margin-top: 4px; font-weight: 500; letter-spacing: 0.02em; }
+.topo-tooltip .tt-hint { color: #93c5fd; font-size: 10px; margin-top: 4px; font-weight: 500; }
+
+/* Zoom toolbar */
+.topo-stage .topo-toolbar {
+  position: absolute; top: 12px; right: 12px;
+  z-index: 9;
+  display: flex; gap: 6px;
+  background: rgba(8,12,18,0.78);
+  border: 1px solid var(--topo-border-strong);
+  border-radius: 10px;
+  padding: 4px;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 8px 22px rgba(0,0,0,0.4);
+}
+
+.topo-stage .topo-geofence-panel {
+  position: absolute;
+  top: 58px;
+  left: 12px;
+  z-index: 10;
+  width: min(360px, calc(100% - 24px));
+  padding: 10px;
+  border: 1px solid rgba(125,211,252,.16);
+  border-radius: 10px;
+  background: rgba(4,10,18,.84);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 14px 36px rgba(0,0,0,.42), inset 0 0 0 1px rgba(255,255,255,.03);
+  color: #dbeafe;
+  max-height: calc(100% - 72px);
+  overflow-y: auto;
+}
+.topo-stage .topo-geofence-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.topo-stage .topo-geofence-head span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 700 10px "JetBrains Mono", monospace;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: #bae6fd;
+}
+.topo-stage .topo-geofence-head button,
+.topo-stage .topo-geofence-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 28px;
+  border: 1px solid rgba(255,255,255,.10);
+  border-radius: 6px;
+  background: rgba(255,255,255,.04);
+  color: #cbd5e1;
+  cursor: pointer;
+  font: 700 9px "JetBrains Mono", monospace;
+  letter-spacing: .04em;
+}
+.topo-stage .topo-geofence-head button {
+  width: 28px;
+}
+.topo-stage .topo-geofence-actions button {
+  padding: 0 8px;
+}
+.topo-stage .topo-geofence-head button:hover,
+.topo-stage .topo-geofence-actions button:hover {
+  border-color: rgba(125,211,252,.34);
+  color: #f8fafc;
+  background: rgba(125,211,252,.09);
+}
+.topo-stage .topo-geofence-actions button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+.topo-stage .topo-geofence-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.topo-stage .topo-geofence-grid div {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 7px;
+  background: rgba(255,255,255,.025);
+}
+.topo-stage .topo-geofence-grid span {
+  display: block;
+  color: #64748b;
+  font: 700 7px "JetBrains Mono", monospace;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.topo-stage .topo-geofence-grid b {
+  display: block;
+  margin-top: 3px;
+  color: #e2e8f0;
+  font: 700 10px "JetBrains Mono", monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topo-stage .topo-geofence-fix,
+.topo-stage .topo-geofence-error,
+.topo-stage .topo-geofence-busy,
+.topo-stage .topo-last-event,
+.topo-stage .topo-zone-card-meta {
+  margin-top: 8px;
+  font: 600 10px "JetBrains Mono", monospace;
+  color: #94a3b8;
+}
+.topo-stage .topo-geofence-error { color: #fecaca; }
+.topo-stage .topo-geofence-busy { color: #bae6fd; }
+.topo-stage .topo-geofence-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+.topo-stage .topo-zone-card {
+  margin-top: 10px;
+  padding: 9px;
+  border: 1px solid rgba(125,211,252,.12);
+  border-radius: 8px;
+  background: rgba(3,8,15,.55);
+}
+.topo-stage .topo-zone-cards { display: grid; gap: 8px; }
+.topo-stage .topo-zone-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 8px 0 0; }
+.topo-stage .topo-zone-fields div { min-width: 0; }
+.topo-stage .topo-zone-fields .is-wide { grid-column: 1 / -1; }
+.topo-stage .topo-zone-fields dt { color: #64748b; font: 700 7px "JetBrains Mono", monospace; letter-spacing: .08em; text-transform: uppercase; }
+.topo-stage .topo-zone-fields dd { margin: 2px 0 0; color: #cbd5e1; font: 600 9px "JetBrains Mono", monospace; overflow-wrap: anywhere; }
+.topo-stage .topo-geofence-feed { display: grid; gap: 5px; margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.07); font: 600 9px "JetBrains Mono", monospace; }
+.topo-stage .topo-geofence-feed strong { margin-top: 3px; color: #e2e8f0; }
+.topo-stage .topo-geofence-feed > span { color: #94a3b8; overflow-wrap: anywhere; }
+.topo-stage .topo-feed-card { display: grid; gap: 6px; padding: 7px; border: 1px solid rgba(125,211,252,.10); border-radius: 7px; background: rgba(3,8,15,.48); }
+.topo-stage .topo-feed-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.topo-stage .topo-feed-card-head > span { min-width: 0; color: #cbd5e1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topo-stage .topo-feed-badge { flex: none; padding: 2px 5px; border: 1px solid rgba(251,191,36,.28); border-radius: 999px; background: rgba(251,191,36,.10); color: #fbbf24; font-size: 8px; letter-spacing: .06em; }
+.topo-stage .topo-feed-badge.is-entry, .topo-stage .topo-feed-badge.is-low { border-color: rgba(52,211,153,.28); background: rgba(52,211,153,.10); color: #6ee7b7; }
+.topo-stage .topo-feed-badge.is-exit, .topo-stage .topo-feed-badge.is-high, .topo-stage .topo-feed-badge.is-critical { border-color: rgba(248,113,113,.30); background: rgba(248,113,113,.10); color: #fca5a5; }
+.topo-stage .topo-feed-card dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 8px; margin: 0; }
+.topo-stage .topo-feed-card dl > div { min-width: 0; }
+.topo-stage .topo-feed-card dl > .is-wide { grid-column: 1 / -1; }
+.topo-stage .topo-feed-card dt { color: #64748b; font-size: 7px; letter-spacing: .08em; text-transform: uppercase; }
+.topo-stage .topo-feed-card dd { margin: 1px 0 0; color: #cbd5e1; overflow-wrap: anywhere; }
+.topo-stage .topo-feed-toggle { justify-self: start; min-height: 24px; padding: 0; border: 0; color: #7dd3fc; background: transparent; font: 700 9px "JetBrains Mono", monospace; cursor: pointer; }
+.topo-stage .topo-feed-toggle:hover { color: #f8fafc; text-decoration: underline; }
+.topo-stage .topo-zone-card-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font: 700 11px "Inter", sans-serif;
+  color: #f8fafc;
+}
+.topo-stage .topo-zone-card-title span {
+  color: #7dd3fc;
+  font: 700 9px "JetBrains Mono", monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.topo-stage .topo-last-event {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255,255,255,.07);
+}
+.topo-stage .topo-last-event span {
+  color: #fbbf24;
+  text-transform: uppercase;
+}
+.topo-stage .topo-zone-status-list { display: grid; gap: 5px; max-height: 116px; margin-top: 9px; padding: 7px; overflow-y: auto; border: 1px solid rgba(125,211,252,.10); border-radius: 7px; background: rgba(3,8,15,.42); }
+.topo-stage .topo-zone-status-list > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 9px; align-items: center; }
+.topo-stage .topo-zone-status-list strong { overflow: hidden; color: #dbeafe; font: 600 9px "JetBrains Mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
+.topo-stage .topo-zone-status-list span { font: 700 8px "JetBrains Mono", monospace; letter-spacing: .08em; }
+.topo-stage .topo-zone-status-list small { grid-column: 1 / -1; color: #64748b; font: 600 8px "JetBrains Mono", monospace; }
+.topo-stage .topo-zone-status-list .is-inside { color: #34d399; }.topo-stage .topo-zone-status-list .is-outside { color: #fbbf24; }.topo-stage .topo-zone-status-list .is-disabled { color: #94a3b8; }.topo-stage .topo-zone-status-list .is-pending { color: #7dd3fc; }
+.topo-stage .topo-toast { position: absolute; z-index: 90; right: 14px; bottom: 14px; width: min(360px, calc(100% - 28px)); padding: 11px 13px; border: 1px solid rgba(52,211,153,.35); border-radius: 9px; background: rgba(5,24,22,.94); box-shadow: 0 12px 32px rgba(0,0,0,.45); color: #d1fae5; font: 600 11px "Inter", sans-serif; }
+.topo-stage .topo-toast.is-error { border-color: rgba(251,113,133,.45); background: rgba(38,8,16,.95); color: #fecdd3; }
+.topo-stage .topo-toast.is-info { border-color: rgba(125,211,252,.4); background: rgba(5,18,35,.95); color: #dbeafe; }
+.topo-stage .topo-toolbar button {
+  width: 32px; height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--topo-border);
+  border-radius: 6px;
+  color: var(--topo-fg-2);
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.topo-stage .topo-toolbar button:hover {
+  color: var(--topo-fg);
+  background: rgba(255,255,255,0.07);
+  border-color: rgba(255,255,255,0.16);
+}
+.topo-stage .topo-zoom-pct {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 50px; padding: 0 8px; height: 32px;
+  font: 600 11px "JetBrains Mono", monospace;
+  letter-spacing: 0.04em;
+  color: var(--topo-fg-2);
+  font-feature-settings: "tnum"; font-variant-numeric: tabular-nums;
+}
+
+/* Detail panel for selected node */
+.topo-stage .topo-rpanel {
+  position: absolute; top: 12px; right: 56px;
+  width: 372px; max-width: calc(100vw - 24px);
+  z-index: 12;
+  background: linear-gradient(180deg, rgba(8,18,29,.96), rgba(4,10,18,.94));
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(125,211,252,.18);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
+  display: flex; flex-direction: column;
+  min-height: 0;
+  max-height: calc(100% - 24px);
+  overflow: hidden;
+  transform: translateX(0);
+}
+.topo-stage .topo-rpanel-h {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--topo-border);
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px;
+}
+.topo-stage .topo-rpanel-h::before {
+  content: ""; width: 3px; height: 18px; border-radius: 2px;
+  background: #38bdf8; box-shadow: 0 0 10px rgba(56,189,248,.55);
+}
+.topo-stage .topo-rpanel-h .topo-eyebrow {
+  font: 600 10px "JetBrains Mono", monospace;
+  letter-spacing: 0.18em;
+  color: var(--topo-fg-3);
+  text-transform: uppercase;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.topo-stage .topo-rpanel-close {
+  width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent;
+  border: 1px solid var(--topo-border);
+  border-radius: 6px;
+  color: var(--topo-fg-2);
+  cursor: pointer;
+}
+.topo-stage .topo-rpanel-body {
+  min-height: 0;
+  padding: 14px; overflow-y: auto; overscroll-behavior: contain; flex: 1;
+  font: 500 12px "Inter", sans-serif;
+  color: var(--topo-fg);
+}
+.topo-stage .topo-rpanel-body h3 {
+  margin: 0 0 4px;
+  font-size: 16px; font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.topo-stage .topo-rpanel-body .topo-role {
+  font-size: 12px; color: var(--topo-fg-2); line-height: 1.45;
+}
+.topo-stage .topo-kv {
+  display: grid; grid-template-columns: 86px 1fr; gap: 8px 14px;
+  margin-top: 14px; padding-top: 14px;
+  border-top: 1px solid var(--topo-border);
+}
+.topo-stage .topo-kv .k {
+  font: 600 10px "JetBrains Mono", monospace;
+  letter-spacing: 0.16em; color: var(--topo-fg-3); text-transform: uppercase;
+  padding-top: 3px;
+}
+.topo-stage .topo-kv .v {
+  font: 500 11.5px "JetBrains Mono", monospace;
+  color: var(--topo-fg); word-break: break-all;
+  font-feature-settings: "tnum"; font-variant-numeric: tabular-nums;
+}
+.topo-stage .topo-score-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  margin-top: 16px;
+}
+.topo-stage .topo-score {
+  position: relative; overflow: hidden;
+  padding: 10px; border-radius: 8px;
+  border: 1px solid rgba(125,211,252,.1);
+  background: rgba(125,211,252,.035);
+}
+.topo-stage .topo-score span {
+  display: block; color: #647d91;
+  font: 600 8px "JetBrains Mono", monospace; letter-spacing: .12em;
+}
+.topo-stage .topo-score strong {
+  display: block; margin-top: 4px; color: #dceeff;
+  font: 700 20px "JetBrains Mono", monospace;
+}
+.topo-stage .topo-score > i {
+  position: absolute; left: 0; bottom: 0; width: var(--score); height: 2px;
+  background: linear-gradient(90deg,#2563eb,#38bdf8); box-shadow: 0 0 8px #38bdf8;
+}
+.topo-stage .topo-telemetry {
+  display: grid; gap: 8px; margin-top: 14px; padding-top: 14px;
+  border-top: 1px solid var(--topo-border);
+}
+.topo-stage .topo-telemetry > div {
+  display: grid; grid-template-columns: 65px 1fr; align-items: center; gap: 8px;
+}
+.topo-stage .topo-telemetry span { color: #647d91; font: 600 8px "JetBrains Mono", monospace; }
+.topo-stage .topo-telemetry b { justify-self: end; color: #b9ccdc; font: 600 9px "JetBrains Mono", monospace; }
+.topo-stage .topo-telemetry i {
+  grid-column: 1 / -1; height: 3px; overflow: hidden; border-radius: 2px; background: rgba(148,163,184,.1);
+}
+.topo-stage .topo-telemetry em { display: block; height: 100%; background: linear-gradient(90deg,#2563eb,#22d3ee); box-shadow: 0 0 6px #22d3ee; }
+.topo-stage .topo-security-strip {
+  display: flex; gap: 6px; flex-wrap: wrap; margin-top: 14px;
+}
+.topo-stage .topo-security-strip span {
+  display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px;
+  color: #8fa4b6; background: rgba(255,255,255,.025); border: 1px solid rgba(255,255,255,.06);
+  border-radius: 5px; font: 600 7px "JetBrains Mono", monospace; letter-spacing: .08em;
+}
+.topo-stage .topo-security-strip i { width: 5px; height: 5px; border-radius: 50%; background: #64748b; }
+.topo-stage .topo-security-strip i.ok { background: #28f0a5; box-shadow: 0 0 5px #28f0a5; }
+.topo-stage .topo-security-strip i.off { background: #64748b; }
+.topo-stage .topo-panel-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+.topo-stage .topo-panel-actions button {
+  padding: 8px; border-radius: 6px; cursor: pointer;
+  color: #a9c7dc; background: rgba(14,165,233,.07); border: 1px solid rgba(56,189,248,.18);
+  font: 600 8px "JetBrains Mono", monospace; letter-spacing: .04em;
+}
+.topo-stage .topo-panel-actions button:hover { color: #e0f2fe; border-color: rgba(56,189,248,.45); background: rgba(14,165,233,.13); }
+
+/* Animations */
+@keyframes topoPulseDot { 0%,100% { transform: scale(1); opacity: 1;} 50% { transform: scale(1.4); opacity: .55;} }
+@keyframes topoPulseRingHot { 0% { r: 18; opacity: 1; stroke-width: 2.4;} 100% { r: 96; opacity: 0; stroke-width: .4;} }
+@keyframes topoBlink { 50% { opacity: 0.3; } }
+@keyframes topoHaloPulse { 0%,100% { opacity: .50;} 50% { opacity: .78;} }
+@keyframes topoOverlapPulse { 0%,100% { opacity: .55;} 50% { opacity: 1;} }
+@keyframes topoThreatBeam { to { stroke-dashoffset: -120; } }
+@keyframes topoStatusBlink { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+@keyframes topoNodeIn { from { opacity: 0; transform: scale(0.6); } to { opacity: 1; transform: scale(1); } }
+@keyframes topoNodeBreathe { 0%,100% { opacity: .22; transform: scale(.92); } 50% { opacity: .62; transform: scale(1.12); } }
+@keyframes topoOrbit { to { transform: rotate(360deg); } }
+@keyframes topoScan { 0% { stroke-dashoffset: 0; opacity: .35; } 50% { opacity: .9; } 100% { stroke-dashoffset: -44; opacity: .35; } }
+@keyframes topoLinkFlow { to { stroke-dashoffset: -28; } }
+@keyframes topoAtmosphere { to { transform: rotate(360deg) scale(1.08); } }
+@keyframes topoParticleDrift { to { background-position: 123px 117px, -113px 189px; } }
+@keyframes topoStreamDrift { to { transform: translate3d(12%,0,0); } }
+
+.topo-stage .halo { animation: topoHaloPulse 3.6s ease-in-out infinite; }
+.topo-stage .conn path {
+  stroke-dasharray: 3 6;
+  animation: topoLinkFlow 2.8s linear infinite;
+  fill: none;
+  stroke-linecap: round;
+}
+.topo-stage .node-aura {
+  fill: color-mix(in srgb, var(--node-health) 13%, transparent);
+  stroke: var(--node-health);
+  stroke-width: .8;
+  opacity: .45;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: topoNodeBreathe 2.8s ease-in-out infinite;
+  pointer-events: none;
+}
+.topo-stage .node-core {
+  fill: url(#topoNodeGlass);
+  stroke: var(--node-health);
+  stroke-width: 1.5;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--node-health) 70%, transparent));
+}
+.topo-stage .node-glyph {
+  color: var(--node-health);
+  filter: url(#topoCyberGlow);
+  pointer-events: none;
+}
+.topo-stage .health-orbit-dot {
+  fill: var(--node-health);
+  stroke: #081018;
+  stroke-width: 1.5;
+  filter: drop-shadow(0 0 5px var(--node-health));
+  animation: topoStatusBlink 1.8s ease-in-out infinite;
+}
+.topo-stage .member-hex {
+  stroke: var(--node-health);
+  stroke-width: 1.25;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--node-health) 55%, transparent));
+  transition: stroke-width .2s ease, filter .2s ease;
+}
+.topo-stage .cluster:hover .member-hex {
+  stroke-width: 2.2;
+  filter: drop-shadow(0 0 11px var(--node-health));
+}
+.topo-stage .node-count {
+  font: 700 7px "JetBrains Mono", monospace;
+  fill: #dbeafe;
+  letter-spacing: .04em;
+  pointer-events: none;
+}
+.topo-stage .relay-orbit {
+  fill: none;
+  stroke-width: 1.3;
+  stroke-dasharray: 5 5;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: topoOrbit 8s linear infinite;
+}
+.topo-stage .relay-orbit-b { animation-direction: reverse; animation-duration: 5.5s; }
+.topo-stage .guardian-scan {
+  fill: none;
+  stroke: var(--node-health);
+  stroke-width: 1.3;
+  stroke-dasharray: 8 4 2 4;
+  filter: drop-shadow(0 0 5px var(--node-health));
+  animation: topoScan 3s linear infinite;
+}
+.topo-stage .guardian-orbit {
+  fill: none;
+  stroke: var(--node-health);
+  stroke-width: .7;
+  stroke-dasharray: 2 8;
+  opacity: .48;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: topoOrbit 14s linear infinite;
+}
+.topo-stage .guardian-orbit-b {
+  stroke-dasharray: 14 6 2 6;
+  opacity: .24;
+  animation-duration: 21s;
+  animation-direction: reverse;
+}
+.topo-stage .attestation-badge rect {
+  fill: rgba(4,12,20,.92);
+  stroke: #e7b957;
+  stroke-width: .7;
+  filter: drop-shadow(0 0 4px rgba(231,185,87,.4));
+}
+.topo-stage .attestation-badge path {
+  fill: none; stroke: #f8d477; stroke-width: 1.3;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.topo-stage .attestation-badge text {
+  fill: #f8d477; font: 700 6px "JetBrains Mono", monospace;
+}
+.topo-stage .link-lock { opacity: .7; pointer-events: none; }
+.topo-stage .link-lock rect { fill: #07111d; stroke: #7dd3fc; stroke-width: .7; }
+.topo-stage .link-lock path { fill: none; stroke: #7dd3fc; stroke-width: .8; animation: none; }
+.topo-stage .guardian-core { stroke-width: 1.8; }
+.topo-stage .guardian-label {
+  fill: #e5f2ff;
+  font: 700 9px "JetBrains Mono", monospace;
+  letter-spacing: .12em;
+  paint-order: stroke;
+  stroke: #030508;
+  stroke-width: 3px;
+  pointer-events: none;
+}
+.topo-stage .health-label {
+  fill: var(--node-health);
+  font: 700 7px "JetBrains Mono", monospace;
+  letter-spacing: .22em;
+  filter: drop-shadow(0 0 4px var(--node-health));
+  pointer-events: none;
+}
+.topo-stage .mesh-packet {
+  fill: #7dd3fc;
+  filter: drop-shadow(0 0 5px #38bdf8);
+  pointer-events: none;
+}
+.topo-stage .threat-pulse {
+  fill: none; stroke: #ef4444; stroke-width: 1.8;
+  transform-origin: center; transform-box: fill-box;
+  animation: topoPulseRingHot 1.6s ease-out infinite;
+  filter: drop-shadow(0 0 6px rgba(239,68,68,0.55));
+}
+.topo-stage .threat-beam {
+  stroke: rgba(239,68,68,0.85); stroke-width: 1.2; fill: none;
+  stroke-dasharray: 3 5;
+  animation: topoThreatBeam 1.4s linear infinite;
+  filter: drop-shadow(0 0 6px rgba(239,68,68,0.55));
+}
+.topo-stage .threat-radar {
+  fill: none; stroke: rgba(255,69,103,.7); stroke-width: 1;
+  stroke-dasharray: 4 5 16 5;
+  transform-box: fill-box; transform-origin: center;
+  animation: topoOrbit 4s linear infinite;
+  filter: drop-shadow(0 0 4px rgba(255,69,103,.5));
+}
+.topo-stage .containment-mark {
+  color: #ff8ba0;
+  filter: drop-shadow(0 0 5px rgba(255,69,103,.7));
+}
+.topo-stage .containment-mark path:first-child { fill: #21070d; stroke: currentColor; stroke-width: 1; }
+.topo-stage .containment-mark path:last-child { fill: none; stroke: currentColor; stroke-width: 1.2; }
+
+/* Mesh */
+.topo-stage .mesh-edge { cursor: help; }
+.topo-stage .mesh-edge.faded { opacity: 0.55; }
+.topo-stage .mesh-edge:hover .mesh-line { stroke: rgba(220,228,242,0.95); }
+.topo-stage .mesh-edge:hover .mesh-label { fill: #e2e8f0; }
+.topo-stage .mesh-edge:hover .mesh-label-bg { stroke: rgba(255,255,255,0.30); }
+.topo-stage .mesh-line {
+  stroke: rgba(125,211,252,0.42); stroke-width: .9; fill: none;
+  stroke-dasharray: 5 6;
+  filter: drop-shadow(0 0 4px rgba(56,189,248,0.25));
+  transition: stroke .15s ease, stroke-width .15s ease, filter .15s ease;
+  pointer-events: none;
+  animation: topoLinkFlow 3.6s linear infinite;
+}
+
+@keyframes topoZoneBreathe {
+  0%, 100% { opacity: .5; filter: drop-shadow(0 0 2px var(--geo-zone-color)); }
+  50% { opacity: .95; filter: drop-shadow(0 0 12px var(--geo-zone-color)); }
+}
+
+.topo-modal-backdrop { position: absolute; inset: 0; z-index: 80; display: grid; place-items: center; padding: 18px; background: rgba(1,4,9,.76); backdrop-filter: blur(8px); }
+.topo-api-form { width: min(520px, 100%); max-height: 90%; overflow-y: auto; padding: 22px; border: 1px solid rgba(96,165,250,.28); border-radius: 14px; background: linear-gradient(145deg, rgba(10,18,30,.98), rgba(4,9,17,.98)); box-shadow: 0 24px 80px rgba(0,0,0,.65), 0 0 30px rgba(59,130,246,.08); color: #e5edf8; font-family: "Inter", sans-serif; }
+.topo-api-form.is-location { width: min(440px, 100%); }
+.topo-api-form-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; }
+.topo-api-form-head span { font: 700 8px "JetBrains Mono", monospace; letter-spacing: .2em; color: #60a5fa; }
+.topo-api-form-head h3 { margin: 4px 0 0; font-size: 20px; letter-spacing: -.02em; }
+.topo-api-form-head button { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 7px; border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.04); color: #cbd5e1; cursor: pointer; }
+.topo-api-form > label, .topo-form-row label { display: grid; gap: 6px; color: #94a3b8; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 12px; }
+.topo-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.topo-api-form input:not([type="checkbox"]), .topo-api-form select { min-width: 0; height: 39px; padding: 0 11px; border: 1px solid rgba(148,163,184,.2); border-radius: 7px; background: #070e18; color: #e2e8f0; font: 500 12px "JetBrains Mono", monospace; outline: none; }
+.topo-api-form input:focus, .topo-api-form select:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.12); }
+.topo-form-checks { display: flex; gap: 20px; padding: 4px 0 12px; }
+.topo-form-checks label { display: flex; align-items: center; gap: 7px; font-size: 11px; color: #cbd5e1; }
+.topo-form-note { margin: 0 0 16px; color: #64748b; font-size: 10px; line-height: 1.5; }
+.topo-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.topo-form-actions button, .topo-zone-detail-btn { min-height: 36px; padding: 0 14px; border-radius: 7px; border: 1px solid rgba(148,163,184,.18); background: rgba(255,255,255,.04); color: #cbd5e1; cursor: pointer; font: 700 10px "Inter", sans-serif; }
+.topo-form-actions button[type="submit"], .topo-zone-detail-btn { background: linear-gradient(135deg, #2563eb, #4f46e5); color: white; border-color: rgba(96,165,250,.55); }
+.topo-zone-detail-btn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 7px; margin: 14px 0 4px; }
+.topo-rpanel-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 0 14px 10px; border-bottom: 1px solid rgba(255,255,255,.06); }
+.topo-rpanel-tabs button { height: 30px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: #64748b; font: 700 9px "Inter", sans-serif; letter-spacing: .1em; text-transform: uppercase; cursor: pointer; }
+.topo-rpanel-tabs button.active { color: #bfdbfe; border-color: rgba(96,165,250,.3); background: rgba(59,130,246,.12); }
+.topo-node-zones article { margin-top: 12px; padding: 12px; border: 1px solid color-mix(in srgb, var(--zone-color) 40%, transparent); border-left: 3px solid var(--zone-color); border-radius: 8px; background: color-mix(in srgb, var(--zone-color) 7%, #07101a); box-shadow: 0 0 18px color-mix(in srgb, var(--zone-color) 8%, transparent); }
+.topo-node-zones article > div { display: flex; align-items: center; gap: 7px; }
+.topo-node-zones article i { width: 7px; height: 7px; border-radius: 50%; background: var(--zone-color); box-shadow: 0 0 9px var(--zone-color); animation: topoPulseDot 1.8s infinite; }
+.topo-node-zones article strong { flex: 1; font-size: 12px; }
+.topo-node-zones article span { font: 700 7px "JetBrains Mono", monospace; color: var(--zone-color); }
+.topo-node-zones dl { display: grid; grid-template-columns: 78px 1fr; gap: 6px 8px; margin: 11px 0 0; font: 9px "JetBrains Mono", monospace; }
+.topo-node-zones dt { color: #64748b; text-transform: uppercase; }.topo-node-zones dd { margin: 0; color: #cbd5e1; word-break: break-word; }
+.topo-empty-zones { color: #64748b; font-size: 11px; line-height: 1.5; }
+@media (max-width: 560px) { .topo-form-row { grid-template-columns: 1fr; gap: 0; } }
+.topo-stage .mesh-hit {
+  stroke: transparent; stroke-width: 14; fill: none;
+  pointer-events: stroke;
+}
+.topo-stage .mesh-label-wrap { pointer-events: none; }
+.topo-stage .mesh-label-bg {
+  fill: rgba(8,12,18,0.85);
+  stroke: rgba(255,255,255,0.10);
+  stroke-width: 0.6;
+  transition: stroke .15s ease;
+}
+.topo-stage .mesh-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8px; font-weight: 600;
+  letter-spacing: 0.18em;
+  fill: #94a3b8;
+  text-transform: uppercase;
+  transition: fill .15s ease;
+}
+.topo-stage .mesh-trust-proof {
+  color: #e7b957;
+  opacity: .62;
+  pointer-events: none;
+  animation: topoStatusBlink 3.2s ease-in-out infinite;
+}
+.topo-stage .mesh-trust-proof path:first-child { fill: rgba(231,185,87,.08); stroke: currentColor; stroke-width: .7; }
+.topo-stage .mesh-trust-proof path:nth-child(2) { fill: none; stroke: currentColor; stroke-width: 1; }
+.topo-stage .mesh-trust-proof text { fill: currentColor; font: 600 6px "JetBrains Mono", monospace; letter-spacing: .08em; }
+.topo-stage .overlap-fill { animation: topoOverlapPulse 4s ease-in-out infinite; }
+.topo-stage .overlap-tag {
+  fill: rgba(220,228,242,0.10);
+  stroke: rgba(220,228,242,0.45);
+}
+
+.topo-stage .node .hit { pointer-events: all; }
+
+/* Mobile */
+@media (max-width: 768px) {
+  .topo-stage .topo-minimap { display: none; }
+  .topo-stage .topo .label { font-size: 13px; }
+  .topo-stage .topo .cluster text { font-size: 13px; }
+  .topo-stage .halo { animation: none; opacity: 0.4; }
+  .topo-stage .threat-pulse { animation-duration: 2.4s; }
+  .topo-stage .threat-beam { animation-duration: 2.0s; }
+  .topo-stage .overlap-fill { animation: none; opacity: 0.6; }
+  .topo-stage .topo-rpanel { right: 8px; left: 8px; width: auto; }
+  .topo-stage .topo-health-legend { display: none; }
+  .topo-stage .topo-stage-status { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .topo-stage .node-aura,
+  .topo-stage .relay-orbit,
+  .topo-stage .guardian-scan,
+  .topo-stage .health-orbit-dot,
+  .topo-stage .conn path,
+  .topo-stage .mesh-packet,
+  .topo-stage .topo-atmosphere,
+  .topo-stage .topo-particle-field,
+  .topo-stage .topo-data-streams {
+    animation: none !important;
+  }
+}
+
+/* Embedded (small embed) variant */
+.topo-stage.is-embed .topo-toolbar { padding: 3px; gap: 4px; }
+.topo-stage.is-embed .topo-toolbar button { width: 26px; height: 26px; }
+.topo-stage.is-embed .topo-zoom-pct { display: none; }
+.topo-stage.is-embed .topo-minimap { width: 144px; height: 78px; bottom: 8px; right: 8px; }
+.topo-stage.is-embed .topo-rpanel { width: 240px; right: 44px; top: 8px; }
+
+/* ── Fullscreen shell ──────────────────────────────────────────────── */
+.topo-fullscreen {
+  position: fixed; inset: 0; z-index: 9000;
+  background: #030508; color: #e8eaed;
+  display: grid; grid-template-rows: 44px 1fr 154px;
+  font-family: "Inter", system-ui, sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+}
+.topo-fullscreen .topo-stage { position: relative; min-width: 0; min-height: 0; }
+
+/* ── Top bar ───────────────────────────────────────────────────────── */
+.topo-topbar {
+  display: flex; align-items: center; gap: 12px; padding: 0 12px; height: 44px;
+  width: 100%; min-width: 0; overflow: hidden;
+  background: linear-gradient(180deg, rgba(10,14,20,0.94), rgba(10,14,20,0.78));
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  position: relative; z-index: 30;
+}
+.topo-topbar::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(147,51,234,0.35) 30%, rgba(20,184,166,0.35) 70%, transparent);
+}
+.topo-brand-lock {
+  display: flex; align-items: center; gap: 10px; padding-right: 12px;
+  border-right: 1px solid rgba(255,255,255,0.06);
+  height: 30px; flex: 0 0 auto;
+}
+.topo-shield {
+  width: 22px; height: 22px; object-fit: contain;
+  filter: drop-shadow(0 0 6px rgba(59,130,246,0.40));
+  flex: 0 0 auto;
+}
+.topo-brand-txt {
+  display: flex; flex-direction: column; line-height: 1.15;
+  flex: 0 0 auto; white-space: nowrap;
+}
+.topo-brand-name {
+  font: 700 11px "Inter", sans-serif; letter-spacing: 0.12em;
+  color: #e6f0ff;
+  background: linear-gradient(180deg, #ffffff 0%, #93c5fd 100%);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+.topo-brand-tag {
+  font: 600 7px "Inter", sans-serif; letter-spacing: 0.20em;
+  color: #60a5fa; margin-top: 2px; text-transform: uppercase;
+}
+.topo-crumb {
+  display: flex; align-items: center; gap: 10px; min-width: 0;
+  font: 500 11px "JetBrains Mono", monospace; letter-spacing: 0.16em;
+  color: #6b7180; text-transform: uppercase;
+  overflow: hidden; white-space: nowrap;
+}
+.topo-pill-row {
+  display: inline-flex; align-items: center; gap: 6px;
+  overflow-x: auto; scrollbar-width: none;
+  flex: 1 1 0; min-width: 0;
+  padding: 0 4px;
+  scroll-snap-type: x proximity;
+}
+.topo-pill-row::-webkit-scrollbar { display: none; }
+.topo-controls {
+  display: inline-flex; align-items: center; gap: 6px;
+  flex: 0 0 auto;
+  padding-left: 8px;
+  border-left: 1px solid rgba(255,255,255,0.06);
+}
+.topo-btn-label {
+  font: 600 10px "Inter", sans-serif;
+  letter-spacing: 0.10em; text-transform: uppercase;
+}
+.topo-exit-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 28px; padding: 0 10px;
+  background: rgba(239,68,68,0.14);
+  border: 1px solid rgba(239,68,68,0.40);
+  border-radius: 6px;
+  color: #fecaca; cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+  flex: 0 0 auto;
+}
+.topo-exit-btn:hover {
+  background: rgba(239,68,68,0.22);
+  border-color: rgba(239,68,68,0.60);
+  color: #fee2e2;
+}
+.topo-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 24px; padding: 0 8px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 999px;
+  color: #aab0b8; cursor: pointer;
+  font: 600 9.5px "Inter", sans-serif; letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: background .18s ease, border-color .18s ease, color .18s ease;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.topo-pill:hover { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.16); color: #e8eaed; }
+.topo-pill .topo-num {
+  color: #e8eaed; font-weight: 700; font-size: 11px;
+  font-feature-settings: "tnum"; font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+.topo-pill .topo-dot { width: 5px; height: 5px; border-radius: 50%; flex: 0 0 auto; }
+.topo-pill.guard .topo-dot   { background: #9333ea; box-shadow: 0 0 8px #9333ea; }
+.topo-pill.dev .topo-dot     { background: #14b8a6; box-shadow: 0 0 8px #14b8a6; }
+.topo-pill.share .topo-dot   { background: #d4d8e0; box-shadow: 0 0 8px rgba(212,216,224,0.7); }
+.topo-pill.threat            { border-color: rgba(239,68,68,0.35); background: rgba(239,68,68,0.10); color: #fecaca; }
+.topo-pill.threat .topo-dot  { background: #ef4444; box-shadow: 0 0 12px #ef4444; animation: topoPulseDot 1.4s infinite; }
+.topo-pill.offline           { color: #6b7180; }
+.topo-pill.offline .topo-dot { background: #6b7280; box-shadow: 0 0 6px rgba(148,163,184,0.4); }
+.topo-pill.alpha .topo-dot   { background: #14b8a6; box-shadow: 0 0 6px #14b8a6; }
+.topo-pill.bravo .topo-dot   { background: #9333ea; box-shadow: 0 0 6px #9333ea; }
+.topo-pill.charlie .topo-dot { background: #f59e0b; box-shadow: 0 0 6px #f59e0b; }
+.topo-pill.delta .topo-dot   { background: #3b82f6; box-shadow: 0 0 6px #3b82f6; }
+
+.topo-pill-filter[data-active="true"] {
+  background: rgba(255,255,255,0.10);
+  border-color: rgba(255,255,255,0.40);
+  color: #e8eaed;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.10);
+}
+.topo-pill-filter.threat[data-active="true"] {
+  border-color: rgba(239,68,68,0.65);
+  background: rgba(239,68,68,0.16);
+  color: #fee2e2;
+}
+.topo-pill-filter.alpha[data-active="true"] {
+  color: #99f6e4; border-color: rgba(20,184,166,0.65); background: rgba(20,184,166,0.16);
+}
+.topo-pill-filter.bravo[data-active="true"] {
+  color: #e9d5ff; border-color: rgba(147,51,234,0.65); background: rgba(147,51,234,0.18);
+}
+.topo-pill-filter.charlie[data-active="true"] {
+  color: #fde68a; border-color: rgba(245,158,11,0.65); background: rgba(245,158,11,0.16);
+}
+.topo-pill-filter.delta[data-active="true"] {
+  color: #dbeafe; border-color: rgba(59,130,246,0.65); background: rgba(59,130,246,0.16);
+}
+.topo-pill-divider {
+  width: 1px; height: 16px; background: rgba(255,255,255,0.14);
+  opacity: 0.5; margin: 0 4px; flex: 0 0 auto;
+}
+
+.topo-icon-btn {
+  width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 6px;
+  color: #aab0b8; cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+  flex: 0 0 auto;
+}
+.topo-icon-btn:hover { color: #e8eaed; background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.16); }
+.topo-icon-btn-wide { width: auto; padding: 0 8px; }
+.topo-zoom-ind {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 44px; height: 28px; padding: 0 8px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  font: 600 10px "JetBrains Mono", monospace;
+  color: #aab0b8;
+  font-feature-settings: "tnum"; font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+.topo-mobile-only { display: none !important; }
+@media (max-width: 1280px) {
+  .topo-crumb { display: none; }
+}
+@media (max-width: 1024px) {
+  .topo-brand-txt { display: none; }
+  .topo-brand-lock { padding-right: 8px; border-right: 0; }
+}
+@media (max-width: 768px) {
+  .topo-mobile-only { display: inline-flex !important; }
+  .topo-pill-row { display: none; }
+  .topo-crumb, .topo-brand-tag { display: none; }
+}
+
+/* ── Corners ───────────────────────────────────────────────────────── */
+.topo-corner {
+  position: absolute; padding: 10px 12px;
+  font: 600 9px "JetBrains Mono", monospace; letter-spacing: 0.20em;
+  color: #6b7180; text-transform: uppercase; pointer-events: none;
+  line-height: 1.55; z-index: 5;
+}
+.topo-corner b { color: #aab0b8; font-weight: 700; letter-spacing: 0.18em; }
+.topo-corner-tl { top: 8px; left: 12px; }
+.topo-corner-bl { top: 8px; left: 320px; }
+.topo-corner-br { bottom: 8px; right: 220px; text-align: right; }
+@media (max-width: 1280px) { .topo-corner-br { right: 12px; bottom: 122px; } }
+.topo-corner-live { color: #86efac; }
+.topo-corner-live::before {
+  content: ""; display: inline-block;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #22c55e; box-shadow: 0 0 8px #22c55e;
+  margin-right: 8px; vertical-align: middle;
+  animation: topoBlink 1.4s infinite;
+}
+@media (max-width: 1024px) { .topo-corner-bl { display: none; } }
+@media (max-width: 768px) { .topo-corner { display: none !important; } }
+
+/* ── Zone focus label ──────────────────────────────────────────────── */
+.topo-zone-focus {
+  position: absolute; top: 56px; left: 12px; z-index: 6;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 12px 16px;
+  background: rgba(8,12,18,0.82);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-left-width: 3px;
+  border-radius: 10px;
+  pointer-events: none;
+  opacity: 0; transform: translateY(-4px);
+  transition: opacity .25s ease, transform .25s ease, border-color .25s ease, color .25s ease;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.40);
+}
+.topo-zone-focus[data-active="true"] { opacity: 1; transform: translateY(0); }
+.topo-zone-focus .topo-zf-eyebrow {
+  font: 600 9px "JetBrains Mono", monospace;
+  letter-spacing: 0.22em; text-transform: uppercase; color: #6b7180;
+}
+.topo-zone-focus .topo-zf-line {
+  display: inline-flex; align-items: baseline; gap: 8px;
+  font: 600 13px "Inter", sans-serif; color: #e8eaed;
+  letter-spacing: -0.005em;
+}
+.topo-zone-focus .topo-zf-line b {
+  font-weight: 700; font-family: "JetBrains Mono", monospace;
+  font-size: 13px; letter-spacing: 0.02em;
+}
+.topo-zone-focus .topo-zf-sep { color: #6b7180; font-weight: 400; }
+.topo-zone-focus .topo-zf-zone {
+  font: 700 12px "JetBrains Mono", monospace; letter-spacing: 0.20em;
+}
+.topo-zone-focus .topo-zf-tail { color: #aab0b8; font-weight: 500; letter-spacing: 0.01em; }
+@media (max-width: 768px) { .topo-zone-focus { display: none; } }
+
+/* ── Log bar ───────────────────────────────────────────────────────── */
+.topo-logbar {
+  height: 154px; background: linear-gradient(180deg,#08111b,#060b12);
+  border-top: 1px solid rgba(255,255,255,0.06);
+  display: grid; grid-template-rows: 28px 1fr;
+  z-index: 10; position: relative;
+  overflow: hidden;
+}
+.topo-logbar::before {
+  content: ""; position: absolute; left: 0; right: 0; top: -1px; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(20,184,166,0.35) 30%, rgba(245,158,11,0.35) 70%, transparent);
+}
+.topo-log-h {
+  display: flex; align-items: center; gap: 16px; padding: 0 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  font: 600 10px "JetBrains Mono", monospace; letter-spacing: 0.18em;
+  color: #aab0b8; text-transform: uppercase;
+}
+.topo-log-live { color: #86efac; display: inline-flex; align-items: center; gap: 8px; }
+.topo-log-live::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: #22c55e; box-shadow: 0 0 8px #22c55e;
+  animation: topoBlink 1.4s infinite;
+}
+.topo-log-stat { color: #6b7180; }
+.topo-log-stat span { color: #e8eaed; font-weight: 700; }
+.topo-log-counts { display: inline-flex; gap: 4px; }
+.topo-log {
+  overflow: hidden; font: 500 11px "JetBrains Mono", monospace;
+  padding: 0;
+}
+.topo-log-row {
+  display: grid;
+  grid-template-columns: 18px 84px 50px minmax(160px, max-content) 1fr minmax(145px,max-content) 80px;
+  gap: 10px; padding: 0 12px; height: 31px; align-items: center;
+  color: #aab0b8;
+  border-bottom: 1px solid rgba(255,255,255,0.025);
+}
+.topo-event-node { position: relative; width: 10px; height: 31px; display: grid; place-items: center; }
+.topo-event-node::before { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; background: rgba(100,116,139,.25); }
+.topo-event-node i { position: relative; width: 7px; height: 7px; border-radius: 50%; background: #28f0a5; border: 2px solid #07111b; box-shadow: 0 0 5px #28f0a5; }
+.topo-log-row.warn .topo-event-node i { background: #ffb020; box-shadow: 0 0 5px #ffb020; }
+.topo-log-row.err .topo-event-node i { background: #ff4567; box-shadow: 0 0 7px #ff4567; }
+.topo-event-framework {
+  color: #60788c; font-size: 8px; letter-spacing: .04em; white-space: nowrap;
+}
+.topo-log-row:nth-child(even) { background: rgba(255,255,255,0.012); }
+.topo-log-ts {
+  color: #6b7180; font-weight: 500; letter-spacing: 0.04em;
+  font-feature-settings: "tnum"; font-variant-numeric: tabular-nums;
+}
+.topo-log-lvl {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 56px; height: 20px; padding: 0;
+  font-weight: 700; letter-spacing: 0.12em; font-size: 9px;
+  border-radius: 4px;
+}
+.topo-log-lvl.info { color: #6ee7b7; background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.30); }
+.topo-log-lvl.warn { color: #fcd34d; background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.32); }
+.topo-log-lvl.err  { color: #fca5a5; background: rgba(239,68,68,0.14);  border: 1px solid rgba(239,68,68,0.40); }
+.topo-log-src { color: #6b7180; text-align: right; font-weight: 500; }
+.topo-log-msg {
+  font: 500 11px "JetBrains Mono", monospace;
+  color: #aab0b8; letter-spacing: 0.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.topo-log-msg em { color: #e8eaed; font-style: normal; font-weight: 600; }
+.topo-log-row.err { background: rgba(239,68,68,0.05); }
+.topo-log-row.err:nth-child(even) { background: rgba(239,68,68,0.06); }
+.topo-logbar.err-flash .topo-log-h { animation: topoErrFlash .8s ease-out 1; }
+@keyframes topoErrFlash {
+  0% { background: rgba(239,68,68,0); }
+  20% { background: rgba(239,68,68,0.18); box-shadow: inset 0 0 0 1px rgba(239,68,68,0.6); }
+  100% { background: rgba(239,68,68,0); box-shadow: inset 0 0 0 0 rgba(239,68,68,0); }
+}
+
+.topo-ev-tags { display: inline-flex; gap: 6px; align-items: center; min-width: 0; }
+.topo-ev-tag {
+  display: inline-flex; align-items: center; height: 20px;
+  padding: 0 8px; border-radius: 4px;
+  font: 700 9px "JetBrains Mono", monospace; letter-spacing: 0.12em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(255,255,255,0.04);
+  color: #aab0b8;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+.topo-ev-tag.cot { text-transform: uppercase; }
+.topo-ev-tag.dev {
+  cursor: pointer; max-width: 160px;
+  text-transform: none; letter-spacing: 0.02em; font-weight: 600;
+  background: rgba(255,255,255,0.05); color: #e8eaed;
+}
+.topo-ev-tag.dev:hover { background: rgba(147,197,253,0.14); color: #bfdbfe; border-color: rgba(147,197,253,0.45); }
+.topo-ev-tag.info { color: #6ee7b7; background: rgba(16,185,129,0.12); border-color: rgba(16,185,129,0.30); }
+.topo-ev-tag.warn { color: #fcd34d; background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.32); }
+.topo-ev-tag.err  { color: #fca5a5; background: rgba(239,68,68,0.14);  border-color: rgba(239,68,68,0.40); }
+.topo-ev-tag.topo-cot-alpha   { color: #5eead4; background: rgba(20,184,166,0.10); border-color: rgba(20,184,166,0.40); }
+.topo-ev-tag.topo-cot-bravo   { color: #d8b4fe; background: rgba(147,51,234,0.10); border-color: rgba(147,51,234,0.40); }
+.topo-ev-tag.topo-cot-charlie { color: #fcd34d; background: rgba(245,158,11,0.10); border-color: rgba(245,158,11,0.40); }
+.topo-ev-tag.topo-cot-delta   { color: #bfdbfe; background: rgba(59,130,246,0.10); border-color: rgba(59,130,246,0.40); }
+.topo-ev-tag.topo-cot-alpha-bravo,
+.topo-ev-tag.topo-cot-bravo-charlie,
+.topo-ev-tag.topo-cot-charlie-delta { color: #e0f2fe; background: rgba(56,189,248,0.10); border-color: rgba(56,189,248,0.35); }
+.topo-ev-tag.topo-cot-mesh   { color: #cbd5e1; background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.18); }
+.topo-ev-tag.topo-cot-policy { color: #c4b5fd; background: rgba(167,139,250,0.10); border-color: rgba(167,139,250,0.35); }
+
+/* ── Filter modes (fade non-matching nodes) ────────────────────────── */
+.topo-stage .cot-zone, .topo-stage .cluster, .topo-stage .gx,
+.topo-stage .device-dot, .topo-stage .shared, .topo-stage .threat,
+.topo-stage .overlap-fill, .topo-stage .overlap-tag, .topo-stage .mesh-edge {
+  transition: opacity .4s ease;
+}
+.topo-stage.filter-trusted .threat { opacity: 0.10; }
+.topo-stage.filter-trusted .threat-pulse,
+.topo-stage.filter-trusted .threat-beam { animation-play-state: paused !important; opacity: 0.05; }
+.topo-stage.filter-threats .gx,
+.topo-stage.filter-threats .cluster,
+.topo-stage.filter-threats .shared,
+.topo-stage.filter-threats .cot,
+.topo-stage.filter-threats .gxmesh { opacity: 0.08; }
+.topo-stage.filter-threats .threat { opacity: 1 !important; }
+.topo-stage.filter-shared .gx,
+.topo-stage.filter-shared .cluster,
+.topo-stage.filter-shared .threat,
+.topo-stage.filter-shared .cot { opacity: 0.18; }
+.topo-stage.filter-shared .shared {
+  opacity: 1 !important;
+  filter: drop-shadow(0 0 12px rgba(220,228,242,0.4));
+}
+.topo-stage.filter-offline .gx,
+.topo-stage.filter-offline .cluster,
+.topo-stage.filter-offline .shared,
+.topo-stage.filter-offline .threat,
+.topo-stage.filter-offline .cot { opacity: 0.18; }
+.topo-stage.filter-alpha .cot-zone:not([data-zone="ALPHA"]),
+.topo-stage.filter-alpha .cluster:not([data-zone="ALPHA"]),
+.topo-stage.filter-alpha .gx:not([data-zone="ALPHA"]),
+.topo-stage.filter-alpha .device-dot:not([data-zone="ALPHA"]),
+.topo-stage.filter-alpha .shared, .topo-stage.filter-alpha .threat,
+.topo-stage.filter-alpha .overlap-fill, .topo-stage.filter-alpha .overlap-tag,
+.topo-stage.filter-alpha .mesh-edge,
+.topo-stage.filter-bravo .cot-zone:not([data-zone="BRAVO"]),
+.topo-stage.filter-bravo .cluster:not([data-zone="BRAVO"]),
+.topo-stage.filter-bravo .gx:not([data-zone="BRAVO"]),
+.topo-stage.filter-bravo .device-dot:not([data-zone="BRAVO"]),
+.topo-stage.filter-bravo .shared, .topo-stage.filter-bravo .threat,
+.topo-stage.filter-bravo .overlap-fill, .topo-stage.filter-bravo .overlap-tag,
+.topo-stage.filter-bravo .mesh-edge,
+.topo-stage.filter-charlie .cot-zone:not([data-zone="CHARLIE"]),
+.topo-stage.filter-charlie .cluster:not([data-zone="CHARLIE"]),
+.topo-stage.filter-charlie .gx:not([data-zone="CHARLIE"]),
+.topo-stage.filter-charlie .device-dot:not([data-zone="CHARLIE"]),
+.topo-stage.filter-charlie .shared, .topo-stage.filter-charlie .threat,
+.topo-stage.filter-charlie .overlap-fill, .topo-stage.filter-charlie .overlap-tag,
+.topo-stage.filter-charlie .mesh-edge,
+.topo-stage.filter-delta .cot-zone:not([data-zone="DELTA"]),
+.topo-stage.filter-delta .cluster:not([data-zone="DELTA"]),
+.topo-stage.filter-delta .gx:not([data-zone="DELTA"]),
+.topo-stage.filter-delta .device-dot:not([data-zone="DELTA"]),
+.topo-stage.filter-delta .shared, .topo-stage.filter-delta .threat,
+.topo-stage.filter-delta .overlap-fill, .topo-stage.filter-delta .overlap-tag,
+.topo-stage.filter-delta .mesh-edge {
+  opacity: 0.10;
+}

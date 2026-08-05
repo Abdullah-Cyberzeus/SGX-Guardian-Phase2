@@ -19,3 +19,11 @@ pub mod vid;
 pub mod xfer;
 
 pub mod discovery;
+
+pub mod ha_automations;
+pub mod ha_devices;
+pub mod ha_integrations;
+pub mod ha_notifications;
+pub mod ha_telemetry;
+pub mod ha_websocket;
+pub mod pagination;

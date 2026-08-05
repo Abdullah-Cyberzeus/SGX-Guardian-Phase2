@@ -126,6 +126,12 @@ pub struct AppState {
     pub auth_rate_limit: AuthRateLimitConfig,
     pub login_rate_limiter: Arc<LoginRateLimiter>,
     pub auth_providers: Arc<ProviderRegistry>,
+    pub device_manager: Arc<tokio::sync::RwLock<Option<Arc<crate::device::manager::DeviceManager>>>>,
+    pub automation_engine: Arc<tokio::sync::RwLock<Option<Arc<crate::automation::engine::AutomationEngine>>>>,
+    pub integration_manager: Arc<tokio::sync::RwLock<Option<Arc<crate::integration::manager::IntegrationManager>>>>,
+    pub ha_event_bus: Arc<tokio::sync::RwLock<Option<Arc<crate::homeassistant::events::EventBus>>>>,
+    pub device_rate_limiter: Arc<crate::api::auth::rate_limiter::DeviceRateLimiter>,
+    pub notification_manager: Arc<tokio::sync::RwLock<Option<Arc<crate::notification::manager::NotificationManager>>>>,
 }
 
 impl AppState {
@@ -169,7 +175,33 @@ impl AppState {
             auth_rate_limit: AuthRateLimitConfig::from_env(),
             login_rate_limiter: Arc::new(LoginRateLimiter::default()),
             auth_providers: ProviderRegistry::from_env(),
+            device_manager: Arc::new(tokio::sync::RwLock::new(None)),
+            automation_engine: Arc::new(tokio::sync::RwLock::new(None)),
+            integration_manager: Arc::new(tokio::sync::RwLock::new(None)),
+            ha_event_bus: Arc::new(tokio::sync::RwLock::new(None)),
+            device_rate_limiter: Arc::new(crate::api::auth::rate_limiter::DeviceRateLimiter::default()),
+            notification_manager: Arc::new(tokio::sync::RwLock::new(None)),
         })
+    }
+
+    pub async fn get_device_manager(&self) -> Option<Arc<crate::device::manager::DeviceManager>> {
+        self.device_manager.read().await.clone()
+    }
+
+    pub async fn get_automation_engine(&self) -> Option<Arc<crate::automation::engine::AutomationEngine>> {
+        self.automation_engine.read().await.clone()
+    }
+
+    pub async fn get_integration_manager(&self) -> Option<Arc<crate::integration::manager::IntegrationManager>> {
+        self.integration_manager.read().await.clone()
+    }
+
+    pub async fn get_ha_event_bus(&self) -> Option<Arc<crate::homeassistant::events::EventBus>> {
+        self.ha_event_bus.read().await.clone()
+    }
+
+    pub async fn get_notification_manager(&self) -> Option<Arc<crate::notification::manager::NotificationManager>> {
+        self.notification_manager.read().await.clone()
     }
 
     #[cfg(test)]
@@ -237,6 +269,12 @@ impl AppState {
             auth_rate_limit: AuthRateLimitConfig::default(),
             login_rate_limiter: Arc::new(LoginRateLimiter::default()),
             auth_providers: ProviderRegistry::from_env(),
+            device_manager: Arc::new(tokio::sync::RwLock::new(None)),
+            automation_engine: Arc::new(tokio::sync::RwLock::new(None)),
+            integration_manager: Arc::new(tokio::sync::RwLock::new(None)),
+            ha_event_bus: Arc::new(tokio::sync::RwLock::new(None)),
+            device_rate_limiter: Arc::new(crate::api::auth::rate_limiter::DeviceRateLimiter::default()),
+            notification_manager: Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 }

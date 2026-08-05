@@ -283,6 +283,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .merge(routes::vault_router())
         .merge(routes::xfer_router())
+        .merge(routes::ha_api_router())
         // Health
         .route(
             "/api/v1/health",
