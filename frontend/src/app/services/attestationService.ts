@@ -42,6 +42,13 @@ interface BackendLastAttestation {
   timestamp: string;
 }
 
+export interface PeerAttestationRecord {
+  peerId: string;
+  policyDigest: string;
+  result: string;
+  timestamp: string;
+}
+
 export const attestationService = {
   // GET /api/attestation - sgx-guardian attest (backend returns single object, UI expects array)
   getResults: async (): Promise<AttestationResult[]> => {
@@ -71,6 +78,18 @@ export const attestationService = {
       } as any];
     } catch (err) {
       throw err;
+    }
+  },
+
+  // GET /api/attestation?peer_did=... - last attestation result for one peer DID.
+  // Returns null when the peer has no recorded attestation yet.
+  getForPeer: async (peerDid: string): Promise<PeerAttestationRecord | null> => {
+    try {
+      const res = await api.get<BackendLastAttestation>('/attestation', { peer_did: peerDid });
+      if (!res.peerId && !res.timestamp) return null;
+      return { peerId: res.peerId, policyDigest: res.policyDigest, result: res.result, timestamp: res.timestamp };
+    } catch {
+      return null;
     }
   },
 

@@ -2,6 +2,7 @@ import { useLocation, useNavigate } from "react-router";
 import { Home, Bell, BellRing, Cpu, Cloud, Settings, MessageSquare, Phone } from "lucide-react";
 import { mockGuardian, mockAlerts, mockDevices } from "../data/mockData";
 import { useCurrentUser } from "../hooks/useCurrentUser";
+import { useChatUnread } from "../contexts/ChatUnreadContext";
 import logoSrc from "@/assets/sgx-guardian-logo.png";
 
 function NetworkCirclesIcon({ size = 20, color = "currentColor", strokeWidth = 1.75 }: {
@@ -25,18 +26,6 @@ const alertBadgeCount = mockAlerts.filter((a) => !a.archived && a.severity === "
 const deviceBadgeCount = mockDevices.filter((d) => d.category === "pending").length;
 const circlesBadgeCount = 2; // mock pending invites
 
-const navItems = [
-  { label: "Home", icon: Home, path: "/home", custom: false, badge: 0 },
-  { label: "Alerts", icon: Bell, path: "/alerts", custom: false, badge: alertBadgeCount },
-  { label: "Notifications", icon: BellRing, path: "/notifications", custom: false, badge: 0 },
-  { label: "Chats", icon: MessageSquare, path: "/chats", custom: false, badge: 0 },
-  { label: "Calls", icon: Phone, path: "/calls", custom: false, badge: 0 },
-  { label: "Circles", icon: null, path: "/network", custom: true, badge: circlesBadgeCount },
-  { label: "Devices", icon: Cpu, path: "/devices", custom: false, badge: deviceBadgeCount },
-  { label: "All Files", icon: Cloud, path: "/storage", custom: false, badge: 0 },
-  { label: "Settings", icon: Settings, path: "/settings", custom: false, badge: 0 },
-];
-
 interface AppSidebarProps {
   /** "collapsed" = tablet icon-only, "expanded" = desktop with labels */
   variant: "collapsed" | "expanded";
@@ -46,9 +35,22 @@ export function AppSidebar({ variant }: AppSidebarProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const { name, initials } = useCurrentUser();
+  const { total: unreadChats } = useChatUnread();
   const isExpanded = variant === "expanded";
 
   const isActive = (path: string) => location.pathname.startsWith(path);
+
+  const navItems = [
+    { label: "Home", icon: Home, path: "/home", custom: false, badge: 0 },
+    { label: "Alerts", icon: Bell, path: "/alerts", custom: false, badge: alertBadgeCount },
+    { label: "Notifications", icon: BellRing, path: "/notifications", custom: false, badge: 0 },
+    { label: "Chats", icon: MessageSquare, path: "/chats", custom: false, badge: unreadChats },
+    { label: "Calls", icon: Phone, path: "/calls", custom: false, badge: 0 },
+    { label: "Circles", icon: null, path: "/network", custom: true, badge: circlesBadgeCount },
+    { label: "Devices", icon: Cpu, path: "/devices", custom: false, badge: deviceBadgeCount },
+    { label: "All Files", icon: Cloud, path: "/storage", custom: false, badge: 0 },
+    { label: "Settings", icon: Settings, path: "/settings", custom: false, badge: 0 },
+  ];
 
   return (
     <aside

@@ -1,12 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Loader2, MessageSquare, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { useNavigate } from "react-router";
 import { PageHeader } from "../../components/PageHeader";
 import { usePeers } from "../../hooks/useApiData";
-import chatService, { parseChatPayload } from "../../services/chatService";
+import { useChatUnread } from "../../contexts/ChatUnreadContext";
 import type { Peer } from "../../services/peerService";
-
-type Preview = { text: string; timestamp: number };
 
 function initials(peer: Peer) {
   return peer.peerId.split(/[-_:]/).filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "P";
@@ -28,26 +26,10 @@ function previewTime(timestamp?: number) {
 export function ChatsListScreen() {
   const navigate = useNavigate();
   const { data, loading, error, refetch } = usePeers();
+  const { counts: unreadCounts, previews } = useChatUnread();
   const [query, setQuery] = useState("");
-  const [previews, setPreviews] = useState<Record<string, Preview>>({});
   const [refreshing, setRefreshing] = useState(false);
   const peers = useMemo(() => (Array.isArray(data) ? data : []).filter((peer: Peer) => peer.status === "verified" && Boolean(peer.did)), [data]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void Promise.all(peers.map(async (peer: Peer) => {
-      try {
-        const { messages } = await chatService.directHistory(peer.did!);
-        const latest = [...messages].sort((a, b) => b.timestamp - a.timestamp)[0];
-        if (!latest) return null;
-        const payload = parseChatPayload(latest);
-        return [peer.did!, { text: payload.attachment_id ? `File: ${payload.content || "Attachment"}` : payload.content || "Message", timestamp: latest.timestamp }] as const;
-      } catch { return null; }
-    })).then((items) => {
-      if (!cancelled) setPreviews(Object.fromEntries(items.filter((item): item is NonNullable<typeof item> => Boolean(item))));
-    });
-    return () => { cancelled = true; };
-  }, [peers]);
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -78,10 +60,14 @@ export function ChatsListScreen() {
         {!loading && !error && visible.length === 0 && <div className="flex flex-col items-center gap-3 p-12 text-center"><MessageSquare size={40} className="text-muted-foreground" /><p className="text-sm font-semibold">{query ? "No peers found" : "No attested peers yet"}</p><p className="max-w-xs text-xs text-muted-foreground">Once a peer is successfully attested and has a DID, you can message them here without sharing a Circle.</p></div>}
         {visible.map((peer: Peer) => {
           const preview = previews[peer.did!];
+          const unread = unreadCounts[peer.did!] || 0;
           return <button key={peer.did} onClick={() => navigate(`/chats/${encodeURIComponent(peer.did!)}`)} className="flex w-full items-center gap-3 bg-transparent px-4 py-3.5 text-left hover:bg-muted/50 md:px-6">
             <div className="relative grid h-12 w-12 shrink-0 place-items-center rounded-full bg-primary/15 font-semibold text-primary">{initials(peer)}<span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-background" style={{ background: peer.online ? "var(--chart-2)" : "var(--muted-foreground)" }} /></div>
-            <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="truncate text-sm font-semibold">{displayName(peer)}</p><ShieldCheck size={14} className="shrink-0 text-primary" /></div><p className="truncate text-xs text-muted-foreground">{preview?.text || `${peer.online ? "Online" : peer.lastSeenAgo} · Tap to start chatting`}</p></div>
-            <div className="shrink-0 self-start pt-1 text-[10px] text-muted-foreground">{previewTime(preview?.timestamp)}</div>
+            <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="truncate text-sm font-semibold">{displayName(peer)}</p><ShieldCheck size={14} className="shrink-0 text-primary" /></div><p className={`truncate text-xs ${unread > 0 ? "font-semibold text-foreground" : "text-muted-foreground"}`}>{preview?.text || `${peer.online ? "Online" : peer.lastSeenAgo} · Tap to start chatting`}</p></div>
+            <div className="flex shrink-0 flex-col items-end gap-1.5 self-start pt-1">
+              <span className="text-[10px] text-muted-foreground">{previewTime(preview?.timestamp)}</span>
+              {unread > 0 && <span className="grid min-w-[18px] place-items-center rounded-full px-1.5 text-[10px] font-semibold" style={{ height: "18px", background: "var(--primary)", color: "var(--primary-foreground)" }}>{unread > 99 ? "99+" : unread}</span>}
+            </div>
           </button>;
         })}
       </div>
