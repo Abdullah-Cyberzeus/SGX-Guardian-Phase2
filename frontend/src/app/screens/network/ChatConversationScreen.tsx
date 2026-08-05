@@ -40,6 +40,7 @@ export function ChatConversationScreen() {
   const [sending, setSending] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [startingCall, setStartingCall] = useState<"audio" | "video" | null>(null);
+  const [liveConnected, setLiveConnected] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const view: View = searchParams.get("view") === "files" ? "files" : "chat";
 
@@ -65,7 +66,7 @@ export function ChatConversationScreen() {
     const close = openChatSocket(() => {
       if (refreshTimer) window.clearTimeout(refreshTimer);
       refreshTimer = window.setTimeout(() => void loadHistory(), 100);
-    });
+    }, setLiveConnected);
     return () => { if (refreshTimer) window.clearTimeout(refreshTimer); close(); };
   }, [loadHistory]);
   useEffect(() => { if (view === "chat") bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [records, view]);
@@ -80,7 +81,7 @@ export function ChatConversationScreen() {
   }, [records, localDid, isGroup, circleId]);
 
   const send = async (content: string | null, attachmentId: string | null = null) => {
-    if (!circleId || (!isGroup && !peerDid) || (!content?.trim() && !attachmentId)) return;
+    if ((isGroup && !circleId) || (!isGroup && !peerDid) || (!content?.trim() && !attachmentId)) return;
     setSending(true);
     try {
       const sentContent = content?.trim() || null;
@@ -183,7 +184,7 @@ export function ChatConversationScreen() {
   if ((isGroup && !circle) || (!isGroup && !peer && !member)) return <div className="grid h-full place-items-center p-6 text-sm text-muted-foreground">Conversation not found.</div>;
 
   const title = isGroup ? circle.name : (member?.name || peer?.peerId || peerDid);
-  const subtitle = isGroup ? `Secure group chat · ${circle.members?.length || 0} members` : "Private peer-to-peer chat";
+  const subtitle = `${isGroup ? `Secure group chat · ${circle.members?.length || 0} members` : "Private peer-to-peer chat"} · ${liveConnected ? "Live" : "Reconnecting…"}`;
   return (
     <div className="flex h-full flex-col">
       <PageHeader title={title} subtitle={subtitle} onBack={() => navigate(isGroup ? `/network/${circleId}?tab=members` : "/chats")} right={
@@ -222,7 +223,7 @@ export function ChatConversationScreen() {
           <div className="mx-auto flex max-w-2xl items-center gap-2">
             <AttachmentMenu onPick={(file) => void attach(file)} disabled={sending} />
             <input value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void send(message); }} disabled={sending} placeholder={isGroup ? "Secure Circle message…" : `Message ${member?.name || peer?.peerId || "peer"}…`} className="h-11 flex-1 rounded-full border border-border bg-input-background px-4 text-sm outline-none" />
-            <button aria-label="Send message" onClick={() => void send(message)} disabled={sending || !message.trim()} className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground disabled:opacity-40">{sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}</button>
+            <button type="button" aria-label="Send message" onClick={() => void send(message)} disabled={sending || !message.trim()} className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground disabled:opacity-40">{sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}</button>
           </div>
         </div>
       </>}

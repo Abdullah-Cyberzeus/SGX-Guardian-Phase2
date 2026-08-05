@@ -78,16 +78,56 @@ export function parseChatPayload(record: ChatMessageRecord): ChatPayload {
 }
 
 export function openChatSocket(onChange: () => void, onState?: (connected: boolean) => void): () => void {
-  const endpoint = new URL(api.publicUrl("/chat/ws"));
-  endpoint.protocol = endpoint.protocol === "https:" ? "wss:" : "ws:";
-  const token = api.getToken();
-  if (token) endpoint.searchParams.set("access_token", token);
-  const socket = new WebSocket(endpoint);
-  socket.onopen = () => onState?.(true);
-  socket.onclose = () => onState?.(false);
-  socket.onerror = () => onState?.(false);
-  socket.onmessage = () => onChange();
-  return () => socket.close();
+  let socket: WebSocket | null = null;
+  let retryTimer: number | undefined;
+  let heartbeatTimer: number | undefined;
+  let stopped = false;
+  let retryCount = 0;
+
+  const connect = () => {
+    if (stopped) return;
+    const token = api.getToken();
+    if (!token) {
+      onState?.(false);
+      return;
+    }
+    const endpoint = new URL(api.publicUrl("/chat/ws"));
+    endpoint.protocol = endpoint.protocol === "https:" ? "wss:" : "ws:";
+    endpoint.searchParams.set("access_token", token);
+    socket = new WebSocket(endpoint);
+    socket.onopen = () => {
+      retryCount = 0;
+      onState?.(true);
+      heartbeatTimer = window.setInterval(() => {
+        if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "heartbeat" }));
+      }, 20_000);
+    };
+    socket.onmessage = (event) => {
+      try {
+        if (JSON.parse(String(event.data))?.type === "heartbeat_ack") return;
+      } catch {
+        // Chat events are still handled by refreshing canonical history.
+      }
+      onChange();
+    };
+    socket.onerror = () => socket?.close();
+    socket.onclose = () => {
+      onState?.(false);
+      if (heartbeatTimer) window.clearInterval(heartbeatTimer);
+      if (!stopped) {
+        const delay = Math.min(10_000, 500 * 2 ** retryCount++);
+        retryTimer = window.setTimeout(connect, delay);
+      }
+    };
+  };
+
+  connect();
+  return () => {
+    stopped = true;
+    if (retryTimer) window.clearTimeout(retryTimer);
+    if (heartbeatTimer) window.clearInterval(heartbeatTimer);
+    socket?.close();
+  };
 }
 
 export default chatService;
