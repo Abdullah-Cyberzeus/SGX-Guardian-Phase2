@@ -309,26 +309,46 @@ pub async fn pair(
         }
     }
 
-    if let Some(existing) = state.admin.devices.get(&authorized.device_id).await? {
-        if existing.owner_user_id != owner_user_id && existing.status != "unpaired" {
-            return Err(ApiError::Conflict(
-                "device is already paired to another user".into(),
+    let now = Utc::now().to_rfc3339();
+    let existing = state
+        .admin
+        .devices
+        .get_by_did(&authorized.device_did)
+        .await?;
+    let reactivated = existing.is_some();
+    let mut device = match existing {
+        Some(mut existing) if existing.status == "unpaired" => {
+            // Reuse the original registry record so its stable device ID and history survive.
+            existing.serial = authorized.serial.clone();
+            existing.did = authorized.device_did.clone();
+            existing.owner_user_id = owner_user_id.to_string();
+            existing.paired_at = now.clone();
+            existing.reactivated_at = Some(now.clone());
+            existing.updated_at = Some(now.clone());
+            existing.status = "active".into();
+            existing.node_id = Some(authorized.node_id.clone());
+            existing
+        }
+        Some(_) => {
+            return Err(ApiError::DeviceAlreadyPaired(
+                "device DID is already paired".into(),
             ));
         }
-    }
-
-    let mut device = PairedDevice {
-        device_id: authorized.device_id.clone(),
-        serial: authorized.serial.clone(),
-        did: authorized.device_did.clone(),
-        owner_user_id: owner_user_id.to_string(),
-        paired_at: Utc::now().to_rfc3339(),
-        status: "bootstrap_pending".into(),
-        node_id: Some(authorized.node_id.clone()),
+        None => PairedDevice {
+            device_id: authorized.device_id.clone(),
+            serial: authorized.serial.clone(),
+            did: authorized.device_did.clone(),
+            owner_user_id: owner_user_id.to_string(),
+            paired_at: now,
+            reactivated_at: None,
+            updated_at: None,
+            status: "bootstrap_pending".into(),
+            node_id: Some(authorized.node_id.clone()),
+        },
     };
     state.admin.devices.upsert(device.clone()).await?;
 
-    if bootstrap_already_completed(&authorized.device_did) {
+    if !reactivated && bootstrap_already_completed(&authorized.device_did) {
         state
             .admin
             .sync_bootstrap_by_identity(
@@ -372,6 +392,50 @@ pub async fn paired_list(
     ))
 }
 
+pub async fn unpaired_list(
+    State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
+) -> Result<Json<Vec<DeviceResponse>>, ApiError> {
+    // Preserve the paired-list authentication contract while reading only devices.json.
+    let _session = optional_session(session)?;
+    let mut devices = state.admin.devices.list_unpaired().await?;
+    devices.sort_by(|left, right| left.serial.cmp(&right.serial));
+    Ok(Json(
+        devices
+            .into_iter()
+            .map(|device| DeviceResponse {
+                device_id: device.device_id,
+                serial: device.serial,
+                did: device.did,
+                status: device.status,
+                node_id: device.node_id,
+            })
+            .collect(),
+    ))
+}
+
+pub async fn all_list(
+    State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
+) -> Result<Json<Vec<DeviceResponse>>, ApiError> {
+    // Preserve the paired-list authentication contract while reading only devices.json.
+    let _session = optional_session(session)?;
+    let mut devices = state.admin.devices.list_all_records().await?;
+    devices.sort_by(|left, right| left.serial.cmp(&right.serial));
+    Ok(Json(
+        devices
+            .into_iter()
+            .map(|device| DeviceResponse {
+                device_id: device.device_id,
+                serial: device.serial,
+                did: device.did,
+                status: device.status,
+                node_id: device.node_id,
+            })
+            .collect(),
+    ))
+}
+
 async fn load_paired_devices_for_session(
     state: &AppState,
     session: Option<&AuthenticatedSession>,
@@ -400,10 +464,9 @@ pub async fn paired_detail(
         .get(&device_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("device not found".into()))?;
-    if device.status == "unpaired"
-        || session
-            .as_ref()
-            .is_some_and(|session| device.owner_user_id != session.claims.sub)
+    if session
+        .as_ref()
+        .is_some_and(|session| device.owner_user_id != session.claims.sub)
     {
         return Err(ApiError::NotFound("device not found".into()));
     }
@@ -1977,6 +2040,122 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pair_reactivates_unpaired_did_without_replacing_device_id() {
+        let td = TempDir::new().expect("tempdir");
+        let state = AppState::for_tests(
+            td.path(),
+            "nodeA",
+            td.path().join("config").to_string_lossy().to_string(),
+        );
+        let session = test_session(&state, "user-1");
+        let serial = "GX-2024-TX-042-REACTIVATE";
+        let node_id = "nodeB";
+        let device_did = "did:guardian:reactivate-test-device";
+        let preserved_device_id = "preserved-device-id";
+
+        state
+            .admin
+            .devices
+            .upsert(PairedDevice {
+                device_id: preserved_device_id.into(),
+                serial: "GX-2024-TX-042-OLD".into(),
+                did: device_did.into(),
+                owner_user_id: "former-owner".into(),
+                paired_at: "2026-01-01T00:00:00Z".into(),
+                reactivated_at: None,
+                updated_at: None,
+                status: "unpaired".into(),
+                node_id: Some("nodeC".into()),
+            })
+            .await
+            .expect("seed unpaired device");
+
+        let key_path = td.path().join("device.key");
+        let signer = Arc::new(
+            KeyManager::load_or_generate(key_path.to_str().expect("key path"))
+                .expect("load key manager"),
+        );
+        let challenge = issue_challenge(serial, Duration::from_secs(300)).expect("challenge");
+        state
+            .admin
+            .pairings
+            .put(record_from_challenge(&challenge, "user-1"))
+            .await
+            .expect("store challenge");
+        let proof = build_pairing_proof(
+            &encode_challenge(&challenge).expect("encode challenge"),
+            node_id,
+            device_did,
+            &signer.pubkey_der().expect("pubkey"),
+            signer.clone(),
+        )
+        .await
+        .expect("build proof");
+
+        let response = pair(
+            State(state.clone()),
+            Some(Extension(session.clone())),
+            Json(PairDeviceRequest {
+                serial: Some(serial.into()),
+                qr: None,
+                proof: Some(proof),
+            }),
+        )
+        .await
+        .expect("reactivate device");
+        assert_eq!(response.0.device_id, preserved_device_id);
+        assert_eq!(response.0.status, "active");
+
+        let reactivated = state
+            .admin
+            .devices
+            .get_by_did(device_did)
+            .await
+            .expect("load reactivated device")
+            .expect("reactivated device exists");
+        assert_eq!(reactivated.device_id, preserved_device_id);
+        assert_eq!(reactivated.owner_user_id, "user-1");
+        assert_eq!(reactivated.serial, serial);
+        assert_eq!(reactivated.status, "active");
+        assert_ne!(reactivated.paired_at, "2026-01-01T00:00:00Z");
+        assert!(reactivated.reactivated_at.is_some());
+        assert!(reactivated.updated_at.is_some());
+
+        let second_challenge =
+            issue_challenge(serial, Duration::from_secs(300)).expect("second challenge");
+        state
+            .admin
+            .pairings
+            .put(record_from_challenge(&second_challenge, "user-1"))
+            .await
+            .expect("store second challenge");
+        let second_proof = build_pairing_proof(
+            &encode_challenge(&second_challenge).expect("encode second challenge"),
+            node_id,
+            device_did,
+            &signer.pubkey_der().expect("pubkey"),
+            signer,
+        )
+        .await
+        .expect("build second proof");
+        let error = match pair(
+            State(state),
+            Some(Extension(session)),
+            Json(PairDeviceRequest {
+                serial: Some(serial.into()),
+                qr: None,
+                proof: Some(second_proof),
+            }),
+        )
+        .await
+        {
+            Ok(_) => panic!("reject already active device DID"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, ApiError::DeviceAlreadyPaired(_)));
+    }
+
+    #[tokio::test]
     async fn device_list_without_session_returns_401_when_login_enabled() {
         let error = optional_session_for_gate(None, false).expect_err("auth required");
         assert!(
@@ -2001,6 +2180,8 @@ mod tests {
                 did: "did:guardian:test-login-disabled".into(),
                 owner_user_id: "real-owner-from-store".into(),
                 paired_at: Utc::now().to_rfc3339(),
+                reactivated_at: None,
+                updated_at: None,
                 status: "active".into(),
                 node_id: Some("nodeB".into()),
             })
