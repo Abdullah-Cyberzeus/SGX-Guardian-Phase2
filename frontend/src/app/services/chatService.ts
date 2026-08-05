@@ -77,4 +77,17 @@ export function parseChatPayload(record: ChatMessageRecord): ChatPayload {
   }
 }
 
+export function openChatSocket(onChange: () => void, onState?: (connected: boolean) => void): () => void {
+  const endpoint = new URL(api.publicUrl("/chat/ws"));
+  endpoint.protocol = endpoint.protocol === "https:" ? "wss:" : "ws:";
+  const token = api.getToken();
+  if (token) endpoint.searchParams.set("access_token", token);
+  const socket = new WebSocket(endpoint);
+  socket.onopen = () => onState?.(true);
+  socket.onclose = () => onState?.(false);
+  socket.onerror = () => onState?.(false);
+  socket.onmessage = () => onChange();
+  return () => socket.close();
+}
+
 export default chatService;

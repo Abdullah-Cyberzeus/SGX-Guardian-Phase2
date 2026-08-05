@@ -220,11 +220,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let path = format!("/etc/sgx-guardian/config/{}.yaml", nid);
         if !std::path::Path::new(&path).exists() {
             let letter = &nid[4..];
-            let api_tls_block = if *nid == "nodeA" {
-                "\napi:\n  tls:\n    enabled: true\n    require_https: true\n"
-            } else {
-                ""
-            };
+            let api_tls_block = "\napi:\n  tls:\n    enabled: true\n    require_https: true\n";
             let content = format!(
                 "---\nnode_id: \"{}\"\nhostname: \"guardian-node-{}\"\nip: \"0.0.0.0\"\nport: {}\npublic_key: \"placeholder-key-{}\"\n\nrelay:\n  enabled: false\n  max_peers: 5\n  max_bandwidth_mbps: 10\n  alert_threshold_pct: 80\n{}\
 \nsecure_element:\n  enabled: true\n  scp_key_path: \"/home/root/se05x_mw_v04.05.01/simw-top/scripts/se050F_scp_keys.txt\"\n  interface: \"t1oi2c\"\n  auth_type: \"PlatformSCP\"\n  connection_type: \"se05x\"\n",
@@ -3154,11 +3150,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("⚠️ Invalid SGX_ADMIN_BIND value ({e}); using 0.0.0.0:8443");
                 "0.0.0.0:8443".parse().expect("valid default admin bind")
             });
-        let tls_cfg = this_node
+        let mut tls_cfg = this_node
             .api
             .clone()
             .map(|config| config.tls)
             .unwrap_or_else(|| default_admin_api_tls(&node_id));
+        // Deployment-level overrides apply even when a persistent node YAML
+        // predates admin TLS support. This is how container cohorts enable
+        // HTTPS consistently without deleting their identity/config volumes.
+        if std::env::var("SGX_ADMIN_TLS_ENABLED")
+            .ok()
+            .is_some_and(|value| {
+                matches!(
+                    value.to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+        {
+            tls_cfg.enabled = true;
+        }
+        if std::env::var("SGX_ADMIN_REQUIRE_HTTPS")
+            .ok()
+            .is_some_and(|value| {
+                matches!(
+                    value.to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+        {
+            tls_cfg.require_https = true;
+        }
         if tls_cfg.require_https && !tls_cfg.enabled {
             eprintln!(
                 "❌ REST admin API TLS misconfigured: require_https=true but tls.enabled=false"

@@ -143,7 +143,7 @@ export const router = createBrowserRouter([
 
       // Main app (with bottom nav) â€” requires auth
       {
-        // Component: ProtectedRoute,
+        Component: ProtectedRoute,
         children: [{
           Component: MainLayout,
           children: [

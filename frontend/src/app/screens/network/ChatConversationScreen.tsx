@@ -9,7 +9,7 @@ import { MessageAttachment } from "../../components/circle/MessageAttachment";
 import type { SharedFile } from "../../components/circle/types";
 import { useCircles, usePeers } from "../../hooks/useApiData";
 import { didService } from "../../services/didService";
-import chatService, { parseChatPayload, type ChatMessageRecord } from "../../services/chatService";
+import chatService, { openChatSocket, parseChatPayload, type ChatMessageRecord } from "../../services/chatService";
 import { useCall } from "../../../features/calls/CallContext";
 import { useGroupCall } from "../../../features/calls/GroupCallContext";
 import type { MediaType } from "../../../features/calls/call.types";
@@ -60,6 +60,14 @@ export function ChatConversationScreen() {
 
   useEffect(() => { void didService.getStatus().then((status) => setLocalDid(status.did)).catch(() => {}); }, []);
   useEffect(() => { void chatService.sync().catch(() => {}).finally(() => void loadHistory()); }, [loadHistory]);
+  useEffect(() => {
+    let refreshTimer: number | undefined;
+    const close = openChatSocket(() => {
+      if (refreshTimer) window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => void loadHistory(), 100);
+    });
+    return () => { if (refreshTimer) window.clearTimeout(refreshTimer); close(); };
+  }, [loadHistory]);
   useEffect(() => { if (view === "chat") bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [records, view]);
 
   useEffect(() => {
@@ -75,10 +83,26 @@ export function ChatConversationScreen() {
     if (!circleId || (!isGroup && !peerDid) || (!content?.trim() && !attachmentId)) return;
     setSending(true);
     try {
-      if (isGroup) await chatService.sendGroup(circleId!, content?.trim() || null, attachmentId);
-      else await chatService.sendDirect(peerDid!, content?.trim() || null, attachmentId);
+      const sentContent = content?.trim() || null;
+      const response = isGroup
+        ? await chatService.sendGroup(circleId!, sentContent, attachmentId)
+        : await chatService.sendDirect(peerDid!, sentContent, attachmentId);
       setMessage("");
-      await loadHistory();
+      const now = Math.floor(Date.now() / 1000);
+      setRecords((current) => current.some((record) => record.message_id === response.message_id) ? current : [...current, {
+        message_id: response.message_id,
+        sender_did: localDid || "local",
+        recipient_did: isGroup ? circleId! : peerDid!,
+        ...(isGroup ? { group_id: circleId } : {}),
+        timestamp: now,
+        seq_no: Math.max(0, ...current.map((record) => record.seq_no)) + 1,
+        encrypted_payload: JSON.stringify({ content: sentContent, attachment_id: attachmentId }),
+        status: response.status || "pending",
+        read_by: [],
+      }]);
+      // Sending is complete once /chat/send responds. History refresh must not
+      // keep the composer locked if storage or synchronization is slow.
+      void loadHistory();
     } catch (cause) {
       toast.error("Message was not sent", { description: cause instanceof Error ? cause.message : undefined });
     } finally {
@@ -128,7 +152,7 @@ export function ChatConversationScreen() {
 
   const messages = useMemo(() => records.map((record) => {
     const payload = parseChatPayload(record);
-    const isMe = localDid ? record.sender_did === localDid : (isGroup ? false : record.sender_did !== peerDid);
+    const isMe = record.sender_did === "local" || (localDid ? record.sender_did === localDid : (isGroup ? false : record.sender_did !== peerDid));
     const senderMember = circle?.members?.find((item: any) => item.did === record.sender_did);
     const attachment = payload.attachment_id ? {
       name: payload.content || `Attachment ${payload.attachment_id.slice(0, 8)}`,

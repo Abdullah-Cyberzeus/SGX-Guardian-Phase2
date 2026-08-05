@@ -97,18 +97,6 @@ fn query_parameter(query: Option<&str>, name: &str) -> Option<String> {
 }
 
 fn is_public_route(method: &Method, path: &str) -> bool {
-    let public_call_api = matches!(method, &Method::GET | &Method::POST)
-        && (path == "/api/v1/calls"
-            || path == "/api/v1/calls/active"
-            || path == "/api/v1/calls/events"
-            || path == "/api/v1/calls/initiate"
-            || path == "/api/v1/calls/ice-servers"
-            || path == "/api/v1/call/end"
-            || path.starts_with("/api/v1/call/")
-            || path == "/api/v1/group-calls"
-            || path == "/api/v1/group-calls/active"
-            || path == "/api/v1/group-calls/events"
-            || path.starts_with("/api/v1/group-call/"));
     let public_frontend = method == Method::GET && !path.starts_with("/api/");
 
     matches!(
@@ -119,8 +107,7 @@ fn is_public_route(method: &Method, path: &str) -> bool {
             | (&Method::POST, "/api/v1/restore/validate")
             | (&Method::GET, "/api/v1/restore/status")
             | (&Method::GET, "/api/v1/health")
-    ) || public_call_api
-        || public_frontend
+    ) || public_frontend
 }
 
 fn is_cors_preflight(headers: &HeaderMap) -> bool {

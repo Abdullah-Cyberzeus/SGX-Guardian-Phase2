@@ -104,12 +104,23 @@ class ApiClient {
     }
 
     let response: Response;
+    const timeout = new AbortController();
+    const timeoutId = window.setTimeout(() => timeout.abort(), 20_000);
+    const suppliedSignal = fetchOptions.signal;
+    const abortFromCaller = () => timeout.abort();
+    suppliedSignal?.addEventListener('abort', abortFromCaller, { once: true });
     try {
-      response = await fetch(url, { ...fetchOptions, headers });
+      response = await fetch(url, { ...fetchOptions, headers, signal: timeout.signal });
     } catch (netErr) {
       const duration = Math.round(performance.now() - t0);
-      monitoring.trackApiCall(method, endpoint, null, duration, netErr instanceof Error ? netErr.message : 'Network error');
-      throw netErr;
+      const message = timeout.signal.aborted && !suppliedSignal?.aborted
+        ? 'Request timed out after 20 seconds'
+        : netErr instanceof Error ? netErr.message : 'Network error';
+      monitoring.trackApiCall(method, endpoint, null, duration, message);
+      throw new Error(message);
+    } finally {
+      window.clearTimeout(timeoutId);
+      suppliedSignal?.removeEventListener('abort', abortFromCaller);
     }
 
     const duration = Math.round(performance.now() - t0);
