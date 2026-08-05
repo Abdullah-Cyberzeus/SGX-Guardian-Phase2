@@ -126,6 +126,35 @@ export interface CrlGossipTriggerResponse {
 
 export type CrlOperationalResponse = Record<string, unknown>;
 
+export interface CrlOfflinePeerSyncState {
+  last_seen_merkle_root?: string;
+  last_seen_sequence?: number;
+  last_sync_at?: string;
+}
+
+export interface CrlOfflineStatusResponse {
+  enabled?: boolean;
+  online?: boolean;
+  sync_interval_secs?: number;
+  flush_rounds?: number;
+  max_retries?: number;
+  pending?: number;
+  sync_cycles?: number;
+  reconnects?: number;
+  entries_delivered?: number;
+  entries_fetched?: number;
+  peer_sync_state?: Record<string, CrlOfflinePeerSyncState>;
+}
+
+export interface CrlOfflineSyncResponse {
+  online?: boolean;
+  reachable_peers?: number;
+  reconciled?: number;
+  fetched?: number;
+  delivered?: number;
+  pending_remaining?: number;
+}
+
 export interface CrlEmergencyBroadcastPayload {
   did: string;
 }
@@ -230,9 +259,9 @@ export const crlService = {
     api.get<CrlOperationalResponse>('/crl/emergency/debug/session', { did }),
   seedEmergencyDebugSession: (payload: CrlEmergencyDebugPayload) =>
     api.post<CrlOperationalResponse>('/crl/emergency/debug/session', payload),
-  offlineStatus: () => api.get<CrlOperationalResponse>('/crl/offline/status'),
+  offlineStatus: () => api.get<CrlOfflineStatusResponse>('/crl/offline/status'),
   offlinePending: () => api.get<CrlOperationalResponse>('/crl/offline/pending'),
-  syncOffline: () => api.post<CrlOperationalResponse>('/crl/offline/sync'),
+  syncOffline: () => api.post<CrlOfflineSyncResponse>('/crl/offline/sync'),
 };
 
 export default crlService;

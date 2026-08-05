@@ -1927,7 +1927,7 @@ export function SC05CRLStatus() {
   const [entryLookup, setEntryLookup] = useState("");
   const [entryLookupBusy, setEntryLookupBusy] = useState(false);
   const [entryLookupError, setEntryLookupError] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState<"crl" | "gossip">("crl");
+  const [activeSection, setActiveSection] = useState<"crl" | "gossip" | "emergency" | "offline">("crl");
 
   const loadCrl = useCallback(async (initial = false) => {
     if (initial) setLoading(true);
@@ -2191,9 +2191,11 @@ export function SC05CRLStatus() {
         <div className="mx-auto w-full max-w-[1180px] p-4 md:p-6 flex flex-col gap-4">
           <div className="flex rounded-lg border border-border bg-card p-1" role="tablist" aria-label="CRL sections">
             <button type="button" role="tab" aria-selected={activeSection === "crl"} onClick={() => setActiveSection("crl")} className={`flex-1 rounded-md px-4 py-2.5 text-sm font-semibold transition ${activeSection === "crl" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>CRL entries</button>
-            <button type="button" role="tab" aria-selected={activeSection === "gossip"} onClick={() => setActiveSection("gossip")} className={`flex-1 rounded-md px-4 py-2.5 text-sm font-semibold transition ${activeSection === "gossip" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>Gossip & propagation</button>
+            <button type="button" role="tab" aria-selected={activeSection === "gossip"} onClick={() => setActiveSection("gossip")} className={`flex-1 rounded-md px-4 py-2.5 text-sm font-semibold transition ${activeSection === "gossip" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>Gossip</button>
+            <button type="button" role="tab" aria-selected={activeSection === "emergency"} onClick={() => setActiveSection("emergency")} className={`flex-1 rounded-md px-4 py-2.5 text-sm font-semibold transition ${activeSection === "emergency" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>Emergency revocation</button>
+            <button type="button" role="tab" aria-selected={activeSection === "offline"} onClick={() => setActiveSection("offline")} className={`flex-1 rounded-md px-4 py-2.5 text-sm font-semibold transition ${activeSection === "offline" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>Offline revocation</button>
           </div>
-          {activeSection === "gossip" ? <CrlOperationsPanel /> : <>
+          {activeSection === "gossip" ? <CrlOperationsPanel section="gossip" /> : activeSection === "emergency" ? <CrlOperationsPanel section="emergency" /> : activeSection === "offline" ? <CrlOperationsPanel section="offline" /> : <>
           <div className="sm:hidden grid grid-cols-2 gap-2">
             <ActionButton icon={ShieldCheck} variant={verifyResult?.ok ? "success" : "primary"} onClick={handleVerify} loading={verifying}>
               Verify CRL
