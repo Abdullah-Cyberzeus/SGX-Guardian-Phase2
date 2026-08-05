@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useNavigate } from "react-router";
 import { CervaisLogo } from "../../components/CervaisLogo";
 import { useAuth } from "../../contexts/AuthContext";
+import { replaceWithCyleniumLogin } from "../../utils/cyleniumAuth";
 
 export function SYS02SplashScreen() {
   const navigate = useNavigate();
@@ -21,9 +22,9 @@ export function SYS02SplashScreen() {
           if (!cancelled) navigate("/home", { replace: true });
         }, 1800);
       } else if (localStorage.getItem("sgx_onboarded")) {
-        // Has completed setup before but no session → login
+        // Has completed setup before but no session -> Cylenium login
         setTimeout(() => {
-          if (!cancelled) navigate("/login", { replace: true });
+          if (!cancelled) replaceWithCyleniumLogin();
         }, 1800);
       } else {
         // First time → full onboarding

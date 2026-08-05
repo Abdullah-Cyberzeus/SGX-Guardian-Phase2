@@ -8,7 +8,7 @@ import { MainLayout } from "./layouts/MainLayout";
 import { SYS01NotFound } from "./screens/system/SYS01NotFound";
 import { SYS02SplashScreen } from "./screens/system/SYS02SplashScreen";
 import { LoginScreen } from "./screens/auth/LoginScreen";
-import { CyleniumCallbackScreen } from "./screens/auth/CyleniumCallbackScreen";
+import { CyleniumCallback } from "./screens/auth/CyleniumCallback";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AuthenticatedOnboardingRoute, OnboardingEntryRoute } from "./components/OnboardingRouteGuard";
 
@@ -110,7 +110,8 @@ export const router = createBrowserRouter([
 
       // Login (returning users, session expired)
       { path: "login", Component: LoginScreen },
-      { path: "auth/cylenium/callback", Component: CyleniumCallbackScreen },
+      { path: "auth/cylenium/callback", Component: CyleniumCallback },
+      { path: "auth/callback", Component: CyleniumCallback },
       { path: "signup", loader: () => redirect("/onboarding") },
 
       // Onboarding flow

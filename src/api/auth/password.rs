@@ -41,6 +41,18 @@ pub async fn hash_password(password: String) -> Result<String> {
     .map_err(|e| anyhow!("password hashing task failed: {}", e))?
 }
 
+/// Generates a hash for a random, never-disclosed password so SSO-provisioned
+/// accounts (which have no local password) can't be logged into via `/auth/login`.
+pub async fn random_unusable_hash() -> Result<String> {
+    use rand::Rng;
+    let random_part: String = rand::thread_rng()
+        .sample_iter(rand::distributions::Alphanumeric)
+        .take(32)
+        .map(char::from)
+        .collect();
+    hash_password(format!("Aa1!{}", random_part)).await
+}
+
 pub async fn verify_password(password: String, encoded_hash: String) -> Result<bool> {
     tokio::task::spawn_blocking(move || {
         let parsed = PasswordHash::new(&encoded_hash)
