@@ -12,6 +12,8 @@ pub enum CrlError {
     MemberSeverityTooLow(crate::crl::entry::Severity),
     #[error("member-issued entries must be a security-critical reason (got {0})")]
     MemberReasonNotCritical(String),
+    #[error("only the Circle owner can revoke the Circle owner DID")]
+    OwnerRevocationRequiresOwner,
     #[error("only the Circle owner can issue administrative_removal or voluntary_departure")]
     NotOwner,
     #[error("circle mismatch: expected {expected}, got {got}")]

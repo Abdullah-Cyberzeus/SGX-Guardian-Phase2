@@ -12,6 +12,7 @@ x-guardian-common: &guardian-common
   environment: &guardian-env
     RUST_LOG: info
     SGX_PLATFORM_MODE: "virtual"
+    SGX_FORCE_SOFTWARE_KEYS: "1"
     SGX_DISABLE_LOGIN: "1"
     SGX_DISABLE_COT_BLUETOOTH: "1"
     SGX_DISABLE_COT_CELLULAR: "1"

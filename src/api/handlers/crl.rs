@@ -641,6 +641,7 @@ fn map_cli_failure(response: &ActionResponse) -> ApiError {
         || lower.contains("member-issued")
         || lower.contains("invalid signature")
         || lower.contains("only the circle owner")
+        || lower.contains("revoke the circle owner")
     {
         ApiError::Forbidden(message)
     } else if lower.contains("not found") || lower.contains("not currently revoked") {

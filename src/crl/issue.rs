@@ -60,6 +60,11 @@ pub fn issue_revocation(
     req: IssueRequest<'_>,
 ) -> Result<CrlEntry, CrlError> {
     if matches!(revoker_role, RevokerRole::Member) {
+        if local_circle_owner_did()
+            .is_some_and(|owner_did| owner_did == req.revoked_did)
+        {
+            return Err(CrlError::OwnerRevocationRequiresOwner);
+        }
         if !req.reason.is_security_critical() {
             return Err(CrlError::MemberReasonNotCritical(
                 req.reason.as_str().to_string(),
@@ -145,6 +150,15 @@ pub fn issue_revocation(
     );
 
     Ok(entry)
+}
+
+fn local_circle_owner_did() -> Option<String> {
+    crate::vc::issue::known_ca_did().ok().or_else(|| {
+        crate::vc::persistence::load_own_any()
+            .ok()
+            .flatten()
+            .map(|membership| membership.issuer.clone())
+    })
 }
 
 pub fn local_revocation_context(revoker: &DidRecord) -> Result<(String, RevokerRole), CrlError> {

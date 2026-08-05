@@ -128,8 +128,12 @@ export type CrlOperationalResponse = Record<string, unknown>;
 
 export interface CrlEmergencyBroadcastPayload {
   did: string;
-  reason?: string;
-  severity?: CrlSeverity | string;
+}
+
+export interface CrlEmergencyBroadcastResponse {
+  success?: boolean;
+  revoked_did?: string;
+  message?: string;
 }
 
 export interface CrlEmergencyDebugPayload {
@@ -214,8 +218,13 @@ export const crlService = {
     return { ...response, newly_propagated: response.newly_propagated ?? [] };
   },
   emergencyStatus: () => api.get<CrlOperationalResponse>('/crl/emergency/status'),
-  broadcastEmergency: (payload: CrlEmergencyBroadcastPayload) =>
-    api.post<CrlOperationalResponse>('/crl/emergency/broadcast', payload),
+  broadcastEmergency: async (payload: CrlEmergencyBroadcastPayload) => {
+    const response = await api.raw('/crl/emergency/broadcast', {
+      method: 'POST',
+      params: { did: payload.did },
+    });
+    return response.json() as Promise<CrlEmergencyBroadcastResponse>;
+  },
   emergencyNotifications: () => api.get<CrlOperationalResponse>('/crl/emergency/notifications'),
   getEmergencyDebugSession: (did: string) =>
     api.get<CrlOperationalResponse>('/crl/emergency/debug/session', { did }),
