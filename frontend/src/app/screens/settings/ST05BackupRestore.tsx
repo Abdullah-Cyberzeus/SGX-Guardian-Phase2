@@ -598,10 +598,7 @@ export function ST05BackupRestore() {
                   </div>
 
                   <div className="flex flex-wrap gap-1.5">
-                    <Chip>{record.portable ? "Portable" : "Same-device"}</Chip>
-                    {(record.components ?? []).map((component) => (
-                      <Chip key={component}>{COMPONENT_LABELS[component] ?? component}</Chip>
-                    ))}
+                    <Chip>Guardian Backup</Chip>
                   </div>
 
                   <div className="flex items-center gap-2 pt-1" style={{ borderTop: "1px solid var(--border)" }}>

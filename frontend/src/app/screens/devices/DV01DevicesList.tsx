@@ -2,10 +2,10 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
 import {
   Plus, Search, Cpu, Shield, ShieldAlert, Trash2, Loader2, Info, LayoutList, ChevronRight,
-  Ban, ShieldCheck, ScanSearch, Pencil, Check, X as XIcon2, UserX, RefreshCw,
+  Ban, ShieldCheck, ScanSearch, Pencil, Check, X as XIcon2, UserX, RefreshCw, Copy,
 } from "lucide-react";
 import { toast } from "sonner";
-import { deviceService, type PairedDevice, type DiscoveredDevice, type DeviceDetail } from "../../services/deviceService";
+import { deviceService, type PairedDevice, type DeviceDetail, type PairingCodeResponse } from "../../services/deviceService";
 import {
   managedDeviceService,
   type ManagedDevice,
@@ -18,9 +18,26 @@ import * as Switch from "@radix-ui/react-switch";
 
 type Tab = "paired" | "unpaired" | "fleet";
 
+function safeTrim(value: unknown): string {
+  return String(value ?? "").trim();
+}
+
+/** Paired Guardian records from GET /devices/paired — not scan or fleet inventory. */
+function isValidPairedDevice(device: PairedDevice | null | undefined): device is PairedDevice {
+  if (!device || typeof device !== "object") return false;
+  return safeTrim(device.deviceId).length > 0;
+}
+
+/** Managed/scanned devices for Fleet Security only — never shown in Paired tab. */
+function isValidFleetDevice(device: ManagedDevice | null | undefined): device is ManagedDevice {
+  if (!device || typeof device !== "object") return false;
+  return safeTrim(device.device_id).length > 0;
+}
+
 // ── Status dot for paired guardian ──────────────────────────────────────────
 function StatusDot({ status }: { status: string }) {
   const isPending = status === "pending_bootstrap";
+  const isUnpaired = status === "unpaired";
   return (
     <span
       style={{
@@ -29,7 +46,7 @@ function StatusDot({ status }: { status: string }) {
         height: "8px",
         borderRadius: "50%",
         flexShrink: 0,
-        backgroundColor: isPending ? "var(--chart-5)" : "var(--chart-2)",
+        backgroundColor: isUnpaired ? "var(--muted-foreground)" : isPending ? "var(--chart-5)" : "var(--chart-2)",
         animation: isPending ? "pulse 2s ease-in-out infinite" : undefined,
       }}
     />
@@ -39,31 +56,36 @@ function StatusDot({ status }: { status: string }) {
 // ── DeviceDetailPanel ────────────────────────────────────────────────────────
 function DeviceDetailPanel({
   deviceId,
+  fallbackDevice,
   onClose,
-  onUnpair
+  onUnpair,
+  onRepair,
 }: {
   deviceId: string;
+  fallbackDevice?: PairedDevice | null;
   onClose: () => void;
   onUnpair: (id: string) => void;
+  onRepair?: (device: PairedDevice) => void;
 }) {
   const [detail, setDetail] = useState<DeviceDetail | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let active = true;
+    setDetail(null);
     setLoading(true);
     deviceService.getDevice(deviceId)
       .then((data) => {
         if (active) setDetail(data);
       })
       .catch((e: any) => {
-        if (active) toast.error(e.message || "Failed to load device details");
+        if (active && !fallbackDevice) toast.error(e.message || "Failed to load device details");
       })
       .finally(() => {
         if (active) setLoading(false);
       });
     return () => { active = false; };
-  }, [deviceId]);
+  }, [deviceId, fallbackDevice?.deviceId]);
 
   if (loading) {
     return (
@@ -73,7 +95,17 @@ function DeviceDetailPanel({
     );
   }
 
-  if (!detail) {
+  const displayDevice = detail ?? (fallbackDevice ? {
+    deviceId: fallbackDevice.deviceId,
+    serial: fallbackDevice.serial,
+    did: fallbackDevice.did,
+    nodeId: fallbackDevice.nodeId,
+    status: fallbackDevice.status,
+    bootstrapStatus: "N/A",
+  } : null);
+  const isUnpaired = safeTrim(displayDevice?.status).toLowerCase() === "unpaired";
+
+  if (!displayDevice) {
     return (
       <div className="flex flex-col items-center justify-center h-full">
         <Info size={32} style={{ color: "var(--muted-foreground)" }} />
@@ -92,7 +124,7 @@ function DeviceDetailPanel({
           </div>
           <div>
             <h3 style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>Guardian Node</h3>
-            <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{detail.serial}</p>
+            <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{displayDevice.serial}</p>
           </div>
         </div>
         <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--muted-foreground)" }}>
@@ -105,8 +137,8 @@ function DeviceDetailPanel({
         <div>
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "8px" }}>STATUS</p>
           <div className="flex items-center gap-2">
-            <StatusDot status={detail.status} />
-            <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--foreground)", textTransform: "capitalize" }}>{detail.status}</span>
+            <StatusDot status={displayDevice.status} />
+            <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--foreground)", textTransform: "capitalize" }}>{isUnpaired ? "Unpaired" : displayDevice.status}</span>
           </div>
         </div>
 
@@ -115,10 +147,10 @@ function DeviceDetailPanel({
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "8px" }}>DEVICE INFO</p>
           <div className="rounded-lg border border-border overflow-hidden" style={{ backgroundColor: "var(--background)" }}>
             {[
-              { label: "Node ID", value: detail.nodeId, mono: true },
-              { label: "DID", value: detail.did, mono: true },
-              { label: "Overlay IP", value: detail.overlayIp || "N/A", mono: true },
-              { label: "Bootstrap Status", value: detail.bootstrapStatus },
+              { label: "Node ID", value: displayDevice.nodeId || "N/A", mono: true },
+              { label: "DID", value: displayDevice.did || "N/A", mono: true },
+              { label: "Overlay IP", value: detail?.overlayIp || "N/A", mono: true },
+              { label: "Bootstrap Status", value: detail?.bootstrapStatus || "N/A" },
             ].map(({ label, value, mono }, i, arr) => (
               <div key={label} className="flex items-center justify-between px-4 py-3" style={{ borderBottom: i < arr.length - 1 ? "1px solid var(--border)" : undefined }}>
                 <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{label}</span>
@@ -129,11 +161,23 @@ function DeviceDetailPanel({
         </div>
 
         {/* Actions */}
-        {detail.status !== 'unpaired' && (
+        {isUnpaired ? (
           <div>
             <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "8px" }}>ACTIONS</p>
             <button
-              onClick={() => { onClose(); onUnpair(detail.deviceId); }}
+              onClick={() => fallbackDevice && onRepair?.(fallbackDevice)}
+              disabled={!fallbackDevice || !onRepair}
+              className="w-full flex items-center justify-center gap-2 rounded-lg"
+              style={{ height: "44px", backgroundColor: "color-mix(in srgb, var(--primary) 12%, transparent)", border: "1px solid color-mix(in srgb, var(--primary) 35%, transparent)", color: "var(--primary)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", cursor: fallbackDevice && onRepair ? "pointer" : "default", opacity: fallbackDevice && onRepair ? 1 : 0.5 }}
+            >
+              <RefreshCw size={16} /> Re-Pair Guardian
+            </button>
+          </div>
+        ) : (
+          <div>
+            <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "8px" }}>ACTIONS</p>
+            <button
+              onClick={() => { onClose(); onUnpair(displayDevice.deviceId); }}
               className="w-full flex items-center justify-center gap-2 rounded-lg"
               style={{ height: "44px", backgroundColor: "color-mix(in srgb, var(--destructive) 12%, transparent)", border: "1px solid color-mix(in srgb, var(--destructive) 25%, transparent)", color: "var(--destructive)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", cursor: "pointer" }}
             >
@@ -178,7 +222,7 @@ function scoreColor(score: number | null): string {
 }
 
 function fleetDeviceLabel(device: ManagedDevice): string {
-  return device.display_name || device.hostname || device.ip || device.mac || device.device_id;
+  return safeTrim(device.display_name) || safeTrim(device.hostname) || safeTrim(device.ip) || safeTrim(device.mac) || safeTrim(device.device_id);
 }
 
 function ScoreStat({ label, score }: { label: string; score: number | null }) {
@@ -262,7 +306,7 @@ function FleetDetailPanel({
   const handleSaveName = async () => {
     setSavingName(true);
     try {
-      await managedDeviceService.edit(device.device_id, { display_name: nameDraft.trim() || null });
+      await managedDeviceService.edit(device.device_id, { display_name: safeTrim(nameDraft) || null });
       toast.success("Device name updated");
       setEditingName(false);
       onChanged();
@@ -305,6 +349,12 @@ function FleetDetailPanel({
 
   const hasIp = !!device.ip;
   const scanActive = scanning || scanRun?.state === "running";
+  const riskLevel = safeTrim(device.risk_level) || "unknown";
+  const securityReasons = Array.isArray(device.security_reasons) ? device.security_reasons : [];
+  const privacyReasons = Array.isArray(device.privacy_reasons) ? device.privacy_reasons : [];
+  const openPorts = Array.isArray(device.open_ports) ? device.open_ports : [];
+  const scanFindings = Array.isArray(scanRun?.findings) ? scanRun.findings : [];
+  const scanRecommendations = Array.isArray(scanRun?.recommendations) ? scanRun.recommendations : [];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", backgroundColor: "var(--card)", borderLeft: "1px solid var(--border)" }}>
@@ -352,7 +402,7 @@ function FleetDetailPanel({
       <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-6">
         {/* Status badges */}
         <div className="flex flex-wrap items-center gap-2">
-          <StatusBadge status={device.risk_level.toUpperCase()} variant={riskVariant(device.risk_level)} />
+          <StatusBadge status={riskLevel.toUpperCase()} variant={riskVariant(riskLevel)} />
           {device.manual && <StatusBadge status="MANUAL" variant="info" />}
           {device.blocked && <StatusBadge status="BLOCKED" variant="danger" />}
           {device.rejected && <StatusBadge status="REJECTED" variant="danger" />}
@@ -366,9 +416,9 @@ function FleetDetailPanel({
             <ScoreStat label="SECURITY" score={device.security_score} />
             <ScoreStat label="PRIVACY" score={device.privacy_score} />
           </div>
-          {(device.security_reasons.length > 0 || device.privacy_reasons.length > 0) && (
+          {(securityReasons.length > 0 || privacyReasons.length > 0) && (
             <div className="mt-3 flex flex-col gap-1">
-              {[...device.security_reasons, ...device.privacy_reasons].slice(0, 6).map((reason, i) => (
+              {[...securityReasons, ...privacyReasons].slice(0, 6).map((reason, i) => (
                 <p key={i} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>• {reason}</p>
               ))}
             </div>
@@ -385,7 +435,7 @@ function FleetDetailPanel({
               { label: "Vendor", value: device.vendor || "N/A" },
               { label: "Hostname", value: device.hostname || "N/A" },
               { label: "OS Fingerprint", value: device.os_fingerprint || "N/A" },
-              { label: "Open Ports", value: String(device.open_ports.length) },
+              { label: "Open Ports", value: String(openPorts.length) },
               { label: "Last Seen", value: device.last_seen ? new Date(device.last_seen).toLocaleString() : "N/A" },
             ].map(({ label, value, mono }, i, arr) => (
               <div key={label} className="flex items-center justify-between px-4 py-3" style={{ borderBottom: i < arr.length - 1 ? "1px solid var(--border)" : undefined }}>
@@ -396,17 +446,17 @@ function FleetDetailPanel({
           </div>
         </div>
 
-        {device.open_ports.length > 0 && (
+        {openPorts.length > 0 && (
           <div>
             <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "8px" }}>OPEN PORTS</p>
             <div className="flex flex-wrap gap-1.5">
-              {device.open_ports.slice(0, 12).map((port) => (
+              {openPorts.slice(0, 12).map((port) => (
                 <span key={`${port.port}-${port.protocol}`} className="rounded-md px-2 py-0.5" style={{ backgroundColor: "var(--secondary)", border: "1px solid var(--border)", fontFamily: "JetBrains Mono, monospace", fontSize: "11px", color: "var(--foreground)" }}>
                   {port.port}/{port.protocol}{port.service ? ` ${port.service}` : ""}
                 </span>
               ))}
-              {device.open_ports.length > 12 && (
-                <span style={{ fontFamily: "Inter, sans-serif", fontSize: "11px", color: "var(--muted-foreground)" }}>+{device.open_ports.length - 12} more</span>
+              {openPorts.length > 12 && (
+                <span style={{ fontFamily: "Inter, sans-serif", fontSize: "11px", color: "var(--muted-foreground)" }}>+{openPorts.length - 12} more</span>
               )}
             </div>
           </div>
@@ -444,10 +494,10 @@ function FleetDetailPanel({
                 {scanRun.state === "complete" ? <ShieldCheck size={14} style={{ color: "var(--chart-2)" }} /> : <ShieldAlert size={14} style={{ color: "var(--destructive)" }} />}
                 <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)", textTransform: "capitalize" }}>{scanRun.state}</span>
               </div>
-              {scanRun.findings.slice(0, 5).map((finding, i) => (
+              {scanFindings.slice(0, 5).map((finding, i) => (
                 <p key={i} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>• {finding}</p>
               ))}
-              {scanRun.recommendations.slice(0, 3).map((rec, i) => (
+              {scanRecommendations.slice(0, 3).map((rec, i) => (
                 <p key={i} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--chart-5)", lineHeight: 1.5 }}>→ {rec}</p>
               ))}
             </div>
@@ -512,17 +562,17 @@ function AddManualDeviceDialog({ open, onOpenChange, onAdded }: { open: boolean;
     }
   }, [open]);
 
-  const canSubmit = ip.trim().length > 0 || mac.trim().length > 0;
+  const canSubmit = safeTrim(ip).length > 0 || safeTrim(mac).length > 0;
 
   const handleSubmit = async () => {
     if (!canSubmit || saving) return;
     setSaving(true);
     try {
       await managedDeviceService.addManual({
-        display_name: displayName.trim() || undefined,
-        ip: ip.trim() || undefined,
-        mac: mac.trim() || undefined,
-        manufacturer: manufacturer.trim() || undefined,
+        display_name: safeTrim(displayName) || undefined,
+        ip: safeTrim(ip) || undefined,
+        mac: safeTrim(mac) || undefined,
+        manufacturer: safeTrim(manufacturer) || undefined,
       });
       toast.success("Device added to fleet");
       onOpenChange(false);
@@ -580,7 +630,7 @@ function RejectDeviceDialog({ device, onOpenChange, onRejected }: { device: Mana
     if (!device || saving) return;
     setSaving(true);
     try {
-      await managedDeviceService.reject(device.device_id, reason.trim() ? { reason: reason.trim() } : undefined);
+      await managedDeviceService.reject(device.device_id, safeTrim(reason) ? { reason: safeTrim(reason) } : undefined);
       toast.success("Device rejected and blocked");
       onOpenChange(false);
       onRejected();
@@ -621,12 +671,20 @@ export function DV01DevicesList() {
   const [tab, setTab] = useState<Tab>("paired");
   const [search, setSearch] = useState("");
 
-  const [devices, setDevices] = useState<PairedDevice[]>([]);
+  const [pairedDevices, setPairedDevices] = useState<PairedDevice[]>([]);
+  const [unpairedDevices, setUnpairedDevices] = useState<PairedDevice[]>([]);
+  const [allDevices, setAllDevices] = useState<PairedDevice[]>([]);
   const [loading, setLoading] = useState(true);
+  const [pairedLoaded, setPairedLoaded] = useState(false);
 
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [unpairId, setUnpairId] = useState<string | null>(null);
   const [unpairLoading, setUnpairLoading] = useState(false);
+  const [repairTarget, setRepairTarget] = useState<PairedDevice | null>(null);
+  const [repairPairingData, setRepairPairingData] = useState<PairingCodeResponse | null>(null);
+  const [repairProof, setRepairProof] = useState("");
+  const [repairLoading, setRepairLoading] = useState(false);
+  const [repairCodeCopied, setRepairCodeCopied] = useState(false);
 
   // Fleet security state
   const [fleetDevices, setFleetDevices] = useState<ManagedDevice[]>([]);
@@ -638,15 +696,38 @@ export function DV01DevicesList() {
   const [deleteTarget, setDeleteTarget] = useState<ManagedDevice | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const loadData = useCallback(async () => {
+  const loadPairedDevices = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await deviceService.listDevices();
-      setDevices(Array.isArray(data) ? data : []);
+      const data = await deviceService.listPairedDevices();
+      setPairedDevices(data.filter(isValidPairedDevice));
+      setPairedLoaded(true);
     } catch (e: any) {
-      console.warn("Failed to load devices", e.message);
+      console.warn("Failed to load paired devices", e.message);
+      setPairedLoaded(false);
+      toast.error(e.message || "Failed to load paired devices");
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const loadUnpairedDevices = useCallback(async () => {
+    try {
+      const data = await deviceService.listUnpairedDevices();
+      setUnpairedDevices(data.filter(isValidPairedDevice));
+    } catch (e: any) {
+      console.warn("Failed to load unpaired devices", e.message);
+      toast.error(e.message || "Failed to load unpaired devices");
+    }
+  }, []);
+
+  const loadAllDevices = useCallback(async () => {
+    try {
+      const data = await deviceService.listAllDevices();
+      setAllDevices(data);
+    } catch (e: any) {
+      console.warn("Failed to load device stats", e.message);
+      toast.error(e.message || "Failed to load device stats");
     }
   }, []);
 
@@ -667,8 +748,10 @@ export function DV01DevicesList() {
   }, []);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    loadPairedDevices();
+    loadUnpairedDevices();
+    loadAllDevices();
+  }, [loadPairedDevices, loadUnpairedDevices, loadAllDevices]);
 
   useEffect(() => {
     if (tab === "fleet" && fleetDevices.length === 0 && fleetLoading) {
@@ -690,11 +773,71 @@ export function DV01DevicesList() {
       toast.success("Device unpaired");
       setUnpairId(null);
       if (selectedDeviceId === unpairId) setSelectedDeviceId(null);
-      loadData();
+      setPairedDevices((prev) => prev.filter((device) => device.deviceId !== unpairId));
+      await Promise.all([loadPairedDevices(), loadUnpairedDevices(), loadAllDevices()]);
     } catch (e: any) {
       toast.error(e.message || "Failed to unpair device");
     } finally {
       setUnpairLoading(false);
+    }
+  };
+
+  const resetRepair = () => {
+    setRepairTarget(null);
+    setRepairPairingData(null);
+    setRepairProof("");
+    setRepairLoading(false);
+    setRepairCodeCopied(false);
+  };
+
+  const handleOpenRepair = async (device: PairedDevice) => {
+    const serial = safeTrim(device.serial);
+    if (!serial) {
+      toast.error("Device serial is required to generate a pairing code");
+      return;
+    }
+
+    setRepairTarget(device);
+    setRepairPairingData(null);
+    setRepairProof("");
+    setRepairCodeCopied(false);
+    setRepairLoading(true);
+    try {
+      const data = await deviceService.getPairingCode(serial);
+      setRepairPairingData(data);
+      toast.success("Pairing code generated");
+    } catch (e: any) {
+      toast.error(e.message || "Failed to generate pairing code");
+      resetRepair();
+    } finally {
+      setRepairLoading(false);
+    }
+  };
+
+  const handleRepair = async () => {
+    if (!repairPairingData || !safeTrim(repairProof) || repairLoading) return;
+    setRepairLoading(true);
+    try {
+      await deviceService.pairDevice(repairPairingData.serial, safeTrim(repairProof));
+      toast.success("Guardian re-paired successfully");
+      resetRepair();
+      await Promise.all([loadPairedDevices(), loadUnpairedDevices(), loadAllDevices()]);
+    } catch (e: any) {
+      toast.error(e.message || "Re-pair failed. Check the proof and try again.");
+    } finally {
+      setRepairLoading(false);
+    }
+  };
+
+  const handleCopyRepairCode = async () => {
+    if (!repairPairingData?.pairingCode) return;
+    try {
+      await navigator.clipboard.writeText(repairPairingData.pairingCode);
+      setRepairCodeCopied(true);
+      toast.success("Pairing code copied");
+      window.setTimeout(() => setRepairCodeCopied(false), 1500);
+    } catch {
+      toast.error("Copy failed");
     }
   };
 
@@ -714,21 +857,42 @@ export function DV01DevicesList() {
     }
   };
 
-  const pairedDevices = devices.filter(d => d.status !== 'unpaired');
-  const unpairedDevices = devices.filter(d => d.status === 'unpaired');
+  // Paired tab: GET /devices/paired only — never scan, discovery, or fleet inventory.
+  // Unpaired tab: separate guardian pairing source (no managed-device fallback).
+  // Stats cards: GET /devices/all only — never used as a list source.
+  // Fleet Security: only managed-device API state — never paired-device fallback.
+  const validFleetDevices = fleetDevices.filter(isValidFleetDevice);
+  const pairedDeviceCount = allDevices.filter((device) => safeTrim(device.status).toLowerCase() === "active").length;
+  const unpairedDeviceCount = allDevices.filter((device) => safeTrim(device.status).toLowerCase() === "unpaired").length;
 
-  const filteredPaired = pairedDevices.filter(d => !search || d.serial.toLowerCase().includes(search.toLowerCase()) || d.nodeId.toLowerCase().includes(search.toLowerCase()));
-  const filteredUnpaired = unpairedDevices.filter(d => !search || d.serial.toLowerCase().includes(search.toLowerCase()) || d.nodeId.toLowerCase().includes(search.toLowerCase()));
-  const filteredFleet = fleetDevices.filter((d) => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return [d.display_name, d.hostname, d.ip, d.mac, d.device_id].some((v) => v?.toLowerCase().includes(q));
+  const searchQuery = safeTrim(search).toLowerCase();
+  const filteredPaired = pairedDevices.filter((d) => {
+    if (!searchQuery) return true;
+    return (
+      safeTrim(d.serial).toLowerCase().includes(searchQuery) ||
+      safeTrim(d.nodeId).toLowerCase().includes(searchQuery)
+    );
+  });
+  const filteredUnpaired = unpairedDevices.filter((d) => {
+    if (!searchQuery) return true;
+    return (
+      safeTrim(d.serial).toLowerCase().includes(searchQuery) ||
+      safeTrim(d.nodeId).toLowerCase().includes(searchQuery)
+    );
+  });
+  const filteredFleet = validFleetDevices.filter((d) => {
+    if (!searchQuery) return true;
+    return [d.display_name, d.hostname, d.ip, d.mac, d.device_id].some((v) =>
+      safeTrim(v).toLowerCase().includes(searchQuery)
+    );
   });
 
-  const selectedFleetDevice = fleetDevices.find((d) => d.device_id === selectedFleetId) ?? null;
+  const selectedFleetDevice = validFleetDevices.find((d) => d.device_id === selectedFleetId) ?? null;
+  const selectedGuardianDevice =
+    (tab === "unpaired" ? unpairedDevices : pairedDevices).find((device) => device.deviceId === selectedDeviceId) ?? null;
 
   const Header = (
-    <div className="flex flex-col justify-center flex-shrink-0 px-5 h-20 border-b border-border bg-card relative overflow-hidden">
+    <div className="flex flex-col justify-center flex-shrink-0 px-5 h-16 border-b border-border bg-card relative overflow-hidden">
       <div className="absolute inset-0 opacity-10" style={{ background: "linear-gradient(90deg, var(--primary) 0%, transparent 100%)" }} />
       <h2 style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xl)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)", lineHeight: 1.2, position: "relative" }}>
         Devices
@@ -739,65 +903,69 @@ export function DV01DevicesList() {
     </div>
   );
 
-  const StatCards = tab === "fleet" ? (
-    <div className="flex gap-4 px-5 py-5 border-b border-border bg-background flex-wrap">
-      <div className="flex-1 rounded-xl p-4 border border-border shadow-sm flex flex-col justify-between" style={{ backgroundColor: "var(--card)", minWidth: "130px" }}>
-        <div className="flex items-center gap-2 mb-2">
-          <Cpu size={16} style={{ color: "var(--primary)" }} />
-          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: "var(--muted-foreground)" }}>Total</span>
-        </div>
-        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "28px", fontWeight: "var(--font-weight-bold)", color: "var(--foreground)" }}>{fleetSummary?.total ?? fleetDevices.length}</p>
-      </div>
-      <div className="flex-1 rounded-xl p-4 border border-border shadow-sm flex flex-col justify-between" style={{ backgroundColor: "var(--card)", minWidth: "130px" }}>
-        <div className="flex items-center gap-2 mb-2">
-          <ShieldAlert size={16} style={{ color: "var(--destructive)" }} />
-          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: "var(--muted-foreground)" }}>At Risk</span>
-        </div>
-        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "28px", fontWeight: "var(--font-weight-bold)", color: "var(--foreground)" }}>{(fleetSummary?.critical_devices ?? 0) + (fleetSummary?.high_risk_devices ?? 0)}</p>
-      </div>
-      <div className="flex-1 rounded-xl p-4 border border-border shadow-sm flex flex-col justify-between" style={{ backgroundColor: "var(--card)", minWidth: "130px" }}>
-        <div className="flex items-center gap-2 mb-2">
-          <Ban size={16} style={{ color: "var(--chart-5)" }} />
-          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: "var(--muted-foreground)" }}>Blocked</span>
-        </div>
-        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "28px", fontWeight: "var(--font-weight-bold)", color: "var(--foreground)" }}>{fleetSummary?.blocked ?? 0}</p>
-      </div>
-      <div className="flex-1 rounded-xl p-4 border border-border shadow-sm flex flex-col justify-between" style={{ backgroundColor: "var(--card)", minWidth: "130px" }}>
-        <div className="flex items-center gap-2 mb-2">
-          <ShieldCheck size={16} style={{ color: "var(--chart-2)" }} />
-          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: "var(--muted-foreground)" }}>Monitored</span>
-        </div>
-        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "28px", fontWeight: "var(--font-weight-bold)", color: "var(--foreground)" }}>{fleetSummary?.monitoring_enabled ?? 0}</p>
-      </div>
-    </div>
-  ) : (
-    <div className="flex gap-4 px-5 py-5 border-b border-border bg-background">
-      <div className="flex-1 rounded-xl p-4 border border-border shadow-sm flex flex-col justify-between" style={{ backgroundColor: "var(--card)" }}>
-        <div className="flex items-center gap-2 mb-2">
+  const GuardianStatCards = (
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 px-5 py-3 border-b border-border bg-background">
+      <div className="rounded-xl p-3 border border-border shadow-sm flex flex-col justify-between min-w-0" style={{ backgroundColor: "var(--card)" }}>
+        <div className="flex items-center gap-2 mb-1.5">
           <Cpu size={16} style={{ color: "var(--primary)" }} />
           <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: "var(--muted-foreground)" }}>Total Devices</span>
         </div>
-        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "28px", fontWeight: "var(--font-weight-bold)", color: "var(--foreground)" }}>{devices.length}</p>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "24px", fontWeight: "var(--font-weight-bold)", color: "var(--foreground)", lineHeight: 1.1 }}>{allDevices.length}</p>
       </div>
-      <div className="flex-1 rounded-xl p-4 border border-border shadow-sm flex flex-col justify-between" style={{ backgroundColor: "var(--card)" }}>
-        <div className="flex items-center gap-2 mb-2">
+      <div className="rounded-xl p-3 border border-border shadow-sm flex flex-col justify-between min-w-0" style={{ backgroundColor: "var(--card)" }}>
+        <div className="flex items-center gap-2 mb-1.5">
           <Shield size={16} style={{ color: "var(--chart-2)" }} />
-          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: "var(--muted-foreground)" }}>Paired</span>
+          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: "var(--muted-foreground)" }}>Paired Devices</span>
         </div>
-        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "28px", fontWeight: "var(--font-weight-bold)", color: "var(--foreground)" }}>{pairedDevices.length}</p>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "24px", fontWeight: "var(--font-weight-bold)", color: "var(--foreground)", lineHeight: 1.1 }}>{pairedDeviceCount}</p>
       </div>
-      <div className="flex-1 rounded-xl p-4 border border-border shadow-sm flex flex-col justify-between" style={{ backgroundColor: "var(--card)" }}>
-        <div className="flex items-center gap-2 mb-2">
+      <div className="rounded-xl p-3 border border-border shadow-sm flex flex-col justify-between min-w-0" style={{ backgroundColor: "var(--card)" }}>
+        <div className="flex items-center gap-2 mb-1.5">
           <LayoutList size={16} style={{ color: "var(--muted-foreground)" }} />
-          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: "var(--muted-foreground)" }}>Unpaired</span>
+          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: "var(--muted-foreground)" }}>Unpaired Devices</span>
         </div>
-        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "28px", fontWeight: "var(--font-weight-bold)", color: "var(--foreground)" }}>{unpairedDevices.length}</p>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "24px", fontWeight: "var(--font-weight-bold)", color: "var(--foreground)", lineHeight: 1.1 }}>{unpairedDeviceCount}</p>
       </div>
     </div>
   );
 
+  const FleetStatCards = (
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 px-5 py-3 border-b border-border bg-background">
+      <div className="rounded-xl p-3 border border-border shadow-sm flex flex-col justify-between min-w-0" style={{ backgroundColor: "var(--card)" }}>
+        <div className="flex items-center gap-2 mb-1.5">
+          <Cpu size={16} style={{ color: "var(--primary)" }} />
+          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: "var(--muted-foreground)" }}>Total</span>
+        </div>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "24px", fontWeight: "var(--font-weight-bold)", color: "var(--foreground)", lineHeight: 1.1 }}>{fleetSummary?.total ?? validFleetDevices.length}</p>
+      </div>
+      <div className="rounded-xl p-3 border border-border shadow-sm flex flex-col justify-between min-w-0" style={{ backgroundColor: "var(--card)" }}>
+        <div className="flex items-center gap-2 mb-1.5">
+          <ShieldAlert size={16} style={{ color: "var(--destructive)" }} />
+          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: "var(--muted-foreground)" }}>At Risk</span>
+        </div>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "24px", fontWeight: "var(--font-weight-bold)", color: "var(--foreground)", lineHeight: 1.1 }}>{(fleetSummary?.critical_devices ?? 0) + (fleetSummary?.high_risk_devices ?? 0)}</p>
+      </div>
+      <div className="rounded-xl p-3 border border-border shadow-sm flex flex-col justify-between min-w-0" style={{ backgroundColor: "var(--card)" }}>
+        <div className="flex items-center gap-2 mb-1.5">
+          <Ban size={16} style={{ color: "var(--chart-5)" }} />
+          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: "var(--muted-foreground)" }}>Blocked</span>
+        </div>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "24px", fontWeight: "var(--font-weight-bold)", color: "var(--foreground)", lineHeight: 1.1 }}>{fleetSummary?.blocked ?? 0}</p>
+      </div>
+      <div className="rounded-xl p-3 border border-border shadow-sm flex flex-col justify-between min-w-0" style={{ backgroundColor: "var(--card)" }}>
+        <div className="flex items-center gap-2 mb-1.5">
+          <ShieldCheck size={16} style={{ color: "var(--chart-2)" }} />
+          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: "var(--muted-foreground)" }}>Monitored</span>
+        </div>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "24px", fontWeight: "var(--font-weight-bold)", color: "var(--foreground)", lineHeight: 1.1 }}>{fleetSummary?.monitoring_enabled ?? 0}</p>
+      </div>
+    </div>
+  );
+
+  const StatCards = tab === "fleet" ? FleetStatCards : GuardianStatCards;
+
   const Controls = (
-    <div className="flex flex-col gap-4 px-5 py-4">
+    <div className="flex flex-col gap-3 px-5 py-3 flex-shrink-0">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-1 p-1 rounded-lg" style={{ backgroundColor: "var(--secondary)", border: "1px solid var(--border)" }}>
           <button
@@ -851,13 +1019,13 @@ export function DV01DevicesList() {
 
   return (
     <div className="flex flex-col h-[100dvh] md:flex-row overflow-hidden bg-background">
-      <div className="flex flex-col flex-1 border-r border-border min-w-0">
+      <div className="flex flex-col flex-1 border-r border-border min-w-0 min-h-0">
         {Header}
         {StatCards}
         {Controls}
 
         {/* List area */}
-        <div className="flex-1 overflow-y-auto px-5 pb-6">
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 pb-6">
           {tab === "fleet" ? (
             fleetLoading ? (
               <div className="flex flex-col items-center justify-center py-12">
@@ -874,7 +1042,9 @@ export function DV01DevicesList() {
               </div>
             ) : (
               <div className="flex flex-col gap-3">
-                {filteredFleet.map((device) => (
+                {filteredFleet.map((device) => {
+                  const riskLevel = safeTrim(device.risk_level) || "unknown";
+                  return (
                   <button
                     key={device.device_id}
                     onClick={() => setSelectedFleetId(device.device_id)}
@@ -892,7 +1062,7 @@ export function DV01DevicesList() {
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <p className="truncate" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)", maxWidth: "220px" }}>{fleetDeviceLabel(device)}</p>
-                          <StatusBadge status={device.risk_level.toUpperCase()} variant={riskVariant(device.risk_level)} />
+                          <StatusBadge status={riskLevel.toUpperCase()} variant={riskVariant(riskLevel)} />
                           {device.blocked && <StatusBadge status="BLOCKED" variant="danger" />}
                         </div>
                         <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{device.ip || device.mac || device.device_id}</p>
@@ -906,7 +1076,8 @@ export function DV01DevicesList() {
                       <ChevronRight size={18} style={{ color: "var(--muted-foreground)" }} />
                     </div>
                   </button>
-                ))}
+                  );
+                })}
               </div>
             )
           ) : loading ? (
@@ -915,7 +1086,7 @@ export function DV01DevicesList() {
               <span className="mt-2" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>Loading...</span>
             </div>
           ) : tab === "paired" ? (
-            filteredPaired.length === 0 ? (
+            pairedLoaded && filteredPaired.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-border rounded-xl" style={{ backgroundColor: "var(--card)" }}>
                 <div className="rounded-full flex items-center justify-center mb-4" style={{ width: "64px", height: "64px", backgroundColor: "color-mix(in srgb, var(--primary) 10%, transparent)" }}>
                   <Shield size={32} style={{ color: "var(--primary)" }} />
@@ -926,30 +1097,30 @@ export function DV01DevicesList() {
             ) : (
               <div className="flex flex-col gap-3">
                 {filteredPaired.map((device) => (
-                  <button
-                    key={device.deviceId}
-                    onClick={() => setSelectedDeviceId(device.deviceId)}
-                    className="w-full text-left flex items-center justify-between p-4 rounded-xl border transition-all shadow-sm"
-                    style={{
-                      backgroundColor: selectedDeviceId === device.deviceId ? "color-mix(in srgb, var(--primary) 6%, var(--card))" : "var(--card)",
-                      borderColor: selectedDeviceId === device.deviceId ? "var(--primary)" : "var(--border)",
-                      cursor: "pointer"
-                    }}
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="rounded-lg flex items-center justify-center flex-shrink-0 shadow-sm" style={{ width: "40px", height: "40px", backgroundColor: "color-mix(in srgb, var(--primary) 12%, transparent)", border: "1px solid color-mix(in srgb, var(--primary) 20%, transparent)" }}>
-                        <Shield size={20} style={{ color: "var(--primary)" }} />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <StatusDot status={device.status} />
-                          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{device.serial}</p>
+                    <button
+                      key={device.deviceId}
+                      onClick={() => setSelectedDeviceId(device.deviceId)}
+                      className="w-full text-left flex items-center justify-between p-4 rounded-xl border transition-all shadow-sm"
+                      style={{
+                        backgroundColor: selectedDeviceId === device.deviceId ? "color-mix(in srgb, var(--primary) 6%, var(--card))" : "var(--card)",
+                        borderColor: selectedDeviceId === device.deviceId ? "var(--primary)" : "var(--border)",
+                        cursor: "pointer"
+                      }}
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="rounded-lg flex items-center justify-center flex-shrink-0 shadow-sm" style={{ width: "40px", height: "40px", backgroundColor: "color-mix(in srgb, var(--primary) 12%, transparent)", border: "1px solid color-mix(in srgb, var(--primary) 20%, transparent)" }}>
+                          <Shield size={20} style={{ color: "var(--primary)" }} />
                         </div>
-                        <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{device.nodeId}</p>
+                        <div>
+                          <div className="flex items-center gap-2 mb-1">
+                            <StatusDot status={device.status} />
+                            <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{safeTrim(device.serial) || safeTrim(device.nodeId)}</p>
+                          </div>
+                          <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{safeTrim(device.nodeId)}</p>
+                        </div>
                       </div>
-                    </div>
-                    <ChevronRight size={18} style={{ color: "var(--muted-foreground)" }} />
-                  </button>
+                      <ChevronRight size={18} style={{ color: "var(--muted-foreground)" }} />
+                    </button>
                 ))}
               </div>
             )
@@ -965,9 +1136,17 @@ export function DV01DevicesList() {
             ) : (
               <div className="flex flex-col gap-3">
                 {filteredUnpaired.map((device) => (
-                  <button
+                  <div
                     key={device.deviceId}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setSelectedDeviceId(device.deviceId)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setSelectedDeviceId(device.deviceId);
+                      }
+                    }}
                     className="w-full text-left flex items-center justify-between p-4 rounded-xl border transition-all shadow-sm"
                     style={{
                       backgroundColor: selectedDeviceId === device.deviceId ? "color-mix(in srgb, var(--primary) 6%, var(--card))" : "var(--card)",
@@ -975,19 +1154,19 @@ export function DV01DevicesList() {
                       cursor: "pointer"
                     }}
                   >
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-4 min-w-0">
                       <div className="rounded-lg flex items-center justify-center flex-shrink-0 shadow-sm" style={{ width: "40px", height: "40px", backgroundColor: "var(--muted)", border: "1px solid var(--border)" }}>
                         <LayoutList size={20} style={{ color: "var(--muted-foreground)" }} />
                       </div>
-                      <div>
+                      <div className="min-w-0">
                         <div className="flex items-center gap-2 mb-1">
-                          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{device.serial}</p>
+                          <p className="truncate" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{safeTrim(device.serial) || safeTrim(device.nodeId)}</p>
                         </div>
-                        <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{device.nodeId} · Unpaired</p>
+                        <p className="truncate" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{safeTrim(device.nodeId)} · Unpaired</p>
                       </div>
                     </div>
-                    <ChevronRight size={18} style={{ color: "var(--muted-foreground)" }} />
-                  </button>
+                    <ChevronRight size={18} style={{ color: "var(--muted-foreground)", flexShrink: 0 }} />
+                  </div>
                 ))}
               </div>
             )
@@ -996,9 +1175,9 @@ export function DV01DevicesList() {
       </div>
 
       {/* Side panel */}
-      <div className="hidden md:flex flex-col" style={{ width: "380px", backgroundColor: "var(--card)", borderLeft: "1px solid var(--border)", boxShadow: "-4px 0 15px rgba(0,0,0,0.02)" }}>
-        {tab === "fleet" ? (
-          selectedFleetDevice ? (
+      {tab === "fleet" ? (
+        selectedFleetDevice && (
+          <div className="hidden md:flex flex-col flex-shrink-0" style={{ width: "380px", backgroundColor: "var(--card)", borderLeft: "1px solid var(--border)", boxShadow: "-4px 0 15px rgba(0,0,0,0.02)", animation: "slideInRight 220ms ease-out" }}>
             <FleetDetailPanel
               device={selectedFleetDevice}
               onClose={() => setSelectedFleetId(null)}
@@ -1006,39 +1185,142 @@ export function DV01DevicesList() {
               onDelete={setDeleteTarget}
               onChanged={loadFleet}
             />
-          ) : (
-            <div className="flex flex-col items-center justify-center h-full p-8 text-center">
-              <ShieldAlert size={48} style={{ color: "var(--muted-foreground)", opacity: 0.2, marginBottom: "16px" }} />
-              <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-medium)", color: "var(--foreground)" }}>Select a device</p>
-              <p className="mt-2" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>Click a device to view scores, run a scan, or manage blocking</p>
-            </div>
-          )
-        ) : selectedDeviceId ? (
-          <DeviceDetailPanel deviceId={selectedDeviceId} onClose={() => setSelectedDeviceId(null)} onUnpair={setUnpairId} />
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full p-8 text-center">
-            <Cpu size={48} style={{ color: "var(--muted-foreground)", opacity: 0.2, marginBottom: "16px" }} />
-            <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-medium)", color: "var(--foreground)" }}>Select a Guardian</p>
-            <p className="mt-2" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>Click a device from the list to view its connection details and status</p>
           </div>
-        )}
-      </div>
+        )
+      ) : (
+        selectedDeviceId && (
+          <div className="hidden md:flex flex-col flex-shrink-0" style={{ width: "380px", backgroundColor: "var(--card)", borderLeft: "1px solid var(--border)", boxShadow: "-4px 0 15px rgba(0,0,0,0.02)", animation: "slideInRight 220ms ease-out" }}>
+            <DeviceDetailPanel
+              deviceId={selectedDeviceId}
+              fallbackDevice={selectedGuardianDevice}
+              onClose={() => setSelectedDeviceId(null)}
+              onUnpair={setUnpairId}
+              onRepair={handleOpenRepair}
+            />
+          </div>
+        )
+      )}
 
       {/* Mobile side panel overlay */}
       {tab === "fleet" && selectedFleetId && selectedFleetDevice && (
         <div className="md:hidden fixed inset-0 z-50 flex justify-end" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setSelectedFleetId(null)}>
-          <div className="w-[85vw] max-w-[360px] h-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="w-[85vw] max-w-[360px] h-full shadow-2xl" style={{ animation: "slideInRight 220ms ease-out" }} onClick={(e) => e.stopPropagation()}>
             <FleetDetailPanel device={selectedFleetDevice} onClose={() => setSelectedFleetId(null)} onReject={setRejectTarget} onDelete={setDeleteTarget} onChanged={loadFleet} />
           </div>
         </div>
       )}
       {tab !== "fleet" && selectedDeviceId && (
         <div className="md:hidden fixed inset-0 z-50 flex justify-end" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={() => setSelectedDeviceId(null)}>
-          <div className="w-[85vw] max-w-[360px] h-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <DeviceDetailPanel deviceId={selectedDeviceId} onClose={() => setSelectedDeviceId(null)} onUnpair={setUnpairId} />
+          <div className="w-[85vw] max-w-[360px] h-full shadow-2xl" style={{ animation: "slideInRight 220ms ease-out" }} onClick={(e) => e.stopPropagation()}>
+            <DeviceDetailPanel
+              deviceId={selectedDeviceId}
+              fallbackDevice={selectedGuardianDevice}
+              onClose={() => setSelectedDeviceId(null)}
+              onUnpair={setUnpairId}
+              onRepair={handleOpenRepair}
+            />
           </div>
         </div>
       )}
+
+      {/* Re-pair Dialog */}
+      <Dialog.Root open={!!repairTarget} onOpenChange={(open) => !open && !repairLoading && resetRepair()}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[60]" style={{ backgroundColor: "rgba(0,0,0,0.7)" }} />
+          <Dialog.Content className="fixed z-[70] rounded-xl border border-border p-6 flex flex-col gap-4" style={{ backgroundColor: "var(--card)", left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: "calc(100% - 48px)", maxWidth: "440px" }}>
+            <Dialog.Title style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>Re-Pair Guardian</Dialog.Title>
+            <Dialog.Description style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", lineHeight: 1.6 }}>
+              Generate a fresh pairing code and paste the signed proof from the target device.
+            </Dialog.Description>
+
+            <div className="flex flex-col gap-3">
+              <div className="rounded-lg border border-border p-3" style={{ backgroundColor: "var(--background)" }}>
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em" }}>PAIRING CODE</span>
+                  <div className="flex items-center gap-2">
+                    {repairCodeCopied && (
+                      <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: "var(--chart-2)" }}>Copied</span>
+                    )}
+                    {repairLoading && !repairPairingData ? (
+                      <Loader2 size={14} className="animate-spin" style={{ color: "var(--primary)" }} />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleCopyRepairCode}
+                        disabled={!repairPairingData?.pairingCode}
+                        aria-label="Copy pairing code"
+                        title={repairCodeCopied ? "Copied" : "Copy pairing code"}
+                        className="flex items-center justify-center rounded-md transition-opacity active:opacity-80"
+                        style={{
+                          width: "30px",
+                          height: "30px",
+                          backgroundColor: repairCodeCopied ? "color-mix(in srgb, var(--chart-2) 14%, transparent)" : "var(--secondary)",
+                          color: repairCodeCopied ? "var(--chart-2)" : "var(--secondary-foreground)",
+                          border: "1px solid var(--border)",
+                          cursor: repairPairingData?.pairingCode ? "pointer" : "default",
+                          opacity: repairPairingData?.pairingCode ? 1 : 0.5,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {repairCodeCopied ? <Check size={13} /> : <Copy size={13} />}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px", color: "var(--foreground)", wordBreak: "break-all", lineHeight: 1.8, minHeight: "22px", userSelect: "all" }}>
+                  {repairPairingData?.pairingCode || "Generating..."}
+                </p>
+              </div>
+
+              <div>
+                <label style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: "var(--muted-foreground)", marginBottom: "6px", display: "block" }}>
+                  Signed Proof
+                </label>
+                <textarea
+                  autoFocus={!!repairPairingData}
+                  value={repairProof}
+                  onChange={(event) => setRepairProof(event.target.value)}
+                  placeholder="Paste the proof string from the Guardian device..."
+                  rows={5}
+                  className="w-full px-4 py-3 outline-none"
+                  disabled={!repairPairingData || repairLoading}
+                  style={{
+                    backgroundColor: "var(--input-background)",
+                    border: "1.5px solid var(--border)",
+                    borderRadius: "var(--radius)",
+                    color: "var(--foreground)",
+                    fontFamily: "JetBrains Mono, monospace",
+                    fontSize: "11px",
+                    resize: "none",
+                    lineHeight: 1.7,
+                    width: "100%",
+                    boxSizing: "border-box",
+                    opacity: repairPairingData ? 1 : 0.55,
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={resetRepair}
+                disabled={repairLoading}
+                style={{ flex: 1, height: "44px", backgroundColor: "var(--secondary)", border: "1px solid var(--border)", borderRadius: "var(--radius)", cursor: repairLoading ? "default" : "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--foreground)", opacity: repairLoading ? 0.6 : 1 }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRepair}
+                disabled={!repairPairingData || !safeTrim(repairProof) || repairLoading}
+                style={{ flex: 1, height: "44px", backgroundColor: "var(--primary)", border: "none", borderRadius: "var(--radius)", cursor: repairPairingData && safeTrim(repairProof) && !repairLoading ? "pointer" : "default", opacity: repairPairingData && safeTrim(repairProof) && !repairLoading ? 1 : 0.5, fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--primary-foreground)", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}
+              >
+                {repairLoading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                Re-Pair
+              </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       {/* Unpair Confirm Dialog */}
       <Dialog.Root open={!!unpairId} onOpenChange={(open) => !open && setUnpairId(null)}>
@@ -1115,7 +1397,10 @@ export function DV01DevicesList() {
       <AddManualDeviceDialog open={addDialogOpen} onOpenChange={setAddDialogOpen} onAdded={loadFleet} />
       <RejectDeviceDialog device={rejectTarget} onOpenChange={(open) => !open && setRejectTarget(null)} onRejected={loadFleet} />
 
-      <style>{`@keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }`}</style>
+      <style>{`
+        @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+        @keyframes slideInRight { from{transform:translateX(100%); opacity:0.6} to{transform:translateX(0); opacity:1} }
+      `}</style>
     </div>
   );
 }

@@ -80,6 +80,14 @@ pub struct PairedDevice {
     pub owner_user_id: String,
     #[serde(default, alias = "pairedAt")]
     pub paired_at: String,
+    #[serde(
+        default,
+        alias = "reactivatedAt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reactivated_at: Option<String>,
+    #[serde(default, alias = "updatedAt", skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
     pub status: String,
     #[serde(default, alias = "nodeId", skip_serializing_if = "Option::is_none")]
     pub node_id: Option<String>,
@@ -137,8 +145,11 @@ pub trait SessionStore: Send + Sync {
 pub trait DeviceStore: Send + Sync {
     async fn upsert(&self, device: PairedDevice) -> Result<()>;
     async fn get(&self, device_id: &str) -> Result<Option<PairedDevice>>;
+    async fn get_by_did(&self, did: &str) -> Result<Option<PairedDevice>>;
     async fn list(&self, owner_user_id: &str) -> Result<Vec<PairedDevice>>;
     async fn list_all(&self) -> Result<Vec<PairedDevice>>;
+    async fn list_all_records(&self) -> Result<Vec<PairedDevice>>;
+    async fn list_unpaired(&self) -> Result<Vec<PairedDevice>>;
     async fn unbind(&self, owner_user_id: &str, device_id: &str) -> Result<()>;
 }
 
@@ -823,6 +834,15 @@ impl DeviceStore for JsonDeviceStore {
             .find(|device| device.device_id == device_id))
     }
 
+    async fn get_by_did(&self, did: &str) -> Result<Option<PairedDevice>> {
+        Ok(self
+            .file
+            .read()
+            .await?
+            .into_iter()
+            .find(|device| device.did == did))
+    }
+
     async fn list(&self, owner_user_id: &str) -> Result<Vec<PairedDevice>> {
         Ok(self
             .file
@@ -840,6 +860,20 @@ impl DeviceStore for JsonDeviceStore {
             .await?
             .into_iter()
             .filter(|device| device.status != "unpaired")
+            .collect())
+    }
+
+    async fn list_all_records(&self) -> Result<Vec<PairedDevice>> {
+        self.file.read().await
+    }
+
+    async fn list_unpaired(&self) -> Result<Vec<PairedDevice>> {
+        Ok(self
+            .file
+            .read()
+            .await?
+            .into_iter()
+            .filter(|device| device.status == "unpaired")
             .collect())
     }
 
@@ -1047,6 +1081,8 @@ mod tests {
             did: "did:guardian:test-device".into(),
             owner_user_id: "user-1".into(),
             paired_at: "2026-06-29T00:00:00Z".into(),
+            reactivated_at: None,
+            updated_at: None,
             status: "paired".into(),
             node_id: Some("nodeB".into()),
         };
@@ -1201,6 +1237,8 @@ mod tests {
                 did: paired.device_did.clone(),
                 owner_user_id: paired.owner_user_id.clone(),
                 paired_at: "2026-07-01T00:00:00Z".into(),
+                reactivated_at: None,
+                updated_at: None,
                 status: "bootstrap_pending".into(),
                 node_id: Some(paired.node_id.clone()),
             })
@@ -1297,6 +1335,8 @@ mod tests {
                 did: paired.device_did.clone(),
                 owner_user_id: paired.owner_user_id.clone(),
                 paired_at: "2026-07-01T00:00:00Z".into(),
+                reactivated_at: None,
+                updated_at: None,
                 status: "bootstrap_pending".into(),
                 node_id: Some(paired.node_id.clone()),
             })

@@ -298,6 +298,10 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             "/api/v1/devices/paired",
             get(handlers::devices::paired_list),
         )
+        .route(
+            "/api/v1/devices/unpaired",
+            get(handlers::devices::unpaired_list),
+        )
         .route("/api/v1/devices/pair", post(handlers::devices::pair))
         .route(
             "/api/v1/devices/pairing-code",
@@ -307,6 +311,8 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             "/api/v1/devices/pairing-status",
             get(handlers::devices::pairing_status),
         )
+        // Keep static collection routes ahead of the device-id capture route.
+        .route("/api/v1/devices/all", get(handlers::devices::all_list))
         .route(
             "/api/v1/devices/{device_id}",
             get(handlers::devices::paired_detail),
@@ -3139,6 +3145,20 @@ mod tests {
         assert_eq!(unpair_body["deviceId"], node_c_device_id);
         assert_eq!(unpair_body["status"], "unpaired");
 
+        let unpaired_detail = client
+            .get(format!("{}/api/v1/devices/{}", base_url, node_c_device_id))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .expect("unpaired device detail");
+        assert_eq!(unpaired_detail.status(), StatusCode::OK);
+        let unpaired_detail_body: Value = unpaired_detail
+            .json()
+            .await
+            .expect("unpaired device detail body");
+        assert_eq!(unpaired_detail_body["deviceId"], node_c_device_id);
+        assert_eq!(unpaired_detail_body["status"], "unpaired");
+
         let devices_after_unpair = client
             .get(format!("{}/api/v1/devices", base_url))
             .bearer_auth(&token)
@@ -3151,6 +3171,41 @@ mod tests {
             .expect("devices after unpair body");
         assert_eq!(devices_after_unpair_body.len(), 1);
         assert_eq!(devices_after_unpair_body[0]["deviceId"], node_b_device_id);
+
+        let unpaired_devices = client
+            .get(format!("{}/api/v1/devices/unpaired", base_url))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .expect("unpaired devices list");
+        assert_eq!(unpaired_devices.status(), StatusCode::OK);
+        let unpaired_devices_body: Vec<Value> = unpaired_devices
+            .json()
+            .await
+            .expect("unpaired devices body");
+        assert_eq!(unpaired_devices_body.len(), 1);
+        assert_eq!(unpaired_devices_body[0]["deviceId"], node_c_device_id);
+        assert_eq!(unpaired_devices_body[0]["status"], "unpaired");
+        assert_eq!(unpaired_devices_body[0]["nodeId"], "nodeC");
+
+        let all_devices = client
+            .get(format!("{}/api/v1/devices/all", base_url))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .expect("all devices list");
+        assert_eq!(all_devices.status(), StatusCode::OK);
+        let all_devices_body: Vec<Value> = all_devices
+            .json()
+            .await
+            .expect("all devices body");
+        assert_eq!(all_devices_body.len(), 2);
+        assert!(all_devices_body.iter().any(
+            |device| device["deviceId"] == node_b_device_id && device["status"] == "active"
+        ));
+        assert!(all_devices_body.iter().any(
+            |device| device["deviceId"] == node_c_device_id && device["status"] == "unpaired"
+        ));
 
         let _ = env;
         handle.abort();

@@ -891,6 +891,7 @@ fn api_error_to_vc_error(err: ApiError) -> VcError {
         ApiError::BadRequest(message)
         | ApiError::Forbidden(message)
         | ApiError::Conflict(message)
+        | ApiError::DeviceAlreadyPaired(message)
         | ApiError::Locked(message)
         | ApiError::NotFound(message)
         | ApiError::TooManyRequests(message)

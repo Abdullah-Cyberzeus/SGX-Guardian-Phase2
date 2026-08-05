@@ -176,12 +176,10 @@ pub async fn send_message(
         let circle_id = req.recipient_did.clone();
         let circle_members = crate::circle::members::list_members(&state.node_id, &circle_id)
             .map_err(|e| ApiError::BadRequest(format!("Failed to load circle members: {:?}", e)))?;
-        
+
         // Extract DIDs of circle members
-        let member_dids: std::collections::HashSet<String> = circle_members
-            .into_iter()
-            .map(|m| m.did)
-            .collect();
+        let member_dids: std::collections::HashSet<String> =
+            circle_members.into_iter().map(|m| m.did).collect();
 
         for p in raw_peers.iter() {
             let status = p.get("status").and_then(|v| v.as_str());
