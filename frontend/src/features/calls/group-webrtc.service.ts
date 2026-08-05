@@ -25,6 +25,9 @@ export class GroupWebRtcService {
 
   async prepare(media: MediaType[]): Promise<MediaStream> {
     this.close();
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      throw new Error("Microphone and camera access requires a trusted HTTPS connection (or localhost). Open this Guardian using its HTTPS address and trust its certificate.");
+    }
     const tracks: MediaStreamTrack[] = [];
     const inputs: MediaStreamTrack[] = [];
     if (media.includes("audio")) {

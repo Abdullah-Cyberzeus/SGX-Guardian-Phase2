@@ -86,6 +86,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (!initialToken) {
+      setSession(null);
+      setLoading(false);
+      return;
+    }
     // Restore token from localStorage before session check
     // Validate session with backend
     api.get<AuthPayload>('/auth/session')
