@@ -23,6 +23,7 @@ import { threatService } from '../services/threatService';
 import type { ThreatAlertsFilters } from '../services/threatService';
 import { dusageService } from '../services/dusageService';
 import { ruleService } from '../services/ruleService';
+import { smartHomeService } from '../services/smartHomeService';
 
 interface UseApiDataResult<T> {
   data: T | null;
@@ -450,6 +451,33 @@ export function useDiscoveryWhitelist() {
  */
 export function useDiscoverySchedule() {
   return useApiData(() => discoveryService.getSchedule());
+}
+
+// ── Smart Home / Home Assistant bridge (SGX Guardian) ──────────────────────
+
+/** Hook for the broad device registry — screens filter/paginate client-side. */
+export function useSmartHomeDevices() {
+  return useApiData(() => smartHomeService.listDevices({ page: 1, per_page: 200 }), { pollingInterval: 15000 });
+}
+
+/** Hook for system-wide device health aggregate (total/online/offline/error). */
+export function useSmartHomeDeviceHealth() {
+  return useApiData(() => smartHomeService.getDeviceHealth(), { pollingInterval: 15000 });
+}
+
+/** Hook for the vendor integration registry (Google Nest, TP-Link Kasa). */
+export function useSmartHomeIntegrations() {
+  return useApiData(() => smartHomeService.listIntegrations(), { pollingInterval: 20000 });
+}
+
+/** Hook for automation rules — small rule sets, so screens filter/paginate client-side. */
+export function useSmartHomeAutomations() {
+  return useApiData(() => smartHomeService.listAutomations({ page: 1, per_page: 100 }), { pollingInterval: 20000 });
+}
+
+/** Hook for the notification feed — screens filter unread/severity client-side. */
+export function useSmartHomeNotifications() {
+  return useApiData(() => smartHomeService.listNotifications({ page: 1, per_page: 100 }), { pollingInterval: 15000 });
 }
 
 /**

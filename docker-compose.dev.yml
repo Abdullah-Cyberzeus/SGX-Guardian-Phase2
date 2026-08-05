@@ -9,6 +9,9 @@ x-guardian-common: &guardian-common
     - NET_ADMIN
   devices:
     - /dev/net/tun:/dev/net/tun
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  env_file: .env
   environment: &guardian-env
     RUST_LOG: info
     SGX_FORCE_SOFTWARE_KEYS: "1"

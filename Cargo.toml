@@ -33,6 +33,9 @@ sha2 = "0.10"
 hex = "0.4"
 ipnet = "2"
 futures-core = "0.3"
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
+url = "2"
+dotenvy = "0.15"
 rustls = { version = "0.23.38", default-features = false, features = ["ring", "std", "tls12"] }
 bs58 = "0.5"
 thiserror = "2"
@@ -55,6 +58,7 @@ quick-xml = { version = "0.41", features = ["serialize"] }
 which = "8"
 socket2 = "0.5"
 tokio-util = { version = "0.7.18", features = ["io"] }
+fs2 = "0.4"
 
 [build-dependencies]
 tonic-prost-build = "0.14.5"

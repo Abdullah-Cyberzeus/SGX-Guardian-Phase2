@@ -20,6 +20,7 @@ export { default as discoveryService } from './discoveryService';
 export { default as crlService } from './crlService';
 export { default as backupService } from './backupService';
 export { default as managedDeviceService } from './managedDeviceService';
+export { default as smartHomeService, openSmartHomeSocket } from './smartHomeService';
 
 // Export types
 export type { NodeStatus, BootStatus } from './nodeService';
@@ -159,3 +160,34 @@ export type {
   DeviceScanProgressTransition,
   DeviceScanRun,
 } from './managedDeviceService';
+
+export type {
+  Paginated as SmartHomePaginated,
+  SmartDevice,
+  DeviceListFilters,
+  DeviceStateSnapshot,
+  DeviceCommandRequest,
+  DeviceCommandResponse,
+  DeviceSyncResponse,
+  DeviceHealthSummary,
+  AutomationTrigger,
+  AutomationAction,
+  AutomationRule,
+  AutomationListFilters,
+  AutomationMutationResponse,
+  TelemetryEvent,
+  TelemetryFilters,
+  SmartHomeNotification,
+  NotificationFilters,
+  MarkNotificationsReadResponse,
+  IntegrationProvider,
+  IntegrationStatus,
+  IntegrationsOverview,
+  ConnectOAuthProviderRequest,
+  ConnectKasaRequest,
+  ConnectIntegrationRequest,
+  ConnectIntegrationResponse,
+  DisconnectIntegrationResponse,
+  SmartHomeTopic,
+  SmartHomeSocketEvent,
+} from './smartHomeService';

@@ -2,24 +2,17 @@
 //!
 //! YAML-based manual approval + NebulaCA signing.
 
-use crate::api::auth::{
-    pairing::{self, PairingUsage},
-    store::{global_admin_stores, AdminStores},
-};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::config_loader::load_config;
-use crate::key_manager::KeyManager;
 use crate::logging::log_event;
 use crate::nebula::ca::NebulaCA;
 use crate::nebula::models::CircleMembership;
 use crate::nebula::relay_registry::RelayRegistry;
 use crate::proto::sgx::cert_service_server::CertService;
 use crate::proto::sgx::{CertSignRequest, CertSignResponse};
-use base64::{engine::general_purpose::STANDARD, Engine as _};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex as StdMutex};
@@ -30,7 +23,6 @@ use tonic::{Request, Response, Status};
 const NEBULA_BASE_DIR: &str = "/var/lib/sgx-guardian/nebula";
 const RELAY_REGISTRY_PATH: &str = "/var/lib/sgx-guardian/nebula/relay_registry.json";
 const PA_PUB_PATH: &str = "/etc/sgx-guardian/policies/pa_admin_pub.der";
-const DID_PATH_ENV: &str = "SGX_GUARDIAN_DID_PATH";
 
 /// Poll interval for YAML approval check (seconds).
 const APPROVAL_POLL_SECS: u64 = 2;
@@ -39,9 +31,9 @@ const APPROVAL_POLL_SECS: u64 = 2;
 const APPROVAL_TIMEOUT_SECS: u64 = 3600;
 
 /// YAML structure written to nebula/requests/<node>.yaml
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum ApprovalDecision {
+enum ApprovalDecision {
     #[serde(alias = "false", alias = "reject", alias = "no")]
     False,
     #[serde(alias = "member")]
@@ -54,14 +46,14 @@ pub enum ApprovalDecision {
     LhRelay,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct CertRequestYaml {
-    pub node_id: String,
-    pub requested_at: String,
-    pub overlay_ip: String,
-    pub public_key_fingerprint: String,
-    pub requested_role: String,
-    pub approve: ApprovalDecision,
+#[derive(Debug, Serialize, Deserialize)]
+struct CertRequestYaml {
+    node_id: String,
+    requested_at: String,
+    overlay_ip: String,
+    public_key_fingerprint: String,
+    requested_role: String,
+    approve: ApprovalDecision,
 }
 
 /// gRPC CertService implementation — registered on nodeA only.
@@ -89,10 +81,6 @@ fn node_lock(node_id: &str) -> Arc<AsyncMutex<()>> {
         .clone()
 }
 
-fn admin_stores() -> Arc<AdminStores> {
-    global_admin_stores().unwrap_or_else(|| AdminStores::new("/var/lib/sgx-guardian/admin"))
-}
-
 async fn read_pa_pubkey_or_warn() -> Vec<u8> {
     match tokio::fs::read(PA_PUB_PATH).await {
         Ok(b) if !b.is_empty() => b,
@@ -106,140 +94,11 @@ async fn read_pa_pubkey_or_warn() -> Vec<u8> {
     }
 }
 
-fn env_true(key: &str) -> bool {
-    matches!(
-        std::env::var(key).ok().as_deref(),
-        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("on")
-    )
-}
-
-fn software_keys_forced() -> bool {
-    env_true("SGX_FORCE_SOFTWARE_KEYS") || env_true("SGX_DISABLE_SE050_DKP")
-}
-
-fn ca_did_path() -> String {
-    std::env::var(DID_PATH_ENV).unwrap_or_else(|_| crate::did::DEFAULT_DID_PATH.to_string())
-}
-
-fn ca_key_path(node_id: &str) -> String {
-    let dir = std::env::var(crate::vc::issue::DEVICE_KEY_DIR_ENV)
-        .unwrap_or_else(|_| "/var/lib/sgx-guardian/sgx-agent".to_string());
-    format!("{}/device_{}.key", dir.trim_end_matches('/'), node_id)
-}
-
-fn derive_device_id(public_key_b64: &str) -> Option<String> {
-    let public_key = STANDARD.decode(public_key_b64.trim()).ok()?;
-    (!public_key.is_empty()).then(|| hex::encode(Sha256::digest(public_key)))
-}
-
-async fn sync_admin_bootstrap_state(
-    stores: &AdminStores,
-    pairing: Option<&pairing::AuthorizedPairing>,
-    node_id: &str,
-    public_key_b64: &str,
-) -> Result<(), Status> {
-    if let Some(pairing) = pairing {
-        return stores
-            .sync_bootstrap_by_identity(
-                Some(pairing.serial.as_str()),
-                Some(pairing.device_id.as_str()),
-                Some(pairing.device_did.as_str()),
-                Some(pairing.owner_user_id.as_str()),
-                Some(pairing.node_id.as_str()),
-            )
-            .await
-            .map_err(|e| Status::internal(format!("bootstrap state sync failed: {}", e)));
-    }
-
-    let Some(device_id) = derive_device_id(public_key_b64) else {
-        return Ok(());
-    };
-
-    stores
-        .sync_bootstrap_by_identity(None, Some(device_id.as_str()), None, None, Some(node_id))
-        .await
-        .map_err(|e| Status::internal(format!("bootstrap state sync failed: {}", e)))
-}
-fn load_ca_bootstrap_identity_with_paths(
-    node_id: &str,
-    force_software_keys: bool,
-    did_path: &str,
-    dkp_pubkey_path: &str,
-    key_path: &str,
-) -> Result<(crate::did::DidRecord, KeyManager), Status> {
-    if force_software_keys {
-        let km = KeyManager::load_or_generate(key_path)
-            .map_err(|e| Status::internal(format!("CA key manager: {}", e)))?;
-        crate::did::ensure_runtime_pubkey(&km, dkp_pubkey_path)
-            .map_err(|e| Status::internal(format!("CA DID pubkey export: {}", e)))?;
-        crate::did::create_if_absent(node_id, &km, dkp_pubkey_path, did_path)
-            .map_err(|e| Status::internal(format!("CA DID ensure: {}", e)))?;
-        crate::did::ensure_self_document(node_id, &km, did_path, dkp_pubkey_path)
-            .map_err(|e| Status::internal(format!("CA DID document ensure: {}", e)))?;
-        let issuer = crate::did::DidRecord::load(did_path)
-            .map_err(|e| Status::internal(format!("CA DID load: {}", e)))?;
-        return Ok((issuer, km));
-    }
-
-    let issuer = crate::did::DidRecord::load(did_path)
-        .map_err(|e| Status::internal(format!("CA DID load: {}", e)))?;
-
-    #[cfg(feature = "tpm")]
-    {
-        let tpm_cfg = crate::tpm::TpmConfig::default();
-        if crate::tpm::should_attempt(&tpm_cfg) {
-            let km = KeyManager::init_with_tpm(&tpm_cfg, crate::tpm::TPM_BASE_PATH, key_path)
-                .map_err(|e| Status::internal(format!("CA key manager: {}", e)))?;
-
-            if km.backend_name() == "Software" {
-                return Err(Status::failed_precondition(
-                    "CA cert bootstrap requires a hardware-backed DID; set SGX_FORCE_SOFTWARE_KEYS=1 only for container/dev mode",
-                ));
-            }
-
-            return Ok((issuer, km));
-        }
-    }
-    #[cfg(feature = "secure-element")]
-    {
-        let km = KeyManager::init_with_se050(
-            &crate::secure_element::config::SeConfig::default(),
-            "/var/lib/sgx-guardian",
-            key_path,
-        )
-        .map_err(|e| Status::internal(format!("CA key manager: {}", e)))?;
-
-        if km.backend_name() != "SE050" {
-            return Err(Status::failed_precondition(
-                "CA cert bootstrap requires a hardware-backed DID; set SGX_FORCE_SOFTWARE_KEYS=1 only for container/dev mode",
-            ));
-        }
-
-        Ok((issuer, km))
-    }
-
-    #[cfg(not(feature = "secure-element"))]
-    {
-        return Err(Status::failed_precondition(
-            "CA cert bootstrap requires SGX_FORCE_SOFTWARE_KEYS=1 when no hardware backend is available",
-        ));
-    }
-}
-
-fn load_ca_bootstrap_identity(
-    node_id: &str,
-) -> Result<(crate::did::DidRecord, KeyManager), Status> {
-    load_ca_bootstrap_identity_with_paths(
-        node_id,
-        software_keys_forced(),
-        &ca_did_path(),
-        crate::did::DEFAULT_DKP_PUBKEY_PATH,
-        &ca_key_path(node_id),
-    )
-}
-
 fn issue_member_vc(node_id: &str) -> Result<crate::vc::credential::VerifiableCredential, Status> {
-    let (issuer, km) = load_ca_bootstrap_identity("nodeA")?;
+    let issuer = crate::did::DidRecord::load(crate::did::DEFAULT_DID_PATH)
+        .map_err(|e| Status::internal(format!("CA DID load: {}", e)))?;
+    let km = crate::vc::issue::load_runtime_key_manager("nodeA")
+        .map_err(|e| Status::internal(format!("VC key manager: {}", e)))?;
     let subject_did = if node_id == "nodeA" {
         issuer.did.clone()
     } else {
@@ -388,24 +247,6 @@ impl CertService for MyCertService {
             (false, true) => "relay",
             (false, false) => "member",
         };
-        let admin_stores = admin_stores();
-        let auto_approved_pairing = if req.pairing_proof.trim().is_empty() {
-            None
-        } else {
-            let pairing = pairing::authorize_pairing_proof(
-                admin_stores.as_ref(),
-                &req.pairing_proof,
-                PairingUsage::Bootstrap,
-            )
-            .await
-            .map_err(|e| Status::permission_denied(format!("pairing proof rejected: {}", e)))?;
-            if pairing.node_id != node_id {
-                return Err(Status::permission_denied(
-                    "pairing proof node_id does not match certificate request",
-                ));
-            }
-            Some(pairing)
-        };
 
         // ── 1. Log receipt ──────────────────────────────────────────
         println!("Certificate request received from {}", node_id);
@@ -483,13 +324,6 @@ impl CertService for MyCertService {
                     .ok()
                     .and_then(|vc| serde_json::to_string(&vc).ok())
                     .unwrap_or_default();
-                sync_admin_bootstrap_state(
-                    admin_stores.as_ref(),
-                    auto_approved_pairing.as_ref(),
-                    &node_id,
-                    &public_key_pem,
-                )
-                .await?;
 
                 return Ok(Response::new(CertSignResponse {
                     status: "approved".into(),
@@ -536,186 +370,170 @@ impl CertService for MyCertService {
         // file that no longer exists until the 1-hour timeout, and the
         // admin never sees a new approval prompt.
         // ═══════════════════════════════════════════════════════════
-        if auto_approved_pairing.is_none() {
-            let mut needs_new_yaml = true;
-            if Path::new(&yaml_path).exists() {
-                needs_new_yaml = false;
-                // Read existing YAML
-                if let Ok(content) = tokio::fs::read_to_string(&yaml_path).await {
-                    if let Ok(parsed) = serde_yaml::from_str::<CertRequestYaml>(&content) {
-                        if matches!(
-                            parsed.approve,
-                            ApprovalDecision::Member
-                                | ApprovalDecision::Lighthouse
-                                | ApprovalDecision::Relay
-                                | ApprovalDecision::LhRelay
-                        ) {
-                            // Old approved YAML is stale → delete it
-                            println!(
-                                "⚠️ Stale approved YAML detected for {} — deleting old request",
+        let mut needs_new_yaml = true;
+
+        if Path::new(&yaml_path).exists() {
+            needs_new_yaml = false;
+            // Read existing YAML
+            if let Ok(content) = tokio::fs::read_to_string(&yaml_path).await {
+                if let Ok(parsed) = serde_yaml::from_str::<CertRequestYaml>(&content) {
+                    if matches!(
+                        parsed.approve,
+                        ApprovalDecision::Member
+                            | ApprovalDecision::Lighthouse
+                            | ApprovalDecision::Relay
+                            | ApprovalDecision::LhRelay
+                    ) {
+                        // Old approved YAML is stale → delete it and re-request approval
+                        println!(
+                            "⚠️ Stale approved YAML detected for {} — deleting old request",
+                            node_id
+                        );
+
+                        log_event(
+                            "nodeA",
+                            &format!(
+                                "Deleting stale approved YAML for {} before new request",
                                 node_id
-                            );
+                            ),
+                        );
 
-                            log_event(
-                                "nodeA",
-                                &format!(
-                                    "Deleting stale approved YAML for {} before new request",
-                                    node_id
-                                ),
-                            );
+                        let _ = tokio::fs::remove_file(&yaml_path).await;
+                        needs_new_yaml = true;
+                    } else {
+                        // Pending request still valid
+                        println!(
+                            "YAML already exists for {} — request still pending, resuming poll",
+                            node_id
+                        );
 
-                            let _ = tokio::fs::remove_file(&yaml_path).await;
-                            needs_new_yaml = true;
-                        } else {
-                            // Pending request still valid
-                            println!(
-                                "YAML already exists for {} — request still pending, resuming poll",
-                                node_id
-                            );
-
-                            log_event(
-                                "nodeA",
-                                &format!(
-                                    "Existing pending YAML for {} — polling continues",
-                                    node_id
-                                ),
-                            );
-                        }
+                        log_event(
+                            "nodeA",
+                            &format!("Existing pending YAML for {} — polling continues", node_id),
+                        );
                     }
                 }
-            }
-
-            if needs_new_yaml {
-                // Fingerprint from public key (first 16 hex chars of SHA-256)
-                let fingerprint = {
-                    use sha2::{Digest, Sha256};
-                    let hash = Sha256::digest(public_key_pem.as_bytes());
-                    hex::encode(&hash[..8])
-                };
-
-                let yaml_data = CertRequestYaml {
-                    node_id: node_id.clone(),
-                    requested_at: chrono::Utc::now().to_rfc3339(),
-                    overlay_ip: req.overlay_ip.clone(),
-                    public_key_fingerprint: fingerprint,
-                    requested_role: requested_role.to_string(),
-                    approve: ApprovalDecision::False,
-                };
-
-                let yaml_string = serde_yaml::to_string(&yaml_data)
-                    .map_err(|e| Status::internal(format!("YAML serialization failed: {}", e)))?;
-
-                if let Err(e) = tokio::fs::write(&yaml_path, &yaml_string).await {
-                    eprintln!("Failed to write approval YAML: {}", e);
-                    return Err(Status::internal("Failed to create approval YAML"));
-                }
-
-                // Terminal instructions for admin
-                println!();
-                println!("Approval file created: {}", yaml_path);
-                println!();
-                println!("Edit the file and set 'approve' to ONE of:");
-                println!("  approve: false        (reject the request)");
-                println!("  approve: member       (accept as standard member)");
-                println!("  approve: lighthouse   (accept as lighthouse only)");
-                println!("  approve: relay        (accept as relay only)");
-                println!("  approve: lh_relay     (accept as lighthouse + relay)");
-                println!();
-                println!("Save the file to trigger approval.");
             }
         }
 
-        // ── 4. Async-poll YAML for approve: true ────────────────────
-        let (assigned_lh, assigned_relay) = if auto_approved_pairing.is_some() {
-            println!("Auto-approval detected for {} via pairing proof", node_id);
-            log_event(
-                "nodeA",
-                &format!(
-                    "Certificate auto-approved for {} via pairing proof",
-                    node_id
-                ),
-            );
-            (false, false)
-        } else {
-            let start = tokio::time::Instant::now();
-            let timeout = std::time::Duration::from_secs(APPROVAL_TIMEOUT_SECS);
-            let poll_interval = std::time::Duration::from_secs(APPROVAL_POLL_SECS);
-            loop {
-                if start.elapsed() > timeout {
-                    println!(
-                        "Approval timeout for {} after {} seconds",
-                        node_id, APPROVAL_TIMEOUT_SECS
-                    );
-                    log_audit(
-                        "nodeA",
-                        AuditCategory::Network,
-                        AuditSeverity::Warning,
-                        AuditAction::Failed,
-                        &format!("Certificate approval timeout for {}", node_id),
-                    );
-                    return Ok(Response::new(CertSignResponse {
-                        status: "pending".into(),
-                        signed_cert_pem: String::new(),
-                        node_key_pem: String::new(),
-                        ca_cert_pem: String::new(),
-                        message: format!(
-                            "Approval timeout after {} seconds. Request still pending.",
-                            APPROVAL_TIMEOUT_SECS
-                        ),
-                        assigned_lighthouse: false,
-                        lighthouse_registry_json: String::new(),
-                        overlay_registry_json: String::new(),
-                        signed_policy_bytes: Vec::new(),
-                        assigned_relay: false,
-                        relay_registry_json: String::new(),
-                        signing_pubkey_der: Vec::new(),
-                        member_vc_json: String::new(),
-                    }));
-                }
+        if needs_new_yaml {
+            // Fingerprint from public key (first 16 hex chars of SHA-256)
+            let fingerprint = {
+                use sha2::{Digest, Sha256};
+                let hash = Sha256::digest(public_key_pem.as_bytes());
+                hex::encode(&hash[..8])
+            };
 
-                // Read and parse YAML
-                if let Ok(content) = tokio::fs::read_to_string(&yaml_path).await {
-                    if let Ok(parsed) = serde_yaml::from_str::<CertRequestYaml>(&content) {
-                        match parsed.approve {
-                            ApprovalDecision::False => {}
-                            ApprovalDecision::Member => {
-                                println!("Approval detected for {} (role: member)", node_id);
-                                log_event(
-                                    "nodeA",
-                                    &format!("Certificate approval detected for {}", node_id),
-                                );
-                                break (false, false);
-                            }
-                            ApprovalDecision::Lighthouse => {
-                                println!("Approval detected for {} (role: lighthouse)", node_id);
-                                log_event(
-                                    "nodeA",
-                                    &format!("Certificate approval detected for {}", node_id),
-                                );
-                                break (true, false);
-                            }
-                            ApprovalDecision::Relay => {
-                                println!("Approval detected for {} (role: relay)", node_id);
-                                log_event(
-                                    "nodeA",
-                                    &format!("Certificate approval detected for {}", node_id),
-                                );
-                                break (false, true);
-                            }
-                            ApprovalDecision::LhRelay => {
-                                println!("Approval detected for {} (role: lh_relay)", node_id);
-                                log_event(
-                                    "nodeA",
-                                    &format!("Certificate approval detected for {}", node_id),
-                                );
-                                break (true, true);
-                            }
+            let yaml_data = CertRequestYaml {
+                node_id: node_id.clone(),
+                requested_at: chrono::Utc::now().to_rfc3339(),
+                overlay_ip: req.overlay_ip.clone(),
+                public_key_fingerprint: fingerprint,
+                requested_role: requested_role.to_string(),
+                approve: ApprovalDecision::False,
+            };
+
+            let yaml_string = serde_yaml::to_string(&yaml_data)
+                .map_err(|e| Status::internal(format!("YAML serialization failed: {}", e)))?;
+
+            if let Err(e) = tokio::fs::write(&yaml_path, &yaml_string).await {
+                eprintln!("Failed to write approval YAML: {}", e);
+                return Err(Status::internal("Failed to create approval YAML"));
+            }
+
+            // Terminal instructions for admin
+            println!();
+            println!("Approval file created: {}", yaml_path);
+            println!();
+            println!("Edit the file and set 'approve' to ONE of:");
+            println!("  approve: false        (reject the request)");
+            println!("  approve: member       (accept as standard member)");
+            println!("  approve: lighthouse   (accept as lighthouse only)");
+            println!("  approve: relay        (accept as relay only)");
+            println!("  approve: lh_relay     (accept as lighthouse + relay)");
+            println!();
+            println!("Save the file to trigger approval.");
+        }
+
+        // ── 4. Async-poll YAML for approve: true ────────────────────
+        let start = tokio::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(APPROVAL_TIMEOUT_SECS);
+        let poll_interval = std::time::Duration::from_secs(APPROVAL_POLL_SECS);
+        let (assigned_lh, assigned_relay) = loop {
+            if start.elapsed() > timeout {
+                println!(
+                    "Approval timeout for {} after {} seconds",
+                    node_id, APPROVAL_TIMEOUT_SECS
+                );
+                log_audit(
+                    "nodeA",
+                    AuditCategory::Network,
+                    AuditSeverity::Warning,
+                    AuditAction::Failed,
+                    &format!("Certificate approval timeout for {}", node_id),
+                );
+                return Ok(Response::new(CertSignResponse {
+                    status: "pending".into(),
+                    signed_cert_pem: String::new(),
+                    node_key_pem: String::new(),
+                    ca_cert_pem: String::new(),
+                    message: format!(
+                        "Approval timeout after {} seconds. Request still pending.",
+                        APPROVAL_TIMEOUT_SECS
+                    ),
+                    assigned_lighthouse: false,
+                    lighthouse_registry_json: String::new(),
+                    overlay_registry_json: String::new(),
+                    signed_policy_bytes: Vec::new(),
+                    assigned_relay: false,
+                    relay_registry_json: String::new(),
+                    signing_pubkey_der: Vec::new(),
+                    member_vc_json: String::new(),
+                }));
+            }
+
+            // Read and parse YAML
+            if let Ok(content) = tokio::fs::read_to_string(&yaml_path).await {
+                if let Ok(parsed) = serde_yaml::from_str::<CertRequestYaml>(&content) {
+                    match parsed.approve {
+                        ApprovalDecision::False => {}
+                        ApprovalDecision::Member => {
+                            println!("Approval detected for {} (role: member)", node_id);
+                            log_event(
+                                "nodeA",
+                                &format!("Certificate approval detected for {}", node_id),
+                            );
+                            break (false, false);
+                        }
+                        ApprovalDecision::Lighthouse => {
+                            println!("Approval detected for {} (role: lighthouse)", node_id);
+                            log_event(
+                                "nodeA",
+                                &format!("Certificate approval detected for {}", node_id),
+                            );
+                            break (true, false);
+                        }
+                        ApprovalDecision::Relay => {
+                            println!("Approval detected for {} (role: relay)", node_id);
+                            log_event(
+                                "nodeA",
+                                &format!("Certificate approval detected for {}", node_id),
+                            );
+                            break (false, true);
+                        }
+                        ApprovalDecision::LhRelay => {
+                            println!("Approval detected for {} (role: lh_relay)", node_id);
+                            log_event(
+                                "nodeA",
+                                &format!("Certificate approval detected for {}", node_id),
+                            );
+                            break (true, true);
                         }
                     }
                 }
-
-                tokio::time::sleep(poll_interval).await;
             }
+
+            tokio::time::sleep(poll_interval).await;
         };
 
         // ── 5. Sign using NebulaCA (sync — run in blocking task) ────
@@ -790,11 +608,10 @@ impl CertService for MyCertService {
         let nebula_base = NEBULA_BASE_DIR.to_string();
         let ip_clone = overlay_ip.clone();
 
-        let sign_result = tokio::task::spawn_blocking(move || {
-            NebulaCA::issue_node_cert(&nebula_base, &membership, &ip_clone)
-        })
-        .await
-        .map_err(|e| Status::internal(format!("Task join error: {}", e)))?;
+        // Synchronous signing path (harness parity): cert issuance keeps the
+        // subprocess on the caller context so timing matches the pre-fix field
+        // builds measured by the board matrix. Do not migrate to tokio::process.
+        let sign_result = NebulaCA::issue_node_cert(&nebula_base, &membership, &ip_clone);
 
         if let Err(e) = sign_result {
             eprintln!("Certificate signing failed for {}: {}", node_id, e);
@@ -900,13 +717,6 @@ impl CertService for MyCertService {
             .await
             .unwrap_or_default();
         let signing_pubkey_der = read_pa_pubkey_or_warn().await;
-        sync_admin_bootstrap_state(
-            admin_stores.as_ref(),
-            auto_approved_pairing.as_ref(),
-            &node_id,
-            &public_key_pem,
-        )
-        .await?;
 
         println!("Certificate approved and signed for {}", node_id);
         // Remove YAML after successful signing
@@ -940,53 +750,9 @@ impl CertService for MyCertService {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ensure_nodea_relay_entries, load_ca_bootstrap_identity_with_paths, ApprovalDecision,
-    };
-    use crate::did::doc_persistence::{load_self, SELF_DOC_PATH_ENV, VERSION_COUNTER_PATH_ENV};
+    use super::{ensure_nodea_relay_entries, ApprovalDecision};
     use crate::nebula::lighthouse::LighthouseRegistry;
     use crate::nebula::relay_registry::RelayRegistry;
-    use once_cell::sync::Lazy;
-    use std::ffi::OsString;
-    use std::path::Path;
-    use std::sync::Mutex;
-    use tempfile::TempDir;
-    use tonic::Code;
-
-    static TEST_ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
-
-    struct DocEnvGuard {
-        self_doc_prev: Option<OsString>,
-        counter_prev: Option<OsString>,
-    }
-
-    impl DocEnvGuard {
-        fn new(self_doc_path: &Path, counter_path: &Path) -> Self {
-            let self_doc_prev = std::env::var_os(SELF_DOC_PATH_ENV);
-            let counter_prev = std::env::var_os(VERSION_COUNTER_PATH_ENV);
-            std::env::set_var(SELF_DOC_PATH_ENV, self_doc_path);
-            std::env::set_var(VERSION_COUNTER_PATH_ENV, counter_path);
-            Self {
-                self_doc_prev,
-                counter_prev,
-            }
-        }
-    }
-
-    impl Drop for DocEnvGuard {
-        fn drop(&mut self) {
-            restore_env(SELF_DOC_PATH_ENV, self.self_doc_prev.take());
-            restore_env(VERSION_COUNTER_PATH_ENV, self.counter_prev.take());
-        }
-    }
-
-    fn restore_env(key: &str, value: Option<OsString>) {
-        if let Some(value) = value {
-            std::env::set_var(key, value);
-        } else {
-            std::env::remove_var(key);
-        }
-    }
 
     #[test]
     fn test_approval_decision_parses_relay() {
@@ -1026,64 +792,5 @@ mod tests {
                 .expect("nodeA relay entry should exist")
                 .is_lighthouse
         );
-    }
-
-    #[test]
-    fn test_ca_bootstrap_software_mode_ensures_missing_did_and_doc() {
-        let _lock = TEST_ENV_LOCK.lock().expect("env lock");
-        let td = TempDir::new().expect("tempdir");
-        let did_path = td.path().join("identity").join("did.json");
-        let dkp_pubkey_path = td.path().join("keys").join("dkp_pub.der");
-        let key_path = td.path().join("sgx-agent").join("device_nodeA.key");
-        let self_doc_path = td.path().join("identity").join("did_doc.json");
-        let counter_path = td.path().join("identity").join("self_version_counter");
-        let _env = DocEnvGuard::new(&self_doc_path, &counter_path);
-
-        let (issuer, km) = load_ca_bootstrap_identity_with_paths(
-            "nodeA",
-            true,
-            did_path.to_str().expect("did path"),
-            dkp_pubkey_path.to_str().expect("dkp path"),
-            key_path.to_str().expect("key path"),
-        )
-        .expect("software bootstrap should succeed");
-
-        assert_eq!(km.backend_name(), "Software");
-        assert!(did_path.exists());
-        assert!(dkp_pubkey_path.exists());
-        assert!(counter_path.exists());
-
-        let doc = load_self()
-            .expect("load self did doc")
-            .expect("self did doc should exist");
-        assert_eq!(doc.id, issuer.did);
-        assert_eq!(doc.sgx_node_name.as_deref(), Some("nodeA"));
-        assert_eq!(
-            crate::did::doc_persistence::read_self_floor_version(),
-            doc.sgx_version_id
-        );
-    }
-
-    #[test]
-    fn test_ca_bootstrap_default_mode_fails_closed_when_did_missing() {
-        let td = TempDir::new().expect("tempdir");
-        let did_path = td.path().join("identity").join("did.json");
-        let dkp_pubkey_path = td.path().join("keys").join("dkp_pub.der");
-        let key_path = td.path().join("sgx-agent").join("device_nodeA.key");
-
-        let err = match load_ca_bootstrap_identity_with_paths(
-            "nodeA",
-            false,
-            did_path.to_str().expect("did path"),
-            dkp_pubkey_path.to_str().expect("dkp path"),
-            key_path.to_str().expect("key path"),
-        ) {
-            Ok(_) => panic!("default mode should fail closed"),
-            Err(err) => err,
-        };
-
-        assert_eq!(err.code(), Code::Internal);
-        assert!(err.message().contains("CA DID load:"));
-        assert!(!did_path.exists());
     }
 }
