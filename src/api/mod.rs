@@ -291,6 +291,14 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         .merge(routes::devices_router())
         .route("/api/v1/auth/signup", post(handlers::auth::signup))
         .route("/api/v1/auth/login", post(handlers::auth::login))
+        .route(
+            "/api/v1/auth/oidc/cylenium/start",
+            post(handlers::auth::cylenium_authorize_start),
+        )
+        .route(
+            "/api/v1/auth/oidc/cylenium/callback",
+            post(handlers::auth::cylenium_callback),
+        )
         .route("/api/v1/auth/logout", post(handlers::auth::logout))
         .route("/api/v1/auth/session", get(handlers::auth::session))
         .route("/api/v1/devices", get(handlers::devices::index))
@@ -902,6 +910,7 @@ mod tests {
                 email: format!("api-test-{}@example.com", uuid::Uuid::new_v4()),
                 pw_hash: "test-hash".into(),
                 role: UserRole::Owner,
+                oidc_sub: None,
             })
             .await
             .expect("seed API test user");
@@ -941,6 +950,7 @@ mod tests {
                 email: format!("api-test-{}@example.com", uuid::Uuid::new_v4()),
                 pw_hash: "test-hash".into(),
                 role: UserRole::Owner,
+                oidc_sub: None,
             })
             .await
             .expect("seed API test user");
@@ -1596,6 +1606,7 @@ mod tests {
                 email: email.into(),
                 pw_hash,
                 role: UserRole::Owner,
+                oidc_sub: None,
             })
             .await
             .expect("seed auth user");

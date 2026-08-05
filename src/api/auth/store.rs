@@ -16,6 +16,7 @@ const USERS_FILE: &str = "users.json";
 const SESSIONS_FILE: &str = "sessions.json";
 const DEVICES_FILE: &str = "devices.json";
 const PAIRING_FILE: &str = "pairing.json";
+const OIDC_TRANSACTIONS_FILE: &str = "oidc_transactions.json";
 
 static GLOBAL_ADMIN_STORES: OnceCell<Arc<AdminStores>> = OnceCell::new();
 
@@ -51,6 +52,11 @@ pub struct User {
     pub locked_until: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_failed_at: Option<i64>,
+    /// Stable OIDC `sub` claim from the identity provider that created this
+    /// account (e.g. Cylenium). This, not email, is the durable identity
+    /// key for SSO logins — email can change or be reassigned upstream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oidc_sub: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -59,6 +65,7 @@ pub struct NewUser {
     pub email: String,
     pub pw_hash: String,
     pub role: UserRole,
+    pub oidc_sub: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -114,6 +121,17 @@ pub struct PairingChallengeRecord {
     pub bound_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct OidcTransactionRecord {
+    pub state: String,
+    pub nonce: String,
+    pub client_id: String,
+    pub redirect_uri: String,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub used: bool,
+}
+
 #[async_trait]
 pub trait UserStore: Send + Sync {
     async fn create(&self, new_user: NewUser) -> Result<User>;
@@ -121,6 +139,11 @@ pub trait UserStore: Send + Sync {
     async fn count(&self) -> Result<usize>;
     async fn find_by_id(&self, user_id: &str) -> Result<Option<User>>;
     async fn find_by_email(&self, email: &str) -> Result<Option<User>>;
+    async fn find_by_oidc_sub(&self, oidc_sub: &str) -> Result<Option<User>>;
+    /// Backfills `oidc_sub` on a pre-existing (e.g. password-created) user
+    /// the first time they complete an SSO login with a matching email, so
+    /// subsequent logins can be keyed by `sub` instead of email.
+    async fn link_oidc_sub(&self, user_id: &str, oidc_sub: &str) -> Result<User>;
     async fn prepare_login(&self, email: &str, now: i64, window_secs: i64) -> Result<Option<User>>;
     async fn record_login_failure(
         &self,
@@ -160,12 +183,28 @@ pub trait PairingStore: Send + Sync {
     async fn list(&self) -> Result<Vec<PairingChallengeRecord>>;
 }
 
+/// Server-side record of a pending Cylenium OIDC authorization request.
+///
+/// `state` and `nonce` are generated here (not by the client) so the
+/// callback handler can bind the returned id_token back to the exact
+/// `/authorize` request SG-X issued, instead of trusting nonce/state values
+/// supplied in the callback body.
+#[async_trait]
+pub trait OidcTransactionStore: Send + Sync {
+    async fn put(&self, record: OidcTransactionRecord) -> Result<()>;
+    /// Atomically look up and mark single-use. Returns `None` for an
+    /// unknown, already-used, or expired `state` so replay of a callback
+    /// cannot succeed twice.
+    async fn consume(&self, state: &str) -> Result<Option<OidcTransactionRecord>>;
+}
+
 #[derive(Clone)]
 pub struct AdminStores {
     pub users: Arc<dyn UserStore>,
     pub sessions: Arc<dyn SessionStore>,
     pub devices: Arc<dyn DeviceStore>,
     pub pairings: Arc<dyn PairingStore>,
+    pub oidc_transactions: Arc<dyn OidcTransactionStore>,
     admin_dir: PathBuf,
     devices_file: Arc<JsonStoreFile<Vec<PairedDevice>>>,
     pairings_file: Arc<JsonStoreFile<Vec<PairingChallengeRecord>>>,
@@ -191,6 +230,9 @@ impl AdminStores {
             sessions: Arc::new(JsonSessionStore::new(admin_dir.join(SESSIONS_FILE))),
             devices: Arc::new(JsonDeviceStore::new(devices_file.clone())),
             pairings: Arc::new(JsonPairingStore::new(pairings_file.clone())),
+            oidc_transactions: Arc::new(JsonOidcTransactionStore::new(
+                admin_dir.join(OIDC_TRANSACTIONS_FILE),
+            )),
             admin_dir,
             devices_file,
             pairings_file,
@@ -533,6 +575,7 @@ impl JsonUserStore {
             failed_attempts: 0,
             locked_until: None,
             last_failed_at: None,
+            oidc_sub: new_user.oidc_sub,
         }
     }
 
@@ -614,6 +657,30 @@ impl UserStore for JsonUserStore {
             .await?
             .into_iter()
             .find(|user| user.email == email))
+    }
+
+    async fn find_by_oidc_sub(&self, oidc_sub: &str) -> Result<Option<User>> {
+        Ok(self
+            .file
+            .read()
+            .await?
+            .into_iter()
+            .find(|user| user.oidc_sub.as_deref() == Some(oidc_sub)))
+    }
+
+    async fn link_oidc_sub(&self, user_id: &str, oidc_sub: &str) -> Result<User> {
+        let user_id = user_id.to_string();
+        let oidc_sub = oidc_sub.to_string();
+        self.file
+            .mutate(move |users| {
+                let user = users
+                    .iter_mut()
+                    .find(|user| user.user_id == user_id)
+                    .ok_or_else(|| anyhow!("user not found"))?;
+                user.oidc_sub = Some(oidc_sub);
+                Ok(user.clone())
+            })
+            .await
     }
 
     async fn prepare_login(&self, email: &str, now: i64, window_secs: i64) -> Result<Option<User>> {
@@ -937,6 +1004,51 @@ impl PairingStore for JsonPairingStore {
     }
 }
 
+struct JsonOidcTransactionStore {
+    file: JsonStoreFile<Vec<OidcTransactionRecord>>,
+}
+
+impl JsonOidcTransactionStore {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            file: JsonStoreFile::new(path),
+        }
+    }
+}
+
+#[async_trait]
+impl OidcTransactionStore for JsonOidcTransactionStore {
+    async fn put(&self, record: OidcTransactionRecord) -> Result<()> {
+        self.file
+            .mutate(move |records| {
+                if let Some(existing) = records.iter_mut().find(|item| item.state == record.state)
+                {
+                    *existing = record.clone();
+                } else {
+                    records.push(record);
+                }
+                Ok(())
+            })
+            .await
+    }
+
+    async fn consume(&self, state: &str) -> Result<Option<OidcTransactionRecord>> {
+        let state = state.to_string();
+        self.file
+            .mutate(move |records| {
+                let Some(record) = records.iter_mut().find(|item| item.state == state) else {
+                    return Ok(None);
+                };
+                if record.used || record.expires_at <= chrono::Utc::now().timestamp() {
+                    return Ok(None);
+                }
+                record.used = true;
+                Ok(Some(record.clone()))
+            })
+            .await
+    }
+}
+
 pub(crate) fn normalize_email(email: &str) -> String {
     email.trim().to_ascii_lowercase()
 }
@@ -983,6 +1095,7 @@ mod tests {
                 email: "ADMIN@example.com".into(),
                 pw_hash: "hash".into(),
                 role: UserRole::Owner,
+                oidc_sub: None,
             })
             .await
             .expect("create user");
@@ -1052,6 +1165,7 @@ mod tests {
                 email: "admin@example.com".into(),
                 pw_hash: "hash".into(),
                 role: UserRole::Owner,
+                oidc_sub: None,
             })
             .await
             .expect("create initial owner");
@@ -1063,6 +1177,7 @@ mod tests {
                 email: "other@example.com".into(),
                 pw_hash: "hash".into(),
                 role: UserRole::Owner,
+                oidc_sub: None,
             })
             .await
             .expect_err("reject second initial owner");
@@ -1172,6 +1287,7 @@ mod tests {
                 email: "ADMIN@example.com".into(),
                 pw_hash: "hash".into(),
                 role: UserRole::Owner,
+                oidc_sub: None,
             })
             .await
             .expect("create user");

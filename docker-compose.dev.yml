@@ -25,6 +25,13 @@ x-guardian-common: &guardian-common
     SGX_DISABLE_POLICY_ENFORCEMENT: "1"
     SGX_ADMIN_TLS_ENABLED: "1"
     SGX_ADMIN_REQUIRE_HTTPS: "1"
+    SGX_SSO_CYLENIUM_ENABLED: "1"
+    SGX_CYLENIUM_OIDC_ISSUER: "${SGX_CYLENIUM_OIDC_ISSUER:-http://localhost:4000}"
+    SGX_CYLENIUM_OIDC_TOKEN_ENDPOINT: "${SGX_CYLENIUM_OIDC_TOKEN_ENDPOINT:-http://host.docker.internal:4000/token}"
+    SGX_CYLENIUM_OIDC_JWKS_URI: "${SGX_CYLENIUM_OIDC_JWKS_URI:-http://host.docker.internal:4000/.well-known/jwks.json}"
+    SGX_CYLENIUM_OIDC_CLIENT_ID: "${SGX_CYLENIUM_OIDC_CLIENT_ID:-sg_x_guardian_44b2f63d}"
+    SGX_CYLENIUM_OIDC_CLIENT_SECRET: "${SGX_CYLENIUM_OIDC_CLIENT_SECRET:-}"
+    SGX_CYLENIUM_OIDC_REDIRECT_URI: "${SGX_CYLENIUM_OIDC_REDIRECT_URI:-http://localhost:3000/auth/callback}"
   restart: unless-stopped
 
 services:

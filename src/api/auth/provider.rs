@@ -217,6 +217,7 @@ mod tests {
                 email: "admin@example.com".into(),
                 pw_hash,
                 role: UserRole::Owner,
+                oidc_sub: None,
             })
             .await
             .expect("create user");
