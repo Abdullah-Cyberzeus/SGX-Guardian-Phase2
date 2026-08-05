@@ -1,6 +1,7 @@
 use crate::chat::models::{AttachmentRecord, ChatMessageRecord, ReadReceiptRecord};
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::{File, OpenOptions};
@@ -26,7 +27,7 @@ pub async fn append_p2p_message(
         .join(safe_filename(peer_did));
     let json_line = serde_json::to_string(record)?;
 
-    append_line(&path, &json_line).await
+    append_message_if_absent(&path, &record.message_id, &json_line).await
 }
 
 /// Appends a new chat message to a specific Group/Circle conversation log.
@@ -39,7 +40,50 @@ pub async fn append_group_message(
         .join(safe_filename(group_id));
     let json_line = serde_json::to_string(record)?;
 
-    append_line(&path, &json_line).await
+    append_message_if_absent(&path, &record.message_id, &json_line).await
+}
+
+/// Persist a message exactly once. Network retries and an overlapping history
+/// sync may deliver the same message more than once, so `message_id` is the
+/// idempotency key for every conversation log.
+async fn append_message_if_absent(
+    path: &PathBuf,
+    message_id: &str,
+    line: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let lock = FILE_LOCKS
+        .entry(path.clone())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone();
+    let _guard = lock.lock().await;
+
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    if let Ok(file) = File::open(path).await {
+        let mut reader = BufReader::new(file);
+        let mut existing = String::new();
+        while reader.read_line(&mut existing).await? > 0 {
+            if serde_json::from_str::<ChatMessageRecord>(existing.trim())
+                .is_ok_and(|record| record.message_id == message_id)
+            {
+                return Ok(());
+            }
+            existing.clear();
+        }
+    }
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .await?;
+    file.write_all(line.as_bytes()).await?;
+    file.write_all(b"\n").await?;
+    file.flush().await?;
+    file.sync_all().await?;
+    Ok(())
 }
 
 pub async fn append_attachment_metadata(
@@ -286,6 +330,7 @@ async fn read_history_file(
 
     let mut reader = BufReader::new(file);
     let mut messages = Vec::new();
+    let mut seen_message_ids = HashSet::new();
     let mut line = String::new();
 
     while reader.read_line(&mut line).await? > 0 {
@@ -293,7 +338,9 @@ async fn read_history_file(
         if !trimmed.is_empty() {
             let record = serde_json::from_str::<ChatMessageRecord>(trimmed)
                 .map_err(|e| format!("Corrupted JSON in chat history: {}", e))?;
-            messages.push(record);
+            if seen_message_ids.insert(record.message_id.clone()) {
+                messages.push(record);
+            }
         }
         line.clear();
     }
