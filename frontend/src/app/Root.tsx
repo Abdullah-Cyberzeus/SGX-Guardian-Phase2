@@ -5,6 +5,7 @@ import { AuthProvider } from "./contexts/AuthContext";
 import { VaultProvider } from "./contexts/VaultContext";
 import { DaemonRestartProvider } from "./contexts/DaemonRestartContext";
 import { NotificationProvider, useNotifications } from "./contexts/NotificationContext";
+import { ChatUnreadProvider } from "./contexts/ChatUnreadContext";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { DaemonRestartBanner } from "./components/DaemonRestartBanner";
 import { NotificationToastStack } from "./components/notifications/NotificationToastStack";
@@ -54,19 +55,21 @@ function AuthenticatedRuntime() {
 
   return (
     <NotificationProvider>
-      <CallProvider>
-        <CallingRuntime>
-          <VaultProvider>
-            <DaemonRestartProvider>
-              <ErrorBoundary>
-                <DaemonRestartBanner />
-                <NotificationToastStack />
-                <Outlet />
-              </ErrorBoundary>
-            </DaemonRestartProvider>
-          </VaultProvider>
-        </CallingRuntime>
-      </CallProvider>
+      <ChatUnreadProvider>
+        <CallProvider>
+          <CallingRuntime>
+            <VaultProvider>
+              <DaemonRestartProvider>
+                <ErrorBoundary>
+                  <DaemonRestartBanner />
+                  <NotificationToastStack />
+                  <Outlet />
+                </ErrorBoundary>
+              </DaemonRestartProvider>
+            </VaultProvider>
+          </CallingRuntime>
+        </CallProvider>
+      </ChatUnreadProvider>
     </NotificationProvider>
   );
 }

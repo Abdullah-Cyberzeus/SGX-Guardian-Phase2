@@ -30,11 +30,8 @@ export interface CircleTopologyLink {
 }
 
 export interface CircleTopologySnapshot {
-  circleId: string;
   generatedAt: string;
-  source: "live" | "fixture";
   nodes: CircleTopologyNode[];
-  links: CircleTopologyLink[];
 }
 
 export interface CircleTopologyCircle {

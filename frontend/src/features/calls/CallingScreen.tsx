@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useCall } from "./CallContext";
+import type { CallSession } from "./call.types";
 
 const labels: Record<string, string> = { local_policy_check: "Checking call policy…", offer_sent: "Ringing…", verifying: "Verifying Guardian identity…", authorizing: "Checking permissions…", accepted: "Preparing secure media…", media_negotiation: "Establishing encrypted connection…", connected: "Secure connection" };
 
@@ -8,11 +9,30 @@ function Video({ stream, muted, className }: { stream?: MediaStream; muted?: boo
   return stream ? <video ref={ref} className={className} autoPlay playsInline muted={muted} /> : null;
 }
 
+// The backend only pushes `duration_seconds` on discrete call-state events, not
+// once a second, so a WhatsApp-style live counter has to be ticked locally —
+// anchored to `started_at` so it stays correct regardless of push cadence.
+function useCallDuration(call?: CallSession) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!call || call.state !== "connected") { setElapsed(0); return; }
+    const anchor = call.started_at ? new Date(call.started_at).getTime() : Date.now() - call.duration_seconds * 1000;
+    const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - anchor) / 1000)));
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [call?.state, call?.session_id, call?.started_at]);
+  return elapsed;
+}
+
 export function CallingScreen() {
-  const { call, peerId, localStream, remoteStream, error, muted, cameraEnabled, toggleMute, toggleCamera, sendTestTone, shareScreen, end } = useCall();
-  if (!call) return null; const peer = peerId ?? "Remote Guardian";
+  const { call, incoming, peerId, localStream, remoteStream, error, muted, cameraEnabled, toggleMute, toggleCamera, sendTestTone, shareScreen, end } = useCall();
+  const elapsed = useCallDuration(call);
+  // While a call is still ringing (offer_received), the incoming toast owns the UI —
+  // the full-screen overlay must only appear once the callee has accepted.
+  if (!call || incoming) return null; const peer = peerId ?? "Remote Guardian";
   return <div className="call-overlay" role="dialog" aria-modal="true" aria-label="Active call">
-    <header className="call-header"><div><strong>{peer}</strong><span className="secure-label">◆ {labels[call.state] ?? call.state}</span></div><div>{call.state === "connected" ? `${Math.floor(call.duration_seconds / 60)}:${String(call.duration_seconds % 60).padStart(2, "0")}` : ""}</div></header>
+    <header className="call-header"><div><strong>{peer}</strong><span className="secure-label">◆ {labels[call.state] ?? call.state}</span></div><div>{call.state === "connected" ? `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}` : ""}</div></header>
     <main className="video-stage">
       <Video stream={remoteStream} className="remote-video" />
       {!remoteStream && <div className="remote-placeholder"><div className="avatar large">{peer.slice(0, 2).toUpperCase()}</div><h2>{labels[call.state] ?? "Connecting…"}</h2><p>Identity and policy checks remain active</p></div>}

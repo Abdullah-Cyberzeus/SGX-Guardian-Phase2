@@ -4,7 +4,13 @@
       "Bash(grep -n '^```bash' -A3 /home/asad/SGX/docs/CRL_Verification_Log.md)",
       "Bash(grep -B3 \"^--$\\\\|^[0-9]*-#\")",
       "Bash(awk '/^```bash/{flag=1; next} /^```$/{flag=0} flag && /^#/{print NR\": \"$0}' /home/asad/SGX/docs/CRL_Verification_Log.md)",
-      "Bash(awk '/^```bash/{flag=1; next} /^```$/{flag=0} flag && /#/{print NR\": \"$0}' /home/asad/SGX/docs/CRL_Verification_Log.md)"
+      "Bash(awk '/^```bash/{flag=1; next} /^```$/{flag=0} flag && /#/{print NR\": \"$0}' /home/asad/SGX/docs/CRL_Verification_Log.md)",
+      "Bash(docker exec *)",
+      "Bash(curl -sk --max-time 8 https://192.168.0.190:18443/assets/index-DThAPO2Y.js -o /tmp/app.js)",
+      "Bash(sudo -n ufw status)",
+      "Bash(ufw status *)",
+      "Bash(sudo -n iptables -L INPUT -n -v)",
+      "Bash(npx tsc *)"
     ]
   }
 }

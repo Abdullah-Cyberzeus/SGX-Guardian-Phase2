@@ -13,6 +13,7 @@ import chatService, { openChatSocket, parseChatPayload, type ChatMessageRecord }
 import { useCall } from "../../../features/calls/CallContext";
 import { useGroupCall } from "../../../features/calls/GroupCallContext";
 import type { MediaType } from "../../../features/calls/call.types";
+import { useChatUnread } from "../../contexts/ChatUnreadContext";
 
 type View = "chat" | "files";
 
@@ -33,6 +34,7 @@ export function ChatConversationScreen() {
   const isGroup = Boolean(circleId && !peerDid);
   const { startCall, call, currentDevice } = useCall();
   const { group } = useGroupCall();
+  const { refresh: refreshUnread } = useChatUnread();
   const [records, setRecords] = useState<ChatMessageRecord[]>([]);
   const [localDid, setLocalDid] = useState("");
   const [message, setMessage] = useState("");
@@ -42,6 +44,10 @@ export function ChatConversationScreen() {
   const [startingCall, setStartingCall] = useState<"audio" | "video" | null>(null);
   const [liveConnected, setLiveConnected] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const recordsRef = useRef<ChatMessageRecord[]>(records);
+  const markedReadRef = useRef<Set<string>>(new Set());
+  const bottomVisibleRef = useRef(false);
   const view: View = searchParams.get("view") === "files" ? "files" : "chat";
 
   const loadHistory = useCallback(async () => {
@@ -71,14 +77,64 @@ export function ChatConversationScreen() {
   }, [loadHistory]);
   useEffect(() => { if (view === "chat") bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [records, view]);
 
-  useEffect(() => {
-    if (!localDid) return;
-    records
+  useEffect(() => { recordsRef.current = records; }, [records]);
+
+  // A message is only marked "read" once its bubble is actually visible inside the
+  // scroll viewport AND the tab is the foreground, focused window — merely mounting
+  // this screen (e.g. a background browser tab) must not send a read receipt.
+  const markMessageRead = useCallback((messageId: string) => {
+    if (markedReadRef.current.has(messageId)) return;
+    const record = recordsRef.current.find((entry) => entry.message_id === messageId);
+    if (!record || !localDid || record.sender_did === localDid || record.status === "read" || record.read_by.includes(localDid)) return;
+    markedReadRef.current.add(messageId);
+    void chatService.markRead(record.message_id, record.sender_did, isGroup ? circleId : undefined)
+      .then(() => {
+        setRecords((current) => current.map((entry) => (entry.message_id === messageId
+          ? { ...entry, status: "read", read_by: entry.read_by.includes(localDid) ? entry.read_by : [...entry.read_by, localDid] }
+          : entry)));
+        refreshUnread();
+      })
+      .catch(() => { markedReadRef.current.delete(messageId); });
+  }, [localDid, isGroup, circleId, refreshUnread]);
+
+  // Reaching the bottom of the conversation means every message above it has
+  // scrolled through the viewport, so all of them are marked read together —
+  // matching how WhatsApp/etc. treat "caught up to the latest message" as read,
+  // rather than tracking each bubble's individual on-screen time.
+  const markAllVisibleRead = useCallback(() => {
+    recordsRef.current
       .filter((record) => record.sender_did !== localDid && record.status !== "read" && !record.read_by.includes(localDid))
-      .forEach((record) => {
-        void chatService.markRead(record.message_id, record.sender_did, isGroup ? circleId : undefined).catch(() => {});
+      .forEach((record) => markMessageRead(record.message_id));
+  }, [localDid, markMessageRead]);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    const sentinel = bottomRef.current;
+    if (!container || !sentinel || !localDid) return;
+    const isForeground = () => document.visibilityState === "visible" && document.hasFocus();
+    const recheck = () => { if (isForeground() && bottomVisibleRef.current) markAllVisibleRead(); };
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        bottomVisibleRef.current = entry.isIntersecting;
+        if (entry.isIntersecting && isForeground()) markAllVisibleRead();
       });
-  }, [records, localDid, isGroup, circleId]);
+    }, { root: container, threshold: 0 });
+    observer.observe(sentinel);
+    document.addEventListener("visibilitychange", recheck);
+    window.addEventListener("focus", recheck);
+    return () => {
+      observer.disconnect();
+      bottomVisibleRef.current = false;
+      document.removeEventListener("visibilitychange", recheck);
+      window.removeEventListener("focus", recheck);
+    };
+  }, [localDid, isGroup, circleId, markAllVisibleRead]);
+
+  // New messages append below the sentinel (still marked "intersecting" once the
+  // auto-scroll below settles it back into view), so re-check on every history load.
+  useEffect(() => {
+    if (document.visibilityState === "visible" && document.hasFocus() && bottomVisibleRef.current) markAllVisibleRead();
+  }, [records, markAllVisibleRead]);
 
   const send = async (content: string | null, attachmentId: string | null = null) => {
     if ((isGroup && !circleId) || (!isGroup && !peerDid) || (!content?.trim() && !attachmentId)) return;
@@ -204,7 +260,7 @@ export function ChatConversationScreen() {
         ))}
       </div>
       {view === "files" ? <FilesTab files={files} /> : <>
-        <div className="flex-1 overflow-y-auto">
+        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
           <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col gap-3 p-4 md:p-6">
             {loading && <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 size={18} className="animate-spin" /> Loading secure conversation…</div>}
             {!loading && messages.length === 0 && <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center text-muted-foreground"><MessageSquare size={36} /><p className="text-sm font-medium text-foreground">No messages yet</p><p className="max-w-xs text-xs">Start this secure {isGroup ? "Circle conversation" : "peer-to-peer conversation"}.</p></div>}

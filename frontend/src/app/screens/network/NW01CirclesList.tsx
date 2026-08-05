@@ -645,7 +645,7 @@ export function NW01CirclesList() {
             </button>
           </div>
           <div className="min-h-0 flex-1 overflow-hidden">
-            <CircleLiveTopology circle={topologyCircle} />
+            <CircleLiveTopology circle={topologyCircle} circles={activeCircles} />
           </div>
         </div>
       )}
