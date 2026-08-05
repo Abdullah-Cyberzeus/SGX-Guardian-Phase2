@@ -12,7 +12,6 @@ x-guardian-common: &guardian-common
   environment: &guardian-env
     RUST_LOG: info
     SGX_FORCE_SOFTWARE_KEYS: "1"
-    SGX_DISABLE_LOGIN: "1"
     SGX_DISABLE_SECURE_BOOT_CHECK: "1"
     SGX_DISABLE_READ_OCOTP: "1"
     SGX_DISABLE_DKP_ROTATION: "1"
@@ -21,6 +20,8 @@ x-guardian-common: &guardian-common
     SGX_DISABLE_COT_SATELLITE: "1"
     SGX_SIM_MODE: "true"
     SGX_DISABLE_POLICY_ENFORCEMENT: "1"
+    SGX_ADMIN_TLS_ENABLED: "1"
+    SGX_ADMIN_REQUIRE_HTTPS: "1"
   restart: unless-stopped
 
 services:

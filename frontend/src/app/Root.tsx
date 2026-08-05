@@ -1,4 +1,4 @@
-import { Outlet } from "react-router";
+import { Outlet, useLocation } from "react-router";
 import type { ReactNode } from "react";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { AuthProvider } from "./contexts/AuthContext";
@@ -16,6 +16,7 @@ import { GroupCallingScreen } from "../features/calls/GroupCallingScreen";
 import { IncomingGroupCallDialog } from "../features/calls/IncomingGroupCallDialog";
 import { CertificateRequestProvider } from "../features/certificates/CertificateRequestContext";
 import { IncomingCertificateRequestDialog } from "../features/certificates/IncomingCertificateRequestDialog";
+import { useAuth } from "./contexts/AuthContext";
 
 function CallingRuntime({ children }: { children: ReactNode }) {
   const { currentDevice, call, error } = useCall();
@@ -37,26 +38,45 @@ function CallingRuntime({ children }: { children: ReactNode }) {
   );
 }
 
+function AuthenticatedRuntime() {
+  const { session, loading } = useAuth();
+  const { pathname } = useLocation();
+  const isPublicFlow = pathname === "/login"
+    || pathname === "/signup"
+    || pathname.startsWith("/onboarding")
+    || pathname.startsWith("/auth/");
+
+  // Login, signup, and onboarding render without notification/call/certificate
+  // streams. ProtectedRoute handles redirecting unauthenticated main routes.
+  if (loading || !session || isPublicFlow) {
+    return <ErrorBoundary><Outlet /></ErrorBoundary>;
+  }
+
+  return (
+    <NotificationProvider>
+      <CallProvider>
+        <CallingRuntime>
+          <VaultProvider>
+            <DaemonRestartProvider>
+              <ErrorBoundary>
+                <DaemonRestartBanner />
+                <NotificationToastStack />
+                <Outlet />
+              </ErrorBoundary>
+            </DaemonRestartProvider>
+          </VaultProvider>
+        </CallingRuntime>
+      </CallProvider>
+    </NotificationProvider>
+  );
+}
+
 export function Root() {
   return (
     <ThemeProvider>
       <div style={{ minHeight: "100dvh", backgroundColor: "var(--background)" }}>
         <AuthProvider>
-          <NotificationProvider>
-            <CallProvider>
-              <CallingRuntime>
-                <VaultProvider>
-                  <DaemonRestartProvider>
-                    <ErrorBoundary>
-                      <DaemonRestartBanner />
-                      <NotificationToastStack />
-                      <Outlet />
-                    </ErrorBoundary>
-                  </DaemonRestartProvider>
-                </VaultProvider>
-              </CallingRuntime>
-            </CallProvider>
-          </NotificationProvider>
+          <AuthenticatedRuntime />
         </AuthProvider>
       </div>
     </ThemeProvider>
