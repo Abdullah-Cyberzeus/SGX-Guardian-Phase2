@@ -11,15 +11,33 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 fn get_grpc_addr(ip: &str, peer_id_str: &str) -> String {
-    let att_port = peer_id_str
+    let parsed_port = peer_id_str
         .split(':')
         .nth(1)
-        .and_then(|p| p.parse::<u16>().ok())
-        .unwrap_or(50151);
-    // Attestation port is base_port + 100 (e.g., 50151).
-    // Chat plaintext port is base_port + 200 (e.g., 50251).
-    // So chat_port = att_port + 100
-    let chat_port = att_port + 100;
+        .and_then(|p| p.parse::<u16>().ok());
+
+    let chat_port = match parsed_port {
+        Some(port) if (50051..=50099).contains(&port) => port + 200,
+        Some(port) if (50151..=50199).contains(&port) => port + 100,
+        Some(port) if (50251..=50299).contains(&port) => port,
+        Some(port) => port + 100,
+        None => match peer_id_str {
+            "nodeA" => 50251,
+            "nodeB" => 50252,
+            "nodeC" => 50253,
+            _ => {
+                if let Some(last_octet) = ip.split('.').last().and_then(|s| s.parse::<u16>().ok()) {
+                    if (1..=9).contains(&last_octet) {
+                        50250 + last_octet
+                    } else {
+                        50251
+                    }
+                } else {
+                    50251
+                }
+            }
+        },
+    };
     format!("{}:{}", ip, chat_port)
 }
 
