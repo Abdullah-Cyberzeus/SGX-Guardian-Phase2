@@ -1,12 +1,38 @@
 import api from './api';
 
-// ── Paired device from GET /devices ─────────────────────────────────────────
+// ── Paired device from GET /devices/paired ───────────────────────────────────
 export interface PairedDevice {
   deviceId: string;
   serial: string;
   did: string;
   status: 'active' | 'pending_bootstrap' | string;
   nodeId: string;
+}
+
+function safeTrim(value: unknown): string {
+  return String(value ?? '').trim();
+}
+
+/** Map raw GET /devices/paired array items (camelCase API fields). */
+export function normalizePairedDevice(raw: unknown): PairedDevice | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const record = raw as Record<string, unknown>;
+  const deviceId = safeTrim(record.deviceId);
+  if (!deviceId) return null;
+  return {
+    deviceId,
+    serial: safeTrim(record.serial),
+    did: safeTrim(record.did),
+    status: safeTrim(record.status) || 'active',
+    nodeId: safeTrim(record.nodeId),
+  };
+}
+
+function parsePairedDeviceList(raw: unknown): PairedDevice[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map(normalizePairedDevice)
+    .filter((device): device is PairedDevice => device !== null);
 }
 
 // ── Response from GET /devices/pairing-code ──────────────────────────────────
@@ -74,11 +100,36 @@ export interface DiscoveredDevice {
 
 export const deviceService = {
   /**
-   * GET /devices
-   * Returns all paired Guardians for the authenticated user.
+   * GET /devices/paired
+   * Returns paired Guardians for the authenticated user as a raw array.
    */
-  listDevices: (): Promise<PairedDevice[]> =>
-    api.get<PairedDevice[]>('/devices'),
+  listPairedDevices: async (): Promise<PairedDevice[]> => {
+    const raw = await api.get<unknown>('/devices/paired');
+    return parsePairedDeviceList(raw);
+  },
+
+  /**
+   * GET /devices/unpaired
+   * Returns unpaired Guardians for the authenticated user as a raw array.
+   */
+  listUnpairedDevices: async (): Promise<PairedDevice[]> => {
+    const raw = await api.get<unknown>('/devices/unpaired');
+    return parsePairedDeviceList(raw);
+  },
+
+  /**
+   * GET /devices/all
+   * Returns all Guardian records for stats only.
+   */
+  listAllDevices: async (): Promise<PairedDevice[]> => {
+    const raw = await api.get<unknown>('/devices/all');
+    return parsePairedDeviceList(raw);
+  },
+
+  listDevices: async (): Promise<PairedDevice[]> => {
+    const raw = await api.get<unknown>('/devices/paired');
+    return parsePairedDeviceList(raw);
+  },
 
   /**
    * GET /discovery/devices

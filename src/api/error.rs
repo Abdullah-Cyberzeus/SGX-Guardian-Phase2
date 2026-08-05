@@ -16,6 +16,7 @@ pub enum ApiError {
     TooManyRequests(String),
     Forbidden(String),
     Conflict(String),
+    DeviceAlreadyPaired(String),
     PayloadTooLarge(String),
     ServiceUnavailable { code: &'static str, message: String },
     Internal(String),
@@ -50,6 +51,11 @@ impl IntoResponse for ApiError {
             }
             ApiError::Conflict(m) => {
                 let body = Json(json!({ "error": { "code": "CONFLICT", "message": m } }));
+                (StatusCode::CONFLICT, body).into_response()
+            }
+            ApiError::DeviceAlreadyPaired(m) => {
+                let body =
+                    Json(json!({ "error": { "code": "DEVICE_ALREADY_PAIRED", "message": m } }));
                 (StatusCode::CONFLICT, body).into_response()
             }
             ApiError::PayloadTooLarge(m) => {
@@ -120,5 +126,18 @@ mod tests {
             body["error"]["message"],
             "parse devices.json: expected a sequence"
         );
+    }
+
+    #[tokio::test]
+    async fn device_already_paired_response_has_dedicated_conflict_code() {
+        let response =
+            ApiError::DeviceAlreadyPaired("device DID is already paired".into()).into_response();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read response body");
+        let body: serde_json::Value = serde_json::from_slice(&body).expect("parse response body");
+        assert_eq!(body["error"]["code"], "DEVICE_ALREADY_PAIRED");
     }
 }

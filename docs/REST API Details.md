@@ -160,6 +160,8 @@ Transport notes:
 | GET | `/audit/logs` | Fetch secure tamper-evident audit logs with filters |
 | GET | `/devices` | List all paired Guardian devices visible to the signed-in operator |
 | GET | `/devices/paired` | Alias of paired-device list for frontend compatibility |
+| GET | `/devices/unpaired` | List unpaired Guardian records from the admin device registry |
+| GET | `/devices/all` | List all Guardian records from the admin device registry |
 | POST | `/devices/pair` | Submit pairing proof and bind a Guardian device to the current operator |
 | GET | `/devices/pairing-code` | Generate a short-lived pairing code for QR or serial onboarding |
 | GET | `/devices/pairing-status` | Poll pairing/bootstrap status for a device serial |
@@ -1046,7 +1048,7 @@ Error responses:
 #### POST `/devices/pair`
 
 Purpose:
-Submit a signed pairing proof and bind a Guardian device to the authenticated owner account.
+Submit a signed pairing proof and bind a Guardian device to the authenticated owner account. When the proof DID matches an existing `unpaired` record, the existing record is reactivated with its original `deviceId` and refreshed `paired_at`, `reactivated_at`, and `updated_at` values.
 
 Request:
 
@@ -1077,7 +1079,7 @@ Error responses:
 - `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
 - `400 BAD_REQUEST`: missing proof, serial mismatch, invalid proof, missing pairing challenge, expired pairing challenge, or replayed proof
 - `403 FORBIDDEN`: pairing proof was issued for a different user
-- `409 CONFLICT`: device is already paired to another user
+- `409 DEVICE_ALREADY_PAIRED`: a record with the proof DID is already active
 - `500 INTERNAL_SERVER_ERROR`: device store persistence failure
 
 #### GET `/devices`
@@ -1117,10 +1119,59 @@ Error responses:
 - `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
 - `500 INTERNAL_SERVER_ERROR`: device store read failure
 
+#### GET `/devices/unpaired`
+
+Purpose:
+Return unpaired Guardian records from `/var/lib/sgx-guardian/admin/devices.json`. The endpoint is read-only and includes only records whose `status` is exactly `"unpaired"`.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+- Query params: none
+- Body: none
+
+Success response (`200 OK`):
+
+```json
+[
+  {
+    "deviceId": "d29f0ca7641c76f1e71a0ea767992a42db629a8e389512ae4de8520446567c0f",
+    "serial": "GX-2024-TX-042-C9F3",
+    "did": "did:guardian:C2txw...",
+    "status": "unpaired",
+    "nodeId": "nodeC"
+  }
+]
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
+- `500 INTERNAL_SERVER_ERROR`: device store read failure
+
+#### GET `/devices/all`
+
+Purpose:
+Return every record in `/var/lib/sgx-guardian/admin/devices.json` without status filtering. This endpoint is read-only and is intended for frontend device counts.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+- Query params: none
+- Body: none
+
+Success response (`200 OK`):
+The response is an array in the same format as `/devices/paired`, containing both active and unpaired records.
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
+- `500 INTERNAL_SERVER_ERROR`: device store read failure
+
 #### GET `/devices/{deviceId}`
 
 Purpose:
-Return detailed information for one paired Guardian.
+Return detailed information for one Guardian record from `devices.json`, including records whose status is `"unpaired"`.
 
 Request:
 
@@ -1148,7 +1199,7 @@ Success response (`200 OK`):
 Error responses:
 
 - `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
-- `404 NOT_FOUND`: device not found for the authenticated user
+- `404 NOT_FOUND`: device does not exist or is not visible to the authenticated user
 - `500 INTERNAL_SERVER_ERROR`: device store read failure
 
 #### GET `/devices/pairing-status`

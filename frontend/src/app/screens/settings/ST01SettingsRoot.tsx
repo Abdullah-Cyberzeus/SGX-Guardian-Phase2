@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import {
-  User, Users, BarChart2, Database, Network, MapPin, Link, Shield, Settings2,
+  User, Users, BarChart2, Database, Network, Link, Shield, Settings2,
   Wifi, Bell, SlidersHorizontal, BookOpen, Info, LogOut, ChevronRight, Key, ShieldCheck, FileCheck, FileText, Radio, Fingerprint, Cable, Award, Radar, ShieldX, ClipboardCheck,
 } from "lucide-react";
 import { mockGuardian } from "../../data/mockData";
@@ -58,12 +58,6 @@ const groups = [
       { icon: Cable, label: "Transport Interfaces", path: "/settings/transport", key: "transport" },
       { icon: Radio, label: "Network Nodes", path: "/settings/relay", key: "relay" },
       { icon: Radar, label: "Network Discovery", path: "/settings/discovery", key: "discovery" },
-    ],
-  },
-  {
-    label: "Physical Security",
-    items: [
-      { icon: MapPin, label: "Location & Geofencing", path: "/settings/geofencing", key: "geofencing" },
     ],
   },
   {

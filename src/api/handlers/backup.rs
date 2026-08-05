@@ -97,14 +97,12 @@ pub async fn import(
                     .open(&staged_path)
                     .await?;
                 let mut size = 0_u64;
-                while let Some(chunk) = field
-                    .chunk()
-                    .await
-                    .map_err(|error| ApiError::BadRequest(format!("failed to read file: {}", error)))?
-                {
-                    size = size
-                        .checked_add(chunk.len() as u64)
-                        .ok_or_else(|| ApiError::PayloadTooLarge("backup bundle is too large".to_string()))?;
+                while let Some(chunk) = field.chunk().await.map_err(|error| {
+                    ApiError::BadRequest(format!("failed to read file: {}", error))
+                })? {
+                    size = size.checked_add(chunk.len() as u64).ok_or_else(|| {
+                        ApiError::PayloadTooLarge("backup bundle is too large".to_string())
+                    })?;
                     if size > config.max_bundle_bytes {
                         cleanup_staged_upload(&staged_path).await;
                         return Err(ApiError::PayloadTooLarge(format!(
@@ -259,9 +257,7 @@ fn validate_import_filename(filename: &str) -> Result<(), ApiError> {
         || filename.contains('/')
         || filename.contains('\\')
     {
-        return Err(ApiError::BadRequest(
-            "unsafe backup filename".to_string(),
-        ));
+        return Err(ApiError::BadRequest("unsafe backup filename".to_string()));
     }
     Ok(())
 }
