@@ -443,6 +443,7 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         .merge(routes::circle_router())
         .merge(routes::notify_router())
         .merge(routes::rules_router())
+        .merge(routes::ha_api_router())
         // Health
         .route(
             "/api/v1/health",

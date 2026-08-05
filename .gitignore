@@ -26,7 +26,6 @@ coverage/
 
 .codex/
 .claude/
-
 .env
 ha-dev-config/
 telemetry/
