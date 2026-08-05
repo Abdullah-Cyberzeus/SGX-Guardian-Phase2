@@ -75,8 +75,8 @@ RUN set -eu; \
     URL="https://github.com/slackhq/nebula/releases/download/v${NEBULA_VERSION}/${TARBALL}"; \
     echo "Fetching ${URL}"; \
     curl --proto '=https' --tlsv1.2 -fSL \
-        --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 60 \
-        --connect-timeout 10 --max-time 90 \
+        --retry 10 --retry-all-errors --retry-delay 2 --retry-max-time 900 \
+        --connect-timeout 20 --max-time 900 --continue-at - \
         -o "${TARBALL}" "${URL}"; \
     echo "${NEBULA_SHA256}  ${TARBALL}" | sha256sum -c -; \
     tar -xzf "${TARBALL}"; \

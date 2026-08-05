@@ -198,7 +198,7 @@ export function LoginScreen() {
         {/* Continue with Cylenium */}
         <button
           onClick={handleCylenium}
-          disabled={cyleniumLoading || loading}
+          disabled={loading}
           className="w-full flex items-center justify-center gap-2.5 transition-opacity active:opacity-80"
           style={{
             height: "52px",
@@ -209,21 +209,17 @@ export function LoginScreen() {
             fontWeight: "var(--font-weight-semibold)",
             borderRadius: "var(--radius)",
             border: "1.5px solid var(--border)",
-            cursor: cyleniumLoading || loading ? "default" : "pointer",
-            opacity: cyleniumLoading || loading ? 0.6 : 1,
+            cursor: loading ? "default" : "pointer",
+            opacity: loading ? 0.6 : 1,
           }}
         >
-          {cyleniumLoading ? (
-            <Loader2 size={16} style={{ animation: "spin 1s linear infinite", color: "var(--primary)" }} />
-          ) : (
-            <div
-              className="flex items-center justify-center rounded-md flex-shrink-0"
-              style={{ width: "22px", height: "22px", backgroundColor: "color-mix(in srgb, var(--primary) 15%, transparent)" }}
-            >
-              <Shield size={13} style={{ color: "var(--primary)" }} />
-            </div>
-          )}
-          {cyleniumLoading ? "Connecting to Cyleniumâ€¦" : "Continue with Cylenium"}
+          <div
+            className="flex items-center justify-center rounded-md flex-shrink-0"
+            style={{ width: "22px", height: "22px", backgroundColor: "color-mix(in srgb, var(--primary) 15%, transparent)" }}
+          >
+            <Shield size={13} style={{ color: "var(--primary)" }} />
+          </div>
+          Continue with Cylenium
         </button>
       </div>
 

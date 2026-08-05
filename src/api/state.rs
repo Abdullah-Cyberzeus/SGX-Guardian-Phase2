@@ -324,6 +324,7 @@ impl AppState {
                 email: format!("api-test-{}@example.com", uuid::Uuid::new_v4()),
                 pw_hash: "test-hash".into(),
                 role: UserRole::Owner,
+                oidc_sub: None,
             })
             .await
             .expect("seed API test user");
