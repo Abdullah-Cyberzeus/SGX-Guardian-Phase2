@@ -47,7 +47,7 @@ impl Default for RelayLimitsConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct PlatformConfig {
     #[serde(default = "default_platform_mode")]
     pub mode: String,
@@ -61,6 +61,15 @@ fn default_platform_mode() -> String {
 
 fn default_virtual_pcr_seed() -> String {
     "guardian-dev".to_string()
+}
+
+impl Default for PlatformConfig {
+    fn default() -> Self {
+        Self {
+            mode: default_platform_mode(),
+            virtual_pcr_seed: default_virtual_pcr_seed(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
