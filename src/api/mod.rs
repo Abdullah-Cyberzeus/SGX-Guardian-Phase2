@@ -879,7 +879,7 @@ mod tests {
                 reqwest::Method::OPTIONS,
                 format!("{}/api/v1/geofence/location", base_url),
             )
-            .header(reqwest::header::ORIGIN, "http://localhost:3000")
+            .header(reqwest::header::ORIGIN, "http://localhost:3001")
             .header(reqwest::header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
             .header(
                 reqwest::header::ACCESS_CONTROL_REQUEST_HEADERS,
