@@ -10,6 +10,8 @@ import {
   Focus,
   Gauge,
   Info,
+  Layers,
+  Map as MapIcon,
   MapPin,
   Network,
   Plus,
@@ -21,6 +23,7 @@ import {
   ShieldQuestion,
   TowerControl,
   Trash2,
+  Waypoints,
   Wifi,
   WifiOff,
   X,
@@ -33,9 +36,14 @@ import type {
   CircleTopologyNode,
   PresenceStatus,
 } from "./types";
-import { useCircleTopology } from "./useCircleTopology";
+import { buildTopologyLinks, useCircleTopology } from "./useCircleTopology";
+import { ALL_CIRCLES_ID, buildCircleMembershipIndex, getNodeCircles } from "./circleMembership";
+import { matchDidDocumentPeer } from "./nodeTelemetry";
+import { PRESENCE_COLORS, TRUST_COLORS, paletteCssVars } from "./palette";
 import { geofenceApi, type CreateZoneRequest, type GeofenceEvent, type GeofenceStatus, type GeofenceZone, type ThreatAlert, type ZoneAutomation } from "../../../api/geofence";
 import { alertDetails, configuredActions, eventDetails, locationSourceLabel, sourceLabel, zoneTypeLabel } from "../geofenceDisplay";
+import attestationService, { type PeerAttestationRecord } from "../../services/attestationService";
+import type { DIDDocumentPeerSummary } from "../../services/didService";
 import "./circle-topology.css";
 
 const WIDTH = 1440;
@@ -44,29 +52,28 @@ const TILE_ZOOM = 3;
 const TILE_COUNT = 2 ** TILE_ZOOM;
 const MAP_SIZE = WIDTH;
 const MAP_Y = (HEIGHT - MAP_SIZE) / 2;
+const POLL_MS = 10_000;
 
 type Filter = "all" | "online" | "offline" | "verified" | "lighthouse" | "relay";
+type ViewMode = "mesh" | "map";
 
 const presenceMeta: Record<PresenceStatus, { label: string; color: string }> = {
-  online: { label: "Online", color: "#22c55e" },
-  stale: { label: "Stale", color: "#f59e0b" },
-  offline: { label: "Offline", color: "#64748b" },
-  unknown: { label: "Unknown", color: "#94a3b8" },
+  online: { label: "Online", color: PRESENCE_COLORS.online },
+  stale: { label: "Stale", color: PRESENCE_COLORS.stale },
+  offline: { label: "Offline", color: PRESENCE_COLORS.offline },
+  unknown: { label: "Unknown", color: PRESENCE_COLORS.unknown },
 };
 
 const trustMeta: Record<AttestationStatus, { label: string; color: string }> = {
-  verified: { label: "Attested", color: "#38bdf8" },
-  pending: { label: "Pending", color: "#f59e0b" },
-  failed: { label: "Rejected", color: "#ef4444" },
-  never: { label: "Not attested", color: "#64748b" },
+  verified: { label: "Attested", color: TRUST_COLORS.verified },
+  pending: { label: "Pending", color: TRUST_COLORS.pending },
+  failed: { label: "Rejected", color: TRUST_COLORS.failed },
+  never: { label: "Not attested", color: TRUST_COLORS.never },
 };
 
 interface PositionedNode extends CircleTopologyNode {
   x: number;
   y: number;
-  lat?: number;
-  lng?: number;
-  locationSource?: string;
 }
 
 interface PositionedZone {
@@ -80,14 +87,6 @@ interface PositionedZone {
   enabled: boolean;
   inside?: boolean;
   source: GeofenceZone;
-}
-
-interface MapLabel {
-  id: string;
-  label: string;
-  sub: string;
-  x: number;
-  y: number;
 }
 
 const DEFAULT_AUTOMATION: ZoneAutomation = {
@@ -115,24 +114,7 @@ function ZoneDialog({ zone, fix, busy, onClose, onSave }: { zone?: GeofenceZone;
   </div>;
 }
 
-const FALLBACK_COORDS = [
-  { lat: 37.7749, lng: -122.4194 },
-  { lat: 40.7128, lng: -74.006 },
-  { lat: 51.5072, lng: -0.1276 },
-  { lat: 52.52, lng: 13.405 },
-  { lat: 35.6762, lng: 139.6503 },
-  { lat: -33.8688, lng: 151.2093 },
-  { lat: 1.3521, lng: 103.8198 },
-  { lat: 25.2048, lng: 55.2708 },
-];
-
 const ZONE_COLORS = ["#18B5C8", "#20C7D9", "#3AC569", "#F4B640", "#E14D4D", "#7A7A7A"];
-const MAP_LABELS: MapLabel[] = [
-  { id: "na", label: "NORTH AMERICA", sub: "WEST TRUST REGION", x: 255, y: 278 },
-  { id: "eu", label: "EUROPE", sub: "ATTESTATION HUB", x: 728, y: 254 },
-  { id: "apac", label: "APAC", sub: "EDGE RELAY REGION", x: 1120, y: 410 },
-  { id: "aus", label: "AUSTRALIA", sub: "RECOVERY REGION", x: 1190, y: 654 },
-];
 
 function projectLocation(lat: number, lng: number) {
   const clampedLat = Math.max(-85, Math.min(85, lat));
@@ -193,6 +175,16 @@ function roleWeight(node: CircleTopologyNode) {
   return 3;
 }
 
+/** Re-derives which node is "primary" within whatever subset is currently in
+ * view (global roster or one circle's members) — the globally-designated
+ * primary lighthouse may not even be a member of the selected circle. */
+function assignPrimaryLighthouse(list: CircleTopologyNode[]): CircleTopologyNode[] {
+  if (list.length === 0) return list;
+  const ordered = [...list].sort((a, b) => roleWeight(a) - roleWeight(b) || a.label.localeCompare(b.label));
+  const primaryId = ordered[0].id;
+  return list.map((node) => ({ ...node, primaryLighthouse: node.id === primaryId }));
+}
+
 function layoutNodes(nodes: CircleTopologyNode[]): PositionedNode[] {
   const ordered = [...nodes].sort((a, b) => roleWeight(a) - roleWeight(b) || a.label.localeCompare(b.label));
   const primary = ordered.find((node) => node.primaryLighthouse) ?? ordered[0];
@@ -232,16 +224,6 @@ function layoutNodes(nodes: CircleTopologyNode[]): PositionedNode[] {
   return out;
 }
 
-function mapLayoutNodes(nodes: CircleTopologyNode[], status: GeofenceStatus | null): PositionedNode[] {
-  return nodes.map((node, index) => {
-    const coord = index === 0 && status?.location?.fix?.kind === "coordinate"
-      ? { lat: status.location.fix.lat, lng: status.location.fix.lng, source: status.location.source }
-      : { ...FALLBACK_COORDS[index % FALLBACK_COORDS.length], source: "configured" };
-    const point = projectLocation(coord.lat, coord.lng);
-    return { ...node, ...point, locationSource: coord.source };
-  });
-}
-
 function mapZones(zones: GeofenceZone[], status: GeofenceStatus | null): PositionedZone[] {
   return zones
     .filter((zone) => typeof zone.center_lat === "number" && typeof zone.center_lng === "number")
@@ -262,15 +244,6 @@ function mapZones(zones: GeofenceZone[], status: GeofenceStatus | null): Positio
         source: zone,
       };
     });
-}
-
-function initials(label: string) {
-  return label
-    .split(/[\s_-]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join("");
 }
 
 function nodeKind(node: CircleTopologyNode): "lighthouse" | "relay" | "member" {
@@ -304,6 +277,14 @@ function TopologyGlyph({ kind, size = 26 }: { kind: "lighthouse" | "relay" | "me
   );
 }
 
+function GlyphSwatch({ kind }: { kind: "lighthouse" | "relay" | "member" }) {
+  return (
+    <svg width={18} height={18} viewBox="-12 -12 24 24" className={`clt-legend-swatch clt-legend-swatch--${kind}`} aria-hidden="true">
+      <TopologyGlyph kind={kind} size={16} />
+    </svg>
+  );
+}
+
 function shortTime(value: string) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
@@ -329,9 +310,33 @@ function linkPath(source: PositionedNode, target: PositionedNode, offset = 0) {
   return `M ${source.x} ${source.y} Q ${cx} ${cy} ${target.x} ${target.y}`;
 }
 
-function NodeDetails({ node, onClose }: { node: CircleTopologyNode; onClose: () => void }) {
+function NodeDetails({ node, nodeCircles, didPeers, onClose }: {
+  node: CircleTopologyNode;
+  nodeCircles: string[];
+  didPeers: DIDDocumentPeerSummary[];
+  onClose: () => void;
+}) {
   const presence = presenceMeta[node.presence];
   const trust = trustMeta[node.attestation];
+  const attestationCacheRef = useRef<Map<string, PeerAttestationRecord | null>>(new Map());
+  const [attestation, setAttestation] = useState<PeerAttestationRecord | null | undefined>(undefined);
+
+  useEffect(() => {
+    if (!node.did) { setAttestation(null); return; }
+    const cached = attestationCacheRef.current.get(node.did);
+    if (cached !== undefined) { setAttestation(cached); return undefined; }
+    let cancelled = false;
+    setAttestation(undefined);
+    void attestationService.getForPeer(node.did).then((result) => {
+      attestationCacheRef.current.set(node.did!, result);
+      if (!cancelled) setAttestation(result);
+    });
+    return () => { cancelled = true; };
+  }, [node.did]);
+
+  const identity = useMemo(() => matchDidDocumentPeer(node, didPeers), [node, didPeers]);
+  const attestationPassed = attestation ? attestation.result === "pass" || attestation.result === "success" : false;
+
   return (
     <aside className="clt-details">
       <div className="clt-details__header">
@@ -360,25 +365,48 @@ function NodeDetails({ node, onClose }: { node: CircleTopologyNode; onClose: () 
         {node.roles.includes("member") && <span><Radio size={12} />Member</span>}
       </div>
 
+      {nodeCircles.length > 0 && (
+        <div className="clt-circle-chips">
+          <span className="clt-card-label">Circles</span>
+          <div>{nodeCircles.map((name) => <span key={name} className="clt-circle-chip"><Layers size={10} />{name}</span>)}</div>
+        </div>
+      )}
+
       <dl className="clt-kv">
         <div><dt>Node ID</dt><dd>{node.id}</dd></div>
         <div><dt>Physical IP</dt><dd>{node.ip || "Not reported"}</dd></div>
         <div><dt>Overlay IP</dt><dd>{node.overlayIp || "Not reported"}</dd></div>
         <div><dt>Last signal</dt><dd>{node.lastSeen}</dd></div>
-        {"lat" in node && typeof node.lat === "number" && <div><dt>Location</dt><dd>{node.lat.toFixed(5)}, {node.lng?.toFixed(5)}</dd></div>}
-        {"locationSource" in node && node.locationSource && <div><dt>Source</dt><dd>{node.locationSource}</dd></div>}
         {node.did && <div><dt>DID</dt><dd className="clt-truncate" title={node.did}>{node.did}</dd></div>}
       </dl>
 
-      <div className="clt-security-posture">
-        <div><span>TRUST SCORE</span><strong>{node.attestation === "verified" ? 96 : node.attestation === "pending" ? 71 : 28}</strong></div>
-        <div><span>HEALTH SCORE</span><strong>{node.presence === "online" ? 98 : node.presence === "stale" ? 62 : 12}</strong></div>
+      <div className="clt-attestation-card">
+        <span className="clt-card-label">Attestation</span>
+        {!node.did ? (
+          <p>No DID on record for this node yet.</p>
+        ) : attestation === undefined ? (
+          <p>Checking…</p>
+        ) : attestation ? (
+          <>
+            <strong className={attestationPassed ? "is-good" : "is-bad"}>{attestationPassed ? "Passed" : "Failed"}</strong>
+            <p>Checked {shortTime(attestation.timestamp)}</p>
+            <p className="clt-truncate" title={attestation.policyDigest}>Policy {attestation.policyDigest ? `${attestation.policyDigest.slice(0, 12)}…` : "Not reported"}</p>
+          </>
+        ) : (
+          <p>No attestation record available for this node yet.</p>
+        )}
       </div>
-      <div className="clt-telemetry-grid">
-        <div><span>CPU</span><b>{node.presence === "online" ? "34%" : "—"}</b><i><em style={{ width: node.presence === "online" ? "34%" : "0%" }} /></i></div>
-        <div><span>MEMORY</span><b>{node.presence === "online" ? "48%" : "—"}</b><i><em style={{ width: node.presence === "online" ? "48%" : "0%" }} /></i></div>
-        <div><span>POLICY</span><b>v3.4.0</b></div>
-        <div><span>CERTIFICATE</span><b>{node.attestation === "verified" ? "VALID · 183d" : "UNVERIFIED"}</b></div>
+
+      <div className="clt-identity-card">
+        <span className="clt-card-label">Identity</span>
+        {identity ? (
+          <>
+            <p>DID Document v{identity.version} · {identity.status}</p>
+            <p>{identity.services} published service{identity.services === 1 ? "" : "s"}</p>
+          </>
+        ) : (
+          <p>No published DID Document found for this node.</p>
+        )}
       </div>
 
       {node.roles.includes("relay") && (
@@ -392,12 +420,59 @@ function NodeDetails({ node, onClose }: { node: CircleTopologyNode; onClose: () 
   );
 }
 
-export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle }) {
-  const { snapshot, loading, connected, error, refresh } = useCircleTopology(circle);
+function LegendPanel({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="clt-legend-panel" role="dialog" aria-label="Topology legend">
+      <header><strong>How to read this screen</strong><button type="button" onClick={onClose} aria-label="Close legend"><X size={14} /></button></header>
+
+      <section>
+        <h4>Status</h4>
+        {(Object.keys(presenceMeta) as PresenceStatus[]).map((key) => (
+          <div key={key} className="clt-legend-row"><i style={{ background: presenceMeta[key].color }} />{presenceMeta[key].label}</div>
+        ))}
+      </section>
+
+      <section>
+        <h4>Trust</h4>
+        {(Object.keys(trustMeta) as AttestationStatus[]).map((key) => (
+          <div key={key} className="clt-legend-row"><i className="clt-legend-ring" style={{ borderColor: trustMeta[key].color }} />{trustMeta[key].label}</div>
+        ))}
+      </section>
+
+      <section>
+        <h4>Node types</h4>
+        <div className="clt-legend-row"><GlyphSwatch kind="lighthouse" />Lighthouse — coordinates the circle</div>
+        <div className="clt-legend-row"><GlyphSwatch kind="relay" />Relay — forwards traffic for others</div>
+        <div className="clt-legend-row"><GlyphSwatch kind="member" />Member device</div>
+        <div className="clt-legend-row"><Zap size={14} />★ badge = primary lighthouse for this view</div>
+      </section>
+
+      <section>
+        <h4>Connections</h4>
+        <div className="clt-legend-row"><span className="clt-legend-line clt-legend-line--mesh" />Mesh route</div>
+        <div className="clt-legend-row"><span className="clt-legend-line clt-legend-line--relay" />Relay route</div>
+        <div className="clt-legend-row"><span className="clt-legend-line clt-legend-line--trust" />Verified trust link (mTLS)</div>
+      </section>
+
+      <section>
+        <h4>Multiple circles</h4>
+        <div className="clt-legend-row"><Layers size={14} />Member of more than one circle — hover the badge for the list</div>
+      </section>
+
+      <p className="clt-legend-note">Zones shown on the map apply to this device only — not scoped to the selected circle.</p>
+    </div>
+  );
+}
+
+export function CircleLiveTopology({ circle, circles }: { circle: CircleTopologyCircle; circles: CircleTopologyCircle[] }) {
+  const { snapshot, didPeers, loading: dataLoading, fatalError, staleWarning, lastSuccessAt, refresh } = useCircleTopology(circles);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const viewportRef = useRef<SVGGElement | null>(null);
   const zoomRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedCircleId, setSelectedCircleId] = useState<string>(circle.id);
+  const [viewMode, setViewMode] = useState<ViewMode>("mesh");
+  const [legendOpen, setLegendOpen] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [fullscreen, setFullscreen] = useState(false);
@@ -419,11 +494,30 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
   const locationRequestInFlightRef = useRef(false);
   const zoneActionInFlightRef = useRef(false);
 
-  const nodes = useMemo(() => mapLayoutNodes(snapshot.nodes, geofenceStatus), [snapshot.nodes, geofenceStatus]);
+  const membershipIndex = useMemo(() => buildCircleMembershipIndex(circles), [circles]);
+  const selectedCircleLabel = selectedCircleId === ALL_CIRCLES_ID
+    ? "All my circles"
+    : (circles.find((item) => item.id === selectedCircleId)?.name ?? circle.name);
+
+  const scopedNodes = useMemo(() => {
+    const filtered = selectedCircleId === ALL_CIRCLES_ID
+      ? snapshot.nodes
+      : snapshot.nodes.filter((node) => getNodeCircles(membershipIndex, node.id).some((entry) => entry.circleId === selectedCircleId));
+    return assignPrimaryLighthouse(filtered);
+  }, [snapshot.nodes, selectedCircleId, membershipIndex]);
+
+  const links = useMemo(() => buildTopologyLinks(scopedNodes), [scopedNodes]);
+  const nodes = useMemo(() => layoutNodes(scopedNodes), [scopedNodes]);
   const zones = useMemo(() => mapZones(geofenceZones, geofenceStatus), [geofenceZones, geofenceStatus]);
   const nodeMap = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const selected = nodes.find((node) => node.id === selectedId) ?? null;
+  const selectedNodeCircles = useMemo(
+    () => (selected ? getNodeCircles(membershipIndex, selected.id).map((entry) => entry.circleName) : []),
+    [selected, membershipIndex],
+  );
   const selectedZone = geofenceZones.find((zone) => zone.zone_id === selectedZoneId) ?? null;
+  const deviceFix = geofenceStatus?.location?.fix?.kind === "coordinate" ? geofenceStatus.location.fix : null;
+  const devicePoint = useMemo(() => (deviceFix ? projectLocation(deviceFix.lat, deviceFix.lng) : null), [deviceFix]);
   const orderedGeofenceEvents = useMemo(() => [...geofenceEvents].sort((a, b) => {
     const right = Date.parse(b.at ?? b.timestamp ?? "") || 0;
     const left = Date.parse(a.at ?? a.timestamp ?? "") || 0;
@@ -447,19 +541,19 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
     }).map((node) => node.id));
   }, [nodes, filter, search]);
   const summary = useMemo(() => ({
-    online: snapshot.nodes.filter((node) => node.presence === "online").length,
-    offline: snapshot.nodes.filter((node) => node.presence === "offline" || node.presence === "stale").length,
-    verified: snapshot.nodes.filter((node) => node.attestation === "verified").length,
-    pending: snapshot.nodes.filter((node) => node.attestation === "pending").length,
-    failed: snapshot.nodes.filter((node) => node.attestation === "failed").length,
-    lighthouses: snapshot.nodes.filter((node) => node.roles.includes("lighthouse")).length,
-    relays: snapshot.nodes.filter((node) => node.roles.includes("relay")).length,
-    members: snapshot.nodes.filter((node) => node.roles.includes("member")).length,
-  }), [snapshot.nodes]);
+    online: scopedNodes.filter((node) => node.presence === "online").length,
+    offline: scopedNodes.filter((node) => node.presence === "offline" || node.presence === "stale").length,
+    verified: scopedNodes.filter((node) => node.attestation === "verified").length,
+    pending: scopedNodes.filter((node) => node.attestation === "pending").length,
+    failed: scopedNodes.filter((node) => node.attestation === "failed").length,
+    lighthouses: scopedNodes.filter((node) => node.roles.includes("lighthouse")).length,
+    relays: scopedNodes.filter((node) => node.roles.includes("relay")).length,
+    members: scopedNodes.filter((node) => node.roles.includes("member")).length,
+  }), [scopedNodes]);
   const visibleNodes = useMemo(() => nodes.filter((node) => visibleIds.has(node.id)), [nodes, visibleIds]);
-  const meshLinks = snapshot.links.filter((link) => link.kind === "mesh").length;
-  const relayLinks = snapshot.links.filter((link) => link.kind === "relay").length;
-  const attestationLinks = snapshot.links.filter((link) => link.kind === "attestation").length;
+  const meshLinks = links.filter((link) => link.kind === "mesh").length;
+  const relayLinks = links.filter((link) => link.kind === "relay").length;
+  const attestationLinks = links.filter((link) => link.kind === "attestation").length;
 
   const refreshGeofence = useCallback(async () => {
     setGeofenceError(null);
@@ -490,6 +584,8 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
     setGeofenceEvents(eventResult.events);
     setGeofenceAlerts(alertResult.alerts);
   }, []);
+
+  const refreshAll = useCallback(() => { void refresh(); void refreshGeofence(); }, [refresh, refreshGeofence]);
 
   const reportLocation = useCallback(() => {
     if (locationRequestInFlightRef.current || geofenceBusy) return;
@@ -584,6 +680,8 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
 
   useEffect(() => {
     void refreshGeofence();
+    const timer = window.setInterval(() => void refreshGeofence(), POLL_MS);
+    return () => window.clearInterval(timer);
   }, [refreshGeofence]);
 
   useEffect(() => {
@@ -648,6 +746,21 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
     select(svgRef.current).transition().duration(220).call(zoomRef.current.scaleBy, factor);
   };
 
+  const selectNode = (node: PositionedNode) => {
+    setSelectedId(node.id);
+    if (viewMode === "mesh") centerNode(node, 6);
+  };
+
+  // Switching circle/scope changes the node set and mesh layout entirely, so
+  // preserving the old pan/zoom framing would just show empty space — reset
+  // to fit-all instead, which is the predictable behavior for this audience.
+  useEffect(() => {
+    setSelectedId(null);
+    const raf = requestAnimationFrame(() => resetView());
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCircleId]);
+
   const filters: Array<{ id: Filter; label: string }> = [
     { id: "all", label: "All nodes" },
     { id: "online", label: "Online" },
@@ -657,23 +770,25 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
     { id: "relay", label: "Relays" },
   ];
 
+  const liveState: "live" | "stale" | "error" = fatalError ? "error" : staleWarning ? "stale" : "live";
+
   return (
-    <section className={`clt-shell ${fullscreen ? "clt-shell--fullscreen" : ""} clt-shell--${zoomMode}`}>
+    <section className={`clt-shell ${fullscreen ? "clt-shell--fullscreen" : ""} clt-shell--${zoomMode}`} style={paletteCssVars() as React.CSSProperties}>
       <header className="clt-header">
         <div className="clt-title">
           <div className="clt-title__icon"><Network size={19} /></div>
           <div>
             <span className="clt-eyebrow">NETWORK TOPOLOGY</span>
-            <h2>{circle.name}</h2>
+            <h2>{selectedCircleLabel}</h2>
           </div>
         </div>
         <div className="clt-env">
           <span>Environment</span>
           <strong>Production</strong>
         </div>
-        <div className="clt-live-state" title={error ?? "Live node APIs connected"}>
-          <span className={connected ? "is-live" : "is-fixture"} />
-          <div><strong>{connected ? "Live" : "Test data"}</strong><small>Updated {shortTime(snapshot.generatedAt)}</small></div>
+        <div className="clt-live-state" title={fatalError ?? staleWarning ?? "Live node APIs connected"}>
+          <span className={`is-${liveState}`} />
+          <div><strong>{liveState === "error" ? "Offline" : liveState === "stale" ? "Reconnecting…" : "Live"}</strong><small>{lastSuccessAt ? `Updated ${shortTime(lastSuccessAt)}` : "Not yet synced"}</small></div>
         </div>
         <label className="clt-search">
           <span>Search</span>
@@ -681,10 +796,7 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && visibleNodes[0]) {
-                setSelectedId(visibleNodes[0].id);
-                centerNode(visibleNodes[0], 6);
-              }
+              if (event.key === "Enter" && visibleNodes[0]) selectNode(visibleNodes[0]);
             }}
             placeholder="Hostname, peer, IP, role"
           />
@@ -692,14 +804,33 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
         <div className="clt-actions">
           <button onClick={() => zoomBy(1.2)} aria-label="Zoom in" title="Zoom in"><Plus size={15} /></button>
           <button onClick={() => zoomBy(1 / 1.2)} aria-label="Zoom out" title="Zoom out"><span className="clt-minus-icon">−</span></button>
-          <button onClick={() => void refresh()} aria-label="Refresh topology" title="Refresh"><RefreshCw size={15} /></button>
+          <button onClick={refreshAll} aria-label="Refresh topology" title="Refresh"><RefreshCw size={15} /></button>
           <button onClick={resetView} aria-label="Reset view" title="Reset view"><Focus size={15} /></button>
           <button onClick={() => setFullscreen((value) => !value)} aria-label="Toggle fullscreen" title="Fullscreen"><Expand size={15} /></button>
         </div>
       </header>
 
-      {error && (
-        <div className="clt-notice"><Info size={14} /><span>{error}</span></div>
+      <div className="clt-toolbar">
+        <div className="clt-toolbar__group" role="group" aria-label="Layout view">
+          <button type="button" className={viewMode === "mesh" ? "is-active" : ""} onClick={() => setViewMode("mesh")}><Waypoints size={13} />Mesh</button>
+          <button type="button" className={viewMode === "map" ? "is-active" : ""} onClick={() => setViewMode("map")}><MapIcon size={13} />Map</button>
+        </div>
+        <label className="clt-toolbar__circle">
+          <span>Circle</span>
+          <select value={selectedCircleId} onChange={(event) => setSelectedCircleId(event.target.value)}>
+            <option value={ALL_CIRCLES_ID}>All my circles</option>
+            {circles.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.members?.length ?? 0} members</option>)}
+          </select>
+        </label>
+        <p className="clt-toolbar__hint">Click a node for details · Drag to pan · Scroll to zoom · Use Mesh/Map to change the layout</p>
+        <div className="clt-toolbar__legend-wrap">
+          <button type="button" className="clt-toolbar__legend" onClick={() => setLegendOpen((value) => !value)} aria-expanded={legendOpen} aria-label="Show legend"><Info size={13} />Legend</button>
+          {legendOpen && <LegendPanel onClose={() => setLegendOpen(false)} />}
+        </div>
+      </div>
+
+      {staleWarning && (
+        <div className="clt-notice"><Info size={14} /><span>Showing the last synced data — {staleWarning}</span><button type="button" onClick={refreshAll}>Retry</button></div>
       )}
 
       <div className="clt-workspace">
@@ -710,12 +841,33 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
         <div className="clt-streams" />
         <div className="clt-glow clt-glow--a" />
         <div className="clt-glow clt-glow--b" />
-        {loading && <div className="clt-loading"><RefreshCw size={20} /><span>Synchronizing mesh…</span></div>}
-        {!loading && nodes.length === 0 && (
-          <div className="clt-empty"><ShieldQuestion size={34} /><strong>No nodes in this circle</strong><span>Nodes appear after discovery or membership enrollment.</span></div>
+        {dataLoading && scopedNodes.length === 0 && !fatalError && (
+          <div className="clt-loading"><RefreshCw size={20} /><span>Synchronizing mesh…</span></div>
+        )}
+        {!dataLoading && fatalError && scopedNodes.length === 0 && (
+          <div className="clt-fatal-error">
+            <WifiOff size={34} />
+            <strong>Unable to load live topology data</strong>
+            <span>{fatalError}</span>
+            <button type="button" onClick={refreshAll}><RefreshCw size={14} />Retry</button>
+          </div>
+        )}
+        {!dataLoading && !fatalError && scopedNodes.length === 0 && (
+          <div className="clt-empty">
+            <ShieldQuestion size={34} />
+            <strong>{selectedCircleId === ALL_CIRCLES_ID ? "No nodes found yet" : `No members found in "${selectedCircleLabel}"`}</strong>
+            <span>Nodes appear after discovery or membership enrollment.</span>
+          </div>
+        )}
+        {viewMode === "map" && !deviceFix && scopedNodes.length > 0 && (
+          <div className="clt-empty">
+            <MapPin size={30} />
+            <strong>No device location yet</strong>
+            <span>Use "Update browser location" in the Geofence card to report this device's position.</span>
+          </div>
         )}
 
-        <svg ref={svgRef} className="clt-svg" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label={`Live topology for ${circle.name}`}>
+        <svg ref={svgRef} className="clt-svg" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label={`${viewMode === "mesh" ? "Mesh" : "Map"} topology for ${selectedCircleLabel}`}>
           <defs>
             <radialGradient id="clt-node-online"><stop offset="0" stopColor="#153b3b" /><stop offset="1" stopColor="#07151c" /></radialGradient>
             <radialGradient id="clt-node-offline"><stop offset="0" stopColor="#233044" /><stop offset="1" stopColor="#0b111d" /></radialGradient>
@@ -728,113 +880,124 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
             </marker>
           </defs>
           <g ref={viewportRef}>
-            <RealMapTiles />
-            <g className="clt-map-labels">
-              {MAP_LABELS.map((item) => (
-                <g key={item.id} transform={`translate(${item.x} ${item.y})`}>
-                  <text className="clt-map-label">{item.label}</text>
-                  <text className="clt-map-label-sub" y="13">{item.sub}</text>
-                </g>
-              ))}
-            </g>
-            <g className="clt-geo-zones">
-              {zones.map((zone) => (
-                <g key={zone.id} className={`clt-geo-zone ${zone.enabled ? "" : "is-disabled"} ${zone.inside ? "is-inside" : ""}`} style={{ "--zone-color": zone.color } as React.CSSProperties}>
-                  <ellipse cx={zone.x} cy={zone.y} rx={zone.rx} ry={zone.ry} />
-                  <text x={zone.x} y={zone.y - zone.ry - 8}>{zone.name}</text>
-                </g>
-              ))}
-            </g>
+            {viewMode === "map" && <RealMapTiles />}
+            {viewMode === "map" && (
+              <g className="clt-geo-zones">
+                {zones.map((zone) => (
+                  <g key={zone.id} className={`clt-geo-zone ${zone.enabled ? "" : "is-disabled"} ${zone.inside ? "is-inside" : ""}`} style={{ "--zone-color": zone.color } as React.CSSProperties}>
+                    <ellipse cx={zone.x} cy={zone.y} rx={zone.rx} ry={zone.ry} />
+                    <text x={zone.x} y={zone.y - zone.ry - 8}>{zone.name}</text>
+                  </g>
+                ))}
+              </g>
+            )}
+            {viewMode === "map" && devicePoint && (
+              <g className="clt-device-marker" transform={`translate(${devicePoint.x} ${devicePoint.y})`}>
+                <circle r="16" className="clt-device-marker__halo" />
+                <circle r="7" className="clt-device-marker__dot" />
+                <MapPin x={-9} y={-32} width={18} height={18} className="clt-device-marker__pin" />
+                <text className="clt-device-marker__label" y="26">This device</text>
+              </g>
+            )}
 
-            <g className="clt-links">
-              {snapshot.links.map((link: CircleTopologyLink, linkIndex) => {
-                const source = nodeMap.get(link.source);
-                const target = nodeMap.get(link.target);
-                if (!source || !target) return null;
-                const visible = visibleIds.has(source.id) && visibleIds.has(target.id);
-                const path = linkPath(source, target, link.kind === "attestation" ? 18 : -7);
-                const mx = (source.x + target.x) / 2;
-                const my = (source.y + target.y) / 2;
-                return (
-                  <g key={link.id} className={`clt-link-group ${visible ? "" : "is-filtered"}`}>
-                    <path
-                      d={path}
-                      className={`clt-link clt-link--${link.kind} ${link.active ? "is-active" : "is-inactive"}`}
-                      markerEnd={link.kind !== "attestation" ? "url(#clt-flow-arrow)" : undefined}
-                    >
-                      <title>{link.label || link.kind}</title>
-                    </path>
-                    {link.active && link.kind !== "attestation" && linkIndex % 3 === 0 && (
-                      <circle r="3" className={`clt-packet clt-packet--${link.kind}`}>
-                        <animateMotion path={path} dur={link.kind === "relay" ? "2.1s" : "3.1s"} repeatCount="indefinite" />
-                      </circle>
-                    )}
-                    {link.verified && (
-                      <g className="clt-link-proof" transform={`translate(${mx} ${my})`}>
-                        <rect x="-21" y="-8" width="42" height="16" rx="8" />
-                        <path d="M-12-4-7-2v3c0 3-2 4-5 5-3-1-5-2-5-5v-3Z" />
-                        <path d="m-14 0 1.3 1.3 2.8-3" />
-                        <text x="-3" y="3">mTLS</text>
+            {viewMode === "mesh" && (
+              <>
+                <g className="clt-links">
+                  {links.map((link: CircleTopologyLink, linkIndex) => {
+                    const source = nodeMap.get(link.source);
+                    const target = nodeMap.get(link.target);
+                    if (!source || !target) return null;
+                    const visible = visibleIds.has(source.id) && visibleIds.has(target.id);
+                    const path = linkPath(source, target, link.kind === "attestation" ? 18 : -7);
+                    const mx = (source.x + target.x) / 2;
+                    const my = (source.y + target.y) / 2;
+                    return (
+                      <g key={link.id} className={`clt-link-group ${visible ? "" : "is-filtered"}`}>
+                        <path
+                          d={path}
+                          className={`clt-link clt-link--${link.kind} ${link.active ? "is-active" : "is-inactive"}`}
+                          markerEnd={link.kind !== "attestation" ? "url(#clt-flow-arrow)" : undefined}
+                        >
+                          <title>{link.label || link.kind}</title>
+                        </path>
+                        {link.active && link.kind !== "attestation" && linkIndex % 3 === 0 && (
+                          <circle r="3" className={`clt-packet clt-packet--${link.kind}`}>
+                            <animateMotion path={path} dur={link.kind === "relay" ? "2.1s" : "3.1s"} repeatCount="indefinite" />
+                          </circle>
+                        )}
+                        {link.verified && (
+                          <g className="clt-link-proof" transform={`translate(${mx} ${my})`}>
+                            <rect x="-21" y="-8" width="42" height="16" rx="8" />
+                            <path d="M-12-4-7-2v3c0 3-2 4-5 5-3-1-5-2-5-5v-3Z" />
+                            <path d="m-14 0 1.3 1.3 2.8-3" />
+                            <text x="-3" y="3">mTLS</text>
+                          </g>
+                        )}
                       </g>
-                    )}
-                  </g>
-                );
-              })}
-            </g>
+                    );
+                  })}
+                </g>
 
-            <g className="clt-nodes">
-              {nodes.map((node) => {
-                const presence = presenceMeta[node.presence];
-                const trust = trustMeta[node.attestation];
-                const selectedNode = node.id === selectedId;
-                const visible = visibleIds.has(node.id);
-                const radius = node.primaryLighthouse ? 30 : node.roles.includes("lighthouse") ? 26 : node.roles.includes("relay") ? 23 : 17;
-                const kind = nodeKind(node);
-                const dotRadius = node.primaryLighthouse ? 8 : node.roles.includes("lighthouse") ? 7 : node.roles.includes("relay") ? 6 : 5;
-                return (
-                  <g
-                    key={node.id}
-                    transform={`translate(${node.x} ${node.y})`}
-                    className={`clt-node ${selectedNode ? "is-selected" : ""} ${visible ? "" : "is-filtered"} clt-node--${node.presence}`}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`${node.label}, ${presence.label}, ${trust.label}`}
-                    onClick={(event) => { event.stopPropagation(); setSelectedId(node.id); centerNode(node, 6); }}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        setSelectedId(node.id);
-                        centerNode(node, 6);
-                      }
-                    }}
-                  >
-                    <g className="clt-node-scale">
-                      <circle r={dotRadius} className="clt-node__map-dot" style={{ fill: presence.color, stroke: trust.color }} />
-                      {node.presence === "online" && kind !== "member" && <circle r={radius + 5} className="clt-node__pulse" style={{ stroke: presence.color }} />}
-                      <circle r={radius + 2} className="clt-node__trust" style={{ stroke: trust.color }} />
-                      {kind === "lighthouse" ? (
-                        <>
-                          <circle r={radius + 1} className="clt-node__body clt-node__body--lighthouse" style={{ stroke: presence.color }} />
-                          <circle r={radius - 8} className="clt-node__energy" style={{ stroke: presence.color }} />
-                          <circle r={radius + 5} className="clt-node__orbit" />
-                        </>
-                      ) : kind === "relay" ? (
-                        <path d={`M 0 ${-radius} L ${radius * .86} ${-radius * .5} L ${radius * .86} ${radius * .5} L 0 ${radius} L ${-radius * .86} ${radius * .5} L ${-radius * .86} ${-radius * .5} Z`} className="clt-node__body clt-node__body--relay" style={{ stroke: presence.color }} />
-                      ) : (
-                        <rect x={-radius} y={-radius} width={radius * 2} height={radius * 2} rx="8" className="clt-node__body clt-node__body--member" style={{ stroke: presence.color }} />
-                      )}
-                      <TopologyGlyph kind={kind} size={kind === "lighthouse" ? 22 : kind === "relay" ? 20 : 16} />
-                      <circle cx={radius * .72} cy={-radius * .72} r="5" fill={presence.color} className="clt-node__status" />
-                      {node.primaryLighthouse && <g className="clt-primary-mark" transform={`translate(${-radius - 5} ${-radius - 9})`}><circle r="12" /><path d="M-4 1-1 4 5-4" /></g>}
-                      {node.roles.includes("lighthouse") && <g className="clt-role-mark" transform={`translate(${-radius - 4} ${radius - 2})`}><circle r="12" /><TowerControl x={-7} y={-7} width={14} height={14} /></g>}
-                      {node.roles.includes("relay") && <g className="clt-role-mark clt-role-mark--relay" transform={`translate(${radius + 3} ${radius - 2})`}><circle r="12" /><Router x={-7} y={-7} width={14} height={14} /></g>}
-                      <text className="clt-node__label" y={radius + 27}>{node.label}</text>
-                      <text className="clt-node__sub" y={radius + 43}>{node.overlayIp || node.ip}</text>
-                      <text className="clt-node__map-label" x={dotRadius + 8} y="3">{node.label}</text>
-                    </g>
-                  </g>
-                );
-              })}
-            </g>
+                <g className="clt-nodes">
+                  {nodes.map((node) => {
+                    const presence = presenceMeta[node.presence];
+                    const trust = trustMeta[node.attestation];
+                    const selectedNode = node.id === selectedId;
+                    const visible = visibleIds.has(node.id);
+                    const radius = node.primaryLighthouse ? 30 : node.roles.includes("lighthouse") ? 26 : node.roles.includes("relay") ? 23 : 17;
+                    const kind = nodeKind(node);
+                    const dotRadius = node.primaryLighthouse ? 8 : node.roles.includes("lighthouse") ? 7 : node.roles.includes("relay") ? 6 : 5;
+                    const nodeCircleEntries = getNodeCircles(membershipIndex, node.id);
+                    return (
+                      <g
+                        key={node.id}
+                        transform={`translate(${node.x} ${node.y})`}
+                        className={`clt-node ${selectedNode ? "is-selected" : ""} ${visible ? "" : "is-filtered"} clt-node--${node.presence}`}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`${node.label}, ${presence.label}, ${trust.label}`}
+                        onClick={(event) => { event.stopPropagation(); selectNode(node); }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") selectNode(node);
+                        }}
+                      >
+                        <g className="clt-node-scale">
+                          <circle r={dotRadius} className="clt-node__map-dot" style={{ fill: presence.color, stroke: trust.color }} />
+                          {node.presence === "online" && kind !== "member" && <circle r={radius + 5} className="clt-node__pulse" style={{ stroke: presence.color }} />}
+                          <circle r={radius + 2} className="clt-node__trust" style={{ stroke: trust.color }} />
+                          {kind === "lighthouse" ? (
+                            <>
+                              <circle r={radius + 1} className="clt-node__body clt-node__body--lighthouse" style={{ stroke: presence.color }} />
+                              <circle r={radius - 8} className="clt-node__energy" style={{ stroke: presence.color }} />
+                              <circle r={radius + 5} className="clt-node__orbit" />
+                            </>
+                          ) : kind === "relay" ? (
+                            <path d={`M 0 ${-radius} L ${radius * .86} ${-radius * .5} L ${radius * .86} ${radius * .5} L 0 ${radius} L ${-radius * .86} ${radius * .5} L ${-radius * .86} ${-radius * .5} Z`} className="clt-node__body clt-node__body--relay" style={{ stroke: presence.color }} />
+                          ) : (
+                            <rect x={-radius} y={-radius} width={radius * 2} height={radius * 2} rx="8" className="clt-node__body clt-node__body--member" style={{ stroke: presence.color }} />
+                          )}
+                          <TopologyGlyph kind={kind} size={kind === "lighthouse" ? 22 : kind === "relay" ? 20 : 16} />
+                          <circle cx={radius * .72} cy={-radius * .72} r="5" fill={presence.color} className="clt-node__status" />
+                          {node.primaryLighthouse && <g className="clt-primary-mark" transform={`translate(${-radius - 5} ${-radius - 9})`}><circle r="12" /><path d="M-4 1-1 4 5-4" /></g>}
+                          {node.roles.includes("lighthouse") && <g className="clt-role-mark" transform={`translate(${-radius - 4} ${radius - 2})`}><circle r="12" /><TowerControl x={-7} y={-7} width={14} height={14} /></g>}
+                          {node.roles.includes("relay") && <g className="clt-role-mark clt-role-mark--relay" transform={`translate(${radius + 3} ${radius - 2})`}><circle r="12" /><Router x={-7} y={-7} width={14} height={14} /></g>}
+                          {nodeCircleEntries.length > 1 && (
+                            <g className="clt-role-mark clt-role-mark--multi" transform={`translate(${radius + 4} ${-radius - 9})`}>
+                              <circle r="12" />
+                              <Layers x={-7} y={-7} width={14} height={14} />
+                              <title>{`Member of ${nodeCircleEntries.length} circles: ${nodeCircleEntries.map((entry) => entry.circleName).join(", ")}`}</title>
+                            </g>
+                          )}
+                          <text className="clt-node__label" y={radius + 27}>{node.label}</text>
+                          <text className="clt-node__sub" y={radius + 43}>{node.overlayIp || node.ip}</text>
+                          <text className="clt-node__map-label" x={dotRadius + 8} y="3">{node.label}</text>
+                        </g>
+                      </g>
+                    );
+                  })}
+                </g>
+              </>
+            )}
           </g>
         </svg>
 
@@ -845,31 +1008,42 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
         </div>
 
         <div className="clt-map-status">
-          <span>{snapshot.source === "live" ? "LIVE BACKEND" : "FIXTURE FALLBACK"}</span>
-          <b>{nodes.length}</b> nodes
-          <b>{zones.length}</b> zones
-          <b>{zoomMode === "dots" ? "DOT VIEW" : "INSPECT VIEW"}</b>
+          <span>{liveState === "error" ? "OFFLINE" : liveState === "stale" ? "RECONNECTING" : "LIVE"}</span>
+          {viewMode === "mesh" ? (
+            <>
+              <b>{nodes.length}</b> nodes
+              <b>{zones.length}</b> zones
+              <b>{zoomMode === "dots" ? "DOT VIEW" : "INSPECT VIEW"}</b>
+            </>
+          ) : (
+            <>
+              <b>{zones.length}</b> zones
+              <b>{devicePoint ? "DEVICE LOCATED" : "NO DEVICE FIX"}</b>
+            </>
+          )}
         </div>
 
-        <div className="clt-minimap" aria-label="Circle minimap">
-          <div><Network size={10} /> MESH OVERVIEW <span ref={minimapZoomRef}>100%</span></div>
-          <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`}>
-            {snapshot.links.filter((link) => link.kind !== "attestation").map((link) => {
-              const source = nodeMap.get(link.source);
-              const target = nodeMap.get(link.target);
-              return source && target ? <line key={link.id} x1={source.x} y1={source.y} x2={target.x} y2={target.y} /> : null;
-            })}
-            {nodes.map((node) => <circle key={node.id} cx={node.x} cy={node.y} r={node.primaryLighthouse ? 15 : 9} className={`is-${node.presence}`} />)}
-            <rect x="4" y="4" width={WIDTH - 8} height={HEIGHT - 8} rx="18" />
-          </svg>
-        </div>
+        {viewMode === "mesh" && (
+          <div className="clt-minimap" aria-label="Circle minimap">
+            <div><Network size={10} /> MESH OVERVIEW <span ref={minimapZoomRef}>100%</span></div>
+            <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`}>
+              {links.filter((link) => link.kind !== "attestation").map((link) => {
+                const source = nodeMap.get(link.source);
+                const target = nodeMap.get(link.target);
+                return source && target ? <line key={link.id} x1={source.x} y1={source.y} x2={target.x} y2={target.y} /> : null;
+              })}
+              {nodes.map((node) => <circle key={node.id} cx={node.x} cy={node.y} r={node.primaryLighthouse ? 15 : 9} className={`is-${node.presence}`} />)}
+              <rect x="4" y="4" width={WIDTH - 8} height={HEIGHT - 8} rx="18" />
+            </svg>
+          </div>
+        )}
       </div>
 
       <aside className="clt-side">
         <section className="clt-card">
           <div className="clt-card__head"><span>Network Summary</span><Activity size={13} /></div>
           <div className="clt-metrics">
-            <div><b>{snapshot.nodes.length}</b><span>Nodes</span></div>
+            <div><b>{scopedNodes.length}</b><span>Nodes</span></div>
             <div><b>{summary.online}</b><span>Online</span></div>
             <div><b>{summary.offline}</b><span>Offline</span></div>
             <div><b>{summary.relays}</b><span>Relays</span></div>
@@ -882,19 +1056,23 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
 
         <section className="clt-card">
           <div className="clt-card__head"><span>Filters</span><Network size={13} /></div>
-          <div className="clt-filterbar" aria-label="Topology filters">
-            {filters.map((item) => (
-              <button key={item.id} className={filter === item.id ? "is-active" : ""} onClick={() => setFilter(item.id)}>
-                {item.label}
-              </button>
-            ))}
-          </div>
+          {viewMode === "mesh" ? (
+            <div className="clt-filterbar" aria-label="Topology filters">
+              {filters.map((item) => (
+                <button key={item.id} className={filter === item.id ? "is-active" : ""} onClick={() => setFilter(item.id)}>
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="clt-card-empty">Switch to Mesh view to filter and browse individual nodes.</div>
+          )}
         </section>
 
         <section className="clt-card">
           <div className="clt-card__head"><span>Selected Node</span><ShieldCheck size={13} /></div>
           {selected ? (
-            <NodeDetails node={selected} onClose={() => setSelectedId(null)} />
+            <NodeDetails node={selected} nodeCircles={selectedNodeCircles} didPeers={didPeers} onClose={() => setSelectedId(null)} />
           ) : (
             <div className="clt-card-empty">Select a node to inspect trust, route, and endpoint details.</div>
           )}
@@ -903,9 +1081,9 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
         <section className="clt-card">
           <div className="clt-card__head"><span>Trust Overview</span><ShieldCheck size={13} /></div>
           <div className="clt-trust-bars">
-            <div><span>Attested</span><i><em style={{ width: `${snapshot.nodes.length ? (summary.verified / snapshot.nodes.length) * 100 : 0}%` }} /></i><b>{summary.verified}</b></div>
-            <div><span>Pending</span><i><em className="warn" style={{ width: `${snapshot.nodes.length ? (summary.pending / snapshot.nodes.length) * 100 : 0}%` }} /></i><b>{summary.pending}</b></div>
-            <div><span>Failed</span><i><em className="crit" style={{ width: `${snapshot.nodes.length ? (summary.failed / snapshot.nodes.length) * 100 : 0}%` }} /></i><b>{summary.failed}</b></div>
+            <div><span>Attested</span><i><em style={{ width: `${scopedNodes.length ? (summary.verified / scopedNodes.length) * 100 : 0}%` }} /></i><b>{summary.verified}</b></div>
+            <div><span>Pending</span><i><em className="warn" style={{ width: `${scopedNodes.length ? (summary.pending / scopedNodes.length) * 100 : 0}%` }} /></i><b>{summary.pending}</b></div>
+            <div><span>Failed</span><i><em className="crit" style={{ width: `${scopedNodes.length ? (summary.failed / scopedNodes.length) * 100 : 0}%` }} /></i><b>{summary.failed}</b></div>
           </div>
         </section>
 
@@ -914,8 +1092,8 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
           <div className="clt-compact-list">
             <div><span>Relay routes</span><b>{relayLinks}</b></div>
             <div><span>Lighthouses</span><b>{summary.lighthouses}</b></div>
-            <div><span>Primary</span><b>{nodes.find((n) => n.primaryLighthouse)?.label ?? "None"}</b></div>
-            <div><span>Discovery</span><b>{connected ? "Healthy" : "Fallback"}</b></div>
+            <div><span>Primary</span><b>{scopedNodes.find((n) => n.primaryLighthouse)?.label ?? "None"}</b></div>
+            <div><span>Discovery</span><b>{fatalError ? "Offline" : "Healthy"}</b></div>
           </div>
         </section>
 
@@ -924,13 +1102,19 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
           <div className="clt-compact-list">
             <div><span>Mesh links</span><b>{meshLinks}</b></div>
             <div><span>Attestation links</span><b>{attestationLinks}</b></div>
-            <div><span>Topology age</span><b>{shortTime(snapshot.generatedAt)}</b></div>
+            <div><span>Topology age</span><b>{lastSuccessAt ? shortTime(lastSuccessAt) : "—"}</b></div>
             <div><span>Visible nodes</span><b>{visibleNodes.length}</b></div>
           </div>
         </section>
 
         <section className="clt-card">
-          <div className="clt-card__head"><span>Geofence</span><MapPin size={13} /></div>
+          <div className="clt-card__head">
+            <div className="clt-card__head-text">
+              <span>Geofence</span>
+              <small className="clt-card__subtitle" title="This device's zones apply network-wide, not scoped to the selected circle.">This device's zones — not scoped to "{selectedCircleLabel}"</small>
+            </div>
+            <MapPin size={13} />
+          </div>
           <div className="clt-compact-list">
             <div><span>Active Provider</span><b>{sourceLabel(geofenceStatus?.source)}</b></div>
             <div><span>Location Source</span><b>{locationSourceLabel(geofenceStatus?.location?.source)}</b></div>
@@ -976,12 +1160,12 @@ export function CircleLiveTopology({ circle }: { circle: CircleTopologyCircle })
       </div>
 
       <footer className="clt-footer">
-        <span>{connected ? <CheckCircle2 size={13} /> : <WifiOff size={13} />}{connected ? "Backend connected" : "Fixture mode"}</span>
-        <span>Peers {snapshot.nodes.length}</span>
+        <span>{fatalError ? <WifiOff size={13} /> : <CheckCircle2 size={13} />}{fatalError ? "Backend unreachable" : "Backend connected"}</span>
+        <span>Peers {scopedNodes.length}</span>
         <span>Relays {summary.relays}</span>
         <span>Zoom <span ref={footerZoomRef}>100%</span></span>
-        <span>Topology v2.1</span>
-        <span><Clock3 size={13} />Manual refresh</span>
+        <span>Topology v2.2</span>
+        <span><Clock3 size={13} />Auto-refreshing every 10s</span>
       </footer>
     </section>
   );
