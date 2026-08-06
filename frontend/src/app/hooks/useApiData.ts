@@ -21,6 +21,8 @@ import { vidService } from '../services/vidService';
 import { discoveryService } from '../services/discoveryService';
 import { threatService } from '../services/threatService';
 import type { ThreatAlertsFilters } from '../services/threatService';
+import { dusageService } from '../services/dusageService';
+import { ruleService } from '../services/ruleService';
 
 interface UseApiDataResult<T> {
   data: T | null;
@@ -162,6 +164,41 @@ export function useAuditLogs(filters?: AuditLogsFilters) {
  */
 export function usePeers() {
   return useApiData(() => peerService.getAll(), { pollingInterval: 15000 });
+}
+
+/**
+ * Hook for the alert-rules automation engine's rule registry
+ */
+export function useRules() {
+  return useApiData(() => ruleService.getAll(), { pollingInterval: 20000 });
+}
+
+/**
+ * Hook for the alert-rules execution history
+ */
+export function useRuleExecutions(limit?: number) {
+  return useApiData(() => ruleService.getExecutions(limit), { pollingInterval: 20000 });
+}
+
+/**
+ * Hook for the current-period data usage snapshot (bandwidth, categories, quota)
+ */
+export function useDusageCurrent() {
+  return useApiData(() => dusageService.getCurrent(), { pollingInterval: 15000 });
+}
+
+/**
+ * Hook for completed-period data usage history
+ */
+export function useDusageHistory() {
+  return useApiData(() => dusageService.getHistory(), { pollingInterval: 30000 });
+}
+
+/**
+ * Hook for the data usage quota (null when no quota has been set)
+ */
+export function useDusageQuota() {
+  return useApiData(() => dusageService.getQuota(), { pollingInterval: 30000 });
 }
 
 /**

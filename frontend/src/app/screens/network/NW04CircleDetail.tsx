@@ -583,7 +583,9 @@ export function NW04CircleDetail() {
                       <div className="flex items-center gap-2">
                         <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{memberName}</p>
                         {(member as any).pending && <StatusBadge status="Pending" variant="warning" />}
-                        {member.role.toLowerCase() === "owner" && <StatusBadge status="Admin" variant="info" />}
+                        {member.role.toLowerCase() === "owner"
+                          ? <StatusBadge status="Admin" variant="info" />
+                          : <StatusBadge status="Member" variant="info" />}
                       </div>
                       <p className="truncate" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{member.email || member.did}</p>
                       <div className="flex items-center gap-1.5 mt-0.5">

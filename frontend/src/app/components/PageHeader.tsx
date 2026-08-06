@@ -4,7 +4,9 @@ import { ReactNode } from "react";
 
 interface PageHeaderProps {
   title: string;
+  titleColor?: string;
   subtitle?: string;
+  subtitleColor?: string;
   showBack?: boolean;
   onBack?: () => void;
   right?: ReactNode;
@@ -12,7 +14,7 @@ interface PageHeaderProps {
   large?: boolean;
 }
 
-export function PageHeader({ title, subtitle, showBack = true, onBack, right, large }: PageHeaderProps) {
+export function PageHeader({ title, titleColor, subtitle, subtitleColor, showBack = true, onBack, right, large }: PageHeaderProps) {
   const navigate = useNavigate();
 
   const handleBack = () => {
@@ -42,7 +44,7 @@ export function PageHeader({ title, subtitle, showBack = true, onBack, right, la
             fontFamily: "Inter, sans-serif",
             fontSize: large ? "var(--text-xl)" : "var(--text-base)",
             fontWeight: "var(--font-weight-semibold)",
-            color: "var(--foreground)",
+            color: titleColor || "var(--foreground)",
             lineHeight: 1.3,
           }}
         >
@@ -54,7 +56,7 @@ export function PageHeader({ title, subtitle, showBack = true, onBack, right, la
             style={{
               fontFamily: "Inter, sans-serif",
               fontSize: "var(--text-xs)",
-              color: "var(--muted-foreground)",
+              color: subtitleColor || "var(--muted-foreground)",
               lineHeight: 1.3,
             }}
           >
