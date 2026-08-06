@@ -10,7 +10,8 @@
       "Bash(sudo -n ufw status)",
       "Bash(ufw status *)",
       "Bash(sudo -n iptables -L INPUT -n -v)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(sudo -n ss -tlnp)"
     ]
   }
 }
