@@ -275,13 +275,47 @@ mod tests {
     }
 
     #[test]
-    fn call_compatibility_routes_include_group_and_websocket_paths() {
-        assert!(is_public_route(&Method::POST, "/api/v1/group-calls"));
-        assert!(is_public_route(
+    fn call_and_websocket_routes_now_require_auth() {
+        // These used to be blanket-public (a bearer-less bypass that also let
+        // unauthenticated clients read/join call and group-call websockets).
+        // They now go through the normal bearer-token check, falling back to
+        // the `access_token` query param specifically for the `/ws` upgrade
+        // paths (browsers can't set custom headers on a WebSocket handshake).
+        assert!(!is_public_route(&Method::POST, "/api/v1/group-calls"));
+        assert!(!is_public_route(
             &Method::GET,
             "/api/v1/group-call/group-1/ws"
         ));
-        assert!(is_public_route(&Method::GET, "/api/v1/call/session-1/ws"));
+        assert!(!is_public_route(&Method::GET, "/api/v1/call/session-1/ws"));
+    }
+
+    #[tokio::test]
+    async fn websocket_route_accepts_access_token_query_param() {
+        let (base_url, token, handle) = spawn_secured_app().await;
+        let response = reqwest::Client::new()
+            .get(format!(
+                "{}/api/v1/call/session-1/ws?access_token={}",
+                base_url, token
+            ))
+            .send()
+            .await
+            .expect("ws route with query token");
+        handle.abort();
+        // No matching route in this minimal test app (so not 200), but the
+        // auth layer must accept the query-param token rather than reject it.
+        assert_ne!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn websocket_route_rejects_missing_token() {
+        let (base_url, _token, handle) = spawn_secured_app().await;
+        let response = reqwest::Client::new()
+            .get(format!("{}/api/v1/call/session-1/ws", base_url))
+            .send()
+            .await
+            .expect("ws route without token");
+        handle.abort();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[test]
