@@ -143,6 +143,23 @@ impl ThreatService {
                             IngestOutcome::Inserted => {
                                 dirty = true;
                                 ai_bridge::forward_to_ai(&self.node_id, &alert);
+                                crate::advisory::generate_for_alert(
+                                    self.node_id.clone(),
+                                    alert.clone(),
+                                    self.state_dir.clone(),
+                                    std::env::var("SGX_GUARDIAN_DISCOVERY_STATE_DIR")
+                                        .map(PathBuf::from)
+                                        .unwrap_or_else(|_| {
+                                            self.state_dir
+                                                .parent()
+                                                .map(|parent| parent.join("discovery"))
+                                                .unwrap_or_else(|| {
+                                                    PathBuf::from(
+                                                        "/var/lib/sgx-guardian/discovery",
+                                                    )
+                                                })
+                                        }),
+                                );
                                 crate::notify::publish_alert(&self.node_id, &alert);
                                 crate::rules::publish(crate::rules::RuleEvent::from_threat_alert(
                                     &self.node_id,
