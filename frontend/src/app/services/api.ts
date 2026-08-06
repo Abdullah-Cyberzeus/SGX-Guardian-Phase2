@@ -15,6 +15,17 @@ function shouldSendNgrokSkipHeader(url: string): boolean {
 
 interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean>;
+  suppressUnauthorizedEvent?: boolean;
+}
+
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
 }
 
 async function extractErrorMessage(response: Response): Promise<string> {
@@ -84,7 +95,7 @@ class ApiClient {
   }
 
   async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-    const { params, ...fetchOptions } = options;
+    const { params, suppressUnauthorizedEvent, ...fetchOptions } = options;
     const url = this.buildUrl(endpoint, params);
     const method = (fetchOptions.method || 'GET').toUpperCase();
     const t0 = performance.now();
@@ -126,12 +137,12 @@ class ApiClient {
     const duration = Math.round(performance.now() - t0);
 
     if (!response.ok) {
-      if (response.status === 401 && !endpoint.startsWith('/auth/')) {
+      if (response.status === 401 && !endpoint.startsWith('/auth/') && !suppressUnauthorizedEvent) {
         window.dispatchEvent(new CustomEvent('sgx:unauthorized'));
       }
       const msg = await extractErrorMessage(response);
       monitoring.trackApiCall(method, endpoint, response.status, duration, msg);
-      throw new Error(msg);
+      throw new ApiError(msg, response.status);
     }
 
     monitoring.trackApiCall(method, endpoint, response.status, duration);
@@ -139,7 +150,7 @@ class ApiClient {
   }
 
   async raw(endpoint: string, options: RequestOptions = {}): Promise<Response> {
-    const { params, ...fetchOptions } = options;
+    const { params, suppressUnauthorizedEvent, ...fetchOptions } = options;
     const baseOrigin = new URL(
       this.baseUrl,
       typeof window === 'undefined' ? 'http://localhost' : window.location.origin,
@@ -161,10 +172,10 @@ class ApiClient {
     if (this.token && !headers.Authorization) headers.Authorization = `Bearer ${this.token}`;
     const response = await fetch(url.toString(), { ...fetchOptions, headers });
     if (!response.ok) {
-      if (response.status === 401 && !endpoint.startsWith('/auth/')) {
+      if (response.status === 401 && !endpoint.startsWith('/auth/') && !suppressUnauthorizedEvent) {
         window.dispatchEvent(new CustomEvent('sgx:unauthorized'));
       }
-      throw new Error(await extractErrorMessage(response));
+      throw new ApiError(await extractErrorMessage(response), response.status);
     }
     return response;
   }

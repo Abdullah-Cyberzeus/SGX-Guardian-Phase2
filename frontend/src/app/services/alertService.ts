@@ -14,6 +14,17 @@ export interface Alert {
   os: string;
   aiSummary: string;
   archived: boolean;
+  rawTimestamp?: string;
+  srcIp?: string;
+  srcPort?: number;
+  dstIp?: string;
+  dstPort?: number;
+  protocol?: string;
+  signatureId?: number;
+  signature?: string;
+  category?: string;
+  blocked?: boolean;
+  originalEvidence?: string;
 }
 
 export interface AlertsResponse {
@@ -48,13 +59,18 @@ interface ThreatAlertApi {
   alert_id: string;
   timestamp: string;
   src_ip: string;
+  src_port?: number;
   dst_ip: string;
+  dst_port?: number;
   protocol: string;
+  signature_id?: number;
   signature: string;
   category: string;
   severity: string;
   event_type: string;
   blocked?: boolean;
+  rev?: number;
+  gid?: number;
 }
 
 function normalizeThreatAlert(alert: ThreatAlertApi): Alert {
@@ -77,6 +93,24 @@ function normalizeThreatAlert(alert: ThreatAlertApi): Alert {
     os: alert.protocol || 'Unknown protocol',
     aiSummary: `Suricata detected ${alert.signature || 'suspicious traffic'} targeting ${alert.dst_ip || 'an unknown destination'}.`,
     archived: false,
+    rawTimestamp: alert.timestamp,
+    srcIp: alert.src_ip,
+    srcPort: alert.src_port,
+    dstIp: alert.dst_ip,
+    dstPort: alert.dst_port,
+    protocol: alert.protocol,
+    signatureId: alert.signature_id,
+    signature: alert.signature,
+    category: alert.category,
+    blocked: !!alert.blocked,
+    originalEvidence: [
+      alert.event_type ? `Event type: ${alert.event_type}` : '',
+      alert.signature ? `Signature: ${alert.signature}` : '',
+      alert.signature_id ? `Signature ID: ${alert.signature_id}` : '',
+      alert.src_ip || alert.dst_ip ? `Flow: ${alert.src_ip || 'unknown'}:${alert.src_port ?? 'any'} → ${alert.dst_ip || 'unknown'}:${alert.dst_port ?? 'any'} ${alert.protocol || ''}` : '',
+      alert.gid ? `GID: ${alert.gid}` : '',
+      alert.rev ? `Revision: ${alert.rev}` : '',
+    ].filter(Boolean).join(' · '),
   };
 }
 
