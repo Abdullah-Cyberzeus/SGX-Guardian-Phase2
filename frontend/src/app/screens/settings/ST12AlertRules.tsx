@@ -19,6 +19,17 @@ import {
 
 // ── Labels & formatting ──────────────────────────────────────────────────────
 
+// Geofence Entry/Exit have no backend event bridge (never fire) and
+// Attestation Failed has no practical way to trigger from the app, so they're
+// hidden from rule creation. Lock Transport / Emergency Key Rotation are
+// hidden the same way — kept selectable only via existing rules, not new ones.
+const SELECTABLE_TRIGGERS: RuleTrigger[] = RULE_TRIGGERS.filter(
+  (t) => !["GeofenceEntry", "GeofenceExit", "AttestationFailed"].includes(t)
+);
+const SELECTABLE_ACTION_TYPES: RuleActionType[] = RULE_ACTION_TYPES.filter(
+  (t) => !["LockTransport", "EmergencyKeyRotation"].includes(t)
+);
+
 const TRIGGER_LABELS: Record<RuleTrigger, string> = {
   ThreatAlert: "Threat Alert",
   DeviceDiscovered: "Device Discovered",
@@ -372,6 +383,7 @@ export function ST12AlertRules() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editingRule, setEditingRule] = useState<Rule | null>(null);
   const [form, setForm] = useState<FormState>(defaultForm());
+  const [executionsVisible, setExecutionsVisible] = useState(20);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [busyKind, setBusyKind] = useState<"toggle" | "test" | "delete" | null>(null);
@@ -552,7 +564,7 @@ export function ST12AlertRules() {
                 </p>
               ) : (
                 <div className="flex flex-col gap-2">
-                  {executions.slice(0, 20).map((execution) => (
+                  {executions.slice(0, executionsVisible).map((execution) => (
                     <div key={execution.id} className="rounded-md p-3" style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }}>
                       <div className="flex items-center justify-between gap-2">
                         <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{execution.rule_name}</p>
@@ -565,8 +577,13 @@ export function ST12AlertRules() {
                       <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--muted-foreground)", marginTop: "4px" }}>{formatDateTime(execution.at)}</p>
                     </div>
                   ))}
-                  {executions.length > 20 && (
-                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--muted-foreground)", textAlign: "center" }}>Showing latest 20 of {executions.length}</p>
+                  {executions.length > executionsVisible && (
+                    <button
+                      onClick={() => setExecutionsVisible((n) => n + 20)}
+                      style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--primary)", textAlign: "center", background: "none", border: "none", cursor: "pointer", padding: "4px" }}
+                    >
+                      Show more ({executions.length - executionsVisible} more)
+                    </button>
                   )}
                 </div>
               )}
@@ -617,7 +634,7 @@ export function ST12AlertRules() {
                   className="w-full px-4 outline-none"
                   style={{ ...inputStyle, cursor: "pointer" }}
                 >
-                  {RULE_TRIGGERS.map((t) => <option key={t} value={t}>{TRIGGER_LABELS[t]}</option>)}
+                  {SELECTABLE_TRIGGERS.map((t) => <option key={t} value={t}>{TRIGGER_LABELS[t]}</option>)}
                 </select>
               </div>
 
@@ -705,7 +722,7 @@ export function ST12AlertRules() {
               <div>
                 <FieldLabel>Actions — what happens when it matches</FieldLabel>
                 <div className="flex flex-col gap-2">
-                  {RULE_ACTION_TYPES.map((type) => {
+                  {SELECTABLE_ACTION_TYPES.map((type) => {
                     const destructive = DESTRUCTIVE_ACTION_TYPES.includes(type);
                     return (
                       <div key={type}>
