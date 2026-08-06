@@ -258,6 +258,18 @@ impl DiscoveryScheduler {
         }
         drop(inv);
 
+        for device in &discovered_devices {
+            crate::rules::publish(crate::rules::RuleEvent::from_device_discovered(
+                &self.node_id,
+                device,
+            ));
+            if matches!(device.status, DeviceStatus::Unauthorized | DeviceStatus::Drifted) {
+                crate::rules::publish(crate::rules::RuleEvent::from_device_unauthorized(
+                    &self.node_id,
+                    device,
+                ));
+            }
+        }
         for device in discovered_devices {
             crate::notify::publish_device_discovered(&device);
         }
