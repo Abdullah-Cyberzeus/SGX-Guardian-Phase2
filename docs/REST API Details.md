@@ -109,6 +109,10 @@ Transport notes:
 | 90 | GET | `/threat/config` | Read current Guardian threat config |
 | 91 | POST | `/threat/config` | Patch threat config fields; effective within 5 seconds |
 | 92 | POST | `/threat/start` | Start Suricata via `systemctl start suricata` when offline |
+| 92a | GET | `/advisory/recommendations` | List recent AI alert remediation advisory recommendations |
+| 92b | GET | `/threat/alerts/{id}/recommendation` | Fetch the advisory recommendation for one threat alert |
+| 92c | GET | `/advisory/rules` | Read the active advisory recommendation rules |
+| 92d | PUT | `/advisory/rules` | Replace the advisory recommendation rules |
 | 93 | POST | `/crl/revoke` | Issue a DID revocation entry and rebuild the signed CRL |
 | 94 | GET | `/crl/list` | List all locally persisted CRL entries |
 | 95 | GET | `/crl/entry` | Fetch one CRL entry by entry ID |
@@ -188,6 +192,10 @@ Transport notes:
 | GET | `/threat/config` | Read full Guardian threat config as JSON |
 | POST | `/threat/config` | Patch threat config fields; live-reloaded within 5 seconds |
 | POST | `/threat/start` | Start Suricata if offline via `systemctl start suricata` |
+| GET | `/advisory/recommendations` | List recent AI alert remediation advisory recommendations |
+| GET | `/threat/alerts/{id}/recommendation` | Fetch the advisory recommendation for one threat alert |
+| GET | `/advisory/rules` | Read the active advisory recommendation rules |
+| PUT | `/advisory/rules` | Replace the advisory recommendation rules |
 
 ### 2.3 Identity, CRL & Network Control
 
@@ -4193,6 +4201,325 @@ Peer DID resolution response (`?did=did:guardian:...`):
   - Runs `systemctl start suricata`.
   - If Suricata is already active, `systemctl start` is a no-op and returns success.
   - Use `GET /threat/status` to confirm `suricata` field becomes `"active"` after calling this endpoint.
+
+## 4.1 AI Alert Remediation Advisory Endpoint Contracts
+
+New advisory surface total: 3 API paths, 4 HTTP operations.
+
+Authentication for all advisory endpoints:
+
+- Auth: `Authorization: Bearer <token>` required.
+- These routes are not public in `require_auth`; only global login-disabled mode bypasses auth.
+- Missing, invalid, expired, revoked, or wrong-issuer sessions return:
+
+```json
+{
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "missing bearer token"
+  }
+}
+```
+
+### GET `/advisory/recommendations`
+
+- Full path: `/api/v1/advisory/recommendations`
+- Request:
+  - Query params:
+    - `limit` (optional, integer, default `500`, max `10000`)
+  - Body: none
+- Success response (`200 OK`): array of `RemediationRecommendation`
+
+```json
+[
+  {
+    "rec_id": "urn:sha256:8b55f177bf4b6bbdc47cb8775f93b2b4",
+    "alert_id": "838deb6e032238c8",
+    "title": "Suspected malware or command-and-control activity",
+    "summary": "A device is communicating in a pattern associated with malware control channels.",
+    "severity": "critical",
+    "confidence": 0.95,
+    "steps": [
+      {
+        "order": 1,
+        "action": "Isolate the affected device from the Circle network",
+        "rationale": "Contain potential command-and-control traffic",
+        "automatable": true
+      },
+      {
+        "order": 2,
+        "action": "Run a full endpoint and service scan",
+        "rationale": "Identify persistence, payloads, and exposed services",
+        "automatable": true
+      }
+    ],
+    "context": [
+      "Signature: ET MALWARE Possible C2 Checkin (sid 2024001)",
+      "Flow: 192.168.50.10:51514 -> 192.168.50.20:443 TCP",
+      "Category: malware",
+      "Device context: 192.168.50.20 (plc-1, Acme)",
+      "Device has CVE-2023-38408 (CVSS 9.8)"
+    ],
+    "references": [
+      "cve",
+      "signature",
+      "suricata:sid:2024001",
+      "https://nvd.nist.gov/vuln/detail/CVE-2023-38408"
+    ],
+    "source": "signature-kb",
+    "generated_at": "2026-07-02T06:01:25.533459328Z"
+  }
+]
+```
+
+- Response schema:
+  - `rec_id` (`string`): deterministic recommendation ID.
+  - `alert_id` (`string`): linked `ThreatAlert.alert_id`.
+  - `title` (`string`): recommendation title from matched rule or fallback.
+  - `summary` (`string`): human-readable advisory summary.
+  - `severity` (`string`): copied from alert severity (`info`, `low`, `medium`, `high`, `critical`).
+  - `confidence` (`number`): `0.0` to `1.0`.
+  - `steps` (`RemediationStep[]`): ordered remediation steps.
+  - `context` (`string[]`): signature, flow, anomaly, and device/CVE evidence lines.
+  - `references` (`string[]`): signature, CVE, policy, or URL references.
+  - `source` (`string`): `signature-kb`, `anomaly-kb`, or `fallback`.
+  - `generated_at` (`string`, RFC3339 UTC): generation timestamp.
+- Validation rules:
+  - `limit` must parse as an unsigned integer.
+  - Values above `10000` are clamped to `10000`.
+- Error responses:
+  - `400 BAD_REQUEST`: query string cannot deserialize, e.g. `limit=abc`
+  - `401 UNAUTHORIZED`: missing or invalid bearer session
+  - `500 INTERNAL_SERVER_ERROR`: failed to read or parse `recommendations.jsonl`
+
+Example:
+
+```bash
+curl -k \
+  -H "Authorization: Bearer $TOKEN" \
+  "https://192.168.1.10:8443/api/v1/advisory/recommendations?limit=25"
+```
+
+### GET `/threat/alerts/{id}/recommendation`
+
+- Full path: `/api/v1/threat/alerts/{id}/recommendation`
+- Request:
+  - Path params:
+    - `id` (`string`, required): exact `ThreatAlert.alert_id`
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`): one `RemediationRecommendation`
+
+```json
+{
+  "rec_id": "urn:sha256:8b55f177bf4b6bbdc47cb8775f93b2b4",
+  "alert_id": "838deb6e032238c8",
+  "title": "Suspected malware or command-and-control activity",
+  "summary": "A device is communicating in a pattern associated with malware control channels.",
+  "severity": "critical",
+  "confidence": 0.95,
+  "steps": [
+    {
+      "order": 1,
+      "action": "Isolate the affected device from the Circle network",
+      "rationale": "Contain potential command-and-control traffic",
+      "automatable": true
+    }
+  ],
+  "context": [
+    "Signature: ET MALWARE Possible C2 Checkin (sid 2024001)",
+    "Flow: 192.168.50.10:51514 -> 192.168.50.20:443 TCP",
+    "Category: malware"
+  ],
+  "references": [
+    "signature",
+    "suricata:sid:2024001"
+  ],
+  "source": "signature-kb",
+  "generated_at": "2026-07-02T06:01:25.533459328Z"
+}
+```
+
+- Validation rules:
+  - `id` is accepted as a string and is not further validated by the handler.
+- Error responses:
+  - `401 UNAUTHORIZED`: missing or invalid bearer session
+  - `404 NOT_FOUND`: no stored recommendation exists for the alert ID
+  - `500 INTERNAL_SERVER_ERROR`: failed to read or parse `recommendations.jsonl`
+
+Example:
+
+```bash
+curl -k \
+  -H "Authorization: Bearer $TOKEN" \
+  "https://192.168.1.10:8443/api/v1/threat/alerts/838deb6e032238c8/recommendation"
+```
+
+Example `404 NOT_FOUND`:
+
+```json
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "no recommendation for alert missing-alert-id"
+  }
+}
+```
+
+### GET `/advisory/rules`
+
+- Full path: `/api/v1/advisory/rules`
+- Request:
+  - Query params: none
+  - Body: none
+- Success response (`200 OK`): `RecommendationRules`
+
+```json
+{
+  "rules": [
+    {
+      "match": {
+        "category": "malware",
+        "signature_contains": null,
+        "severity_at_least": "high"
+      },
+      "title": "Suspected malware or command-and-control activity",
+      "summary": "A device is communicating in a pattern associated with malware control channels.",
+      "steps": [
+        {
+          "action": "Isolate the affected device from the Circle network",
+          "rationale": "Contain potential command-and-control traffic",
+          "automatable": true
+        }
+      ],
+      "references": [
+        "signature",
+        "cve"
+      ]
+    }
+  ],
+  "fallback": {
+    "title": "Security alert requires review",
+    "summary": "Guardian detected a security alert that does not match a more specific advisory rule.",
+    "steps": [
+      {
+        "action": "Review the alert signature, endpoints, and recent device changes",
+        "rationale": "Manual triage can separate expected activity from a new threat",
+        "automatable": false
+      }
+    ],
+    "references": [
+      "signature"
+    ]
+  }
+}
+```
+
+- Response schema:
+  - `rules` (`RecommendationRule[]`): ordered rule list.
+  - `rules[].match.category` (`string|null`, optional): category match, compared case-insensitively.
+  - `rules[].match.signature_contains` (`string|null`, optional): substring match against alert signature.
+  - `rules[].match.severity_at_least` (`string|null`, optional): minimum severity.
+  - `rules[].title` (`string`): recommendation title.
+  - `rules[].summary` (`string`): recommendation summary.
+  - `rules[].steps` (`RuleStep[]`): step templates without `order`; order is assigned during generation.
+  - `rules[].references` (`string[]`): static references added by the rule.
+  - `fallback` (`RecommendationTemplate`): used when no rule matches.
+  - `signature_sha256` (`string`, optional): SHA-256 over the same JSON body with `signature_sha256` removed.
+- Notes:
+  - If the runtime rules file is missing, unreadable, invalid JSON, or has a bad `signature_sha256`, the handler returns the built-in default rules with `200 OK`.
+- Error responses:
+  - `401 UNAUTHORIZED`: missing or invalid bearer session
+
+Example:
+
+```bash
+curl -k \
+  -H "Authorization: Bearer $TOKEN" \
+  "https://192.168.1.10:8443/api/v1/advisory/rules"
+```
+
+### PUT `/advisory/rules`
+
+- Full path: `/api/v1/advisory/rules`
+- Request:
+  - Query params: none
+  - JSON body: `RecommendationRules`
+
+```json
+{
+  "rules": [
+    {
+      "match": {
+        "category": "exploit",
+        "signature_contains": "OpenSSH",
+        "severity_at_least": "medium"
+      },
+      "title": "Possible exploit attempt against SSH",
+      "summary": "Traffic matched exploit behavior for an exposed SSH service.",
+      "steps": [
+        {
+          "action": "Patch or disable the affected SSH service",
+          "rationale": "Known vulnerable service versions are common exploit targets",
+          "automatable": false
+        }
+      ],
+      "references": [
+        "signature",
+        "cve"
+      ]
+    }
+  ],
+  "fallback": {
+    "title": "Security alert requires review",
+    "summary": "Guardian detected a security alert that does not match a more specific advisory rule.",
+    "steps": [
+      {
+        "action": "Preserve logs before taking remediation action",
+        "rationale": "Evidence helps confirm scope and supports later audit review",
+        "automatable": true
+      }
+    ],
+    "references": [
+      "signature"
+    ]
+  }
+}
+```
+
+- Success response (`200 OK`): echoes the saved `RecommendationRules`
+- Validation rules:
+  - Body must deserialize as `RecommendationRules`.
+  - `fallback` is required.
+  - Each rule requires `match`, `title`, and `summary`.
+  - Each rule/fallback step requires `action`, `rationale`, and `automatable`.
+  - Optional `signature_sha256`, when provided, must equal SHA-256 of the JSON body after removing `signature_sha256`.
+  - Unknown severity strings are accepted by the schema; during matching they rank as `info`.
+- Error responses:
+  - `400 BAD_REQUEST`: JSON body cannot deserialize, `signature_sha256` mismatch, or rules write/serialization failure
+  - `401 UNAUTHORIZED`: missing or invalid bearer session
+  - `415 UNSUPPORTED_MEDIA_TYPE`: JSON body is sent without an accepted JSON content type
+
+Example:
+
+```bash
+curl -k -X PUT \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  --data @recommendation_rules.json \
+  "https://192.168.1.10:8443/api/v1/advisory/rules"
+```
+
+Example `400 BAD_REQUEST`:
+
+```json
+{
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "invalid advisory rules: signature_sha256 does not match rules body"
+  }
+}
+```
 
 ## 5. CRL Endpoint Contracts
 
