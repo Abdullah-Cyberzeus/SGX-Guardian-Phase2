@@ -176,19 +176,20 @@ pub struct ScanTargetRequest {
 }
 
 pub async fn scan_now(
-    State(_s): State<Arc<AppState>>,
+    State(s): State<Arc<AppState>>,
     Query(query): Query<ScanTargetRequest>,
     body: Bytes,
 ) -> Result<Json<ScanResponse>, ApiError> {
-    scan_with_args(&["discovery", "scan"], resolve_scan_target(query, &body)?).await
+    scan_with_args(&s, &["discovery", "scan"], resolve_scan_target(query, &body)?).await
 }
 
 pub async fn scan_stealth(
-    State(_s): State<Arc<AppState>>,
+    State(s): State<Arc<AppState>>,
     Query(query): Query<ScanTargetRequest>,
     body: Bytes,
 ) -> Result<Json<ScanResponse>, ApiError> {
     scan_with_args(
+        &s,
         &["discovery", "scan", "--intensity", "stealth"],
         resolve_scan_target(query, &body)?,
     )
@@ -196,11 +197,12 @@ pub async fn scan_stealth(
 }
 
 pub async fn scan_standard(
-    State(_s): State<Arc<AppState>>,
+    State(s): State<Arc<AppState>>,
     Query(query): Query<ScanTargetRequest>,
     body: Bytes,
 ) -> Result<Json<ScanResponse>, ApiError> {
     scan_with_args(
+        &s,
         &["discovery", "scan", "--intensity", "standard"],
         resolve_scan_target(query, &body)?,
     )
@@ -208,11 +210,12 @@ pub async fn scan_standard(
 }
 
 pub async fn scan_aggressive(
-    State(_s): State<Arc<AppState>>,
+    State(s): State<Arc<AppState>>,
     Query(query): Query<ScanTargetRequest>,
     body: Bytes,
 ) -> Result<Json<ScanResponse>, ApiError> {
     scan_with_args(
+        &s,
         &["discovery", "scan", "--intensity", "aggressive"],
         resolve_scan_target(query, &body)?,
     )
@@ -767,18 +770,52 @@ fn build_scan_args(args: &[&str], target: Option<String>) -> Vec<String> {
 }
 
 async fn scan_with_args(
+    state: &AppState,
     args: &[&str],
     target: Option<String>,
 ) -> Result<Json<ScanResponse>, ApiError> {
     let args = build_scan_args(args, target);
     let refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
     let resp = super::dkp::run_cli(&refs).await?;
+    if resp.success {
+        publish_rule_events_for_latest_run(state);
+    }
     Ok(Json(ScanResponse {
         success: resp.success,
         stdout: resp.stdout,
         stderr: resp.stderr,
         timestamp: resp.timestamp,
     }))
+}
+
+// The CLI subprocess (`sgx-pa-cli discovery scan ...`) updates the inventory
+// directly on disk, bypassing the in-process DiscoveryScheduler that normally
+// publishes DeviceDiscovered/DeviceUnauthorized rule events. Re-derive the
+// device list for the run it just recorded (same approach as
+// `historical_run_devices`, used for run-history enrichment) and publish from
+// here so manual/frontend-triggered scans fire rule events too.
+fn publish_rule_events_for_latest_run(state: &AppState) {
+    let history_path = run_history::history_path(Path::new(&state.discovery_state_dir));
+    let Ok(mut runs) = run_history::list_recent(&history_path, Some(1)) else {
+        return;
+    };
+    let Some(run) = runs.pop() else {
+        return;
+    };
+    let whitelist = Whitelist::load(&whitelist_path(state)).unwrap_or_default();
+    let (devices, _) = historical_run_devices(&run, &whitelist);
+    for device in devices.unwrap_or_default() {
+        crate::rules::publish(crate::rules::RuleEvent::from_device_discovered(
+            &state.node_id,
+            &device,
+        ));
+        if matches!(device.status, DeviceStatus::Unauthorized | DeviceStatus::Drifted) {
+            crate::rules::publish(crate::rules::RuleEvent::from_device_unauthorized(
+                &state.node_id,
+                &device,
+            ));
+        }
+    }
 }
 
 // ── Summary endpoint ──────────────────────────────────────────────────────────

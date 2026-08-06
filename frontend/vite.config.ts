@@ -20,12 +20,15 @@ export default defineConfig({
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
   assetsInclude: ['**/*.svg', '**/*.csv'],
   server: {
-    port: 3000,
+    // VITE_DEV_PORT / VITE_API_TARGET let you point this dev server at any
+    // node (nodeA/B/C) without touching this file — see the three commands
+    // in the project notes. Defaults preserve this branch's current setup.
+    port: Number(process.env.VITE_DEV_PORT) || 3000,
     strictPort: true,
 
     proxy: {
       '/api/v1': {
-        target: 'http://127.0.0.1:8443',
+        target: process.env.VITE_API_TARGET || 'http://127.0.0.1:8443',
         changeOrigin: true,
         ws: true,
       },
