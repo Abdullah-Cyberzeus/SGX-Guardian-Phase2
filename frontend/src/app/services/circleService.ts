@@ -110,10 +110,12 @@ function normalizeMember(value: any): CircleMember {
   const did = String(value?.did || '');
   const nodeHint = value?.nodeHint || value?.node_hint;
   const lifecycle = String(value?.lifecycleState || value?.lifecycle_state || value?.state || value?.status || 'unknown').toLowerCase();
+  const rawId = did.split(':').pop() || '';
+  const fallbackName = rawId ? `Guardian ${rawId.slice(0, 6)}…${rawId.slice(-4)}` : 'Guardian member';
   return {
     ...value,
     id: String(value?.id || did || nodeHint || 'unknown-member'),
-    name: String(value?.name || nodeHint || did.split(':').pop() || 'Guardian member'),
+    name: String(value?.name || nodeHint || fallbackName),
     did,
     role: String(value?.role || 'member').toLowerCase() as CircleRole,
     nodeHint: nodeHint ? String(nodeHint) : undefined,
