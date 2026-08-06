@@ -8,21 +8,29 @@ pub mod attestation_service;
 pub mod audit;
 pub mod backup;
 pub mod call;
+pub mod automation;
 pub mod cert_client;
 pub mod cert_service;
 pub mod circle;
 pub mod client;
 pub mod cloud;
 pub mod config_loader;
+pub mod storage;
 pub mod cot;
 pub mod crl;
 pub mod devices;
+pub mod device;
 pub mod did;
 pub mod discovery; // Network discovery module
 pub mod dusage;
 pub mod enforcement;
 pub mod geofence;
 pub mod key_manager;
+pub mod homeassistant;
+pub mod integration;
+pub mod kasa;
+pub mod nest;
+pub mod notification;
 pub mod logging;
 pub mod media;
 pub mod metrics;
@@ -41,6 +49,7 @@ pub mod rules;
 pub mod runtime_gates;
 pub mod secure_element;
 pub mod server;
+pub mod telemetry;
 pub mod threat;
 pub mod tls;
 pub mod tpm;
@@ -66,4 +75,11 @@ pub mod proto {
 }
 pub fn add_numbers(a: i32, b: i32) -> i32 {
     a + b
+}
+
+#[cfg(test)]
+pub mod test_utils {
+    use once_cell::sync::Lazy;
+    pub static TEST_ENV_LOCK: Lazy<tokio::sync::Mutex<()>> =
+        Lazy::new(|| tokio::sync::Mutex::new(()));
 }
