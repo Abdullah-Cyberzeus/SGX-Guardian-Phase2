@@ -2,13 +2,13 @@ import { useState, useMemo } from "react";
 import { useNavigate } from "react-router";
 import {
   Battery, Signal, Users, AlertTriangle, ChevronRight,
-  Shield, Scan, Network, Loader2, X, ShieldCheck,
+  Shield, X, ShieldCheck,
 } from "lucide-react";
 import { mockAlerts, mockCircles, mockThreatIntel } from "../../data/mockData";
 import { SkeletonCard } from "../../components/SkeletonBlock";
 import { EmptyState } from "../../components/EmptyState";
 import { useCurrentUser } from "../../hooks/useCurrentUser";
-import { useGuardianInfo, useAlerts, useCircles, useThreatIntel, useDevices } from "../../hooks/useApiData";
+import { useGuardianInfo, useAlerts, useCircles, useThreatIntel } from "../../hooks/useApiData";
 import { Card, CardHeader, CardTitle, CardDescription, CardAction, CardContent } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Progress } from "../../components/ui/progress";
@@ -203,7 +203,7 @@ function AlertsDeskCard({ alerts, navigate }: { alerts: AlertData[]; navigate: (
   ];
   const total = rows.reduce((s, r) => s + r.count, 0) || 1;
   return (
-    <Card className="col-span-2 h-full gap-3">
+    <Card className="col-span-3 h-full gap-3">
       <CardHeader className="px-5 pt-5">
         <CardTitle className={sectionLabel}>Active Alerts</CardTitle>
         <CardAction>
@@ -227,41 +227,6 @@ function AlertsDeskCard({ alerts, navigate }: { alerts: AlertData[]; navigate: (
               </div>
             </div>
             <span className="text-xl font-bold tabular-nums" style={{ color: r.color }}>{r.count}</span>
-          </button>
-        ))}
-      </CardContent>
-    </Card>
-  );
-}
-
-function QuickActionsDeskCard({ navigate, onScan }: { navigate: (p: string) => void; onScan: () => void }) {
-  const actions = [
-    { icon: Scan, label: "Scan Network", desc: "Discover devices on your network", run: onScan },
-    { icon: Network, label: "View Topology", desc: "See your live network map", run: () => navigate("/home/topology") },
-  ];
-  return (
-    <Card className="h-full gap-3">
-      <CardHeader className="px-5 pt-5">
-        <CardTitle className={sectionLabel}>Quick Actions</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-1 flex-col justify-center gap-2.5 px-5 [&:last-child]:pb-5">
-        {actions.map(({ icon: Icon, label, desc, run }) => (
-          <button
-            key={label}
-            onClick={run}
-            className="flex items-center gap-3 rounded-lg border border-border bg-muted/40 px-3.5 py-3 text-left transition-colors hover:border-primary/40 hover:bg-muted"
-          >
-            <span
-              className="flex size-9 shrink-0 items-center justify-center rounded-lg"
-              style={{ backgroundColor: "color-mix(in srgb, var(--primary) 14%, transparent)", border: "1px solid color-mix(in srgb, var(--primary) 24%, transparent)" }}
-            >
-              <Icon size={18} className="text-primary" />
-            </span>
-            <div className="flex min-w-0 flex-1 flex-col">
-              <span className="text-sm font-semibold text-foreground">{label}</span>
-              <span className="text-xs text-muted-foreground">{desc}</span>
-            </div>
-            <ChevronRight size={16} className="shrink-0 text-muted-foreground" />
           </button>
         ))}
       </CardContent>
@@ -406,29 +371,6 @@ function ActiveAlertsCard({ navigate, alerts }: { navigate: (p: string) => void;
   );
 }
 
-function QuickActions({ navigate, onScan }: { navigate: (p: string) => void; onScan: () => void }) {
-  return (
-    <div className="grid grid-cols-2 gap-3">
-      <button
-        onClick={onScan}
-        className="flex flex-col items-center gap-2.5 py-5 rounded-lg border border-border transition-opacity active:opacity-70"
-        style={{ backgroundColor: "var(--card)", cursor: "pointer", borderRadius: "var(--radius-card)" }}
-      >
-        <Scan size={24} style={{ color: "var(--primary)" }} />
-        <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", color: "var(--foreground)" }}>Scan Network</span>
-      </button>
-      <button
-        onClick={() => navigate("/home/topology")}
-        className="flex flex-col items-center gap-2.5 py-5 rounded-lg border border-border transition-opacity active:opacity-70"
-        style={{ backgroundColor: "var(--card)", cursor: "pointer", borderRadius: "var(--radius-card)" }}
-      >
-        <Network size={24} style={{ color: "var(--primary)" }} />
-        <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", color: "var(--foreground)" }}>View Topology</span>
-      </button>
-    </div>
-  );
-}
-
 function CirclesCard({ navigate, circles }: { navigate: (p: string) => void; circles: CircleData[] }) {
   return (
     <div className="rounded-lg border border-border p-4" style={{ backgroundColor: "var(--card)", borderRadius: "var(--radius-card)" }}>
@@ -465,91 +407,16 @@ function CirclesCard({ navigate, circles }: { navigate: (p: string) => void; cir
   );
 }
 
-// ── Scan Sheet ───────────────────────────────────────────────────────────────
-function ScanSheet({ open, onClose, progress, devices, done }: {
-  open: boolean; onClose: () => void; progress: number; devices: string[]; done: boolean;
-}) {
-  if (!open) return null;
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-end md:items-center justify-center cursor-pointer"
-      style={{ backgroundColor: "rgba(0,0,0,0.6)" }}
-      onClick={(e) => { if (e.target === e.currentTarget && done) onClose(); }}
-    >
-      <div
-        className="w-full rounded-t-xl md:rounded-xl border-t md:border border-border"
-        style={{
-          backgroundColor: "var(--card)",
-          maxHeight: "75dvh",
-          display: "flex", flexDirection: "column",
-          maxWidth: "480px",
-          marginBottom: 0,
-        }}
-      >
-        <div className="flex items-center justify-between px-5 pt-5 pb-3">
-          <h3 style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>Scanning Network</h3>
-          {done && (
-            <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer" }}>
-              <X size={20} style={{ color: "var(--muted-foreground)" }} />
-            </button>
-          )}
-        </div>
-        <div className="px-5 mb-4">
-          <div className="rounded-full overflow-hidden" style={{ height: "4px", backgroundColor: "var(--muted)" }}>
-            <div className="h-full rounded-full transition-all" style={{ width: `${progress}%`, backgroundColor: "var(--primary)", transitionDuration: "0.4s" }} />
-          </div>
-          <div className="flex items-center justify-between mt-1.5">
-            <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{done ? "Scan complete" : "Scanning..."}</span>
-            <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{Math.round(progress)}%</span>
-          </div>
-        </div>
-        <div className="px-5 mb-3">
-          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--primary)" }}>
-            {devices.length} {devices.length === 1 ? "device" : "devices"} found
-          </span>
-        </div>
-        <div className="flex-1 overflow-y-auto px-5 pb-3">
-          {devices.map((dev, i) => (
-            <div key={i} className="flex items-center gap-3 py-3" style={{ borderBottom: i < devices.length - 1 ? "1px solid var(--border)" : undefined }}>
-              <div style={{ width: "7px", height: "7px", borderRadius: "50%", backgroundColor: dev.includes("Unknown") ? "var(--chart-5)" : "var(--chart-2)", flexShrink: 0 }} />
-              <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--foreground)" }}>{dev}</span>
-            </div>
-          ))}
-          {!done && (
-            <div className="flex items-center gap-2 py-3">
-              <Loader2 size={14} style={{ color: "var(--muted-foreground)", animation: "spin 1s linear infinite" }} />
-              <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>Looking for devices...</span>
-            </div>
-          )}
-        </div>
-        {done && (
-          <div className="px-5 pb-6 pt-3 border-t border-border">
-            <button onClick={onClose} className="w-full flex items-center justify-center rounded-md transition-opacity active:opacity-80"
-              style={{ height: "48px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", borderRadius: "var(--radius)", border: "none", cursor: "pointer" }}>
-              Done
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ── Main component ────────────────────────────────────────────────────────────
 export function HM01Dashboard() {
   const navigate = useNavigate();
   const { name: userName } = useCurrentUser();
-  const [scanOpen, setScanOpen] = useState(false);
-  const [scanProgress, setScanProgress] = useState(0);
-  const [scanDevices, setScanDevices] = useState<string[]>([]);
-  const [scanDone, setScanDone] = useState(false);
   const [bannerVisible, setBannerVisible] = useState(() => !localStorage.getItem(BANNER_KEY));
 
   // Fetch data from API with fallback to mock data
   const { data: guardianData, loading: guardianLoading, source: guardianSource } = useGuardianInfo();
   const { data: alertsData, loading: alertsLoading, source: alertsSource } = useAlerts();
   const { data: circlesData, loading: circlesLoading, source: circlesSource } = useCircles();
-  const { data: devicesData } = useDevices();
   const { data: threatData, loading: threatLoading } = useThreatIntel();
 
   // Map API data to expected format (backend: /node/status)
@@ -602,21 +469,6 @@ export function HM01Dashboard() {
 
   // Use threat intel from API
   const score = threatIntel.score;
-
-  const startScan = () => {
-    setScanOpen(true); setScanProgress(0); setScanDevices([]); setScanDone(false);
-    const deviceList = devicesData?.devices ?? (Array.isArray(devicesData) ? devicesData : []);
-    const discovered: string[] = deviceList.length > 0
-      ? deviceList.map((d: any) => `${d.name || d.id} · ${d.ip || "—"}`)
-      : ["No devices found"];
-    discovered.forEach((dev, i) => {
-      setTimeout(() => {
-        setScanDevices((prev) => [...prev, dev]);
-        setScanProgress(((i + 1) / discovered.length) * 100);
-        if (i === discovered.length - 1) setTimeout(() => setScanDone(true), 300);
-      }, i * 800 + 500);
-    });
-  };
 
   if (screenState === "loading") {
     return <div className="flex flex-col gap-4 p-4 md:p-6 lg:p-8"><SkeletonCard lines={4} /><SkeletonCard lines={2} /><SkeletonCard lines={3} /></div>;
@@ -688,7 +540,6 @@ export function HM01Dashboard() {
         <GuardianCard onClick={() => navigate("/home/guardian")} guardian={guardian} />
         <HealthScoreCard score={score} threats24h={threatIntel.threats24h} blocked={threatIntel.blocked} />
         <ActiveAlertsCard navigate={navigate} alerts={alerts} />
-        <QuickActions navigate={navigate} onScan={startScan} />
         <CirclesCard navigate={navigate} circles={circles} />
       </div>
 
@@ -703,7 +554,6 @@ export function HM01Dashboard() {
         {/* Right col */}
         <div className="flex flex-col gap-5">
           <ActiveAlertsCard navigate={navigate} alerts={alerts} />
-          <QuickActions navigate={navigate} onScan={startScan} />
         </div>
         {/* Full-width circles */}
         <div className="col-span-2">
@@ -719,20 +569,10 @@ export function HM01Dashboard() {
             <HealthHeroCard score={score} threats24h={threatIntel.threats24h} blocked={threatIntel.blocked} />
             <GuardianDeskCard guardian={guardian} onClick={() => navigate("/home/guardian")} />
             <AlertsDeskCard alerts={alerts} navigate={navigate} />
-            <QuickActionsDeskCard navigate={navigate} onScan={startScan} />
             <CirclesDeskGrid navigate={navigate} circles={circles} />
           </div>
         </div>
       </div>
-
-      <ScanSheet
-        open={scanOpen}
-        onClose={() => setScanOpen(false)}
-        progress={scanProgress}
-        devices={scanDevices}
-        done={scanDone}
-      />
-      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }

@@ -44,7 +44,8 @@ pub async fn require_auth(
                 || (req.uri().path().starts_with("/api/v1/call/")
                     && req.uri().path().ends_with("/ws"))
                 || req.uri().path() == "/api/v1/chat/ws"
-                || req.uri().path() == "/api/v1/cert/requests/ws")
+                || req.uri().path() == "/api/v1/cert/requests/ws"
+                || req.uri().path() == "/api/v1/ha/ws")
                 .then(|| query_parameter(req.uri().query(), "access_token"))
                 .flatten()
         });
