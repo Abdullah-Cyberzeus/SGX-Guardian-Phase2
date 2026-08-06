@@ -406,12 +406,30 @@ mod tests {
         assert_eq!(claims.name.as_deref(), Some("Admin User"));
     }
 
-    #[test]
-    fn rejects_wrong_audience() {
-        let jwks = Jwks { keys: vec![] };
-        let err = verify_id_token_with_jwks("a.b.c", &jwks, "https://issuer", "other", "nonce")
-            .unwrap_err();
-        assert!(err.to_string().contains("Invalid byte"));
+    #[tokio::test]
+    async fn rejects_wrong_audience() {
+        let td = TempDir::new().expect("tempdir");
+        let signer = Arc::new(
+            KeyManager::load_or_generate(td.path().join("idp.key").to_str().expect("path"))
+                .expect("signer"),
+        );
+        let issuer = "https://issuer";
+        let id_token = signed_id_token(
+            signer.clone(),
+            "kid-1",
+            issuer,
+            "sgx-client",
+            "cylenium-user-1",
+            "nonce-1",
+            Some("admin@example.com"),
+            Some("Admin User"),
+        )
+        .await;
+        let jwks: Jwks = serde_json::from_value(jwks_for_signer(signer, "kid-1")).expect("jwks");
+
+        let err = verify_id_token_with_jwks(&id_token, &jwks, issuer, "other", "nonce-1")
+            .expect_err("wrong audience must fail");
+        assert!(err.to_string().contains("audience mismatch"));
     }
 
     #[test]
