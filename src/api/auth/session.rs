@@ -127,6 +127,7 @@ mod tests {
             failed_attempts: 0,
             locked_until: None,
             last_failed_at: None,
+            oidc_sub: None,
         };
 
         let (token, claims, _) = issue(
