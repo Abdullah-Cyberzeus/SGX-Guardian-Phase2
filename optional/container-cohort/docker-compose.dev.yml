@@ -33,6 +33,7 @@ services:
       SGX_DUSAGE_SAMPLE_SECS: "15"
       SGX_DUSAGE_CATEGORIES_ENABLED: "1"
       SGX_DISABLE_POLICY_ENFORCEMENT: "0"
+      SGX_RULES_DRYRUN: "0"
     networks:
       sgxnet:
         ipv4_address: 172.31.250.10
