@@ -2749,6 +2749,14 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
                             AuditAction::Rejected,
                             &format!("Incoming attestation rejected from {}", remote),
                         );
+                        crate::rules::publish(crate::rules::RuleEvent::AttestationFailed {
+                            node_id,
+                            peer: peer_addr,
+                            did: (!incoming.subject_did.trim().is_empty())
+                                .then(|| incoming.subject_did.clone()),
+                            reason: "pcr_or_signature_failure".to_string(),
+                            severity: "high".to_string(),
+                        });
                         continue;
                     }
                 }
