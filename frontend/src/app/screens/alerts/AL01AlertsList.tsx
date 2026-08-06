@@ -1,43 +1,326 @@
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import {
   Clock, ChevronRight, ChevronDown, Trash2, Search, Shield, Archive,
-  CheckSquare, Square, X, AlertTriangle, Ban, Scan, Monitor, Brain, Loader2, Network,
+  CheckSquare, Square, X, AlertTriangle, Brain, Loader2, Network,
 } from "lucide-react";
 import { mockAlerts } from "../../data/mockData";
 import { useAlerts, useThreatStatus } from "../../hooks/useApiData";
 import type { ThreatStatus } from "../../services/threatService";
+import { ApiError } from "../../services/api";
+import { advisoryService, type AdvisoryRules, type RemediationRecommendation } from "../../services/advisoryService";
+import { managedDeviceService, type ManagedDevice } from "../../services/managedDeviceService";
+import type { Alert } from "../../services/alertService";
 import { ThreatProtectionPanel } from "./AL08ThreatProtection";
 import { AL09LiveAttackTopology } from "./AL09LiveAttackTopology";
 import { SeverityBadge, StatusBadge } from "../../components/SeverityBadge";
-import { SkeletonCard } from "../../components/SkeletonBlock";
+import { SkeletonBlock, SkeletonCard } from "../../components/SkeletonBlock";
 import { EmptyState } from "../../components/EmptyState";
 import { toast } from "sonner";
 
 type Mode = "active" | "archived" | "bulk";
 type SeverityFilter = "ALL" | "HIGH" | "MEDIUM" | "LOW";
 type StatusFilter = "ALL" | "Active" | "Acknowledged" | "Blocked";
+type AlertView = Alert & Partial<typeof mockAlerts[number]>;
+type RecommendationState =
+  | { status: "idle" | "loading" }
+  | { status: "available" | "fallback"; recommendation: RemediationRecommendation; rules?: AdvisoryRules | null }
+  | { status: "none"; rules?: AdvisoryRules | null }
+  | { status: "error"; message: string; rules?: AdvisoryRules | null }
+  | { status: "unauthorized"; message: string };
 
-// ── Alert Detail Panel (inline for tablet/desktop) ────────────────────────────
-function AlertDetailPanel({ alert, onClose }: { alert: typeof mockAlerts[0]; onClose: () => void }) {
-  const navigate = useNavigate();
-  const accentColor = alert.severity === "HIGH" ? "var(--destructive)" : alert.severity === "MEDIUM" ? "var(--chart-5)" : "var(--chart-2)";
+function confidencePercent(confidence: number | undefined): number {
+  const raw = Number(confidence ?? 0);
+  const percent = raw <= 1 ? raw * 100 : raw;
+  return Math.max(0, Math.min(100, Math.round(percent)));
+}
 
-  const statusVariant = alert.status === "Active" ? "danger" : alert.status === "Blocked" ? "warning" : "muted";
-  const sectionLabel = { fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "8px" } as const;
+function formatDateTime(value?: string): string {
+  if (!value) return "N/A";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
 
-  const details = [
-    { label: "Device", value: alert.device },
-    { label: "IP Address", value: alert.deviceIp, mono: true },
-    { label: "Event Type", value: alert.eventType },
-    { label: "OS", value: alert.os },
+function compactValue(value: unknown): string {
+  if (value === undefined || value === null || value === "") return "N/A";
+  return String(value);
+}
+
+function extractCves(lines: string[]): string[] {
+  return Array.from(new Set(lines.flatMap((line) => line.match(/CVE-\d{4}-\d{4,7}/gi) ?? [])));
+}
+
+function extractCvss(lines: string[]): string[] {
+  return Array.from(new Set(lines.flatMap((line) => line.match(/CVSS\s*[:=]?\s*\d+(?:\.\d+)?|\b\d+(?:\.\d+)?\s*CVSS/gi) ?? [])));
+}
+
+function findDeviceForAlert(alert: AlertView, devices: ManagedDevice[]): ManagedDevice | null {
+  const ips = new Set([alert.srcIp, alert.dstIp, alert.deviceIp].filter(Boolean));
+  return devices.find((device) => device.ip && ips.has(device.ip)) ?? null;
+}
+
+function isUnauthorizedError(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 401 || error.status === 403);
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404;
+}
+
+function advisoryErrorMessage(error: unknown): string {
+  if (isUnauthorizedError(error)) return "Session expired or unauthorized. Please sign in again.";
+  if (error instanceof Error) return error.message;
+  return "Recommendation request failed";
+}
+
+function RecommendationSkeleton() {
+  return (
+    <div className="rounded-lg border p-4" style={{ backgroundColor: "color-mix(in srgb, var(--primary) 5%, var(--card))", borderColor: "color-mix(in srgb, var(--primary) 20%, transparent)" }}>
+      <div className="flex items-center gap-2 mb-4">
+        <SkeletonBlock height={18} width={18} rounded="sm" />
+        <SkeletonBlock height={12} width="48%" />
+      </div>
+      <SkeletonCard lines={4} />
+    </div>
+  );
+}
+
+function RecommendationCard({ state }: { state: RecommendationState }) {
+  const sectionLabel = { fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--primary)", letterSpacing: "0.08em" } as const;
+
+  if (state.status === "loading") return <RecommendationSkeleton />;
+
+  if (state.status === "unauthorized" || state.status === "error" || state.status === "none") {
+    const title = state.status === "none" ? "No recommendation found" : state.status === "unauthorized" ? "Unauthorized" : "Recommendation unavailable";
+    const message = state.status === "none"
+      ? "No advisory has been generated for this alert yet. Alert details remain available for manual triage."
+      : state.message;
+    return (
+      <div className="rounded-lg border p-4" style={{ backgroundColor: "var(--card)", borderColor: state.status === "unauthorized" ? "color-mix(in srgb, var(--chart-5) 28%, var(--border))" : "var(--border)" }}>
+        <div className="flex items-center gap-2 mb-2">
+          <Brain size={14} style={{ color: "var(--primary)" }} />
+          <span style={sectionLabel}>AI-READY REMEDIATION ADVISORY</span>
+        </div>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{title}</p>
+        <p className="mt-1" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.6 }}>{message}</p>
+      </div>
+    );
+  }
+
+  if (state.status !== "available" && state.status !== "fallback") return null;
+
+  const rec = state.recommendation;
+  const confidence = confidencePercent(rec.confidence);
+  const isFallback = state.status === "fallback" || rec.source === "fallback";
+
+  return (
+    <div className="rounded-lg border p-4" style={{ backgroundColor: "color-mix(in srgb, var(--primary) 5%, var(--card))", borderColor: "color-mix(in srgb, var(--primary) 22%, transparent)" }}>
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div className="flex items-center gap-2">
+          <Brain size={14} style={{ color: "var(--primary)" }} />
+          <span style={sectionLabel}>AI REMEDIATION RECOMMENDATION</span>
+        </div>
+        <span className="rounded-full px-2 py-0.5" style={{ backgroundColor: isFallback ? "color-mix(in srgb, var(--chart-5) 13%, transparent)" : "color-mix(in srgb, var(--primary) 13%, transparent)", border: `1px solid ${isFallback ? "color-mix(in srgb, var(--chart-5) 25%, transparent)" : "color-mix(in srgb, var(--primary) 25%, transparent)"}`, color: isFallback ? "var(--chart-5)" : "var(--primary)", fontFamily: "Inter, sans-serif", fontSize: "10px", fontWeight: "var(--font-weight-semibold)" }}>
+          {rec.source || "fallback"}
+        </span>
+      </div>
+
+      <h3 style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)", lineHeight: 1.35 }}>{rec.title}</h3>
+      <p className="mt-2" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", lineHeight: 1.65 }}>{rec.summary}</p>
+
+      <div className="mt-4">
+        <div className="flex items-center justify-between mb-1.5">
+          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>Confidence</span>
+          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--chart-2)", fontWeight: "var(--font-weight-semibold)" }}>{confidence}%</span>
+        </div>
+        <div style={{ height: "7px", borderRadius: "999px", backgroundColor: "var(--muted)", overflow: "hidden" }}>
+          <div style={{ width: `${confidence}%`, height: "100%", backgroundColor: "var(--chart-2)", borderRadius: "999px" }} />
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center gap-2 flex-wrap">
+        <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>Generated {formatDateTime(rec.generated_at)}</span>
+        {isFallback && <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--chart-5)" }}>Fallback recommendation</span>}
+      </div>
+
+      {rec.steps.length > 0 && (
+        <div className="mt-4">
+          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "10px" }}>REMEDIATION STEPS</p>
+          <ol className="flex flex-col gap-3">
+            {[...rec.steps].sort((a, b) => a.order - b.order).map((step, index) => (
+              <li key={`${step.order}-${index}`} className="flex gap-3">
+                <span className="rounded-md flex items-center justify-center flex-shrink-0" style={{ width: "24px", height: "24px", backgroundColor: "color-mix(in srgb, var(--primary) 16%, transparent)", color: "var(--primary)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)" }}>{step.order || index + 1}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)", lineHeight: 1.5 }}>{step.action}</p>
+                    <span className="rounded-full px-2 py-0.5" style={{ backgroundColor: step.automatable ? "color-mix(in srgb, var(--chart-2) 13%, transparent)" : "color-mix(in srgb, var(--chart-5) 13%, transparent)", border: `1px solid ${step.automatable ? "color-mix(in srgb, var(--chart-2) 25%, transparent)" : "color-mix(in srgb, var(--chart-5) 25%, transparent)"}`, color: step.automatable ? "var(--chart-2)" : "var(--chart-5)", fontFamily: "Inter, sans-serif", fontSize: "10px", fontWeight: "var(--font-weight-semibold)" }}>
+                      {step.automatable ? "Automatable" : "Manual"}
+                    </span>
+                  </div>
+                  <p className="mt-1" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.55 }}>{step.rationale}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+
+      {rec.context.length > 0 && (
+        <div className="mt-4">
+          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "8px" }}>CONTEXT / EVIDENCE</p>
+          <div className="flex flex-col gap-1.5">
+            {rec.context.map((line, index) => (
+              <p key={index} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>• {line}</p>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {rec.references.length > 0 && (
+        <div className="mt-4 flex flex-wrap gap-1.5">
+          {rec.references.map((ref) => (
+            <span key={ref} className="rounded-md px-2 py-1" style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)", color: "var(--foreground)", fontFamily: "JetBrains Mono, monospace", fontSize: "10px" }}>{ref}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DeviceContextCard({ alert, recommendation, devices }: { alert: AlertView; recommendation: RemediationRecommendation | null; devices: ManagedDevice[] }) {
+  const context = recommendation?.context ?? [];
+  const device = findDeviceForAlert(alert, devices);
+  const cves = extractCves([...(recommendation?.references ?? []), ...context]);
+  const cvss = extractCvss(context);
+  const openPorts = device?.open_ports ?? [];
+  const riskReasons = [...(device?.security_reasons ?? []), ...(device?.privacy_reasons ?? []), ...context.filter((line) => /risk|cve|cvss|vulnerab/i.test(line))];
+  const rows = [
+    { label: "Device IP", value: device?.ip || alert.dstIp || alert.srcIp || alert.deviceIp, mono: true },
+    { label: "Device ID", value: device?.device_id, mono: true },
+    { label: "Vendor", value: device?.vendor || device?.display_name },
+    { label: "Authorization", value: device ? (device.rejected ? "Rejected" : device.blocked ? "Blocked" : "Authorized / monitored") : alert.blocked ? "Blocked by threat enforcement" : "Unknown" },
+    { label: "OS Fingerprint", value: device?.os_fingerprint || alert.os },
   ];
 
-  const actions = [
-    { icon: Ban, label: "Block Device", desc: "Revoke network access immediately", color: "var(--destructive)" },
-    { icon: Scan, label: "Run Security Scan", desc: "Full scan on the affected device", color: "var(--primary)" },
-    { icon: Monitor, label: "View Affected Device", desc: "Open the device's details", color: "var(--chart-2)" },
-    { icon: Archive, label: "Archive Event", desc: "Mark as reviewed", color: "var(--muted-foreground)" },
+  return (
+    <div className="rounded-lg border border-border p-4" style={{ backgroundColor: "var(--card)" }}>
+      <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "10px" }}>DEVICE CONTEXT</p>
+      <div className="grid grid-cols-2 gap-2">
+        {rows.map((row) => (
+          <div key={row.label} className="rounded-md p-2.5" style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }}>
+            <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{row.label}</p>
+            <p className="mt-1" style={{ fontFamily: row.mono ? "JetBrains Mono, monospace" : "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--foreground)", wordBreak: "break-word" }}>{compactValue(row.value)}</p>
+          </div>
+        ))}
+      </div>
+      {openPorts.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {openPorts.slice(0, 10).map((port) => (
+            <span key={`${port.protocol}-${port.port}`} className="rounded-md px-2 py-1" style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)", color: "var(--foreground)", fontFamily: "JetBrains Mono, monospace", fontSize: "10px" }}>
+              {port.port}/{port.protocol}{port.service ? ` ${port.service}` : ""}
+            </span>
+          ))}
+        </div>
+      )}
+      {riskReasons.length > 0 && (
+        <div className="mt-3">
+          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", fontWeight: "var(--font-weight-semibold)", marginBottom: "6px" }}>Risk details</p>
+          {riskReasons.slice(0, 5).map((reason, index) => (
+            <p key={index} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>• {reason}</p>
+          ))}
+        </div>
+      )}
+      {(cves.length > 0 || cvss.length > 0) && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {[...cves, ...cvss].map((item) => (
+            <span key={item} className="rounded-md px-2 py-1" style={{ backgroundColor: "color-mix(in srgb, var(--destructive) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--destructive) 22%, transparent)", color: "var(--destructive)", fontFamily: "JetBrains Mono, monospace", fontSize: "10px" }}>{item}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Alert Detail Panel (inline for tablet/desktop) ────────────────────────────
+function AlertDetailPanel({ alert, onClose }: { alert: AlertView; onClose: () => void }) {
+  const navigate = useNavigate();
+  const accentColor = alert.severity === "HIGH" ? "var(--destructive)" : alert.severity === "MEDIUM" ? "var(--chart-5)" : "var(--chart-2)";
+  const statusVariant = alert.status === "Active" ? "danger" : alert.status === "Blocked" ? "warning" : "muted";
+  const sectionLabel = { fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "8px" } as const;
+  const [recommendationState, setRecommendationState] = useState<RecommendationState>({ status: "idle" });
+  const [devices, setDevices] = useState<ManagedDevice[]>([]);
+  const activeRecommendation = recommendationState.status === "available" || recommendationState.status === "fallback"
+    ? recommendationState.recommendation
+    : null;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    setRecommendationState({ status: "loading" });
+    setDevices([]);
+
+    async function loadRecommendation() {
+      const [primary, recent, rules, deviceList] = await Promise.allSettled([
+        advisoryService.getRecommendation(alert.id, controller.signal),
+        advisoryService.listRecommendations(500, controller.signal),
+        advisoryService.getRules(controller.signal),
+        managedDeviceService.list(),
+      ]);
+
+      if (!active || controller.signal.aborted) return;
+      const rulesValue = rules.status === "fulfilled" ? rules.value : null;
+      if (deviceList.status === "fulfilled") setDevices(deviceList.value);
+
+      if (primary.status === "fulfilled") {
+        setRecommendationState({
+          status: primary.value.source === "fallback" ? "fallback" : "available",
+          recommendation: primary.value,
+          rules: rulesValue,
+        });
+        return;
+      }
+
+      const err = primary.reason;
+      if (isUnauthorizedError(err)) {
+        toast.error("Session expired or unauthorized");
+        setRecommendationState({ status: "unauthorized", message: "Session expired or unauthorized. Please sign in again." });
+        return;
+      }
+
+      const recentMatch = recent.status === "fulfilled"
+        ? recent.value.find((rec) => rec.alert_id === alert.id) ?? null
+        : null;
+      if (recentMatch) {
+        setRecommendationState({
+          status: "fallback",
+          recommendation: recentMatch,
+          rules: rulesValue,
+        });
+        return;
+      }
+
+      if (isNotFoundError(err)) {
+        setRecommendationState({ status: "none", rules: rulesValue });
+        return;
+      }
+
+      setRecommendationState({ status: "error", message: advisoryErrorMessage(err), rules: rulesValue });
+    }
+
+    loadRecommendation();
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [alert.id]);
+
+  const details = [
+    { label: "Signature ID", value: alert.signatureId, mono: true },
+    { label: "Category", value: alert.category || alert.eventType },
+    { label: "Source", value: `${compactValue(alert.srcIp || alert.deviceIp)}:${compactValue(alert.srcPort)}`, mono: true },
+    { label: "Destination", value: `${compactValue(alert.dstIp)}:${compactValue(alert.dstPort)}`, mono: true },
+    { label: "Protocol", value: alert.protocol || alert.os },
+    { label: "Timestamp", value: formatDateTime(alert.rawTimestamp || `${alert.date} ${alert.timestamp}`) },
   ];
 
   return (
@@ -74,62 +357,35 @@ function AlertDetailPanel({ alert, onClose }: { alert: typeof mockAlerts[0]; onC
           <div className="flex items-center gap-2 rounded-lg px-3 py-2.5" style={{ backgroundColor: "color-mix(in srgb, var(--destructive) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--destructive) 22%, transparent)" }}>
             <AlertTriangle size={14} style={{ color: "var(--destructive)", flexShrink: 0 }} />
             <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--destructive)", fontWeight: "var(--font-weight-semibold)" }}>
-              Active threat — immediate action recommended
+              Active threat — review advisory and evidence
             </span>
           </div>
         )}
 
         {/* Details grid */}
         <div>
-          <p style={sectionLabel}>Details</p>
+          <p style={sectionLabel}>Alert Details</p>
           <div className="grid grid-cols-2 rounded-lg border border-border overflow-hidden" style={{ backgroundColor: "var(--card)" }}>
             {details.map((row, i) => (
-              <div key={row.label} className="px-4 py-3 min-w-0" style={{ borderRight: i % 2 === 0 ? "1px solid var(--border)" : undefined, borderBottom: i < 2 ? "1px solid var(--border)" : undefined }}>
+              <div key={row.label} className="px-4 py-3 min-w-0" style={{ borderRight: i % 2 === 0 ? "1px solid var(--border)" : undefined, borderBottom: i < details.length - 2 ? "1px solid var(--border)" : undefined }}>
                 <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--muted-foreground)", fontWeight: "var(--font-weight-medium)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{row.label}</p>
-                <p style={{ fontFamily: row.mono ? "JetBrains Mono, monospace" : "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--foreground)", fontWeight: "var(--font-weight-medium)", marginTop: "2px", wordBreak: "break-word" }}>{row.value}</p>
+                <p style={{ fontFamily: row.mono ? "JetBrains Mono, monospace" : "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--foreground)", fontWeight: "var(--font-weight-medium)", marginTop: "2px", wordBreak: "break-word" }}>{compactValue(row.value)}</p>
               </div>
             ))}
           </div>
         </div>
 
-        {/* AI Summary */}
-        <div className="rounded-lg border p-4" style={{ backgroundColor: "color-mix(in srgb, var(--primary) 5%, var(--card))", borderColor: "color-mix(in srgb, var(--primary) 20%, transparent)" }}>
-          <div className="flex items-center gap-2 mb-2">
-            <Brain size={14} style={{ color: "var(--primary)" }} />
-            <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--primary)", letterSpacing: "0.08em" }}>
-              AI Analysis
-            </span>
+        <div>
+          <p style={sectionLabel}>Original Alert Evidence</p>
+          <div className="rounded-lg border border-border p-3" style={{ backgroundColor: "var(--card)" }}>
+            <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.6 }}>
+              {alert.originalEvidence || alert.description || alert.aiSummary}
+            </p>
           </div>
-          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", lineHeight: 1.65 }}>
-            {alert.aiSummary}
-          </p>
         </div>
 
-        {/* Recommended actions */}
-        <div>
-          <p style={sectionLabel}>Recommended Actions</p>
-          <div className="flex flex-col gap-2">
-            {actions.map(({ icon: Icon, label, desc, color }) => (
-              <button
-                key={label}
-                onClick={() => toast.success(`${label} — action initiated`)}
-                className="flex items-center gap-3 p-3 rounded-lg text-left transition-colors"
-                style={{ backgroundColor: "var(--card)", border: "1px solid var(--border)", cursor: "pointer", borderRadius: "var(--radius)" }}
-                onMouseEnter={(e) => { e.currentTarget.style.borderColor = `color-mix(in srgb, ${color} 45%, var(--border))`; }}
-                onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; }}
-              >
-                <div className="flex items-center justify-center rounded-md flex-shrink-0" style={{ width: "36px", height: "36px", backgroundColor: `color-mix(in srgb, ${color} 12%, transparent)` }}>
-                  <Icon size={16} style={{ color }} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", color: "var(--foreground)" }}>{label}</p>
-                  <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{desc}</p>
-                </div>
-                <ChevronRight size={16} style={{ color: "var(--muted-foreground)", flexShrink: 0 }} />
-              </button>
-            ))}
-          </div>
-        </div>
+        <RecommendationCard state={recommendationState} />
+        <DeviceContextCard alert={alert} recommendation={activeRecommendation} devices={devices} />
       </div>
 
       {/* Footer CTA (pinned) */}
@@ -156,7 +412,7 @@ function AlertListPanel({
 }: {
   mode: Mode;
   setMode: (m: Mode) => void;
-  filtered: typeof mockAlerts;
+  filtered: AlertView[];
   expandedId: string | null;
   setExpandedId: (id: string | null) => void;
   selectedIds: Set<string>;
@@ -172,7 +428,7 @@ function AlertListPanel({
   onSelectAlert?: (id: string) => void;
   selectedAlertId?: string | null;
   isPanel?: boolean;
-  alerts: typeof mockAlerts;
+  alerts: AlertView[];
   threatStatus?: ThreatStatus | null;
 }) {
   const navigate = useNavigate();
@@ -437,8 +693,8 @@ export function AL01AlertsList() {
   const suricataActive = threatStatus?.suricata?.toLowerCase() === "active";
 
   const alerts = useMemo(() => {
-    if (!alertsData) return mockAlerts;
-    return alertsData.alerts || mockAlerts;
+    if (!alertsData) return mockAlerts as AlertView[];
+    return (alertsData.alerts || mockAlerts) as AlertView[];
   }, [alertsData]);
 
   const baseAlerts = useMemo(() => {
