@@ -283,6 +283,7 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         .route("/api/v1/threat/config", post(handlers::threat::set_config))
         .route("/api/v1/threat/start", post(handlers::threat::start))
         .merge(routes::crl_router())
+        .merge(routes::advisory_router())
         .merge(routes::dusage_router())
         .merge(routes::geofence_router())
         .merge(routes::backup_router())

@@ -1,3 +1,4 @@
+pub mod advisory;
 pub mod attestation;
 pub mod auth;
 pub mod backup;
