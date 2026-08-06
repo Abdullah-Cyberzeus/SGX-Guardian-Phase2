@@ -468,6 +468,17 @@ pub async fn revoke(
     // guaranteed to reach peers even if connectivity is currently down.
     crate::crl::offline::queue_pending(&state.node_id, &entry);
 
+    // Feed the alert-rules engine. issue_revocation() itself runs inside the
+    // separate sgx-pa-cli subprocess (see run_owned_cli_with_env above), so a
+    // publish() there would be lost with that process — this in-daemon handler
+    // is the only point that can actually reach the running rules::spawn() listener.
+    crate::rules::publish(crate::rules::RuleEvent::CrlRevocation {
+        node_id: state.node_id.clone(),
+        revoked_did: entry.revoked_did.clone(),
+        reason: entry.reason.as_str().to_string(),
+        severity: entry.severity.as_str().to_string(),
+    });
+
     Ok(Json(RevokeCrlResponse {
         status: "success".to_string(),
         message: "CRL entry issued".to_string(),
