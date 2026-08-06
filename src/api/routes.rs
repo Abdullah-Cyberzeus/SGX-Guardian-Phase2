@@ -57,6 +57,22 @@ pub fn crl_router() -> Router<Arc<AppState>> {
         )
 }
 
+pub fn advisory_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route(
+            "/api/v1/advisory/recommendations",
+            get(handlers::advisory::list),
+        )
+        .route(
+            "/api/v1/threat/alerts/{id}/recommendation",
+            get(handlers::advisory::for_alert),
+        )
+        .route(
+            "/api/v1/advisory/rules",
+            get(handlers::advisory::get_rules).put(handlers::advisory::put_rules),
+        )
+}
+
 pub fn geofence_router() -> Router<Arc<AppState>> {
     Router::new()
         .route(
