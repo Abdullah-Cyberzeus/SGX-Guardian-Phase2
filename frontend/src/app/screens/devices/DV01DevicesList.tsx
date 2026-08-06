@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
 import {
   Plus, Search, Cpu, Shield, ShieldAlert, Trash2, Loader2, Info, LayoutList, ChevronRight,
-  Ban, ShieldCheck, ScanSearch, Pencil, Check, X as XIcon2, UserX, RefreshCw, Copy,
+  Ban, ShieldCheck, ScanSearch, Pencil, Check, X as XIcon2, UserX, RefreshCw, Copy, Home,
 } from "lucide-react";
 import { toast } from "sonner";
 import { deviceService, type PairedDevice, type DeviceDetail, type PairingCodeResponse } from "../../services/deviceService";
@@ -985,6 +985,12 @@ export function DV01DevicesList() {
             style={{ padding: "6px 16px", borderRadius: "var(--radius)", backgroundColor: tab === "fleet" ? "var(--background)" : "transparent", color: tab === "fleet" ? "var(--foreground)" : "var(--muted-foreground)", boxShadow: tab === "fleet" ? "0 1px 3px rgba(0,0,0,0.1)" : "none", border: "none", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", cursor: "pointer", transition: "all 0.2s", display: "flex", alignItems: "center", gap: "6px" }}
           >
             <ShieldAlert size={14} /> Fleet Security
+          </button>
+          <button
+            onClick={() => navigate("/devices/smart-home")}
+            style={{ padding: "6px 16px", borderRadius: "var(--radius)", backgroundColor: "transparent", color: "var(--muted-foreground)", border: "none", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", cursor: "pointer", transition: "all 0.2s", display: "flex", alignItems: "center", gap: "6px" }}
+          >
+            <Home size={14} /> Smart Home
           </button>
         </div>
         <div className="flex items-center gap-3">
