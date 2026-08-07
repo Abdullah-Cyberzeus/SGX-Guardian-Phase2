@@ -6,18 +6,22 @@ import { Toaster } from "sonner";
 function usePWA() {
   useEffect(() => {
     const isIframe = window.self !== window.top;
+    const isLoopbackHost =
+      window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1" ||
+      window.location.hostname === "[::1]";
     const isFigmaPreview =
       window.location.hostname.includes("figma.site") ||
       window.location.hostname.includes("figmaiframepreview") ||
       window.location.hostname.includes("makeproxy");
 
-    // In Figma/preview environments, unregister any stale service workers
-    // that could intercept module requests and serve cached broken responses
-    if ((isIframe || isFigmaPreview) && "serviceWorker" in navigator) {
+    // In loopback and preview environments, stale service workers are more
+    // harmful than helpful because they can keep serving old route chunks.
+    if ((isIframe || isFigmaPreview || isLoopbackHost) && "serviceWorker" in navigator) {
       navigator.serviceWorker.getRegistrations().then((registrations) => {
         registrations.forEach((reg) => {
           reg.unregister();
-          console.log("[SW] Unregistered stale service worker in preview env");
+          console.log("[SW] Unregistered stale service worker in non-prod env");
         });
       });
       return;
