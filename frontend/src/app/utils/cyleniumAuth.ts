@@ -1,5 +1,9 @@
 import { api } from "../services/api";
-import { CYLENIUM_OIDC_CONFIG } from "../config/cylenium";
+import {
+  CYLENIUM_OIDC_CONFIG,
+  cyleniumConfigErrorMessage,
+  isCyleniumConfigured,
+} from "../config/cylenium";
 
 export const CYLENIUM_OIDC_STATE_KEY = "sgx_cylenium_oidc_state";
 export const CYLENIUM_PKCE_CODE_VERIFIER_KEY = "sgx_cylenium_oidc_pkce_code_verifier";
@@ -62,6 +66,9 @@ async function buildCyleniumAuthorizeUrl(state: string, nonce: string): Promise<
 }
 
 async function beginCyleniumLogin(navigate: (url: string) => void) {
+  if (!isCyleniumConfigured()) {
+    throw new Error(cyleniumConfigErrorMessage());
+  }
   const { state, nonce } = await startCyleniumAuthorization();
   storeCyleniumState(state);
   navigate(await buildCyleniumAuthorizeUrl(state, nonce));

@@ -1,5 +1,9 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { CYLENIUM_OIDC_CONFIG } from "../config/cylenium";
+import {
+  CYLENIUM_OIDC_CONFIG,
+  cyleniumConfigErrorMessage,
+  isCyleniumConfigured,
+} from "../config/cylenium";
 import { api } from "../services/api";
 import {
   CYLENIUM_PKCE_CODE_VERIFIER_KEY,
@@ -54,6 +58,11 @@ interface AuthPayload {
   valid?: boolean;
 }
 
+interface LoginBypassProbe {
+  nodeId?: string;
+  hostname?: string;
+}
+
 function normalizeSession(payload: AuthPayload, fallbackToken = ""): Session {
   return {
     token: payload.token || fallbackToken,
@@ -76,6 +85,24 @@ function injectToken(token: string | null) {
   }
 }
 
+function makeLoginBypassSession(probe?: LoginBypassProbe): Session {
+  const nodeId = probe?.nodeId?.trim() || "guardian-local";
+  const hostname = probe?.hostname?.trim() || nodeId;
+  return {
+    token: "",
+    user: {
+      id: nodeId,
+      email: `${hostname.toLowerCase()}@local.guardian`,
+      name: hostname,
+      role: "owner",
+      user_metadata: {
+        name: hostname,
+        role: "Guardian Admin",
+      },
+    },
+  };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [initialToken] = useState(() => {
     const token = localStorage.getItem(TOKEN_KEY) ?? "";
@@ -95,14 +122,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const probeLoginBypass = async () => {
+      try {
+        const probe = await api.get<LoginBypassProbe>("/node/status");
+        if (cancelled) return;
+        const bypassSession = makeLoginBypassSession(probe);
+        injectToken(null);
+        setSession(bypassSession);
+      } catch {
+        if (!cancelled) {
+          injectToken(null);
+          setSession(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
     if (!initialToken) {
-      setSession(null);
-      setLoading(false);
-      return;
+      void probeLoginBypass();
+      return () => {
+        cancelled = true;
+      };
     }
 
     api.get<AuthPayload>("/auth/session")
       .then((data) => {
+        if (cancelled) return;
         const next = normalizeSession(data, initialToken);
         injectToken(next.token);
         setSession(next);
@@ -110,10 +160,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       .catch((error) => {
         console.warn("AuthContext: no active session found.", error.message);
-        injectToken(null);
-        setSession(null);
-        setLoading(false);
+        void probeLoginBypass();
       });
+    return () => {
+      cancelled = true;
+    };
   }, [initialToken]);
 
   const signIn = async (
@@ -151,6 +202,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const startCyleniumSignIn = (returnTo: string) => {
+    if (!isCyleniumConfigured()) {
+      console.warn(cyleniumConfigErrorMessage());
+      return;
+    }
     sessionStorage.setItem(CYLENIUM_RETURN_TO_KEY, returnTo);
     void startCyleniumOidcRedirect();
   };
@@ -161,6 +216,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     codeVerifier?: string | null,
   ): Promise<{ error: string | null }> => {
     try {
+      if (!isCyleniumConfigured()) {
+        throw new Error(cyleniumConfigErrorMessage());
+      }
       const body: {
         code: string;
         state: string;
