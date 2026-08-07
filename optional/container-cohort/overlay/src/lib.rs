@@ -1,6 +1,7 @@
 // ===== Public exports for integration tests =====
 
 // Core modules
+pub mod advisory;
 pub mod api;
 pub mod chat;
 

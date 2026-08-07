@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router";
 import { useEffect, useRef, useState } from "react";
 import { startCyleniumOidcRedirect } from "../../utils/cyleniumAuth";
+import { isCyleniumConfigured } from "../../config/cylenium";
 
 const SLIDES = [
   {
@@ -32,6 +33,7 @@ export function OB01Welcome() {
   const navigate = useNavigate();
   const [active, setActive] = useState(0);
   const [showSwipeHint, setShowSwipeHint] = useState(true);
+  const cyleniumEnabled = isCyleniumConfigured();
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -245,7 +247,8 @@ export function OB01Welcome() {
               Already have an account?
             </span>
             <button
-              onClick={() => startCyleniumOidcRedirect()}
+              onClick={() => { if (cyleniumEnabled) void startCyleniumOidcRedirect(); }}
+              disabled={!cyleniumEnabled}
               className="active:opacity-60"
               style={{
                 background: "none",
@@ -254,11 +257,12 @@ export function OB01Welcome() {
                 fontSize: "var(--text-sm)",
                 fontWeight: "var(--font-weight-semibold)",
                 color: "var(--primary)",
-                cursor: "pointer",
+                cursor: cyleniumEnabled ? "pointer" : "default",
+                opacity: cyleniumEnabled ? 1 : 0.6,
                 padding: "0 2px",
               }}
             >
-              Login
+              {cyleniumEnabled ? "Login" : "Login unavailable"}
             </button>
           </div>
         </div>
