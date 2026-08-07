@@ -4,6 +4,12 @@ x-guardian-common: &guardian-common
   build:
     context: .
     dockerfile: docker/Dockerfile.agent
+    args:
+      # These are public OIDC client settings embedded in the browser bundle.
+      # Never add SGX_CYLENIUM_OIDC_CLIENT_SECRET here.
+      VITE_CYLENIUM_BASE_URL: "${VITE_CYLENIUM_BASE_URL:-http://localhost:4000}"
+      VITE_CYLENIUM_CLIENT_ID: "${VITE_CYLENIUM_CLIENT_ID:-sg_x_guardian_44b2f63d}"
+      VITE_CYLENIUM_SCOPE: "${VITE_CYLENIUM_SCOPE:-openid profile email}"
   image: sgx-guardian:dev
   cap_add:
     - NET_ADMIN
@@ -50,6 +56,7 @@ services:
       SGX_DUSAGE_SAMPLE_SECS: "15"
       SGX_DUSAGE_CATEGORIES_ENABLED: "1"
       SGX_CALL_SIGNALING_PORT: "50065"
+      SGX_CYLENIUM_OIDC_REDIRECT_URI: "${NODEA_CYLENIUM_REDIRECT_URI:-https://localhost:18443/auth/callback}"
     networks:
       sgxnet:
         ipv4_address: 172.31.250.10
@@ -78,6 +85,7 @@ services:
       SGX_TPM_DIK_HANDLE: "0x81000110"
       SGX_TPM_KEY_AUTH: "${NODEB_TPM_KEY_AUTH:-}"
       SGX_CALL_SIGNALING_PORT: "50065"
+      SGX_CYLENIUM_OIDC_REDIRECT_URI: "${NODEB_CYLENIUM_REDIRECT_URI:-https://localhost:28443/auth/callback}"
     networks:
       sgxnet:
         ipv4_address: 172.31.250.11
@@ -103,6 +111,7 @@ services:
       SGX_TPM_DIK_HANDLE: "0x81000120"
       SGX_TPM_KEY_AUTH: "${NODEC_TPM_KEY_AUTH:-}"
       SGX_CALL_SIGNALING_PORT: "50065"
+      SGX_CYLENIUM_OIDC_REDIRECT_URI: "${NODEC_CYLENIUM_REDIRECT_URI:-https://localhost:38443/auth/callback}"
     networks:
       sgxnet:
         ipv4_address: 172.31.250.12
