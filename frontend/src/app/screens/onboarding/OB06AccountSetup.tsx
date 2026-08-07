@@ -5,6 +5,7 @@ import { Eye, EyeOff, Check, X, Loader2, Shield, ExternalLink, Copy } from "luci
 import { useAuth } from "../../contexts/AuthContext";
 import { useCurrentUser } from "../../hooks/useCurrentUser";
 import { useState } from "react";
+import { cyleniumConfigErrorMessage, isCyleniumConfigured } from "../../config/cylenium";
 
 const MIN_PASSWORD_LENGTH = 12;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -58,6 +59,7 @@ export function OB06AccountSetup() {
   });
   const signupMethod = (routeState?.signupMethod || sessionStorage.getItem(ONBOARDING_METHOD_KEY) || "serial") as OnboardingSignupMethod;
   const signupMethodLabel = SIGNUP_METHOD_LABELS[signupMethod] ?? SIGNUP_METHOD_LABELS.serial;
+  const cyleniumEnabled = isCyleniumConfigured();
 
   const emailValid = isValidEmail(email);
   const showEmailError = email.trim().length > 0 && !emailValid;
@@ -95,6 +97,10 @@ export function OB06AccountSetup() {
   };
 
   const handleCylenium = () => {
+    if (!cyleniumEnabled) {
+      toast.error(cyleniumConfigErrorMessage());
+      return;
+    }
     setCyleniumState("loading");
     startCyleniumSignIn("/onboarding/pairing");
   };
@@ -508,6 +514,7 @@ export function OB06AccountSetup() {
         {/* Continue with Cylenium */}
         <button
           onClick={handleCylenium}
+          disabled={!cyleniumEnabled}
           className="w-full flex items-center justify-center gap-2.5 transition-opacity active:opacity-80"
           style={{
             height: "52px",
@@ -516,7 +523,8 @@ export function OB06AccountSetup() {
             fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)",
             borderRadius: "var(--radius)",
             border: "1.5px solid var(--border)",
-            cursor: "pointer",
+            cursor: cyleniumEnabled ? "pointer" : "default",
+            opacity: cyleniumEnabled ? 1 : 0.6,
           }}
         >
           {/* Cervais shield icon */}
@@ -526,7 +534,7 @@ export function OB06AccountSetup() {
           >
             <Shield size={13} style={{ color: "var(--primary)" }} />
           </div>
-          Continue with Cylenium
+          {cyleniumEnabled ? "Continue with Cylenium" : "Cylenium Not Configured"}
         </button>
       </div>
 
@@ -537,4 +545,3 @@ export function OB06AccountSetup() {
     </div>
   );
 }
-
