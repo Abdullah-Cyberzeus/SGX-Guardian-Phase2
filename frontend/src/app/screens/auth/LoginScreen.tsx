@@ -4,6 +4,7 @@ import { CervaisLogo } from "../../components/CervaisLogo";
 import { Eye, EyeOff, Shield, Loader2 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { toast } from "sonner";
+import { cyleniumConfigErrorMessage, isCyleniumConfigured } from "../../config/cylenium";
 
 export function LoginScreen() {
   const navigate = useNavigate();
@@ -13,6 +14,7 @@ export function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [cyleniumLoading, setCyleniumLoading] = useState(false);
+  const cyleniumEnabled = isCyleniumConfigured();
 
   const canSubmit = email.includes("@") && password.length >= 6;
 
@@ -29,6 +31,10 @@ export function LoginScreen() {
   };
 
   const handleCylenium = () => {
+    if (!cyleniumEnabled) {
+      toast.error(cyleniumConfigErrorMessage());
+      return;
+    }
     setCyleniumLoading(true);
     startCyleniumSignIn("/home");
   };
@@ -198,7 +204,7 @@ export function LoginScreen() {
         {/* Continue with Cylenium */}
         <button
           onClick={handleCylenium}
-          disabled={loading}
+          disabled={loading || !cyleniumEnabled}
           className="w-full flex items-center justify-center gap-2.5 transition-opacity active:opacity-80"
           style={{
             height: "52px",
@@ -209,8 +215,8 @@ export function LoginScreen() {
             fontWeight: "var(--font-weight-semibold)",
             borderRadius: "var(--radius)",
             border: "1.5px solid var(--border)",
-            cursor: loading ? "default" : "pointer",
-            opacity: loading ? 0.6 : 1,
+            cursor: loading || !cyleniumEnabled ? "default" : "pointer",
+            opacity: loading || !cyleniumEnabled ? 0.6 : 1,
           }}
         >
           <div
@@ -219,7 +225,8 @@ export function LoginScreen() {
           >
             <Shield size={13} style={{ color: "var(--primary)" }} />
           </div>
-          Continue with Cylenium
+          {cyleniumLoading ? <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> : null}
+          {cyleniumEnabled ? "Continue with Cylenium" : "Cylenium Not Configured"}
         </button>
       </div>
 

@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import { CervaisLogo } from "../../components/CervaisLogo";
 import { useAuth } from "../../contexts/AuthContext";
 import { replaceWithCyleniumLogin } from "../../utils/cyleniumAuth";
+import { isCyleniumConfigured } from "../../config/cylenium";
 
 export function SYS02SplashScreen() {
   const navigate = useNavigate();
@@ -22,9 +23,17 @@ export function SYS02SplashScreen() {
           if (!cancelled) navigate("/home", { replace: true });
         }, 1800);
       } else if (localStorage.getItem("sgx_onboarded")) {
-        // Has completed setup before but no session -> Cylenium login
+        // Has completed setup before but no session -> Cylenium login when configured,
+        // otherwise show the regular login screen instead of crashing blank.
         setTimeout(() => {
-          if (!cancelled) replaceWithCyleniumLogin();
+          if (cancelled) return;
+          if (!isCyleniumConfigured()) {
+            navigate("/login", { replace: true });
+            return;
+          }
+          void replaceWithCyleniumLogin().catch(() => {
+            if (!cancelled) navigate("/login", { replace: true });
+          });
         }, 1800);
       } else {
         // First time → full onboarding
