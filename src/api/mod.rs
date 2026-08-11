@@ -317,6 +317,10 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             get(handlers::devices::pairing_code),
         )
         .route(
+            "/api/v1/devices/onboarding-proof",
+            post(handlers::devices::onboarding_proof),
+        )
+        .route(
             "/api/v1/devices/pairing-status",
             get(handlers::devices::pairing_status),
         )
