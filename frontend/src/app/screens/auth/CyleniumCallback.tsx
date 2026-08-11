@@ -28,6 +28,12 @@ export function CyleniumCallback() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const { completeCyleniumLogin } = useAuth();
+  // AuthProvider updates its session during a successful exchange, which
+  // rerenders the context and changes function identities. Keep the latest
+  // callback in a ref so that rerender does not cancel this one-shot effect
+  // before it can navigate away from the loading screen.
+  const completeCyleniumLoginRef = useRef(completeCyleniumLogin);
+  completeCyleniumLoginRef.current = completeCyleniumLogin;
   const startedRef = useRef(false);
   const [backendError, setBackendError] = useState<string | null>(null);
   const code = params.get("code");
@@ -67,7 +73,11 @@ export function CyleniumCallback() {
     const codeVerifier = readStoredPkceVerifier();
 
     async function exchangeCode() {
-      const result = await completeCyleniumLogin(code ?? "", returnedState ?? "", codeVerifier);
+      const result = await completeCyleniumLoginRef.current(
+        code ?? "",
+        returnedState ?? "",
+        codeVerifier,
+      );
       if (cancelled) return;
       if (result.error) {
         clearStoredCyleniumState();
@@ -85,7 +95,7 @@ export function CyleniumCallback() {
     return () => {
       cancelled = true;
     };
-  }, [code, completeCyleniumLogin, navigate, result.valid, returnedState]);
+  }, [code, navigate, result.valid, returnedState]);
 
   return (
     <div
