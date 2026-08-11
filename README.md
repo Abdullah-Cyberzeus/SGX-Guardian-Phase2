@@ -230,16 +230,24 @@ To ensure timely delivery of a robust foundation, the following features are def
 git clone <repository-url>
 cd new-guardian
 
-# Build the project
-cargo build --release
+# Install and build the frontend embedded by the Rust binary
+npm --prefix frontend ci
+VITE_API_URL=/api/v1 npm --prefix frontend run build
+
+# Build the Rust workspace after frontend/dist exists
+cargo build --release --workspace --locked
 
 # Run tests
-cargo test
+cargo test --workspace --locked
 
 # Run security checks
 cargo clippy
 cargo audit
 ```
+
+The Rust build intentionally fails when `frontend/dist/index.html` is absent,
+because the release binary serves the compiled admin console directly. The
+Docker image handles this sequence automatically in separate build stages.
 
 ### Installation
 
