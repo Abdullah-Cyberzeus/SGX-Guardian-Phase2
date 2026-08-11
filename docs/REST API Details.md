@@ -1053,6 +1053,41 @@ Error responses:
 - `400 BAD_REQUEST`: invalid serial
 - `500 INTERNAL_SERVER_ERROR`: pairing store persistence or pairing-code encoding failure
 
+#### POST `/devices/onboarding-proof`
+
+Purpose:
+Generate and return the local Guardian's signed pairing proof during the initial
+serial-number onboarding flow. The backend runs `sgx-pa-cli pairing proof` and
+validates its output before returning it. This endpoint rejects requests after
+the current user already has a paired device; normal `/devices` pairing remains
+a manual proof workflow.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+- JSON body:
+
+```json
+{
+  "pairingCode": "base64url-pairing-payload"
+}
+```
+
+Success response (`200 OK`):
+
+```json
+{
+  "proof": "signed-proof-from-local-guardian"
+}
+```
+
+Error responses:
+
+- `400 BAD_REQUEST`: invalid, expired, consumed, missing, or mismatched challenge
+- `403 FORBIDDEN`: challenge belongs to another user
+- `409 CONFLICT`: automatic proof is no longer available after initial onboarding
+- `500 INTERNAL_SERVER_ERROR`: proof command failed or returned invalid output
+
 #### POST `/devices/pair`
 
 Purpose:

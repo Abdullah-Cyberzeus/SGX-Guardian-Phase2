@@ -53,6 +53,10 @@ export interface PairResponse {
   nodeId: string;
 }
 
+export interface OnboardingProofResponse {
+  proof: string;
+}
+
 // ── Response from POST /devices/{id}/unpair ──────────────────────────────────
 export interface UnpairResponse {
   success: boolean;
@@ -154,6 +158,13 @@ export const deviceService = {
     if (ttl_secs) params.ttl_secs = ttl_secs;
     return api.get<PairingCodeResponse>('/devices/pairing-code', params);
   },
+
+  /**
+   * POST /devices/onboarding-proof
+   * Generates a local proof only for the initial onboarding serial flow.
+   */
+  getOnboardingProof: (pairingCode: string): Promise<OnboardingProofResponse> =>
+    api.post<OnboardingProofResponse>('/devices/onboarding-proof', { pairingCode }),
 
   /**
    * POST /devices/pair

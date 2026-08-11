@@ -348,16 +348,25 @@ export function OB02HardwarePairing() {
     setPairingLoading(true);
     try {
       const data = await deviceService.getPairingCode(nextSerial);
+      const generatedProof = method === "serial"
+        ? (await deviceService.getOnboardingProof(data.pairingCode)).proof
+        : "";
       savePairingContext(nextSerial, method);
       setSerial(nextSerial);
       setPairingMethod(method);
       setPairingData(data);
-      setProof("");
       setCodeCopied(false);
-      setMode("code");
-      toast.success("Pairing code generated");
+      if (method === "serial") {
+        setProof(generatedProof);
+        setMode("proof");
+        toast.success("Pairing code and signed proof generated");
+      } else {
+        setProof("");
+        setMode("code");
+        toast.success("Pairing code generated");
+      }
     } catch (error: any) {
-      toast.error(error.message || "Failed to generate pairing code");
+      toast.error(error.message || "Failed to prepare Guardian pairing");
     } finally {
       setPairingLoading(false);
     }
@@ -681,7 +690,9 @@ export function OB02HardwarePairing() {
             Verify Guardian Pairing
           </h2>
           <p className="mt-2 text-center" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", maxWidth: "320px", lineHeight: 1.5 }}>
-            Copy the pairing code to the Guardian, then paste its signed proof here.
+            {pairingMethod === "serial"
+              ? "The Guardian generated its signed proof automatically. Review it, then continue."
+              : "Copy the pairing code to the Guardian, then paste its signed proof here."}
           </p>
         </div>
 
@@ -747,7 +758,7 @@ export function OB02HardwarePairing() {
                     autoFocus
                     value={proof}
                     onChange={(event) => setProof(event.target.value)}
-                    placeholder="Paste the proof string from the Guardian device..."
+                    placeholder={pairingMethod === "serial" ? "Generating signed proof..." : "Paste the proof string from the Guardian device..."}
                     rows={5}
                     className="w-full px-4 py-3 outline-none"
                     style={{
