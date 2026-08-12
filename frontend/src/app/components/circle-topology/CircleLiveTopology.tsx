@@ -44,6 +44,7 @@ import { geofenceApi, type CreateZoneRequest, type GeofenceEvent, type GeofenceS
 import { alertDetails, configuredActions, eventDetails, locationSourceLabel, sourceLabel, zoneTypeLabel } from "../geofenceDisplay";
 import attestationService, { type PeerAttestationRecord } from "../../services/attestationService";
 import type { DIDDocumentPeerSummary } from "../../services/didService";
+import { useContactNames } from "../../contexts/ContactNameContext";
 import "./circle-topology.css";
 
 const WIDTH = 1440;
@@ -316,6 +317,7 @@ function NodeDetails({ node, nodeCircles, didPeers, onClose }: {
   didPeers: DIDDocumentPeerSummary[];
   onClose: () => void;
 }) {
+  const { displayForDid } = useContactNames();
   const presence = presenceMeta[node.presence];
   const trust = trustMeta[node.attestation];
   const attestationCacheRef = useRef<Map<string, PeerAttestationRecord | null>>(new Map());
@@ -336,13 +338,14 @@ function NodeDetails({ node, nodeCircles, didPeers, onClose }: {
 
   const identity = useMemo(() => matchDidDocumentPeer(node, didPeers), [node, didPeers]);
   const attestationPassed = attestation ? attestation.result === "pass" || attestation.result === "success" : false;
+  const nodeDisplayName = displayForDid(node.did, node.label);
 
   return (
     <aside className="clt-details">
       <div className="clt-details__header">
         <div>
           <span className="clt-eyebrow">NODE INSPECTOR</span>
-          <h3>{node.label}</h3>
+          <h3 title={node.did || node.label}>{nodeDisplayName}</h3>
         </div>
         <button onClick={onClose} aria-label="Close node details"><X size={17} /></button>
       </div>
@@ -373,11 +376,11 @@ function NodeDetails({ node, nodeCircles, didPeers, onClose }: {
       )}
 
       <dl className="clt-kv">
-        <div><dt>Node ID</dt><dd>{node.id}</dd></div>
+        <div><dt>Node ID</dt><dd title={node.did || node.id}>{displayForDid(node.did, node.id)}</dd></div>
         <div><dt>Physical IP</dt><dd>{node.ip || "Not reported"}</dd></div>
         <div><dt>Overlay IP</dt><dd>{node.overlayIp || "Not reported"}</dd></div>
         <div><dt>Last signal</dt><dd>{node.lastSeen}</dd></div>
-        {node.did && <div><dt>DID</dt><dd className="clt-truncate" title={node.did}>{node.did}</dd></div>}
+        {node.did && <div><dt>DID</dt><dd className="clt-truncate" title={node.did}>{displayForDid(node.did, node.did)}</dd></div>}
       </dl>
 
       <div className="clt-attestation-card">
@@ -466,6 +469,7 @@ function LegendPanel({ onClose }: { onClose: () => void }) {
 
 export function CircleLiveTopology({ circle, circles }: { circle: CircleTopologyCircle; circles: CircleTopologyCircle[] }) {
   const { snapshot, didPeers, loading: dataLoading, fatalError, staleWarning, lastSuccessAt, refresh } = useCircleTopology(circles);
+  const { displayForDid } = useContactNames();
   const svgRef = useRef<SVGSVGElement | null>(null);
   const viewportRef = useRef<SVGGElement | null>(null);
   const zoomRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
@@ -533,13 +537,13 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
     return new Set(nodes.filter((node) => {
       const matchesFilter = filterNode(node, filter);
       if (!q) return matchesFilter;
-      const haystack = [node.label, node.id, node.ip, node.overlayIp, node.roles.join(" "), node.attestation, node.presence]
+      const haystack = [displayForDid(node.did, node.label), node.label, node.id, node.ip, node.overlayIp, node.roles.join(" "), node.attestation, node.presence]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
       return matchesFilter && haystack.includes(q);
     }).map((node) => node.id));
-  }, [nodes, filter, search]);
+  }, [nodes, filter, search, displayForDid]);
   const summary = useMemo(() => ({
     online: scopedNodes.filter((node) => node.presence === "online").length,
     offline: scopedNodes.filter((node) => node.presence === "offline" || node.presence === "stale").length,
@@ -942,6 +946,7 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
                   {nodes.map((node) => {
                     const presence = presenceMeta[node.presence];
                     const trust = trustMeta[node.attestation];
+                    const nodeDisplayName = displayForDid(node.did, node.label);
                     const selectedNode = node.id === selectedId;
                     const visible = visibleIds.has(node.id);
                     const radius = node.primaryLighthouse ? 30 : node.roles.includes("lighthouse") ? 26 : node.roles.includes("relay") ? 23 : 17;
@@ -955,7 +960,7 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
                         className={`clt-node ${selectedNode ? "is-selected" : ""} ${visible ? "" : "is-filtered"} clt-node--${node.presence}`}
                         role="button"
                         tabIndex={0}
-                        aria-label={`${node.label}, ${presence.label}, ${trust.label}`}
+                        aria-label={`${nodeDisplayName}, ${presence.label}, ${trust.label}`}
                         onClick={(event) => { event.stopPropagation(); selectNode(node); }}
                         onKeyDown={(event) => {
                           if (event.key === "Enter" || event.key === " ") selectNode(node);
@@ -988,9 +993,9 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
                               <title>{`Member of ${nodeCircleEntries.length} circles: ${nodeCircleEntries.map((entry) => entry.circleName).join(", ")}`}</title>
                             </g>
                           )}
-                          <text className="clt-node__label" y={radius + 27}>{node.label}</text>
+                          <text className="clt-node__label" y={radius + 27}>{nodeDisplayName}</text>
                           <text className="clt-node__sub" y={radius + 43}>{node.overlayIp || node.ip}</text>
-                          <text className="clt-node__map-label" x={dotRadius + 8} y="3">{node.label}</text>
+                          <text className="clt-node__map-label" x={dotRadius + 8} y="3">{nodeDisplayName}</text>
                         </g>
                       </g>
                     );

@@ -7,7 +7,7 @@ use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
 
 use crate::automation::conflict::ConflictResolver;
-use crate::automation::presence::{PresenceTracker};
+use crate::automation::presence::PresenceTracker;
 use crate::automation::schema::{
     AutomationRule, FailurePolicy, RuleAction, RuleCondition, RuleTrigger,
 };
@@ -45,41 +45,55 @@ impl AutomationEngine {
             if let Ok(store_data) = serde_json::from_slice::<AutomationsStore>(&data) {
                 rules = store_data.rules;
                 if !rules.is_empty() {
-                    println!("⚙️ Loaded {} automation rule(s) from {}", rules.len(), config_path);
-                    info!("Loaded {} automation rule(s) from {}.", rules.len(), config_path);
+                    println!(
+                        "⚙️ Loaded {} automation rule(s) from {}",
+                        rules.len(),
+                        config_path
+                    );
+                    info!(
+                        "Loaded {} automation rule(s) from {}.",
+                        rules.len(),
+                        config_path
+                    );
                 }
             }
         }
 
         if rules.is_empty() {
-            rules = vec![
-                AutomationRule {
-                    id: "rule_sync_toggles".to_string(),
-                    name: "Sync Toggle 1 to Toggle 2".to_string(),
-                    priority: 100,
-                    enabled: true,
-                    trigger: RuleTrigger::StateChanged {
-                        entity_id: "input_boolean.1".to_string(),
-                        to_state: None,
-                    },
-                    conditions: vec![],
-                    actions: vec![
-                        RuleAction::Command {
-                            entity_id: "input_boolean.2".to_string(),
-                            domain: "input_boolean".to_string(),
-                            command: "turn_on".to_string(),
-                            service_data: None,
-                            on_failure: FailurePolicy::Continue,
-                        }
-                    ],
-                }
-            ];
-            let store = AutomationsStore { rules: rules.clone() };
+            rules = vec![AutomationRule {
+                id: "rule_sync_toggles".to_string(),
+                name: "Sync Toggle 1 to Toggle 2".to_string(),
+                priority: 100,
+                enabled: true,
+                trigger: RuleTrigger::StateChanged {
+                    entity_id: "input_boolean.1".to_string(),
+                    to_state: None,
+                },
+                conditions: vec![],
+                actions: vec![RuleAction::Command {
+                    entity_id: "input_boolean.2".to_string(),
+                    domain: "input_boolean".to_string(),
+                    command: "turn_on".to_string(),
+                    service_data: None,
+                    on_failure: FailurePolicy::Continue,
+                }],
+            }];
+            let store = AutomationsStore {
+                rules: rules.clone(),
+            };
             if let Ok(json_bytes) = serde_json::to_vec_pretty(&store) {
                 let _ = config_store.write_atomic(|_| Ok::<_, std::io::Error>(json_bytes));
             }
-            println!("⚙️ Initialized default automation rule(s) ({}) in {}", rules.len(), config_path);
-            info!("Initialized default automation rule(s) ({}) in {}", rules.len(), config_path);
+            println!(
+                "⚙️ Initialized default automation rule(s) ({}) in {}",
+                rules.len(),
+                config_path
+            );
+            info!(
+                "Initialized default automation rule(s) ({}) in {}",
+                rules.len(),
+                config_path
+            );
         }
 
         Arc::new(Self {
@@ -180,7 +194,9 @@ impl AutomationEngine {
                     let _ = engine.timer_store.remove_pending_action(&pa.id).await;
                 });
             } else {
-                let delay = (pa.execute_at - now).to_std().unwrap_or(Duration::from_secs(0));
+                let delay = (pa.execute_at - now)
+                    .to_std()
+                    .unwrap_or(Duration::from_secs(0));
                 info!("Scheduling pending action {} in {:?}", pa.id, delay);
                 tokio::spawn(async move {
                     sleep(delay).await;
@@ -200,8 +216,14 @@ impl AutomationEngine {
 
         tokio::spawn(async move {
             let rules_count = engine.rules.read().await.len();
-            println!("⚙️ Automation Engine event loop started with {} active rule(s).", rules_count);
-            info!("⚙️ Automation Engine started with {} active rule(s).", rules_count);
+            println!(
+                "⚙️ Automation Engine event loop started with {} active rule(s).",
+                rules_count
+            );
+            info!(
+                "⚙️ Automation Engine started with {} active rule(s).",
+                rules_count
+            );
             loop {
                 match rx.recv().await {
                     Ok(HaEvent::StateChanged(val)) => {
@@ -209,7 +231,10 @@ impl AutomationEngine {
                     }
                     Ok(_) => {}
                     Err(RecvError::Lagged(skipped)) => {
-                        warn!("Automation Engine lagged behind! Skipped {} events.", skipped);
+                        warn!(
+                            "Automation Engine lagged behind! Skipped {} events.",
+                            skipped
+                        );
                     }
                     Err(RecvError::Closed) => {
                         warn!("Event Bus closed. Stopping Automation Engine.");
@@ -231,14 +256,20 @@ impl AutomationEngine {
             None => return,
         };
 
-        let new_state = match data.get("new_state").and_then(|n| n.get("state")).and_then(|s| s.as_str()) {
+        let new_state = match data
+            .get("new_state")
+            .and_then(|n| n.get("state"))
+            .and_then(|s| s.as_str())
+        {
             Some(s) => s,
             None => return,
         };
 
         // 1. Update presence tracker if person or device_tracker
         if PresenceTracker::is_presence_entity(entity_id) {
-            self.presence_tracker.update_entity_state(entity_id, new_state).await;
+            self.presence_tracker
+                .update_entity_state(entity_id, new_state)
+                .await;
         }
 
         // 2. Evaluate triggers across enabled rules
@@ -252,8 +283,14 @@ impl AutomationEngine {
 
             if self.evaluate_trigger(&rule.trigger, entity_id, new_state) {
                 if self.evaluate_conditions(&rule.conditions).await {
-                    println!("⚡ Rule fired: {} ({}) for entity: {} (state={})", rule.name, rule.id, entity_id, new_state);
-                    info!("⚡ Rule fired: {} ({}) for entity: {} (state={})", rule.name, rule.id, entity_id, new_state);
+                    println!(
+                        "⚡ Rule fired: {} ({}) for entity: {} (state={})",
+                        rule.name, rule.id, entity_id, new_state
+                    );
+                    info!(
+                        "⚡ Rule fired: {} ({}) for entity: {} (state={})",
+                        rule.name, rule.id, entity_id, new_state
+                    );
                     firing_rules.push(rule.clone());
                 }
             }
@@ -300,9 +337,18 @@ impl AutomationEngine {
                         return false;
                     }
                 }
-                RuleCondition::State { entity_id, operator, value } => {
+                RuleCondition::State {
+                    entity_id,
+                    operator,
+                    value,
+                } => {
                     // Check against live device state from DeviceRegistry
-                    if let Some(device) = self.device_manager.get_registry().get_device_by_entity_id(entity_id).await {
+                    if let Some(device) = self
+                        .device_manager
+                        .get_registry()
+                        .get_device_by_entity_id(entity_id)
+                        .await
+                    {
                         if operator == "equals" && device.current_state != *value {
                             return false;
                         }
@@ -319,7 +365,11 @@ impl AutomationEngine {
         match action {
             RuleAction::Delay { delay_secs } => {
                 // Find target action after the delay in rule.actions
-                let target_action = rule.actions.iter().find(|a| !matches!(a, RuleAction::Delay { .. })).cloned();
+                let target_action = rule
+                    .actions
+                    .iter()
+                    .find(|a| !matches!(a, RuleAction::Delay { .. }))
+                    .cloned();
 
                 if let Some(target) = target_action {
                     let pa_id = format!("pa_{}", uuid::Uuid::new_v4().simple());
@@ -339,13 +389,25 @@ impl AutomationEngine {
                     let delay = Duration::from_secs(*delay_secs);
                     let rule_name = rule.name.clone();
 
-                    println!("⏳ Delaying action {:?} for {}s (rule: '{}')...", target, delay_secs, rule_name);
-                    info!("⏳ Delaying action {:?} for {}s (rule: '{}')...", target, delay_secs, rule_name);
+                    println!(
+                        "⏳ Delaying action {:?} for {}s (rule: '{}')...",
+                        target, delay_secs, rule_name
+                    );
+                    info!(
+                        "⏳ Delaying action {:?} for {}s (rule: '{}')...",
+                        target, delay_secs, rule_name
+                    );
 
                     tokio::spawn(async move {
                         sleep(delay).await;
-                        println!("⏰ Timer expired! Executing delayed action {:?} for rule '{}'", target, rule_name);
-                        info!("⏰ Timer expired! Executing delayed action {:?} for rule '{}'", target, rule_name);
+                        println!(
+                            "⏰ Timer expired! Executing delayed action {:?} for rule '{}'",
+                            target, rule_name
+                        );
+                        info!(
+                            "⏰ Timer expired! Executing delayed action {:?} for rule '{}'",
+                            target, rule_name
+                        );
                         let _ = engine.execute_single_action(&target).await;
                         let _ = engine.timer_store.remove_pending_action(&pa_id).await;
                     });
@@ -353,7 +415,10 @@ impl AutomationEngine {
             }
             RuleAction::Command { on_failure, .. } => {
                 // If rule has a Delay action, skip immediate execution (handled by Delay timer)
-                let has_delay = rule.actions.iter().any(|a| matches!(a, RuleAction::Delay { .. }));
+                let has_delay = rule
+                    .actions
+                    .iter()
+                    .any(|a| matches!(a, RuleAction::Delay { .. }));
                 if !has_delay {
                     let res = self.execute_single_action(action).await;
                     if let Err(e) = res {
@@ -361,8 +426,15 @@ impl AutomationEngine {
                     }
                 }
             }
-            RuleAction::Notification { message, severity, on_failure } => {
-                let has_delay = rule.actions.iter().any(|a| matches!(a, RuleAction::Delay { .. }));
+            RuleAction::Notification {
+                message,
+                severity,
+                on_failure,
+            } => {
+                let has_delay = rule
+                    .actions
+                    .iter()
+                    .any(|a| matches!(a, RuleAction::Delay { .. }));
                 if !has_delay {
                     info!("🔔 Notification [{}]: {}", severity, message);
                     let res = self.execute_single_action(action).await;
@@ -401,22 +473,43 @@ impl AutomationEngine {
     ) {
         match policy {
             FailurePolicy::Continue => {
-                warn!("Rule {} action failed: {}. Continuing remaining actions.", rule_id, err);
+                warn!(
+                    "Rule {} action failed: {}. Continuing remaining actions.",
+                    rule_id, err
+                );
             }
             FailurePolicy::Abort => {
-                error!("Rule {} action failed: {}. Aborting rule execution.", rule_id, err);
+                error!(
+                    "Rule {} action failed: {}. Aborting rule execution.",
+                    rule_id, err
+                );
             }
             FailurePolicy::Log => {
-                info!("Rule {} action failed: {}. Logged per policy.", rule_id, err);
+                info!(
+                    "Rule {} action failed: {}. Logged per policy.",
+                    rule_id, err
+                );
             }
             FailurePolicy::Retry => {
-                warn!("Rule {} action failed: {}. Retrying once after 5s...", rule_id, err);
+                warn!(
+                    "Rule {} action failed: {}. Retrying once after 5s...",
+                    rule_id, err
+                );
                 let dev_mgr = Arc::clone(&self.device_manager);
                 let action_clone = action.clone();
                 tokio::spawn(async move {
                     sleep(Duration::from_secs(5)).await;
-                    if let RuleAction::Command { entity_id, domain, command, service_data, .. } = action_clone {
-                        let _ = dev_mgr.send_command(&entity_id, &domain, &command, service_data).await;
+                    if let RuleAction::Command {
+                        entity_id,
+                        domain,
+                        command,
+                        service_data,
+                        ..
+                    } = action_clone
+                    {
+                        let _ = dev_mgr
+                            .send_command(&entity_id, &domain, &command, service_data)
+                            .await;
                     }
                 });
             }
@@ -429,7 +522,9 @@ impl AutomationEngine {
 
         tokio::task::spawn_blocking(move || {
             store_clone.write_atomic(|_old| {
-                let data = AutomationsStore { rules: rules_snapshot };
+                let data = AutomationsStore {
+                    rules: rules_snapshot,
+                };
                 serde_json::to_vec_pretty(&data)
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
             })

@@ -75,7 +75,12 @@ mod tests {
         assert_eq!(tracker.get_presence_status().await, PresenceState::Home);
 
         // Person 1 leaves
-        tracker.update_entity_state("person.ahsan", "not_home").await;
-        assert_eq!(tracker.get_presence_status().await, PresenceState::NobodyHome);
+        tracker
+            .update_entity_state("person.ahsan", "not_home")
+            .await;
+        assert_eq!(
+            tracker.get_presence_status().await,
+            PresenceState::NobodyHome
+        );
     }
 }

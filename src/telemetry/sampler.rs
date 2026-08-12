@@ -25,7 +25,7 @@ impl TelemetrySampler {
     /// Returns `true` if the entity should be sampled (>= interval since last sample), `false` otherwise.
     pub async fn should_sample(&self, entity_id: &str) -> bool {
         let now = Instant::now();
-        
+
         // Fast read check
         {
             let map = self.last_sampled.read().await;

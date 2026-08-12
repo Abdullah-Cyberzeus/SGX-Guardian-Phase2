@@ -17,6 +17,7 @@ import { useVault } from "../../contexts/VaultContext";
 import { useCall } from "../../../features/calls/CallContext";
 import { useGroupCall } from "../../../features/calls/GroupCallContext";
 import type { MediaType } from "../../../features/calls/call.types";
+import { useContactNames } from "../../contexts/ContactNameContext";
 import chatService from "../../services/chatService";
 import circleService, { type CircleInvite } from "../../services/circleService";
 import { toast } from "sonner";
@@ -31,6 +32,7 @@ export function NW04CircleDetail() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const vault = useVault();
+  const { displayForDid } = useContactNames();
   const requestedTab = searchParams.get("tab") as Tab | null;
   const activeTab: Tab = requestedTab && circleDetailTabs.includes(requestedTab) ? requestedTab : "members";
 
@@ -248,10 +250,11 @@ export function NW04CircleDetail() {
     chatService.history(directMember.did)
       .then(({ messages: history }) => {
         if (cancelled) return;
+        const directMemberName = displayForDid(directMember.did, directMember.name || directMember.nodeHint || directMember.did);
         setDirectMessages(history.map((item) => ({
           id: item.message_id,
-          sender: item.sender_did === directMember.did ? directMember.name : "Me",
-          initials: item.sender_did === directMember.did ? String(directMember.name || "M").slice(0, 2).toUpperCase() : "ME",
+          sender: item.sender_did === directMember.did ? directMemberName : "Me",
+          initials: item.sender_did === directMember.did ? String(directMemberName || "M").slice(0, 2).toUpperCase() : "ME",
           content: "Encrypted historical message",
           timestamp: new Date(item.timestamp * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           isMe: item.sender_did !== directMember.did,
@@ -261,7 +264,7 @@ export function NW04CircleDetail() {
       .catch((cause) => { if (!cancelled) toast.error("Direct-message history unavailable", { description: cause instanceof Error ? cause.message : undefined }); })
       .finally(() => { if (!cancelled) setDirectLoading(false); });
     return () => { cancelled = true; };
-  }, [directMember?.did]);
+  }, [directMember?.did, displayForDid]);
 
   // Picked file → an attachment chat message (object URL, session-only).
   // Also mirrored into All Files so it syncs to the device storage.
@@ -565,7 +568,8 @@ export function NW04CircleDetail() {
                         ? "Member is not linked to a trusted Guardian peer"
                         : trustedPeer.callUnavailableReason || (!trustedPeer.callAvailable ? "Peer is not available for calls" : "");
                   const callsDisabled = busy || isCurrentMember || !target || target === currentDevice || !trustedPeer?.callAvailable;
-                  const memberName = String(member.name || member.nodeHint || member.did || "Guardian member");
+                  const memberName = String(displayForDid(member.did, member.name || member.nodeHint || member.did || "Guardian member"));
+                  const memberSecondary = member.email || displayForDid(member.did, member.did);
                   const memberKey = String(member.did || member.id || `${memberName}-${i}`);
                   return (
                   <div
@@ -587,11 +591,11 @@ export function NW04CircleDetail() {
                           ? <StatusBadge status="Admin" variant="info" />
                           : <StatusBadge status="Member" variant="info" />}
                       </div>
-                      <p className="truncate" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{member.email || member.did}</p>
+                      <p className="truncate" title={member.did} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{memberSecondary}</p>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <div style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: trustedPeer?.online ? "var(--chart-2)" : "var(--muted-foreground)" }} />
                         <span style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--muted-foreground)" }}>
-                          {trustedPeer ? `${trustedPeer.online ? "online" : "offline"} · ${trustedPeer.peerId}` : callUnavailableReason}
+                          {trustedPeer ? `${trustedPeer.online ? "online" : "offline"} · ${displayForDid(trustedPeer.did, trustedPeer.peerId)}` : callUnavailableReason}
                         </span>
                       </div>
                     </button>
@@ -751,7 +755,7 @@ export function NW04CircleDetail() {
         <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center cursor-pointer" style={{ backgroundColor: "rgba(0,0,0,0.6)" }} onClick={() => setMemberDetailOpen(null)}>
           <div className="w-full rounded-t-xl md:rounded-xl border-t md:border border-border" style={{ backgroundColor: "var(--card)", maxWidth: "440px" }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-border">
-              <h3 style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{selectedMember.name}</h3>
+              <h3 style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{displayForDid(selectedMember.did, selectedMember.name || selectedMember.nodeHint || selectedMember.did || "Guardian member")}</h3>
               <button onClick={() => setMemberDetailOpen(null)} style={{ background: "none", border: "none", cursor: "pointer" }}>
                 <X size={20} style={{ color: "var(--muted-foreground)" }} />
               </button>
@@ -760,7 +764,7 @@ export function NW04CircleDetail() {
               <div>
                 <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "8px" }}>DID</p>
                 <div className="rounded-lg border border-border p-3 flex items-start justify-between gap-2" style={{ backgroundColor: "var(--background)" }}>
-                  <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px", color: "var(--foreground)", wordBreak: "break-all", lineHeight: 1.7, flex: 1 }}>{selectedMember.did}</span>
+                  <span title={selectedMember.did} style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px", color: "var(--foreground)", wordBreak: "break-all", lineHeight: 1.7, flex: 1 }}>{displayForDid(selectedMember.did, selectedMember.did)}</span>
                   <button onClick={() => handleCopy(selectedMember.did, "member-did")} style={{ background: "none", border: "none", cursor: "pointer", flexShrink: 0 }}>
                     {copiedField === "member-did" ? <Check size={15} style={{ color: "var(--chart-2)" }} /> : <Copy size={15} style={{ color: "var(--muted-foreground)" }} />}
                   </button>

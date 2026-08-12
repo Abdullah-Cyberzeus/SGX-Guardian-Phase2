@@ -8,6 +8,7 @@ import type { CallHistoryRecord } from "../../services/callHistoryService";
 import { useCall } from "../../../features/calls/CallContext";
 import { useGroupCall } from "../../../features/calls/GroupCallContext";
 import type { MediaType } from "../../../features/calls/call.types";
+import { useContactNames } from "../../contexts/ContactNameContext";
 import { toast } from "sonner";
 
 function duration(seconds: number) {
@@ -24,16 +25,20 @@ export function CallsHistoryScreen() {
   const navigate = useNavigate();
   const history = useCallHistory();
   const { data: peersData, loading } = usePeers();
+  const { displayForDid } = useContactNames();
   const [query, setQuery] = useState("");
   const [starting, setStarting] = useState<string | null>(null);
   const { startCall, call, currentDevice } = useCall();
   const groupCalling = useGroupCall();
   const peers = Array.isArray(peersData) ? peersData : [];
-  const peerName = (id: string) => peers.find((peer: any) => peer.peerId === id)?.peerId || id;
+  const peerName = (id: string) => {
+    const peer = peers.find((item: any) => item.peerId === id);
+    return displayForDid(peer?.did, peer?.peerId || id);
+  };
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return needle ? history.filter((record) => `${record.title} ${record.participantIds.join(" ")} ${record.outcome}`.toLowerCase().includes(needle)) : history;
-  }, [history, query]);
+    return needle ? history.filter((record) => `${record.title} ${record.participantIds.map(peerName).join(" ")} ${record.participantIds.join(" ")} ${record.outcome}`.toLowerCase().includes(needle)) : history;
+  }, [history, query, peers, displayForDid]);
 
   const startAgain = async (record: CallHistoryRecord, media: MediaType[]) => {
     if (call || groupCalling.group) {
@@ -84,8 +89,8 @@ export function CallsHistoryScreen() {
           <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{record.kind === "group" ? record.title : peerName(record.participantIds[0])}</p><div className={`flex items-center gap-1 text-xs ${failed ? "text-destructive" : "text-muted-foreground"}`}>{record.direction === "incoming" ? <ArrowDownLeft size={13} /> : <ArrowUpRight size={13} />}<span>{record.direction === "incoming" ? "Incoming" : "Outgoing"} {video ? "video" : "audio"} · {outcomeLabel(record)}</span></div>{record.kind === "group" && <p className="truncate text-[11px] text-muted-foreground">{record.participantIds.map(peerName).join(", ")}</p>}</div>
           <div className="flex shrink-0 items-center gap-1">
             <time className="mr-1 hidden self-start pt-1 text-[10px] text-muted-foreground sm:block">{new Date(record.startedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time>
-            <button aria-label={`Call ${record.title || record.participantIds[0]}`} title={record.kind === "group" ? "Call group" : "Voice call"} disabled={starting !== null} onClick={() => void startAgain(record, ["audio"])} className="grid h-9 w-9 place-items-center rounded-full text-primary hover:bg-primary/10 disabled:opacity-40">{starting === `${record.id}:audio` ? <Loader2 size={17} className="animate-spin" /> : record.kind === "group" ? <Users size={17} /> : <Phone size={17} />}</button>
-            <button aria-label={`Video call ${record.title || record.participantIds[0]}`} title={record.kind === "group" ? "Video call group" : "Video call"} disabled={starting !== null} onClick={() => void startAgain(record, ["audio", "video"])} className="grid h-9 w-9 place-items-center rounded-full text-primary hover:bg-primary/10 disabled:opacity-40">{starting === `${record.id}:video` ? <Loader2 size={17} className="animate-spin" /> : <Video size={17} />}</button>
+            <button aria-label={`Call ${record.kind === "group" ? record.title : peerName(record.participantIds[0])}`} title={record.kind === "group" ? "Call group" : "Voice call"} disabled={starting !== null} onClick={() => void startAgain(record, ["audio"])} className="grid h-9 w-9 place-items-center rounded-full text-primary hover:bg-primary/10 disabled:opacity-40">{starting === `${record.id}:audio` ? <Loader2 size={17} className="animate-spin" /> : record.kind === "group" ? <Users size={17} /> : <Phone size={17} />}</button>
+            <button aria-label={`Video call ${record.kind === "group" ? record.title : peerName(record.participantIds[0])}`} title={record.kind === "group" ? "Video call group" : "Video call"} disabled={starting !== null} onClick={() => void startAgain(record, ["audio", "video"])} className="grid h-9 w-9 place-items-center rounded-full text-primary hover:bg-primary/10 disabled:opacity-40">{starting === `${record.id}:video` ? <Loader2 size={17} className="animate-spin" /> : <Video size={17} />}</button>
           </div>
         </div>;
       })}

@@ -53,10 +53,12 @@ pub async fn create_automation(
         }
     };
 
-    engine
-        .add_rule(rule.clone())
-        .await
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e }))))?;
+    engine.add_rule(rule.clone()).await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+    })?;
 
     Ok((
         StatusCode::CREATED,
@@ -86,10 +88,12 @@ pub async fn update_automation(
 
     rule.id = id.clone();
 
-    engine
-        .update_rule(rule.clone())
-        .await
-        .map_err(|e| (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": e }))))?;
+    engine.update_rule(rule.clone()).await.map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": e })),
+        )
+    })?;
 
     Ok((
         StatusCode::OK,
@@ -116,10 +120,12 @@ pub async fn delete_automation(
         }
     };
 
-    engine
-        .delete_rule(&id)
-        .await
-        .map_err(|e| (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": e }))))?;
+    engine.delete_rule(&id).await.map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": e })),
+        )
+    })?;
 
     Ok((
         StatusCode::OK,
@@ -146,10 +152,12 @@ pub async fn enable_automation(
         }
     };
 
-    engine
-        .toggle_rule(&id, true)
-        .await
-        .map_err(|e| (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": e }))))?;
+    engine.toggle_rule(&id, true).await.map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": e })),
+        )
+    })?;
 
     Ok((
         StatusCode::OK,
@@ -176,10 +184,12 @@ pub async fn disable_automation(
         }
     };
 
-    engine
-        .toggle_rule(&id, false)
-        .await
-        .map_err(|e| (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": e }))))?;
+    engine.toggle_rule(&id, false).await.map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": e })),
+        )
+    })?;
 
     Ok((
         StatusCode::OK,

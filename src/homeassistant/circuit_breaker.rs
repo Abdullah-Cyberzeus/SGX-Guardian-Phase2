@@ -107,7 +107,10 @@ mod tests {
 
         // 2nd failure -> opens circuit
         cb.on_failure().await;
-        assert!(matches!(cb.current_state().await, CircuitState::Open { .. }));
+        assert!(matches!(
+            cb.current_state().await,
+            CircuitState::Open { .. }
+        ));
         assert!(cb.can_execute().await.is_err());
 
         // Wait for reset timeout

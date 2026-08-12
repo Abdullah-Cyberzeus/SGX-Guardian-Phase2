@@ -451,6 +451,7 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         .merge(routes::xfer_router())
         .merge(routes::circle_router())
         .merge(routes::notify_router())
+        .merge(routes::contacts_router())
         .merge(routes::rules_router())
         .merge(routes::ha_api_router())
         // Health
@@ -1379,7 +1380,10 @@ mod tests {
         assert_eq!(imported.status(), StatusCode::OK);
         let imported_body: Value = imported.json().await.expect("import response");
         assert_eq!(imported_body["id"], portable_record.id);
-        assert_eq!(imported_body["source_node_id"], portable_record.source_node_id);
+        assert_eq!(
+            imported_body["source_node_id"],
+            portable_record.source_node_id
+        );
         assert_eq!(imported_body["source_did"], source_state.device_did);
         assert_eq!(imported_body["target_did"], target_state.device_did);
         assert_eq!(imported_body["portable"], true);
@@ -3208,17 +3212,17 @@ mod tests {
             .await
             .expect("all devices list");
         assert_eq!(all_devices.status(), StatusCode::OK);
-        let all_devices_body: Vec<Value> = all_devices
-            .json()
-            .await
-            .expect("all devices body");
+        let all_devices_body: Vec<Value> = all_devices.json().await.expect("all devices body");
         assert_eq!(all_devices_body.len(), 2);
-        assert!(all_devices_body.iter().any(
-            |device| device["deviceId"] == node_b_device_id && device["status"] == "active"
-        ));
-        assert!(all_devices_body.iter().any(
-            |device| device["deviceId"] == node_c_device_id && device["status"] == "unpaired"
-        ));
+        assert!(all_devices_body
+            .iter()
+            .any(|device| device["deviceId"] == node_b_device_id && device["status"] == "active"));
+        assert!(
+            all_devices_body
+                .iter()
+                .any(|device| device["deviceId"] == node_c_device_id
+                    && device["status"] == "unpaired")
+        );
 
         let _ = env;
         handle.abort();

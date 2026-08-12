@@ -31,6 +31,7 @@ pub mod xfer;
 pub mod cert;
 pub mod chat;
 pub mod chat_attachments;
+pub mod contacts;
 pub mod discovery;
 
 pub mod ha_automations;
