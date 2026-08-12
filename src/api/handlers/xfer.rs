@@ -1,4 +1,5 @@
 use crate::api::error::ApiError;
+use crate::api::auth::middleware::AuthenticatedSession;
 use crate::api::state::AppState;
 use crate::vault::namespace::validate_vault_id;
 use crate::vault::{persistence as vault_persistence, VaultConfig};
@@ -6,6 +7,7 @@ use crate::xfer::errors::XferError;
 use crate::xfer::store::{self, ReceiverState, SenderProgress};
 use axum::{
     extract::{Path, State},
+    Extension,
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -73,6 +75,7 @@ pub struct InboxResponse {
 
 pub async fn send(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Json(body): Json<SendRequest>,
 ) -> Result<Json<SendResponse>, ApiError> {
     let config = crate::xfer::XferConfig::from_env();
@@ -81,6 +84,32 @@ pub async fn send(
         return Err(ApiError::BadRequest(
             "peer_did must not be empty".to_string(),
         ));
+    }
+    if session
+        .as_ref()
+        .is_some_and(|Extension(session)| session.claims.role == "member")
+    {
+        let allowed = crate::api::auth::authorization::scoped_circle_contact_dids(
+            &state.node_id,
+            &state.device_did,
+            session
+                .as_ref()
+                .map(|Extension(session)| session.claims.circle_ids.as_slice())
+                .unwrap_or(&[]),
+        )
+        .map_err(ApiError::Internal)?;
+        if !allowed.contains(peer_did) {
+            if let Some(Extension(session)) = session.as_ref() {
+                crate::api::auth::authorization::audit_member_resource_denied(
+                    &state.node_id,
+                    &session.claims.sub,
+                    "Circle transfer target",
+                );
+            }
+            return Err(ApiError::Forbidden(
+                "transfer target does not share a Circle with this Guardian".into(),
+            ));
+        }
     }
     let transfer_id = match (body.path, body.vault_id) {
         (Some(path), None) => {

@@ -1,10 +1,12 @@
 use crate::api::error::ApiError;
+use crate::api::auth::middleware::AuthenticatedSession;
 use crate::api::state::AppState;
 use crate::chat::models::{ChatMessageRecord, MessageStatus};
 use axum::extract::{
     ws::{Message, WebSocket, WebSocketUpgrade},
     Json, Query, State,
 };
+use axum::Extension;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -100,6 +102,7 @@ pub struct SendMessageResponse {
 
 pub async fn send_message(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Json(req): Json<SendMessageRequest>,
 ) -> Result<Json<SendMessageResponse>, ApiError> {
     // 1. Validate payload
@@ -107,6 +110,9 @@ pub async fn send_message(
         return Err(ApiError::BadRequest(
             "Message must contain either content or an attachment".to_string(),
         ));
+    }
+    if !req.is_group {
+        ensure_member_contact_access(&state, &session, &req.recipient_did)?;
     }
 
     // 1b. Validate Attestation Status & Determine Target IPs
@@ -177,6 +183,7 @@ pub async fn send_message(
         let circle_id = req.recipient_did.clone();
         let circle_members = crate::circle::members::list_members(&state.node_id, &circle_id)
             .map_err(|e| ApiError::BadRequest(format!("Failed to load circle members: {:?}", e)))?;
+        ensure_local_guardian_circle_access(&state, &session, &circle_id)?;
 
         // Extract DIDs of circle members
         let member_dids: std::collections::HashSet<String> =
@@ -387,6 +394,7 @@ pub struct MarkReadResponse {
 /// Task 5.3: API endpoint called by the UI when a user views a message
 pub async fn mark_as_read(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Json(req): Json<MarkReadRequest>,
 ) -> Result<Json<MarkReadResponse>, ApiError> {
     // Peers are authorised by DID. Transport confidentiality and endpoint
@@ -396,6 +404,7 @@ pub async fn mark_as_read(
 
     // 1. Verify the message exists
     if let Some(ref gid) = req.group_id {
+        ensure_local_guardian_circle_access(&state, &session, gid)?;
         if let Ok(history) = crate::chat::storage::read_group_history(gid).await {
             if !history.iter().any(|m| m.message_id == req.message_id) {
                 return Err(ApiError::BadRequest(
@@ -410,6 +419,7 @@ pub async fn mark_as_read(
     } else if let Ok(history) =
         crate::chat::storage::read_p2p_history(&req.original_sender_did).await
     {
+        ensure_member_contact_access(&state, &session, &req.original_sender_did)?;
         if !history.iter().any(|m| m.message_id == req.message_id) {
             return Err(ApiError::BadRequest(
                 "Message not found in conversation history".to_string(),
@@ -595,13 +605,17 @@ pub struct ChatHistoryResponse {
 
 /// Task 7.1: Local Axum REST API to query paginated chat logs
 pub async fn get_history(
+    State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Query(query): Query<ChatHistoryQuery>,
 ) -> Result<Json<ChatHistoryResponse>, ApiError> {
     let messages = if let Some(peer_did) = query.peer_did {
+        ensure_member_contact_access(&state, &session, &peer_did)?;
         crate::chat::storage::read_p2p_history(&peer_did)
             .await
             .map_err(|e| ApiError::Internal(format!("Failed to read P2P history: {}", e)))?
     } else if let Some(group_id) = query.group_id {
+        ensure_local_guardian_circle_access(&state, &session, &group_id)?;
         crate::chat::storage::read_group_history(&group_id)
             .await
             .map_err(|e| ApiError::Internal(format!("Failed to read Group history: {}", e)))?
@@ -612,6 +626,79 @@ pub async fn get_history(
     };
 
     Ok(Json(ChatHistoryResponse { messages }))
+}
+
+fn ensure_member_contact_access(
+    state: &AppState,
+    session: &Option<Extension<AuthenticatedSession>>,
+    contact_did: &str,
+) -> Result<(), ApiError> {
+    let is_member = session
+        .as_ref()
+        .is_some_and(|Extension(session)| session.claims.role == "member");
+    if !is_member {
+        return Ok(());
+    }
+    let contacts = crate::api::auth::authorization::scoped_circle_contact_dids(
+        &state.node_id,
+        &state.device_did,
+        session
+            .as_ref()
+            .map(|Extension(session)| session.claims.circle_ids.as_slice())
+            .unwrap_or(&[]),
+    )
+    .map_err(ApiError::Internal)?;
+    if contacts.contains(contact_did) {
+        Ok(())
+    } else {
+        if let Some(Extension(session)) = session.as_ref() {
+            crate::api::auth::authorization::audit_member_resource_denied(
+                &state.node_id,
+                &session.claims.sub,
+                "Circle contact",
+            );
+        }
+        Err(ApiError::Forbidden(
+            "contact does not share a Circle with this Guardian".into(),
+        ))
+    }
+}
+
+fn ensure_local_guardian_circle_access(
+    state: &AppState,
+    session: &Option<Extension<AuthenticatedSession>>,
+    circle_id: &str,
+) -> Result<(), ApiError> {
+    let is_member = session
+        .as_ref()
+        .is_some_and(|Extension(session)| session.claims.role == "member");
+    if !is_member
+        || (session.as_ref().is_some_and(|Extension(session)| {
+            session
+                .claims
+                .circle_ids
+                .iter()
+                .any(|allowed| allowed == circle_id)
+        }) && crate::api::auth::authorization::local_active_circle_ids(
+            &state.node_id,
+            &state.device_did,
+        )
+        .map_err(ApiError::Internal)?
+        .contains(circle_id))
+    {
+        return Ok(());
+    }
+    if let Some(Extension(session)) = session.as_ref() {
+        crate::api::auth::authorization::audit_member_resource_denied(
+            &state.node_id,
+            &session.claims.sub,
+            "Circle conversation",
+        );
+    }
+    Err(ApiError::Forbidden(format!(
+        "Guardian is not a member of circle {}",
+        circle_id
+    )))
 }
 
 /// Task 7.2: Local WebSocket Server for real-time event push

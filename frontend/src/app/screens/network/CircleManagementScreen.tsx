@@ -2,7 +2,7 @@ import { ChangeEvent, useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { Archive, ArchiveRestore, Check, ChevronLeft, Clipboard, Copy, Edit3, Link2, Loader2, Plus, RefreshCw, Send, Trash2, Upload, UserPlus, Users, X } from "lucide-react";
 import { toast } from "sonner";
-import circleService, { Circle, CircleInvite, CircleMember, CircleRole } from "../../services/circleService";
+import circleService, { Circle, CircleInvite, CircleMember, CircleRole, parseInviteMaterial } from "../../services/circleService";
 
 type Tab = "details" | "members" | "invites";
 const roles: CircleRole[] = ["owner", "member"];
@@ -44,7 +44,10 @@ export function CircleManagementScreen() {
   const [inviteRole, setInviteRole] = useState<CircleRole>("member");
   const [inviteHours, setInviteHours] = useState(24);
   const [inviteMaxUses, setInviteMaxUses] = useState(1);
-  const [ownerHost, setOwnerHost] = useState(() => `${window.location.protocol}//${window.location.hostname}:8443`);
+  // Preserve the externally reachable origin. In the local Docker demo the
+  // Guardian listens through ports such as 18443/28443, while deployed
+  // hardware commonly uses 8443 directly.
+  const [ownerHost, setOwnerHost] = useState(() => window.location.origin);
   const [newInvite, setNewInvite] = useState<CircleInvite | null>(null);
   const [confirm, setConfirm] = useState<{ kind: "archive" } | { kind: "unarchive" } | { kind: "delete" } | { kind: "member"; did: string } | { kind: "invite"; id: string } | null>(null);
 
@@ -169,6 +172,29 @@ export function CircleManagementScreen() {
     toast.success("Invite copied");
   };
 
+  const copyPwaInvite = async (invite: CircleInvite) => {
+    if (!invite.token || invite.role !== "member") {
+      toast.error("PWA onboarding requires a member invitation token");
+      return;
+    }
+    const deviceLink = invite.url || invite.qrPayload || "";
+    // This screen is authenticated against the issuing Guardian, so its
+    // current Owner URL is authoritative. The embedded device link remains a
+    // fallback for imported invite records.
+    const issuingGuardian = ownerHost || parseInviteMaterial(deviceLink).ownerHost || window.location.origin;
+    let joinUrl: URL;
+    try {
+      joinUrl = new URL("/join", issuingGuardian);
+    } catch {
+      toast.error("The Owner Guardian URL is invalid");
+      return;
+    }
+    joinUrl.searchParams.set("invite", invite.token);
+    const value = joinUrl.toString();
+    await navigator.clipboard.writeText(value);
+    toast.success("PWA member link copied");
+  };
+
   const shareInvite = async (invite: CircleInvite) => {
     const value = invite.url || invite.qrPayload || (invite.token ? `sgx-guardian://circle/join?owner_host=${ownerHost}&token=${invite.token}` : "");
     if (!value) { toast.error("This invite has no shareable token"); return; }
@@ -269,7 +295,7 @@ export function CircleManagementScreen() {
           </div>}
 
           {tab === "invites" && <div className="space-y-5">
-            <section className="rounded-xl border border-border bg-card p-5"><div className="mb-4 flex items-center gap-2"><Link2 size={18} className="text-primary" /><h2 className="font-semibold">Create invite</h2></div><label className="mb-1.5 block text-xs font-medium text-muted-foreground">Owner Guardian URL</label><input className={fieldClass} value={ownerHost} onChange={(e) => setOwnerHost(e.target.value)} placeholder="https://guardian.example:8443" /><div className="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr_120px_auto]"><select className={fieldClass} value={inviteRole} onChange={(e) => setInviteRole(e.target.value as CircleRole)}>{roles.map((role) => <option key={role}>{role}</option>)}</select><select className={fieldClass} value={inviteHours} onChange={(e) => setInviteHours(Number(e.target.value))}><option value={1}>Expires in 1 hour</option><option value={24}>Expires in 24 hours</option><option value={168}>Expires in 7 days</option></select><input className={fieldClass} type="number" min={1} max={100} value={inviteMaxUses} onChange={(e) => setInviteMaxUses(Math.max(1, Number(e.target.value)))} aria-label="Maximum uses" title="Maximum uses" /><button className={primaryButton} onClick={createInvite} disabled={busy || !ownerHost.trim()}>{busy ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}Create</button></div><p className="mt-2 text-xs text-muted-foreground">Maximum uses: {inviteMaxUses}. The Guardian clamps expiry to 5 minutes–30 days.</p>{newInvite && <div className="mt-4 flex flex-col gap-3 rounded-lg border border-primary/30 bg-primary/5 p-3 sm:flex-row sm:items-center"><Check size={16} className="text-primary" /><code className="min-w-0 flex-1 truncate text-xs">{newInvite.url || newInvite.qrPayload || newInvite.token || newInvite.id}</code><button className={primaryButton} onClick={() => void shareInvite(newInvite)}><Send size={14} />Send invite</button><button className={secondaryButton} onClick={() => void copyInvite(newInvite)}><Copy size={14} />Copy</button></div>}</section>
+            <section className="rounded-xl border border-border bg-card p-5"><div className="mb-4 flex items-center gap-2"><Link2 size={18} className="text-primary" /><h2 className="font-semibold">Create invite</h2></div><label className="mb-1.5 block text-xs font-medium text-muted-foreground">Owner Guardian URL</label><input className={fieldClass} value={ownerHost} onChange={(e) => setOwnerHost(e.target.value)} placeholder="https://guardian.example:8443" /><div className="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr_120px_auto]"><select className={fieldClass} value={inviteRole} onChange={(e) => setInviteRole(e.target.value as CircleRole)}>{roles.map((role) => <option key={role}>{role}</option>)}</select><select className={fieldClass} value={inviteHours} onChange={(e) => setInviteHours(Number(e.target.value))}><option value={1}>Expires in 1 hour</option><option value={24}>Expires in 24 hours</option><option value={168}>Expires in 7 days</option></select><input className={fieldClass} type="number" min={1} max={100} value={inviteMaxUses} onChange={(e) => setInviteMaxUses(Math.max(1, Number(e.target.value)))} aria-label="Maximum uses" title="Maximum uses" /><button className={primaryButton} onClick={createInvite} disabled={busy || !ownerHost.trim()}>{busy ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}Create</button></div><p className="mt-2 text-xs text-muted-foreground">Maximum uses: {inviteMaxUses}. The Guardian clamps expiry to 5 minutes–30 days. Use “Copy PWA link” for a browser member; the existing device invite remains available for Guardian-to-Guardian joining.</p>{newInvite && <div className="mt-4 flex flex-col gap-3 rounded-lg border border-primary/30 bg-primary/5 p-3 sm:flex-row sm:items-center"><Check size={16} className="text-primary" /><code className="min-w-0 flex-1 truncate text-xs">{newInvite.url || newInvite.qrPayload || newInvite.token || newInvite.id}</code><button className={primaryButton} onClick={() => void shareInvite(newInvite)}><Send size={14} />Send device invite</button><button className={secondaryButton} onClick={() => void copyInvite(newInvite)}><Copy size={14} />Copy device invite</button>{newInvite.role === "member" && <button className={secondaryButton} onClick={() => void copyPwaInvite(newInvite)}><Copy size={14} />Copy PWA link</button>}</div>}</section>
             <section className="overflow-hidden rounded-xl border border-border bg-card"><div className="flex items-center justify-between border-b border-border p-4"><h2 className="font-semibold">Active invites</h2><span className="text-xs text-muted-foreground">{invites.length} total</span></div>{invites.length === 0 ? <p className="p-8 text-center text-sm text-muted-foreground">No active invites.</p> : invites.map((invite) => <div key={invite.id} className="flex items-center gap-3 border-b border-border p-4 last:border-0"><div className="min-w-0 flex-1"><p className="truncate font-mono text-xs">{invite.id}</p><p className="mt-1 text-xs text-muted-foreground">{roleLabel(invite.role)}{invite.expiresAt ? ` · Expires ${new Date(invite.expiresAt).toLocaleString()}` : ""}</p></div><button className={secondaryButton} onClick={() => void shareInvite(invite)} aria-label="Send invite"><Send size={14} /></button><button className={secondaryButton} onClick={() => void copyInvite(invite)} aria-label="Copy invite"><Copy size={14} /></button><button className={secondaryButton} onClick={() => setConfirm({ kind: "invite", id: invite.id })} aria-label="Revoke invite"><X size={15} className="text-destructive" /></button></div>)}</section>
             <button className={secondaryButton} onClick={() => navigate("/network/join")}><Clipboard size={15} />Open invite preview and join</button>
           </div>}

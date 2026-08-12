@@ -25,6 +25,9 @@ dhcp-option=6,{GATEWAY_IP}
 # Local domain for devices on the network (e.g. guardian.local)
 domain={LOCAL_DOMAIN}
 local=/{LOCAL_DOMAIN}/
+# Resolve guardian.local directly to the hotspot gateway. `domain=` alone
+# assigns a DHCP search domain but does not create this host record.
+address=/{LOCAL_DOMAIN}/{GATEWAY_IP}
 
 # Secure upstream DNS servers (Cloudflare & Quad9)
 server=1.1.1.1

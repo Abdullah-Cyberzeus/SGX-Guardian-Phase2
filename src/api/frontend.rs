@@ -8,8 +8,16 @@ use axum::{
     http::{header, StatusCode, Uri},
     response::{IntoResponse, Response},
 };
+use axum::response::Redirect;
 
 include!(concat!(env!("OUT_DIR"), "/embedded_frontend.rs"));
+
+/// Standard captive-portal probes are redirected to the local member join
+/// page. The browser must still verify the Guardian fingerprint; a redirect
+/// never establishes trust or grants API access.
+pub async fn captive_portal() -> Redirect {
+    Redirect::temporary("/join")
+}
 
 /// Serve a static frontend asset, falling back to `index.html` for client-side
 /// routes such as `/home`.

@@ -7,6 +7,7 @@ use axum::{
     },
     http::{HeaderMap, StatusCode},
     response::{sse::Event, sse::KeepAlive, IntoResponse, Sse},
+    Extension,
 };
 use futures_util::{stream, SinkExt, StreamExt};
 use once_cell::sync::Lazy;
@@ -21,6 +22,7 @@ static CREATED_OPERATIONS: Lazy<dashmap::DashMap<String, CreateGroupCallResponse
     Lazy::new(dashmap::DashMap::new);
 
 use crate::api::state::AppState;
+use crate::api::auth::middleware::AuthenticatedSession;
 use crate::call::{
     GroupMemberState, GroupParticipant, GroupRole, GroupSession, GroupWireMessage, MediaType,
     ModerationAction, SignalKind, MAX_GROUP_PARTICIPANTS,
@@ -79,6 +81,8 @@ pub struct GroupCallsResponse {
 #[derive(Debug, Deserialize)]
 struct TrustedGroupPeer {
     peer_id: String,
+    #[serde(default)]
+    did: Option<String>,
     ip: String,
     status: String,
     #[serde(default)]
@@ -153,6 +157,7 @@ async fn trusted_group_peers(state: &AppState) -> Result<Vec<TrustedGroupPeer>, 
 pub async fn create(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    session: Option<Extension<AuthenticatedSession>>,
     Json(request): Json<CreateGroupCallRequest>,
 ) -> impl IntoResponse {
     let operation = operation_key(&headers, &state.node_id, "create", None);
@@ -186,9 +191,52 @@ pub async fn create(
         Ok(peers) => peers,
         Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
     };
+    let member_contacts = if session
+        .as_ref()
+        .is_some_and(|Extension(session)| session.claims.role == "member")
+    {
+        match crate::api::auth::authorization::scoped_circle_contact_dids(
+            &state.node_id,
+            &state.device_did,
+            session
+                .as_ref()
+                .map(|Extension(session)| session.claims.circle_ids.as_slice())
+                .unwrap_or(&[]),
+        ) {
+            Ok(contacts) => Some(contacts),
+            Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+        }
+    } else {
+        None
+    };
+    if let Some(contacts) = member_contacts.as_ref() {
+        let unauthorized_requested = !request.call_all
+            && trusted.iter().any(|peer| {
+                request.member_ids.contains(&peer.peer_id)
+                    && !peer.did.as_ref().is_some_and(|did| contacts.contains(did))
+            });
+        if unauthorized_requested {
+            if let Some(Extension(session)) = session.as_ref() {
+                crate::api::auth::authorization::audit_member_resource_denied(
+                    &state.node_id,
+                    &session.claims.sub,
+                    "Circle group-call target",
+                );
+            }
+            return error(
+                StatusCode::FORBIDDEN,
+                "A requested call target does not share a Circle with this Guardian",
+            );
+        }
+    }
     let selected: Vec<_> = trusted
         .into_iter()
-        .filter(|peer| request.call_all || request.member_ids.contains(&peer.peer_id))
+        .filter(|peer| {
+            (request.call_all || request.member_ids.contains(&peer.peer_id))
+                && member_contacts.as_ref().map_or(true, |contacts| {
+                    peer.did.as_ref().is_some_and(|did| contacts.contains(did))
+                })
+        })
         .collect();
     if selected.is_empty() {
         return error(

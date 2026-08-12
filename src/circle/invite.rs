@@ -258,6 +258,27 @@ pub fn record_redemption(invite_id: &str, joiner_did: &str) -> Result<(), Circle
     Ok(())
 }
 
+/// Roll back a redemption when the local browser-account transaction fails
+/// after reserving an invite use. Callers serialize join operations while
+/// using this compensation path.
+pub fn remove_redemption(invite_id: &str, redeemer: &str) -> Result<(), CircleError> {
+    let mut ledger = load_redeemed()?;
+    let remove_invite = if let Some(entries) = ledger.get_mut(invite_id) {
+        entries.retain(|entry| entry.redeemer_did != redeemer);
+        entries.is_empty()
+    } else {
+        false
+    };
+    if remove_invite {
+        ledger.remove(invite_id);
+    }
+    persistence::write_atomic(
+        &persistence::redeemed_path(),
+        &serde_json::to_vec_pretty(&ledger)?,
+    )?;
+    Ok(())
+}
+
 pub fn load_redeemed() -> Result<BTreeMap<String, Vec<InviteRedemption>>, CircleError> {
     let path = persistence::redeemed_path();
     if !path.exists() {

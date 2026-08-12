@@ -1915,6 +1915,10 @@ mod tests {
             claims: Claims {
                 sub: user_id.to_string(),
                 role: "owner".into(),
+                scopes: crate::api::auth::authorization::default_scopes("owner"),
+                circle_ids: Vec::new(),
+                browser_registration_id: None,
+                guardian_fingerprint: None,
                 iss: state.device_did.clone(),
                 iat: 0,
                 exp: i64::MAX,

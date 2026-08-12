@@ -122,6 +122,9 @@ export async function streamNotificationEvents(
 
   const response = await fetch(apiUrl("/notifications/stream"), { headers, signal });
   if (!response.ok || !response.body) {
+    if (response.status === 401) {
+      window.dispatchEvent(new CustomEvent("sgx:unauthorized"));
+    }
     const body: unknown = await response.json().catch(() => undefined);
     throw new ApiError(response.status, errorMessage(body, `Notification stream failed (${response.status})`));
   }
