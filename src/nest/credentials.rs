@@ -68,13 +68,7 @@ mod tests {
         );
         assert!(valid.validate().is_ok());
 
-        let invalid = NestCredentials::new(
-            None,
-            None,
-            None,
-            Some("".to_string()),
-            None,
-        );
+        let invalid = NestCredentials::new(None, None, None, Some("".to_string()), None);
         assert!(invalid.validate().is_err());
     }
 

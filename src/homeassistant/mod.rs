@@ -1,8 +1,7 @@
+pub mod circuit_breaker;
+pub mod events;
 pub mod rest;
 pub mod websocket;
-pub mod events;
-pub mod circuit_breaker;
-
 
 use dotenvy::dotenv;
 use std::env;

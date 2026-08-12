@@ -263,7 +263,10 @@ impl DiscoveryScheduler {
                 &self.node_id,
                 device,
             ));
-            if matches!(device.status, DeviceStatus::Unauthorized | DeviceStatus::Drifted) {
+            if matches!(
+                device.status,
+                DeviceStatus::Unauthorized | DeviceStatus::Drifted
+            ) {
                 crate::rules::publish(crate::rules::RuleEvent::from_device_unauthorized(
                     &self.node_id,
                     device,

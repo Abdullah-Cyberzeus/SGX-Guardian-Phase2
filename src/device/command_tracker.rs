@@ -25,12 +25,17 @@ impl CommandTracker {
 
     /// Registers a new command and returns a command ID and a Future that resolves
     /// when the command is acknowledged (via state change) or times out.
-    pub async fn register_command(&self, entity_id: &str) -> (String, oneshot::Receiver<CommandResult>) {
+    pub async fn register_command(
+        &self,
+        entity_id: &str,
+    ) -> (String, oneshot::Receiver<CommandResult>) {
         let cmd_id = Uuid::new_v4().to_string();
         let (tx, rx) = oneshot::channel();
 
         let mut pending = self.pending.write().await;
-        let entity_map = pending.entry(entity_id.to_string()).or_insert_with(HashMap::new);
+        let entity_map = pending
+            .entry(entity_id.to_string())
+            .or_insert_with(HashMap::new);
         entity_map.insert(cmd_id.clone(), tx);
 
         (cmd_id, rx)
@@ -51,7 +56,10 @@ impl CommandTracker {
         if let Some(entity_map) = pending.remove(entity_id) {
             for (cmd_id, tx) in entity_map {
                 if tx.send(CommandResult::Success).is_err() {
-                    warn!("Failed to send CommandResult for cmd {}. Receiver dropped.", cmd_id);
+                    warn!(
+                        "Failed to send CommandResult for cmd {}. Receiver dropped.",
+                        cmd_id
+                    );
                 }
             }
         }

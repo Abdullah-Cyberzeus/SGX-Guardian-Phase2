@@ -7,8 +7,12 @@ set -euo pipefail
 # Usage:
 #   bash scripts/build.sh
 #   CLEAN=1 bash scripts/build.sh
+#   USE_ZIGBUILD=1 GLIBC_VERSION=2.34 bash scripts/build.sh
 
 TARGET_TRIPLE="aarch64-unknown-linux-gnu"
+GLIBC_VERSION="${GLIBC_VERSION:-2.34}"
+USE_ZIGBUILD="${USE_ZIGBUILD:-0}"
+ZIG_TARGET="${TARGET_TRIPLE}.${GLIBC_VERSION}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FRONTEND_DIR="${REPO_ROOT}/frontend"
 FRONTEND_DIST_DIR="${FRONTEND_DIR}/dist"
@@ -176,16 +180,35 @@ verify_required_commands() {
     cmake
     pkg-config
     protoc
-    aarch64-linux-gnu-gcc
-    aarch64-linux-gnu-g++
-    aarch64-linux-gnu-strip
     nmap
     setcap
   )
 
+  if [[ "${USE_ZIGBUILD}" == "1" ]]; then
+    required_cmds+=(
+      aarch64-linux-gnu-objdump
+      aarch64-linux-gnu-strip
+    )
+  else
+    required_cmds+=(
+      aarch64-linux-gnu-gcc
+      aarch64-linux-gnu-g++
+      aarch64-linux-gnu-strip
+    )
+  fi
+
   for cmd in "${required_cmds[@]}"; do
     need_cmd "${cmd}" || die "Required command missing after install: ${cmd}"
   done
+}
+
+ensure_zigbuild_tools() {
+  if [[ "${USE_ZIGBUILD}" != "1" ]]; then
+    return 0
+  fi
+
+  need_cmd cargo-zigbuild || die "cargo-zigbuild is required for USE_ZIGBUILD=1. Install it with: cargo install cargo-zigbuild"
+  need_cmd zig || die "zig is required for USE_ZIGBUILD=1. Install Zig 0.13+ or use: pipx install ziglang"
 }
 
 install_apt_prereqs() {
@@ -265,7 +288,13 @@ print_versions() {
   rustc -Vv
   cargo -V
   protoc --version
-  aarch64-linux-gnu-gcc --version | head -n 1
+  if [[ "${USE_ZIGBUILD}" == "1" ]]; then
+    cargo zigbuild --help | head -n 1
+    zig version
+    aarch64-linux-gnu-objdump --version | head -n 1
+  else
+    aarch64-linux-gnu-gcc --version | head -n 1
+  fi
 }
 
 ensure_frontend_dist() {
@@ -295,11 +324,14 @@ ensure_frontend_dist() {
 build_workspace() {
   cd "${REPO_ROOT}"
   local out_dir="${REPO_ROOT}/target/${TARGET_TRIPLE}/release"
+  local zig_out_dir="${REPO_ROOT}/target/${ZIG_TARGET}/release"
 
   # Always remove previously generated binaries so output is guaranteed fresh.
   rm -f \
     "${out_dir}/${DAEMON_BINARY_NAME}" \
     "${out_dir}/sgx-pa-cli" \
+    "${zig_out_dir}/${DAEMON_BINARY_NAME}" \
+    "${zig_out_dir}/sgx-pa-cli" \
     "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" \
     "${ARTIFACT_DIR}/sgx-pa-cli"
 
@@ -308,7 +340,11 @@ build_workspace() {
     cargo clean
   fi
 
-  log "Building BOTH binaries for ${TARGET_TRIPLE} (release)..."
+  if [[ "${USE_ZIGBUILD}" == "1" ]]; then
+    log "Building BOTH binaries for ${ZIG_TARGET} with cargo-zigbuild (release)..."
+  else
+    log "Building BOTH binaries for ${TARGET_TRIPLE} (release)..."
+  fi
 
   local attempt=1
   local delay="${RETRY_INITIAL_DELAY}"
@@ -317,12 +353,18 @@ build_workspace() {
 
   while true; do
     set +e
-    output="$(
-      CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
-      CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
-      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
-      cargo build --release --workspace --locked --target "${TARGET_TRIPLE}" --features secure-element 2>&1
-    )"
+    if [[ "${USE_ZIGBUILD}" == "1" ]]; then
+      output="$(
+        cargo zigbuild --release --workspace --locked --target "${ZIG_TARGET}" --features secure-element 2>&1
+      )"
+    else
+      output="$(
+        CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
+        CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
+        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+        cargo build --release --workspace --locked --target "${TARGET_TRIPLE}" --features secure-element 2>&1
+      )"
+    fi
     rc=$?
     set -e
 
@@ -343,10 +385,14 @@ build_workspace() {
 
     if [[ "${ALLOW_UNLOCKED_FALLBACK:-0}" == "1" ]]; then
       warn "Retrying without --locked (ALLOW_UNLOCKED_FALLBACK=1)..."
-      CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
-      CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
-      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
-      cargo build --release --workspace --target "${TARGET_TRIPLE}" --features secure-element
+      if [[ "${USE_ZIGBUILD}" == "1" ]]; then
+        cargo zigbuild --release --workspace --target "${ZIG_TARGET}" --features secure-element
+      else
+        CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
+        CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
+        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+        cargo build --release --workspace --target "${TARGET_TRIPLE}" --features secure-element
+      fi
       return 0
     else
       die "Build with --locked failed."
@@ -356,6 +402,9 @@ build_workspace() {
 
 collect_artifacts() {
   local out_dir="${REPO_ROOT}/target/${TARGET_TRIPLE}/release"
+  if [[ "${USE_ZIGBUILD}" == "1" && -d "${REPO_ROOT}/target/${ZIG_TARGET}/release" ]]; then
+    out_dir="${REPO_ROOT}/target/${ZIG_TARGET}/release"
+  fi
   local daemon_src="${out_dir}/${DAEMON_BINARY_NAME}"
   local cli_src="${out_dir}/sgx-pa-cli"
 
@@ -373,6 +422,14 @@ collect_artifacts() {
 
   log "SHA256"
   sha256sum "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" "${ARTIFACT_DIR}/sgx-pa-cli"
+
+  if need_cmd aarch64-linux-gnu-objdump; then
+    log "Max GLIBC symbol version required"
+    aarch64-linux-gnu-objdump -T "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" \
+      | grep -o 'GLIBC_[0-9.]*' \
+      | sort -uV \
+      | tail -1
+  fi
 }
 
 main() {
@@ -380,6 +437,7 @@ main() {
   setup_privilege
   install_apt_prereqs
   install_rust_toolchain
+  ensure_zigbuild_tools
   print_versions
   ensure_frontend_dist
   build_workspace

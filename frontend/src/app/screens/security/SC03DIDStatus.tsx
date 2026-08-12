@@ -30,6 +30,7 @@ import {
   useDIDDocument,
   useDIDDocumentPeers,
 } from "../../hooks/useApiData";
+import { useContactNames } from "../../contexts/ContactNameContext";
 import { didService } from "../../services/didService";
 import type { DIDDocumentRaw, DIDDocumentPeerSummary } from "../../services/didService";
 import { toast } from "sonner";
@@ -89,6 +90,14 @@ function maskDID(did: string): string {
   return "•".repeat(Math.max(did.length, 8));
 }
 
+// Truncated DID shown (instead of the full raw DID) once a contact name is
+// already occupying the primary label for this row.
+function shortDid(did: string): string {
+  if (!did) return did;
+  if (did.length <= 22) return did;
+  return did.slice(0, 16) + "…" + did.slice(-6);
+}
+
 function HideableDID({
   value,
   hidden,
@@ -142,6 +151,7 @@ function HideableDID({
 
 export function SC03DIDStatus() {
   const navigate = useNavigate();
+  const { contactNameForDid } = useContactNames();
   const [deactivating, setDeactivating] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
@@ -349,7 +359,11 @@ export function SC03DIDStatus() {
             <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: isActive ? "var(--chart-2)" : "var(--destructive)" }}>
               {isActive ? "DID Active" : "DID Deactivated"}
             </p>
-            {didStatus?.did ? (
+            {didStatus?.did && contactNameForDid(didStatus.did) ? (
+              <p title={didStatus.did} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
+                {contactNameForDid(didStatus.did)}
+              </p>
+            ) : didStatus?.did ? (
               <HideableDID
                 value={didStatus.did}
                 hidden={hiddenDIDs.has(didStatus.did)}
@@ -538,6 +552,8 @@ export function SC03DIDStatus() {
               {peersData.peers.map(peer => {
                 const isLoadingThis = loadingRaw && rawDocTitle === `Peer: ${peer.node_name}`;
                 const isHidden = hiddenDIDs.has(peer.did);
+                const contactName = contactNameForDid(peer.did);
+                const peerDisplayName = contactName || peer.node_name;
                 return (
                   // Whole row opens the peer document; the eye button only
                   // toggles DID masking and must not trigger the row click.
@@ -554,8 +570,8 @@ export function SC03DIDStatus() {
                         handleViewPeer(peer);
                       }
                     }}
-                    aria-label={`View DID Document for ${peer.node_name}`}
-                    title={`View DID Document for ${peer.node_name}`}
+                    aria-label={`View DID Document for ${peerDisplayName}`}
+                    title={`View DID Document for ${peerDisplayName}`}
                     className="flex items-center gap-3 p-2.5 rounded-md"
                     style={{
                       backgroundColor: "var(--muted)",
@@ -570,13 +586,15 @@ export function SC03DIDStatus() {
                     )}
                     <div className="flex-1 min-w-0">
                       <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
-                        {peer.node_name}
+                        {peerDisplayName}
                       </p>
                       <p
                         className="truncate"
                         style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px", color: "var(--muted-foreground)" }}
                       >
-                        {isHidden ? maskDID(peer.did) : peer.did}
+                        {contactName
+                          ? (isHidden ? contactName : shortDid(peer.did))
+                          : (isHidden ? maskDID(peer.did) : peer.did)}
                       </p>
                     </div>
                     <div className="flex flex-col items-end gap-0.5">
@@ -593,7 +611,7 @@ export function SC03DIDStatus() {
                         e.stopPropagation();
                         toggleDIDVisibility(peer.did);
                       }}
-                      aria-label={isHidden ? `Show DID for ${peer.node_name}` : `Hide DID for ${peer.node_name}`}
+                      aria-label={isHidden ? `Show DID for ${peerDisplayName}` : `Hide DID for ${peerDisplayName}`}
                       title={isHidden ? "Show DID" : "Hide DID"}
                       className="flex items-center justify-center rounded-md flex-shrink-0"
                       style={{
