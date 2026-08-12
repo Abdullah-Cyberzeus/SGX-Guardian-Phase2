@@ -24,6 +24,8 @@ import type { ThreatAlertsFilters } from '../services/threatService';
 import { dusageService } from '../services/dusageService';
 import { ruleService } from '../services/ruleService';
 import { smartHomeService } from '../services/smartHomeService';
+import { useAuth } from '../contexts/AuthContext';
+import { isMemberRole } from '../utils/authorization';
 
 interface UseApiDataResult<T> {
   data: T | null;
@@ -165,6 +167,13 @@ export function useAuditLogs(filters?: AuditLogsFilters) {
  */
 export function usePeers() {
   return useApiData(() => peerService.getAll(), { pollingInterval: 15000 });
+}
+
+/** Member-safe peers for chat, calls, and Contacts. */
+export function useCommunicationPeers() {
+  const { session } = useAuth();
+  const member = isMemberRole(session?.user.role);
+  return useApiData(() => member ? peerService.getContacts() : peerService.getAll(), { pollingInterval: 15000 });
 }
 
 /**

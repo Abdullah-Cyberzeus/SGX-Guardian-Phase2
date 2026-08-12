@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { didService } from "../services/didService";
 import { peerService } from "../services/peerService";
 import chatService, { openChatSocket, parseChatPayload } from "../services/chatService";
+import { useAuth } from "./AuthContext";
+import { isMemberRole } from "../utils/authorization";
 
 export interface ChatPreview {
   text: string;
@@ -15,28 +16,35 @@ interface ChatUnreadContextValue {
   previews: Record<string, ChatPreview>;
   /** sum of all per-peer unread counts, for the sidebar badge */
   total: number;
+  /** immediately clears the badge for a conversation being actively viewed */
+  clearPeerUnread(peerDid: string): void;
   refresh(): void;
 }
 
 const Context = createContext<ChatUnreadContextValue | null>(null);
 
 export function ChatUnreadProvider({ children }: { children: ReactNode }) {
-  const [localDid, setLocalDid] = useState("");
+  const { session } = useAuth();
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [previews, setPreviews] = useState<Record<string, ChatPreview>>({});
   const requestId = useRef(0);
 
-  useEffect(() => { void didService.getStatus().then((status) => setLocalDid(status.did)).catch(() => {}); }, []);
-
   const refresh = useCallback(() => {
-    if (!localDid) return;
     const thisRequest = ++requestId.current;
-    void peerService.getAll().then(async (peers) => {
+    // The member-safe contacts endpoint exposes only communication identities;
+    // it intentionally omits network addresses and policy/topology metadata.
+    const loadPeers = isMemberRole(session?.user.role)
+      ? peerService.getContacts
+      : peerService.getAll;
+    void loadPeers().then(async (peers) => {
       const verified = peers.filter((peer) => peer.status === "verified" && peer.did);
       const entries = await Promise.all(verified.map(async (peer) => {
         try {
           const { messages } = await chatService.directHistory(peer.did!);
-          const unread = messages.filter((record) => record.sender_did !== localDid && record.status !== "read" && !record.read_by.includes(localDid)).length;
+          // This history is for exactly one remote contact. Messages carrying
+          // that DID are incoming, so no administrative local-DID lookup is
+          // needed to calculate unread state.
+          const unread = messages.filter((record) => record.sender_did === peer.did && record.status !== "read").length;
           const latest = [...messages].sort((a, b) => b.timestamp - a.timestamp)[0];
           let preview: ChatPreview | undefined;
           if (latest) {
@@ -53,7 +61,7 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
         setPreviews(Object.fromEntries(entries.filter((entry): entry is [string, number, ChatPreview] => Boolean(entry[2])).map(([did, , preview]) => [did, preview])));
       }
     }).catch(() => {});
-  }, [localDid]);
+  }, [session?.user.role]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -66,8 +74,15 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
     return () => { if (refreshTimer) window.clearTimeout(refreshTimer); close(); };
   }, [refresh]);
 
+  const clearPeerUnread = useCallback((peerDid: string) => {
+    setCounts((current) => current[peerDid] > 0 ? { ...current, [peerDid]: 0 } : current);
+  }, []);
+
   const total = useMemo(() => Object.values(counts).reduce((sum, count) => sum + count, 0), [counts]);
-  const value = useMemo(() => ({ counts, previews, total, refresh }), [counts, previews, total, refresh]);
+  const value = useMemo(
+    () => ({ counts, previews, total, clearPeerUnread, refresh }),
+    [counts, previews, total, clearPeerUnread, refresh],
+  );
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 

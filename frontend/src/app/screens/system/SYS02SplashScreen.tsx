@@ -4,6 +4,7 @@ import { CervaisLogo } from "../../components/CervaisLogo";
 import { useAuth } from "../../contexts/AuthContext";
 import { replaceWithCyleniumLogin } from "../../utils/cyleniumAuth";
 import { isCyleniumConfigured } from "../../config/cylenium";
+import { homePathForRole } from "../../utils/authorization";
 
 export function SYS02SplashScreen() {
   const navigate = useNavigate();
@@ -20,7 +21,7 @@ export function SYS02SplashScreen() {
       if (session) {
         // Authenticated user → go straight to dashboard
         setTimeout(() => {
-          if (!cancelled) navigate("/home", { replace: true });
+          if (!cancelled) navigate(homePathForRole(session.user.role), { replace: true });
         }, 1800);
       } else if (localStorage.getItem("sgx_onboarded")) {
         // Has completed setup before but no session -> Cylenium login when configured,

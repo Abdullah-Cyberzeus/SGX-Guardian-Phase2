@@ -1,5 +1,7 @@
 import { useLocation, useNavigate } from "react-router";
-import { Home, Bell, Cpu, Cloud, Settings, MessageSquare } from "lucide-react";
+import { Home, Bell, Cpu, Cloud, Settings, MessageSquare, Phone, Users } from "lucide-react";
+import { useAuth } from "../contexts/AuthContext";
+import { isMemberRole } from "../utils/authorization";
 
 // Custom Network-as-circles icon
 function NetworkCirclesIcon({ size = 20, color = "currentColor", strokeWidth = 1.75 }: { size?: number; color?: string; strokeWidth?: number }) {
@@ -21,7 +23,7 @@ function NetworkCirclesIcon({ size = 20, color = "currentColor", strokeWidth = 1
   );
 }
 
-const tabs = [
+const adminTabs = [
   { label: "Home", icon: Home, path: "/home", custom: false },
   { label: "Alerts", icon: Bell, path: "/alerts", custom: false },
   { label: "Chats", icon: MessageSquare, path: "/chats", custom: false },
@@ -31,9 +33,19 @@ const tabs = [
   { label: "Settings", icon: Settings, path: "/settings", custom: false },
 ];
 
+const memberTabs = [
+  { label: "Messages", icon: MessageSquare, path: "/chats", custom: false },
+  { label: "Calls", icon: Phone, path: "/calls", custom: false },
+  { label: "Contacts", icon: Users, path: "/contacts", custom: false },
+  { label: "Files", icon: Cloud, path: "/storage", custom: false },
+  { label: "Settings", icon: Settings, path: "/member-settings", custom: false },
+];
+
 export function BottomNav() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { session } = useAuth();
+  const tabs = isMemberRole(session?.user.role) ? memberTabs : adminTabs;
 
   const isActive = (path: string) => location.pathname.startsWith(path);
 

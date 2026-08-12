@@ -6,12 +6,15 @@ import { Button } from "../../components/ui/button";
 import { useVault } from "../../contexts/VaultContext";
 import { FileDetailPanel } from "../../components/vault/FileDetailPanel";
 import { ROOT_ID } from "../../components/vault/types";
+import { useAuth } from "../../contexts/AuthContext";
+import { isMemberRole } from "../../utils/authorization";
 
 /** Full-screen file detail — opened when a file is tapped on mobile/tablet. */
 export function CS02FileDetail() {
   const { fileId } = useParams<{ fileId: string }>();
   const navigate = useNavigate();
   const { getFile, fetchFile } = useVault();
+  const { session } = useAuth();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -92,6 +95,7 @@ export function CS02FileDetail() {
         <div className="mx-auto h-full w-full max-w-2xl">
           <FileDetailPanel
             file={file}
+            canManage={!isMemberRole(session?.user.role)}
             onRemoved={() => navigate("/storage")}
             onOpenFolder={(folderId) =>
               navigate(folderId === ROOT_ID ? "/storage" : `/storage?folder=${folderId}`)

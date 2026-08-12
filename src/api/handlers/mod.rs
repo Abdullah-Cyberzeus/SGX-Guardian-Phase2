@@ -18,6 +18,7 @@ pub mod notify;
 pub mod pcr;
 pub mod peers;
 pub mod policy;
+pub mod pwa;
 pub mod relay;
 pub mod restore;
 pub mod rules;

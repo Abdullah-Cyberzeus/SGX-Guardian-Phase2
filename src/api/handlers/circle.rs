@@ -1,4 +1,5 @@
 use crate::api::{error::ApiError, state::AppState};
+use crate::api::auth::middleware::AuthenticatedSession;
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::circle::invite::{self, InviteToken, JoinRequest};
@@ -15,6 +16,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use axum::Extension;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -170,8 +172,17 @@ pub struct JoinCircleResponse {
 
 pub async fn list(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
 ) -> Result<Json<CircleListResponse>, ApiError> {
-    let registry = store::load_or_seed(&state.node_id).map_err(map_circle_error)?;
+    let mut registry = store::load_or_seed(&state.node_id).map_err(map_circle_error)?;
+    if is_member_browser_session(&session) {
+        registry.circles.retain(|circle| {
+            session.as_ref().is_some_and(|Extension(session)| {
+                session.claims.circle_ids.contains(&circle.circle_id)
+            }) && browser_guardian_has_active_membership(&state, &circle.circle_id)
+                .unwrap_or(false)
+        });
+    }
     Ok(Json(CircleListResponse {
         status: "success".to_string(),
         count: registry.circles.len(),
@@ -181,8 +192,10 @@ pub async fn list(
 
 pub async fn detail(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Path(id): Path<String>,
 ) -> Result<Json<CircleDetailResponse>, ApiError> {
+    ensure_member_browser_circle_access(&state, &session, &id)?;
     let circle = store::get_circle(&state.node_id, &id).map_err(map_circle_error)?;
     Ok(Json(CircleDetailResponse {
         status: "success".to_string(),
@@ -366,8 +379,10 @@ pub async fn delete(
 
 pub async fn list_members(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Path(id): Path<String>,
 ) -> Result<Json<MemberListResponse>, ApiError> {
+    ensure_member_browser_circle_access(&state, &session, &id)?;
     let members = members::list_members(&state.node_id, &id).map_err(map_circle_error)?;
     Ok(Json(MemberListResponse {
         status: "success".to_string(),
@@ -562,8 +577,10 @@ pub async fn revoke_invite(
 
 pub async fn join_preview(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Json(body): Json<JoinPreviewRequest>,
 ) -> Result<Json<JoinPreviewResponse>, ApiError> {
+    enforce_join_rate_limit(&state, &session, "preview")?;
     let invite_token = invite::decode_compact(body.token_b64.trim()).map_err(map_circle_error)?;
     invite::verify_invite(&invite_token, &state.did_resolver)
         .await
@@ -581,8 +598,10 @@ pub async fn join_preview(
 
 pub async fn join(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Json(body): Json<JoinCircleRequest>,
 ) -> Result<(StatusCode, Json<JoinCircleResponse>), ApiError> {
+    enforce_join_rate_limit(&state, &session, "join")?;
     let invite_token = invite::decode_compact(body.token_b64.trim()).map_err(map_circle_error)?;
     invite::verify_invite(&invite_token, &state.did_resolver)
         .await
@@ -644,6 +663,79 @@ pub async fn join(
             circle,
         }),
     ))
+}
+
+fn enforce_join_rate_limit(
+    state: &AppState,
+    session: &Option<Extension<AuthenticatedSession>>,
+    action: &str,
+) -> Result<(), ApiError> {
+    let actor = session
+        .as_ref()
+        .map(|Extension(session)| session.claims.sub.as_str())
+        .unwrap_or("login-disabled-local");
+    let key = format!("circle-{}:{}", action, actor);
+    if state.login_rate_limiter.check_and_record(
+        &key,
+        chrono::Utc::now().timestamp(),
+        state.auth_rate_limit,
+    ) {
+        Ok(())
+    } else {
+        Err(ApiError::TooManyRequests(
+            "too many Circle join attempts; try again later".into(),
+        ))
+    }
+}
+
+fn is_member_browser_session(session: &Option<Extension<AuthenticatedSession>>) -> bool {
+    session
+        .as_ref()
+        .is_some_and(|Extension(session)| session.claims.role == "member")
+}
+
+fn browser_guardian_has_active_membership(
+    state: &AppState,
+    circle_id: &str,
+) -> Result<bool, ApiError> {
+    Ok(crate::api::auth::authorization::local_active_circle_ids(
+        &state.node_id,
+        &state.device_did,
+    )
+    .map_err(ApiError::Internal)?
+    .contains(circle_id))
+}
+
+fn ensure_member_browser_circle_access(
+    state: &AppState,
+    session: &Option<Extension<AuthenticatedSession>>,
+    circle_id: &str,
+) -> Result<(), ApiError> {
+    if !is_member_browser_session(session)
+        || (session
+            .as_ref()
+            .is_some_and(|Extension(session)| {
+                session
+                    .claims
+                    .circle_ids
+                    .iter()
+                    .any(|allowed| allowed == circle_id)
+            })
+            && browser_guardian_has_active_membership(state, circle_id)?)
+    {
+        Ok(())
+    } else {
+        if let Some(Extension(session)) = session.as_ref() {
+            crate::api::auth::authorization::audit_member_resource_denied(
+                &state.node_id,
+                &session.claims.sub,
+                "Circle",
+            );
+        }
+        Err(ApiError::Forbidden(
+            "Guardian is not an active member of this Circle".into(),
+        ))
+    }
 }
 
 pub async fn redeem(
