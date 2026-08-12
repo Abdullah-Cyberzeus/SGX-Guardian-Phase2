@@ -17,6 +17,7 @@ import { useChatUnread } from "../../contexts/ChatUnreadContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { isMemberRole } from "../../utils/authorization";
 import { peerService } from "../../services/peerService";
+import { useContactNames } from "../../contexts/ContactNameContext";
 
 type View = "chat" | "files";
 
@@ -39,6 +40,7 @@ export function ChatConversationScreen() {
   const { startCall, call, currentDevice } = useCall();
   const { group } = useGroupCall();
   const { clearPeerUnread, refresh: refreshUnread } = useChatUnread();
+  const { contactNameForDid } = useContactNames();
   const [records, setRecords] = useState<ChatMessageRecord[]>([]);
   const [localDid, setLocalDid] = useState("");
   const [message, setMessage] = useState("");
@@ -221,14 +223,14 @@ export function ChatConversationScreen() {
     } : undefined;
     return {
       id: record.message_id,
-      sender: isMe ? "You" : (senderMember?.name || member?.name || record.sender_did),
+      sender: isMe ? "You" : (contactNameForDid(record.sender_did) || senderMember?.name || member?.name || record.sender_did),
       content: attachment ? "" : (payload.content || ""),
       timestamp: timeLabel(record.timestamp),
       isMe,
       read: record.status === "read" || record.read_by.length > 0,
       attachment,
     };
-  }), [records, localDid, isGroup, peerDid, circle, member]);
+  }), [records, localDid, isGroup, peerDid, circle, member, contactNameForDid]);
 
   const files = useMemo<SharedFile[]>(() => messages.filter((item) => item.attachment).map((item) => ({
     id: item.id,
@@ -240,8 +242,10 @@ export function ChatConversationScreen() {
   if ((isGroup && circlesLoading) || (!isGroup && peersLoading)) return <div className="grid h-full place-items-center"><Loader2 className="animate-spin" /></div>;
   if ((isGroup && !circle) || (!isGroup && !peer && !member)) return <div className="grid h-full place-items-center p-6 text-sm text-muted-foreground">Conversation not found.</div>;
 
-  const title = isGroup ? circle.name : (member?.name || peer?.peerId || peerDid);
+  const peerContactName = !isGroup ? (contactNameForDid(peerDid) || contactNameForDid(peer?.did)) : undefined;
+  const title = isGroup ? circle.name : (peerContactName || member?.name || peer?.peerId || peerDid);
   const subtitle = `${isGroup ? `Secure group chat · ${circle.members?.length || 0} members` : "Private peer-to-peer chat"} · ${liveConnected ? "Live" : "Reconnecting…"}`;
+  const peerComposerName = peerContactName || member?.name || peer?.peerId || "peer";
   return (
     <div className="flex h-full flex-col">
       <PageHeader title={title} subtitle={subtitle} onBack={() => navigate(isGroup ? `/network/${circleId}?tab=members` : "/chats")} right={
@@ -279,7 +283,7 @@ export function ChatConversationScreen() {
           {uploadProgress !== null && <div className="mx-auto mb-2 max-w-2xl text-xs text-muted-foreground">Uploading file… {uploadProgress}%</div>}
           <div className="mx-auto flex max-w-2xl items-center gap-2">
             <AttachmentMenu onPick={(file) => void attach(file)} disabled={sending} />
-            <input value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void send(message); }} disabled={sending} placeholder={isGroup ? "Secure Circle message…" : `Message ${member?.name || peer?.peerId || "peer"}…`} className="h-11 flex-1 rounded-full border border-border bg-input-background px-4 text-sm outline-none" />
+            <input value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void send(message); }} disabled={sending} placeholder={isGroup ? "Secure Circle message…" : `Message ${peerComposerName}…`} className="h-11 flex-1 rounded-full border border-border bg-input-background px-4 text-sm outline-none" />
             <button type="button" aria-label="Send message" onClick={() => void send(message)} disabled={sending || !message.trim()} className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground disabled:opacity-40">{sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}</button>
           </div>
         </div>

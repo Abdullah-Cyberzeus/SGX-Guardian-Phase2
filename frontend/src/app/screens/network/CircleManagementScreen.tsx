@@ -2,6 +2,7 @@ import { ChangeEvent, useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { Archive, ArchiveRestore, Check, ChevronLeft, Clipboard, Copy, Edit3, Link2, Loader2, Plus, RefreshCw, Send, Trash2, Upload, UserPlus, Users, X } from "lucide-react";
 import { toast } from "sonner";
+import { useContactNames } from "../../contexts/ContactNameContext";
 import circleService, { Circle, CircleInvite, CircleMember, CircleRole, parseInviteMaterial } from "../../services/circleService";
 
 type Tab = "details" | "members" | "invites";
@@ -31,6 +32,7 @@ function ConfirmDialog({ title, message, confirmLabel, onConfirm, onClose, busy,
 export function CircleManagementScreen() {
   const { circleId = "" } = useParams();
   const navigate = useNavigate();
+  const { displayForDid } = useContactNames();
   const [tab, setTab] = useState<Tab>("details");
   const [circle, setCircle] = useState<Circle | null>(null);
   const [members, setMembers] = useState<CircleMember[]>([]);
@@ -247,15 +249,17 @@ export function CircleManagementScreen() {
 
   const memberRow = (member: CircleMember, revoked = false) => {
     const primaryOwner = member.did === circle?.ownerDid;
+    const memberDisplayName = displayForDid(member.did, member.name || member.email || member.did);
+    const memberSecondary = displayForDid(member.did, member.did);
     return (
     <div key={member.did || member.id} className="flex flex-col gap-3 border-b border-border p-4 last:border-0 sm:flex-row sm:items-center">
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2"><p className="truncate text-sm font-medium">{member.name || member.email || member.did}</p>{primaryOwner && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">Primary admin</span>}{revoked && <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-destructive">Deleted</span>}</div>
-        <p className="truncate font-mono text-xs text-muted-foreground">{member.did}</p>
+        <div className="flex items-center gap-2"><p className="truncate text-sm font-medium" title={member.did}>{memberDisplayName}</p>{primaryOwner && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">Primary admin</span>}{revoked && <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-destructive">Deleted</span>}</div>
+        <p className="truncate font-mono text-xs text-muted-foreground" title={member.did}>{memberSecondary}</p>
         {revoked && <p className="mt-1 text-xs text-muted-foreground">Membership credential revoked; the DID can be added to this Circle again.</p>}
       </div>
       <select className="rounded-md border border-border bg-input-background px-2 py-2 text-sm" value={member.role || "member"} onChange={(e) => void updateRole(member.did, e.target.value as CircleRole)} disabled={busy || revoked || primaryOwner}>{roles.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}</select>
-      {revoked ? <button className={primaryButton} onClick={() => void restoreMember(member)} disabled={busy} aria-label={`Add ${member.name || member.did} again`}><UserPlus size={15} />Add again</button> : <button className={secondaryButton} onClick={() => setConfirm({ kind: "member", did: member.did })} disabled={busy || primaryOwner} aria-label={`Remove ${member.name || member.did}`}><Trash2 size={15} className="text-destructive" /></button>}
+      {revoked ? <button className={primaryButton} onClick={() => void restoreMember(member)} disabled={busy} aria-label={`Add ${memberDisplayName} again`}><UserPlus size={15} />Add again</button> : <button className={secondaryButton} onClick={() => setConfirm({ kind: "member", did: member.did })} disabled={busy || primaryOwner} aria-label={`Remove ${memberDisplayName}`}><Trash2 size={15} className="text-destructive" /></button>}
     </div>
     );
   };

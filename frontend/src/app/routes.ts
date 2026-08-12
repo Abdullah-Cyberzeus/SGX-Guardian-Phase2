@@ -48,10 +48,10 @@ const NW03PeersList = screen(() => import("./screens/network/NW03PeersList"), "N
 const NW04CircleDetail = screen(() => import("./screens/network/NW04CircleDetail"), "NW04CircleDetail");
 const ChatConversationScreen = screen(() => import("./screens/network/ChatConversationScreen"), "ChatConversationScreen");
 const ChatsListScreen = screen(() => import("./screens/chat/ChatsListScreen"), "ChatsListScreen");
+const ContactsRouteScreen = screen(() => import("./screens/contacts/ContactsRouteScreen"), "ContactsRouteScreen");
 const CallsHistoryScreen = screen(() => import("./screens/calls/CallsHistoryScreen"), "CallsHistoryScreen");
 const CircleManagementScreen = screen(() => import("./screens/network/CircleManagementScreen"), "CircleManagementScreen");
 const CircleJoinScreen = screen(() => import("./screens/network/CircleJoinScreen"), "CircleJoinScreen");
-const MemberContactsScreen = screen(() => import("./screens/member/MemberContactsScreen"), "MemberContactsScreen");
 const MemberSettingsScreen = screen(() => import("./screens/member/MemberSettingsScreen"), "MemberSettingsScreen");
 const MemberJoinOnboarding = screen(() => import("./screens/onboarding/MemberJoinOnboarding"), "MemberJoinOnboarding");
 
@@ -185,8 +185,8 @@ export const router = createBrowserRouter([
             // Standalone messaging; member access is restricted to shared-Circle contacts.
             { path: "chats", Component: ChatsListScreen },
             { path: "chats/:peerDid", Component: ChatConversationScreen },
+            { path: "contacts", Component: ContactsRouteScreen },
             { path: "calls", Component: CallsHistoryScreen },
-            { path: "contacts", Component: MemberContactsScreen },
             { path: "member-settings", Component: MemberSettingsScreen },
 
             // Network / Circles tab

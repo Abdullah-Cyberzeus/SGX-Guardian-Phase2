@@ -4,7 +4,7 @@ use tracing::{error, info, warn};
 
 use crate::device::command_tracker::{CommandResult, CommandTracker};
 use crate::device::registry::DeviceRegistry;
-use crate::device::state::{Device, DeviceHealth, is_supported_domain};
+use crate::device::state::{is_supported_domain, Device, DeviceHealth};
 use crate::homeassistant::events::{EventBus, HaEvent};
 use crate::homeassistant::rest::HaRestClient;
 
@@ -196,11 +196,10 @@ impl DeviceManager {
         }
     }
 
-
     /// Spawns the event loop to consume HA events and update the registry in real-time.
     pub async fn start_event_listener(self: Arc<Self>) {
         let mut rx = self.event_bus.subscribe();
-        
+
         tokio::spawn(async move {
             info!("📡 DeviceManager Event Listener started.");
             loop {
@@ -227,7 +226,7 @@ impl DeviceManager {
             Some(d) => d,
             None => return,
         };
-        
+
         let entity_id = match data.get("entity_id").and_then(|e| e.as_str()) {
             Some(id) => id,
             None => return,
@@ -237,12 +236,17 @@ impl DeviceManager {
             return;
         }
 
-        let new_state = match data.get("new_state").and_then(|n| n.get("state")).and_then(|s| s.as_str()) {
+        let new_state = match data
+            .get("new_state")
+            .and_then(|n| n.get("state"))
+            .and_then(|s| s.as_str())
+        {
             Some(s) => s,
             None => return,
         };
 
-        let friendly_name = data.get("new_state")
+        let friendly_name = data
+            .get("new_state")
             .and_then(|n| n.get("attributes"))
             .and_then(|a| a.get("friendly_name"))
             .and_then(|v| v.as_str())
@@ -306,7 +310,10 @@ impl DeviceManager {
         // Generate notification on health status transition
         if let Some(ref notif_mgr) = self.notification_manager {
             if old_health != DeviceHealth::Offline && new_health == DeviceHealth::Offline {
-                let vendor_prefix = if device.vendor == "tp_link" || device.ha_entity_id.contains("kasa") || device.friendly_name.to_lowercase().contains("kasa") {
+                let vendor_prefix = if device.vendor == "tp_link"
+                    || device.ha_entity_id.contains("kasa")
+                    || device.friendly_name.to_lowercase().contains("kasa")
+                {
                     "Kasa"
                 } else if device.vendor == "google_nest" || device.ha_entity_id.contains("nest") {
                     "Nest"
@@ -317,15 +324,26 @@ impl DeviceManager {
                 };
 
                 let title = format!("{} Device Offline", vendor_prefix);
-                let message = format!("{} device '{}' went offline", vendor_prefix, device.friendly_name);
-                warn!("⚠️ Device '{}' ({}) transitioned to Offline", device.friendly_name, entity_id);
+                let message = format!(
+                    "{} device '{}' went offline",
+                    vendor_prefix, device.friendly_name
+                );
+                warn!(
+                    "⚠️ Device '{}' ({}) transitioned to Offline",
+                    device.friendly_name, entity_id
+                );
 
                 let notif_mgr_clone = notif_mgr.clone();
                 tokio::spawn(async move {
-                    notif_mgr_clone.create_notification(title, message, "warning").await;
+                    notif_mgr_clone
+                        .create_notification(title, message, "warning")
+                        .await;
                 });
             } else if old_health == DeviceHealth::Offline && new_health == DeviceHealth::Online {
-                let vendor_prefix = if device.vendor == "tp_link" || device.ha_entity_id.contains("kasa") || device.friendly_name.to_lowercase().contains("kasa") {
+                let vendor_prefix = if device.vendor == "tp_link"
+                    || device.ha_entity_id.contains("kasa")
+                    || device.friendly_name.to_lowercase().contains("kasa")
+                {
                     "Kasa"
                 } else if device.vendor == "google_nest" || device.ha_entity_id.contains("nest") {
                     "Nest"
@@ -336,12 +354,20 @@ impl DeviceManager {
                 };
 
                 let title = format!("{} Device Online", vendor_prefix);
-                let message = format!("{} device '{}' is back online", vendor_prefix, device.friendly_name);
-                info!("✅ Device '{}' ({}) recovered to Online", device.friendly_name, entity_id);
+                let message = format!(
+                    "{} device '{}' is back online",
+                    vendor_prefix, device.friendly_name
+                );
+                info!(
+                    "✅ Device '{}' ({}) recovered to Online",
+                    device.friendly_name, entity_id
+                );
 
                 let notif_mgr_clone = notif_mgr.clone();
                 tokio::spawn(async move {
-                    notif_mgr_clone.create_notification(title, message, "info").await;
+                    notif_mgr_clone
+                        .create_notification(title, message, "info")
+                        .await;
                 });
             }
         }
@@ -350,7 +376,9 @@ impl DeviceManager {
             error!("Failed to update state for {}: {}", entity_id, e);
         } else {
             // Notify command tracker so pending API calls can return success
-            self.command_tracker.resolve_commands_for_entity(entity_id).await;
+            self.command_tracker
+                .resolve_commands_for_entity(entity_id)
+                .await;
         }
     }
 
@@ -363,22 +391,37 @@ impl DeviceManager {
         service_data: Option<serde_json::Value>,
     ) -> Result<(), String> {
         // Ensure device exists in our registry first
-        if self.registry.get_device_by_entity_id(entity_id).await.is_none() {
-            return Err(format!("Device with entity_id {} not found in registry", entity_id));
+        if self
+            .registry
+            .get_device_by_entity_id(entity_id)
+            .await
+            .is_none()
+        {
+            return Err(format!(
+                "Device with entity_id {} not found in registry",
+                entity_id
+            ));
         }
 
         // Register tracking before sending command to avoid race conditions
         let (cmd_id, rx) = self.command_tracker.register_command(entity_id).await;
-        
-        info!("Sending command {} to {} (Tracking ID: {})", service, entity_id, cmd_id);
-        
+
+        info!(
+            "Sending command {} to {} (Tracking ID: {})",
+            service, entity_id, cmd_id
+        );
+
         // Execute the REST call
-        self.ha_rest.call_service(domain, service, entity_id, service_data).await?;
-        
+        self.ha_rest
+            .call_service(domain, service, entity_id, service_data)
+            .await?;
+
         // Wait for the state_changed event to acknowledge success
         match CommandTracker::wait_for_command(rx).await {
             CommandResult::Success => Ok(()),
-            CommandResult::Timeout => Err("Command timed out waiting for acknowledgment".to_string()),
+            CommandResult::Timeout => {
+                Err("Command timed out waiting for acknowledgment".to_string())
+            }
         }
     }
 }
@@ -402,10 +445,12 @@ mod tests {
             url: "http://localhost:8123".to_string(),
             token: "test".to_string(),
         }));
-        let notif_mgr = Arc::new(crate::notification::manager::NotificationManager::load_or_create(
-            notif_file,
-            Some(event_bus.clone()),
-        ));
+        let notif_mgr = Arc::new(
+            crate::notification::manager::NotificationManager::load_or_create(
+                notif_file,
+                Some(event_bus.clone()),
+            ),
+        );
 
         let dm = DeviceManager::new(
             registry,
@@ -427,7 +472,8 @@ mod tests {
                     "attributes": { "friendly_name": friendly_name }
                 }
             }
-        })).await;
+        }))
+        .await;
 
         // 2. Transition to Offline (unavailable)
         dm.handle_state_changed(serde_json::json!({
@@ -438,14 +484,20 @@ mod tests {
                     "attributes": { "friendly_name": friendly_name }
                 }
             }
-        })).await;
+        }))
+        .await;
 
         // Give async notification task a brief pause to process
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let notifs = notif_mgr.list_notifications(false, None).await;
-        let has_offline_notif = notifs.iter().any(|n| n.severity == "warning" && n.message.contains("went offline"));
-        assert!(has_offline_notif, "Should generate warning notification on transition to Offline");
+        let has_offline_notif = notifs
+            .iter()
+            .any(|n| n.severity == "warning" && n.message.contains("went offline"));
+        assert!(
+            has_offline_notif,
+            "Should generate warning notification on transition to Offline"
+        );
 
         // 3. Transition back to Online
         dm.handle_state_changed(serde_json::json!({
@@ -456,13 +508,19 @@ mod tests {
                     "attributes": { "friendly_name": friendly_name }
                 }
             }
-        })).await;
+        }))
+        .await;
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let notifs_after = notif_mgr.list_notifications(false, None).await;
-        let has_online_notif = notifs_after.iter().any(|n| n.severity == "info" && n.message.contains("is back online"));
-        assert!(has_online_notif, "Should generate info notification on transition back to Online");
+        let has_online_notif = notifs_after
+            .iter()
+            .any(|n| n.severity == "info" && n.message.contains("is back online"));
+        assert!(
+            has_online_notif,
+            "Should generate info notification on transition back to Online"
+        );
     }
 
     #[tokio::test]
@@ -488,9 +546,13 @@ mod tests {
                     "attributes": { "friendly_name": "Living Room Nest Thermostat" }
                 }
             }
-        })).await;
+        }))
+        .await;
 
-        let dev = registry.get_device_by_entity_id("climate.living_room_nest_thermostat").await.unwrap();
+        let dev = registry
+            .get_device_by_entity_id("climate.living_room_nest_thermostat")
+            .await
+            .unwrap();
         assert_eq!(dev.vendor, "google_nest");
         assert_eq!(dev.device_type, "climate");
     }

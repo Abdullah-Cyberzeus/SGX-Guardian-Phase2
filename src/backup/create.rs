@@ -105,7 +105,11 @@ pub async fn register_imported_backup(
     record: BackupRecord,
 ) -> Result<(), BackupError> {
     let mut history = load_history(config).await?;
-    if history.records.iter().any(|existing| existing.id == record.id) {
+    if history
+        .records
+        .iter()
+        .any(|existing| existing.id == record.id)
+    {
         return Err(BackupError::Duplicate(record.id));
     }
     history.records.insert(0, record);

@@ -105,7 +105,10 @@ mod tests {
 
         {
             let store1 = PendingActionStore::new(&path);
-            store1.add_pending_action(pending_action.clone()).await.unwrap();
+            store1
+                .add_pending_action(pending_action.clone())
+                .await
+                .unwrap();
         }
 
         let store2 = PendingActionStore::new(&path);

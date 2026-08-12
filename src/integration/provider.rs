@@ -85,8 +85,14 @@ mod tests {
 
     #[test]
     fn test_vendor_provider_conversion() {
-        assert_eq!(VendorProvider::from_str("google_nest"), Some(VendorProvider::GoogleNest));
-        assert_eq!(VendorProvider::from_str("kasa"), Some(VendorProvider::TpLinkKasa));
+        assert_eq!(
+            VendorProvider::from_str("google_nest"),
+            Some(VendorProvider::GoogleNest)
+        );
+        assert_eq!(
+            VendorProvider::from_str("kasa"),
+            Some(VendorProvider::TpLinkKasa)
+        );
         assert_eq!(VendorProvider::from_str("unknown"), None);
     }
 }

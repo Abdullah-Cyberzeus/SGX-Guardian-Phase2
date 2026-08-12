@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "react-router";
-import { Home, Bell, BellRing, Cpu, Cloud, Settings, MessageSquare, Phone, Users } from "lucide-react";
+import { Home, Bell, BellRing, Cpu, Cloud, Settings, MessageSquare, Phone, UsersRound } from "lucide-react";
 import { mockGuardian, mockAlerts, mockDevices } from "../data/mockData";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 import { useChatUnread } from "../contexts/ChatUnreadContext";
@@ -49,6 +49,7 @@ export function AppSidebar({ variant }: AppSidebarProps) {
     { label: "Alerts", icon: Bell, path: "/alerts", custom: false, badge: alertBadgeCount },
     { label: "Notifications", icon: BellRing, path: "/notifications", custom: false, badge: 0 },
     { label: "Chats", icon: MessageSquare, path: "/chats", custom: false, badge: unreadChats },
+    { label: "Contacts", icon: UsersRound, path: "/contacts", custom: false, badge: 0 },
     { label: "Calls", icon: Phone, path: "/calls", custom: false, badge: 0 },
     { label: "Circles", icon: null, path: "/network", custom: true, badge: circlesBadgeCount },
     { label: "Devices", icon: Cpu, path: "/devices", custom: false, badge: deviceBadgeCount },
@@ -58,7 +59,7 @@ export function AppSidebar({ variant }: AppSidebarProps) {
   const memberNavItems = [
     { label: "Messages", icon: MessageSquare, path: "/chats", custom: false, badge: unreadChats },
     { label: "Calls", icon: Phone, path: "/calls", custom: false, badge: 0 },
-    { label: "Contacts", icon: Users, path: "/contacts", custom: false, badge: 0 },
+    { label: "Contacts", icon: UsersRound, path: "/contacts", custom: false, badge: 0 },
     { label: "Files", icon: Cloud, path: "/storage", custom: false, badge: 0 },
     { label: "Settings", icon: Settings, path: "/member-settings", custom: false, badge: 0 },
   ];
