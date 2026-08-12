@@ -30,7 +30,10 @@ impl TelemetryCollector {
     /// Starts the telemetry collector service & background pruner
     pub async fn start(self: Arc<Self>) {
         if let Err(e) = fs::create_dir_all(&self.log_dir).await {
-            error!("Failed to create telemetry directory {:?}: {}", self.log_dir, e);
+            error!(
+                "Failed to create telemetry directory {:?}: {}",
+                self.log_dir, e
+            );
             return;
         }
 
@@ -50,7 +53,10 @@ impl TelemetryCollector {
                     }
                     Ok(_) => {} // Ignore non-state events for telemetry storage
                     Err(RecvError::Lagged(skipped)) => {
-                        warn!("Telemetry Collector lagged behind! Skipped {} events.", skipped);
+                        warn!(
+                            "Telemetry Collector lagged behind! Skipped {} events.",
+                            skipped
+                        );
                     }
                     Err(RecvError::Closed) => {
                         warn!("Event Bus closed. Stopping Telemetry Collector.");
@@ -127,7 +133,9 @@ impl TelemetryCollector {
         // Base file >= 50MB, find next available index suffix
         let mut index = 1;
         loop {
-            let rotated_path = self.log_dir.join(format!("ha_telemetry_{}_{:03}.log", date_str, index));
+            let rotated_path = self
+                .log_dir
+                .join(format!("ha_telemetry_{}_{:03}.log", date_str, index));
             if let Ok(metadata) = fs::metadata(&rotated_path).await {
                 if metadata.len() < MAX_FILE_SIZE_BYTES {
                     return rotated_path;

@@ -73,7 +73,10 @@ impl TokenRefreshWorker {
                     }
                 }
             } else if let Some(ref nest_creds) = meta.nest_credentials {
-                if crate::nest::NestTokenRefresher::is_expiring_soon(nest_creds, self.expiry_window_secs) {
+                if crate::nest::NestTokenRefresher::is_expiring_soon(
+                    nest_creds,
+                    self.expiry_window_secs,
+                ) {
                     info!(
                         "⏳ Nest OAuth token for {} expires soon. Triggering Google OAuth refresh...",
                         meta.provider.display_name()
@@ -129,7 +132,10 @@ impl TokenRefreshWorker {
         creds.access_token = format!("renewed_access_token_{}", uuid::Uuid::new_v4().simple());
         creds.expires_at = Some(Utc::now() + chrono::Duration::hours(1));
 
-        info!("✅ OAuth token refreshed successfully for {}", provider.display_name());
+        info!(
+            "✅ OAuth token refreshed successfully for {}",
+            provider.display_name()
+        );
 
         self.manager
             .set_credentials(provider, creds.clone())

@@ -18,28 +18,28 @@ pub enum DeviceHealth {
 pub struct Device {
     /// Guardian's internal unique device ID (e.g. "dev_a1b2c3")
     pub id: String,
-    
+
     /// The Home Assistant entity ID (e.g. "light.living_room")
     pub ha_entity_id: String,
-    
+
     /// Vendor of the device (e.g. "Google Nest", "TP-Link Kasa")
     pub vendor: String,
-    
+
     /// Type of device (e.g. "thermostat", "light", "lock")
     pub device_type: String,
-    
+
     /// Room or zone where the device is located
     pub room: Option<String>,
-    
+
     /// User-friendly name
     pub friendly_name: String,
-    
+
     /// Current state from Home Assistant (e.g. "on", "off", "unlocked")
     pub current_state: String,
-    
+
     /// Overall health status
     pub health_status: DeviceHealth,
-    
+
     /// Last seen timestamp
     pub last_seen: DateTime<Utc>,
 }
@@ -59,11 +59,23 @@ pub fn is_supported_domain(entity_id: &str) -> bool {
     }
 
     let supported_domains = [
-        "light.", "switch.", "climate.", "lock.", "sensor.", 
-        "binary_sensor.", "camera.", "media_player.", "cover.",
-        "input_boolean.", "input_button.", "input_select.", "input_number."
+        "light.",
+        "switch.",
+        "climate.",
+        "lock.",
+        "sensor.",
+        "binary_sensor.",
+        "camera.",
+        "media_player.",
+        "cover.",
+        "input_boolean.",
+        "input_button.",
+        "input_select.",
+        "input_number.",
     ];
-    supported_domains.iter().any(|domain| entity_id.starts_with(domain))
+    supported_domains
+        .iter()
+        .any(|domain| entity_id.starts_with(domain))
 }
 
 #[cfg(test)]

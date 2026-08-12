@@ -1,14 +1,20 @@
+use crate::homeassistant::events::EventBus;
 use crate::homeassistant::HomeAssistantConfig;
+use crate::logging::log_event;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
+use std::sync::Arc;
 use tokio::time::{sleep, timeout, Duration};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use crate::logging::log_event;
-use std::sync::Arc;
-use crate::homeassistant::events::EventBus;
 
-async fn ws_connection_loop(config: &HomeAssistantConfig, event_bus: &Arc<EventBus>) -> Result<(), String> {
-    let mut ws_url = config.url.replace("http://", "ws://").replace("https://", "wss://");
+async fn ws_connection_loop(
+    config: &HomeAssistantConfig,
+    event_bus: &Arc<EventBus>,
+) -> Result<(), String> {
+    let mut ws_url = config
+        .url
+        .replace("http://", "ws://")
+        .replace("https://", "wss://");
     ws_url.push_str("/api/websocket");
 
     // Attempt connection
@@ -17,9 +23,9 @@ async fn ws_connection_loop(config: &HomeAssistantConfig, event_bus: &Arc<EventB
         Ok(Err(e)) => return Err(format!("WS Connect Error: {}", e)),
         Err(_) => return Err("WS Connect Timeout".to_string()),
     };
-    
+
     println!("✅ Connected to Home Assistant WebSocket!");
-    
+
     let (mut write, mut read) = ws_stream.split();
     let mut current_id = 1;
 
@@ -27,14 +33,18 @@ async fn ws_connection_loop(config: &HomeAssistantConfig, event_bus: &Arc<EventB
     if let Some(msg) = read.next().await {
         let msg = msg.map_err(|e| e.to_string())?;
         if let Message::Text(text) = msg {
-            let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+            let parsed: serde_json::Value =
+                serde_json::from_str(&text).map_err(|e| e.to_string())?;
             if parsed["type"] == "auth_required" {
                 println!("🔐 Authenticating with Home Assistant...");
                 let auth_msg = json!({
                     "type": "auth",
                     "access_token": config.token
                 });
-                write.send(Message::Text(auth_msg.to_string().into())).await.map_err(|e| e.to_string())?;
+                write
+                    .send(Message::Text(auth_msg.to_string().into()))
+                    .await
+                    .map_err(|e| e.to_string())?;
             }
         }
     }
@@ -43,7 +53,8 @@ async fn ws_connection_loop(config: &HomeAssistantConfig, event_bus: &Arc<EventB
     if let Some(msg) = read.next().await {
         let msg = msg.map_err(|e| e.to_string())?;
         if let Message::Text(text) = msg {
-            let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+            let parsed: serde_json::Value =
+                serde_json::from_str(&text).map_err(|e| e.to_string())?;
             if parsed["type"] == "auth_ok" {
                 println!("🎉 Successfully authenticated with Home Assistant!");
                 log_event("homeassistant", "WebSocket authenticated successfully");
@@ -55,14 +66,21 @@ async fn ws_connection_loop(config: &HomeAssistantConfig, event_bus: &Arc<EventB
     }
 
     // Requirement: Subscribe to state_changed, device_registry_updated, entity_registry_updated
-    let events = vec!["state_changed", "device_registry_updated", "entity_registry_updated"];
+    let events = vec![
+        "state_changed",
+        "device_registry_updated",
+        "entity_registry_updated",
+    ];
     for event_type in events {
         let sub_msg = json!({
             "id": current_id,
             "type": "subscribe_events",
             "event_type": event_type
         });
-        write.send(Message::Text(sub_msg.to_string().into())).await.map_err(|e| e.to_string())?;
+        write
+            .send(Message::Text(sub_msg.to_string().into()))
+            .await
+            .map_err(|e| e.to_string())?;
         current_id += 1;
     }
     println!("📡 Subscribed to HA event streams.");
@@ -112,7 +130,7 @@ async fn ws_connection_loop(config: &HomeAssistantConfig, event_bus: &Arc<EventB
                 if waiting_for_pong && now.duration_since(last_ping) > Duration::from_secs(10) {
                     return Err("Pong timeout (10s) exceeded".to_string());
                 }
-                
+
                 if now.duration_since(last_ping) >= Duration::from_secs(30) {
                     // Send Ping
                     waiting_for_pong = true;
@@ -147,7 +165,7 @@ pub async fn start_websocket_client(config: HomeAssistantConfig, event_bus: Arc<
                     eprintln!("⚠️ HA WebSocket Disconnected: {}", e);
                 }
             }
-            
+
             // Reconnect with exponential backoff capped at 60s
             println!("⏱️ Reconnecting in {} seconds...", backoff);
             sleep(Duration::from_secs(backoff)).await;

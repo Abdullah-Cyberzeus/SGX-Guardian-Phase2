@@ -6,20 +6,25 @@ pub struct ConflictResolver;
 
 impl ConflictResolver {
     /// Resolves rule priorities and contradictory actions for a set of firing rules.
-    pub fn resolve_conflicts(firing_rules: Vec<AutomationRule>) -> Vec<(AutomationRule, RuleAction)> {
+    pub fn resolve_conflicts(
+        firing_rules: Vec<AutomationRule>,
+    ) -> Vec<(AutomationRule, RuleAction)> {
         if firing_rules.is_empty() {
             return Vec::new();
         }
 
         // Group actions by target entity_id: entity_id -> Vec<(rule_priority, rule_index, rule, action)>
-        let mut entity_actions: HashMap<String, Vec<(i32, AutomationRule, RuleAction)>> = HashMap::new();
+        let mut entity_actions: HashMap<String, Vec<(i32, AutomationRule, RuleAction)>> =
+            HashMap::new();
         let mut non_command_actions: Vec<(AutomationRule, RuleAction)> = Vec::new();
 
         for rule in firing_rules {
             for action in &rule.actions {
                 match action {
                     RuleAction::Command { entity_id, .. } => {
-                        let list = entity_actions.entry(entity_id.clone()).or_insert_with(Vec::new);
+                        let list = entity_actions
+                            .entry(entity_id.clone())
+                            .or_insert_with(Vec::new);
                         list.push((rule.priority, rule.clone(), action.clone()));
                     }
                     _ => {
@@ -42,12 +47,15 @@ impl ConflictResolver {
 
             // Check if top priority rules have contradictory commands
             let top_priority = actions[0].0;
-            let top_actions: Vec<&(i32, AutomationRule, RuleAction)> = actions.iter().filter(|a| a.0 == top_priority).collect();
+            let top_actions: Vec<&(i32, AutomationRule, RuleAction)> =
+                actions.iter().filter(|a| a.0 == top_priority).collect();
 
             if top_actions.len() > 1 {
                 // Check if the top actions contradict each other
                 let first_cmd = extract_command_name(&top_actions[0].2);
-                let is_conflict = top_actions.iter().any(|a| is_contradictory_command(&first_cmd, &extract_command_name(&a.2)));
+                let is_conflict = top_actions
+                    .iter()
+                    .any(|a| is_contradictory_command(&first_cmd, &extract_command_name(&a.2)));
 
                 if is_conflict {
                     warn!(
@@ -92,7 +100,7 @@ fn is_contradictory_command(cmd1: &str, cmd2: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::automation::schema::{RuleTrigger};
+    use crate::automation::schema::RuleTrigger;
 
     fn make_test_rule(id: &str, priority: i32, entity: &str, cmd: &str) -> AutomationRule {
         AutomationRule {

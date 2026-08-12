@@ -14,6 +14,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { usePeers } from "../../hooks/useApiData";
+import { useContactNames } from "../../contexts/ContactNameContext";
 import { peerService, type Peer } from "../../services/peerService";
 import { toast } from "sonner";
 
@@ -67,8 +68,10 @@ function PeerCard({
   onAttest: (id: string) => void;
   attesting: boolean;
 }) {
+  const { displayForDid } = useContactNames();
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
+  const peerDisplayName = displayForDid(peer.did, peer.peerId);
 
   const copyPeerId = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -118,7 +121,7 @@ function PeerCard({
               marginBottom: "2px",
             }}
           >
-            {peer.peerId}
+            {peerDisplayName}
           </p>
           <div className="flex items-center gap-2">
             <span
@@ -165,7 +168,7 @@ function PeerCard({
           {/* Details grid */}
           <div className="flex flex-col gap-2">
             {[
-              { label: "Peer ID", value: peer.peerId, mono: true },
+              { label: "Peer ID", value: displayForDid(peer.did, peer.peerId), mono: true },
               { label: "IP Address", value: peer.ip, mono: true },
               { label: "Port", value: String(peer.port), mono: true },
               { label: "Last Seen", value: new Date(peer.lastSeen).toLocaleString(), mono: false },

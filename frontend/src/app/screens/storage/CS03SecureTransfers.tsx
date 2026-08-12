@@ -9,6 +9,7 @@ import { PageHeader } from "../../components/PageHeader";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
+import { useContactNames } from "../../contexts/ContactNameContext";
 import { formatBytes } from "../../components/vault/types";
 import {
   xferService, type InboxFile, type TransferListResponse, type TransferSummary,
@@ -53,6 +54,7 @@ function StatusPill({ value }: { value?: string }) {
 export function CS03SecureTransfers() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { displayForDid } = useContactNames();
   const [tab, setTab] = useState<Tab>("send");
   const [peerDid, setPeerDid] = useState("");
   const [selectedVaultIds, setSelectedVaultIds] = useState<string[]>(
@@ -509,7 +511,7 @@ export function CS03SecureTransfers() {
                       <StatusPill value={item.status} />
                     </div>
                     <div className="flex justify-between gap-3 text-xs text-muted-foreground">
-                      <span className="truncate">{String(item.peer_did ?? id)}</span>
+                      <span className="truncate" title={String(item.peer_did ?? "")}>{displayForDid(String(item.peer_did ?? ""), String(item.peer_did ?? id))}</span>
                       <span>{displayTime(item.updated_at ?? item.created_at)}</span>
                     </div>
                     {Number(item.size ?? 0) > 0 && !["completed", "complete", "failed", "cancelled", "canceled"].includes(String(item.status ?? "").toLowerCase()) && (
@@ -565,7 +567,7 @@ export function CS03SecureTransfers() {
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium">{file.filename}</p>
                       <p className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">Received file</p>
-                      <p className="truncate text-xs text-muted-foreground">From {file.sender_did}</p>
+                      <p className="truncate text-xs text-muted-foreground" title={file.sender_did}>From {displayForDid(file.sender_did, file.sender_did)}</p>
                     </div>
                   </div>
                   <StatusPill value={file.completed ? "Completed" : "Receiving"} />
@@ -611,7 +613,7 @@ export function CS03SecureTransfers() {
             </div>
             <dl className="grid grid-cols-[110px_1fr] gap-2 text-xs">
               <dt className="text-muted-foreground">Transfer ID</dt><dd className="break-all font-mono">{transferId(detail)}</dd>
-              <dt className="text-muted-foreground">Peer DID</dt><dd className="break-all">{String(detail.peer_did ?? "—")}</dd>
+              <dt className="text-muted-foreground">Peer DID</dt><dd className="break-all" title={String(detail.peer_did ?? "")}>{displayForDid(String(detail.peer_did ?? ""), String(detail.peer_did ?? "—"))}</dd>
               <dt className="text-muted-foreground">File</dt><dd className="break-all">{String(detail.filename ?? detail.path ?? "—")}</dd>
               <dt className="text-muted-foreground">Direction</dt><dd className="capitalize">{String(detail.direction ?? "outbound")}</dd>
               <dt className="text-muted-foreground">Progress</dt><dd>{formatBytes(Number(detail.bytes_sent ?? detail.bytes_transferred ?? 0))} of {formatBytes(Number(detail.size ?? 0))}</dd>
