@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { AlertTriangle, BellRing, Bug, CheckCircle2, Clock3, CloudOff, Eye, Inbox, Loader2, Radio, RefreshCw, Send, Wifi } from "lucide-react";
 import { toast } from "sonner";
+import { useContactNames } from "../../contexts/ContactNameContext";
 import {
   crlService,
   type CrlGossipStatusResponse,
@@ -55,14 +56,16 @@ function itemTitle(item: Record<string, unknown>, fallback: string) {
 }
 
 function ItemCards({ data, keys, emptyTitle, emptyMessage, itemLabel }: { data: unknown; keys: string[]; emptyTitle: string; emptyMessage: string; itemLabel: string }) {
+  const { displayForDid } = useContactNames();
   const items = extractItems(data, keys);
   if (!items.length) return <div className="mt-3 flex flex-col items-center rounded-lg border border-dashed border-border bg-background/40 px-4 py-8 text-center"><span className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground"><Inbox size={18} /></span><p className="text-sm font-semibold">{emptyTitle}</p><p className="mt-1 max-w-md text-xs leading-5 text-muted-foreground">{emptyMessage}</p></div>;
 
   return <div className="mt-3 grid gap-3 md:grid-cols-2">{items.map((item, index) => {
     const hidden = new Set(["id", "entry_id", "did", "revoked_did", "title"]);
     const fields = Object.entries(item).filter(([key, value]) => !hidden.has(key) && value !== undefined).slice(0, 8);
+    const did = String(item.revoked_did ?? item.did ?? "");
     return <article key={String(item.id ?? item.entry_id ?? item.did ?? index)} className="rounded-lg border border-border bg-background/60 p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{itemLabel} {index + 1}</p><h3 className="mt-1 break-all text-sm font-semibold">{itemTitle(item, `${itemLabel} ${index + 1}`)}</h3></div><CheckCircle2 size={17} className="shrink-0 text-primary" /></div>
+      <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{itemLabel} {index + 1}</p><h3 className="mt-1 break-all text-sm font-semibold" title={did}>{displayForDid(did, itemTitle(item, `${itemLabel} ${index + 1}`))}</h3></div><CheckCircle2 size={17} className="shrink-0 text-primary" /></div>
       {fields.length > 0 && <dl className="mt-3 grid gap-2">{fields.map(([key, value]) => <div key={key} className="flex items-start justify-between gap-4 border-t border-border/60 pt-2 text-xs"><dt className="shrink-0 capitalize text-muted-foreground">{key.replaceAll("_", " ")}</dt><dd className="break-all text-right font-medium">{displayValue(value)}</dd></div>)}</dl>}
     </article>;
   })}</div>;
@@ -85,6 +88,7 @@ function InfoSection({ title, subtitle, children }: { title: string; subtitle: s
 }
 
 function GossipSummary({ data, latestTrigger }: { data: CrlGossipStatusResponse | null; latestTrigger: CrlGossipTriggerResponse | null }) {
+  const { displayForDid } = useContactNames();
   if (!data) return <p className="text-sm text-muted-foreground">No gossip status has been loaded yet.</p>;
 
   return <div className="space-y-4">
@@ -93,7 +97,7 @@ function GossipSummary({ data, latestTrigger }: { data: CrlGossipStatusResponse 
       { label: "Port", value: data.port },
       { label: "Interval secs", value: data.interval_secs },
       { label: "Threshold pct", value: data.threshold_pct },
-      { label: "Self DID", value: data.self_did, mono: true },
+      { label: "Self DID", value: displayForDid(data.self_did, data.self_did), mono: true },
       { label: "Circle ID", value: data.circle_id, mono: true },
       { label: "Other members", value: data.other_members },
       { label: "Threshold count", value: data.threshold_count },
@@ -115,7 +119,7 @@ function GossipSummary({ data, latestTrigger }: { data: CrlGossipStatusResponse 
       {data.last_round ? <MetricsGrid items={[
         { label: "Direction", value: data.last_round.direction },
         { label: "Peer node", value: data.last_round.peer_node },
-        { label: "Peer DID", value: data.last_round.peer_did, mono: true },
+        { label: "Peer DID", value: displayForDid(data.last_round.peer_did, data.last_round.peer_did), mono: true },
         { label: "Merged", value: data.last_round.merged },
         { label: "Sent", value: data.last_round.sent },
         { label: "Merkle root", value: data.last_round.merkle_root, mono: true },
@@ -127,7 +131,7 @@ function GossipSummary({ data, latestTrigger }: { data: CrlGossipStatusResponse 
       {latestTrigger ? <MetricsGrid items={[
         { label: "Success", value: latestTrigger.success },
         { label: "Peer node", value: latestTrigger.peer_node },
-        { label: "Peer DID", value: latestTrigger.peer_did, mono: true },
+        { label: "Peer DID", value: displayForDid(latestTrigger.peer_did, latestTrigger.peer_did), mono: true },
         { label: "Merged", value: latestTrigger.merged },
         { label: "Pushed", value: latestTrigger.pushed },
         { label: "Peer merged", value: latestTrigger.peer_merged },

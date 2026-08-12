@@ -1,7 +1,7 @@
 use serde_json::Value;
 use std::sync::Arc;
-use tokio::sync::broadcast::{self, Sender, Receiver};
-use tracing::{warn, info};
+use tokio::sync::broadcast::{self, Receiver, Sender};
+use tracing::{info, warn};
 
 /// Home Assistant Event Wrapper
 #[derive(Debug, Clone)]
@@ -49,7 +49,7 @@ impl EventBus {
 /// (In future phases, this will fan out to Device Manager, Automation Engine, etc.)
 pub async fn start_event_dispatcher(bus: Arc<EventBus>) {
     let mut receiver = bus.subscribe();
-    
+
     info!("🚀 Event Dispatcher started.");
 
     tokio::spawn(async move {
@@ -61,7 +61,10 @@ pub async fn start_event_dispatcher(bus: Arc<EventBus>) {
                     tracing::debug!("Dispatched Event: {:?}", event);
                 }
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    warn!("Event Dispatcher lagged behind! Skipped {} dropped messages to keep up.", skipped);
+                    warn!(
+                        "Event Dispatcher lagged behind! Skipped {} dropped messages to keep up.",
+                        skipped
+                    );
                 }
                 Err(broadcast::error::RecvError::Closed) => {
                     warn!("Event Bus closed. Stopping dispatcher.");

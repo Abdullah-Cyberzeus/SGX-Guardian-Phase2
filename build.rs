@@ -40,7 +40,9 @@ fn validate_frontend_entry(dist_dir: &Path) -> Result<(), Box<dyn std::error::Er
     let index = fs::read_to_string(&index_path)?;
     let module_tag = index
         .lines()
-        .find(|line| line.contains("<script") && line.contains("type=\"module\"") && line.contains("src=\""))
+        .find(|line| {
+            line.contains("<script") && line.contains("type=\"module\"") && line.contains("src=\"")
+        })
         .ok_or("frontend index.html has no module entry script")?;
     let source = module_tag
         .split_once("src=\"")
@@ -57,7 +59,10 @@ fn validate_frontend_entry(dist_dir: &Path) -> Result<(), Box<dyn std::error::Er
     // The application entry contains the React DOM bootstrap. This prevents
     // accidentally embedding a lazy D3/vendor chunk as the page entry, which
     // otherwise returns HTTP 200 but renders a blank screen.
-    if !entry.windows(b"createRoot".len()).any(|window| window == b"createRoot") {
+    if !entry
+        .windows(b"createRoot".len())
+        .any(|window| window == b"createRoot")
+    {
         return Err(format!(
             "frontend module entry {} does not contain the React bootstrap",
             entry_path.display()

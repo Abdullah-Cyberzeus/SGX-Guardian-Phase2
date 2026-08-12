@@ -1,5 +1,5 @@
-pub mod file_lock;
 pub mod backup;
+pub mod file_lock;
 
 use std::fs;
 use std::path::PathBuf;

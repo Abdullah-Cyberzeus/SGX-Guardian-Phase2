@@ -47,7 +47,10 @@ impl KasaHaConfigFlowClient {
     /// Programmatically initiates and completes HA's tplink config flow.
     /// Returns the created HA config `entry_id`.
     pub async fn setup_kasa_config_entry(&self, creds: &KasaCredentials) -> Result<String, String> {
-        let flow_url = format!("{}/api/config/config_entries/flow", self.ha_url.trim_end_matches('/'));
+        let flow_url = format!(
+            "{}/api/config/config_entries/flow",
+            self.ha_url.trim_end_matches('/')
+        );
 
         // Step 1: Initiate flow
         let init_resp = self
@@ -113,11 +116,17 @@ impl KasaHaConfigFlowClient {
                             return Ok(entry_id);
                         }
                         if step_data.reason.as_deref() == Some("already_configured") {
-                            info!("ℹ️ HA Kasa integration is already configured via host '{}'", fallback_host);
+                            info!(
+                                "ℹ️ HA Kasa integration is already configured via host '{}'",
+                                fallback_host
+                            );
                             return Ok("already_configured".to_string());
                         }
                         if step_data.r#type.as_deref() == Some("create_entry") {
-                            info!("✅ HA Kasa config entry created via host '{}'", fallback_host);
+                            info!(
+                                "✅ HA Kasa config entry created via host '{}'",
+                                fallback_host
+                            );
                             return Ok("kasa_entry_created".to_string());
                         }
                     }
@@ -151,7 +160,10 @@ impl KasaHaConfigFlowClient {
 
         if !resp.status().is_success() {
             let err_text = resp.text().await.unwrap_or_default();
-            return Err(format!("Failed to remove HA config entry '{}': {}", entry_id, err_text));
+            return Err(format!(
+                "Failed to remove HA config entry '{}': {}",
+                entry_id, err_text
+            ));
         }
 
         info!("🗑️ Successfully removed HA config entry '{}'", entry_id);
@@ -175,7 +187,13 @@ mod tests {
         }"#;
         let parsed_step: FlowStepResponse = serde_json::from_str(json_step).unwrap();
         assert_eq!(
-            parsed_step.result.unwrap().get("entry_id").unwrap().as_str().unwrap(),
+            parsed_step
+                .result
+                .unwrap()
+                .get("entry_id")
+                .unwrap()
+                .as_str()
+                .unwrap(),
             "entry_7890"
         );
     }

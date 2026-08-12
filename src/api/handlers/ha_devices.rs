@@ -219,7 +219,12 @@ pub async fn execute_device_command(
         payload.params,
     )
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))))?;
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
+    })?;
 
     let cmd_id = format!("cmd_{}", uuid::Uuid::new_v4().simple());
 

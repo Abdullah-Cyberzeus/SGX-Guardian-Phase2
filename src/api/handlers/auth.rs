@@ -308,9 +308,7 @@ pub async fn cylenium_callback(
     // The OIDC `sub` claim, not email, is the durable identity key: email
     // can change or be reassigned at the IdP, but `sub` is permanent for a
     // given Cylenium user.
-    let sub = claims
-        .sub
-        .trim();
+    let sub = claims.sub.trim();
     if sub.is_empty() {
         return Err(ApiError::Unauthorized(
             "cylenium ID token missing subject claim".into(),
@@ -327,7 +325,13 @@ pub async fn cylenium_callback(
         None => match state.admin.users.find_by_email(email).await? {
             // A local/password account already owns this email: link it to
             // this Cylenium subject so future logins resolve by sub.
-            Some(existing) => state.admin.users.link_oidc_sub(&existing.user_id, sub).await?,
+            Some(existing) => {
+                state
+                    .admin
+                    .users
+                    .link_oidc_sub(&existing.user_id, sub)
+                    .await?
+            }
             None => {
                 let name = claims
                     .name

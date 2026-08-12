@@ -20,9 +20,12 @@ import {
   useLighthouseList,
   useMemberList,
   useRelayLighthouseList,
+  useDIDDocumentPeers,
 } from "../../hooks/useApiData";
+import { useContactNames } from "../../contexts/ContactNameContext";
 import { relayService } from "../../services/relayService";
 import type { RelayNode, RegistryNode } from "../../services/relayService";
+import type { DIDDocumentPeerSummary } from "../../services/didService";
 import { toast } from "sonner";
 
 type NodeEntry = RegistryNode & Partial<Pick<RelayNode, "maxPeers" | "maxBandwidthMbps" | "currentMbps">>;
@@ -117,6 +120,7 @@ function NodeCard({
   onToggleRelay,
   onToggleLighthouse,
   onSetLimits,
+  peerDid,
 }: {
   node: NodeEntry;
   icon: typeof Radio;
@@ -124,8 +128,11 @@ function NodeCard({
   onToggleRelay: (node: NodeEntry) => void;
   onToggleLighthouse: (node: NodeEntry) => void;
   onSetLimits?: (node: NodeEntry) => void;
+  peerDid?: string;
 }) {
+  const { displayForDid } = useContactNames();
   const hasRuntime = typeof node.maxBandwidthMbps === "number";
+  const nodeDisplayName = displayForDid(peerDid, node.node);
   return (
     <div
       className="rounded-lg border p-4 flex flex-col gap-3"
@@ -152,7 +159,7 @@ function NodeCard({
           </div>
           <div>
             <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
-              {node.node}
+              {nodeDisplayName}
             </p>
             <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
               {node.overlayIp}
@@ -435,6 +442,7 @@ export function NW06RelayList() {
   const lighthouseData = useLighthouseList();
   const memberData = useMemberList();
   const dualData = useRelayLighthouseList();
+  const didPeersData = useDIDDocumentPeers();
 
   const [tab, setTab] = useState<TabKey>("relays");
   const [editingRelay, setEditingRelay] = useState<NodeEntry | null>(null);
@@ -444,6 +452,12 @@ export function NW06RelayList() {
   // made disabled nodes "come back" on the next tick. The override keeps the
   // user's intent visible until the backend catches up (reconciled below).
   const [roleOverride, setRoleOverride] = useState<Record<string, RoleOverride>>({});
+  const didByNode = new Map<string, string>();
+  (didPeersData.data?.peers ?? []).forEach((peer: DIDDocumentPeerSummary) => {
+    const node = peer.node_name?.trim();
+    if (node && peer.did) didByNode.set(node.toLowerCase(), peer.did);
+  });
+  const didForNode = (node: string) => didByNode.get(node.trim().toLowerCase());
 
   // Older backends don't send role flags on /relay/list; presence in the
   // relay list means the relay role is on, so default relayEnabled to true.
@@ -678,6 +692,7 @@ export function NW06RelayList() {
                   onToggleRelay={n => handleToggle(n, "relay")}
                   onToggleLighthouse={n => handleToggle(n, "lighthouse")}
                   onSetLimits={setEditingRelay}
+                  peerDid={didForNode(node.node)}
                 />
               ))
             )}

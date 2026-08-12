@@ -33,9 +33,7 @@ impl WifiClientOrchestrator {
 
         let output_string;
         let output_str = match active_output {
-            Ok(ref out) if out.status.success() => {
-                str::from_utf8(&out.stdout).unwrap_or("")
-            }
+            Ok(ref out) if out.status.success() => str::from_utf8(&out.stdout).unwrap_or(""),
             _ => {
                 // Active scan failed (e.g. EBUSY -16).
                 // Trigger wpa_cli scan asynchronously so wpa_supplicant updates cache

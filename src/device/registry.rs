@@ -1,11 +1,11 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
 
 use crate::device::state::Device;
 use crate::storage::file_lock::SecureFileStore;
-use tracing::{info, error};
+use tracing::{error, info};
 
 #[derive(Serialize, Deserialize, Default)]
 struct DevicesStore {
@@ -22,7 +22,7 @@ pub struct DeviceRegistry {
 impl DeviceRegistry {
     pub fn new(path: &str) -> Self {
         let store = Arc::new(SecureFileStore::new(path));
-        
+
         // Attempt to load existing devices
         let mut cache = HashMap::new();
         if let Ok(Some(data)) = store.read() {
@@ -33,7 +33,7 @@ impl DeviceRegistry {
                 error!("Failed to parse devices.json, starting with empty registry.");
             }
         }
-        
+
         Self {
             cache: RwLock::new(cache),
             store,
@@ -52,7 +52,10 @@ impl DeviceRegistry {
 
     pub async fn get_device_by_entity_id(&self, entity_id: &str) -> Option<Device> {
         let cache = self.cache.read().await;
-        cache.values().find(|d| d.ha_entity_id == entity_id).cloned()
+        cache
+            .values()
+            .find(|d| d.ha_entity_id == entity_id)
+            .cloned()
     }
 
     pub async fn upsert_device(&self, device: Device) -> Result<(), String> {
@@ -61,7 +64,7 @@ impl DeviceRegistry {
             let mut cache = self.cache.write().await;
             cache.insert(device.id.clone(), device.clone());
         }
-        
+
         // 2. Persist to disk
         self.persist().await
     }
@@ -74,7 +77,7 @@ impl DeviceRegistry {
                 return Ok(()); // Already removed
             }
         }
-        
+
         // 2. Persist to disk
         self.persist().await
     }
@@ -83,17 +86,19 @@ impl DeviceRegistry {
     async fn persist(&self) -> Result<(), String> {
         let cache_snapshot = self.cache.read().await.clone();
         let store_clone = self.store.clone();
-        
+
         let result = tokio::task::spawn_blocking(move || {
             store_clone.write_atomic(|_old_data| {
-                let to_save = DevicesStore { devices: cache_snapshot };
+                let to_save = DevicesStore {
+                    devices: cache_snapshot,
+                };
                 serde_json::to_vec_pretty(&to_save)
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
             })
         })
         .await
         .map_err(|e| format!("Join error: {}", e))?;
-        
+
         result.map_err(|e| format!("IO error: {}", e))
     }
 }
@@ -132,7 +137,10 @@ mod tests {
         assert_eq!(fetched.id, "dev1");
         assert_eq!(fetched.ha_entity_id, "light.dev1");
 
-        let fetched_by_entity = registry.get_device_by_entity_id("light.dev1").await.unwrap();
+        let fetched_by_entity = registry
+            .get_device_by_entity_id("light.dev1")
+            .await
+            .unwrap();
         assert_eq!(fetched_by_entity.id, "dev1");
     }
 
@@ -154,7 +162,7 @@ mod tests {
     async fn test_registry_persistence_reload() {
         let file = NamedTempFile::new().unwrap();
         let path = file.path().to_str().unwrap().to_string();
-        
+
         {
             let registry1 = DeviceRegistry::new(&path);
             let device = create_dummy_device("dev3");

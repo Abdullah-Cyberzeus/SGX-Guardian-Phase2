@@ -1,6 +1,6 @@
-pub(crate) mod ecdsa;
 pub mod command_auth;
 pub mod authorization;
+pub(crate) mod ecdsa;
 pub mod middleware;
 pub mod oidc;
 pub mod pairing;

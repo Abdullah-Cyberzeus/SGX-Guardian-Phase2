@@ -60,9 +60,7 @@ pub fn issue_revocation(
     req: IssueRequest<'_>,
 ) -> Result<CrlEntry, CrlError> {
     if matches!(revoker_role, RevokerRole::Member) {
-        if local_circle_owner_did()
-            .is_some_and(|owner_did| owner_did == req.revoked_did)
-        {
+        if local_circle_owner_did().is_some_and(|owner_did| owner_did == req.revoked_did) {
             return Err(CrlError::OwnerRevocationRequiresOwner);
         }
         if !req.reason.is_security_critical() {
