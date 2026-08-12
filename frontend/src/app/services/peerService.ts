@@ -47,26 +47,45 @@ interface PeersResponse {
   timestamp: string;
 }
 
+interface ContactsResponse {
+  contacts: PeersResponse['peers'];
+  total: number;
+  timestamp: string;
+}
+
+function normalizePeers(peers: PeersResponse['peers']): Peer[] {
+  return peers.map((p, i) => ({
+    id: `peer_${String(i + 1).padStart(3, '0')}`,
+    peerId: p.peerId,
+    did: p.did,
+    ip: p.ip || '',
+    port: 0,
+    status: (p.status === 'verified' || p.status === 'trusted' || p.status === 'success'
+      ? 'verified'
+      : p.status === 'failed' ? 'failed' : 'pending') as Peer['status'],
+    lastSeen: p.lastSeen,
+    lastSeenAgo: p.lastSeen ? formatTimeAgo(p.lastSeen) : 'Unknown',
+    attestationCount: 0,
+    online: p.online ?? Boolean(p.lastSeen),
+    callAvailable: p.callAvailable ?? true,
+    callUnavailableReason: p.callUnavailableReason,
+  }));
+}
+
 export const peerService = {
+  getLocalIdentity: () => api.get<{ did: string }>('/pwa/identity'),
+
   // GET /api/peers - sgx-guardian peers
   getAll: async (): Promise<Peer[]> => {
     const res = await api.get<PeersResponse>('/peers');
-    return (res.peers || []).map((p, i) => ({
-      id: `peer_${String(i + 1).padStart(3, '0')}`,
-      peerId: p.peerId,
-      did: p.did,
-      ip: p.ip,
-      port: 0,
-      status: (p.status === 'verified' || p.status === 'trusted' || p.status === 'success'
-        ? 'verified'
-        : p.status === 'failed' ? 'failed' : 'pending') as Peer['status'],
-      lastSeen: p.lastSeen,
-      lastSeenAgo: p.lastSeen ? formatTimeAgo(p.lastSeen) : 'Unknown',
-      attestationCount: 0,
-      online: p.online ?? Boolean(p.lastSeen),
-      callAvailable: p.callAvailable ?? true,
-      callUnavailableReason: p.callUnavailableReason,
-    }));
+    return normalizePeers(res.peers || []);
+  },
+
+  // Member-safe communication roster. The backend deliberately omits IPs,
+  // ports, topology, policy, and attestation internals from this response.
+  getContacts: async (): Promise<Peer[]> => {
+    const res = await api.get<ContactsResponse>('/pwa/contacts');
+    return normalizePeers(res.contacts || []);
   },
 
   // GET /api/peers/:id

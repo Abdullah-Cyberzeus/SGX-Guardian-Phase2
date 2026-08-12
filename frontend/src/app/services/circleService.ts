@@ -147,14 +147,18 @@ function normalizeInvite(value: any): CircleInvite {
 export function parseInviteMaterial(value: string): ParsedInviteMaterial {
   const trimmed = value.trim();
   if (!trimmed) return { token: '', ownerHost: '' };
-  if (trimmed.startsWith('sgx-guardian://')) {
+  try {
     const url = new URL(trimmed);
+    const isWebLink = url.protocol === 'http:' || url.protocol === 'https:';
+    const token = url.searchParams.get('token') || url.searchParams.get('invite') || '';
+    if (!token) return { token: trimmed, ownerHost: '' };
     return {
-      token: url.searchParams.get('token') || '',
-      ownerHost: url.searchParams.get('owner_host') || '',
+      token,
+      ownerHost: url.searchParams.get('owner_host') || (isWebLink ? url.origin : ''),
     };
+  } catch {
+    return { token: trimmed, ownerHost: '' };
   }
-  return { token: trimmed, ownerHost: '' };
 }
 
 export const circleService = {

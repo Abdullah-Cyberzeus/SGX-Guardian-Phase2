@@ -48,6 +48,9 @@ export async function streamCallEvents(signal: AbortSignal, onEvent: (event: Cal
   const token = authToken();
   const response = await fetch(apiUrl("/calls/events"), { headers: token ? { Authorization: `Bearer ${token}` } : {}, signal });
   if (!response.ok || !response.body) {
+    if (response.status === 401) {
+      window.dispatchEvent(new CustomEvent("sgx:unauthorized"));
+    }
     const body: unknown = await response.json().catch(() => undefined);
     throw new ApiError(response.status, errorMessage(body, `Call event stream failed (${response.status})`));
   }
@@ -64,4 +67,3 @@ export async function streamCallEvents(signal: AbortSignal, onEvent: (event: Cal
     }
   }
 }
-

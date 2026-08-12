@@ -229,7 +229,19 @@ export function OB01Welcome() {
               transition: "opacity 0.15s ease",
             }}
           >
-            Create Account
+            Set Up Administrator
+          </button>
+
+          <button
+            onClick={() => navigate("/join")}
+            className="w-full flex items-center justify-center active:opacity-80"
+            style={{
+              height: "48px", backgroundColor: "transparent", color: "var(--primary)",
+              fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)",
+              borderRadius: "var(--radius)", border: "1px solid var(--primary)", cursor: "pointer",
+            }}
+          >
+            Join as Member
           </button>
 
           <div

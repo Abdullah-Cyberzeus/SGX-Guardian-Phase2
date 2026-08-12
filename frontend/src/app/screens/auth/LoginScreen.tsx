@@ -2,9 +2,10 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 import { CervaisLogo } from "../../components/CervaisLogo";
 import { Eye, EyeOff, Shield, Loader2 } from "lucide-react";
-import { useAuth } from "../../contexts/AuthContext";
+import { AUTH_NOTICE_KEY, useAuth } from "../../contexts/AuthContext";
 import { toast } from "sonner";
 import { cyleniumConfigErrorMessage, isCyleniumConfigured } from "../../config/cylenium";
+import { homePathForRole } from "../../utils/authorization";
 
 export function LoginScreen() {
   const navigate = useNavigate();
@@ -14,6 +15,11 @@ export function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [cyleniumLoading, setCyleniumLoading] = useState(false);
+  const [authNotice] = useState(() => {
+    const notice = sessionStorage.getItem(AUTH_NOTICE_KEY) || "";
+    sessionStorage.removeItem(AUTH_NOTICE_KEY);
+    return notice;
+  });
   const cyleniumEnabled = isCyleniumConfigured();
 
   const canSubmit = email.includes("@") && password.length >= 6;
@@ -21,12 +27,12 @@ export function LoginScreen() {
   const handleLogin = async () => {
     if (!canSubmit || loading) return;
     setLoading(true);
-    const { error } = await signIn(email, password);
+    const { error, role } = await signIn(email, password);
     setLoading(false);
     if (error) {
       toast.error(error);
     } else {
-      navigate("/home", { replace: true });
+      navigate(homePathForRole(role), { replace: true });
     }
   };
 
@@ -86,6 +92,11 @@ export function LoginScreen() {
 
       {/* Form */}
       <div className="flex flex-col gap-4 px-6">
+        {authNotice && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-700 dark:text-amber-300" role="status">
+            {authNotice}
+          </div>
+        )}
         {/* Email */}
         <div>
           <label

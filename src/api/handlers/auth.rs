@@ -7,6 +7,8 @@ use crate::api::auth::{
     store::{NewUser, OidcTransactionRecord, UserRole},
 };
 use crate::api::{error::ApiError, state::AppState};
+use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use crate::audit::logger::log_audit;
 use axum::{extract::State, Extension, Json};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rand::{rngs::OsRng, RngCore};
@@ -20,6 +22,14 @@ pub struct SignupRequest {
     pub name: String,
     pub email: String,
     pub password: String,
+    /// The requested application role. The backend validates this value and
+    /// derives its fixed scopes; caller-provided scopes are never accepted.
+    #[serde(default = "default_signup_role")]
+    pub role: String,
+}
+
+fn default_signup_role() -> String {
+    "admin".to_string()
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -50,6 +60,9 @@ pub struct SignupResponse {
     pub user_id: String,
     pub email: String,
     pub role: String,
+    pub scopes: Vec<String>,
+    #[serde(rename = "guardianDid")]
+    pub guardian_did: String,
     pub token: String,
     #[serde(rename = "expiresAt")]
     pub expires_at: i64,
@@ -60,12 +73,21 @@ pub struct LoginUserResponse {
     pub id: String,
     pub email: String,
     pub role: String,
+    pub scopes: Vec<String>,
+    #[serde(rename = "circleIds")]
+    pub circle_ids: Vec<String>,
+    #[serde(rename = "browserRegistrationId", skip_serializing_if = "Option::is_none")]
+    pub browser_registration_id: Option<String>,
+    #[serde(rename = "guardianFingerprint", skip_serializing_if = "Option::is_none")]
+    pub guardian_fingerprint: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize)]
 pub struct LoginResponse {
     pub token: String,
     pub user: LoginUserResponse,
+    #[serde(rename = "guardianDid")]
+    pub guardian_did: String,
     #[serde(rename = "expiresAt")]
     pub expires_at: i64,
 }
@@ -76,12 +98,28 @@ pub struct LogoutResponse {
 }
 
 #[derive(Debug, serde::Serialize)]
+pub struct RevokeAllResponse {
+    pub status: String,
+    #[serde(rename = "revokedSessions")]
+    pub revoked_sessions: usize,
+}
+
+#[derive(Debug, serde::Serialize)]
 pub struct SessionResponse {
     pub valid: bool,
     #[serde(rename = "userId")]
     pub user_id: String,
     pub email: String,
     pub role: String,
+    pub scopes: Vec<String>,
+    #[serde(rename = "circleIds")]
+    pub circle_ids: Vec<String>,
+    #[serde(rename = "browserRegistrationId", skip_serializing_if = "Option::is_none")]
+    pub browser_registration_id: Option<String>,
+    #[serde(rename = "guardianFingerprint", skip_serializing_if = "Option::is_none")]
+    pub guardian_fingerprint: Option<String>,
+    #[serde(rename = "guardianDid")]
+    pub guardian_did: String,
     #[serde(rename = "expiresAt")]
     pub expires_at: i64,
 }
@@ -97,6 +135,15 @@ pub async fn signup(
             "name and email are required".to_string(),
         ));
     }
+    let role = match UserRole::parse(&body.role) {
+        Some(UserRole::Admin) => UserRole::Admin,
+        Some(UserRole::Member) => {
+            return Err(ApiError::Forbidden(
+                "member accounts require the verified Guardian invitation workflow".into(),
+            ))
+        }
+        _ => return Err(ApiError::BadRequest("role must be admin or member".to_string())),
+    };
 
     let pw_hash = password::hash_password(body.password)
         .await
@@ -108,7 +155,7 @@ pub async fn signup(
             name: name.to_string(),
             email: email.to_string(),
             pw_hash,
-            role: UserRole::Owner,
+            role,
             oidc_sub: None,
         })
         .await
@@ -134,6 +181,8 @@ pub async fn signup(
         user_id: user.user_id,
         email: user.email,
         role: claims.role,
+        scopes: claims.scopes,
+        guardian_did: state.device_did.clone(),
         token,
         expires_at: claims.exp,
     }))
@@ -156,12 +205,14 @@ pub async fn login(
             },
         )
         .await?;
+    validate_member_registration(&state, &user)?;
+    let ttl = member_session_ttl(&state, &user);
 
     let (token, claims, session_rec) = session::issue(
         state.signer.clone(),
         &state.device_did,
         &user,
-        Duration::from_secs(state.session_ttl_secs),
+        Duration::from_secs(ttl),
     )
     .await?;
     state.admin.sessions.put(session_rec).await?;
@@ -172,7 +223,12 @@ pub async fn login(
             id: user.user_id,
             email: user.email,
             role: claims.role,
+            scopes: claims.scopes,
+            circle_ids: claims.circle_ids,
+            browser_registration_id: claims.browser_registration_id,
+            guardian_fingerprint: claims.guardian_fingerprint,
         },
+        guardian_did: state.device_did.clone(),
         expires_at: claims.exp,
     }))
 }
@@ -310,7 +366,12 @@ pub async fn cylenium_callback(
             id: user.user_id,
             email: user.email,
             role: claims.role,
+            scopes: claims.scopes,
+            circle_ids: claims.circle_ids,
+            browser_registration_id: claims.browser_registration_id,
+            guardian_fingerprint: claims.guardian_fingerprint,
         },
+        guardian_did: state.device_did.clone(),
         expires_at: claims.exp,
     }))
 }
@@ -325,8 +386,84 @@ pub async fn logout(
         ));
     };
     state.admin.sessions.revoke(&session.claims.jti).await?;
+    log_audit(
+        &state.node_id,
+        AuditCategory::Identity,
+        AuditSeverity::Info,
+        AuditAction::Revoked,
+        &format!("browser session revoked actor={}", session.claims.sub),
+    );
     Ok(Json(LogoutResponse {
         status: "logged_out".into(),
+    }))
+}
+
+pub async fn revoke_all_sessions(
+    State(state): State<Arc<AppState>>,
+    Extension(session): Extension<AuthenticatedSession>,
+) -> Result<Json<RevokeAllResponse>, ApiError> {
+    let revoked_sessions = state
+        .admin
+        .sessions
+        .revoke_all_for_user(&session.claims.sub)
+        .await?;
+    log_audit(
+        &state.node_id,
+        AuditCategory::Identity,
+        AuditSeverity::Info,
+        AuditAction::Revoked,
+        &format!(
+            "all browser sessions revoked actor={} count={}",
+            session.claims.sub, revoked_sessions
+        ),
+    );
+    Ok(Json(RevokeAllResponse {
+        status: "all_sessions_revoked".into(),
+        revoked_sessions,
+    }))
+}
+
+pub async fn refresh_session(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthenticatedSession>,
+) -> Result<Json<LoginResponse>, ApiError> {
+    let user = state
+        .admin
+        .users
+        .find_by_id(&auth.claims.sub)
+        .await?
+        .ok_or_else(|| ApiError::Unauthorized("session user not found".into()))?;
+    validate_member_registration(&state, &user)?;
+    let ttl = member_session_ttl(&state, &user);
+    let (token, claims, record) = session::issue(
+        state.signer.clone(),
+        &state.device_did,
+        &user,
+        Duration::from_secs(ttl),
+    )
+    .await?;
+    state.admin.sessions.put(record).await?;
+    state.admin.sessions.revoke(&auth.claims.jti).await?;
+    log_audit(
+        &state.node_id,
+        AuditCategory::Identity,
+        AuditSeverity::Info,
+        AuditAction::Updated,
+        &format!("browser session refreshed actor={}", auth.claims.sub),
+    );
+    Ok(Json(LoginResponse {
+        token,
+        user: LoginUserResponse {
+            id: user.user_id,
+            email: user.email,
+            role: claims.role,
+            scopes: claims.scopes,
+            circle_ids: claims.circle_ids,
+            browser_registration_id: claims.browser_registration_id,
+            guardian_fingerprint: claims.guardian_fingerprint,
+        },
+        guardian_did: state.device_did.clone(),
+        expires_at: claims.exp,
     }))
 }
 
@@ -351,8 +488,56 @@ pub async fn session(
         user_id: session.claims.sub,
         email: user.email,
         role: user.role.as_str().to_string(),
+        scopes: if user.scopes.is_empty() {
+            crate::api::auth::authorization::default_scopes(user.role.as_str())
+        } else {
+            user.scopes
+        },
+        circle_ids: user.circle_ids,
+        browser_registration_id: user.browser_registration_id,
+        guardian_fingerprint: user.guardian_fingerprint,
+        guardian_did: state.device_did.clone(),
         expires_at: session.claims.exp,
     }))
+}
+
+fn validate_member_registration(
+    state: &AppState,
+    user: &crate::api::auth::store::User,
+) -> Result<(), ApiError> {
+    if user.role != UserRole::Member {
+        return Ok(());
+    }
+    if user.status != "active"
+        || user.browser_registration_id.is_none()
+        || user.circle_ids.is_empty()
+        || user
+            .registration_expires_at
+            .is_none_or(|expiry| expiry <= chrono::Utc::now().timestamp())
+    {
+        return Err(ApiError::Unauthorized(
+            "member browser registration is inactive or expired; rejoin this Guardian".into(),
+        ));
+    }
+    let current = crate::api::handlers::pwa::guardian_fingerprint(&state.device_pubkey_point);
+    if user.guardian_fingerprint.as_deref() != Some(current.as_str()) {
+        return Err(ApiError::Conflict(
+            "Guardian fingerprint changed; explicit verification and rejoin are required".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn member_session_ttl(state: &AppState, user: &crate::api::auth::store::User) -> u64 {
+    if user.role != UserRole::Member {
+        return state.session_ttl_secs;
+    }
+    let remaining = user
+        .registration_expires_at
+        .unwrap_or_default()
+        .saturating_sub(chrono::Utc::now().timestamp())
+        .max(1) as u64;
+    state.session_ttl_secs.min(remaining)
 }
 
 fn cylenium_oidc_config_from_env() -> Result<CyleniumOidcConfig, ApiError> {

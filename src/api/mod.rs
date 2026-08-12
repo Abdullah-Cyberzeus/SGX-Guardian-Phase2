@@ -57,6 +57,21 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         .route("/api/v1/node/boot-status", get(handlers::node::boot_status))
         .route("/api/v1/node/restart", post(handlers::node::restart))
         .route("/api/v1/peers", get(handlers::peers::list))
+        .route("/api/v1/pwa/contacts", get(handlers::pwa::contacts))
+        .route("/api/v1/pwa/identity", get(handlers::pwa::identity))
+        .route("/api/v1/pwa/onboarding", get(handlers::pwa::onboarding))
+        .route(
+            "/api/v1/pwa/onboarding/invite-preview",
+            post(handlers::pwa::preview_member_invite),
+        )
+        .route(
+            "/api/v1/pwa/onboarding/join",
+            post(handlers::pwa::join_member),
+        )
+        .route(
+            "/api/v1/pwa/registration",
+            axum::routing::delete(handlers::pwa::remove_registration),
+        )
         .route("/api/v1/attestation", get(handlers::attestation::last))
         .route("/api/v1/logs", get(handlers::logs::tail))
         .route("/api/v1/audit/logs", get(handlers::logs::audit_logs))
@@ -301,7 +316,15 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             post(handlers::auth::cylenium_callback),
         )
         .route("/api/v1/auth/logout", post(handlers::auth::logout))
+        .route(
+            "/api/v1/auth/sessions/revoke-all",
+            post(handlers::auth::revoke_all_sessions),
+        )
         .route("/api/v1/auth/session", get(handlers::auth::session))
+        .route(
+            "/api/v1/auth/session/refresh",
+            post(handlers::auth::refresh_session),
+        )
         .route("/api/v1/devices", get(handlers::devices::index))
         .route(
             "/api/v1/devices/paired",
@@ -462,6 +485,14 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             "/api/v1/health",
             get(|| async { Json(serde_json::json!({ "status": "ok" })) }),
         )
+        // Captive Network Assistant probes used by Apple, Android, Windows,
+        // Firefox, and common Linux network managers.
+        .route("/hotspot-detect.html", get(frontend::captive_portal))
+        .route("/generate_204", get(frontend::captive_portal))
+        .route("/gen_204", get(frontend::captive_portal))
+        .route("/connecttest.txt", get(frontend::captive_portal))
+        .route("/ncsi.txt", get(frontend::captive_portal))
+        .route("/canonical.html", get(frontend::captive_portal))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::middleware::require_auth,
@@ -947,22 +978,53 @@ mod tests {
     }
 
     async fn authed_client_with_claim_role(state: &Arc<AppState>, role: &str) -> reqwest::Client {
-        let user = state
-            .admin
-            .users
-            .create(NewUser {
-                name: "API Test User".into(),
-                email: format!("api-test-{}@example.com", uuid::Uuid::new_v4()),
-                pw_hash: "test-hash".into(),
-                role: UserRole::Owner,
-                oidc_sub: None,
-            })
-            .await
-            .expect("seed API test user");
+        let stored_role = match role {
+            "owner" => UserRole::Owner,
+            "admin" => UserRole::Admin,
+            "member" => UserRole::Member,
+            _ => UserRole::Owner,
+        };
+        let email = format!("api-test-{}@example.com", uuid::Uuid::new_v4());
+        let user = if stored_role == UserRole::Member {
+            state
+                .admin
+                .users
+                .create_or_reactivate_member(crate::api::auth::store::NewMemberRegistration {
+                    name: "API Test Member".into(),
+                    email,
+                    pw_hash: "test-hash".into(),
+                    circle_id: "test-circle".into(),
+                    browser_registration_id: uuid::Uuid::new_v4().to_string(),
+                    guardian_fingerprint: crate::api::handlers::pwa::guardian_fingerprint(
+                        &state.device_pubkey_point,
+                    ),
+                    registration_expires_at: Utc::now().timestamp() + 300,
+                    invite_id: "test-invite".into(),
+                })
+                .await
+                .expect("seed API test member")
+        } else {
+            state
+                .admin
+                .users
+                .create(NewUser {
+                    name: "API Test User".into(),
+                    email,
+                    pw_hash: "test-hash".into(),
+                    role: stored_role,
+                    oidc_sub: None,
+                })
+                .await
+                .expect("seed API test user")
+        };
         let now = Utc::now().timestamp();
         let claims = Claims {
             sub: user.user_id.clone(),
             role: role.to_string(),
+            scopes: crate::api::auth::authorization::default_scopes(role),
+            circle_ids: user.circle_ids.clone(),
+            browser_registration_id: user.browser_registration_id.clone(),
+            guardian_fingerprint: user.guardian_fingerprint.clone(),
             iss: state.device_did.clone(),
             iat: now,
             exp: now + 300,
@@ -1209,7 +1271,7 @@ mod tests {
         let _login = ScopedLoginMode::disabled(false);
         let state = test_state();
         let owner_client = authed_client_for_state(&state).await;
-        let viewer_client = authed_client_with_claim_role(&state, "viewer").await;
+        let viewer_client = authed_client_with_claim_role(&state, "member").await;
         let (base_url, handle) = spawn_api_with_state(state).await;
 
         let owner_apply = owner_client
@@ -1246,7 +1308,7 @@ mod tests {
             .expect("viewer restore undo request");
         assert_eq!(viewer_undo.status(), StatusCode::FORBIDDEN);
         let viewer_undo_body = viewer_undo.text().await.expect("viewer undo body");
-        assert!(viewer_undo_body.contains("restore requires owner or admin role"));
+        assert!(viewer_undo_body.contains("insufficient role or scope"));
         assert!(!viewer_undo_body.contains("Missing request extension"));
 
         handle.abort();
@@ -2593,7 +2655,7 @@ mod tests {
     // guard hand-off for this to deadlock.
     #[allow(clippy::await_holding_lock)]
     #[tokio::test]
-    async fn signup_creates_initial_owner_and_returns_session() {
+    async fn signup_creates_initial_admin_and_returns_session() {
         let state = auth_test_state(AuthLockoutConfig::default());
         let (base_url, handle) = spawn_secured_api_with_state(state.clone()).await;
         let client = reqwest::Client::new();
@@ -2610,7 +2672,7 @@ mod tests {
         let body: Value = response.json().await.expect("signup body");
         let token = body["token"].as_str().expect("signup token");
         assert_eq!(body["email"], "admin@example.com");
-        assert_eq!(body["role"], "owner");
+        assert_eq!(body["role"], "admin");
         assert!(body["userId"].as_str().is_some());
         assert!(body["expiresAt"].as_i64().is_some());
 
@@ -2623,7 +2685,7 @@ mod tests {
         assert_eq!(session.status(), StatusCode::OK);
 
         let stored = auth_user(&state, "admin@example.com").await;
-        assert_eq!(stored.role, UserRole::Owner);
+        assert_eq!(stored.role, UserRole::Admin);
         assert_eq!(stored.status, "active");
         assert_ne!(stored.pw_hash, "GuardianPass123!");
         assert!(stored.pw_hash.starts_with("$argon2"));

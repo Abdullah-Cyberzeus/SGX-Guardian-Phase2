@@ -3,7 +3,7 @@ import { ArrowDownLeft, ArrowUpRight, Clock, Loader2, Phone, Search, Users, Vide
 import { useNavigate } from "react-router";
 import { PageHeader } from "../../components/PageHeader";
 import { useCallHistory } from "../../hooks/useCallHistory";
-import { usePeers } from "../../hooks/useApiData";
+import { useCommunicationPeers } from "../../hooks/useApiData";
 import type { CallHistoryRecord } from "../../services/callHistoryService";
 import { useCall } from "../../../features/calls/CallContext";
 import { useGroupCall } from "../../../features/calls/GroupCallContext";
@@ -23,7 +23,7 @@ function outcomeLabel(record: CallHistoryRecord) {
 export function CallsHistoryScreen() {
   const navigate = useNavigate();
   const history = useCallHistory();
-  const { data: peersData, loading } = usePeers();
+  const { data: peersData, loading } = useCommunicationPeers();
   const [query, setQuery] = useState("");
   const [starting, setStarting] = useState<string | null>(null);
   const { startCall, call, currentDevice } = useCall();

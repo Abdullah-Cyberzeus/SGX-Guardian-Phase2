@@ -6,6 +6,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useCurrentUser } from "../../hooks/useCurrentUser";
 import { useState } from "react";
 import { cyleniumConfigErrorMessage, isCyleniumConfigured } from "../../config/cylenium";
+import { homePathForRole, type GuardianRole } from "../../utils/authorization";
 
 const MIN_PASSWORD_LENGTH = 12;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -39,6 +40,11 @@ const SIGNUP_METHOD_LABELS: Record<OnboardingSignupMethod, string> = {
   "qr-camera": "Camera scan",
 };
 
+const ACCOUNT_ROLES: Array<{ value: GuardianRole; label: string; description: string }> = [
+  { value: "admin", label: "Admin", description: "Full control of the Guardian and its administration" },
+  { value: "member", label: "Member", description: "PWA access to messages, calls, contacts, files, and settings" },
+];
+
 export function OB06AccountSetup() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -47,6 +53,7 @@ export function OB06AccountSetup() {
   const { name: currentUserName, did } = useCurrentUser();
   const [mode, setMode] = useState<"create" | "login">("create");
   const [name, setName] = useState("");
+  const [role, setRole] = useState<GuardianRole>("admin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -64,14 +71,30 @@ export function OB06AccountSetup() {
   const emailValid = isValidEmail(email);
   const showEmailError = email.trim().length > 0 && !emailValid;
   const allMet = requirements.every((r) => r.test(password));
-  const canSubmit = emailValid && (mode === "login" ? password.length >= 6 : allMet && name.trim().length > 1);
+  const canSubmit = mode === "login"
+    ? emailValid && password.length >= 6
+    : role === "member" || (emailValid && allMet && name.trim().length > 1);
+
+  const selectAccountRole = (nextRole: GuardianRole) => {
+    if (nextRole === "member") {
+      // A member is registered against an existing Circle invitation. Never
+      // let this choice fall through to the administrator signup endpoint.
+      navigate("/join", { replace: true });
+      return;
+    }
+    setRole(nextRole);
+  };
 
   const handleSubmit = async () => {
     if (!canSubmit || loading) return;
+    if (mode === "create" && role === "member") {
+      navigate("/join");
+      return;
+    }
     setLoading(true);
 
     if (mode === "create") {
-      const { error } = await signUp(email.trim(), password, name.trim());
+      const { error, role: createdRole } = await signUp(email.trim(), password, name.trim(), role);
       if (error) {
         toast.error(error);
         setLoading(false);
@@ -81,16 +104,21 @@ export function OB06AccountSetup() {
         localStorage.setItem(ONBOARDING_SERIAL_KEY, guardianSerial);
         localStorage.setItem(ONBOARDING_METHOD_KEY, signupMethod);
       }
-      navigate("/onboarding/pairing", { replace: true });
+      if (createdRole === "member") {
+        localStorage.setItem("sgx_onboarded", "1");
+        navigate(homePathForRole(createdRole), { replace: true });
+      } else {
+        navigate("/onboarding/pairing", { replace: true });
+      }
     } else {
-      const { error } = await signIn(email, password);
+      const { error, role: authenticatedRole } = await signIn(email, password);
       if (error) {
         toast.error(error);
         setLoading(false);
         return;
       }
       localStorage.setItem("sgx_onboarded", "1");
-      navigate("/home", { replace: true });
+      navigate(homePathForRole(authenticatedRole), { replace: true });
     }
 
     setLoading(false);
@@ -368,6 +396,49 @@ export function OB06AccountSetup() {
           </div>
         )}
 
+        {/* Account role (create only). The backend validates and persists it. */}
+        {mode === "create" && (
+          <fieldset>
+            <legend
+              style={{
+                fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)",
+                fontWeight: "var(--font-weight-medium)", color: "var(--muted-foreground)",
+                marginBottom: "8px",
+              }}
+            >
+              Account Role
+            </legend>
+            <div className="grid gap-2" role="radiogroup" aria-label="Account role">
+              {ACCOUNT_ROLES.map((option) => {
+                const selected = role === option.value;
+                return (
+                  <label
+                    key={option.value}
+                    className="flex cursor-pointer items-start gap-3 rounded-lg border p-3"
+                    style={{
+                      borderColor: selected ? "var(--primary)" : "var(--border)",
+                      backgroundColor: selected ? "color-mix(in srgb, var(--primary) 8%, var(--card))" : "var(--card)",
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="account-role"
+                      value={option.value}
+                      checked={selected}
+                      onChange={() => selectAccountRole(option.value)}
+                      className="mt-1"
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-foreground">{option.label}</span>
+                      <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{option.description}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
+        )}
+
         {/* Email */}
         <div>
           <label
@@ -494,7 +565,7 @@ export function OB06AccountSetup() {
             opacity: canSubmit ? 1 : 0.45,
           }}
         >
-          {loading ? <Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /> : (mode === "create" ? "Create Account" : "Log In")}
+          {loading ? <Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /> : (mode === "create" ? role === "member" ? "Continue to Member Join" : "Create Admin Account" : "Log In")}
         </button>
 
         {/* Divider */}

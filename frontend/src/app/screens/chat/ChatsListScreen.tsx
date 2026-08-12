@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Loader2, MessageSquare, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { useNavigate } from "react-router";
 import { PageHeader } from "../../components/PageHeader";
-import { usePeers } from "../../hooks/useApiData";
+import { useCommunicationPeers } from "../../hooks/useApiData";
 import { useChatUnread } from "../../contexts/ChatUnreadContext";
 import type { Peer } from "../../services/peerService";
 
@@ -25,7 +25,7 @@ function previewTime(timestamp?: number) {
 
 export function ChatsListScreen() {
   const navigate = useNavigate();
-  const { data, loading, error, refetch } = usePeers();
+  const { data, loading, error, refetch } = useCommunicationPeers();
   const { counts: unreadCounts, previews } = useChatUnread();
   const [query, setQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
@@ -33,7 +33,7 @@ export function ChatsListScreen() {
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    const filtered = needle ? peers.filter((peer: Peer) => `${peer.peerId} ${peer.did} ${peer.ip}`.toLowerCase().includes(needle)) : peers;
+    const filtered = needle ? peers.filter((peer: Peer) => `${peer.peerId} ${peer.did}`.toLowerCase().includes(needle)) : peers;
     return [...filtered].sort((a, b) => (previews[b.did!]?.timestamp || 0) - (previews[a.did!]?.timestamp || 0));
   }, [peers, previews, query]);
 

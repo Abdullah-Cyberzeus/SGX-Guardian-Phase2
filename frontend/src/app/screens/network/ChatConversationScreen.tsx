@@ -7,13 +7,16 @@ import { AttachmentMenu } from "../../components/circle/AttachmentMenu";
 import { FilesTab } from "../../components/circle/FilesTab";
 import { MessageAttachment } from "../../components/circle/MessageAttachment";
 import type { SharedFile } from "../../components/circle/types";
-import { useCircles, usePeers } from "../../hooks/useApiData";
+import { useCircles, useCommunicationPeers } from "../../hooks/useApiData";
 import { didService } from "../../services/didService";
 import chatService, { openChatSocket, parseChatPayload, type ChatMessageRecord } from "../../services/chatService";
 import { useCall } from "../../../features/calls/CallContext";
 import { useGroupCall } from "../../../features/calls/GroupCallContext";
 import type { MediaType } from "../../../features/calls/call.types";
 import { useChatUnread } from "../../contexts/ChatUnreadContext";
+import { useAuth } from "../../contexts/AuthContext";
+import { isMemberRole } from "../../utils/authorization";
+import { peerService } from "../../services/peerService";
 
 type View = "chat" | "files";
 
@@ -25,16 +28,17 @@ function timeLabel(timestamp: number) {
 export function ChatConversationScreen() {
   const { circleId, peerDid } = useParams<{ circleId: string; peerDid?: string }>();
   const navigate = useNavigate();
+  const { session } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const { data: circlesData, loading: circlesLoading } = useCircles();
-  const { data: peersData, loading: peersLoading } = usePeers();
+  const { data: peersData, loading: peersLoading } = useCommunicationPeers();
   const circle = (Array.isArray(circlesData) ? circlesData : []).find((item: any) => item.id === circleId);
   const member = circle?.members?.find((item: any) => item.did === peerDid);
   const peer = (Array.isArray(peersData) ? peersData : []).find((item: any) => item.did === peerDid);
   const isGroup = Boolean(circleId && !peerDid);
   const { startCall, call, currentDevice } = useCall();
   const { group } = useGroupCall();
-  const { refresh: refreshUnread } = useChatUnread();
+  const { clearPeerUnread, refresh: refreshUnread } = useChatUnread();
   const [records, setRecords] = useState<ChatMessageRecord[]>([]);
   const [localDid, setLocalDid] = useState("");
   const [message, setMessage] = useState("");
@@ -44,10 +48,8 @@ export function ChatConversationScreen() {
   const [startingCall, setStartingCall] = useState<"audio" | "video" | null>(null);
   const [liveConnected, setLiveConnected] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const recordsRef = useRef<ChatMessageRecord[]>(records);
   const markedReadRef = useRef<Set<string>>(new Set());
-  const bottomVisibleRef = useRef(false);
   const view: View = searchParams.get("view") === "files" ? "files" : "chat";
 
   const loadHistory = useCallback(async () => {
@@ -65,8 +67,19 @@ export function ChatConversationScreen() {
     }
   }, [circleId, isGroup, peerDid]);
 
-  useEffect(() => { void didService.getStatus().then((status) => setLocalDid(status.did)).catch(() => {}); }, []);
-  useEffect(() => { void chatService.sync().catch(() => {}).finally(() => void loadHistory()); }, [loadHistory]);
+  useEffect(() => {
+    const identity = isMemberRole(session?.user.role)
+      ? peerService.getLocalIdentity()
+      : didService.getStatus();
+    void identity.then((status) => setLocalDid(status.did)).catch(() => {});
+  }, [session?.user.role]);
+  useEffect(() => {
+    if (isMemberRole(session?.user.role)) {
+      void loadHistory();
+      return;
+    }
+    void chatService.sync().catch(() => {}).finally(() => void loadHistory());
+  }, [loadHistory, session?.user.role]);
   useEffect(() => {
     let refreshTimer: number | undefined;
     const close = openChatSocket(() => {
@@ -79,9 +92,9 @@ export function ChatConversationScreen() {
 
   useEffect(() => { recordsRef.current = records; }, [records]);
 
-  // A message is only marked "read" once its bubble is actually visible inside the
-  // scroll viewport AND the tab is the foreground, focused window — merely mounting
-  // this screen (e.g. a background browser tab) must not send a read receipt.
+  // A message is marked read while its conversation is the active, foreground view.
+  // The backend persists the receipt before this promise resolves, so refreshing the
+  // conversation list afterwards returns the canonical unread count.
   const markMessageRead = useCallback((messageId: string) => {
     if (markedReadRef.current.has(messageId)) return;
     const record = recordsRef.current.find((entry) => entry.message_id === messageId);
@@ -97,44 +110,32 @@ export function ChatConversationScreen() {
       .catch(() => { markedReadRef.current.delete(messageId); });
   }, [localDid, isGroup, circleId, refreshUnread]);
 
-  // Reaching the bottom of the conversation means every message above it has
-  // scrolled through the viewport, so all of them are marked read together —
-  // matching how WhatsApp/etc. treat "caught up to the latest message" as read,
-  // rather than tracking each bubble's individual on-screen time.
-  const markAllVisibleRead = useCallback(() => {
+  const markConversationRead = useCallback(() => {
     recordsRef.current
       .filter((record) => record.sender_did !== localDid && record.status !== "read" && !record.read_by.includes(localDid))
       .forEach((record) => markMessageRead(record.message_id));
   }, [localDid, markMessageRead]);
 
+  // Do not depend on the bottom sentinel for read receipts. It has zero height and
+  // IntersectionObserver can miss it during the history-load/auto-scroll transition,
+  // leaving a message visibly opened but still counted as unread on the list screen.
   useEffect(() => {
-    const container = scrollContainerRef.current;
-    const sentinel = bottomRef.current;
-    if (!container || !sentinel || !localDid) return;
+    if (view !== "chat" || !localDid) return;
     const isForeground = () => document.visibilityState === "visible" && document.hasFocus();
-    const recheck = () => { if (isForeground() && bottomVisibleRef.current) markAllVisibleRead(); };
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        bottomVisibleRef.current = entry.isIntersecting;
-        if (entry.isIntersecting && isForeground()) markAllVisibleRead();
-      });
-    }, { root: container, threshold: 0 });
-    observer.observe(sentinel);
+    const recheck = () => {
+      if (!isForeground()) return;
+      if (!isGroup && peerDid) clearPeerUnread(peerDid);
+      markConversationRead();
+    };
+
+    recheck();
     document.addEventListener("visibilitychange", recheck);
     window.addEventListener("focus", recheck);
     return () => {
-      observer.disconnect();
-      bottomVisibleRef.current = false;
       document.removeEventListener("visibilitychange", recheck);
       window.removeEventListener("focus", recheck);
     };
-  }, [localDid, isGroup, circleId, markAllVisibleRead]);
-
-  // New messages append below the sentinel (still marked "intersecting" once the
-  // auto-scroll below settles it back into view), so re-check on every history load.
-  useEffect(() => {
-    if (document.visibilityState === "visible" && document.hasFocus() && bottomVisibleRef.current) markAllVisibleRead();
-  }, [records, markAllVisibleRead]);
+  }, [view, localDid, records, isGroup, peerDid, clearPeerUnread, markConversationRead]);
 
   const send = async (content: string | null, attachmentId: string | null = null) => {
     if ((isGroup && !circleId) || (!isGroup && !peerDid) || (!content?.trim() && !attachmentId)) return;
@@ -260,7 +261,7 @@ export function ChatConversationScreen() {
         ))}
       </div>
       {view === "files" ? <FilesTab files={files} /> : <>
-        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto">
           <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col gap-3 p-4 md:p-6">
             {loading && <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 size={18} className="animate-spin" /> Loading secure conversation…</div>}
             {!loading && messages.length === 0 && <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center text-muted-foreground"><MessageSquare size={36} /><p className="text-sm font-medium text-foreground">No messages yet</p><p className="max-w-xs text-xs">Start this secure {isGroup ? "Circle conversation" : "peer-to-peer conversation"}.</p></div>}

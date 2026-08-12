@@ -8,6 +8,7 @@ use axum::{
     },
     http::StatusCode,
     response::{sse::Event, sse::KeepAlive, IntoResponse, Sse},
+    Extension,
     Router,
 };
 use futures_util::{stream, SinkExt, StreamExt};
@@ -18,6 +19,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::api::state::AppState;
+use crate::api::auth::middleware::AuthenticatedSession;
 use crate::audit::logger::log_uep_decision;
 use crate::call::{CallAnswer, CallOffer, CallState as CallStateEnum, MediaType};
 use crate::enforcement::uep::{Role, UepEngine};
@@ -125,6 +127,8 @@ pub struct BrowserInitiateCallRequest {
 #[derive(Debug, Deserialize)]
 struct TrustedCallTarget {
     peer_id: String,
+    #[serde(default)]
+    did: Option<String>,
     ip: String,
     status: String,
     #[serde(default)]
@@ -173,6 +177,7 @@ async fn trusted_call_target(
 /// identity/IP fields from the browser.
 pub async fn initiate_browser_call(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Json(request): Json<BrowserInitiateCallRequest>,
 ) -> impl IntoResponse {
     if request.target_peer_id.trim().is_empty() || request.media.is_empty() {
@@ -216,6 +221,41 @@ pub async fn initiate_browser_call(
         Ok(target) => target,
         Err(error) => return (StatusCode::FORBIDDEN, Json(error)).into_response(),
     };
+    if session
+        .as_ref()
+        .is_some_and(|Extension(session)| session.claims.role == "member")
+    {
+        let allowed = match crate::api::auth::authorization::scoped_circle_contact_dids(
+            &state.node_id,
+            &state.device_did,
+            session
+                .as_ref()
+                .map(|Extension(session)| session.claims.circle_ids.as_slice())
+                .unwrap_or(&[]),
+        ) {
+            Ok(allowed) => allowed,
+            Err(error) => {
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error }))
+                    .into_response()
+            }
+        };
+        if !target.did.as_ref().is_some_and(|did| allowed.contains(did)) {
+            if let Some(Extension(session)) = session.as_ref() {
+                crate::api::auth::authorization::audit_member_resource_denied(
+                    &state.node_id,
+                    &session.claims.sub,
+                    "Circle call target",
+                );
+            }
+            return (
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "Call target does not share a Circle with this Guardian".into(),
+                }),
+            )
+                .into_response();
+        }
+    }
     let local_virtual_id =
         match crate::virtual_id::read_runtime_virtual_id_status(&state.node_id, None) {
             Ok(status) if !status.virtual_id.is_empty() => status.virtual_id,
