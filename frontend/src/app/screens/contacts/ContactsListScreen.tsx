@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   Copy,
@@ -35,6 +35,26 @@ function formatWhen(value: string) {
   return date.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
 }
 
+async function copyText(value: string) {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+  if (!copied) throw new Error("copy command failed");
+}
+
 export function ContactsListScreen() {
   const { refreshContacts, upsertContact, removeContactByDid } = useContactNames();
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -45,6 +65,7 @@ export function ContactsListScreen() {
   const [form, setForm] = useState<FormState>(emptyForm);
   const [editingDid, setEditingDid] = useState<string | null>(null);
   const [copiedDid, setCopiedDid] = useState<string | null>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -79,8 +100,7 @@ export function ContactsListScreen() {
     setEditingDid(null);
   };
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
+  const saveContact = async () => {
     const did = form.did.trim();
     if (!did.startsWith("did:")) {
       toast.error("Enter a valid DID", { description: "DIDs must start with did:." });
@@ -93,11 +113,15 @@ export function ContactsListScreen() {
         alias: form.alias.trim() || undefined,
         notes: form.notes.trim() || undefined,
       };
-      const response = editingDid
+      const response = editingDid && did === editingDid
         ? await contactService.update(editingDid, payload)
         : await contactService.create({ did, ...payload });
+      if (editingDid && did !== editingDid) {
+        await contactService.remove(editingDid);
+        removeContactByDid(editingDid);
+      }
       setContacts((items) => {
-        const next = items.filter((item) => item.did !== response.contact.did);
+        const next = items.filter((item) => item.did !== response.contact.did && item.did !== editingDid);
         return [...next, response.contact].sort((a, b) => displayName(a).localeCompare(displayName(b)));
       });
       upsertContact(response.contact);
@@ -113,6 +137,11 @@ export function ContactsListScreen() {
     }
   };
 
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    await saveContact();
+  };
+
   const edit = (contact: Contact) => {
     setEditingDid(contact.did);
     setForm({
@@ -122,6 +151,11 @@ export function ContactsListScreen() {
       notes: contact.notes ?? "",
     });
   };
+
+  useEffect(() => {
+    if (!editingDid) return;
+    window.setTimeout(() => nameInputRef.current?.focus(), 0);
+  }, [editingDid]);
 
   const remove = async (contact: Contact) => {
     if (!window.confirm(`Remove ${displayName(contact)} from contacts?`)) return;
@@ -141,7 +175,7 @@ export function ContactsListScreen() {
 
   const copyDid = async (did: string) => {
     try {
-      await navigator.clipboard.writeText(did);
+      await copyText(did);
       setCopiedDid(did);
       window.setTimeout(() => setCopiedDid((current) => (current === did ? null : current)), 1400);
     } catch {
@@ -199,7 +233,7 @@ export function ContactsListScreen() {
               <input
                 value={form.did}
                 onChange={(event) => setForm((current) => ({ ...current, did: event.target.value }))}
-                disabled={Boolean(editingDid) || saving}
+                disabled={saving}
                 placeholder="did:guardian:..."
                 className="h-11 w-full rounded-md border border-border bg-input-background px-3 text-sm outline-none disabled:opacity-60"
               />
@@ -208,6 +242,7 @@ export function ContactsListScreen() {
             <label className="mb-3 block">
               <span className="mb-1 block text-xs font-medium text-muted-foreground">Name</span>
               <input
+                ref={nameInputRef}
                 value={form.name}
                 onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
                 disabled={saving}
@@ -275,55 +310,118 @@ export function ContactsListScreen() {
                   </p>
                 </div>
               )}
-              {visible.map((contact) => (
-                <div key={contact.did} className="flex gap-3 px-4 py-4 md:px-5">
-                  <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary/15 text-primary">
-                    <UserRound size={19} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <p className="truncate text-sm font-semibold">{displayName(contact)}</p>
-                      {contact.name && contact.alias && (
-                        <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
-                          {contact.alias}
-                        </span>
+              {visible.map((contact) => {
+                const isEditing = editingDid === contact.did;
+                return (
+                  <div key={contact.did} className={`flex gap-3 px-4 py-4 md:px-5 ${isEditing ? "bg-primary/5" : ""}`}>
+                    <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary/15 text-primary">
+                      <UserRound size={19} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      {isEditing ? (
+                        <div className="grid gap-2">
+                          <input
+                            value={form.did}
+                            onChange={(event) => setForm((current) => ({ ...current, did: event.target.value }))}
+                            disabled={saving}
+                            placeholder="did:guardian:..."
+                            className="h-10 rounded-md border border-border bg-input-background px-3 font-mono text-xs outline-none"
+                          />
+                          <input
+                            value={form.name}
+                            onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+                            disabled={saving}
+                            placeholder="Display name"
+                            className="h-10 rounded-md border border-border bg-input-background px-3 text-sm outline-none"
+                          />
+                          <input
+                            value={form.alias}
+                            onChange={(event) => setForm((current) => ({ ...current, alias: event.target.value }))}
+                            disabled={saving}
+                            placeholder="Optional alias"
+                            className="h-10 rounded-md border border-border bg-input-background px-3 text-sm outline-none"
+                          />
+                          <textarea
+                            value={form.notes}
+                            onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))}
+                            disabled={saving}
+                            placeholder="Optional notes"
+                            rows={3}
+                            className="resize-none rounded-md border border-border bg-input-background px-3 py-2 text-sm outline-none"
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void saveContact()}
+                              disabled={saving}
+                              className="flex h-9 items-center gap-2 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+                            >
+                              {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              onClick={resetForm}
+                              disabled={saving}
+                              className="flex h-9 items-center gap-2 rounded-md border border-border px-3 text-xs font-medium hover:bg-muted disabled:opacity-50"
+                            >
+                              <X size={14} />
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex min-w-0 items-center gap-2">
+                            <p className="truncate text-sm font-semibold">{displayName(contact)}</p>
+                            {contact.name && contact.alias && (
+                              <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+                                {contact.alias}
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{contact.did}</p>
+                          {contact.notes && <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{contact.notes}</p>}
+                          <p className="mt-2 text-[10px] text-muted-foreground">Updated {formatWhen(contact.updated_at)}</p>
+                        </>
                       )}
                     </div>
-                    <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{contact.did}</p>
-                    {contact.notes && <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{contact.notes}</p>}
-                    <p className="mt-2 text-[10px] text-muted-foreground">Updated {formatWhen(contact.updated_at)}</p>
+                    <div className="flex shrink-0 items-start gap-1">
+                      {!isEditing && (
+                        <>
+                          <button
+                            type="button"
+                            aria-label="Copy DID"
+                            title="Copy DID"
+                            onClick={() => void copyDid(contact.did)}
+                            className="grid h-9 w-9 place-items-center rounded-full hover:bg-muted"
+                          >
+                            {copiedDid === contact.did ? <Check size={16} /> : <Copy size={16} />}
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Edit contact"
+                            title="Edit contact"
+                            onClick={() => edit(contact)}
+                            className="grid h-9 w-9 place-items-center rounded-full hover:bg-muted"
+                          >
+                            <Pencil size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Remove contact"
+                            title="Remove contact"
+                            onClick={() => void remove(contact)}
+                            className="grid h-9 w-9 place-items-center rounded-full hover:bg-muted"
+                          >
+                            <Trash2 size={16} className="text-destructive" />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex shrink-0 items-start gap-1">
-                    <button
-                      type="button"
-                      aria-label="Copy DID"
-                      title="Copy DID"
-                      onClick={() => void copyDid(contact.did)}
-                      className="grid h-9 w-9 place-items-center rounded-full hover:bg-muted"
-                    >
-                      {copiedDid === contact.did ? <Check size={16} /> : <Copy size={16} />}
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Edit contact"
-                      title="Edit contact"
-                      onClick={() => edit(contact)}
-                      className="grid h-9 w-9 place-items-center rounded-full hover:bg-muted"
-                    >
-                      <Pencil size={16} />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Remove contact"
-                      title="Remove contact"
-                      onClick={() => void remove(contact)}
-                      className="grid h-9 w-9 place-items-center rounded-full hover:bg-muted"
-                    >
-                      <Trash2 size={16} className="text-destructive" />
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         </div>
