@@ -5,6 +5,13 @@ ip: "127.0.0.1"
 port: 50052
 public_key: "placeholder-key-B"
 
+api:
+  tls:
+    enabled: true
+    require_https: true
+    cert_path: "/var/lib/sgx-guardian/sgx-agent/device_nodeB_cert.der"
+    key_path: "/var/lib/sgx-guardian/sgx-agent/device_nodeB.key"
+
 relay:
   enabled: false
   max_peers: 5

@@ -44,16 +44,24 @@ pub async fn serve(uri: Uri) -> Response {
         },
     };
 
-    let cache_control = if is_spa_fallback || requested == "index.html" {
+    let cache_control = if is_spa_fallback
+        || requested == "index.html"
+        || requested == "sw.js"
+        || requested == "manifest.json"
+    {
         "no-cache"
     } else {
         "public, max-age=31536000, immutable"
     };
 
-    Response::builder()
+    let mut response = Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, mime)
-        .header(header::CACHE_CONTROL, cache_control)
+        .header(header::CACHE_CONTROL, cache_control);
+    if requested == "sw.js" {
+        response = response.header("Service-Worker-Allowed", "/");
+    }
+    response
         .body(Body::from(contents))
         .expect("valid embedded frontend response")
 }
