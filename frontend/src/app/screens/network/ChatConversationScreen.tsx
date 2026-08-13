@@ -76,14 +76,14 @@ export function ChatConversationScreen() {
       const sorted = [...response.messages].sort((a, b) => a.seq_no - b.seq_no || a.timestamp - b.timestamp);
       setRecords(sorted);
       const conversationId = isGroup ? `circle:${circleId}` : `peer:${peerDid}`;
-      sorted.forEach((record) => void messageRepository.save({
+      await Promise.all(sorted.map((record) => messageRepository.save({
         id: record.message_id,
         conversationId,
         timestamp: record.timestamp,
         sequence: record.seq_no,
         status: record.status,
         value: record,
-      }));
+      })));
     } catch (cause) {
       const conversationId = isGroup ? `circle:${circleId}` : `peer:${peerDid}`;
       try {

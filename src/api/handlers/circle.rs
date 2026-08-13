@@ -606,11 +606,31 @@ pub async fn join(
     invite::verify_invite(&invite_token, &state.did_resolver)
         .await
         .map_err(map_circle_error)?;
+    let (redeemed, circle) = join_remote_circle(&state, invite_token, &body.owner_host).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(JoinCircleResponse {
+            status: redeemed.status,
+            message: redeemed.message,
+            vc: redeemed.vc,
+            circle,
+        }),
+    ))
+}
+
+/// Redeem a signed Circle invitation at its owner while keeping the browser
+/// and resulting membership on the current Guardian. This is shared by the
+/// authenticated device-join screen and PWA member onboarding.
+pub(crate) async fn join_remote_circle(
+    state: &Arc<AppState>,
+    invite_token: InviteToken,
+    owner_host: &str,
+) -> Result<(RedeemCircleResponse, Circle), ApiError> {
     let (joiner, km) =
         store::load_runtime_signing_context(&state.node_id).map_err(map_circle_error)?;
     let join_request =
         invite::sign_join_request(&joiner, &km, invite_token.clone()).map_err(map_circle_error)?;
-    let owner_url = normalize_owner_url(&body.owner_host)?;
+    let owner_url = normalize_owner_url(owner_host)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
@@ -641,6 +661,19 @@ pub async fn join(
         .json()
         .await
         .map_err(|err| ApiError::Internal(format!("redeem response parse: {}", err)))?;
+    crate::vc::verify::verify_vc(
+        &redeemed.vc,
+        &state.did_resolver,
+        crate::vc::verify::VerifyOptions {
+            expected_subject_did: Some(&state.device_did),
+            expected_circle_id: Some(&invite_token.circle_id),
+            expected_issuer_did: Some(&invite_token.issuer_did),
+            check_status_list: false,
+            status_list: None,
+        },
+    )
+    .await
+    .map_err(map_vc_error)?;
     crate::vc::persistence::save_own(&redeemed.vc).map_err(map_vc_error)?;
     let circle =
         invite::save_joined_circle(&state.node_id, &invite_token).map_err(map_circle_error)?;
@@ -654,15 +687,7 @@ pub async fn join(
             circle.circle_id, circle.owner_did
         ),
     );
-    Ok((
-        StatusCode::CREATED,
-        Json(JoinCircleResponse {
-            status: redeemed.status,
-            message: redeemed.message,
-            vc: redeemed.vc,
-            circle,
-        }),
-    ))
+    Ok((redeemed, circle))
 }
 
 fn enforce_join_rate_limit(
@@ -900,7 +925,7 @@ fn validate_optional_days(days: Option<i64>) -> Result<i64, ApiError> {
     Ok(value)
 }
 
-fn normalize_owner_url(raw: &str) -> Result<String, ApiError> {
+pub(crate) fn normalize_owner_url(raw: &str) -> Result<String, ApiError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(ApiError::BadRequest(

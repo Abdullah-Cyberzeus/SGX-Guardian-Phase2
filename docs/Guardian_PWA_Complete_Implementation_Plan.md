@@ -496,9 +496,15 @@ Implemented contract:
 - A dependency-free Workbox-equivalent service worker discovers the hashed Vite entry assets
   from embedded `index.html`, precaches the executable shell, runtime-caches subsequently used
   static route chunks, and falls back to the cached shell for navigation.
+- Installation fails atomically if any executable shell asset cannot be cached. Initial activation
+  is completed automatically, the UI reports preparation/failure state, persistent browser storage
+  is requested where supported, and member login/join waits for encrypted membership persistence.
 - Cache names are versioned as `sgx-guardian-shell-<application-version>`. Old shell versions are
   deleted only during activation. A waiting worker never activates automatically; the application
   presents an update prompt and sends `SKIP_WAITING` only after user confirmation.
+- Docker development uses browser-trusted HTTP loopback origins (`localhost:18443`, `:28443`,
+  `:38443`) rather than untrusted HTTPS container IP certificates. Physical Guardian deployments
+  retain HTTPS at `guardian.local`; their provisioning process must establish browser trust.
 - `/api` and every `/api/*` request are explicitly network-only. Cross-origin and non-GET requests
   are also excluded, so authenticated responses and bearer material never enter Cache Storage.
 - The manifest has a stable application ID/scope, member start route, standalone portrait mode,

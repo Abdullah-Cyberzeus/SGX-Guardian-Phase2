@@ -515,6 +515,30 @@ pub async fn serve(
     tls: Option<AdminTls>,
     wifi_router: Router,
 ) -> anyhow::Result<()> {
+    // The peers API marks a trusted Guardian callable only when its dedicated
+    // Nebula signaling port accepts a connection. The secure listener used to
+    // be constructed in AppState but never started, leaving every call button
+    // permanently disabled even after attestation and Circle membership.
+    let signaling_state = state.clone();
+    tokio::spawn(async move {
+        loop {
+            if let Err(error) = signaling_state
+                .call_nebula_signaling
+                .clone()
+                .run_listener(
+                    signaling_state.call_session_manager.clone(),
+                    signaling_state.call_signal_hub.clone(),
+                    signaling_state.group_session_manager.clone(),
+                    signaling_state.node_id.clone(),
+                )
+                .await
+            {
+                tracing::warn!(%error, "Nebula call signaling listener stopped; retrying");
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+        }
+    });
+
     let presence_state = state.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));

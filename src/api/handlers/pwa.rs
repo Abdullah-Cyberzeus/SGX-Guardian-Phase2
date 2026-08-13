@@ -80,6 +80,8 @@ pub struct OnboardingResponse {
 #[serde(rename_all = "camelCase")]
 pub struct MemberInvitePreviewRequest {
     pub invite_token: String,
+    #[serde(default)]
+    pub owner_host: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -100,6 +102,8 @@ pub struct MemberJoinRequest {
     pub email: String,
     pub password: String,
     pub invite_token: String,
+    #[serde(default)]
+    pub owner_host: Option<String>,
     pub accepted_fingerprint: String,
     pub fingerprint_confirmed: bool,
 }
@@ -191,17 +195,19 @@ pub async fn preview_member_invite(
     Json(body): Json<MemberInvitePreviewRequest>,
 ) -> Result<Json<MemberInvitePreviewResponse>, ApiError> {
     rate_limit(&state, "member-invite-preview", &body.invite_token)?;
-    let token = validate_local_member_invite(&state, &body.invite_token).await?;
-    // A synthetic, non-persisted redeemer checks max-uses without consuming it.
-    let circle = store::get_circle(&state.node_id, &token.circle_id).map_err(|error| match error {
-        crate::circle::errors::CircleError::NotFound(_) => ApiError::Conflict(format!(
-            "the invited Circle {} no longer exists on this Guardian; ask the administrator to create a new member invitation",
-            token.circle_id
-        )),
-        other => ApiError::BadRequest(other.to_string()),
-    })?;
-    invite::assert_redeemable(&circle, &token, "browser:preview")
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let token = validate_member_invite(&state, &body.invite_token).await?;
+    if token.issuer_did == state.device_did {
+        // A synthetic, non-persisted redeemer checks max-uses without consuming it.
+        let circle = local_invite_circle(&state, &token)?;
+        invite::assert_redeemable(&circle, &token, "browser:preview")
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    } else {
+        // A foreign issuer is valid for portable onboarding, but its address
+        // must travel separately so this Guardian can redeem server-to-server.
+        crate::api::handlers::circle::normalize_owner_url(
+            body.owner_host.as_deref().unwrap_or_default(),
+        )?;
+    }
     Ok(Json(MemberInvitePreviewResponse {
         valid: true,
         circle_id: token.circle_id,
@@ -248,7 +254,7 @@ pub async fn join_member(
             email, current_fingerprint
         ),
     );
-    let token = match validate_local_member_invite(&state, &body.invite_token).await {
+    let token = match validate_member_invite(&state, &body.invite_token).await {
         Ok(token) => token,
         Err(error) => {
             let audit_reason = format!("{:?}", error);
@@ -266,17 +272,17 @@ pub async fn join_member(
     let _join_guard = MEMBER_JOIN_LOCK.lock().await;
     let registration_id = Uuid::new_v4().to_string();
     let redeemer = format!("browser:{}", registration_id);
-    let circle = store::get_circle(&state.node_id, &token.circle_id).map_err(|error| match error {
-        crate::circle::errors::CircleError::NotFound(_) => ApiError::Conflict(format!(
-            "the invited Circle {} no longer exists on this Guardian; ask the administrator to create a new member invitation",
-            token.circle_id
-        )),
-        other => ApiError::BadRequest(other.to_string()),
-    })?;
-    invite::assert_redeemable(&circle, &token, &redeemer)
-        .map_err(|error| ApiError::Conflict(error.to_string()))?;
-    invite::record_redemption(&token.id, &redeemer)
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let locally_issued = token.issuer_did == state.device_did;
+    if locally_issued {
+        let circle = local_invite_circle(&state, &token)?;
+        invite::assert_redeemable(&circle, &token, &redeemer)
+            .map_err(|error| ApiError::Conflict(error.to_string()))?;
+        invite::record_redemption(&token.id, &redeemer)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+    } else {
+        let owner_host = body.owner_host.as_deref().unwrap_or_default();
+        crate::api::handlers::circle::join_remote_circle(&state, token.clone(), owner_host).await?;
+    }
 
     let registration_expires_at = chrono::Utc::now().timestamp()
         + registration_days().saturating_mul(24 * 60 * 60);
@@ -297,7 +303,9 @@ pub async fn join_member(
     {
         Ok(user) => user,
         Err(error) => {
-            let _ = invite::remove_redemption(&token.id, &redeemer);
+            if locally_issued {
+                let _ = invite::remove_redemption(&token.id, &redeemer);
+            }
             return Err(ApiError::Conflict(error.to_string()));
         }
     };
@@ -382,7 +390,7 @@ pub async fn remove_registration(
     }))
 }
 
-async fn validate_local_member_invite(
+async fn validate_member_invite(
     state: &AppState,
     compact: &str,
 ) -> Result<invite::InviteToken, ApiError> {
@@ -396,12 +404,13 @@ async fn validate_local_member_invite(
             "only member invitations can create PWA accounts".into(),
         ));
     }
-    if token.issuer_did != state.device_did {
-        return Err(ApiError::Conflict(format!(
-            "this invitation was issued by a different Guardian (issuer {}, current {}); open the link using the issuing Guardian address",
-            token.issuer_did, state.device_did
-        )));
-    }
+    Ok(token)
+}
+
+fn local_invite_circle(
+    state: &AppState,
+    token: &invite::InviteToken,
+) -> Result<crate::circle::Circle, ApiError> {
     let circle = store::get_circle(&state.node_id, &token.circle_id).map_err(|error| match error {
         crate::circle::errors::CircleError::NotFound(_) => ApiError::Conflict(format!(
             "the invited Circle {} no longer exists on this Guardian; ask the administrator to create a new member invitation",
@@ -414,7 +423,7 @@ async fn validate_local_member_invite(
             "member invitation must be issued by this Guardian".into(),
         ));
     }
-    Ok(token)
+    Ok(circle)
 }
 
 fn rate_limit(state: &AppState, action: &str, subject: &str) -> Result<(), ApiError> {

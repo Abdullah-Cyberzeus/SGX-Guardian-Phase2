@@ -25,6 +25,7 @@ export interface MemberJoinPayload {
   email: string;
   password: string;
   inviteToken: string;
+  ownerHost?: string;
   acceptedFingerprint: string;
   fingerprintConfirmed: boolean;
 }
@@ -45,8 +46,8 @@ export interface MemberJoinResult {
 
 export const pwaOnboardingService = {
   info: () => api.get<GuardianOnboardingInfo>("/pwa/onboarding"),
-  previewInvite: (inviteToken: string) =>
-    api.post<MemberInvitePreview>("/pwa/onboarding/invite-preview", { inviteToken }),
+  previewInvite: (inviteToken: string, ownerHost?: string) =>
+    api.post<MemberInvitePreview>("/pwa/onboarding/invite-preview", { inviteToken, ownerHost }),
   join: (payload: MemberJoinPayload) =>
     api.post<MemberJoinResult>("/pwa/onboarding/join", payload),
 };
