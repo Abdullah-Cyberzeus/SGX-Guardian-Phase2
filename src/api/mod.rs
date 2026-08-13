@@ -392,6 +392,10 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             get(handlers::group_call::active),
         )
         .route(
+            "/api/v1/group-calls/history",
+            get(handlers::group_call::history),
+        )
+        .route(
             "/api/v1/group-calls/events",
             get(handlers::group_call::events),
         )
@@ -544,6 +548,10 @@ pub async fn serve(
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
         loop {
             interval.tick().await;
+            for session in presence_state.call_session_manager.expire_stalled_sessions().await {
+                tracing::info!(session_id = %session.session_id, "Expired stalled call session");
+                presence_state.call_signal_hub.clear(&session.session_id).await;
+            }
             for session in presence_state
                 .group_session_manager
                 .expire_stale_for_host(&presence_state.node_id)

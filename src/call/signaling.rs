@@ -56,7 +56,7 @@ impl CallOffer {
         session_id: String,
         nonce: String,
         requested_media: Vec<MediaType>,
-        _key_manager: &crate::key_manager::KeyManager,
+        key_manager: &crate::key_manager::KeyManager,
     ) -> CallResult<Self> {
         // Validate inputs
         if device_id.is_empty() || virtual_id.is_empty() || session_id.is_empty() {
@@ -75,19 +75,20 @@ impl CallOffer {
             });
         }
 
-        let offer = CallOffer {
+        let mut offer = CallOffer {
             device_id: device_id.clone(),
             virtual_id: virtual_id.clone(),
             session_id: session_id.clone(),
             timestamp: Utc::now(),
             nonce: nonce.clone(),
             requested_media,
-            signature: String::new(), // Placeholder, will be filled
+            signature: String::new(),
         };
-
-        // Peer identity already passed attestation. Call control travels only
-        // through the authenticated Nebula overlay, so opening a new SE050
-        // session for every call message is unnecessary.
+        offer.signature = hex::encode(
+            key_manager
+                .sign(offer.payload_to_sign()?.as_bytes())
+                .map_err(|error| CallError::KeyManagerError(error.to_string()))?,
+        );
         Ok(offer)
     }
 
@@ -154,7 +155,7 @@ impl CallAnswer {
         session_id: String,
         nonce: String,
         accepted_media: Vec<MediaType>,
-        _key_manager: &crate::key_manager::KeyManager,
+        key_manager: &crate::key_manager::KeyManager,
     ) -> CallResult<Self> {
         if accepted_media.is_empty() {
             return Err(CallError::InvalidOffer {
@@ -162,7 +163,7 @@ impl CallAnswer {
             });
         }
 
-        let answer = CallAnswer {
+        let mut answer = CallAnswer {
             device_id: device_id.clone(),
             virtual_id: virtual_id.clone(),
             session_id: session_id.clone(),
@@ -174,6 +175,11 @@ impl CallAnswer {
             signature: String::new(),
         };
 
+        answer.signature = hex::encode(
+            key_manager
+                .sign(answer.payload_to_sign()?.as_bytes())
+                .map_err(|error| CallError::KeyManagerError(error.to_string()))?,
+        );
         Ok(answer)
     }
 
@@ -184,9 +190,9 @@ impl CallAnswer {
         session_id: String,
         nonce: String,
         reason: String,
-        _key_manager: &crate::key_manager::KeyManager,
+        key_manager: &crate::key_manager::KeyManager,
     ) -> CallResult<Self> {
-        let answer = CallAnswer {
+        let mut answer = CallAnswer {
             device_id: device_id.clone(),
             virtual_id: virtual_id.clone(),
             session_id: session_id.clone(),
@@ -198,6 +204,11 @@ impl CallAnswer {
             signature: String::new(),
         };
 
+        answer.signature = hex::encode(
+            key_manager
+                .sign(answer.payload_to_sign()?.as_bytes())
+                .map_err(|error| CallError::KeyManagerError(error.to_string()))?,
+        );
         Ok(answer)
     }
 

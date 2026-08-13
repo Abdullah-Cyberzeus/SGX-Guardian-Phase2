@@ -857,6 +857,22 @@ Complete both chat attachment sharing and the independent Files-tab workflow.
 
 Finish production-quality local voice/video functionality through reachable Guardians.
 
+### Implementation status
+
+Implemented in source on 2026-08-13:
+
+- Secure call signaling listener starts on every Guardian and retries after Nebula startup races.
+- Every versioned call-control message is DKP-signed, DID-key verified, freshness checked, and replay protected.
+- Direct and group calls require trusted attestation plus active shared-Circle authorization; revocation fails closed.
+- Production uses the active UEP call policy enforcer rather than the allow-all test/default enforcer.
+- Browser SDP requires a real SHA-256 DTLS-SRTP certificate fingerprint before remote media negotiation.
+- Direct and full-mesh group WebRTC support permission recovery, audio fallback, bounded ICE recovery, mute/camera/screen controls, measured quality labels, and adaptive video bitrate.
+- Direct and group call histories are durably stored by the Guardian and synchronized into browser IndexedDB.
+- Abandoned setup sessions expire automatically so a stale call cannot leave the Guardian permanently busy.
+- Same-origin camera, microphone, and display-capture permissions are explicitly constrained by response policy.
+
+Runtime exit criteria still require the Phase 12 supported-device matrix: real two-device audio/video, group-call, interruption/recovery, browser-permission, and physical-board demonstrations.
+
 ### Backend/signaling tasks
 
 1. Complete authorization before call signaling is accepted.

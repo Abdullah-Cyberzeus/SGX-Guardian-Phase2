@@ -26,13 +26,13 @@ function useCallDuration(call?: CallSession) {
 }
 
 export function CallingScreen() {
-  const { call, incoming, peerId, localStream, remoteStream, error, muted, cameraEnabled, toggleMute, toggleCamera, sendTestTone, shareScreen, end } = useCall();
+  const { call, incoming, peerId, localStream, remoteStream, error, muted, cameraEnabled, connectionState, qualityLabel, toggleMute, toggleCamera, sendTestTone, shareScreen, end } = useCall();
   const elapsed = useCallDuration(call);
   // While a call is still ringing (offer_received), the incoming toast owns the UI —
   // the full-screen overlay must only appear once the callee has accepted.
   if (!call || incoming) return null; const peer = peerId ?? "Remote Guardian";
   return <div className="call-overlay" role="dialog" aria-modal="true" aria-label="Active call">
-    <header className="call-header"><div><strong>{peer}</strong><span className="secure-label">◆ {labels[call.state] ?? call.state}</span></div><div>{call.state === "connected" ? `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}` : ""}</div></header>
+    <header className="call-header"><div><strong>{peer}</strong><span className="secure-label">◆ {connectionState === "disconnected" || connectionState === "failed" ? "Reconnecting secure media…" : labels[call.state] ?? call.state}</span></div><div>{call.state === "connected" ? <>{qualityLabel && <span title="Measured from WebRTC packet loss, latency, and jitter">{qualityLabel} · </span>}{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}</> : ""}</div></header>
     <main className="video-stage">
       <Video stream={remoteStream} className="remote-video" />
       {!remoteStream && <div className="remote-placeholder"><div className="avatar large">{peer.slice(0, 2).toUpperCase()}</div><h2>{labels[call.state] ?? "Connecting…"}</h2><p>Identity and policy checks remain active</p></div>}
@@ -41,11 +41,10 @@ export function CallingScreen() {
     </main>
     <footer className="call-controls">
       <button aria-label={muted ? "Unmute microphone" : "Mute microphone"} aria-pressed={muted} onClick={toggleMute}>{muted ? "Mic off" : "Mic"}</button>
-      <button aria-label={cameraEnabled ? "Turn camera off" : "Turn camera on"} aria-pressed={!cameraEnabled} onClick={toggleCamera}>{cameraEnabled ? "Camera" : "Camera off"}</button>
+      <button aria-label={cameraEnabled ? "Turn camera off" : "Turn camera on"} aria-pressed={!cameraEnabled} disabled={!call.accepted_media.includes("video") && !call.requested_media.includes("video")} onClick={toggleCamera}>{cameraEnabled ? "Camera" : "Camera off"}</button>
       <button aria-label="Send test audio to remote peer" disabled={call.state !== "connected" || !call.requested_media.includes("audio")} onClick={() => sendTestTone().catch(() => undefined)}>Test audio</button>
-      <button aria-label="Share screen" onClick={() => shareScreen().catch(() => undefined)}>Share</button>
+      <button aria-label="Share screen" disabled={!call.accepted_media.includes("video") && !call.requested_media.includes("video")} onClick={() => shareScreen().catch(() => undefined)}>Share</button>
       <button className="end-call" aria-label="End call" onClick={() => end()}>End</button>
     </footer>
   </div>;
 }
-

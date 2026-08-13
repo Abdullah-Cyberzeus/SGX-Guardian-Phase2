@@ -12,7 +12,7 @@ function StreamTile({ peerId, stream }: { peerId: string; stream?: MediaStream }
 
 export function GroupCallingScreen({ localDevice }: { localDevice?: string }) {
   const {
-    group, incoming, localStream, remoteStreams, error, muted, cameraEnabled,
+    group, incoming, localStream, remoteStreams, error, muted, cameraEnabled, qualityLabel,
     toggleMute, toggleCamera, shareScreen, leaveGroup, endGroup, moderate, rejoinGroup,
   } = useGroupCall();
   if (!group || incoming || !localDevice) return null;
@@ -44,7 +44,7 @@ export function GroupCallingScreen({ localDevice }: { localDevice?: string }) {
   const host = group.host_device_id === localDevice;
   const joined = Object.values(group.participants).filter((participant) => participant.state === "joined");
   return <div className="call-overlay group-call-overlay" role="dialog" aria-modal="true">
-    <header className="call-header"><div><strong>{group.title}</strong><span className="secure-label">◆ Trusted group · {joined.length} joined</span></div></header>
+    <header className="call-header"><div><strong>{group.title}</strong><span className="secure-label">◆ Trusted group · {joined.length} joined{qualityLabel ? ` · ${qualityLabel}` : ""}</span></div></header>
     <main className="group-stage">
       <StreamTile peerId={`${localDevice} (you)`} stream={localStream} />
       {joined.filter((participant) => participant.device_id !== localDevice).map((participant) =>

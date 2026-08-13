@@ -87,7 +87,9 @@ impl CertVerifier {
     /// 1. PEM is non-empty / fields are present
     /// 2. Validity window — not_before ≤ now ≤ not_after
     /// 3. Issuer matches the trusted CA
-    /// 4. Issuer signature over certificate body (stubbed — replace with ring verify)
+    /// 4. Reject legacy certificate objects that do not carry canonical TBS
+    ///    bytes. Production calls use the DID/DKP-signed signaling envelope
+    ///    and browser-verified DTLS-SRTP fingerprint instead.
     pub fn verify(&self, cert: &PeerCertificate) -> VerifyResult<CertVerifyOk> {
         // ── 1. Presence check ────────────────────────────────────────────────
         if cert.pem.is_empty() || cert.device_id.is_empty() || cert.fingerprint.is_empty() {
@@ -120,22 +122,13 @@ impl CertVerifier {
             });
         }
 
-        // ── 4. Signature verification ────────────────────────────────────────
-        // TODO: integrate ring::signature::UnparsedPublicKey to verify
-        // issuer_signature bytes over the DER TBS certificate.
-        // For now we check the signature field is non-empty (checked at presence).
-        if cert.issuer_signature.is_empty() {
-            return Err(VerifyError::CertBadSignature {
-                device_id: cert.device_id.clone(),
-            });
-        }
-
-        Ok(CertVerifyOk {
+        // This legacy DTO does not expose the certificate's canonical
+        // to-be-signed bytes, so accepting a merely non-empty signature would
+        // be a security vulnerability. Fail closed instead of simulating
+        // verification. The active production signaling path never invokes
+        // this legacy verifier.
+        Err(VerifyError::CertBadSignature {
             device_id: cert.device_id.clone(),
-            serial: cert.serial.clone(),
-            fingerprint: cert.fingerprint.clone(),
-            issuer: cert.issuer.clone(),
-            not_after: cert.not_after.clone(),
         })
     }
 }
@@ -167,10 +160,10 @@ mod tests {
     }
 
     #[test]
-    fn test_valid_cert() {
+    fn legacy_certificate_without_verifiable_tbs_fails_closed() {
         let verifier = CertVerifier::new(make_ca());
         let cert = valid_cert("device-1");
-        assert!(verifier.verify(&cert).is_ok());
+        assert!(matches!(verifier.verify(&cert), Err(VerifyError::CertBadSignature { .. })));
     }
 
     #[test]

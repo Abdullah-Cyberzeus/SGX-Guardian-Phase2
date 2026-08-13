@@ -184,7 +184,10 @@ impl AppState {
             admin_dir: "/var/lib/sgx-guardian/admin".into(),
             admin,
             signer: signer.clone(),
-            call_session_manager: Arc::new(SessionManager::new()),
+            call_session_manager: Arc::new(SessionManager::persistent(
+                Arc::new(crate::call::policy::CallPolicyEnforcer),
+                "/var/lib/sgx-guardian/calls/history.json",
+            )),
             call_signal_hub: Arc::new(CallSignalHub::default()),
             call_nebula_signaling: Arc::new(NebulaSignaling::new_secure(
                 Arc::new(NebulaClient),

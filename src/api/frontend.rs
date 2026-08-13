@@ -57,7 +57,13 @@ pub async fn serve(uri: Uri) -> Response {
     let mut response = Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, mime)
-        .header(header::CACHE_CONTROL, cache_control);
+        .header(header::CACHE_CONTROL, cache_control)
+        .header("X-Content-Type-Options", "nosniff")
+        .header("Referrer-Policy", "same-origin")
+        .header("X-Frame-Options", "DENY")
+        // Camera, microphone, and display capture remain same-origin and are
+        // still gated by explicit browser user gestures in the call UI.
+        .header("Permissions-Policy", "camera=(self), microphone=(self), display-capture=(self), geolocation=(), payment=(), usb=()");
     if requested == "sw.js" {
         response = response.header("Service-Worker-Allowed", "/");
     }

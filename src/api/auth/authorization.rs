@@ -49,14 +49,29 @@ pub fn scoped_circle_contact_dids(
         .map_err(|error| format!("load issued memberships: {}", error))?;
     let peers = crate::vc::persistence::list_peers()
         .map_err(|error| format!("load peer memberships: {}", error))?;
-    Ok(issued
+    let mut contacts = issued
         .into_iter()
         .chain(peers)
         .filter(active_membership_credential)
         .filter(|vc| circle_ids.contains(&vc.credential_subject.circle_id))
         .map(|vc| vc.subject_did().to_string())
         .filter(|did| did != guardian_did)
-        .collect())
+        .collect::<HashSet<_>>();
+    // A joined Guardian stores the owner DID in its signed-invite-derived
+    // Circle record, while its own membership VC is stored in `own/`. The
+    // owner may therefore not also appear in `peers/`; include that owner as
+    // an authorized communication contact for every active joined Circle.
+    let registry = crate::circle::store::load_or_seed(node_id)
+        .map_err(|error| format!("load Circle registry: {:?}", error))?;
+    contacts.extend(
+        registry
+            .circles
+            .into_iter()
+            .filter(|circle| circle_ids.contains(&circle.circle_id))
+            .map(|circle| circle.owner_did)
+            .filter(|did| did != guardian_did),
+    );
+    Ok(contacts)
 }
 
 pub fn local_active_circle_ids(

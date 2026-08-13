@@ -30,6 +30,7 @@ export class GroupWebRtcService {
     }
     const tracks: MediaStreamTrack[] = [];
     const inputs: MediaStreamTrack[] = [];
+    try {
     if (media.includes("audio")) {
       const microphone = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
@@ -49,6 +50,12 @@ export class GroupWebRtcService {
     this.input = new MediaStream(inputs);
     this.local = new MediaStream(tracks);
     return this.local;
+    } catch (error) {
+      tracks.forEach((track) => track.stop());
+      inputs.forEach((track) => track.stop());
+      this.close();
+      throw error;
+    }
   }
 
   configure(callbacks: GroupRtcCallbacks): void {
@@ -83,6 +90,7 @@ export class GroupWebRtcService {
     };
     if (initiate) {
       const offer = await pc.createOffer();
+      requireSecureGroupSdp(offer);
       await pc.setLocalDescription(offer);
       await this.sendReliable(peerId, "sdp_offer", { type: offer.type, sdp: offer.sdp });
     }
@@ -93,13 +101,18 @@ export class GroupWebRtcService {
     await this.ensurePeer(peerId, false);
     const pc = this.peers.get(peerId)!;
     if (signal.type === "sdp_offer") {
-      await pc.setRemoteDescription(signal.payload as RTCSessionDescriptionInit);
+      const description = signal.payload as RTCSessionDescriptionInit;
+      requireSecureGroupSdp(description);
+      await pc.setRemoteDescription(description);
       await this.flush(peerId);
       const answer = await pc.createAnswer();
+      requireSecureGroupSdp(answer);
       await pc.setLocalDescription(answer);
       await this.sendReliable(peerId, "sdp_answer", { type: answer.type, sdp: answer.sdp });
     } else if (signal.type === "sdp_answer") {
-      await pc.setRemoteDescription(signal.payload as RTCSessionDescriptionInit);
+      const description = signal.payload as RTCSessionDescriptionInit;
+      requireSecureGroupSdp(description);
+      await pc.setRemoteDescription(description);
       await this.flush(peerId);
     } else if (signal.type === "ice_candidate") {
       const candidate = signal.payload as RTCIceCandidateInit;
@@ -133,6 +146,31 @@ export class GroupWebRtcService {
           .catch(() => undefined);
       });
     };
+  }
+
+  async quality(): Promise<{ rttMs: number; jitterMs: number; packetLossPercent: number }> {
+    let rttMs = 0, jitterMs = 0, lost = 0, received = 0;
+    for (const pc of this.peers.values()) {
+      const reports = await pc.getStats();
+      reports.forEach((report) => {
+        if (report.type === "candidate-pair" && report.state === "succeeded") rttMs = Math.max(rttMs, Math.round((report.currentRoundTripTime ?? 0) * 1000));
+        if (report.type === "inbound-rtp") {
+          jitterMs = Math.max(jitterMs, Math.round((report.jitter ?? 0) * 1000));
+          lost += Math.max(0, report.packetsLost ?? 0); received += Math.max(0, report.packetsReceived ?? 0);
+        }
+      });
+    }
+    const packetLossPercent = lost + received ? (lost / (lost + received)) * 100 : 0;
+    const maxBitrate = packetLossPercent >= 8 || rttMs >= 600 ? 250_000
+      : packetLossPercent >= 4 || rttMs >= 350 ? 600_000
+      : packetLossPercent >= 1.5 || rttMs >= 180 ? 1_200_000 : 2_000_000;
+    for (const pc of this.peers.values()) {
+      for (const sender of pc.getSenders().filter((item) => item.track?.kind === "video")) {
+        const parameters = sender.getParameters(); parameters.encodings = parameters.encodings?.length ? parameters.encodings : [{}];
+        parameters.encodings[0].maxBitrate = maxBitrate; await sender.setParameters(parameters).catch(() => undefined);
+      }
+    }
+    return { rttMs, jitterMs, packetLossPercent };
   }
 
   removePeer(peerId: string): void {
@@ -210,6 +248,7 @@ export class GroupWebRtcService {
       if (attempts <= 2 && initiate) {
         pc.restartIce();
         const offer = await pc.createOffer({ iceRestart: true });
+        requireSecureGroupSdp(offer);
         await pc.setLocalDescription(offer);
         await this.sendReliable(peerId, "sdp_offer", { type: offer.type, sdp: offer.sdp });
       } else {
@@ -220,5 +259,11 @@ export class GroupWebRtcService {
       this.removePeer(peerId);
       await this.ensurePeer(peerId, initiate).catch(() => undefined);
     }
+  }
+}
+
+function requireSecureGroupSdp(description: RTCSessionDescriptionInit): void {
+  if (!/^a=fingerprint:sha-256\s+[0-9A-F:]{32,}$/im.test(description.sdp || "")) {
+    throw new Error("Group media negotiation did not provide a valid DTLS-SRTP SHA-256 certificate fingerprint");
   }
 }

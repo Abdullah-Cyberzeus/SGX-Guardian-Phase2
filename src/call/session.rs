@@ -7,8 +7,9 @@ use crate::call::policy::{AllowAllEnforcer, SharedEnforcer};
 use crate::call::signaling::{CallOffer, MediaType};
 use crate::call::state::CallState;
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use uuid::Uuid;
@@ -56,7 +57,7 @@ pub struct CallStateTransition {
 
 /// Non-sensitive call status exposed through the authenticated REST API.
 /// Deliberately excludes nonces, Nebula addresses, signatures, and media keys.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CallSessionStatus {
     pub session_id: String,
     pub state: String,
@@ -230,6 +231,8 @@ pub struct SessionManager {
     sessions: Arc<RwLock<HashMap<String, CallSession>>>,
     enforcer: SharedEnforcer,
     events: broadcast::Sender<CallSessionEvent>,
+    history: Arc<std::sync::RwLock<HashMap<String, CallSessionStatus>>>,
+    history_path: Option<PathBuf>,
 }
 
 impl Default for SessionManager {
@@ -241,21 +244,41 @@ impl Default for SessionManager {
 impl SessionManager {
     /// Create new session manager
     pub fn new() -> Self {
-        let (events, _) = broadcast::channel(256);
-        SessionManager {
-            sessions: Arc::new(RwLock::new(HashMap::new())),
-            enforcer: Arc::new(AllowAllEnforcer),
-            events,
-        }
+        Self::with_optional_persistence(Arc::new(AllowAllEnforcer), None)
     }
 
     /// Create a session manager with a custom policy enforcer.
     pub fn with_enforcer(enforcer: SharedEnforcer) -> Self {
+        Self::with_optional_persistence(enforcer, None)
+    }
+
+    pub fn persistent(enforcer: SharedEnforcer, history_path: impl Into<PathBuf>) -> Self {
+        Self::with_optional_persistence(enforcer, Some(history_path.into()))
+    }
+
+    fn with_optional_persistence(enforcer: SharedEnforcer, history_path: Option<PathBuf>) -> Self {
         let (events, _) = broadcast::channel(256);
+        let mut history: HashMap<String, CallSessionStatus> = history_path
+            .as_deref()
+            .and_then(|path| std::fs::read(path).ok())
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        // A process restart necessarily tears down browser WebRTC. Preserve
+        // the record, but never resurrect it as a live call.
+        let now = Utc::now();
+        for status in history.values_mut().filter(|status| !status.terminal) {
+            status.state = "ended".into();
+            status.terminal = true;
+            status.media_connected = false;
+            status.ended_at = Some(now);
+            status.updated_at = now;
+        }
         SessionManager {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             enforcer,
             events,
+            history: Arc::new(std::sync::RwLock::new(history)),
+            history_path,
         }
     }
 
@@ -264,9 +287,26 @@ impl SessionManager {
     }
 
     fn publish(&self, event: &str, session: &CallSession) {
+        let snapshot = session.status_snapshot();
+        if let Ok(mut history) = self.history.write() {
+            history.insert(snapshot.session_id.clone(), snapshot.clone());
+            if history.len() > 500 {
+                let mut oldest: Vec<_> = history
+                    .values()
+                    .map(|status| (status.updated_at, status.session_id.clone()))
+                    .collect();
+                oldest.sort_by_key(|(updated_at, _)| *updated_at);
+                for (_, session_id) in oldest.into_iter().take(history.len() - 500) {
+                    history.remove(&session_id);
+                }
+            }
+            if let Some(path) = self.history_path.as_deref() {
+                persist_history(path, &history);
+            }
+        }
         let _ = self.events.send(CallSessionEvent {
             event: event.to_string(),
-            session: session.status_snapshot(),
+            session: snapshot,
         });
     }
 
@@ -557,12 +597,41 @@ impl SessionManager {
             .collect()
     }
 
+    /// End calls that can no longer make forward progress. This prevents a
+    /// missed ring or abandoned negotiation from keeping the Guardian busy
+    /// forever after a browser closes or a device disappears.
+    pub async fn expire_stalled_sessions(&self) -> Vec<CallSession> {
+        let now = Utc::now();
+        let mut ended = Vec::new();
+        {
+            let mut sessions = self.sessions.write().await;
+            for session in sessions.values_mut().filter(|session| !session.state.is_terminal()) {
+                let age = (now - session.updated_at).num_seconds();
+                let timeout = match session.state {
+                    CallState::Idle | CallState::LocalPolicyCheck => 30,
+                    CallState::OfferSent | CallState::OfferReceived => 60,
+                    CallState::Verifying | CallState::Authorizing | CallState::Accepted | CallState::MediaNegotiation => 90,
+                    CallState::Connected | CallState::EndCall => continue,
+                };
+                if age >= timeout && session.transition(CallState::EndCall, "Call setup timed out".into()).is_ok() {
+                    ended.push(session.clone());
+                }
+            }
+        }
+        for session in &ended {
+            self.publish("call_timed_out", session);
+        }
+        ended
+    }
+
     pub async fn list_statuses(&self) -> Vec<CallSessionStatus> {
         let sessions = self.sessions.read().await;
-        let mut statuses: Vec<_> = sessions
-            .values()
-            .map(CallSession::status_snapshot)
-            .collect();
+        let mut merged = self.history.read().map(|items| items.clone()).unwrap_or_default();
+        for session in sessions.values() {
+            let status = session.status_snapshot();
+            merged.insert(status.session_id.clone(), status);
+        }
+        let mut statuses: Vec<_> = merged.into_values().collect();
         statuses.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         statuses
     }
@@ -578,6 +647,18 @@ impl SessionManager {
                 true
             }
         });
+    }
+}
+
+fn persist_history(path: &Path, history: &HashMap<String, CallSessionStatus>) {
+    let Some(parent) = path.parent() else { return };
+    if std::fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let Ok(bytes) = serde_json::to_vec_pretty(history) else { return };
+    let temporary = path.with_extension("tmp");
+    if std::fs::write(&temporary, bytes).is_ok() {
+        let _ = std::fs::rename(temporary, path);
     }
 }
 

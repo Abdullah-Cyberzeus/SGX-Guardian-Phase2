@@ -20,6 +20,7 @@ export class WebRtcService {
   private signalChain: Promise<void> = Promise.resolve();
   private iceServers: RTCIceServer[] = [];
   private recovering = false;
+  private recoveryAttempts = 0;
 
   configureIceServers(iceServers: RTCIceServer[]): void { this.iceServers = iceServers; }
 
@@ -31,6 +32,7 @@ export class WebRtcService {
     const tracks: MediaStreamTrack[] = [];
     const inputTracks: MediaStreamTrack[] = [];
 
+    try {
     if (media.includes("audio")) {
       const microphone = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
@@ -66,6 +68,12 @@ export class WebRtcService {
     this.mediaInput = new MediaStream(inputTracks);
     this.local = new MediaStream(tracks);
     return this.local;
+    } catch (error) {
+      inputTracks.forEach((track) => track.stop());
+      tracks.forEach((track) => track.stop());
+      this.close();
+      throw mediaError(error, media);
+    }
   }
 
   setup(callbacks: WebRtcCallbacks): RTCPeerConnection {
@@ -74,7 +82,10 @@ export class WebRtcService {
     this.pc = pc;
     this.local?.getTracks().forEach((track) => pc.addTrack(track, this.local!));
     pc.ontrack = ({ streams }) => streams[0] && callbacks.onRemoteStream(streams[0]);
-    pc.onconnectionstatechange = () => callbacks.onConnectionState(pc.connectionState);
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "connected") this.recoveryAttempts = 0;
+      callbacks.onConnectionState(pc.connectionState);
+    };
     pc.onicecandidate = ({ candidate }) => this.sendSignalReliable(
       candidate ? "ice_candidate" : "ice_complete",
       candidate ? candidate.toJSON() : {},
@@ -85,6 +96,7 @@ export class WebRtcService {
   async startCaller(): Promise<void> {
     const pc = this.requirePeer();
     const offer = await pc.createOffer();
+    requireSecureSdp(offer);
     await pc.setLocalDescription(offer);
     await this.sendSignalReliable("sdp_offer", { type: offer.type, sdp: offer.sdp });
   }
@@ -96,13 +108,18 @@ export class WebRtcService {
     }
     const pc = this.requirePeer();
     if (signal.type === "sdp_offer") {
-      await pc.setRemoteDescription(signal.payload as RTCSessionDescriptionInit);
+      const description = signal.payload as RTCSessionDescriptionInit;
+      requireSecureSdp(description);
+      await pc.setRemoteDescription(description);
       await this.flushCandidates();
       const answer = await pc.createAnswer();
+      requireSecureSdp(answer);
       await pc.setLocalDescription(answer);
       await this.sendSignalReliable("sdp_answer", { type: answer.type, sdp: answer.sdp });
     } else if (signal.type === "sdp_answer") {
-      await pc.setRemoteDescription(signal.payload as RTCSessionDescriptionInit);
+      const description = signal.payload as RTCSessionDescriptionInit;
+      requireSecureSdp(description);
+      await pc.setRemoteDescription(description);
       await this.flushCandidates();
     } else if (signal.type === "ice_candidate") {
       const candidate = signal.payload as RTCIceCandidateInit;
@@ -158,13 +175,16 @@ export class WebRtcService {
   async restartIce(): Promise<void> {
     const pc = this.requirePeer(); pc.restartIce();
     const offer = await pc.createOffer({ iceRestart: true });
+    requireSecureSdp(offer);
     await pc.setLocalDescription(offer);
     await this.sendSignalReliable("sdp_offer", offer);
   }
 
   async recover(initiate: boolean): Promise<void> {
     if (this.recovering) return;
+    if (this.recoveryAttempts >= 3) throw new Error("The secure media connection could not be restored after 3 attempts. End the call and try again.");
     this.recovering = true;
+    this.recoveryAttempts += 1;
     try {
       await this.restartIce();
       await new Promise((resolve) => window.setTimeout(resolve, 4_000));
@@ -192,6 +212,7 @@ export class WebRtcService {
       }
       if (report.type === "codec") result.codec = report.mimeType ?? "unknown";
     });
+    await this.applyAdaptiveBitrate(Number(result.packet_loss_percent ?? 0), Number(result.rtt_ms ?? 0));
     return result;
   }
 
@@ -199,6 +220,7 @@ export class WebRtcService {
     this.pc?.close(); this.pc = undefined; this.pendingCandidates = [];
     this.signalChain = Promise.resolve();
     this.recovering = false;
+    this.recoveryAttempts = 0;
     this.local?.getTracks().forEach((track) => track.stop()); this.local = undefined;
     this.mediaInput?.getTracks().forEach((track) => track.stop()); this.mediaInput = undefined;
     if (this.testToneTimer) window.clearTimeout(this.testToneTimer);
@@ -209,6 +231,18 @@ export class WebRtcService {
   }
 
   private requirePeer(): RTCPeerConnection { if (!this.pc) throw new Error("WebRTC is not initialized"); return this.pc; }
+  private async applyAdaptiveBitrate(packetLoss: number, rttMs: number): Promise<void> {
+    const constrained = packetLoss >= 8 || rttMs >= 600 ? 250_000
+      : packetLoss >= 4 || rttMs >= 350 ? 600_000
+      : packetLoss >= 1.5 || rttMs >= 180 ? 1_200_000
+      : 2_000_000;
+    for (const sender of this.requirePeer().getSenders().filter((item) => item.track?.kind === "video")) {
+      const parameters = sender.getParameters();
+      parameters.encodings = parameters.encodings?.length ? parameters.encodings : [{}];
+      parameters.encodings[0].maxBitrate = constrained;
+      await sender.setParameters(parameters).catch(() => undefined);
+    }
+  }
   private sendSignalReliable(type: SignalKind, payload: unknown): Promise<void> {
     const operationId = typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
@@ -231,4 +265,25 @@ export class WebRtcService {
     return queued;
   }
   private async flushCandidates(): Promise<void> { const pc = this.requirePeer(); for (const item of this.pendingCandidates.splice(0)) await pc.addIceCandidate(item); }
+}
+
+function requireSecureSdp(description: RTCSessionDescriptionInit): void {
+  const sdp = description.sdp || "";
+  if (!/^a=fingerprint:sha-256\s+[0-9A-F:]{32,}$/im.test(sdp)) {
+    throw new Error("Remote media negotiation did not provide a valid DTLS-SRTP SHA-256 certificate fingerprint");
+  }
+}
+
+function mediaError(error: unknown, media: MediaType[]): Error {
+  if (error instanceof DOMException && ["NotAllowedError", "SecurityError"].includes(error.name)) {
+    const devices = media.includes("video") ? "camera and microphone" : "microphone";
+    return new Error(`Permission for the ${devices} was denied. Allow it in this Guardian's browser site settings, then try again.`);
+  }
+  if (error instanceof DOMException && ["NotFoundError", "DevicesNotFoundError"].includes(error.name)) {
+    return new Error("The required microphone or camera was not found on this device.");
+  }
+  if (error instanceof DOMException && ["NotReadableError", "TrackStartError"].includes(error.name)) {
+    return new Error("The microphone or camera is already in use by another application.");
+  }
+  return error instanceof Error ? error : new Error("The microphone or camera could not be started.");
 }
