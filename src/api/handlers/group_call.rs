@@ -207,7 +207,13 @@ pub async fn create(
             Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
         }
     } else {
-        None
+        match crate::api::auth::authorization::local_circle_contact_dids(
+            &state.node_id,
+            &state.device_did,
+        ) {
+            Ok(contacts) => Some(contacts),
+            Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+        }
     };
     if let Some(contacts) = member_contacts.as_ref() {
         let unauthorized_requested = !request.call_all
@@ -332,6 +338,14 @@ pub async fn create(
 
 pub async fn active(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let groups = state.group_session_manager.active_for(&state.node_id).await;
+    Json(GroupCallsResponse {
+        total: groups.len(),
+        groups,
+    })
+}
+
+pub async fn history(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let groups = state.group_session_manager.history_for(&state.node_id);
     Json(GroupCallsResponse {
         total: groups.len(),
         groups,

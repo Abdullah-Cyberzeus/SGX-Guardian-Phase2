@@ -296,12 +296,36 @@ impl NebulaSignaling {
         local_device_id: String,
     ) -> CallResult<()> {
         envelope.validate_freshness(chrono::Utc::now())?;
-        let _identity = self
+        let identity = self
             .peer_identities
             .resolve(&envelope.sender_device_id)
             .await?;
-        // Attestation and Nebula authenticate this peer before call traffic.
-        // Avoid reopening SE050 for each call-control message.
+        // Nebula provides the private route, while the DID-bound DKP proves
+        // who authored this exact control message. Both are required: an
+        // overlay participant must not be able to spoof another Guardian.
+        envelope.verify(&identity.public_key_point)?;
+        let local_did = crate::did::DidRecord::load(crate::did::DEFAULT_DID_PATH)
+            .map_err(|error| CallError::UnauthorizedDevice {
+                reason: format!("Local Guardian identity is unavailable: {}", error),
+            })?
+            .did;
+        let authorized = crate::api::auth::authorization::local_circle_contact_dids(
+            &local_device_id,
+            &local_did,
+        )
+        .map_err(|error| CallError::UnauthorizedDevice { reason: error })?;
+        if crate::crl::is_revoked(&identity.did) || !authorized.contains(&identity.did) {
+            if session_manager
+                .get_session(&envelope.session_id)
+                .await
+                .is_ok()
+            {
+                let _ = session_manager.end_session(&envelope.session_id).await;
+            }
+            return Err(CallError::UnauthorizedDevice {
+                reason: "Call peer has no active shared Circle membership".into(),
+            });
+        }
         self.replay.check_and_record(&envelope).await?;
 
         if envelope.kind == SignalKind::GroupControl {
@@ -322,6 +346,7 @@ impl NebulaSignaling {
                         reason: "Offer fields do not match the authenticated envelope".into(),
                     });
                 }
+                offer.verify_signature(&identity.public_key_point)?;
                 let is_retry = session_manager.get_session(&offer.session_id).await.is_ok();
                 let busy = !is_retry
                     && (!session_manager.get_active_sessions().await.is_empty()
@@ -360,6 +385,7 @@ impl NebulaSignaling {
                         reason: "Answer fields do not match the authenticated envelope".into(),
                     });
                 }
+                answer.verify_signature(&identity.public_key_point)?;
                 let session = session_manager.get_session(&answer.session_id).await?;
                 if session.receiver.device_id != answer.device_id || session.nonce != answer.nonce {
                     return Err(CallError::InvalidOffer {
@@ -751,7 +777,15 @@ impl NebulaSignaling {
         envelope: &SignalingEnvelope,
         receiver_nebula_ip: &str,
     ) -> CallResult<()> {
-        let payload = serde_json::to_string(envelope)
+        let signed = match self.signer.as_ref() {
+            Some(signer) => envelope.clone().sign(signer)?,
+            None => {
+                return Err(CallError::KeyManagerError(
+                    "Secure call signaling has no device signer".into(),
+                ))
+            }
+        };
+        let payload = serde_json::to_string(&signed)
             .map_err(|e| CallError::SerializationError(e.to_string()))?;
         self.nebula_client
             .send_message(receiver_nebula_ip, &payload)

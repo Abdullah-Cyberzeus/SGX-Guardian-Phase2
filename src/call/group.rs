@@ -112,6 +112,7 @@ pub struct GroupSessionManager {
     events: broadcast::Sender<GroupEvent>,
     log_path: PathBuf,
     persistence_path: PathBuf,
+    history_path: PathBuf,
 }
 
 impl Default for GroupSessionManager {
@@ -125,6 +126,7 @@ impl GroupSessionManager {
         let (events, _) = broadcast::channel(512);
         let log_path = log_path.into();
         let persistence_path = log_path.with_extension("sessions.json");
+        let history_path = log_path.with_extension("history.json");
         let mut sessions: HashMap<String, GroupSession> = std::fs::read(&persistence_path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
@@ -138,6 +140,7 @@ impl GroupSessionManager {
             events,
             log_path,
             persistence_path,
+            history_path,
         }
     }
 
@@ -470,6 +473,7 @@ impl GroupSessionManager {
             }
         }
         if incoming.state == GroupCallState::Ended {
+            self.persist_history(&incoming);
             sessions.remove(&incoming.group_id);
         } else {
             sessions.insert(incoming.group_id.clone(), incoming.clone());
@@ -519,6 +523,7 @@ impl GroupSessionManager {
             None,
             "host ended group call",
         );
+        self.persist_history(&session);
         Ok(session)
     }
 
@@ -564,6 +569,21 @@ impl GroupSessionManager {
                 .then_with(|| right.group_id.cmp(&left.group_id))
         });
         active
+    }
+
+    pub fn history_for(&self, device_id: &str) -> Vec<GroupSession> {
+        let mut history: HashMap<String, GroupSession> = std::fs::read(&self.history_path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        let mut sessions: Vec<_> = history
+            .drain()
+            .map(|(_, session)| session)
+            .filter(|session| session.participants.contains_key(device_id))
+            .collect();
+        sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        sessions.truncate(500);
+        sessions
     }
 
     /// Record liveness and restore a temporarily disconnected participant.
@@ -722,6 +742,28 @@ impl GroupSessionManager {
         };
         if std::fs::write(&temporary, bytes).is_ok() {
             let _ = std::fs::rename(temporary, &self.persistence_path);
+        }
+    }
+
+    fn persist_history(&self, session: &GroupSession) {
+        let mut history: HashMap<String, GroupSession> = std::fs::read(&self.history_path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        history.insert(session.group_id.clone(), session.clone());
+        if history.len() > 500 {
+            let mut oldest: Vec<_> = history.values().map(|item| (item.updated_at, item.group_id.clone())).collect();
+            oldest.sort_by_key(|(updated_at, _)| *updated_at);
+            for (_, group_id) in oldest.into_iter().take(history.len() - 500) {
+                history.remove(&group_id);
+            }
+        }
+        let Some(parent) = self.history_path.parent() else { return };
+        if std::fs::create_dir_all(parent).is_err() { return }
+        let Ok(bytes) = serde_json::to_vec_pretty(&history) else { return };
+        let temporary = self.history_path.with_extension("history.tmp");
+        if std::fs::write(&temporary, bytes).is_ok() {
+            let _ = std::fs::rename(temporary, &self.history_path);
         }
     }
 

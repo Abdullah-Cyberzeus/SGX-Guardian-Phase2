@@ -11,6 +11,7 @@ import callHistoryService from "../../app/services/callHistoryService";
 interface GroupCallValue {
   group?: GroupSession; incoming?: GroupSession; localStream?: MediaStream;
   remoteStreams: Record<string, MediaStream>; error?: string; muted: boolean; cameraEnabled: boolean;
+  qualityLabel?: "Excellent" | "Good" | "Fair" | "Poor";
   createGroup(memberIds: string[], callAll: boolean, media: MediaType[], title?: string): Promise<void>;
   acceptGroup(): Promise<void>; rejoinGroup(): Promise<void>; declineGroup(): Promise<void>; leaveGroup(): Promise<void>;
   endGroup(): Promise<void>; moderate(action: GroupModerationAction): Promise<void>;
@@ -36,6 +37,7 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
   const [error, setError] = useState<string>();
   const [muted, setMuted] = useState(false);
   const [cameraEnabled, setCameraEnabled] = useState(true);
+  const [qualityLabel, setQualityLabel] = useState<"Excellent" | "Good" | "Fair" | "Poor">();
   const rtc = useRef(new GroupWebRtcService());
   const signalCursor = useRef(0);
   const pollingSignals = useRef(false);
@@ -158,7 +160,23 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
     };
   }, [group?.group_id, localDevice, localParticipantState, localStream]);
 
-  const prepare = async (media: MediaType[]) => {
+  useEffect(() => {
+    if (!group || localParticipantState !== "joined" || !localStream) return;
+    let stopped = false;
+    const sample = async () => {
+      try {
+        const report = await rtc.current.quality();
+        if (stopped) return;
+        setQualityLabel(report.packetLossPercent >= 8 || report.rttMs >= 600 || report.jitterMs >= 100 ? "Poor"
+          : report.packetLossPercent >= 4 || report.rttMs >= 350 || report.jitterMs >= 60 ? "Fair"
+          : report.packetLossPercent >= 1.5 || report.rttMs >= 180 || report.jitterMs >= 30 ? "Good" : "Excellent");
+      } catch { /* A transient stats failure must not end a group call. */ }
+    };
+    void sample(); const timer = window.setInterval(() => void sample(), 5_000);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [group?.group_id, localParticipantState, localStream]);
+
+  const prepare = async (media: MediaType[]): Promise<MediaType[]> => {
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error("Camera and microphone access requires HTTPS or localhost.");
@@ -166,9 +184,22 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
       const stream = await rtc.current.prepare(media);
       setLocalStream(stream); setRemoteStreams({}); signalCursor.current = 0;
       connectedPeers.current.clear(); mediaReadySent.current = false;
+      return media;
     } catch (reason) {
       rtc.current.close();
       setLocalStream(undefined);
+      if (media.includes("video") && media.includes("audio")) {
+        try {
+          const stream = await rtc.current.prepare(["audio"]);
+          setLocalStream(stream); setRemoteStreams({}); signalCursor.current = 0;
+          connectedPeers.current.clear(); mediaReadySent.current = false;
+          setCameraEnabled(false);
+          setError("Camera unavailable; continuing with group audio.");
+          return ["audio"];
+        } catch {
+          // Report the original permission/device error below.
+        }
+      }
       const message = reason instanceof DOMException && reason.name === "NotAllowedError"
         ? "Camera or microphone permission was denied. Allow access in the browser site settings, then try again."
         : reason instanceof Error ? reason.message : "Camera or microphone could not be started.";
@@ -177,8 +208,8 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
     }
   };
   const createGroup = async (memberIds: string[], callAll: boolean, media: MediaType[], title = "") => {
-    setError(undefined); await prepare(media);
-    try { setGroup((await groupCallsApi.create(title, memberIds, callAll, media)).session); }
+    setError(undefined); const preparedMedia = await prepare(media);
+    try { setGroup((await groupCallsApi.create(title, memberIds, callAll, preparedMedia)).session); }
     catch (reason) { rtc.current.close(); setLocalStream(undefined); throw reason; }
   };
   const acceptGroup = async () => {
@@ -217,10 +248,10 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
   };
   const incoming = group && localDevice && group.participants[localDevice]?.state === "invited" ? group : undefined;
   const value = useMemo(() => ({
-    group, incoming, localStream, remoteStreams, error, muted, cameraEnabled, createGroup,
+    group, incoming, localStream, remoteStreams, error, muted, cameraEnabled, qualityLabel, createGroup,
     acceptGroup, rejoinGroup, declineGroup, leaveGroup, endGroup, moderate, toggleMute, toggleCamera,
     shareScreen: () => rtc.current.shareScreen(),
-  }), [group, incoming, localStream, remoteStreams, error, muted, cameraEnabled]);
+  }), [group, incoming, localStream, remoteStreams, error, muted, cameraEnabled, qualityLabel]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 
