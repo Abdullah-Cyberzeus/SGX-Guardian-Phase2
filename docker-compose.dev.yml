@@ -29,8 +29,11 @@ x-guardian-common: &guardian-common
     SGX_DISABLE_COT_SATELLITE: "1"
     SGX_SIM_MODE: "true"
     SGX_DISABLE_POLICY_ENFORCEMENT: "1"
-    SGX_ADMIN_TLS_ENABLED: "1"
-    SGX_ADMIN_REQUIRE_HTTPS: "1"
+    # Docker development uses published localhost ports. HTTP localhost is a
+    # browser-trusted service-worker origin without a developer-installed CA.
+    # Physical board profiles remain HTTPS.
+    SGX_ADMIN_TLS_ENABLED: "0"
+    SGX_ADMIN_REQUIRE_HTTPS: "0"
     SGX_SSO_CYLENIUM_ENABLED: "1"
     SGX_CYLENIUM_OIDC_ISSUER: "${SGX_CYLENIUM_OIDC_ISSUER:-http://localhost:4000}"
     SGX_CYLENIUM_OIDC_TOKEN_ENDPOINT: "${SGX_CYLENIUM_OIDC_TOKEN_ENDPOINT:-http://host.docker.internal:4000/token}"
@@ -56,10 +59,12 @@ services:
       SGX_DUSAGE_SAMPLE_SECS: "15"
       SGX_DUSAGE_CATEGORIES_ENABLED: "1"
       SGX_CALL_SIGNALING_PORT: "50065"
-      SGX_CYLENIUM_OIDC_REDIRECT_URI: "${NODEA_CYLENIUM_REDIRECT_URI:-https://localhost:18443/auth/callback}"
+      SGX_CYLENIUM_OIDC_REDIRECT_URI: "${NODEA_CYLENIUM_REDIRECT_URI:-http://localhost:18443/auth/callback}"
     networks:
       sgxnet:
         ipv4_address: 172.31.250.10
+        aliases:
+          - guardian1.com
     ports:
       - "18443:8443"
     volumes:
@@ -85,10 +90,12 @@ services:
       SGX_TPM_DIK_HANDLE: "0x81000110"
       SGX_TPM_KEY_AUTH: "${NODEB_TPM_KEY_AUTH:-}"
       SGX_CALL_SIGNALING_PORT: "50065"
-      SGX_CYLENIUM_OIDC_REDIRECT_URI: "${NODEB_CYLENIUM_REDIRECT_URI:-https://localhost:28443/auth/callback}"
+      SGX_CYLENIUM_OIDC_REDIRECT_URI: "${NODEB_CYLENIUM_REDIRECT_URI:-http://localhost:28443/auth/callback}"
     networks:
       sgxnet:
         ipv4_address: 172.31.250.11
+        aliases:
+          - guardian2.com
     ports:
       - "28443:8443"
     volumes:
@@ -111,10 +118,12 @@ services:
       SGX_TPM_DIK_HANDLE: "0x81000120"
       SGX_TPM_KEY_AUTH: "${NODEC_TPM_KEY_AUTH:-}"
       SGX_CALL_SIGNALING_PORT: "50065"
-      SGX_CYLENIUM_OIDC_REDIRECT_URI: "${NODEC_CYLENIUM_REDIRECT_URI:-https://localhost:38443/auth/callback}"
+      SGX_CYLENIUM_OIDC_REDIRECT_URI: "${NODEC_CYLENIUM_REDIRECT_URI:-http://localhost:38443/auth/callback}"
     networks:
       sgxnet:
         ipv4_address: 172.31.250.12
+        aliases:
+          - guardian3.com
     ports:
       - "38443:8443"
     volumes:

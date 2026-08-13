@@ -116,6 +116,20 @@ function injectToken(token: string | null, storage: "local" | "session" = "local
 const tokenStorageForRole = (role?: string): "local" | "session" =>
   role?.toLowerCase() === "member" ? "session" : "local";
 
+async function persistOfflineMembership(session: Session) {
+  if (session.user.role?.toLowerCase() !== "member" || session.offline) return;
+  await membershipRepository.save({
+    guardianDid: session.guardianDid || "",
+    guardianFingerprint: session.guardianFingerprint,
+    circleIds: session.circleIds,
+    actorId: session.user.id,
+    role: "member",
+    browserRegistrationId: session.browserRegistrationId,
+    sessionExpiresAt: session.expiresAt,
+    registrationExpiresAt: session.registrationExpiresAt,
+  });
+}
+
 function makeLoginBypassSession(probe?: LoginBypassProbe): Session {
   const nodeId = probe?.nodeId?.trim() || "guardian-local";
   const hostname = probe?.hostname?.trim() || nodeId;
@@ -146,18 +160,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (session?.user.role?.toLowerCase() === "member") {
-      void membershipRepository.save({
-        guardianDid: session.guardianDid || "",
-        guardianFingerprint: session.guardianFingerprint,
-        circleIds: session.circleIds,
-        actorId: session.user.id,
-        role: "member",
-        browserRegistrationId: session.browserRegistrationId,
-        sessionExpiresAt: session.expiresAt,
-        registrationExpiresAt: session.registrationExpiresAt,
-      });
-    }
+    if (session) void persistOfflineMembership(session).catch(() => {});
   }, [session]);
 
   useEffect(() => {
@@ -251,6 +254,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await api.post<AuthPayload>("/auth/login", { email, password });
       const next = normalizeSession(data);
       if (!next.token) throw new Error("Login response did not include a bearer token");
+      await persistOfflineMembership(next);
       injectToken(next.token, tokenStorageForRole(next.user.role));
       setSession(next);
       return { error: null, role: next.user.role };
@@ -364,6 +368,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!next.token || next.user.role !== "member") {
         throw new Error("Guardian did not issue a valid member session");
       }
+      await persistOfflineMembership(next);
       injectToken(next.token, "session");
       setSession(next);
       localStorage.setItem("sgx_onboarded", "1");
@@ -378,6 +383,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await api.post<AuthPayload>("/auth/session/refresh");
       const next = normalizeSession(data);
       if (!next.token) throw new Error("Refresh response did not include a session token");
+      await persistOfflineMembership(next);
       injectToken(next.token, tokenStorageForRole(next.user.role));
       setSession(next);
       return { error: null };
