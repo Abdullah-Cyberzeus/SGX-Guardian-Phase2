@@ -16,6 +16,7 @@ function shouldSendNgrokSkipHeader(url: string): boolean {
 interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean>;
   suppressUnauthorizedEvent?: boolean;
+  idempotencyKey?: string;
 }
 
 export class ApiError extends Error {
@@ -26,6 +27,29 @@ export class ApiError extends Error {
     this.name = 'ApiError';
     this.status = status;
   }
+}
+
+export type ApiFailureKind = 'guardian_unreachable' | 'timeout' | 'unauthorized' | 'forbidden' | 'server' | 'http';
+
+function emitApiEvent(name: string, detail: Record<string, unknown>) {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(name, { detail }));
+  }
+}
+
+function operationId() {
+  return typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function classifyFailure(status: number | null, message: string): ApiFailureKind {
+  if (status === 401) return 'unauthorized';
+  if (status === 403) return 'forbidden';
+  if (status != null && status >= 500) return 'server';
+  if (status != null) return 'http';
+  if (message.toLowerCase().includes('timed out')) return 'timeout';
+  return 'guardian_unreachable';
 }
 
 async function extractErrorMessage(response: Response): Promise<string> {
@@ -95,7 +119,7 @@ class ApiClient {
   }
 
   async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-    const { params, suppressUnauthorizedEvent, ...fetchOptions } = options;
+    const { params, suppressUnauthorizedEvent, idempotencyKey, ...fetchOptions } = options;
     const url = this.buildUrl(endpoint, params);
     const method = (fetchOptions.method || 'GET').toUpperCase();
     const t0 = performance.now();
@@ -107,6 +131,9 @@ class ApiClient {
     };
     if (this.token && !headers['Authorization']) {
       headers['Authorization'] = `Bearer ${this.token}`;
+    }
+    if (method !== 'GET' && method !== 'HEAD' && !headers['Idempotency-Key']) {
+      headers['Idempotency-Key'] = idempotencyKey || operationId();
     }
     // A bodyless GET does not need a content type. Omitting it also avoids an
     // unnecessary CORS preflight when the admin UI is hosted separately.
@@ -128,6 +155,7 @@ class ApiClient {
         ? 'Request timed out after 20 seconds'
         : netErr instanceof Error ? netErr.message : 'Network error';
       monitoring.trackApiCall(method, endpoint, null, duration, message);
+      emitApiEvent('sgx:api-failure', { endpoint, method, status: null, kind: classifyFailure(null, message), message });
       throw new Error(message);
     } finally {
       window.clearTimeout(timeoutId);
@@ -142,15 +170,17 @@ class ApiClient {
       }
       const msg = await extractErrorMessage(response);
       monitoring.trackApiCall(method, endpoint, response.status, duration, msg);
+      emitApiEvent('sgx:api-failure', { endpoint, method, status: response.status, kind: classifyFailure(response.status, msg), message: msg });
       throw new ApiError(msg, response.status);
     }
 
     monitoring.trackApiCall(method, endpoint, response.status, duration);
+    emitApiEvent('sgx:api-success', { endpoint, method, status: response.status });
     return response.json();
   }
 
   async raw(endpoint: string, options: RequestOptions = {}): Promise<Response> {
-    const { params, suppressUnauthorizedEvent, ...fetchOptions } = options;
+    const { params, suppressUnauthorizedEvent, idempotencyKey, ...fetchOptions } = options;
     const baseOrigin = new URL(
       this.baseUrl,
       typeof window === 'undefined' ? 'http://localhost' : window.location.origin,
@@ -170,13 +200,19 @@ class ApiClient {
       ...(fetchOptions.headers as Record<string, string> | undefined),
     };
     if (this.token && !headers.Authorization) headers.Authorization = `Bearer ${this.token}`;
+    if ((fetchOptions.method || 'GET').toUpperCase() !== 'GET' && (fetchOptions.method || 'GET').toUpperCase() !== 'HEAD' && !headers['Idempotency-Key']) {
+      headers['Idempotency-Key'] = idempotencyKey || operationId();
+    }
     const response = await fetch(url.toString(), { ...fetchOptions, headers });
     if (!response.ok) {
       if (response.status === 401 && !endpoint.startsWith('/auth/') && !suppressUnauthorizedEvent) {
         window.dispatchEvent(new CustomEvent('sgx:unauthorized'));
       }
-      throw new ApiError(await extractErrorMessage(response), response.status);
+      const message = await extractErrorMessage(response);
+      emitApiEvent('sgx:api-failure', { endpoint, method: fetchOptions.method || 'GET', status: response.status, kind: classifyFailure(response.status, message), message });
+      throw new ApiError(message, response.status);
     }
+    emitApiEvent('sgx:api-success', { endpoint, method: fetchOptions.method || 'GET', status: response.status });
     return response;
   }
 
@@ -207,6 +243,7 @@ class ApiClient {
       };
       xhr.onerror = () => {
         monitoring.trackApiCall("POST", endpoint, null, Math.round(performance.now() - started), "Network error");
+        emitApiEvent('sgx:api-failure', { endpoint, method: 'POST', status: null, kind: 'guardian_unreachable', message: 'Network error' });
         reject(new Error("Upload network connection failed"));
       };
       xhr.onabort = () => reject(new DOMException("Upload cancelled", "AbortError"));
@@ -216,6 +253,7 @@ class ApiClient {
         })();
         if (xhr.status >= 200 && xhr.status < 300) {
           monitoring.trackApiCall("POST", endpoint, xhr.status, Math.round(performance.now() - started));
+          emitApiEvent('sgx:api-success', { endpoint, method: 'POST', status: xhr.status });
           resolve(response as T);
           return;
         }
@@ -224,6 +262,7 @@ class ApiClient {
         }
         const message = response?.error?.message || response?.message || response?.error || `Upload failed (HTTP ${xhr.status})`;
         monitoring.trackApiCall("POST", endpoint, xhr.status, Math.round(performance.now() - started), String(message));
+        emitApiEvent('sgx:api-failure', { endpoint, method: 'POST', status: xhr.status, kind: classifyFailure(xhr.status, String(message)), message: String(message) });
         reject(new Error(String(message)));
       };
       options.signal?.addEventListener("abort", () => xhr.abort(), { once: true });

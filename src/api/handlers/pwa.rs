@@ -58,6 +58,17 @@ pub struct PwaIdentityResponse {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PwaHealthResponse {
+    pub status: &'static str,
+    pub guardian_did: String,
+    pub actor_id: String,
+    pub role: String,
+    pub circle_ids: Vec<String>,
+    pub server_time: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OnboardingCircleSummary {
     pub id: String,
     pub name: String,
@@ -120,6 +131,7 @@ pub struct MemberJoinResponse {
     pub guardian_fingerprint: String,
     pub circle_ids: Vec<String>,
     pub browser_registration_id: String,
+    pub browser_member_did: String,
     pub expires_at: i64,
     pub registration_expires_at: i64,
 }
@@ -199,7 +211,8 @@ pub async fn preview_member_invite(
     if token.issuer_did == state.device_did {
         // A synthetic, non-persisted redeemer checks max-uses without consuming it.
         let circle = local_invite_circle(&state, &token)?;
-        invite::assert_redeemable(&circle, &token, "browser:preview")
+        let preview_did = crate::api::handlers::browser_member::did_for_registration("preview");
+        invite::assert_redeemable(&circle, &token, &preview_did)
             .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     } else {
         // A foreign issuer is valid for portable onboarding, but its address
@@ -271,7 +284,7 @@ pub async fn join_member(
     };
     let _join_guard = MEMBER_JOIN_LOCK.lock().await;
     let registration_id = Uuid::new_v4().to_string();
-    let redeemer = format!("browser:{}", registration_id);
+    let redeemer = crate::api::handlers::browser_member::did_for_registration(&registration_id);
     let locally_issued = token.issuer_did == state.device_did;
     if locally_issued {
         let circle = local_invite_circle(&state, &token)?;
@@ -349,6 +362,9 @@ pub async fn join_member(
         guardian_did: state.device_did.clone(),
         guardian_fingerprint: current_fingerprint,
         circle_ids: claims.circle_ids,
+        browser_member_did: crate::api::handlers::browser_member::did_for_registration(
+            &registration_id,
+        ),
         browser_registration_id: registration_id,
         expires_at: claims.exp,
         registration_expires_at,
@@ -487,6 +503,20 @@ pub async fn identity(State(state): State<Arc<AppState>>) -> Json<PwaIdentityRes
     })
 }
 
+pub async fn health(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthenticatedSession>,
+) -> Json<PwaHealthResponse> {
+    Json(PwaHealthResponse {
+        status: "guardian_connected",
+        guardian_did: state.device_did.clone(),
+        actor_id: auth.claims.sub,
+        role: auth.claims.role,
+        circle_ids: auth.claims.circle_ids,
+        server_time: chrono::Utc::now().timestamp(),
+    })
+}
+
 pub async fn contacts(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthenticatedSession>,
@@ -497,8 +527,17 @@ pub async fn contacts(
         &auth.claims.circle_ids,
     )
     .map_err(ApiError::Internal)?;
-    let Json(response) = peers::list(State(state)).await?;
-    let contacts = response
+    let Json(response) = peers::list(State(state.clone())).await?;
+    let mut contacts = vec![PwaContact {
+        peer_id: state.node_id.clone(),
+        did: Some(state.device_did.clone()),
+        status: "verified".to_string(),
+        last_seen: chrono::Utc::now().to_rfc3339(),
+        online: true,
+        call_available: true,
+        call_unavailable_reason: None,
+    }];
+    contacts.extend(response
         .peers
         .into_iter()
         .filter(|peer| {
@@ -515,7 +554,7 @@ pub async fn contacts(
             call_available: peer.call_available,
             call_unavailable_reason: peer.call_unavailable_reason,
         })
-        .collect::<Vec<_>>();
+        .collect::<Vec<_>>());
     let total = contacts.len();
 
     Ok(Json(PwaContactsResponse {

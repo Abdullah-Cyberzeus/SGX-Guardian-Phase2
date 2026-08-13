@@ -168,6 +168,9 @@ fn member_required_scope(method: &Method, path: &str) -> Option<&'static str> {
     if method == Method::GET && path == "/api/v1/pwa/identity" {
         return Some(scope::GUARDIAN_READ);
     }
+    if method == Method::GET && path == "/api/v1/pwa/health" {
+        return Some(scope::GUARDIAN_READ);
+    }
     if method == Method::GET && path == "/api/v1/pwa/contacts" {
         return Some(scope::CONTACTS_READ);
     }

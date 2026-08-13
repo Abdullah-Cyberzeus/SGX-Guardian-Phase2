@@ -6,6 +6,7 @@ import {
   type NotificationItem,
   type NotificationPrefs,
 } from "../../api/notifications";
+import { notificationRepository } from "../../pwa/db/notificationRepository";
 
 const LAST_ID_KEY = "sgx_notify_last_id";
 const MAX_ITEMS = 150;
@@ -70,11 +71,34 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     const [history, unread, currentPrefs] = await Promise.all([
-      notificationsApi.history().catch(() => [] as NotificationItem[]),
+      notificationsApi.history().catch(async () => {
+        const cached = await notificationRepository.list().catch(() => []);
+        return cached.map((item) => ({
+          id: item.id,
+          kind: item.kind,
+          title: item.title,
+          body: item.body,
+          severity: item.severity,
+          refId: item.refId,
+          createdAt: item.createdAt,
+          read: item.read,
+        })) as NotificationItem[];
+      }),
       notificationsApi.unreadCount().catch(() => ({ unread: 0 })),
       notificationsApi.getPrefs().catch(() => null),
     ]);
     setItems(history.slice(0, MAX_ITEMS));
+    void notificationRepository.replaceAll(history.map((item) => ({
+      id: item.id,
+      kind: String(item.kind),
+      title: item.title,
+      body: item.body,
+      severity: String(item.severity),
+      refId: item.refId,
+      createdAt: item.createdAt,
+      read: item.read,
+      updatedAt: Date.now(),
+    })));
     setUnreadCount(unread.unread ?? 0);
     if (currentPrefs) setPrefs(currentPrefs);
   }, []);
@@ -125,6 +149,17 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         }
         if (!notificationEnabled(prefs, item.kind)) return;
         setItems((prev) => (prev.some((n) => n.id === item.id) ? prev : [item, ...prev].slice(0, MAX_ITEMS)));
+        void notificationRepository.save({
+          id: item.id,
+          kind: String(item.kind),
+          title: item.title,
+          body: item.body,
+          severity: String(item.severity),
+          refId: item.refId,
+          createdAt: item.createdAt,
+          read: item.read,
+          updatedAt: Date.now(),
+        });
         if (!item.read) setUnreadCount((c) => c + 1);
         pushToast(item);
       })

@@ -58,6 +58,7 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         .route("/api/v1/node/restart", post(handlers::node::restart))
         .route("/api/v1/peers", get(handlers::peers::list))
         .route("/api/v1/pwa/contacts", get(handlers::pwa::contacts))
+        .route("/api/v1/pwa/health", get(handlers::pwa::health))
         .route("/api/v1/pwa/identity", get(handlers::pwa::identity))
         .route("/api/v1/pwa/onboarding", get(handlers::pwa::onboarding))
         .route(
@@ -466,6 +467,10 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             post(handlers::call::reject_browser_call),
         )
         .route("/api/v1/call/end", post(handlers::call::end_call))
+        .route(
+            "/api/v1/call/{session_id}/end",
+            post(handlers::call::end_browser_call),
+        )
         .route(
             "/api/v1/call/{session_id}/status",
             get(handlers::call::call_status),

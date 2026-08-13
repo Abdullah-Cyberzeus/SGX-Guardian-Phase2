@@ -4,6 +4,8 @@ import { networkApi } from "../../api/network";
 import type { BrowserSignal, CallSession, MediaType } from "./call.types";
 import { WebRtcService } from "./webrtc.service";
 import callHistoryService from "../../app/services/callHistoryService";
+import { useAuth } from "../../app/contexts/AuthContext";
+import { isMemberRole } from "../../app/utils/authorization";
 
 interface CallContextValue { call?:CallSession;incoming?:CallSession;localStream?:MediaStream;remoteStream?:MediaStream;peerId?:string;error?:string;muted:boolean;cameraEnabled:boolean;currentDevice?:string;
  startCall(peerId:string,media:MediaType[]):Promise<void>;accept(media?:MediaType[]):Promise<void>;decline():Promise<void>;end():Promise<void>;toggleMute():void;toggleCamera():void;sendTestTone():Promise<void>;shareScreen():Promise<void> }
@@ -18,13 +20,14 @@ const offlineValue:CallContextValue={
 const Context=createContext<CallContextValue>(offlineValue);
 
 export function CallProvider({children}:{children:ReactNode}){
+ const{session}=useAuth();
  const[call,setCall]=useState<CallSession>();const[incoming,setIncoming]=useState<CallSession>();const[peerId,setPeerId]=useState<string>();const[currentDevice,setCurrentDevice]=useState<string>();
  const[localStream,setLocalStream]=useState<MediaStream>();const[remoteStream,setRemoteStream]=useState<MediaStream>();const[error,setError]=useState<string>();const[muted,setMuted]=useState(false);const[cameraEnabled,setCameraEnabled]=useState(true);
  const rtc=useRef(new WebRtcService());const localNode=useRef("");const caller=useRef(false);const startedOffer=useRef(false);const lastSignal=useRef(0);
  const signalSocketConnected=useRef(false);const signalApplyChain=useRef(Promise.resolve());
- const hydrate=useCallback(async()=>{const[{nodeId},active,ice]=await Promise.all([networkApi.node(),callsApi.active(),callsApi.iceServers()]);rtc.current.configureIceServers(ice.ice_servers);localNode.current=nodeId;setCurrentDevice(nodeId);const current=active.calls[0];setCall(current);if(current)setPeerId(current.initiator_device_id===nodeId?current.receiver_device_id:current.initiator_device_id);setIncoming(current?.state==="offer_received"?current:undefined)},[]);
+ const hydrate=useCallback(async()=>{const[{nodeId},active,ice]=await Promise.all([networkApi.node(),callsApi.active(),callsApi.iceServers()]);rtc.current.configureIceServers(ice.ice_servers);const identity=isMemberRole(session?.user.role)&&session?.browserMemberDid?session.browserMemberDid:nodeId;localNode.current=identity;setCurrentDevice(identity);const current=active.calls.find(item=>item.initiator_device_id===identity||item.receiver_device_id===identity);setCall(current);if(current)setPeerId(current.initiator_device_id===identity?current.receiver_device_id:current.initiator_device_id);setIncoming(current?.state==="offer_received"&&current.receiver_device_id===identity?current:undefined)},[session?.browserMemberDid,session?.user.role]);
  useEffect(()=>{hydrate().catch(e=>setError(e instanceof Error?e.message:"Backend unavailable"))},[hydrate]);
- useEffect(()=>{const abort=new AbortController();let retry:number|undefined;const connect=()=>streamCallEvents(abort.signal,message=>{if(!("session" in message)){hydrate().catch(()=>undefined);return}const next=message.session;setCall(next.terminal?undefined:next);setPeerId(next.initiator_device_id===localNode.current?next.receiver_device_id:next.initiator_device_id);setIncoming(next.state==="offer_received"&&next.receiver_device_id===localNode.current?next:undefined);if(next.terminal){callHistoryService.recordDirect(next,localNode.current);rtc.current.close();setLocalStream(undefined);setRemoteStream(undefined)}}).catch(()=>{if(!abort.signal.aborted)retry=window.setTimeout(connect,3000)});connect();return()=>{abort.abort();if(retry)clearTimeout(retry)}},[hydrate]);
+ useEffect(()=>{const abort=new AbortController();let retry:number|undefined;const connect=()=>streamCallEvents(abort.signal,message=>{if(!("session" in message)){hydrate().catch(()=>undefined);return}const next=message.session;if(next.initiator_device_id!==localNode.current&&next.receiver_device_id!==localNode.current)return;setCall(next.terminal?undefined:next);setPeerId(next.initiator_device_id===localNode.current?next.receiver_device_id:next.initiator_device_id);setIncoming(next.state==="offer_received"&&next.receiver_device_id===localNode.current?next:undefined);if(next.terminal){callHistoryService.recordDirect(next,localNode.current);rtc.current.close();setLocalStream(undefined);setRemoteStream(undefined)}}).catch(()=>{if(!abort.signal.aborted)retry=window.setTimeout(connect,3000)});connect();return()=>{abort.abort();if(retry)clearTimeout(retry)}},[hydrate]);
  const setup=useCallback((sessionId:string)=>rtc.current.setup({sendSignal:(type,payload,operationId)=>callsApi.signal(sessionId,type,payload,operationId).then(()=>undefined),onRemoteStream:setRemoteStream,onConnectionState:state=>{if(state==="connected")callsApi.mediaReady(sessionId).catch(e=>setError(e.message));if(state==="failed")rtc.current.recover(caller.current).catch(e=>setError(e.message))}}),[]);
  useEffect(()=>{
   if(!call||!["accepted","media_negotiation","connected"].includes(call.state))return;
@@ -37,7 +40,7 @@ export function CallProvider({children}:{children:ReactNode}){
   };
   void startOffer();
   const applySignal=(signal:BrowserSignal)=>{
-   signalApplyChain.current=signalApplyChain.current.then(async()=>{if(signal.id<=lastSignal.current)return;await rtc.current.apply(signal);lastSignal.current=Math.max(lastSignal.current,signal.id)}).catch(e=>setError(e instanceof Error?e.message:"Signaling failed"));
+   signalApplyChain.current=signalApplyChain.current.then(async()=>{if(signal.id<=lastSignal.current)return;lastSignal.current=Math.max(lastSignal.current,signal.id);if(signal.sender_device_id===localNode.current)return;await rtc.current.apply(signal)}).catch(e=>setError(e instanceof Error?e.message:"Signaling failed"));
   };
   const closeSocket=openCallSignalSocket(call.session_id,lastSignal.current,applySignal,connected=>{signalSocketConnected.current=connected});
   const poll=async()=>{

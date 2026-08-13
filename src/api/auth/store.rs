@@ -176,6 +176,7 @@ pub trait UserStore: Send + Sync {
     async fn create(&self, new_user: NewUser) -> Result<User>;
     async fn create_initial_owner(&self, new_user: NewUser) -> Result<User>;
     async fn count(&self) -> Result<usize>;
+    async fn list(&self) -> Result<Vec<User>>;
     async fn find_by_id(&self, user_id: &str) -> Result<Option<User>>;
     async fn find_by_email(&self, email: &str) -> Result<Option<User>>;
     async fn find_by_oidc_sub(&self, oidc_sub: &str) -> Result<Option<User>>;
@@ -693,6 +694,10 @@ impl UserStore for JsonUserStore {
 
     async fn count(&self) -> Result<usize> {
         Ok(self.file.read().await?.len())
+    }
+
+    async fn list(&self) -> Result<Vec<User>> {
+        Ok(self.file.read().await?)
     }
 
     async fn find_by_id(&self, user_id: &str) -> Result<Option<User>> {

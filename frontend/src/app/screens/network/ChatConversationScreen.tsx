@@ -19,14 +19,33 @@ import { isMemberRole } from "../../utils/authorization";
 import { peerService } from "../../services/peerService";
 import { useContactNames } from "../../contexts/ContactNameContext";
 import { messageRepository } from "../../../pwa/db/messageRepository";
+import { pendingRepository } from "../../../pwa/db/pendingRepository";
 import { decryptValue } from "../../../pwa/crypto/vault";
 import { contactRepository } from "../../../pwa/db/contactRepository";
+import { ApiError } from "../../services/api";
 
 type View = "chat" | "files";
 
 function timeLabel(timestamp: number) {
   const date = new Date(timestamp > 10_000_000_000 ? timestamp : timestamp * 1000);
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function operationId() {
+  return typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function isQueueableSendFailure(cause: unknown) {
+  if (cause instanceof ApiError) return false;
+  if (!(cause instanceof Error)) return false;
+  const message = cause.message.toLowerCase();
+  return message.includes("failed to fetch")
+    || message.includes("network")
+    || message.includes("timed out")
+    || message.includes("abort")
+    || message.includes("load failed");
 }
 
 export function ChatConversationScreen() {
@@ -39,7 +58,14 @@ export function ChatConversationScreen() {
   const circle = (Array.isArray(circlesData) ? circlesData : []).find((item: any) => item.id === circleId);
   const member = circle?.members?.find((item: any) => item.did === peerDid);
   const [cachedPeer, setCachedPeer] = useState<any>(null);
-  const peer = (Array.isArray(peersData) ? peersData : []).find((item: any) => item.did === peerDid) || cachedPeer;
+  const memberPeer = member?.did ? {
+    peerId: member.did,
+    did: member.did,
+    online: member.status === "active",
+    callAvailable: member.status === "active",
+    callUnavailableReason: member.status === "active" ? undefined : "The member browser is inactive.",
+  } : undefined;
+  const peer = (Array.isArray(peersData) ? peersData : []).find((item: any) => item.did === peerDid) || cachedPeer || memberPeer;
   const isGroup = Boolean(circleId && !peerDid);
   const { startCall, call, currentDevice } = useCall();
   const { group } = useGroupCall();
@@ -53,6 +79,7 @@ export function ChatConversationScreen() {
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [startingCall, setStartingCall] = useState<"audio" | "video" | null>(null);
   const [liveConnected, setLiveConnected] = useState(false);
+  const [queuedMessageIds, setQueuedMessageIds] = useState<Set<string>>(new Set());
   const bottomRef = useRef<HTMLDivElement>(null);
   const recordsRef = useRef<ChatMessageRecord[]>(records);
   const markedReadRef = useRef<Set<string>>(new Set());
@@ -101,11 +128,15 @@ export function ChatConversationScreen() {
   }, [circleId, isGroup, peerDid]);
 
   useEffect(() => {
+    if (isMemberRole(session?.user.role) && session.browserMemberDid) {
+      setLocalDid(session.browserMemberDid);
+      return;
+    }
     const identity = isMemberRole(session?.user.role)
       ? peerService.getLocalIdentity()
       : didService.getStatus();
     void identity.then((status) => setLocalDid(status.did)).catch(() => {});
-  }, [session?.user.role]);
+  }, [session?.browserMemberDid, session?.user.role]);
   useEffect(() => {
     if (isMemberRole(session?.user.role)) {
       void loadHistory();
@@ -113,6 +144,20 @@ export function ChatConversationScreen() {
     }
     void chatService.sync().catch(() => {}).finally(() => void loadHistory());
   }, [loadHistory, session?.user.role]);
+  const refreshQueuedMessages = useCallback(() => {
+    void pendingRepository.list()
+      .then((pending) => setQueuedMessageIds(new Set(pending.filter((record) => record.kind === "chat.send").map((record) => record.id))))
+      .catch(() => setQueuedMessageIds(new Set()));
+  }, []);
+  useEffect(() => {
+    refreshQueuedMessages();
+    window.addEventListener("sgx:pending-operation", refreshQueuedMessages);
+    window.addEventListener("sgx:sync-state", refreshQueuedMessages);
+    return () => {
+      window.removeEventListener("sgx:pending-operation", refreshQueuedMessages);
+      window.removeEventListener("sgx:sync-state", refreshQueuedMessages);
+    };
+  }, [refreshQueuedMessages]);
   useEffect(() => {
     let refreshTimer: number | undefined;
     const close = openChatSocket(() => {
@@ -173,20 +218,28 @@ export function ChatConversationScreen() {
   const send = async (content: string | null, attachmentId: string | null = null) => {
     if ((isGroup && !circleId) || (!isGroup && !peerDid) || (!content?.trim() && !attachmentId)) return;
     setSending(true);
+    const sentContent = content?.trim() || null;
+    const recipientId = isGroup ? circleId! : peerDid!;
+    const conversationId = isGroup ? `circle:${circleId}` : `peer:${peerDid}`;
+    // Generated before the first attempt and reused on every retry, so a
+    // network failure followed by an offline-queue replay resends the same
+    // canonical ID rather than minting a new one — the backend recognizes the
+    // repeat and returns the already-accepted message instead of duplicating it.
+    const messageId = operationId();
+    const now = Math.floor(Date.now() / 1000);
+    const seqNo = Math.max(0, ...recordsRef.current.map((record) => record.seq_no)) + 1;
     try {
-      const sentContent = content?.trim() || null;
       const response = isGroup
-        ? await chatService.sendGroup(circleId!, sentContent, attachmentId)
-        : await chatService.sendDirect(peerDid!, sentContent, attachmentId);
+        ? await chatService.sendGroup(recipientId, sentContent, attachmentId, messageId)
+        : await chatService.sendDirect(recipientId, sentContent, attachmentId, messageId);
       setMessage("");
-      const now = Math.floor(Date.now() / 1000);
       setRecords((current) => current.some((record) => record.message_id === response.message_id) ? current : [...current, {
         message_id: response.message_id,
         sender_did: localDid || "local",
-        recipient_did: isGroup ? circleId! : peerDid!,
+        recipient_did: recipientId,
         ...(isGroup ? { group_id: circleId } : {}),
         timestamp: now,
-        seq_no: Math.max(0, ...current.map((record) => record.seq_no)) + 1,
+        seq_no: seqNo,
         encrypted_payload: JSON.stringify({ content: sentContent, attachment_id: attachmentId }),
         status: response.status || "pending",
         read_by: [],
@@ -195,6 +248,42 @@ export function ChatConversationScreen() {
       // keep the composer locked if storage or synchronization is slow.
       void loadHistory();
     } catch (cause) {
+      if (isQueueableSendFailure(cause)) {
+        const pendingRecord: ChatMessageRecord = {
+          message_id: messageId,
+          sender_did: localDid || "local",
+          recipient_did: recipientId,
+          ...(isGroup ? { group_id: circleId } : {}),
+          timestamp: now,
+          seq_no: seqNo,
+          encrypted_payload: JSON.stringify({ content: sentContent, attachment_id: attachmentId }),
+          status: "pending",
+          read_by: [],
+        };
+        await messageRepository.saveAndQueue({
+          id: messageId,
+          conversationId,
+          timestamp: now,
+          sequence: seqNo,
+          status: "pending",
+          value: pendingRecord,
+        }, {
+          id: messageId,
+          kind: "chat.send",
+          value: {
+            mode: isGroup ? "group" : "direct",
+            recipientId,
+            content: sentContent,
+            attachmentId,
+          },
+        });
+        setQueuedMessageIds((current) => new Set([...current, messageId]));
+        window.dispatchEvent(new CustomEvent("sgx:pending-operation"));
+        setRecords((current) => current.some((record) => record.message_id === messageId) ? current : [...current, pendingRecord]);
+        setMessage("");
+        toast.info("Message queued", { description: "It will send when Guardian reconnects." });
+        return;
+      }
       toast.error("Message was not sent", { description: cause instanceof Error ? cause.message : undefined });
     } finally {
       setSending(false);
@@ -217,13 +306,13 @@ export function ChatConversationScreen() {
   };
 
   const callPeer = async (media: MediaType[]) => {
-    if (isGroup || !peer) return;
+    if (isGroup || !peerDid) return;
     if (call || group) {
       toast.error("Guardian is busy", { description: "End or leave the current call before starting another." });
       return;
     }
-    if (!peer.callAvailable || !peer.online) {
-      toast.error("Peer is unavailable for calls", { description: peer.callUnavailableReason || "The peer is currently offline." });
+    if (!peer?.callAvailable || !peer.online) {
+      toast.error("Peer is unavailable for calls", { description: peer?.callUnavailableReason || "The peer is currently offline." });
       return;
     }
     if (peer.peerId === currentDevice) {
@@ -233,7 +322,7 @@ export function ChatConversationScreen() {
     const mode = media.includes("video") ? "video" : "audio";
     setStartingCall(mode);
     try {
-      await startCall(peer.peerId, media);
+      await startCall(peer.peerId || peerDid, media);
     } catch (cause) {
       toast.error("Call could not start", { description: cause instanceof Error ? cause.message : "The peer may be unavailable." });
     } finally {
@@ -259,9 +348,10 @@ export function ChatConversationScreen() {
       timestamp: timeLabel(record.timestamp),
       isMe,
       read: record.status === "read" || record.read_by.length > 0,
+      status: record.status === "pending" && isMe && !queuedMessageIds.has(record.message_id) ? "sent" : record.status,
       attachment,
     };
-  }), [records, localDid, isGroup, peerDid, circle, member, contactNameForDid]);
+  }), [records, localDid, isGroup, peerDid, circle, member, contactNameForDid, queuedMessageIds]);
 
   const files = useMemo<SharedFile[]>(() => messages.filter((item) => item.attachment).map((item) => ({
     id: item.id,
@@ -305,7 +395,7 @@ export function ChatConversationScreen() {
               <div className="max-w-[78%] overflow-hidden rounded-2xl border border-border px-4 py-2.5" style={{ background: item.isMe ? "var(--primary)" : "var(--card)", borderColor: item.isMe ? "transparent" : undefined }}>
                 {item.attachment ? <MessageAttachment attachment={item.attachment} isMe={item.isMe} /> : <p className="text-sm leading-6" style={{ color: item.isMe ? "var(--primary-foreground)" : "var(--foreground)" }}>{item.content}</p>}
               </div>
-              <span className="mx-1 mt-1 text-[10px] text-muted-foreground">{item.timestamp}{item.isMe ? item.read ? " · Read" : " · Sent" : ""}</span>
+              <span className="mx-1 mt-1 text-[10px] text-muted-foreground">{item.timestamp}{item.isMe ? item.status === "pending" ? " · Pending" : item.read ? " · Read" : " · Sent" : ""}</span>
             </div>)}
             <div ref={bottomRef} />
           </div>

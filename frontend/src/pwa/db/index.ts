@@ -8,4 +8,5 @@ export * from "./callRepository";
 export * from "./pendingRepository";
 export * from "./settingsRepository";
 export * from "./syncStateRepository";
+export * from "./notificationRepository";
 export * from "./maintenance";

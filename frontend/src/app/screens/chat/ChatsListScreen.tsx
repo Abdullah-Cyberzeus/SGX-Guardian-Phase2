@@ -16,6 +16,16 @@ function displayName(peer: Peer, contactName?: string) {
   return contactName || peer.peerId || peer.did || "Trusted peer";
 }
 
+function dedupePeers(peers: Peer[]) {
+  const byDid = new Map<string, Peer>();
+  for (const peer of peers) {
+    if (!peer.did) continue;
+    const existing = byDid.get(peer.did);
+    byDid.set(peer.did, existing ? { ...existing, ...peer, online: existing.online || peer.online } : peer);
+  }
+  return [...byDid.values()];
+}
+
 function previewTime(timestamp?: number) {
   if (!timestamp) return "";
   const date = new Date(timestamp > 10_000_000_000 ? timestamp : timestamp * 1000);
@@ -35,14 +45,14 @@ export function ChatsListScreen() {
   const [cachedPeers, setCachedPeers] = useState<Peer[]>([]);
   useEffect(() => {
     if (Array.isArray(data)) {
-      const current = data as Peer[];
+      const current = dedupePeers(data as Peer[]);
       setCachedPeers(current);
       current.filter((peer) => peer.did).forEach((peer) => void contactRepository.save({ did: peer.did!, displayName: peer.peerId, online: peer.online, lastSeen: peer.lastSeenAgo, updatedAt: Date.now() }));
     } else if (error) {
-      void contactRepository.list().then((items) => setCachedPeers(items.map((item) => ({ peerId: item.displayName, did: item.did, online: false, lastSeenAgo: item.lastSeen || "Cached", status: "verified", callAvailable: false } as Peer))));
+      void contactRepository.list().then((items) => setCachedPeers(dedupePeers(items.map((item) => ({ peerId: item.displayName, did: item.did, online: false, lastSeenAgo: item.lastSeen || "Cached", status: "verified", callAvailable: false } as Peer)))));
     }
   }, [data, error]);
-  const peers = useMemo(() => (Array.isArray(data) ? data : cachedPeers).filter((peer: Peer) => peer.status === "verified" && Boolean(peer.did)), [data, cachedPeers]);
+  const peers = useMemo(() => dedupePeers((Array.isArray(data) ? data : cachedPeers).filter((peer: Peer) => peer.status === "verified" && Boolean(peer.did))), [data, cachedPeers]);
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();

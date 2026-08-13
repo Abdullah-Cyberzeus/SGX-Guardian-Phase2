@@ -1,5 +1,6 @@
 use crate::api::{error::ApiError, state::AppState};
 use crate::api::auth::middleware::AuthenticatedSession;
+use crate::api::auth::store::UserRole;
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::circle::invite::{self, InviteToken, JoinRequest};
@@ -383,12 +384,72 @@ pub async fn list_members(
     Path(id): Path<String>,
 ) -> Result<Json<MemberListResponse>, ApiError> {
     ensure_member_browser_circle_access(&state, &session, &id)?;
-    let members = members::list_members(&state.node_id, &id).map_err(map_circle_error)?;
+    let mut members = members::list_members(&state.node_id, &id).map_err(map_circle_error)?;
+    append_browser_members(&state, &id, &mut members).await?;
     Ok(Json(MemberListResponse {
         status: "success".to_string(),
         count: members.len(),
         members,
     }))
+}
+
+async fn append_browser_members(
+    state: &AppState,
+    circle_id: &str,
+    members: &mut Vec<CircleMember>,
+) -> Result<(), ApiError> {
+    let users = state.admin.users.list().await?;
+    let now = chrono::Utc::now().timestamp();
+    for user in users {
+        if user.role != UserRole::Member
+            || user.status != "active"
+            || !user.circle_ids.iter().any(|allowed| allowed == circle_id)
+            || user
+                .registration_expires_at
+                .is_none_or(|expiry| expiry <= now)
+        {
+            continue;
+        }
+
+        let registration_id = match user.browser_registration_id.clone() {
+            Some(value) if !value.trim().is_empty() => value,
+            _ => continue,
+        };
+        let did = crate::api::handlers::browser_member::did_for_registration(&registration_id);
+        if members.iter().any(|member| {
+            member.browser_registration_id.as_deref() == Some(registration_id.as_str())
+                || member.did == did
+        }) {
+            continue;
+        }
+        members.push(CircleMember {
+            did,
+            vc_id: user.invite_id.clone().unwrap_or_else(|| user.user_id.clone()),
+            issuer_did: state.device_did.clone(),
+            role: CredentialRole::Member,
+            permissions: user.scopes.clone(),
+            join_date: user.created_at.clone(),
+            expiration_date: chrono::DateTime::from_timestamp(
+                user.registration_expires_at.unwrap_or(now),
+                0,
+            )
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_else(|| user.created_at.clone()),
+            membership_status: crate::vc::credential::MembershipStatus::Active,
+            lifecycle_state: crate::circle::MemberLifecycleState::Active,
+            node_hint: Some(state.node_id.clone()),
+            name: Some(user.name),
+            email: Some(user.email),
+            member_type: Some("browser".to_string()),
+            browser_registration_id: Some(registration_id),
+        });
+    }
+    members.sort_by(|left, right| {
+        let left_name = left.name.as_deref().unwrap_or(&left.did);
+        let right_name = right.name.as_deref().unwrap_or(&right.did);
+        left_name.cmp(right_name)
+    });
+    Ok(())
 }
 
 pub async fn add_member(

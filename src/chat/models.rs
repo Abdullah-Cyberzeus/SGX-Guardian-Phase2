@@ -28,6 +28,17 @@ pub enum MessageStatus {
     Failed,
 }
 
+impl MessageStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MessageStatus::Pending => "pending",
+            MessageStatus::Delivered => "delivered",
+            MessageStatus::Read => "read",
+            MessageStatus::Failed => "failed",
+        }
+    }
+}
+
 /// Metadata record for an encrypted file attachment.
 /// Maps the local file path to the ECDH-encrypted symmetric key.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -56,4 +67,5 @@ pub struct ReadReceiptRecord {
 pub enum ChatEvent {
     NewMessage(ChatMessageRecord),
     ReadReceipt(ReadReceiptRecord),
+    MessageStatus(ChatMessageRecord),
 }

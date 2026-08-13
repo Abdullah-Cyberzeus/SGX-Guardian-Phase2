@@ -30,6 +30,7 @@ export interface Session {
   guardianFingerprint?: string;
   circleIds: string[];
   browserRegistrationId?: string;
+  browserMemberDid?: string;
   registrationExpiresAt?: number;
   offline?: boolean;
   [key: string]: any;
@@ -74,6 +75,7 @@ interface AuthPayload {
   guardianFingerprint?: string;
   circleIds?: string[];
   browserRegistrationId?: string;
+  browserMemberDid?: string;
   registrationExpiresAt?: number;
   expiresAt?: number;
   valid?: boolean;
@@ -99,6 +101,7 @@ function normalizeSession(payload: AuthPayload, fallbackToken = ""): Session {
     guardianFingerprint: payload.guardianFingerprint ?? payload.user?.guardianFingerprint,
     circleIds: payload.circleIds ?? (Array.isArray(payload.user?.circleIds) ? payload.user.circleIds : []),
     browserRegistrationId: payload.browserRegistrationId ?? payload.user?.browserRegistrationId,
+    browserMemberDid: payload.browserMemberDid ?? payload.user?.browserMemberDid,
     registrationExpiresAt: payload.registrationExpiresAt ?? payload.user?.registrationExpiresAt,
     user,
   };
@@ -125,6 +128,7 @@ async function persistOfflineMembership(session: Session) {
     actorId: session.user.id,
     role: "member",
     browserRegistrationId: session.browserRegistrationId,
+    browserMemberDid: session.browserMemberDid,
     sessionExpiresAt: session.expiresAt,
     registrationExpiresAt: session.registrationExpiresAt,
   });
@@ -206,6 +210,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 guardianFingerprint: cached.guardianFingerprint,
                 circleIds: cached.circleIds,
                 browserRegistrationId: cached.browserRegistrationId,
+                browserMemberDid: cached.browserMemberDid,
                 expiresAt: cached.sessionExpiresAt,
                 registrationExpiresAt: cached.registrationExpiresAt,
                 user: { id: cached.actorId, email: "Offline member", role: "member" },

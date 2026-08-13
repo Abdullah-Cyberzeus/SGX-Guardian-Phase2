@@ -14,8 +14,17 @@ const routeFallback = (
 );
 
 export function MainLayout() {
-  const { reachable, lastSeen } = useGuardianConnectivity();
-  const isOffline = !reachable;
+  const { reachable, status, lastSeen, pendingCount, syncRunning, retryNow } = useGuardianConnectivity();
+  const showConnectivityBanner = !reachable || status === "credential_revoked";
+  const banner = showConnectivityBanner ? (
+    <OfflineBanner
+      status={status === "guardian_connected" ? "guardian_offline" : status}
+      lastSeen={lastSeen}
+      pendingCount={pendingCount}
+      syncRunning={syncRunning}
+      onRetry={() => void retryNow()}
+    />
+  ) : null;
 
   return (
     <>
@@ -28,7 +37,7 @@ export function MainLayout() {
           className="relative w-full flex flex-col"
           style={{ maxWidth: "440px", height: "100dvh", backgroundColor: "var(--background)" }}
         >
-          {isOffline && <OfflineBanner lastSeen={lastSeen} />}
+          {banner}
           <main
             className="flex-1 overflow-y-auto overflow-x-hidden"
             style={{ WebkitOverflowScrolling: "touch" }}
@@ -44,9 +53,9 @@ export function MainLayout() {
         className="hidden md:flex lg:hidden"
         style={{ height: "100dvh", backgroundColor: "var(--background)" }}
       >
-        {isOffline && (
+        {showConnectivityBanner && (
           <div className="fixed top-0 z-50" style={{ left: "64px", right: 0 }}>
-            <OfflineBanner lastSeen={lastSeen} />
+            {banner}
           </div>
         )}
         <AppSidebar variant="collapsed" />
@@ -64,9 +73,9 @@ export function MainLayout() {
         className="hidden lg:flex"
         style={{ height: "100dvh", backgroundColor: "var(--background)" }}
       >
-        {isOffline && (
+        {showConnectivityBanner && (
           <div className="fixed top-0 z-50" style={{ left: "240px", right: 0 }}>
-            <OfflineBanner lastSeen={lastSeen} />
+            {banner}
           </div>
         )}
         <AppSidebar variant="expanded" />

@@ -10,7 +10,7 @@ import { policyService } from '../services/policyService';
 import { logService } from '../services/logService';
 import { auditLogService } from '../services/auditLogService';
 import type { AuditLogsFilters } from '../services/auditLogService';
-import { peerService } from '../services/peerService';
+import { peerService, type Peer } from '../services/peerService';
 import { deviceService } from '../services/deviceService';
 import { didService } from '../services/didService';
 import { transportService } from '../services/transportService';
@@ -173,7 +173,38 @@ export function usePeers() {
 export function useCommunicationPeers() {
   const { session } = useAuth();
   const member = isMemberRole(session?.user.role);
-  return useApiData(() => member ? peerService.getContacts() : peerService.getAll(), { pollingInterval: 15000 });
+  return useApiData(async () => {
+    if (member) return peerService.getContacts();
+    const [peers, circles] = await Promise.all([
+      peerService.getAll(),
+      circleService.getAll().catch(() => []),
+    ]);
+    const byDid = new Map(peers.filter((peer) => peer.did).map((peer) => [peer.did!, peer]));
+    for (const circle of circles) {
+      for (const circleMember of circle.members || []) {
+        const did = circleMember.did;
+        if (!did || did === session?.guardianDid || circleMember.memberType !== "browser" || byDid.has(did)) continue;
+        const active = circleMember.status === "active"
+          || circleMember.status === "online"
+          || circleMember.lifecycleState === "active";
+        byDid.set(did, {
+          id: `member_${did}`,
+          peerId: circleMember.name || circleMember.email || did,
+          did,
+          ip: "",
+          port: 0,
+          status: "verified",
+          lastSeen: circleMember.joinedAt || circleMember.joinDate || "",
+          lastSeenAgo: active ? "Active browser member" : "Inactive browser member",
+          attestationCount: 0,
+          online: active,
+          callAvailable: active,
+          callUnavailableReason: active ? undefined : "The member browser is inactive.",
+        } as Peer);
+      }
+    }
+    return [...byDid.values()];
+  }, { pollingInterval: 15000 });
 }
 
 /**

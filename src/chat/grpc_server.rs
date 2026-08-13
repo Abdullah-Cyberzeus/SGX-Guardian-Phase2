@@ -149,10 +149,41 @@ impl ChatService for MyChatService {
             .map_err(|e| tonic::Status::internal(format!("Failed to read history: {}", e)))?;
 
         let (tx, rx) = tokio::sync::mpsc::channel(100);
+        let sync_state = self.state.clone();
 
         tokio::spawn(async move {
             for record in history {
                 if record.seq_no > last_seq {
+                    // This peer was offline (or unreachable) when we tried the
+                    // original push, leaving our own copy `Pending`. It just
+                    // proved it is reachable by requesting this catch-up sync,
+                    // so advance our copy to `Delivered` too — otherwise a
+                    // message we sent while the recipient was offline would
+                    // stay "Pending" forever on our side even after they
+                    // caught up.
+                    if record.status == MessageStatus::Pending {
+                        match crate::chat::storage::update_message_status(
+                            false,
+                            &requester_did,
+                            &record.message_id,
+                            MessageStatus::Delivered,
+                        )
+                        .await
+                        {
+                            Ok(Some(updated)) => {
+                                let _ = sync_state.chat_events.send(
+                                    crate::chat::models::ChatEvent::MessageStatus(updated),
+                                );
+                            }
+                            Ok(None) => {}
+                            Err(e) => tracing::warn!(
+                                "Failed to mark message {} delivered after sync: {}",
+                                record.message_id,
+                                e
+                            ),
+                        }
+                    }
+
                     let msg = crate::proto::sgx::PushMessageRequest {
                         message_id: record.message_id,
                         sender_did: record.sender_did,

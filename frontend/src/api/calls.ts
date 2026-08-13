@@ -7,7 +7,7 @@ export const callsApi = {
   initiate: (target_peer_id: string, media: MediaType[]) => api<{ session_id: string; status: string }>("/calls/initiate", { method: "POST", body: JSON.stringify({ target_peer_id, media }) }),
   accept: (sessionId: string, accepted_media: MediaType[]) => api<{ status: string }>(`/call/${sessionId}/accept`, { method: "POST", body: JSON.stringify({ accepted_media }) }),
   reject: (sessionId: string, reason = "declined") => api(`/call/${sessionId}/reject`, { method: "POST", body: JSON.stringify({ reason }) }),
-  end: (session_id: string) => api("/call/end", { method: "POST", body: JSON.stringify({ session_id }) }),
+  end: (session_id: string) => api(`/call/${session_id}/end`, { method: "POST", body: "{}" }),
   signal: (sessionId: string, type: SignalKind, payload: unknown, operation_id: string) => api(`/call/${sessionId}/signal`, {
     method: "POST",
     headers: { "Idempotency-Key": operation_id },

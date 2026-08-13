@@ -41,6 +41,14 @@ pub struct CircleMember {
     pub membership_status: MembershipStatus,
     pub lifecycle_state: MemberLifecycleState,
     pub node_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser_registration_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,6 +91,10 @@ pub fn list_members(node_id: &str, circle_id: &str) -> Result<Vec<CircleMember>,
                 membership_status: vc.credential_subject.membership_status.clone(),
                 lifecycle_state: state.into(),
                 node_hint: vc.credential_subject.node_hint.clone(),
+                name: None,
+                email: None,
+                member_type: Some("guardian".to_string()),
+                browser_registration_id: None,
             })
         })
         .collect::<Result<Vec<_>, CircleError>>()?;

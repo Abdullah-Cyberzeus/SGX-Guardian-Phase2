@@ -40,6 +40,7 @@ export interface MemberJoinResult {
   guardianFingerprint: string;
   circleIds: string[];
   browserRegistrationId: string;
+  browserMemberDid: string;
   expiresAt: number;
   registrationExpiresAt: number;
 }

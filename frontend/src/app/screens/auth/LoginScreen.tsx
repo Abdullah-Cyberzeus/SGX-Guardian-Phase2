@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { CervaisLogo } from "../../components/CervaisLogo";
 import { Eye, EyeOff, Shield, Loader2 } from "lucide-react";
 import { AUTH_NOTICE_KEY, useAuth } from "../../contexts/AuthContext";
@@ -9,6 +9,7 @@ import { homePathForRole } from "../../utils/authorization";
 
 export function LoginScreen() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { signIn, startCyleniumSignIn } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -21,6 +22,13 @@ export function LoginScreen() {
     return notice;
   });
   const cyleniumEnabled = isCyleniumConfigured();
+  const returnTo = typeof location.state === "object"
+    && location.state
+    && "returnTo" in location.state
+    && typeof location.state.returnTo === "string"
+    && location.state.returnTo.startsWith("/")
+    ? location.state.returnTo
+    : "";
 
   const canSubmit = email.includes("@") && password.length >= 6;
 
@@ -32,7 +40,7 @@ export function LoginScreen() {
     if (error) {
       toast.error(error);
     } else {
-      navigate(homePathForRole(role), { replace: true });
+      navigate(returnTo || homePathForRole(role), { replace: true });
     }
   };
 
@@ -42,7 +50,7 @@ export function LoginScreen() {
       return;
     }
     setCyleniumLoading(true);
-    startCyleniumSignIn("/home");
+    startCyleniumSignIn(returnTo || "/home");
   };
 
   return (

@@ -17,6 +17,8 @@ export interface CircleMember {
   membershipStatus?: 'active' | 'suspended' | 'revoked' | string;
   lifecycleState?: 'active' | 'expired' | 'revoked' | string;
   nodeHint?: string;
+  memberType?: 'guardian' | 'browser' | string;
+  browserRegistrationId?: string;
   status?: 'online' | 'offline' | string;
   joinedAt?: string;
 }
@@ -119,6 +121,8 @@ function normalizeMember(value: any): CircleMember {
     did,
     role: String(value?.role || 'member').toLowerCase() as CircleRole,
     nodeHint: nodeHint ? String(nodeHint) : undefined,
+    memberType: value?.memberType || value?.member_type,
+    browserRegistrationId: value?.browserRegistrationId || value?.browser_registration_id,
     status: lifecycle,
     joinedAt: value?.joinDate || value?.join_date || value?.joinedAt,
   };

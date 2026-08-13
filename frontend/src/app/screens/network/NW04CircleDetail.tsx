@@ -153,6 +153,7 @@ export function NW04CircleDetail() {
   };
 
   const peerForMember = (member: any) => {
+    if (String(member?.memberType || member?.member_type || "").toLowerCase() === "browser") return undefined;
     const candidates = nodeIdsForMember(member);
     const explicitNodeMatch = candidates.length
       ? trustedPeers.find((peer) => candidates.includes(peer.peerId.trim().toLowerCase()))
@@ -201,10 +202,13 @@ export function NW04CircleDetail() {
       toast.info("This member is the current Guardian", { description: "Choose another Circle member to start a call." });
       return;
     }
+    const isBrowserMember = String(member?.memberType || member?.member_type || "").toLowerCase() === "browser";
     const trustedPeer = peerForMember(member);
-    const target = trustedPeer?.peerId || "";
-    if (!trustedPeer) { toast.error("This Circle member is not linked to a trusted Guardian peer."); return; }
-    if (!trustedPeer.callAvailable) { toast.error("This trusted peer is not available for calls.", { description: trustedPeer.callUnavailableReason }); return; }
+    const target = trustedPeer?.peerId || (isBrowserMember ? member.did : "");
+    if (!target) { toast.error("This Circle member is not linked to a call target."); return; }
+    if (!isBrowserMember && !trustedPeer) { toast.error("This Circle member is not linked to a trusted Guardian peer."); return; }
+    if (!isBrowserMember && !trustedPeer?.callAvailable) { toast.error("This trusted peer is not available for calls.", { description: trustedPeer?.callUnavailableReason }); return; }
+    if (isBrowserMember && member.status !== "active") { toast.error("This browser member is inactive."); return; }
     if (!ensureCallAvailable()) return;
     setStartingCall(`${target}:${media.includes("video") ? "video" : "audio"}`);
     try {
@@ -555,11 +559,17 @@ export function NW04CircleDetail() {
                 )}
                 {members.map((member, i) => {
                   const trustedPeer = peerForMember(member);
-                  const target = trustedPeer?.peerId || "";
                   const busy = !!startingCall;
+                  const isBrowserMember = String(member?.memberType || member?.member_type || "").toLowerCase() === "browser";
                   const isCurrentMember = nodeIdsForMember(member).includes(String(currentDevice || "").trim().toLowerCase());
+                  const browserCallAvailable = isBrowserMember && !!member.did && member.status === "active";
+                  const target = trustedPeer?.peerId || (browserCallAvailable ? member.did : "");
                   const callUnavailableReason = isCurrentMember
                     ? "Current Guardian"
+                    : isBrowserMember && member.status !== "active"
+                    ? "Browser member inactive"
+                    : isBrowserMember
+                    ? ""
                     : peersLoading
                     ? "Checking trusted peers…"
                     : peersError
@@ -567,9 +577,9 @@ export function NW04CircleDetail() {
                       : !trustedPeer
                         ? "Member is not linked to a trusted Guardian peer"
                         : trustedPeer.callUnavailableReason || (!trustedPeer.callAvailable ? "Peer is not available for calls" : "");
-                  const callsDisabled = busy || isCurrentMember || !target || target === currentDevice || !trustedPeer?.callAvailable;
+                  const callsDisabled = busy || isCurrentMember || !target || target === currentDevice || (!browserCallAvailable && !trustedPeer?.callAvailable);
                   const memberName = String(displayForDid(member.did, member.name || member.nodeHint || member.did || "Guardian member"));
-                  const memberSecondary = member.email || displayForDid(member.did, member.did);
+                  const memberSecondary = member.email || (isBrowserMember ? "Browser PWA member" : displayForDid(member.did, member.did));
                   const memberKey = String(member.did || member.id || `${memberName}-${i}`);
                   return (
                   <div
@@ -587,6 +597,7 @@ export function NW04CircleDetail() {
                       <div className="flex items-center gap-2">
                         <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{memberName}</p>
                         {(member as any).pending && <StatusBadge status="Pending" variant="warning" />}
+                        {isBrowserMember && <StatusBadge status="PWA" variant="info" />}
                         {member.role.toLowerCase() === "owner"
                           ? <StatusBadge status="Admin" variant="info" />
                           : <StatusBadge status="Member" variant="info" />}
