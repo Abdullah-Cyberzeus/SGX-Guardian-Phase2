@@ -795,6 +795,13 @@ impl UserStore for JsonUserStore {
         self.file
             .mutate(move |users| {
                 let normalized_email = normalize_email(&member.email);
+                if users.iter().any(|user| {
+                    user.status == "active"
+                        && user.invite_id.as_deref() == Some(member.invite_id.as_str())
+                        && user.email != normalized_email
+                }) {
+                    return Err(anyhow!("member invitation has already been used"));
+                }
                 if let Some(existing) = users.iter_mut().find(|user| user.email == normalized_email) {
                     let registration_still_valid = existing.status == "active"
                         && existing

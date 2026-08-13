@@ -50,25 +50,13 @@ export function MemberJoinOnboarding() {
 
   const verifyInvite = async () => {
     if (!canPreview) return;
-    if (parsedInvite.ownerHost) {
-      try {
-        const issuingGuardianUrl = new URL("/join", parsedInvite.ownerHost);
-        issuingGuardianUrl.searchParams.set("invite", inviteToken);
-        if (issuingGuardianUrl.origin !== window.location.origin) {
-          // Fingerprint verification must restart against the Guardian that
-          // actually issued the invitation; never carry confirmation across.
-          window.location.assign(issuingGuardianUrl.toString());
-          return;
-        }
-      } catch {
-        toast.error("The invitation contains an invalid issuing Guardian address");
-        return;
-      }
-    }
     setBusy("preview");
     setPreview(null);
     try {
-      const result = await pwaOnboardingService.previewInvite(inviteToken);
+      // Always call the Guardian currently open in the browser. ownerHost is
+      // routing metadata for server-to-server redemption, never a browser
+      // redirect target.
+      const result = await pwaOnboardingService.previewInvite(inviteToken, parsedInvite.ownerHost || undefined);
       setPreview(result);
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "Invitation could not be verified");
@@ -85,6 +73,7 @@ export function MemberJoinOnboarding() {
       email: email.trim(),
       password,
       inviteToken,
+      ownerHost: parsedInvite.ownerHost || undefined,
       acceptedFingerprint: typedFingerprint,
       fingerprintConfirmed: confirmed,
     });
@@ -128,7 +117,7 @@ export function MemberJoinOnboarding() {
       </section>
 
       <section className="rounded-xl border border-border bg-card p-5">
-        <h2 className="font-semibold">Circle invitation</h2><p className="mt-1 text-sm text-muted-foreground">Paste the member invitation supplied by the Guardian administrator.</p>
+        <h2 className="font-semibold">Circle invitation</h2><p className="mt-1 text-sm text-muted-foreground">Paste the member invitation supplied by the Guardian administrator. You will remain on {window.location.host}; the issuing Guardian address is used only by this Guardian to redeem the invitation.</p>
         <textarea className="mt-3 min-h-28 w-full rounded-md border border-border bg-input-background p-3 font-mono text-xs outline-none" value={inviteMaterial} onChange={(event) => { setInviteMaterial(event.target.value); setPreview(null); }} placeholder="Invitation token or sgx-guardian:// link" />
         <button className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-40" disabled={!canPreview} onClick={() => void verifyInvite()}>{busy === "preview" && <Loader2 size={16} className="animate-spin" />}Verify invitation</button>
         {preview && <div className="mt-4 rounded-lg border border-primary/30 bg-primary/5 p-4"><div className="flex items-center gap-2 font-semibold text-primary"><CheckCircle2 size={17} />Invitation verified</div><dl className="mt-3 grid grid-cols-[90px_1fr] gap-2 text-sm"><dt className="text-muted-foreground">Circle</dt><dd>{preview.circleName}</dd><dt className="text-muted-foreground">Role</dt><dd className="capitalize">{preview.role}</dd><dt className="text-muted-foreground">Expires</dt><dd>{new Date(preview.expiresAt).toLocaleString()}</dd></dl></div>}
