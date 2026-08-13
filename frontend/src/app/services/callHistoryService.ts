@@ -1,4 +1,5 @@
 import type { CallSession, GroupSession, MediaType } from "../../features/calls/call.types";
+import { callRepository } from "../../pwa/db/callRepository";
 
 export type CallDirection = "incoming" | "outgoing";
 export type CallOutcome = "completed" | "missed" | "declined" | "cancelled" | "failed";
@@ -17,18 +18,14 @@ export interface CallHistoryRecord {
   circleId?: string;
 }
 
-const STORAGE_KEY = "sgx.call-history.v1";
 const EVENT_NAME = "sgx:call-history-changed";
+let records: CallHistoryRecord[] = [];
 
 function read(): CallHistoryRecord[] {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    return Array.isArray(parsed) ? parsed : [];
-  } catch { return []; }
+  return [...records];
 }
 
 function write(record: CallHistoryRecord) {
-  const records = read();
   const existing = records.findIndex((item) => item.id === record.id);
   if (existing >= 0) {
     const previous = records[existing];
@@ -38,9 +35,15 @@ function write(record: CallHistoryRecord) {
   }
   else records.push(record);
   records.sort((a, b) => new Date(b.endedAt).getTime() - new Date(a.endedAt).getTime());
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(records.slice(0, 500)));
+  records = records.slice(0, 500);
+  void callRepository.save({ ...record, media: record.media, startedAt: new Date(record.startedAt).getTime() });
   window.dispatchEvent(new CustomEvent(EVENT_NAME));
 }
+
+void callRepository.list().then((cached) => {
+  records = cached.map((record) => ({ ...record, media: record.media as MediaType[], startedAt: new Date(record.startedAt).toISOString() })) as CallHistoryRecord[];
+  window.dispatchEvent(new CustomEvent(EVENT_NAME));
+}).catch(() => {});
 
 function directOutcome(session: CallSession, localDevice: string, explicit?: CallOutcome): CallOutcome {
   if (explicit) return explicit;

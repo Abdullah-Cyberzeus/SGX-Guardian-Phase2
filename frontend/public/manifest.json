@@ -2,7 +2,9 @@
   "name": "SG-X Guardian",
   "short_name": "Guardian",
   "description": "Cervais SG-X Guardian — Zero-trust mobile security platform",
-  "start_url": "/",
+  "id": "/",
+  "start_url": "/chats?source=pwa",
+  "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#18181b",
@@ -13,13 +15,13 @@
       "src": "/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     }
   ],
   "screenshots": [

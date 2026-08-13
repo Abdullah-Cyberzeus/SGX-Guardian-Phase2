@@ -513,6 +513,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => eprintln!("  ⚠️ DID Document load failed: {}", e),
     }
 
+    // Share the active signing identity with the API, pairing, and calling
+    // runtimes instead of reloading independent key-manager instances.
+    let km = Arc::new(km);
+
     // === Crypto Provider Status ===
     match km.backend_name() {
         "SE050" => {
@@ -885,6 +889,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             public_key: format!("placeholder-key-{}", &node[4..]),
             metrics: None,
             relay: None,
+            api: None,
         }
     }
 
@@ -1446,6 +1451,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let wants_relay = std::env::var("SGX_WANTS_RELAY")
                     .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
                     .unwrap_or(false);
+                let pairing_proof = match std::env::var("SGX_GUARDIAN_PAIRING_CODE") {
+                    Ok(code) if !code.trim().is_empty() => {
+                        let device_did = sgx_guardian_client::did::DidRecord::load(
+                            sgx_guardian_client::did::DEFAULT_DID_PATH,
+                        )
+                        .map(|record| record.did)
+                        .map_err(|e| {
+                            eprintln!("⚠️ Failed to load DID for pairing bootstrap proof: {}", e);
+                            e
+                        })
+                        .ok();
+                        let device_pubkey = km.pubkey_der().map_err(|e| {
+                            eprintln!(
+                                "⚠️ Failed to load device pubkey for pairing bootstrap proof: {}",
+                                e
+                            );
+                            e
+                        });
+                        match (device_did, device_pubkey) {
+                            (Some(device_did), Ok(device_pubkey)) => {
+                                match sgx_guardian_client::api::auth::pairing::build_pairing_proof(
+                                    &code,
+                                    &node_id,
+                                    &device_did,
+                                    &device_pubkey,
+                                    km.clone(),
+                                )
+                                .await
+                                {
+                                    Ok(proof) => Some(proof),
+                                    Err(e) => {
+                                        eprintln!(
+                                            "⚠️ Failed to build pairing bootstrap proof: {}",
+                                            e
+                                        );
+                                        None
+                                    }
+                                }
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
 
                 // BLOCKING: wait until we have the cert before starting Nebula
                 sgx_guardian_client::cert_client::request_certificate_from_ca(
@@ -1455,6 +1504,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     pubkey_b64.clone(),
                     wants_lh,
                     wants_relay,
+                    pairing_proof,
                 )
                 .await;
 
@@ -2611,6 +2661,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build tonic Identity + CA root
     let identity = Identity::from_pem(cert_pem.clone(), key_pem.clone());
     let ca_cert = TonicCertificate::from_pem(cert_pem.clone());
+    // Start the network runtime and mount its Wi-Fi routes into the same API
+    // listener as the embedded frontend.
+    let (wifi_router, runtime_manager) = sgx_guardian_client::runtime::start_daemon().await;
     // spawn gRPC server using tonic Identity + CA (mTLS)
     let server_task = task::spawn({
         let identity = identity.clone();
@@ -2646,18 +2699,62 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-    // === REST Admin API (axum) on :8443 ===
-    let api_state =
-        sgx_guardian_client::api::state::AppState::from_env(node_id.clone(), did_resolver.clone());
-    let api_bind: std::net::SocketAddr = "0.0.0.0:8443".parse().unwrap();
-    tokio::spawn({
-        let state = api_state.clone();
-        async move {
-            if let Err(e) = sgx_guardian_client::api::serve(state, api_bind).await {
-                eprintln!("❌ REST API server failed: {:?}", e);
-            }
-        }
+    // === REST API (axum) on :8443 ===
+    let admin_stores =
+        sgx_guardian_client::api::auth::store::AdminStores::new("/var/lib/sgx-guardian/admin");
+    sgx_guardian_client::api::auth::store::install_global_admin_stores(admin_stores.clone());
+    let device_did =
+        sgx_guardian_client::did::DidRecord::load(sgx_guardian_client::did::DEFAULT_DID_PATH)
+            .map(|record| record.did)
+            .unwrap_or_else(|e| {
+                eprintln!("⚠️ Failed to load persisted DID for auth issuer: {}", e);
+                sgx_guardian_client::did::Did::from_id_bytes(&[0u8; 32]).to_string()
+            });
+    let device_pubkey_point = km.pubkey_der().unwrap_or_else(|e| {
+        eprintln!("⚠️ Failed to load auth verification key: {}", e);
+        Vec::new()
     });
+    let api_state = sgx_guardian_client::api::state::AppState::from_env(
+        node_id.clone(),
+        did_resolver.clone(),
+        km.clone(),
+        admin_stores,
+        device_did,
+        device_pubkey_point,
+    );
+    let api_bind: std::net::SocketAddr = "0.0.0.0:8443".parse().unwrap();
+    let tls_cfg = this_node.api_or_default().tls;
+    if tls_cfg.require_https && !tls_cfg.enabled {
+        eprintln!("❌ REST API TLS misconfigured: require_https=true but tls.enabled=false");
+        log_error(
+            &node_id,
+            "REST API TLS misconfigured: require_https=true but tls.enabled=false",
+        );
+    } else {
+        let tls = tls_cfg.enabled.then(|| sgx_guardian_client::api::AdminTls {
+            cert_path: tls_cfg.resolved_cert_path(&node_id),
+            key_path: tls_cfg.resolved_key_path(&node_id),
+        });
+        let require_https = tls_cfg.require_https;
+        tokio::spawn({
+            let state = api_state.clone();
+            async move {
+                if let Err(e) =
+                    sgx_guardian_client::api::serve(state, api_bind, tls, wifi_router).await
+                {
+                    eprintln!("❌ REST API server failed: {:?}", e);
+                    if require_https {
+                        eprintln!("TLS required; REST API not started (fail-closed).");
+                    }
+                }
+            }
+        });
+        let scheme = if tls_cfg.enabled { "https" } else { "http" };
+        println!(
+            "✅ REST API ({}) starting on {}://{}/api/v1",
+            node_id, scheme, api_bind
+        );
+    }
 
     // === CRL gossip engine ===
     // Decentralized epidemic revocation propagation: listener on
@@ -2675,8 +2772,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Subscribes to the notification bus and durably appends live events so
     // reconnecting consoles can replay missed notifications.
     sgx_guardian_client::notify::spawn(node_id.clone());
-    println!("✅ REST admin API listening on http://{}/api/v1", api_bind);
-
     // === NMAP discovery scheduler ===
     {
         use sgx_guardian_client::discovery::{DiscoveryScheduler, Inventory};
@@ -2747,7 +2842,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Policy enforcement started",
         );
 
-        match enforcement::enforce_policy(&active_policy) {
+        match enforcement::apply_policy(&active_policy) {
             Ok(_) => {
                 println!("✅ Policy enforcement applied successfully");
 
@@ -3036,6 +3131,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ = signal::ctrl_c() => {
                 println!("\n shutting down gracefully...");
                 log_event(&node_id, "Ctrl+C detected — graceful shutdown initiated");
+                println!("🛑 Tearing down networking stacks...");
+                let _ = runtime_manager
+                    .handle_transition(sgx_guardian_client::runtime::models::RuntimeMode::Off)
+                    .await;
                 break;
             },
             res = &mut server_task => {

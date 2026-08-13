@@ -18,6 +18,9 @@ import { useAuth } from "../../contexts/AuthContext";
 import { isMemberRole } from "../../utils/authorization";
 import { peerService } from "../../services/peerService";
 import { useContactNames } from "../../contexts/ContactNameContext";
+import { messageRepository } from "../../../pwa/db/messageRepository";
+import { decryptValue } from "../../../pwa/crypto/vault";
+import { contactRepository } from "../../../pwa/db/contactRepository";
 
 type View = "chat" | "files";
 
@@ -32,10 +35,11 @@ export function ChatConversationScreen() {
   const { session } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const { data: circlesData, loading: circlesLoading } = useCircles();
-  const { data: peersData, loading: peersLoading } = useCommunicationPeers();
+  const { data: peersData, loading: peersLoading, error: peersError } = useCommunicationPeers();
   const circle = (Array.isArray(circlesData) ? circlesData : []).find((item: any) => item.id === circleId);
   const member = circle?.members?.find((item: any) => item.did === peerDid);
-  const peer = (Array.isArray(peersData) ? peersData : []).find((item: any) => item.did === peerDid);
+  const [cachedPeer, setCachedPeer] = useState<any>(null);
+  const peer = (Array.isArray(peersData) ? peersData : []).find((item: any) => item.did === peerDid) || cachedPeer;
   const isGroup = Boolean(circleId && !peerDid);
   const { startCall, call, currentDevice } = useCall();
   const { group } = useGroupCall();
@@ -54,6 +58,14 @@ export function ChatConversationScreen() {
   const markedReadRef = useRef<Set<string>>(new Set());
   const view: View = searchParams.get("view") === "files" ? "files" : "chat";
 
+  useEffect(() => {
+    if (!peerDid || !peersError) return;
+    void contactRepository.list().then((items) => {
+      const contact = items.find((item) => item.did === peerDid);
+      if (contact) setCachedPeer({ peerId: contact.displayName, did: contact.did, online: false, callAvailable: false });
+    });
+  }, [peerDid, peersError]);
+
   const loadHistory = useCallback(async () => {
     if ((isGroup && !circleId) || (!isGroup && !peerDid)) return;
     setLoading(true);
@@ -61,9 +73,28 @@ export function ChatConversationScreen() {
       const response = isGroup
         ? await chatService.groupHistory(circleId)
         : await chatService.directHistory(peerDid!);
-      setRecords([...response.messages].sort((a, b) => a.seq_no - b.seq_no || a.timestamp - b.timestamp));
+      const sorted = [...response.messages].sort((a, b) => a.seq_no - b.seq_no || a.timestamp - b.timestamp);
+      setRecords(sorted);
+      const conversationId = isGroup ? `circle:${circleId}` : `peer:${peerDid}`;
+      sorted.forEach((record) => void messageRepository.save({
+        id: record.message_id,
+        conversationId,
+        timestamp: record.timestamp,
+        sequence: record.seq_no,
+        status: record.status,
+        value: record,
+      }));
     } catch (cause) {
-      toast.error("Conversation could not be loaded", { description: cause instanceof Error ? cause.message : undefined });
+      const conversationId = isGroup ? `circle:${circleId}` : `peer:${peerDid}`;
+      try {
+        const cached = await messageRepository.list(conversationId);
+        const restored = await Promise.all(cached.map((record) => decryptValue<ChatMessageRecord>(record.payload)));
+        setRecords(restored);
+        if (restored.length) toast.info("Showing encrypted cached messages");
+        else throw cause;
+      } catch {
+        toast.error("Conversation could not be loaded", { description: cause instanceof Error ? cause.message : undefined });
+      }
     } finally {
       setLoading(false);
     }

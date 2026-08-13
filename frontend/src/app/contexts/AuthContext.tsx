@@ -11,6 +11,7 @@ import {
 } from "../utils/cyleniumAuth";
 import type { GuardianRole } from "../utils/authorization";
 import pwaOnboardingService, { type MemberJoinPayload } from "../services/pwaOnboardingService";
+import { membershipRepository } from "../../pwa/db/membershipRepository";
 
 export interface User {
   id: string;
@@ -29,6 +30,8 @@ export interface Session {
   guardianFingerprint?: string;
   circleIds: string[];
   browserRegistrationId?: string;
+  registrationExpiresAt?: number;
+  offline?: boolean;
   [key: string]: any;
 }
 
@@ -71,6 +74,7 @@ interface AuthPayload {
   guardianFingerprint?: string;
   circleIds?: string[];
   browserRegistrationId?: string;
+  registrationExpiresAt?: number;
   expiresAt?: number;
   valid?: boolean;
 }
@@ -95,6 +99,7 @@ function normalizeSession(payload: AuthPayload, fallbackToken = ""): Session {
     guardianFingerprint: payload.guardianFingerprint ?? payload.user?.guardianFingerprint,
     circleIds: payload.circleIds ?? (Array.isArray(payload.user?.circleIds) ? payload.user.circleIds : []),
     browserRegistrationId: payload.browserRegistrationId ?? payload.user?.browserRegistrationId,
+    registrationExpiresAt: payload.registrationExpiresAt ?? payload.user?.registrationExpiresAt,
     user,
   };
 }
@@ -141,6 +146,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (session?.user.role?.toLowerCase() === "member") {
+      void membershipRepository.save({
+        guardianDid: session.guardianDid || "",
+        guardianFingerprint: session.guardianFingerprint,
+        circleIds: session.circleIds,
+        actorId: session.user.id,
+        role: "member",
+        browserRegistrationId: session.browserRegistrationId,
+        sessionExpiresAt: session.expiresAt,
+        registrationExpiresAt: session.registrationExpiresAt,
+      });
+    }
+  }, [session]);
+
+  useEffect(() => {
     const handleUnauthorized = () => {
       sessionStorage.setItem(AUTH_NOTICE_KEY, "Your Guardian session expired or was revoked. Please sign in again.");
       injectToken(null);
@@ -163,7 +183,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch {
         if (!cancelled) {
           injectToken(null);
-          setSession(null);
+          try {
+            const health = await fetch("/api/v1/health", { cache: "no-store", signal: AbortSignal.timeout(1500) });
+            if (health.ok) {
+              setSession(null);
+            } else {
+              throw new Error("Guardian unreachable");
+            }
+          } catch {
+            const cached = await membershipRepository.get().catch(() => undefined);
+            const registrationValid = cached?.registrationExpiresAt == null
+              || cached.registrationExpiresAt > Math.floor(Date.now() / 1000);
+            if (cached && registrationValid && !cancelled) {
+              setSession({
+                token: "",
+                offline: true,
+                scopes: [],
+                guardianDid: cached.guardianDid,
+                guardianFingerprint: cached.guardianFingerprint,
+                circleIds: cached.circleIds,
+                browserRegistrationId: cached.browserRegistrationId,
+                expiresAt: cached.sessionExpiresAt,
+                registrationExpiresAt: cached.registrationExpiresAt,
+                user: { id: cached.actorId, email: "Offline member", role: "member" },
+              });
+            } else {
+              setSession(null);
+            }
+          }
         }
       } finally {
         if (!cancelled) {
@@ -291,6 +338,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     injectToken(null);
     setSession(null);
+    await membershipRepository.remove().catch(() => {});
     sessionStorage.removeItem(AUTH_NOTICE_KEY);
     localStorage.removeItem("sgx_onboarded");
   };
@@ -300,6 +348,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await api.post("/auth/sessions/revoke-all");
       injectToken(null);
       setSession(null);
+      await membershipRepository.remove().catch(() => {});
       sessionStorage.removeItem(AUTH_NOTICE_KEY);
       localStorage.removeItem("sgx_onboarded");
       return { error: null };
@@ -343,6 +392,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       injectToken(null);
       setSession(null);
       localStorage.removeItem("sgx_onboarded");
+      await membershipRepository.remove();
       return { error: null };
     } catch (cause) {
       return { error: cause instanceof Error ? cause.message : "Unable to remove browser" };

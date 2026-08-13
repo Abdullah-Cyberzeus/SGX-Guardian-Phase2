@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2, MessageSquare, Phone, Search, ShieldCheck, Users, Video } from "lucide-react";
 import { useNavigate } from "react-router";
 import { PageHeader } from "../../components/PageHeader";
 import { useCommunicationPeers } from "../../hooks/useApiData";
 import type { Peer } from "../../services/peerService";
+import { contactRepository } from "../../../pwa/db/contactRepository";
 
 function initials(peer: Peer) {
   return peer.peerId.split(/[-_:]/).filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "P";
@@ -12,12 +13,22 @@ function initials(peer: Peer) {
 export function MemberContactsScreen() {
   const navigate = useNavigate();
   const { data, loading, error, refetch } = useCommunicationPeers();
+  const [cached, setCached] = useState<Peer[]>([]);
   const [query, setQuery] = useState("");
+  useEffect(() => {
+    if (Array.isArray(data)) {
+      const current = data as Peer[];
+      setCached(current);
+      current.filter((peer) => peer.did).forEach((peer) => void contactRepository.save({ did: peer.did!, displayName: peer.peerId, online: peer.online, lastSeen: peer.lastSeenAgo, updatedAt: Date.now() }));
+    } else if (error) {
+      void contactRepository.list().then((items) => setCached(items.map((item) => ({ peerId: item.displayName, did: item.did, online: item.online, lastSeenAgo: item.lastSeen || "Cached", status: "verified", callAvailable: false } as Peer))));
+    }
+  }, [data, error]);
   const contacts = useMemo(() => {
-    const all = (Array.isArray(data) ? data : []).filter((peer: Peer) => peer.status === "verified" && Boolean(peer.did));
+    const all = (Array.isArray(data) ? data : cached).filter((peer: Peer) => peer.status === "verified" && Boolean(peer.did));
     const needle = query.trim().toLowerCase();
     return needle ? all.filter((peer: Peer) => `${peer.peerId} ${peer.did}`.toLowerCase().includes(needle)) : all;
-  }, [data, query]);
+  }, [data, cached, query]);
 
   return <div className="flex h-full flex-col">
     <PageHeader title="Contacts" subtitle="Trusted communication contacts" />
@@ -29,7 +40,7 @@ export function MemberContactsScreen() {
     </div>
     <div className="flex-1 overflow-y-auto"><div className="mx-auto max-w-3xl divide-y divide-border">
       {loading && <div className="flex items-center justify-center gap-2 p-12 text-sm text-muted-foreground"><Loader2 size={20} className="animate-spin" />Loading contacts…</div>}
-      {!loading && error && <div className="p-10 text-center"><p className="text-sm text-destructive">Contacts could not be loaded.</p><button onClick={() => void refetch()} className="mt-3 rounded-md border border-border px-4 py-2 text-sm">Try again</button></div>}
+      {!loading && error && cached.length === 0 && <div className="p-10 text-center"><p className="text-sm text-destructive">Contacts could not be loaded.</p><button onClick={() => void refetch()} className="mt-3 rounded-md border border-border px-4 py-2 text-sm">Try again</button></div>}
       {!loading && !error && contacts.length === 0 && <div className="flex flex-col items-center gap-3 p-12 text-center"><Users size={40} className="text-muted-foreground" /><p className="text-sm font-semibold">No trusted contacts yet</p><p className="max-w-xs text-xs text-muted-foreground">Contacts appear after their Guardian is attested and authorized for communication.</p></div>}
       {contacts.map((peer: Peer) => <article key={peer.did} className="flex items-center gap-3 px-4 py-4 md:px-6">
         <div className="relative grid h-12 w-12 shrink-0 place-items-center rounded-full bg-primary/15 font-semibold text-primary">{initials(peer)}<span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-background" style={{ background: peer.online ? "var(--chart-2)" : "var(--muted-foreground)" }} /></div>

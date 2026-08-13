@@ -1,23 +1,22 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { RouterProvider } from "react-router";
 import { router } from "./routes";
 import { Toaster } from "sonner";
+import { PwaUpdatePrompt } from "./components/PwaUpdatePrompt";
+
+const APP_VERSION = __APP_VERSION__;
 
 function usePWA() {
+  const [waiting, setWaiting] = useState<ServiceWorker | null>(null);
   useEffect(() => {
     const isIframe = window.self !== window.top;
-    const isLoopbackHost =
-      window.location.hostname === "localhost" ||
-      window.location.hostname === "127.0.0.1" ||
-      window.location.hostname === "[::1]";
     const isFigmaPreview =
       window.location.hostname.includes("figma.site") ||
       window.location.hostname.includes("figmaiframepreview") ||
       window.location.hostname.includes("makeproxy");
 
-    // In loopback and preview environments, stale service workers are more
-    // harmful than helpful because they can keep serving old route chunks.
-    if ((isIframe || isFigmaPreview || isLoopbackHost) && "serviceWorker" in navigator) {
+    // Embedded design previews are not the deployed Guardian application.
+    if ((isIframe || isFigmaPreview) && "serviceWorker" in navigator) {
       navigator.serviceWorker.getRegistrations().then((registrations) => {
         registrations.forEach((reg) => {
           reg.unregister();
@@ -67,23 +66,35 @@ function usePWA() {
     // Register Service Worker (production only)
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker
-        .register("/sw.js", { scope: "/" })
+        .register(`/sw.js?v=${encodeURIComponent(APP_VERSION)}`, { scope: "/" })
         .then((reg) => {
           console.log("[SW] Registered, scope:", reg.scope);
+          if (reg.waiting) setWaiting(reg.waiting);
+          reg.addEventListener("updatefound", () => {
+            const worker = reg.installing;
+            worker?.addEventListener("statechange", () => {
+              if (worker.state === "installed" && navigator.serviceWorker.controller) setWaiting(worker);
+            });
+          });
         })
         .catch((err) => {
           console.warn("[SW] Registration skipped:", err.message);
         });
     }
+    const reloadForController = () => window.location.reload();
+    navigator.serviceWorker?.addEventListener("controllerchange", reloadForController);
+    return () => navigator.serviceWorker?.removeEventListener("controllerchange", reloadForController);
   }, []);
+  return waiting ? () => waiting.postMessage({ type: "SKIP_WAITING" }) : null;
 }
 
 export default function App() {
-  usePWA();
+  const applyUpdate = usePWA();
 
   return (
     <>
       <RouterProvider router={router} />
+      {applyUpdate && <PwaUpdatePrompt apply={applyUpdate} />}
       <Toaster
         theme="dark"
         position="top-center"
