@@ -67,7 +67,7 @@ services:
       - nodeA-lib:/var/lib/sgx-guardian
       - nodeA-log:/var/log/sgx-guardian
     healthcheck:
-      test: ["CMD", "curl", "-ksf", "https://127.0.0.1:8443/api/v1/health"]
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8443/api/v1/health"]
       interval: 10s
       timeout: 5s
       retries: 12
