@@ -2725,6 +2725,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         device_did,
         device_pubkey_point,
     );
+    let chat_grpc_port = match node_id.as_str() {
+        "nodeA" => 50251,
+        "nodeB" => 50252,
+        "nodeC" => 50253,
+        _ => 50251,
+    };
+    tokio::spawn({
+        let state = api_state.clone();
+        let chat_addr = format!("0.0.0.0:{}", chat_grpc_port);
+        async move {
+            if let Err(e) = server::start_chat_plaintext_server(chat_addr.clone(), state).await {
+                eprintln!("Chat plaintext gRPC server failed at {}: {:?}", chat_addr, e);
+            }
+        }
+    });
     let api_bind: std::net::SocketAddr = "0.0.0.0:8443".parse().unwrap();
     let mut tls_cfg = this_node.api_or_default().tls;
     let env_flag = |name: &str| {

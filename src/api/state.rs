@@ -241,7 +241,7 @@ impl AppState {
         self.notification_manager.read().await.clone()
     }
 
-    #[cfg(test)]
+    #[doc(hidden)]
     pub fn for_tests(
         base_dir: &std::path::Path,
         node_id: &str,

@@ -3,7 +3,7 @@ const params = new URL(self.location.href).searchParams;
 const VERSION = params.get("v") || "dev";
 const SHELL_CACHE = `sgx-guardian-shell-${VERSION}`;
 const CACHE_PREFIX = "sgx-guardian-shell-";
-const CORE = ["/", "/manifest.json", "/favicon.png", "/icon-192.png", "/icon-512.png"];
+const CORE = ["/", "/manifest.json", "/asset-manifest.json", "/favicon.png", "/icon-192.png", "/icon-512.png"];
 
 const sameOrigin = (url) => url.origin === self.location.origin;
 const isApi = (url) => url.pathname === "/api" || url.pathname.startsWith("/api/");
@@ -17,6 +17,13 @@ async function discoverShellAssets() {
   const urls = new Set(CORE);
   for (const match of html.matchAll(/(?:src|href)=["']([^"']+)["']/g)) {
     const url = new URL(match[1], self.location.origin);
+    if (sameOrigin(url) && !isApi(url) && isStatic(url)) urls.add(url.pathname + url.search);
+  }
+  const manifest = await fetch(new Request("/asset-manifest.json", { cache: "no-store" }))
+    .then((res) => res.ok ? res.json() : { assets: [] })
+    .catch(() => ({ assets: [] }));
+  for (const asset of Array.isArray(manifest.assets) ? manifest.assets : []) {
+    const url = new URL(String(asset), self.location.origin);
     if (sameOrigin(url) && !isApi(url) && isStatic(url)) urls.add(url.pathname + url.search);
   }
   const cache = await caches.open(SHELL_CACHE);

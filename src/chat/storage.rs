@@ -1,4 +1,4 @@
-use crate::chat::models::{AttachmentRecord, ChatMessageRecord, ReadReceiptRecord};
+use crate::chat::models::{AttachmentRecord, ChatMessageRecord, MessageStatus, ReadReceiptRecord};
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use std::collections::HashSet;
@@ -270,6 +270,62 @@ pub async fn update_message_read_by(
     }
 
     Ok(())
+}
+
+/// Advances a message's delivery status (e.g. `Pending` -> `Delivered`) in its
+/// conversation log. Only a transition away from `Pending` is applied, so a
+/// message already marked `Read` is never regressed by a late delivery ack.
+/// Returns the updated record so the caller can notify live websocket clients.
+pub async fn update_message_status(
+    is_group: bool,
+    target_id: &str,
+    message_id: &str,
+    status: MessageStatus,
+) -> Result<Option<ChatMessageRecord>, Box<dyn std::error::Error + Send + Sync>> {
+    let dir_name = if is_group { "group" } else { "p2p" };
+    let path = PathBuf::from(&*BASE_DIR)
+        .join(dir_name)
+        .join(safe_filename(target_id));
+
+    let lock = FILE_LOCKS
+        .entry(path.clone())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone();
+    let _guard = lock.lock().await;
+
+    let file = match File::open(&path).await {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+
+    let mut reader = BufReader::new(file);
+    let mut updated_lines = Vec::new();
+    let mut line = String::new();
+    let mut updated_record = None;
+
+    while reader.read_line(&mut line).await? > 0 {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            if let Ok(mut record) = serde_json::from_str::<ChatMessageRecord>(trimmed) {
+                if record.message_id == message_id && record.status == MessageStatus::Pending {
+                    record.status = status.clone();
+                    updated_record = Some(record.clone());
+                }
+                updated_lines.push(serde_json::to_string(&record)?);
+            } else {
+                updated_lines.push(trimmed.to_string());
+            }
+        }
+        line.clear();
+    }
+
+    if updated_record.is_some() {
+        let content = updated_lines.join("\n") + "\n";
+        tokio::fs::write(&path, content.as_bytes()).await?;
+    }
+
+    Ok(updated_record)
 }
 
 async fn read_all_receipts(

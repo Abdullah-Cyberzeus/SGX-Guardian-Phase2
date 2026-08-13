@@ -2,6 +2,7 @@ pub mod advisory;
 pub mod attestation;
 pub mod auth;
 pub mod backup;
+pub mod browser_member;
 pub mod call;
 pub mod circle;
 pub mod crl;

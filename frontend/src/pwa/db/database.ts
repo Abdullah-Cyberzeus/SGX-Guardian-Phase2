@@ -31,6 +31,12 @@ function migrate(database: IDBDatabase, oldVersion: number) {
     database.createObjectStore(stores.settings, { keyPath: "key" });
     database.createObjectStore(stores.syncState, { keyPath: "key" });
   }
+  if (oldVersion < 2) {
+    if (!database.objectStoreNames.contains(stores.notifications)) {
+      const notifications = database.createObjectStore(stores.notifications, { keyPath: "id" });
+      notifications.createIndex("created_at", "createdAt");
+    }
+  }
 }
 
 export function openPwaDatabase(): Promise<IDBDatabase> {

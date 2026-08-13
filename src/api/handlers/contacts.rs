@@ -117,11 +117,16 @@ async fn ensure_saveable_contact_did(state: &AppState, did: &str) -> Result<(), 
         &state.device_did,
     )
     .map_err(ApiError::Internal)?;
-    if !circle_peer_dids.contains(&did) {
+    let is_browser_member = is_active_browser_member_contact(state, &did).await?;
+    if !circle_peer_dids.contains(&did) && !is_browser_member {
         return Err(ApiError::BadRequest(format!(
             "DID {} is not an active peer in any Circle shared with this Guardian",
             did
         )));
+    }
+
+    if is_browser_member {
+        return Ok(());
     }
 
     let known_peer_dids = known_trusted_peer_dids(state).await;
@@ -132,6 +137,18 @@ async fn ensure_saveable_contact_did(state: &AppState, did: &str) -> Result<(), 
         )));
     }
     Ok(())
+}
+
+async fn is_active_browser_member_contact(state: &AppState, did: &str) -> Result<bool, ApiError> {
+    let local_circle_ids = crate::api::auth::authorization::local_active_circle_ids(
+        &state.node_id,
+        &state.device_did,
+    )
+    .map_err(ApiError::Internal)?;
+    Ok(matches!(
+        crate::api::handlers::browser_member::state_for_did(state, did, &local_circle_ids).await?,
+        Some(crate::api::handlers::browser_member::BrowserMemberState::Active)
+    ))
 }
 
 pub async fn list(State(state): State<Arc<AppState>>) -> Result<Json<ContactsResponse>, ApiError> {

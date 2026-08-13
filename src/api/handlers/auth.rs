@@ -78,6 +78,8 @@ pub struct LoginUserResponse {
     pub circle_ids: Vec<String>,
     #[serde(rename = "browserRegistrationId", skip_serializing_if = "Option::is_none")]
     pub browser_registration_id: Option<String>,
+    #[serde(rename = "browserMemberDid", skip_serializing_if = "Option::is_none")]
+    pub browser_member_did: Option<String>,
     #[serde(rename = "guardianFingerprint", skip_serializing_if = "Option::is_none")]
     pub guardian_fingerprint: Option<String>,
     #[serde(rename = "registrationExpiresAt", skip_serializing_if = "Option::is_none")]
@@ -118,6 +120,8 @@ pub struct SessionResponse {
     pub circle_ids: Vec<String>,
     #[serde(rename = "browserRegistrationId", skip_serializing_if = "Option::is_none")]
     pub browser_registration_id: Option<String>,
+    #[serde(rename = "browserMemberDid", skip_serializing_if = "Option::is_none")]
+    pub browser_member_did: Option<String>,
     #[serde(rename = "guardianFingerprint", skip_serializing_if = "Option::is_none")]
     pub guardian_fingerprint: Option<String>,
     #[serde(rename = "registrationExpiresAt", skip_serializing_if = "Option::is_none")]
@@ -229,6 +233,10 @@ pub async fn login(
             role: claims.role,
             scopes: claims.scopes,
             circle_ids: claims.circle_ids,
+            browser_member_did: claims
+                .browser_registration_id
+                .as_deref()
+                .map(crate::api::handlers::browser_member::did_for_registration),
             browser_registration_id: claims.browser_registration_id,
             guardian_fingerprint: claims.guardian_fingerprint,
             registration_expires_at: user.registration_expires_at,
@@ -377,6 +385,10 @@ pub async fn cylenium_callback(
             role: claims.role,
             scopes: claims.scopes,
             circle_ids: claims.circle_ids,
+            browser_member_did: claims
+                .browser_registration_id
+                .as_deref()
+                .map(crate::api::handlers::browser_member::did_for_registration),
             browser_registration_id: claims.browser_registration_id,
             guardian_fingerprint: claims.guardian_fingerprint,
             registration_expires_at: user.registration_expires_at,
@@ -469,6 +481,10 @@ pub async fn refresh_session(
             role: claims.role,
             scopes: claims.scopes,
             circle_ids: claims.circle_ids,
+            browser_member_did: claims
+                .browser_registration_id
+                .as_deref()
+                .map(crate::api::handlers::browser_member::did_for_registration),
             browser_registration_id: claims.browser_registration_id,
             guardian_fingerprint: claims.guardian_fingerprint,
             registration_expires_at: user.registration_expires_at,
@@ -494,6 +510,11 @@ pub async fn session(
         .await?
         .ok_or_else(|| ApiError::Unauthorized("session user not found".into()))?;
 
+    let browser_registration_id = user.browser_registration_id;
+    let browser_member_did = browser_registration_id
+        .as_deref()
+        .map(crate::api::handlers::browser_member::did_for_registration);
+
     Ok(Json(SessionResponse {
         valid: true,
         user_id: session.claims.sub,
@@ -505,7 +526,8 @@ pub async fn session(
             user.scopes
         },
         circle_ids: user.circle_ids,
-        browser_registration_id: user.browser_registration_id,
+        browser_registration_id,
+        browser_member_did,
         guardian_fingerprint: user.guardian_fingerprint,
         registration_expires_at: user.registration_expires_at,
         guardian_did: state.device_did.clone(),

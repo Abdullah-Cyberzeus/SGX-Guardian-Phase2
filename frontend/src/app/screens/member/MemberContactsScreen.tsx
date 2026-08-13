@@ -10,6 +10,16 @@ function initials(peer: Peer) {
   return peer.peerId.split(/[-_:]/).filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "P";
 }
 
+function dedupePeers(peers: Peer[]) {
+  const byDid = new Map<string, Peer>();
+  for (const peer of peers) {
+    if (!peer.did) continue;
+    const existing = byDid.get(peer.did);
+    byDid.set(peer.did, existing ? { ...existing, ...peer, online: existing.online || peer.online } : peer);
+  }
+  return [...byDid.values()];
+}
+
 export function MemberContactsScreen() {
   const navigate = useNavigate();
   const { data, loading, error, refetch } = useCommunicationPeers();
@@ -17,15 +27,15 @@ export function MemberContactsScreen() {
   const [query, setQuery] = useState("");
   useEffect(() => {
     if (Array.isArray(data)) {
-      const current = data as Peer[];
+      const current = dedupePeers(data as Peer[]);
       setCached(current);
       current.filter((peer) => peer.did).forEach((peer) => void contactRepository.save({ did: peer.did!, displayName: peer.peerId, online: peer.online, lastSeen: peer.lastSeenAgo, updatedAt: Date.now() }));
     } else if (error) {
-      void contactRepository.list().then((items) => setCached(items.map((item) => ({ peerId: item.displayName, did: item.did, online: item.online, lastSeenAgo: item.lastSeen || "Cached", status: "verified", callAvailable: false } as Peer))));
+      void contactRepository.list().then((items) => setCached(dedupePeers(items.map((item) => ({ peerId: item.displayName, did: item.did, online: item.online, lastSeenAgo: item.lastSeen || "Cached", status: "verified", callAvailable: false } as Peer)))));
     }
   }, [data, error]);
   const contacts = useMemo(() => {
-    const all = (Array.isArray(data) ? data : cached).filter((peer: Peer) => peer.status === "verified" && Boolean(peer.did));
+    const all = dedupePeers((Array.isArray(data) ? data : cached).filter((peer: Peer) => peer.status === "verified" && Boolean(peer.did)));
     const needle = query.trim().toLowerCase();
     return needle ? all.filter((peer: Peer) => `${peer.peerId} ${peer.did}`.toLowerCase().includes(needle)) : all;
   }, [data, cached, query]);

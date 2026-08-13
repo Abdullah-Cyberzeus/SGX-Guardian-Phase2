@@ -1,10 +1,21 @@
-import { readAll, runAtomic } from "./database";
-import { encryptValue } from "../crypto/vault";
+import { deleteRecord, readAll, readRecord, runAtomic } from "./database";
+import { encryptValue, decryptValue } from "../crypto/vault";
 import { stores, type MessageRecord, type PendingRecord } from "./schema";
 
 export const messageRepository = {
   async list(conversationId: string) {
     return (await readAll(stores.messages)).filter((item) => item.conversationId === conversationId).sort((a, b) => a.sequence - b.sequence || a.timestamp - b.timestamp);
+  },
+  get: (id: string) => readRecord(stores.messages, id),
+  // Used after a successful offline-queue replay: the message keeps its place
+  // in the cached conversation instead of disappearing until the next full
+  // history reload.
+  async updateStatus(id: string, status: string) {
+    const existing = await readRecord(stores.messages, id);
+    if (!existing) return;
+    const value = await decryptValue<Record<string, unknown>>(existing.payload);
+    const payload = await encryptValue({ ...value, status });
+    return runAtomic([stores.messages], (tx) => { tx.objectStore(stores.messages).put({ ...existing, status, payload }); });
   },
   async save(record: Omit<MessageRecord, "payload"> & { value: unknown }) {
     const payload = await encryptValue(record.value);
@@ -20,4 +31,5 @@ export const messageRepository = {
       tx.objectStore(stores.pending).put(pending);
     });
   },
+  remove: (id: string) => deleteRecord(stores.messages, id),
 };

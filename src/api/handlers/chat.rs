@@ -91,6 +91,11 @@ pub struct SendMessageRequest {
     pub content: Option<String>,
     pub attachment_id: Option<String>,
     pub is_group: bool,
+    /// Optional client-generated canonical message ID. Replaying the same
+    /// send (e.g. an interrupted offline-queue retry) with the same ID
+    /// returns the already-accepted message instead of creating a duplicate.
+    #[serde(default)]
+    pub message_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -114,6 +119,31 @@ pub async fn send_message(
     if !req.is_group {
         ensure_member_contact_access(&state, &session, &req.recipient_did)?;
     }
+    let sender_did = crate::api::handlers::browser_member::did_from_session(&session)
+        .unwrap_or_else(|| state.device_did.clone());
+    let local_circle_ids = crate::api::auth::authorization::local_active_circle_ids(
+        &state.node_id,
+        &state.device_did,
+    )
+    .map_err(ApiError::Internal)?;
+    let browser_recipient_state = if !req.is_group {
+        crate::api::handlers::browser_member::state_for_did(
+            &state,
+            &req.recipient_did,
+            &local_circle_ids,
+        )
+        .await?
+    } else {
+        None
+    };
+    let is_local_guardian_recipient =
+        !req.is_group && req.recipient_did == state.device_did && sender_did != state.device_did;
+    let is_local_direct = is_local_guardian_recipient || browser_recipient_state.is_some();
+    let direct_conversation_id = if is_local_guardian_recipient {
+        sender_did.clone()
+    } else {
+        req.recipient_did.clone()
+    };
 
     // 1b. Validate Attestation Status & Determine Target IPs
     let mut target_peers_info: Vec<(String, String)> = Vec::new();
@@ -220,7 +250,7 @@ pub async fn send_message(
                 "No trusted peers found in the circle for group fan-out".to_string(),
             ));
         }
-    } else {
+    } else if !is_local_direct {
         // P2P Chat: Find the specific trusted peer.
         // Match by full DID string OR by the base58 key suffix OR by peer_id.
         let target_peer_id = req
@@ -282,20 +312,43 @@ pub async fn send_message(
         }
     }
 
-    // 2. Generate UUID and current timestamp
-    let message_id = Uuid::new_v4().to_string();
-    let timestamp = chrono::Utc::now().timestamp();
-    let sender_did = state.device_did.clone();
+    // 2/3. Load current history once: it drives both the idempotent-replay
+    // check and the seq_no assignment below.
+    let history = if req.is_group {
+        crate::chat::storage::read_group_history(&req.recipient_did)
+            .await
+            .unwrap_or_default()
+    } else {
+        crate::chat::storage::read_p2p_history(&direct_conversation_id)
+            .await
+            .unwrap_or_default()
+    };
 
-    // 3. Determine seq_no
-    let mut seq_no = 1u64;
-    if req.is_group {
-        if let Ok(history) = crate::chat::storage::read_group_history(&req.recipient_did).await {
-            seq_no = history.iter().map(|m| m.seq_no).max().unwrap_or(0) + 1;
-        }
-    } else if let Ok(history) = crate::chat::storage::read_p2p_history(&req.recipient_did).await {
-        seq_no = history.iter().map(|m| m.seq_no).max().unwrap_or(0) + 1;
+    let requested_id = req
+        .message_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty() && id.len() <= 100);
+
+    if let Some(existing) = requested_id.and_then(|id| history.iter().find(|m| m.message_id == id))
+    {
+        // Idempotent replay: this exact message was already accepted, so do
+        // not append another log entry or re-dispatch gRPC delivery. Return
+        // its real current status rather than a fixed placeholder so a
+        // retried send reflects delivery progress made since the first
+        // attempt.
+        return Ok(Json(SendMessageResponse {
+            message_id: existing.message_id.clone(),
+            signature_base64: String::new(),
+            status: existing.status.as_str().to_string(),
+        }));
     }
+
+    let message_id = requested_id
+        .map(str::to_string)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let timestamp = chrono::Utc::now().timestamp();
+    let seq_no = history.iter().map(|m| m.seq_no).max().unwrap_or(0) + 1;
 
     // 4. Save outbound message locally (plaintext JSON, no encryption)
     let payload_obj = serde_json::json!({
@@ -327,12 +380,53 @@ pub async fn send_message(
             .await
             .map_err(|e| ApiError::Internal(format!("Failed to save group message: {}", e)))?;
     } else {
-        crate::chat::storage::append_p2p_message(&req.recipient_did, &record)
+        crate::chat::storage::append_p2p_message(&direct_conversation_id, &record)
             .await
             .map_err(|e| ApiError::Internal(format!("Failed to save p2p message: {}", e)))?;
     }
+    let _ = state
+        .chat_events
+        .send(crate::chat::models::ChatEvent::NewMessage(record.clone()));
 
-    // 5. Dispatch gRPC push in background (Nebula overlay already provides E2E security)
+    if is_local_direct {
+        let delivered = is_local_guardian_recipient
+            || browser_recipient_state
+                == Some(crate::api::handlers::browser_member::BrowserMemberState::Active);
+        if delivered {
+            match crate::chat::storage::update_message_status(
+                false,
+                &direct_conversation_id,
+                &message_id,
+                crate::chat::models::MessageStatus::Delivered,
+            )
+            .await
+            {
+                Ok(Some(record)) => {
+                    let _ = state
+                        .chat_events
+                        .send(crate::chat::models::ChatEvent::MessageStatus(record));
+                }
+                Ok(None) => {}
+                Err(e) => eprintln!("❌ Chat: failed to update local delivered status: {}", e),
+            }
+        }
+        return Ok(Json(SendMessageResponse {
+            message_id,
+            signature_base64: String::new(),
+            status: if delivered {
+                MessageStatus::Delivered.as_str().to_string()
+            } else {
+                MessageStatus::Pending.as_str().to_string()
+            },
+        }));
+    }
+
+    // 5. Dispatch gRPC push in background (Nebula overlay already provides E2E security).
+    // The message stays `Pending` (the status already persisted above) until a
+    // push actually succeeds — that is the "offline peer keeps it pending"
+    // behavior. Once at least one target acknowledges delivery, the stored
+    // record is advanced to `Delivered` and connected clients are notified so
+    // the UI stops showing "Pending" for a message that in fact went through.
     let message_id_clone = message_id.clone();
     let sender_did_clone = sender_did.clone();
     let is_group = req.is_group;
@@ -341,7 +435,10 @@ pub async fn send_message(
     } else {
         String::new()
     };
+    let status_state = state.clone();
+    let status_target_id = req.recipient_did.clone();
     tokio::spawn(async move {
+        let mut delivery_tasks = Vec::new();
         for (recipient_did, target_addr) in target_peers_info {
             let msg_id = message_id_clone.clone();
             let snd_did = sender_did_clone.clone();
@@ -350,7 +447,7 @@ pub async fn send_message(
             let addr = target_addr.clone();
             let g_id = group_id_str.clone();
 
-            tokio::spawn(async move {
+            delivery_tasks.push(tokio::spawn(async move {
                 let grpc_req = crate::proto::sgx::PushMessageRequest {
                     message_id: msg_id,
                     sender_did: snd_did,
@@ -363,18 +460,50 @@ pub async fn send_message(
                 };
 
                 match crate::chat::grpc_client::push_message_to_peer(addr.clone(), grpc_req).await {
-                    Ok(()) => println!("💬 ✅ Message delivered to {}", addr),
-                    Err(e) => eprintln!("❌ Chat delivery failed to {}: {}", addr, e),
+                    Ok(()) => {
+                        println!("💬 ✅ Message delivered to {}", addr);
+                        true
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Chat delivery failed to {}: {}", addr, e);
+                        false
+                    }
                 }
-            });
+            }));
+        }
+
+        let mut any_delivered = false;
+        for task in delivery_tasks {
+            if matches!(task.await, Ok(true)) {
+                any_delivered = true;
+            }
+        }
+
+        if any_delivered {
+            match crate::chat::storage::update_message_status(
+                is_group,
+                &status_target_id,
+                &message_id_clone,
+                crate::chat::models::MessageStatus::Delivered,
+            )
+            .await
+            {
+                Ok(Some(record)) => {
+                    let _ = status_state
+                        .chat_events
+                        .send(crate::chat::models::ChatEvent::MessageStatus(record));
+                }
+                Ok(None) => {}
+                Err(e) => eprintln!("❌ Chat: failed to update delivered status: {}", e),
+            }
         }
     });
 
-    // 6. Respond immediately — message queued for delivery
+    // 6. Respond immediately — message persisted locally and queued for delivery
     Ok(Json(SendMessageResponse {
         message_id,
         signature_base64: String::new(),
-        status: "queued".to_string(),
+        status: MessageStatus::Pending.as_str().to_string(),
     }))
 }
 
@@ -611,7 +740,13 @@ pub async fn get_history(
 ) -> Result<Json<ChatHistoryResponse>, ApiError> {
     let messages = if let Some(peer_did) = query.peer_did {
         ensure_member_contact_access(&state, &session, &peer_did)?;
-        crate::chat::storage::read_p2p_history(&peer_did)
+        let conversation_id = if peer_did == state.device_did {
+            crate::api::handlers::browser_member::did_from_session(&session)
+                .unwrap_or(peer_did)
+        } else {
+            peer_did
+        };
+        crate::chat::storage::read_p2p_history(&conversation_id)
             .await
             .map_err(|e| ApiError::Internal(format!("Failed to read P2P history: {}", e)))?
     } else if let Some(group_id) = query.group_id {
@@ -639,6 +774,9 @@ fn ensure_member_contact_access(
     if !is_member {
         return Ok(());
     }
+    if contact_did == state.device_did {
+        return Ok(());
+    }
     let contacts = crate::api::auth::authorization::scoped_circle_contact_dids(
         &state.node_id,
         &state.device_did,
@@ -648,7 +786,10 @@ fn ensure_member_contact_access(
             .unwrap_or(&[]),
     )
     .map_err(ApiError::Internal)?;
-    if contacts.contains(contact_did) {
+    let browser_allowed =
+        crate::api::handlers::browser_member::did_from_session(session).as_deref()
+            == Some(contact_did);
+    if contacts.contains(contact_did) || browser_allowed {
         Ok(())
     } else {
         if let Some(Extension(session)) = session.as_ref() {
