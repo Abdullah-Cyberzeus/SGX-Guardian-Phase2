@@ -164,7 +164,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if !std::path::Path::new(&path).exists() {
             let letter = &nid[4..];
             let content = format!(
-                "---\nnode_id: \"{}\"\nhostname: \"guardian-node-{}\"\nip: \"0.0.0.0\"\nport: {}\npublic_key: \"placeholder-key-{}\"\n\nrelay:\n  enabled: false\n  max_peers: 5\n  max_bandwidth_mbps: 10\n  alert_threshold_pct: 80\n\nsecure_element:\n  enabled: true\n  scp_key_path: \"/home/root/se05x_mw_v04.05.01/simw-top/scripts/se050F_scp_keys.txt\"\n  interface: \"t1oi2c\"\n  auth_type: \"PlatformSCP\"\n  connection_type: \"se05x\"\n",
+                "---\nnode_id: \"{}\"\nhostname: \"guardian-node-{}\"\nip: \"0.0.0.0\"\nport: {}\npublic_key: \"placeholder-key-{}\"\n\napi:\n  tls:\n    enabled: true\n    require_https: true\n\nrelay:\n  enabled: false\n  max_peers: 5\n  max_bandwidth_mbps: 10\n  alert_threshold_pct: 80\n\nsecure_element:\n  enabled: true\n  scp_key_path: \"/home/root/se05x_mw_v04.05.01/simw-top/scripts/se050F_scp_keys.txt\"\n  interface: \"t1oi2c\"\n  auth_type: \"PlatformSCP\"\n  connection_type: \"se05x\"\n",
                 nid, letter, port, letter
             );
             let _ = std::fs::write(&path, &content);
@@ -2630,6 +2630,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         node_id.as_str(),
         overlay_ip_only.as_str(),
         "127.0.0.1",
+        "localhost",
+        "guardian.local",
+        "192.168.200.1",
     ];
     // Ensure certificate exists
     match tls::ensure_node_certificate_or_generate(&key_path, &cert_path, &san) {
@@ -2723,7 +2726,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         device_pubkey_point,
     );
     let api_bind: std::net::SocketAddr = "0.0.0.0:8443".parse().unwrap();
-    let tls_cfg = this_node.api_or_default().tls;
+    let mut tls_cfg = this_node.api_or_default().tls;
+    let env_flag = |name: &str| {
+        std::env::var(name).ok().and_then(|value| {
+            match value.trim().to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => Some(true),
+                "0" | "false" | "no" | "off" => Some(false),
+                _ => None,
+            }
+        })
+    };
+    if let Some(enabled) = env_flag("SGX_ADMIN_TLS_ENABLED") {
+        tls_cfg.enabled = enabled;
+    }
+    if let Some(require_https) = env_flag("SGX_ADMIN_REQUIRE_HTTPS") {
+        tls_cfg.require_https = require_https;
+    }
     if tls_cfg.require_https && !tls_cfg.enabled {
         eprintln!("❌ REST API TLS misconfigured: require_https=true but tls.enabled=false");
         log_error(

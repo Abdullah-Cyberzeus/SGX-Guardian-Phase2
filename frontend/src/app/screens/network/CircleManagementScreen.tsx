@@ -180,21 +180,13 @@ export function CircleManagementScreen() {
       return;
     }
     const deviceLink = invite.url || invite.qrPayload || "";
-    // This screen is authenticated against the issuing Guardian, so its
-    // current Owner URL is authoritative. The embedded device link remains a
-    // fallback for imported invite records.
     const issuingGuardian = ownerHost || parseInviteMaterial(deviceLink).ownerHost || window.location.origin;
-    let joinUrl: URL;
-    try {
-      joinUrl = new URL("/join", issuingGuardian);
-    } catch {
-      toast.error("The Owner Guardian URL is invalid");
-      return;
-    }
-    joinUrl.searchParams.set("invite", invite.token);
-    const value = joinUrl.toString();
+    const params = new URLSearchParams({ owner_host: issuingGuardian, token: invite.token });
+    // A portable payload deliberately has no HTTP origin. The recipient pastes
+    // it into the /join page of the Guardian that will host their account.
+    const value = `sgx-guardian://pwa/join?${params.toString()}`;
     await navigator.clipboard.writeText(value);
-    toast.success("PWA member link copied");
+    toast.success("Portable PWA member invite copied");
   };
 
   const shareInvite = async (invite: CircleInvite) => {

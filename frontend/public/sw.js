@@ -24,13 +24,15 @@ async function discoverShellAssets() {
     status: 200,
     headers: { "Content-Type": "text/html; charset=utf-8", "X-SGX-Offline-Shell": VERSION },
   }));
+  // A worker must not report itself installed with a partial executable
+  // shell. In particular, missing hashed JS/CSS would turn a later offline
+  // navigation into a blank page even though registration appeared healthy.
   await Promise.all([...urls].filter((url) => url !== "/").map(async (url) => {
-    try {
-      const asset = await fetch(new Request(url, { cache: "reload" }));
-      if (asset.ok && asset.type !== "opaque") await cache.put(url, asset);
-    } catch {
-      // Optional artwork must not prevent installing the executable shell.
+    const asset = await fetch(new Request(url, { cache: "reload" }));
+    if (!asset.ok || asset.type === "opaque") {
+      throw new Error(`shell asset unavailable: ${url} (${asset.status})`);
     }
+    await cache.put(url, asset);
   }));
 }
 
@@ -63,7 +65,8 @@ self.addEventListener("fetch", (event) => {
       try {
         return await fetch(request);
       } catch {
-        return (await caches.match("/", { cacheName: SHELL_CACHE }))
+        const cache = await caches.open(SHELL_CACHE);
+        return (await cache.match("/"))
           || new Response("Guardian PWA shell is unavailable", { status: 503 });
       }
     })());
@@ -72,11 +75,11 @@ self.addEventListener("fetch", (event) => {
 
   if (isStatic(url)) {
     event.respondWith((async () => {
-      const cached = await caches.match(request, { cacheName: SHELL_CACHE });
+      const cache = await caches.open(SHELL_CACHE);
+      const cached = await cache.match(request);
       if (cached) return cached;
       const response = await fetch(request);
       if (response.ok && response.type !== "opaque") {
-        const cache = await caches.open(SHELL_CACHE);
         await cache.put(request, response.clone());
       }
       return response;
