@@ -20,6 +20,7 @@ import { CertificateRequestProvider } from "../features/certificates/Certificate
 import { IncomingCertificateRequestDialog } from "../features/certificates/IncomingCertificateRequestDialog";
 import { useAuth } from "./contexts/AuthContext";
 import { isAdminRole } from "./utils/authorization";
+import { GuardianConnectivityProvider } from "../pwa/connectivity/GuardianConnectivityContext";
 
 function CallSurfaces({ children }: { children: ReactNode }) {
   const { currentDevice, call, error } = useCall();
@@ -92,6 +93,10 @@ function AuthenticatedRuntime() {
     return <ErrorBoundary><Outlet /></ErrorBoundary>;
   }
 
+  // Disconnected startup uses encrypted IndexedDB data only. Do not start
+  // notification/call/certificate clients that require a live bearer token.
+  if (session.offline) return <ErrorBoundary><Outlet /></ErrorBoundary>;
+
   return (
     <ContactNameProvider>
       <NotificationProvider>
@@ -117,7 +122,9 @@ export function Root() {
     <ThemeProvider>
       <div style={{ minHeight: "100dvh", backgroundColor: "var(--background)" }}>
         <AuthProvider>
-          <AuthenticatedRuntime />
+          <GuardianConnectivityProvider>
+            <AuthenticatedRuntime />
+          </GuardianConnectivityProvider>
         </AuthProvider>
       </div>
     </ThemeProvider>

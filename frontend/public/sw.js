@@ -1,75 +1,85 @@
-/**
- * SG-X Guardian Service Worker
- * Provides offline shell caching for PWA support.
- */
+/** SG-X Guardian offline shell. Authenticated API data is never cached here. */
+const params = new URL(self.location.href).searchParams;
+const VERSION = params.get("v") || "dev";
+const SHELL_CACHE = `sgx-guardian-shell-${VERSION}`;
+const CACHE_PREFIX = "sgx-guardian-shell-";
+const CORE = ["/", "/manifest.json", "/favicon.png", "/icon-192.png", "/icon-512.png"];
 
-const CACHE_NAME = "sgx-guardian-v2.4.1";
+const sameOrigin = (url) => url.origin === self.location.origin;
+const isApi = (url) => url.pathname === "/api" || url.pathname.startsWith("/api/");
+const isStatic = (url) => url.pathname.startsWith("/assets/")
+  || /\.(?:js|css|woff2?|png|jpg|jpeg|svg|webp|ico)$/i.test(url.pathname);
 
-// Assets to pre-cache for offline shell
-const PRECACHE_URLS = [
-  "/",
-];
+async function discoverShellAssets() {
+  const response = await fetch(new Request("/", { cache: "no-store" }));
+  if (!response.ok) throw new Error(`shell discovery failed: ${response.status}`);
+  const html = await response.text();
+  const urls = new Set(CORE);
+  for (const match of html.matchAll(/(?:src|href)=["']([^"']+)["']/g)) {
+    const url = new URL(match[1], self.location.origin);
+    if (sameOrigin(url) && !isApi(url) && isStatic(url)) urls.add(url.pathname + url.search);
+  }
+  const cache = await caches.open(SHELL_CACHE);
+  await cache.put("/", new Response(html, {
+    status: 200,
+    headers: { "Content-Type": "text/html; charset=utf-8", "X-SGX-Offline-Shell": VERSION },
+  }));
+  await Promise.all([...urls].filter((url) => url !== "/").map(async (url) => {
+    try {
+      const asset = await fetch(new Request(url, { cache: "reload" }));
+      if (asset.ok && asset.type !== "opaque") await cache.put(url, asset);
+    } catch {
+      // Optional artwork must not prevent installing the executable shell.
+    }
+  }));
+}
 
-// ── Install: pre-cache shell ──────────────────────────────────────────────────
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(PRECACHE_URLS);
-    })
-  );
-  self.skipWaiting();
+  event.waitUntil(discoverShellAssets());
+  // Do not skipWaiting: the open app must explicitly approve this version.
 });
 
-// ── Activate: clean up old caches ────────────────────────────────────────────
 self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
-        keys
-          .filter((key) => key !== CACHE_NAME)
-          .map((key) => caches.delete(key))
-      )
-    )
-  );
-  self.clients.claim();
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys
+      .filter((key) => key.startsWith(CACHE_PREFIX) && key !== SHELL_CACHE)
+      .map((key) => caches.delete(key)));
+    await self.clients.claim();
+  })());
 });
 
-// ── Fetch: network-first with cache fallback ─────────────────────────────────
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
+});
+
 self.addEventListener("fetch", (event) => {
-  const { request } = event;
+  const request = event.request;
+  const url = new URL(request.url);
+  if (request.method !== "GET" || !sameOrigin(url) || isApi(url)) return;
 
-  // Skip non-GET and cross-origin requests
-  if (request.method !== "GET") return;
-  if (!request.url.startsWith(self.location.origin)) return;
-
-  // API/Supabase calls: network only
-  if (
-    request.url.includes("supabase.co") ||
-    request.url.includes("/functions/v1/")
-  ) {
+  if (request.mode === "navigate") {
+    event.respondWith((async () => {
+      try {
+        return await fetch(request);
+      } catch {
+        return (await caches.match("/", { cacheName: SHELL_CACHE }))
+          || new Response("Guardian PWA shell is unavailable", { status: 503 });
+      }
+    })());
     return;
   }
 
-  event.respondWith(
-    fetch(request)
-      .then((response) => {
-        // Cache successful responses for static assets
-        if (response.ok && (request.url.includes("/assets/") || request.url.endsWith(".js") || request.url.endsWith(".css"))) {
-          const cloned = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, cloned));
-        }
-        return response;
-      })
-      .catch(() => {
-        // Fallback to cache for navigation requests
-        return caches.match(request).then((cached) => {
-          if (cached) return cached;
-          // For navigate requests, return the app shell
-          if (request.mode === "navigate") {
-            return caches.match("/");
-          }
-          return Response.error();
-        });
-      })
-  );
+  if (isStatic(url)) {
+    event.respondWith((async () => {
+      const cached = await caches.match(request, { cacheName: SHELL_CACHE });
+      if (cached) return cached;
+      const response = await fetch(request);
+      if (response.ok && response.type !== "opaque") {
+        const cache = await caches.open(SHELL_CACHE);
+        await cache.put(request, response.clone());
+      }
+      return response;
+    })());
+  }
 });

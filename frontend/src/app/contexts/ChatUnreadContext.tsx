@@ -21,7 +21,18 @@ interface ChatUnreadContextValue {
   refresh(): void;
 }
 
-const Context = createContext<ChatUnreadContextValue | null>(null);
+const offlineValue: ChatUnreadContextValue = {
+  counts: {},
+  previews: {},
+  total: 0,
+  clearPeerUnread: () => {},
+  refresh: () => {},
+};
+
+// The fallback is intentional: during a disconnected startup Root omits this
+// live polling/socket provider, while member screens still need to render their
+// encrypted cached content and sidebar.
+const Context = createContext<ChatUnreadContextValue>(offlineValue);
 
 export function ChatUnreadProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth();
@@ -87,7 +98,5 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
 }
 
 export function useChatUnread(): ChatUnreadContextValue {
-  const value = useContext(Context);
-  if (!value) throw new Error("useChatUnread must be inside ChatUnreadProvider");
-  return value;
+  return useContext(Context);
 }

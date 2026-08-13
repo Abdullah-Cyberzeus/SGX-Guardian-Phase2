@@ -2,8 +2,9 @@ import { Outlet } from "react-router";
 import { BottomNav } from "../components/BottomNav";
 import { OfflineBanner } from "../components/OfflineBanner";
 import { AppSidebar } from "../components/AppSidebar";
-import { Suspense, useState } from "react";
+import { Suspense } from "react";
 import { Loader2 } from "lucide-react";
+import { useGuardianConnectivity } from "../../pwa/connectivity/GuardianConnectivityContext";
 
 /** Shown in the content area while a route's code chunk loads. */
 const routeFallback = (
@@ -13,7 +14,8 @@ const routeFallback = (
 );
 
 export function MainLayout() {
-  const [isOffline] = useState(false);
+  const { reachable, lastSeen } = useGuardianConnectivity();
+  const isOffline = !reachable;
 
   return (
     <>
@@ -26,7 +28,7 @@ export function MainLayout() {
           className="relative w-full flex flex-col"
           style={{ maxWidth: "440px", height: "100dvh", backgroundColor: "var(--background)" }}
         >
-          {isOffline && <OfflineBanner lastSeen="3 min ago" />}
+          {isOffline && <OfflineBanner lastSeen={lastSeen} />}
           <main
             className="flex-1 overflow-y-auto overflow-x-hidden"
             style={{ WebkitOverflowScrolling: "touch" }}
@@ -44,7 +46,7 @@ export function MainLayout() {
       >
         {isOffline && (
           <div className="fixed top-0 z-50" style={{ left: "64px", right: 0 }}>
-            <OfflineBanner lastSeen="3 min ago" />
+            <OfflineBanner lastSeen={lastSeen} />
           </div>
         )}
         <AppSidebar variant="collapsed" />
@@ -64,7 +66,7 @@ export function MainLayout() {
       >
         {isOffline && (
           <div className="fixed top-0 z-50" style={{ left: "240px", right: 0 }}>
-            <OfflineBanner lastSeen="3 min ago" />
+            <OfflineBanner lastSeen={lastSeen} />
           </div>
         )}
         <AppSidebar variant="expanded" />

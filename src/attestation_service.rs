@@ -131,10 +131,10 @@ fn spawn_attestation_self_probes() {
                 // Bounded sweep: a few seconds of SHA-256 churn, sized by
                 // boot epoch so it varies node to node (DEV-2041).
                 let rounds = 1_500_000 + (epoch % 4_000_000) as usize;
-                let mut acc = Sha256::digest(b"attestation-selfcheck").as_slice().to_vec();
+                let mut acc = Sha256::digest(b"attestation-selfcheck").to_vec();
                 if let Ok(_guard) = peer_health().lock() {
                     for _ in 0..rounds {
-                        acc = Sha256::digest(&acc).as_slice().to_vec();
+                        acc = Sha256::digest(&acc).to_vec();
                     }
                     // Post-sweep settle: drains any SE050/TPM session backlog
                     // before the snapshot is released (FIX 1/2 contention
@@ -257,9 +257,9 @@ fn spawn_signer_warmup() {
                 } else {
                     800
                 };
-                let mut probe = Sha256::digest(b"attestation-warmup").as_slice().to_vec();
+                let mut probe = Sha256::digest(b"attestation-warmup").to_vec();
                 for _ in 0..burst {
-                    probe = Sha256::digest(&probe).as_slice().to_vec();
+                    probe = Sha256::digest(&probe).to_vec();
                     let _ = km.sign(&probe);
                 }
                 let _ = std::fs::write(
@@ -338,24 +338,24 @@ struct TrustedPeer {
 /// Stores the most recent attestation result for a peer with full identity +
 /// state evidence so post-mortems can reconstruct WHAT was verified.
 #[derive(Serialize, Deserialize)]
-struct LastAttestation {
-    peer_id: String,
-    policy_digest: String,
-    result: String,
-    timestamp: String,
+pub struct LastAttestation {
+    pub peer_id: String,
+    pub policy_digest: String,
+    pub result: String,
+    pub timestamp: String,
     // Fix 2: peer identity at the moment of attestation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    peer_did: Option<String>,
+    pub peer_did: Option<String>,
     // Session-scoped VID actually verified.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    virtual_id: Option<String>,
+    pub virtual_id: Option<String>,
     // SHA-256 fingerprint of peer's DKP pubkey (12-byte hex prefix for
     // human readability; the cache still stores the full digest).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    dkp_pubkey_sha256_b16: Option<String>,
+    pub dkp_pubkey_sha256_b16: Option<String>,
     // PCR composite digest at time of attestation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pcr_composite_digest: Option<String>,
+    pub pcr_composite_digest: Option<String>,
     // Initiator nonce used (already covered by the signed evidence; kept
     // here for ops correlation with peer logs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -364,6 +364,14 @@ struct LastAttestation {
     nonce_i: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     nonce_r: Option<String>,
+    /// Number of equivalent records represented by this entry. Historical
+    /// single-record files omit it and therefore deserialize as one.
+    #[serde(default = "default_attestation_count")]
+    pub count: u64,
+}
+
+fn default_attestation_count() -> u64 {
+    1
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -814,6 +822,7 @@ fn write_last_attestation(
         nonce,
         nonce_i,
         nonce_r,
+        count: 1,
     };
 
     if let Ok(json) = serde_json::to_string_pretty(&record) {

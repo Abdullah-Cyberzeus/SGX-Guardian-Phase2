@@ -395,6 +395,7 @@ where
 /// SAFETY: This goes through the kernel nvmem-imx-ocotp driver which handles
 /// OCOTP clock gating and bus synchronization. No AXI hangs possible, unlike
 /// the previous /dev/mem mmap approach that caused board freezes.
+#[allow(dead_code)] // Retained for board diagnostics and exercised by its unit test.
 fn read_nvmem_u32(offset: u64) -> Option<u32> {
     let candidates = [
         "/sys/bus/nvmem/devices/imx-ocotp0/nvmem",

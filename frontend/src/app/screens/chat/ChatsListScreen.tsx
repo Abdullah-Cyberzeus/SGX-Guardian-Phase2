@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2, MessageSquare, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { useNavigate } from "react-router";
 import { PageHeader } from "../../components/PageHeader";
@@ -6,6 +6,7 @@ import { useCommunicationPeers } from "../../hooks/useApiData";
 import { useChatUnread } from "../../contexts/ChatUnreadContext";
 import { useContactNames } from "../../contexts/ContactNameContext";
 import type { Peer } from "../../services/peerService";
+import { contactRepository } from "../../../pwa/db/contactRepository";
 
 function initials(peer: Peer) {
   return peer.peerId.split(/[-_:]/).filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "P";
@@ -31,7 +32,17 @@ export function ChatsListScreen() {
   const { contactNameForDid } = useContactNames();
   const [query, setQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-  const peers = useMemo(() => (Array.isArray(data) ? data : []).filter((peer: Peer) => peer.status === "verified" && Boolean(peer.did)), [data]);
+  const [cachedPeers, setCachedPeers] = useState<Peer[]>([]);
+  useEffect(() => {
+    if (Array.isArray(data)) {
+      const current = data as Peer[];
+      setCachedPeers(current);
+      current.filter((peer) => peer.did).forEach((peer) => void contactRepository.save({ did: peer.did!, displayName: peer.peerId, online: peer.online, lastSeen: peer.lastSeenAgo, updatedAt: Date.now() }));
+    } else if (error) {
+      void contactRepository.list().then((items) => setCachedPeers(items.map((item) => ({ peerId: item.displayName, did: item.did, online: false, lastSeenAgo: item.lastSeen || "Cached", status: "verified", callAvailable: false } as Peer))));
+    }
+  }, [data, error]);
+  const peers = useMemo(() => (Array.isArray(data) ? data : cachedPeers).filter((peer: Peer) => peer.status === "verified" && Boolean(peer.did)), [data, cachedPeers]);
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -58,7 +69,7 @@ export function ChatsListScreen() {
     <div className="flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-3xl divide-y divide-border">
         {loading && <div className="flex items-center justify-center gap-2 p-12 text-sm text-muted-foreground"><Loader2 size={20} className="animate-spin" /> Loading chats…</div>}
-        {!loading && error && <div className="p-8 text-center text-sm text-destructive">Attested peers could not be loaded.</div>}
+        {!loading && error && cachedPeers.length === 0 && <div className="p-8 text-center text-sm text-destructive">Attested peers could not be loaded.</div>}
         {!loading && !error && visible.length === 0 && <div className="flex flex-col items-center gap-3 p-12 text-center"><MessageSquare size={40} className="text-muted-foreground" /><p className="text-sm font-semibold">{query ? "No peers found" : "No attested peers yet"}</p><p className="max-w-xs text-xs text-muted-foreground">Once a peer is successfully attested and has a DID, you can message them here without sharing a Circle.</p></div>}
         {visible.map((peer: Peer) => {
           const preview = previews[peer.did!];
