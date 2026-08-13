@@ -1,10 +1,9 @@
 import { WifiOff } from "lucide-react";
 
-interface OfflineBannerProps {
-  lastSeen?: string;
-}
+interface OfflineBannerProps { lastSeen?: number; }
 
-export function OfflineBanner({ lastSeen = "2 min ago" }: OfflineBannerProps) {
+export function OfflineBanner({ lastSeen }: OfflineBannerProps) {
+  const label = lastSeen ? new Date(lastSeen).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "unknown";
   return (
     <div
       className="flex items-center gap-2 px-4 py-2"
@@ -22,7 +21,7 @@ export function OfflineBanner({ lastSeen = "2 min ago" }: OfflineBannerProps) {
           color: "var(--chart-5)",
         }}
       >
-        Guardian offline — last seen {lastSeen}
+        Guardian unreachable — cached data only · last reached {label}
       </span>
     </div>
   );

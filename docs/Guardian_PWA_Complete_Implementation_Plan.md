@@ -487,6 +487,49 @@ Welcome
 
 ## Phase 3 — Installable PWA Shell and IndexedDB Foundation
 
+**Implementation status (August 12, 2026):** Implemented in source. Static validation is
+complete; build, Docker, and browser automation commands were intentionally not run on the
+development laptop. Installability and upgrade behavior still require release-device validation.
+
+Implemented contract:
+
+- A dependency-free Workbox-equivalent service worker discovers the hashed Vite entry assets
+  from embedded `index.html`, precaches the executable shell, runtime-caches subsequently used
+  static route chunks, and falls back to the cached shell for navigation.
+- Cache names are versioned as `sgx-guardian-shell-<application-version>`. Old shell versions are
+  deleted only during activation. A waiting worker never activates automatically; the application
+  presents an update prompt and sends `SKIP_WAITING` only after user confirmation.
+- `/api` and every `/api/*` request are explicitly network-only. Cross-origin and non-GET requests
+  are also excluded, so authenticated responses and bearer material never enter Cache Storage.
+- The manifest has a stable application ID/scope, member start route, standalone portrait mode,
+  valid 192px/512px icons, and a 440x956 narrow screenshot. Localhost remains supported for the
+  multi-node Docker demo; only embedded design previews unregister service workers.
+- IndexedDB schema `sgx-guardian-pwa` v1 implements `membership`, `messages`, `contacts`, `files`,
+  `calls`, `pending`, `settings`, and `sync_state`, with typed record contracts and indexes for
+  conversation chronology, call chronology, and queued-operation state.
+- Repository modules are the browser persistence boundary. Membership metadata, message bodies,
+  queued operations, and optional file blobs use AES-256-GCM with a non-extractable, origin-local `CryptoKey` stored
+  through structured clone. The browser credential/private Guardian keys are never written there.
+- Message persistence and pending-operation insertion can be committed in one IndexedDB
+  transaction. Schema upgrades are transactional; blocked upgrades require other tabs to close.
+  Integrity failure is surfaced through Settings and recovery is explicit rather than silently
+  deleting data.
+- Member session metadata (Guardian DID/fingerprint, Circle scope, actor, browser registration,
+  expiry) is mirrored without the bearer token. With the Guardian unreachable, that metadata can
+  restore a read-only offline member shell. Live notification/call clients are not started in that
+  mode.
+- Messages, communication contacts, and call history now use/fall back to IndexedDB. The previous
+  call-history `localStorage` persistence was removed. Connectivity is measured against
+  `/api/v1/health`, never `navigator.onLine`.
+- Member Settings reports quota usage, warns above 80%, validates the schema, clears cache while
+  preserving membership, removes all offline data when requested, and produces a passphrase-
+  encrypted PBKDF2-SHA256/AES-GCM archive. Non-extractable key material is excluded from export.
+
+Recovery policy: failed migrations leave the prior database transaction intact. The user may
+first create an encrypted export, then reset the database. “Clear cache” preserves membership and
+the local encryption key; “Remove all offline data” deletes the entire database and key. Restore
+import is intentionally deferred until its authenticated ownership/recovery protocol is approved.
+
 ### Objective
 
 Make the member application reliably installable and able to load without Guardian connectivity.

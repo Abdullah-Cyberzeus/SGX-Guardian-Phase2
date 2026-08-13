@@ -7,7 +7,15 @@ import callHistoryService from "../../app/services/callHistoryService";
 
 interface CallContextValue { call?:CallSession;incoming?:CallSession;localStream?:MediaStream;remoteStream?:MediaStream;peerId?:string;error?:string;muted:boolean;cameraEnabled:boolean;currentDevice?:string;
  startCall(peerId:string,media:MediaType[]):Promise<void>;accept(media?:MediaType[]):Promise<void>;decline():Promise<void>;end():Promise<void>;toggleMute():void;toggleCamera():void;sendTestTone():Promise<void>;shareScreen():Promise<void> }
-const Context=createContext<CallContextValue|null>(null);
+const offlineCallError=()=>Promise.reject(new Error("Calls require a live Guardian connection"));
+const offlineValue:CallContextValue={
+ muted:false,cameraEnabled:false,error:"Calls are unavailable while Guardian is offline",
+ startCall:offlineCallError,accept:offlineCallError,decline:offlineCallError,end:offlineCallError,
+ toggleMute:()=>{},toggleCamera:()=>{},sendTestTone:offlineCallError,shareScreen:offlineCallError,
+};
+// Root deliberately omits CallProvider offline. This fallback keeps cached
+// call history and conversation screens readable without starting call APIs.
+const Context=createContext<CallContextValue>(offlineValue);
 
 export function CallProvider({children}:{children:ReactNode}){
  const[call,setCall]=useState<CallSession>();const[incoming,setIncoming]=useState<CallSession>();const[peerId,setPeerId]=useState<string>();const[currentDevice,setCurrentDevice]=useState<string>();
@@ -51,4 +59,4 @@ export function CallProvider({children}:{children:ReactNode}){
  const toggleMute=()=>{const next=!muted;setMuted(next);rtc.current.setMuted(next)};const toggleCamera=()=>{const next=!cameraEnabled;setCameraEnabled(next);rtc.current.setCameraEnabled(next)};
  const value=useMemo(()=>({call,incoming,peerId,localStream,remoteStream,error,muted,cameraEnabled,currentDevice,startCall,accept,decline,end,toggleMute,toggleCamera,sendTestTone:()=>rtc.current.sendTestTone(),shareScreen:()=>rtc.current.startScreenShare()}),[call,incoming,peerId,localStream,remoteStream,error,muted,cameraEnabled,currentDevice]);return <Context.Provider value={value}>{children}</Context.Provider>;
 }
-export function useCall(){const value=useContext(Context);if(!value)throw new Error("useCall must be inside CallProvider");return value}
+export function useCall(){return useContext(Context)}

@@ -80,6 +80,8 @@ pub struct LoginUserResponse {
     pub browser_registration_id: Option<String>,
     #[serde(rename = "guardianFingerprint", skip_serializing_if = "Option::is_none")]
     pub guardian_fingerprint: Option<String>,
+    #[serde(rename = "registrationExpiresAt", skip_serializing_if = "Option::is_none")]
+    pub registration_expires_at: Option<i64>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -118,6 +120,8 @@ pub struct SessionResponse {
     pub browser_registration_id: Option<String>,
     #[serde(rename = "guardianFingerprint", skip_serializing_if = "Option::is_none")]
     pub guardian_fingerprint: Option<String>,
+    #[serde(rename = "registrationExpiresAt", skip_serializing_if = "Option::is_none")]
+    pub registration_expires_at: Option<i64>,
     #[serde(rename = "guardianDid")]
     pub guardian_did: String,
     #[serde(rename = "expiresAt")]
@@ -227,6 +231,7 @@ pub async fn login(
             circle_ids: claims.circle_ids,
             browser_registration_id: claims.browser_registration_id,
             guardian_fingerprint: claims.guardian_fingerprint,
+            registration_expires_at: user.registration_expires_at,
         },
         guardian_did: state.device_did.clone(),
         expires_at: claims.exp,
@@ -374,6 +379,7 @@ pub async fn cylenium_callback(
             circle_ids: claims.circle_ids,
             browser_registration_id: claims.browser_registration_id,
             guardian_fingerprint: claims.guardian_fingerprint,
+            registration_expires_at: user.registration_expires_at,
         },
         guardian_did: state.device_did.clone(),
         expires_at: claims.exp,
@@ -465,6 +471,7 @@ pub async fn refresh_session(
             circle_ids: claims.circle_ids,
             browser_registration_id: claims.browser_registration_id,
             guardian_fingerprint: claims.guardian_fingerprint,
+            registration_expires_at: user.registration_expires_at,
         },
         guardian_did: state.device_did.clone(),
         expires_at: claims.exp,
@@ -500,6 +507,7 @@ pub async fn session(
         circle_ids: user.circle_ids,
         browser_registration_id: user.browser_registration_id,
         guardian_fingerprint: user.guardian_fingerprint,
+        registration_expires_at: user.registration_expires_at,
         guardian_did: state.device_did.clone(),
         expires_at: session.claims.exp,
     }))

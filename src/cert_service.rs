@@ -31,9 +31,9 @@ const APPROVAL_POLL_SECS: u64 = 2;
 const APPROVAL_TIMEOUT_SECS: u64 = 3600;
 
 /// YAML structure written to nebula/requests/<node>.yaml
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-enum ApprovalDecision {
+pub(crate) enum ApprovalDecision {
     #[serde(alias = "false", alias = "reject", alias = "no")]
     False,
     #[serde(alias = "member")]
@@ -47,13 +47,13 @@ enum ApprovalDecision {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct CertRequestYaml {
-    node_id: String,
-    requested_at: String,
-    overlay_ip: String,
-    public_key_fingerprint: String,
-    requested_role: String,
-    approve: ApprovalDecision,
+pub(crate) struct CertRequestYaml {
+    pub(crate) node_id: String,
+    pub(crate) requested_at: String,
+    pub(crate) overlay_ip: String,
+    pub(crate) public_key_fingerprint: String,
+    pub(crate) requested_role: String,
+    pub(crate) approve: ApprovalDecision,
 }
 
 /// gRPC CertService implementation — registered on nodeA only.
