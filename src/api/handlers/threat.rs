@@ -3,6 +3,10 @@ use crate::api::{error::ApiError, state::AppState};
 use crate::threat::{
     blocker::load_block_records,
     config::{BlockMode, SuricataConfig},
+    setup::{
+        detect_runtime_capabilities, effective_interface, ensure_suricata_layout,
+        ensure_suricata_service_unit, SuricataRuntimeMode,
+    },
     threat_alert::{Severity, ThreatAlert},
 };
 use axum::{
@@ -157,19 +161,38 @@ pub struct ThreatStatusResponse {
     pub block_mode: String,
     pub alert_count: usize,
     pub block_count: usize,
+    pub runtime_mode: String,
+    pub can_start: bool,
+    pub can_validate: bool,
+    pub can_update_rules: bool,
+    pub runtime_note: Option<String>,
 }
 
 pub async fn status(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<ThreatStatusResponse>, ApiError> {
-    let cfg = SuricataConfig::load(Path::new(&state.threat_config_path)).unwrap_or_default();
+    let config_path = Path::new(&state.threat_config_path);
+    let cfg = SuricataConfig::load(config_path).unwrap_or_default();
+    if let Err(err) = ensure_suricata_layout(Some(config_path), Some(&cfg)).await {
+        tracing::warn!("failed to ensure Suricata layout for status: {}", err);
+    }
 
-    let suricata = tokio::process::Command::new("systemctl")
-        .args(["is-active", "suricata"])
-        .output()
-        .await
-        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
-        .unwrap_or_else(|_| "unknown".to_string());
+    let caps = detect_runtime_capabilities();
+    let suricata = if let Some(systemctl) = caps.systemctl_path {
+        tokio::process::Command::new(systemctl)
+            .args(["is-active", "suricata"])
+            .output()
+            .await
+            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+            .unwrap_or_else(|_| "unknown".to_string())
+    } else if Path::new("/run/suricata/suricata.pid").exists() {
+        "active".to_string()
+    } else {
+        match caps.mode {
+            SuricataRuntimeMode::TailerOnly => "tailer-only".to_string(),
+            _ => "inactive".to_string(),
+        }
+    };
 
     let alerts_path = PathBuf::from(&state.threat_state_dir).join("alerts.jsonl");
     let alert_count = tokio::fs::read_to_string(&alerts_path)
@@ -186,6 +209,11 @@ pub async fn status(
         block_mode: cfg.block_mode.as_str().to_string(),
         alert_count,
         block_count,
+        runtime_mode: caps.mode.as_str().to_string(),
+        can_start: caps.can_start,
+        can_validate: caps.can_validate,
+        can_update_rules: caps.can_update_rules,
+        runtime_note: caps.mode.note().map(str::to_string),
     }))
 }
 
@@ -258,12 +286,51 @@ pub async fn block_ip(
     Ok(Json(run_cli(&["threat", "block", &body.ip]).await?))
 }
 
-pub async fn start(State(_state): State<Arc<AppState>>) -> Result<Json<ActionResponse>, ApiError> {
-    let output = tokio::process::Command::new("systemctl")
-        .args(["start", "suricata"])
-        .output()
+pub async fn start(State(state): State<Arc<AppState>>) -> Result<Json<ActionResponse>, ApiError> {
+    let config_path = Path::new(&state.threat_config_path);
+    let cfg = SuricataConfig::load(config_path).unwrap_or_default();
+    ensure_suricata_layout(Some(config_path), Some(&cfg))
         .await
-        .map_err(|e| ApiError::Internal(format!("systemctl: {}", e)))?;
+        .map_err(|e| ApiError::Internal(format!("suricata layout: {}", e)))?;
+
+    let caps = detect_runtime_capabilities();
+    let output = if let Some(systemctl) = caps.systemctl_path {
+        ensure_suricata_service_unit(Some(&cfg))
+            .await
+            .map_err(|e| ApiError::Internal(format!("suricata unit: {}", e)))?;
+        tokio::process::Command::new(systemctl)
+            .args(["start", "suricata"])
+            .output()
+            .await
+            .map_err(|e| ApiError::Internal(format!("systemctl: {}", e)))?
+    } else if caps.can_start {
+        let interface = effective_interface(Some(&cfg));
+        tokio::process::Command::new("/opt/suricata/bin/suricata")
+            .args([
+                "-c",
+                &cfg.suricata_yaml,
+                "--pidfile",
+                "/run/suricata/suricata.pid",
+                "-i",
+                &interface,
+                "-D",
+            ])
+            .output()
+            .await
+            .map_err(|e| ApiError::Internal(format!("suricata: {}", e)))?
+    } else {
+        return Ok(Json(ActionResponse {
+            success: false,
+            stdout: String::new(),
+            stderr: caps
+                .mode
+                .note()
+                .unwrap_or("Suricata service control is unavailable on this runtime.")
+                .to_string(),
+            restart_required: false,
+            timestamp: Utc::now().to_rfc3339(),
+        }));
+    };
 
     let success = output.status.success();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();

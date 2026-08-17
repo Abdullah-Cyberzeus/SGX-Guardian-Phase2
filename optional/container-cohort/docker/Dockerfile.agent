@@ -10,6 +10,10 @@ ARG RUNTIME_IMAGE=debian:bookworm-slim
 
 FROM ${RUST_IMAGE} AS builder
 
+ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse \
+    CARGO_NET_RETRY=10 \
+    CARGO_HTTP_TIMEOUT=120
+
 # protoc: required by tonic-prost-build in build.rs
 # cmake + pkg-config: mirror scripts/build.sh prerequisites closely
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -17,11 +21,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
+
+# Cache dependency resolution separately from source changes so rebuilds only
+# fetch new crates when Cargo manifests or the lockfile actually change.
+COPY Cargo.lock build.rs ./
+COPY optional/container-cohort/overlay/Cargo.toml ./Cargo.toml
+COPY sgx-pa-cli/Cargo.toml ./sgx-pa-cli/Cargo.toml
+COPY src/lib.rs ./src/lib.rs
+COPY sgx-pa-cli/src/lib.rs ./sgx-pa-cli/src/lib.rs
+RUN --mount=type=cache,id=sgx-cohort-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=sgx-cohort-cargo-git,target=/usr/local/cargo/git \
+    cargo fetch --locked
+
 COPY . .
 COPY optional/container-cohort/overlay/ /src/
 
-# Keep the workspace contract aligned with CI and scripts/build.sh.
-RUN cargo build --release --workspace --locked --features virtual-platform
+# Persist cargo's registry/git/target caches across docker builds so source
+# edits do not force crates.io downloads or a completely cold rebuild.
+RUN --mount=type=cache,id=sgx-cohort-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=sgx-cohort-cargo-git,target=/usr/local/cargo/git \
+    --mount=type=cache,id=sgx-cohort-target,target=/src/target \
+    cargo build --release --workspace --locked --features virtual-platform
 
 FROM ${RUNTIME_IMAGE} AS runtime
 

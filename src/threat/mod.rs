@@ -26,6 +26,7 @@ pub mod inventory;
 pub mod peer_scorer;
 pub mod rule_manager;
 pub mod service;
+pub mod setup;
 pub mod threat_alert;
 pub mod threat_rules;
 

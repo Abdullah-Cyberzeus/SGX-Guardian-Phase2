@@ -5,11 +5,13 @@ use crate::circle::invite::{self, InviteToken, JoinRequest};
 use crate::circle::members::{self, CircleMember};
 use crate::circle::store::{self, CIRCLE_WRITE_LOCK};
 use crate::circle::{Circle, CircleError};
-use crate::did::Did;
+use crate::crl::gossip::engine::parse_nebula_endpoint;
+use crate::did::{Did, Resolver};
 use crate::vc::credential::{CredentialRole, VerifiableCredential};
 use crate::vc::issue::{
     self, default_permissions_for_role, IssueMembershipOutcome, IssueRequest, VcAdminAction,
 };
+use crate::vc::verify::{verify_vc, VerifyOptions};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -19,6 +21,12 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
+
+/// How long a same-mesh auto-delivery invite stays redeemable. Short-lived
+/// because it is consumed immediately by [`try_deliver_membership_to_peer`]
+/// against a peer resolved to be online right now — it is never meant to be
+/// copied/shared like an operator-minted invite.
+const DELIVERY_INVITE_TTL_MINUTES: i64 = 15;
 
 #[derive(Serialize)]
 pub struct CircleListResponse {
@@ -83,6 +91,31 @@ pub struct MemberMutationResponse {
     pub vc: VerifiableCredential,
     pub reused_existing: bool,
     pub replaced_expired: bool,
+    /// Whether the membership was also pushed to and accepted by the
+    /// member's own node (see [`deliver_membership`]). `false` just means
+    /// delivery could not be confirmed right now (peer offline / not yet
+    /// mesh-resolvable) — the local membership record above is unaffected;
+    /// share an invite from the Invites tab as a fallback.
+    pub delivered: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct DeliverMembershipRequest {
+    pub invite_token: InviteToken,
+    pub vc: VerifiableCredential,
+}
+
+#[derive(Serialize)]
+pub struct DeliverMembershipResponse {
+    pub status: String,
+    pub message: String,
+    pub circle: Circle,
+}
+
+#[derive(Serialize)]
+pub struct SelfHostResponse {
+    pub status: String,
+    pub host: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -396,6 +429,9 @@ pub async fn add_member(
             id, did, role
         ),
     );
+
+    let delivered = deliver_membership_to_peer(&state, &id, &did, &result.vc).await;
+
     Ok((
         if result.reused_existing {
             StatusCode::OK
@@ -412,8 +448,200 @@ pub async fn add_member(
             vc: result.vc,
             reused_existing: result.reused_existing,
             replaced_expired: result.replaced_expired,
+            delivered,
         }),
     ))
+}
+
+/// Best-effort push of a just-issued membership VC straight to the member's
+/// own node, so it shows up there without a manual invite/join round trip.
+/// Never turns into a request failure: the local membership record from
+/// [`add_member`] above is already durable by the time this runs, and a
+/// peer that is offline or not yet mesh-resolvable just falls back to the
+/// existing manual Invite flow.
+async fn deliver_membership_to_peer(
+    state: &Arc<AppState>,
+    circle_id: &str,
+    subject_did: &str,
+    vc: &VerifiableCredential,
+) -> bool {
+    match try_deliver_membership_to_peer(state, circle_id, subject_did, vc).await {
+        Ok(()) => {
+            log_audit(
+                &state.node_id,
+                AuditCategory::Circle,
+                AuditSeverity::Info,
+                AuditAction::Succeeded,
+                &format!(
+                    "Circle membership pushed to peer: circle={} subject={}",
+                    circle_id, subject_did
+                ),
+            );
+            true
+        }
+        Err(reason) => {
+            log_audit(
+                &state.node_id,
+                AuditCategory::Circle,
+                AuditSeverity::Warning,
+                AuditAction::Failed,
+                &format!(
+                    "Circle membership push skipped: circle={} subject={} reason={}",
+                    circle_id, subject_did, reason
+                ),
+            );
+            false
+        }
+    }
+}
+
+async fn try_deliver_membership_to_peer(
+    state: &Arc<AppState>,
+    circle_id: &str,
+    subject_did: &str,
+    vc: &VerifiableCredential,
+) -> Result<(), String> {
+    let host = resolve_overlay_host(&state.did_resolver, subject_did)
+        .await
+        .ok_or_else(|| "peer overlay address not resolvable".to_string())?;
+    let circle = store::get_circle(&state.node_id, circle_id).map_err(|err| err.to_string())?;
+    let (issuer, km) =
+        store::load_runtime_signing_context(&state.node_id).map_err(|err| err.to_string())?;
+    let invite_token = invite::mint_invite(
+        &circle,
+        &issuer,
+        &km,
+        vc.credential_subject.role.clone(),
+        Some(DELIVERY_INVITE_TTL_MINUTES),
+        Some(1),
+    )
+    .map_err(|err| err.to_string())?;
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|err| err.to_string())?;
+    let response = client
+        .post(format!(
+            "{}/api/v1/circles/deliver",
+            host.trim_end_matches('/')
+        ))
+        .json(&DeliverMembershipRequest {
+            invite_token: invite_token.clone(),
+            vc: vc.clone(),
+        })
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+
+    if !response.status().is_success() {
+        return Err(format!("peer responded {}", response.status()));
+    }
+
+    invite::record_redemption(&invite_token.id, subject_did).map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+/// Accepts a membership VC pushed directly by a circle owner (see
+/// [`try_deliver_membership_to_peer`]) instead of pulled via the manual
+/// join flow. Trust comes entirely from the embedded, owner-signed
+/// `InviteToken` and `VerifiableCredential` — both independently verified
+/// against the resolved owner DID below — the same proof standard the
+/// manual `redeem` endpoint holds itself to. This node's own identity is
+/// never asserted by the caller: the VC must already name this node's own
+/// subject DID, so a push cannot plant membership for anyone else.
+pub async fn deliver_membership(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<DeliverMembershipRequest>,
+) -> Result<(StatusCode, Json<DeliverMembershipResponse>), ApiError> {
+    invite::verify_invite(&body.invite_token, &state.did_resolver)
+        .await
+        .map_err(map_circle_error)?;
+
+    if crate::crl::is_revoked(&body.invite_token.issuer_did) {
+        log_audit(
+            &state.node_id,
+            AuditCategory::Circle,
+            AuditSeverity::Warning,
+            AuditAction::Rejected,
+            &format!(
+                "Circle membership push rejected: revoked issuer {}",
+                body.invite_token.issuer_did
+            ),
+        );
+        return Err(ApiError::Conflict(format!(
+            "issuer DID {} is revoked",
+            body.invite_token.issuer_did
+        )));
+    }
+
+    let (own, _) = store::load_runtime_signing_context(&state.node_id).map_err(map_circle_error)?;
+    verify_vc(
+        &body.vc,
+        &state.did_resolver,
+        VerifyOptions {
+            expected_subject_did: Some(&own.did),
+            expected_circle_id: Some(&body.invite_token.circle_id),
+            expected_issuer_did: Some(&body.invite_token.issuer_did),
+            check_status_list: false,
+            status_list: None,
+        },
+    )
+    .await
+    .map_err(map_vc_error)?;
+
+    crate::vc::persistence::save_own(&body.vc).map_err(map_vc_error)?;
+    let circle =
+        invite::save_joined_circle(&state.node_id, &body.invite_token).map_err(map_circle_error)?;
+
+    log_audit(
+        &state.node_id,
+        AuditCategory::Circle,
+        AuditSeverity::Info,
+        AuditAction::Succeeded,
+        &format!(
+            "Circle membership received: circle={} owner={}",
+            circle.circle_id, circle.owner_did
+        ),
+    );
+
+    Ok((
+        StatusCode::CREATED,
+        Json(DeliverMembershipResponse {
+            status: "success".to_string(),
+            message: "Circle membership received".to_string(),
+            circle,
+        }),
+    ))
+}
+
+/// This node's own admin-API address as reachable by mesh peers (its
+/// `SGXNebulaMesh` overlay IP), for the frontend to prefill "Owner Guardian
+/// URL" with instead of guessing from the browser's own address bar — which
+/// is meaningless once nodeA/B/C are separate containers reached through
+/// per-node port-forwards (`window.location.hostname` is then the *host
+/// machine*, not this node, and any two nodes' forwarded ports usually
+/// differ from the fixed in-container `:8443`).
+pub async fn self_host(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<SelfHostResponse>, ApiError> {
+    let (issuer, _) =
+        store::load_runtime_signing_context(&state.node_id).map_err(map_circle_error)?;
+    let host = resolve_overlay_host(&state.did_resolver, &issuer.did).await;
+    Ok(Json(SelfHostResponse {
+        status: "success".to_string(),
+        host,
+    }))
+}
+
+async fn resolve_overlay_host(resolver: &Resolver, did: &str) -> Option<String> {
+    let resolution = resolver.resolve(did).await.ok()?;
+    resolution
+        .services
+        .iter()
+        .find(|svc| svc.r#type == "SGXNebulaMesh")
+        .and_then(|svc| parse_nebula_endpoint(&svc.endpoint))
+        .map(|ip| format!("http://{}:8443", ip))
 }
 
 pub async fn remove_member(
@@ -457,12 +685,16 @@ pub async fn change_role(
             id, did, role
         ),
     );
+
+    let delivered = deliver_membership_to_peer(&state, &id, &did, &result.vc).await;
+
     Ok(Json(MemberMutationResponse {
         status: "success".to_string(),
         message: "Circle member role updated".to_string(),
         vc: result.vc,
         reused_existing: result.reused_existing,
         replaced_expired: result.replaced_expired,
+        delivered,
     }))
 }
 
@@ -502,12 +734,17 @@ pub async fn mint_invite(
     )
     .map_err(map_circle_error)?;
     let token_b64 = invite::encode_compact(&invite_token).map_err(map_circle_error)?;
-    let owner_host = body
+    let owner_host = match body
         .owner_host
         .as_deref()
-        .map(normalize_owner_url)
-        .transpose()?
-        .unwrap_or_else(|| "http://127.0.0.1:8443".to_string());
+        .filter(|value| !value.trim().is_empty())
+    {
+        Some(raw) => normalize_owner_url(raw)?,
+        None => match resolve_overlay_host(&state.did_resolver, &issuer.did).await {
+            Some(host) => host,
+            None => "http://127.0.0.1:8443".to_string(),
+        },
+    };
     let link = invite::build_share_link(&token_b64, &owner_host).map_err(map_circle_error)?;
     log_audit(
         &state.node_id,

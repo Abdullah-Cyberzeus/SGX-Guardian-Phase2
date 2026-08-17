@@ -61,6 +61,12 @@ export interface ThreatStatus {
   block_mode: string;
   alert_count: number;
   block_count: number;
+  /** managed_service | binary_only | tailer_only */
+  runtime_mode?: string;
+  can_start?: boolean;
+  can_validate?: boolean;
+  can_update_rules?: boolean;
+  runtime_note?: string | null;
 }
 
 // ── Blocks (GET/POST /threat/blocks, POST /threat/blocks/unblock) ──────────────

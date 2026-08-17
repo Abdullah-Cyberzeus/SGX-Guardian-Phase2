@@ -7,6 +7,7 @@ use crate::threat::{
     eve_tailer::EveTailer,
     inventory::{AlertInventory, IngestOutcome},
     rule_manager::RuleManager,
+    setup::ensure_suricata_layout,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -23,6 +24,10 @@ pub struct ThreatService {
 impl ThreatService {
     pub fn start(self) {
         tokio::spawn(async move {
+            if let Err(err) = ensure_suricata_layout(Some(&self.config_path), None).await {
+                tracing::warn!("failed to prepare Suricata layout: {}", err);
+            }
+
             let cfg = match SuricataConfig::load(&self.config_path) {
                 Ok(cfg) if cfg.enabled => cfg,
                 Ok(_) => {
@@ -35,6 +40,10 @@ impl ThreatService {
                     return;
                 }
             };
+
+            if let Err(err) = ensure_suricata_layout(Some(&self.config_path), Some(&cfg)).await {
+                tracing::warn!("failed to refresh Suricata layout: {}", err);
+            }
 
             let _ = tokio::fs::create_dir_all(&self.state_dir).await;
             if let Some(log_dir) = Path::new(&cfg.eve_path).parent() {

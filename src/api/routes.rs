@@ -324,6 +324,8 @@ pub fn circle_router() -> Router<Arc<AppState>> {
         )
         .route("/api/v1/circles/join", post(handlers::circle::join))
         .route("/api/v1/circles/redeem", post(handlers::circle::redeem))
+        .route("/api/v1/circles/deliver", post(handlers::circle::deliver_membership))
+        .route("/api/v1/circles/self-host", get(handlers::circle::self_host))
 }
 
 pub fn ha_api_router() -> Router<Arc<AppState>> {

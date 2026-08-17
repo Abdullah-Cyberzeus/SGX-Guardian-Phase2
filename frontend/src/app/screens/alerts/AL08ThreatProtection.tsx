@@ -152,6 +152,7 @@ function suricataVisual(state: string) {
   const s = (state || "").toLowerCase();
   if (s === "active") return { color: "var(--chart-2)", label: "Active", Icon: ShieldCheck };
   if (s === "inactive") return { color: "var(--destructive)", label: "Inactive", Icon: ShieldAlert };
+  if (s === "tailer-only") return { color: "var(--primary)", label: "Tailer only", Icon: ShieldQuestion };
   return { color: "var(--muted-foreground)", label: state || "Unknown", Icon: ShieldQuestion };
 }
 
@@ -163,6 +164,10 @@ function OverviewTab({ onManageConfig }: { onManageConfig: () => void }) {
 
   const s = status.data;
   const sv = suricataVisual(s?.suricata ?? "");
+  const showStart = !!s && s.suricata.toLowerCase() !== "active" && (s.can_start ?? true);
+  const showValidate = !!s && (s.can_validate ?? true);
+  const showRules = !!s && (s.can_update_rules ?? true);
+  const supportedActions = [showStart, showValidate, showRules].filter(Boolean).length;
 
   const run = async (
     kind: "start" | "validate" | "rules",
@@ -211,33 +216,59 @@ function OverviewTab({ onManageConfig }: { onManageConfig: () => void }) {
               <Pill color="var(--primary)">
                 Block mode: {(s?.block_mode ?? "—").replace("_", " ")}
               </Pill>
+              {s?.runtime_mode === "tailer_only" && (
+                <Pill color="var(--primary)" icon={ShieldQuestion}>
+                  Docker tailer mode
+                </Pill>
+              )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {s && s.suricata.toLowerCase() !== "active" && (
-                <ActionButton
-                  busy={busy === "start"}
-                  disabled={busy !== null}
-                  icon={Play}
-                  label="Start Suricata"
-                  onClick={() => run("start", () => threatService.start(), "Suricata start")}
-                />
-              )}
-              <ActionButton
-                busy={busy === "validate"}
-                disabled={busy !== null}
-                icon={CheckCircle2}
-                label="Validate config"
-                onClick={() => run("validate", () => threatService.validate(), "Validation")}
-              />
-              <ActionButton
-                busy={busy === "rules"}
-                disabled={busy !== null}
-                icon={RefreshCw}
-                label="Update rules"
-                onClick={() => run("rules", () => threatService.updateRules(), "Rules update")}
-              />
-            </div>
+            {s?.runtime_note && (
+              <p
+                className="mb-4 rounded-md border px-3 py-2"
+                style={{
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "var(--text-xs)",
+                  color: "var(--muted-foreground)",
+                  borderColor: "var(--border)",
+                  backgroundColor: "color-mix(in srgb, var(--primary) 6%, var(--card))",
+                }}
+              >
+                {s.runtime_note}
+              </p>
+            )}
+
+            {supportedActions > 0 && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {showStart && (
+                  <ActionButton
+                    busy={busy === "start"}
+                    disabled={busy !== null}
+                    icon={Play}
+                    label="Start Suricata"
+                    onClick={() => run("start", () => threatService.start(), "Suricata start")}
+                  />
+                )}
+                {showValidate && (
+                  <ActionButton
+                    busy={busy === "validate"}
+                    disabled={busy !== null}
+                    icon={CheckCircle2}
+                    label="Validate config"
+                    onClick={() => run("validate", () => threatService.validate(), "Validation")}
+                  />
+                )}
+                {showRules && (
+                  <ActionButton
+                    busy={busy === "rules"}
+                    disabled={busy !== null}
+                    icon={RefreshCw}
+                    label="Update rules"
+                    onClick={() => run("rules", () => threatService.updateRules(), "Rules update")}
+                  />
+                )}
+              </div>
+            )}
           </>
         )}
       </div>

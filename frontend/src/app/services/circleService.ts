@@ -251,6 +251,18 @@ export const circleService = {
 
   // 15. POST /circles/redeem
   redeem: (joinRequest: unknown) => api.post<CircleMutationResult>('/circles/redeem', joinRequest),
+
+  // GET /circles/self-host — this node's own mesh-reachable address, for
+  // prefilling "Owner Guardian URL" instead of guessing from the browser's
+  // address bar (wrong once nodes are separate containers/port-forwards).
+  async getSelfHost(): Promise<string | null> {
+    try {
+      const result = await api.get<any>('/circles/self-host');
+      return result?.host || null;
+    } catch {
+      return null;
+    }
+  },
 };
 
 export default circleService;

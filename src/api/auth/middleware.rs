@@ -107,6 +107,7 @@ fn is_public_route(method: &Method, path: &str) -> bool {
             | (&Method::POST, "/api/v1/auth/oidc/cylenium/start")
             | (&Method::POST, "/api/v1/auth/oidc/cylenium/callback")
             | (&Method::POST, "/api/v1/circles/redeem")
+            | (&Method::POST, "/api/v1/circles/deliver")
             | (&Method::POST, "/api/v1/restore/validate")
             | (&Method::GET, "/api/v1/restore/status")
             | (&Method::GET, "/api/v1/health")
