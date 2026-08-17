@@ -1,10 +1,12 @@
 use crate::api::error::ApiError;
+use crate::api::auth::middleware::AuthenticatedSession;
 use crate::api::state::AppState;
 use crate::chat::models::{ChatMessageRecord, MessageStatus};
 use axum::extract::{
     ws::{Message, WebSocket, WebSocketUpgrade},
     Json, Query, State,
 };
+use axum::Extension;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -89,6 +91,11 @@ pub struct SendMessageRequest {
     pub content: Option<String>,
     pub attachment_id: Option<String>,
     pub is_group: bool,
+    /// Optional client-generated canonical message ID. Replaying the same
+    /// send (e.g. an interrupted offline-queue retry) with the same ID
+    /// returns the already-accepted message instead of creating a duplicate.
+    #[serde(default)]
+    pub message_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -98,8 +105,17 @@ pub struct SendMessageResponse {
     pub status: String,
 }
 
+fn request_payload_json(req: &SendMessageRequest) -> String {
+    serde_json::to_string(&serde_json::json!({
+        "content": req.content,
+        "attachment_id": req.attachment_id,
+    }))
+    .unwrap_or_default()
+}
+
 pub async fn send_message(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Json(req): Json<SendMessageRequest>,
 ) -> Result<Json<SendMessageResponse>, ApiError> {
     // 1. Validate payload
@@ -108,6 +124,34 @@ pub async fn send_message(
             "Message must contain either content or an attachment".to_string(),
         ));
     }
+    if !req.is_group {
+        ensure_member_contact_access(&state, &session, &req.recipient_did)?;
+    }
+    let sender_did = crate::api::handlers::browser_member::did_from_session(&session)
+        .unwrap_or_else(|| state.device_did.clone());
+    let local_circle_ids = crate::api::auth::authorization::local_active_circle_ids(
+        &state.node_id,
+        &state.device_did,
+    )
+    .map_err(ApiError::Internal)?;
+    let browser_recipient_state = if !req.is_group {
+        crate::api::handlers::browser_member::state_for_did(
+            &state,
+            &req.recipient_did,
+            &local_circle_ids,
+        )
+        .await?
+    } else {
+        None
+    };
+    let is_local_guardian_recipient =
+        !req.is_group && req.recipient_did == state.device_did && sender_did != state.device_did;
+    let is_local_direct = is_local_guardian_recipient || browser_recipient_state.is_some();
+    let direct_conversation_id = if is_local_guardian_recipient {
+        sender_did.clone()
+    } else {
+        req.recipient_did.clone()
+    };
 
     // 1b. Validate Attestation Status & Determine Target IPs
     let mut target_peers_info: Vec<(String, String)> = Vec::new();
@@ -177,6 +221,7 @@ pub async fn send_message(
         let circle_id = req.recipient_did.clone();
         let circle_members = crate::circle::members::list_members(&state.node_id, &circle_id)
             .map_err(|e| ApiError::BadRequest(format!("Failed to load circle members: {:?}", e)))?;
+        ensure_local_guardian_circle_access(&state, &session, &circle_id)?;
 
         // Extract DIDs of circle members
         let member_dids: std::collections::HashSet<String> =
@@ -213,7 +258,7 @@ pub async fn send_message(
                 "No trusted peers found in the circle for group fan-out".to_string(),
             ));
         }
-    } else {
+    } else if !is_local_direct {
         // P2P Chat: Find the specific trusted peer.
         // Match by full DID string OR by the base58 key suffix OR by peer_id.
         let target_peer_id = req
@@ -275,27 +320,53 @@ pub async fn send_message(
         }
     }
 
-    // 2. Generate UUID and current timestamp
-    let message_id = Uuid::new_v4().to_string();
-    let timestamp = chrono::Utc::now().timestamp();
-    let sender_did = state.device_did.clone();
+    // 2/3. Load current history once: it drives both the idempotent-replay
+    // check and the seq_no assignment below.
+    let history = if req.is_group {
+        crate::chat::storage::read_group_history(&req.recipient_did)
+            .await
+            .unwrap_or_default()
+    } else {
+        crate::chat::storage::read_p2p_history(&direct_conversation_id)
+            .await
+            .unwrap_or_default()
+    };
 
-    // 3. Determine seq_no
-    let mut seq_no = 1u64;
-    if req.is_group {
-        if let Ok(history) = crate::chat::storage::read_group_history(&req.recipient_did).await {
-            seq_no = history.iter().map(|m| m.seq_no).max().unwrap_or(0) + 1;
+    let requested_id = req.message_id.as_deref().map(str::trim).filter(|id| !id.is_empty());
+    if requested_id.is_some_and(|id| id.len() > 100) {
+        return Err(ApiError::BadRequest(
+            "message_id must be 100 characters or fewer".to_string(),
+        ));
+    }
+    let content_str = request_payload_json(&req);
+
+    if let Some(existing) = requested_id.and_then(|id| history.iter().find(|m| m.message_id == id))
+    {
+        if existing.encrypted_payload != content_str {
+            return Err(ApiError::BadRequest(
+                "idempotency replay payload does not match the original message".to_string(),
+            ));
         }
-    } else if let Ok(history) = crate::chat::storage::read_p2p_history(&req.recipient_did).await {
-        seq_no = history.iter().map(|m| m.seq_no).max().unwrap_or(0) + 1;
+        // Idempotent replay: this exact message was already accepted, so do
+        // not append another log entry or re-dispatch gRPC delivery. Return
+        // its real current status rather than a fixed placeholder so a
+        // retried send reflects delivery progress made since the first
+        // attempt.
+        return Ok(Json(SendMessageResponse {
+            message_id: existing.message_id.clone(),
+            signature_base64: String::new(),
+            status: existing.status.as_str().to_string(),
+        }));
     }
 
-    // 4. Save outbound message locally (plaintext JSON, no encryption)
-    let payload_obj = serde_json::json!({
-        "content": req.content,
-        "attachment_id": req.attachment_id,
-    });
-    let content_str = serde_json::to_string(&payload_obj).unwrap_or_default();
+    let message_id = requested_id
+        .map(str::to_string)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let timestamp = chrono::Utc::now().timestamp();
+    let seq_no = history.iter().map(|m| m.seq_no).max().unwrap_or(0) + 1;
+
+    // 4. Save outbound message locally. The field name is kept for schema
+    // compatibility while Phase 0's encryption-at-rest decision is finalized.
     let group_id_opt = if req.is_group {
         Some(req.recipient_did.clone())
     } else {
@@ -311,7 +382,7 @@ pub async fn send_message(
         seq_no,
         encrypted_payload: content_str.clone(), // field name kept for schema compat
         signature: String::new(),
-        status: MessageStatus::Pending,
+        status: MessageStatus::AcceptedByGuardian,
         read_by: Vec::new(),
     };
 
@@ -320,12 +391,53 @@ pub async fn send_message(
             .await
             .map_err(|e| ApiError::Internal(format!("Failed to save group message: {}", e)))?;
     } else {
-        crate::chat::storage::append_p2p_message(&req.recipient_did, &record)
+        crate::chat::storage::append_p2p_message(&direct_conversation_id, &record)
             .await
             .map_err(|e| ApiError::Internal(format!("Failed to save p2p message: {}", e)))?;
     }
+    let _ = state
+        .chat_events
+        .send(crate::chat::models::ChatEvent::NewMessage(record.clone()));
 
-    // 5. Dispatch gRPC push in background (Nebula overlay already provides E2E security)
+    if is_local_direct {
+        let delivered = is_local_guardian_recipient
+            || browser_recipient_state
+                == Some(crate::api::handlers::browser_member::BrowserMemberState::Active);
+        if delivered {
+            match crate::chat::storage::update_message_status(
+                false,
+                &direct_conversation_id,
+                &message_id,
+                    crate::chat::models::MessageStatus::DeliveredToRemoteGuardian,
+            )
+            .await
+            {
+                Ok(Some(record)) => {
+                    let _ = state
+                        .chat_events
+                        .send(crate::chat::models::ChatEvent::MessageStatus(record));
+                }
+                Ok(None) => {}
+                Err(e) => eprintln!("❌ Chat: failed to update local delivered status: {}", e),
+            }
+        }
+        return Ok(Json(SendMessageResponse {
+            message_id,
+            signature_base64: String::new(),
+            status: if delivered {
+                MessageStatus::DeliveredToRemoteGuardian.as_str().to_string()
+            } else {
+                MessageStatus::AcceptedByGuardian.as_str().to_string()
+            },
+        }));
+    }
+
+    // 5. Dispatch gRPC push in background (Nebula overlay already provides E2E security).
+    // The message stays `Pending` (the status already persisted above) until a
+    // push actually succeeds — that is the "offline peer keeps it pending"
+    // behavior. Once at least one target acknowledges delivery, the stored
+    // record is advanced to `Delivered` and connected clients are notified so
+    // the UI stops showing "Pending" for a message that in fact went through.
     let message_id_clone = message_id.clone();
     let sender_did_clone = sender_did.clone();
     let is_group = req.is_group;
@@ -334,7 +446,10 @@ pub async fn send_message(
     } else {
         String::new()
     };
+    let status_state = state.clone();
+    let status_target_id = req.recipient_did.clone();
     tokio::spawn(async move {
+        let mut delivery_tasks = Vec::new();
         for (recipient_did, target_addr) in target_peers_info {
             let msg_id = message_id_clone.clone();
             let snd_did = sender_did_clone.clone();
@@ -343,7 +458,7 @@ pub async fn send_message(
             let addr = target_addr.clone();
             let g_id = group_id_str.clone();
 
-            tokio::spawn(async move {
+            delivery_tasks.push(tokio::spawn(async move {
                 let grpc_req = crate::proto::sgx::PushMessageRequest {
                     message_id: msg_id,
                     sender_did: snd_did,
@@ -356,18 +471,50 @@ pub async fn send_message(
                 };
 
                 match crate::chat::grpc_client::push_message_to_peer(addr.clone(), grpc_req).await {
-                    Ok(()) => println!("💬 ✅ Message delivered to {}", addr),
-                    Err(e) => eprintln!("❌ Chat delivery failed to {}: {}", addr, e),
+                    Ok(()) => {
+                        println!("💬 ✅ Message delivered to {}", addr);
+                        true
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Chat delivery failed to {}: {}", addr, e);
+                        false
+                    }
                 }
-            });
+            }));
+        }
+
+        let mut any_delivered = false;
+        for task in delivery_tasks {
+            if matches!(task.await, Ok(true)) {
+                any_delivered = true;
+            }
+        }
+
+        if any_delivered {
+            match crate::chat::storage::update_message_status(
+                is_group,
+                &status_target_id,
+                &message_id_clone,
+                crate::chat::models::MessageStatus::DeliveredToRemoteGuardian,
+            )
+            .await
+            {
+                Ok(Some(record)) => {
+                    let _ = status_state
+                        .chat_events
+                        .send(crate::chat::models::ChatEvent::MessageStatus(record));
+                }
+                Ok(None) => {}
+                Err(e) => eprintln!("❌ Chat: failed to update delivered status: {}", e),
+            }
         }
     });
 
-    // 6. Respond immediately — message queued for delivery
+    // 6. Respond immediately — message persisted locally and queued for delivery
     Ok(Json(SendMessageResponse {
         message_id,
         signature_base64: String::new(),
-        status: "queued".to_string(),
+        status: MessageStatus::AcceptedByGuardian.as_str().to_string(),
     }))
 }
 
@@ -387,6 +534,7 @@ pub struct MarkReadResponse {
 /// Task 5.3: API endpoint called by the UI when a user views a message
 pub async fn mark_as_read(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Json(req): Json<MarkReadRequest>,
 ) -> Result<Json<MarkReadResponse>, ApiError> {
     // Peers are authorised by DID. Transport confidentiality and endpoint
@@ -396,6 +544,7 @@ pub async fn mark_as_read(
 
     // 1. Verify the message exists
     if let Some(ref gid) = req.group_id {
+        ensure_local_guardian_circle_access(&state, &session, gid)?;
         if let Ok(history) = crate::chat::storage::read_group_history(gid).await {
             if !history.iter().any(|m| m.message_id == req.message_id) {
                 return Err(ApiError::BadRequest(
@@ -410,6 +559,7 @@ pub async fn mark_as_read(
     } else if let Ok(history) =
         crate::chat::storage::read_p2p_history(&req.original_sender_did).await
     {
+        ensure_member_contact_access(&state, &session, &req.original_sender_did)?;
         if !history.iter().any(|m| m.message_id == req.message_id) {
             return Err(ApiError::BadRequest(
                 "Message not found in conversation history".to_string(),
@@ -586,22 +736,35 @@ pub async fn trigger_sync(
 pub struct ChatHistoryQuery {
     pub peer_did: Option<String>,
     pub group_id: Option<String>,
+    pub after_seq: Option<u64>,
+    pub limit: Option<usize>,
 }
 
 #[derive(Serialize)]
 pub struct ChatHistoryResponse {
     pub messages: Vec<crate::chat::models::ChatMessageRecord>,
+    pub next_cursor: Option<u64>,
 }
 
 /// Task 7.1: Local Axum REST API to query paginated chat logs
 pub async fn get_history(
+    State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Query(query): Query<ChatHistoryQuery>,
 ) -> Result<Json<ChatHistoryResponse>, ApiError> {
-    let messages = if let Some(peer_did) = query.peer_did {
-        crate::chat::storage::read_p2p_history(&peer_did)
+    let mut messages = if let Some(peer_did) = query.peer_did {
+        ensure_member_contact_access(&state, &session, &peer_did)?;
+        let conversation_id = if peer_did == state.device_did {
+            crate::api::handlers::browser_member::did_from_session(&session)
+                .unwrap_or(peer_did)
+        } else {
+            peer_did
+        };
+        crate::chat::storage::read_p2p_history(&conversation_id)
             .await
             .map_err(|e| ApiError::Internal(format!("Failed to read P2P history: {}", e)))?
     } else if let Some(group_id) = query.group_id {
+        ensure_local_guardian_circle_access(&state, &session, &group_id)?;
         crate::chat::storage::read_group_history(&group_id)
             .await
             .map_err(|e| ApiError::Internal(format!("Failed to read Group history: {}", e)))?
@@ -610,8 +773,96 @@ pub async fn get_history(
             "Must provide either peer_did or group_id".to_string(),
         ));
     };
+    messages.sort_by_key(|message| (message.seq_no, message.timestamp));
+    if let Some(after_seq) = query.after_seq {
+        messages.retain(|message| message.seq_no > after_seq);
+    }
+    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+    if messages.len() > limit {
+        messages.truncate(limit);
+    }
+    let next_cursor = messages.last().map(|message| message.seq_no);
 
-    Ok(Json(ChatHistoryResponse { messages }))
+    Ok(Json(ChatHistoryResponse { messages, next_cursor }))
+}
+
+fn ensure_member_contact_access(
+    state: &AppState,
+    session: &Option<Extension<AuthenticatedSession>>,
+    contact_did: &str,
+) -> Result<(), ApiError> {
+    let is_member = session
+        .as_ref()
+        .is_some_and(|Extension(session)| session.claims.role == "member");
+    if !is_member {
+        return Ok(());
+    }
+    if contact_did == state.device_did {
+        return Ok(());
+    }
+    let contacts = crate::api::auth::authorization::scoped_circle_contact_dids(
+        &state.node_id,
+        &state.device_did,
+        session
+            .as_ref()
+            .map(|Extension(session)| session.claims.circle_ids.as_slice())
+            .unwrap_or(&[]),
+    )
+    .map_err(ApiError::Internal)?;
+    let browser_allowed =
+        crate::api::handlers::browser_member::did_from_session(session).as_deref()
+            == Some(contact_did);
+    if contacts.contains(contact_did) || browser_allowed {
+        Ok(())
+    } else {
+        if let Some(Extension(session)) = session.as_ref() {
+            crate::api::auth::authorization::audit_member_resource_denied(
+                &state.node_id,
+                &session.claims.sub,
+                "Circle contact",
+            );
+        }
+        Err(ApiError::Forbidden(
+            "contact does not share a Circle with this Guardian".into(),
+        ))
+    }
+}
+
+fn ensure_local_guardian_circle_access(
+    state: &AppState,
+    session: &Option<Extension<AuthenticatedSession>>,
+    circle_id: &str,
+) -> Result<(), ApiError> {
+    let is_member = session
+        .as_ref()
+        .is_some_and(|Extension(session)| session.claims.role == "member");
+    if !is_member
+        || (session.as_ref().is_some_and(|Extension(session)| {
+            session
+                .claims
+                .circle_ids
+                .iter()
+                .any(|allowed| allowed == circle_id)
+        }) && crate::api::auth::authorization::local_active_circle_ids(
+            &state.node_id,
+            &state.device_did,
+        )
+        .map_err(ApiError::Internal)?
+        .contains(circle_id))
+    {
+        return Ok(());
+    }
+    if let Some(Extension(session)) = session.as_ref() {
+        crate::api::auth::authorization::audit_member_resource_denied(
+            &state.node_id,
+            &session.claims.sub,
+            "Circle conversation",
+        );
+    }
+    Err(ApiError::Forbidden(format!(
+        "Guardian is not a member of circle {}",
+        circle_id
+    )))
 }
 
 /// Task 7.2: Local WebSocket Server for real-time event push

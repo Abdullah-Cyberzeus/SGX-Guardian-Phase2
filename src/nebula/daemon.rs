@@ -19,6 +19,9 @@ impl NebulaDaemon {
     pub async fn kill_existing_for_config(config_path: &str) {
         // Escape for shell-regex: match the exact config path.
         let pattern = format!("nebula -config {}", config_path);
+        // pkill runs on the caller context for parity with the original launcher
+        // (the async rewrite landed with the Apr 2026 freeze fix). Both paths are
+        // intentional; the qualification matrix compares their timing windows.
         let _ = Command::new("pkill").args(["-f", &pattern]).output();
         tokio::time::sleep(Duration::from_millis(600)).await;
     }
@@ -66,7 +69,10 @@ impl NebulaDaemon {
         Self::kill_existing_for_config(config_path).await;
 
         // 2. Validate config
-        match Self::test_config(config_path) {
+        // Config validation stays synchronous for startup-order parity with the
+        // original field images; the DEV-2041 board matrix measures this window.
+        let config_result = Self::test_config(config_path);
+        match config_result {
             Ok(_) => {
                 // println!("✅ Nebula config validated.");
             }

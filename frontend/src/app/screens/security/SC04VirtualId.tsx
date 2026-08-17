@@ -18,6 +18,7 @@ import {
   ChevronUp,
 } from "lucide-react";
 import { useVidShow, useVidPeers } from "../../hooks/useApiData";
+import { useContactNames } from "../../contexts/ContactNameContext";
 import type { VidPeer, VidChangeReason } from "../../services/vidService";
 import { toast } from "sonner";
 
@@ -226,6 +227,7 @@ function ExpiryCountdown({ expiresAt, ttl }: { expiresAt?: string; ttl?: number 
 
 function CurrentVidCard() {
   const { data, loading, error, refetch } = useVidShow();
+  const { displayForDid } = useContactNames();
 
   if (loading && !data) {
     return (
@@ -344,8 +346,7 @@ function CurrentVidCard() {
         />
         <Field
           label="DID"
-          value={shortDid(data.did) || "—"}
-          mono
+          value={displayForDid(data.did, shortDid(data.did) || "—")}
           icon={<Fingerprint size={11} />}
           copyValue={data.did}
         />
@@ -492,6 +493,8 @@ function DigestRow({
 
 function PeerVidRow({ peer }: { peer: VidPeer }) {
   const [open, setOpen] = useState(false);
+  const { displayForDid } = useContactNames();
+  const peerLabel = displayForDid(peer.did, shortDid(peer.did));
   return (
     <div
       className="rounded-xl overflow-hidden"
@@ -519,7 +522,7 @@ function PeerVidRow({ peer }: { peer: VidPeer }) {
               }}
               title={peer.did}
             >
-              {shortDid(peer.did)}
+              {peerLabel}
             </div>
             <div
               style={{
@@ -546,7 +549,7 @@ function PeerVidRow({ peer }: { peer: VidPeer }) {
           className="px-4 py-3 flex flex-col gap-2"
           style={{ borderTop: "1px solid var(--border)" }}
         >
-          <Field label="DID" value={peer.did} mono copyValue={peer.did} />
+          <Field label="DID" value={displayForDid(peer.did, peer.did)} copyValue={peer.did} />
           <Field
             label="Virtual ID"
             value={peer.virtualId}

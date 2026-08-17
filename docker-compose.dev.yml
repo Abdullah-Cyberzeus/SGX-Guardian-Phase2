@@ -4,6 +4,12 @@ x-guardian-common: &guardian-common
   build:
     context: .
     dockerfile: docker/Dockerfile.agent
+    args:
+      # These are public OIDC client settings embedded in the browser bundle.
+      # Never add SGX_CYLENIUM_OIDC_CLIENT_SECRET here.
+      VITE_CYLENIUM_BASE_URL: "${VITE_CYLENIUM_BASE_URL:-http://localhost:4000}"
+      VITE_CYLENIUM_CLIENT_ID: "${VITE_CYLENIUM_CLIENT_ID:-sg_x_guardian_44b2f63d}"
+      VITE_CYLENIUM_SCOPE: "${VITE_CYLENIUM_SCOPE:-openid profile email}"
   image: sgx-guardian:dev
   cap_add:
     - NET_ADMIN
@@ -23,8 +29,11 @@ x-guardian-common: &guardian-common
     SGX_DISABLE_COT_SATELLITE: "1"
     SGX_SIM_MODE: "true"
     SGX_DISABLE_POLICY_ENFORCEMENT: "1"
-    SGX_ADMIN_TLS_ENABLED: "1"
-    SGX_ADMIN_REQUIRE_HTTPS: "1"
+    # Docker development uses published localhost ports. HTTP localhost is a
+    # browser-trusted service-worker origin without a developer-installed CA.
+    # Physical board profiles remain HTTPS.
+    SGX_ADMIN_TLS_ENABLED: "0"
+    SGX_ADMIN_REQUIRE_HTTPS: "0"
     SGX_SSO_CYLENIUM_ENABLED: "1"
     SGX_CYLENIUM_OIDC_ISSUER: "${SGX_CYLENIUM_OIDC_ISSUER:-http://localhost:4000}"
     SGX_CYLENIUM_OIDC_TOKEN_ENDPOINT: "${SGX_CYLENIUM_OIDC_TOKEN_ENDPOINT:-http://host.docker.internal:4000/token}"
@@ -50,9 +59,12 @@ services:
       SGX_DUSAGE_SAMPLE_SECS: "15"
       SGX_DUSAGE_CATEGORIES_ENABLED: "1"
       SGX_CALL_SIGNALING_PORT: "50065"
+      SGX_CYLENIUM_OIDC_REDIRECT_URI: "${NODEA_CYLENIUM_REDIRECT_URI:-http://localhost:18443/auth/callback}"
     networks:
       sgxnet:
         ipv4_address: 172.31.250.10
+        aliases:
+          - guardian1.com
     ports:
       - "18443:8443"
     volumes:
@@ -60,7 +72,7 @@ services:
       - nodeA-lib:/var/lib/sgx-guardian
       - nodeA-log:/var/log/sgx-guardian
     healthcheck:
-      test: ["CMD", "curl", "-ksf", "https://127.0.0.1:8443/api/v1/health"]
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8443/api/v1/health"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -78,9 +90,12 @@ services:
       SGX_TPM_DIK_HANDLE: "0x81000110"
       SGX_TPM_KEY_AUTH: "${NODEB_TPM_KEY_AUTH:-}"
       SGX_CALL_SIGNALING_PORT: "50065"
+      SGX_CYLENIUM_OIDC_REDIRECT_URI: "${NODEB_CYLENIUM_REDIRECT_URI:-http://localhost:28443/auth/callback}"
     networks:
       sgxnet:
         ipv4_address: 172.31.250.11
+        aliases:
+          - guardian2.com
     ports:
       - "28443:8443"
     volumes:
@@ -103,9 +118,12 @@ services:
       SGX_TPM_DIK_HANDLE: "0x81000120"
       SGX_TPM_KEY_AUTH: "${NODEC_TPM_KEY_AUTH:-}"
       SGX_CALL_SIGNALING_PORT: "50065"
+      SGX_CYLENIUM_OIDC_REDIRECT_URI: "${NODEC_CYLENIUM_REDIRECT_URI:-http://localhost:38443/auth/callback}"
     networks:
       sgxnet:
         ipv4_address: 172.31.250.12
+        aliases:
+          - guardian3.com
     ports:
       - "38443:8443"
     volumes:

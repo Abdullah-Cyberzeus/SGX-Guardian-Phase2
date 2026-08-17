@@ -7,7 +7,7 @@ export const callsApi = {
   initiate: (target_peer_id: string, media: MediaType[]) => api<{ session_id: string; status: string }>("/calls/initiate", { method: "POST", body: JSON.stringify({ target_peer_id, media }) }),
   accept: (sessionId: string, accepted_media: MediaType[]) => api<{ status: string }>(`/call/${sessionId}/accept`, { method: "POST", body: JSON.stringify({ accepted_media }) }),
   reject: (sessionId: string, reason = "declined") => api(`/call/${sessionId}/reject`, { method: "POST", body: JSON.stringify({ reason }) }),
-  end: (session_id: string) => api("/call/end", { method: "POST", body: JSON.stringify({ session_id }) }),
+  end: (session_id: string) => api(`/call/${session_id}/end`, { method: "POST", body: "{}" }),
   signal: (sessionId: string, type: SignalKind, payload: unknown, operation_id: string) => api(`/call/${sessionId}/signal`, {
     method: "POST",
     headers: { "Idempotency-Key": operation_id },
@@ -48,6 +48,9 @@ export async function streamCallEvents(signal: AbortSignal, onEvent: (event: Cal
   const token = authToken();
   const response = await fetch(apiUrl("/calls/events"), { headers: token ? { Authorization: `Bearer ${token}` } : {}, signal });
   if (!response.ok || !response.body) {
+    if (response.status === 401) {
+      window.dispatchEvent(new CustomEvent("sgx:unauthorized"));
+    }
     const body: unknown = await response.json().catch(() => undefined);
     throw new ApiError(response.status, errorMessage(body, `Call event stream failed (${response.status})`));
   }
@@ -64,4 +67,3 @@ export async function streamCallEvents(signal: AbortSignal, onEvent: (event: Cal
     }
   }
 }
-

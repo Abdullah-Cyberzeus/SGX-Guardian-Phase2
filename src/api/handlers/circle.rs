@@ -1,4 +1,6 @@
 use crate::api::{error::ApiError, state::AppState};
+use crate::api::auth::middleware::AuthenticatedSession;
+use crate::api::auth::store::UserRole;
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::circle::invite::{self, InviteToken, JoinRequest, ReceivedInvite, ReceivedInviteState};
@@ -18,6 +20,7 @@ use axum::{
 };
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Utc};
+use axum::Extension;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -218,8 +221,17 @@ pub struct RejectInviteResponse {
 
 pub async fn list(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
 ) -> Result<Json<CircleListResponse>, ApiError> {
-    let registry = store::load_or_seed(&state.node_id).map_err(map_circle_error)?;
+    let mut registry = store::load_or_seed(&state.node_id).map_err(map_circle_error)?;
+    if is_member_browser_session(&session) {
+        registry.circles.retain(|circle| {
+            session.as_ref().is_some_and(|Extension(session)| {
+                session.claims.circle_ids.contains(&circle.circle_id)
+            }) && browser_guardian_has_active_membership(&state, &circle.circle_id)
+                .unwrap_or(false)
+        });
+    }
     Ok(Json(CircleListResponse {
         status: "success".to_string(),
         count: registry.circles.len(),
@@ -229,8 +241,10 @@ pub async fn list(
 
 pub async fn detail(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Path(id): Path<String>,
 ) -> Result<Json<CircleDetailResponse>, ApiError> {
+    ensure_member_browser_circle_access(&state, &session, &id)?;
     let circle = store::get_circle(&state.node_id, &id).map_err(map_circle_error)?;
     Ok(Json(CircleDetailResponse {
         status: "success".to_string(),
@@ -421,9 +435,12 @@ pub async fn delete(
 
 pub async fn list_members(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Path(id): Path<String>,
 ) -> Result<Json<MemberListResponse>, ApiError> {
-    let members = members::list_members(&state.node_id, &id).map_err(map_circle_error)?;
+    ensure_member_browser_circle_access(&state, &session, &id)?;
+    let mut members = members::list_members(&state.node_id, &id).map_err(map_circle_error)?;
+    append_browser_members(&state, &id, &mut members).await?;
     Ok(Json(MemberListResponse {
         status: "success".to_string(),
         count: members.len(),
@@ -464,6 +481,65 @@ pub async fn sync_member_snapshots(
         status: "success".to_string(),
         snapshots_applied: applied,
     }))
+}
+
+async fn append_browser_members(
+    state: &AppState,
+    circle_id: &str,
+    members: &mut Vec<CircleMember>,
+) -> Result<(), ApiError> {
+    let users = state.admin.users.list().await?;
+    let now = chrono::Utc::now().timestamp();
+    for user in users {
+        if user.role != UserRole::Member
+            || user.status != "active"
+            || !user.circle_ids.iter().any(|allowed| allowed == circle_id)
+            || user
+                .registration_expires_at
+                .is_none_or(|expiry| expiry <= now)
+        {
+            continue;
+        }
+
+        let registration_id = match user.browser_registration_id.clone() {
+            Some(value) if !value.trim().is_empty() => value,
+            _ => continue,
+        };
+        let did = crate::api::handlers::browser_member::did_for_registration(&registration_id);
+        if members.iter().any(|member| {
+            member.browser_registration_id.as_deref() == Some(registration_id.as_str())
+                || member.did == did
+        }) {
+            continue;
+        }
+        members.push(CircleMember {
+            did,
+            vc_id: user.invite_id.clone().unwrap_or_else(|| user.user_id.clone()),
+            issuer_did: state.device_did.clone(),
+            role: CredentialRole::Member,
+            permissions: user.scopes.clone(),
+            join_date: user.created_at.clone(),
+            expiration_date: chrono::DateTime::from_timestamp(
+                user.registration_expires_at.unwrap_or(now),
+                0,
+            )
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_else(|| user.created_at.clone()),
+            membership_status: crate::vc::credential::MembershipStatus::Active,
+            lifecycle_state: crate::circle::MemberLifecycleState::Active,
+            node_hint: Some(state.node_id.clone()),
+            name: Some(user.name),
+            email: Some(user.email),
+            member_type: Some("browser".to_string()),
+            browser_registration_id: Some(registration_id),
+        });
+    }
+    members.sort_by(|left, right| {
+        let left_name = left.name.as_deref().unwrap_or(&left.did);
+        let right_name = right.name.as_deref().unwrap_or(&right.did);
+        left_name.cmp(right_name)
+    });
+    Ok(())
 }
 
 pub async fn add_member(
@@ -769,8 +845,10 @@ pub async fn deliver_existing_invite(
 
 pub async fn join_preview(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Json(body): Json<JoinPreviewRequest>,
 ) -> Result<Json<JoinPreviewResponse>, ApiError> {
+    enforce_join_rate_limit(&state, &session, "preview")?;
     let invite_token = invite::decode_compact(body.token_b64.trim()).map_err(map_circle_error)?;
     invite::verify_invite(&invite_token, &state.did_resolver)
         .await
@@ -788,12 +866,41 @@ pub async fn join_preview(
 
 pub async fn join(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Json(body): Json<JoinCircleRequest>,
 ) -> Result<(StatusCode, Json<JoinCircleResponse>), ApiError> {
+    enforce_join_rate_limit(&state, &session, "join")?;
     let invite_token = invite::decode_compact(body.token_b64.trim()).map_err(map_circle_error)?;
     invite::verify_invite(&invite_token, &state.did_resolver)
         .await
         .map_err(map_circle_error)?;
+    let owner_host = match body.owner_host.as_deref() {
+        Some(raw) => normalize_owner_url(raw)?,
+        None => invite::resolve_circle_endpoint(&invite_token.issuer_did, &state.did_resolver)
+            .await
+            .map_err(map_circle_error)?,
+    };
+    let (redeemed, circle) = join_remote_circle(&state, invite_token, &owner_host).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(JoinCircleResponse {
+            status: redeemed.status,
+            message: redeemed.message,
+            vc: redeemed.vc,
+            circle,
+            member_snapshot: redeemed.member_snapshot,
+        }),
+    ))
+}
+
+/// Redeem a signed Circle invitation at its owner while keeping the browser
+/// and resulting membership on the current Guardian. This is shared by the
+/// authenticated device-join screen and PWA member onboarding.
+pub(crate) async fn join_remote_circle(
+    state: &Arc<AppState>,
+    invite_token: InviteToken,
+    owner_host: &str,
+) -> Result<(RedeemCircleResponse, Circle), ApiError> {
     let (joiner, km) =
         store::load_runtime_signing_context(&state.node_id).map_err(map_circle_error)?;
     let join_request =
@@ -804,12 +911,7 @@ pub async fn join(
             invite_token.target_did, joiner.did
         )));
     }
-    let owner_url = match body.owner_host.as_deref() {
-        Some(raw) => normalize_owner_url(raw)?,
-        None => invite::resolve_circle_endpoint(&invite_token.issuer_did, &state.did_resolver)
-            .await
-            .map_err(map_circle_error)?,
-    };
+    let owner_url = normalize_owner_url(owner_host)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
@@ -840,6 +942,19 @@ pub async fn join(
         .json()
         .await
         .map_err(|err| ApiError::Internal(format!("redeem response parse: {}", err)))?;
+    crate::vc::verify::verify_vc(
+        &redeemed.vc,
+        &state.did_resolver,
+        crate::vc::verify::VerifyOptions {
+            expected_subject_did: Some(&state.device_did),
+            expected_circle_id: Some(&invite_token.circle_id),
+            expected_issuer_did: Some(&invite_token.issuer_did),
+            check_status_list: false,
+            status_list: None,
+        },
+    )
+    .await
+    .map_err(map_vc_error)?;
     crate::vc::persistence::save_own(&redeemed.vc).map_err(map_vc_error)?;
     let circle =
         invite::save_joined_circle(&state.node_id, &invite_token).map_err(map_circle_error)?;
@@ -858,16 +973,80 @@ pub async fn join(
             circle.circle_id, circle.owner_did
         ),
     );
-    Ok((
-        StatusCode::CREATED,
-        Json(JoinCircleResponse {
-            status: redeemed.status,
-            message: redeemed.message,
-            vc: redeemed.vc,
-            circle,
-            member_snapshot: redeemed.member_snapshot,
-        }),
-    ))
+    Ok((redeemed, circle))
+}
+
+fn enforce_join_rate_limit(
+    state: &AppState,
+    session: &Option<Extension<AuthenticatedSession>>,
+    action: &str,
+) -> Result<(), ApiError> {
+    let actor = session
+        .as_ref()
+        .map(|Extension(session)| session.claims.sub.as_str())
+        .unwrap_or("login-disabled-local");
+    let key = format!("circle-{}:{}", action, actor);
+    if state.login_rate_limiter.check_and_record(
+        &key,
+        chrono::Utc::now().timestamp(),
+        state.auth_rate_limit,
+    ) {
+        Ok(())
+    } else {
+        Err(ApiError::TooManyRequests(
+            "too many Circle join attempts; try again later".into(),
+        ))
+    }
+}
+
+fn is_member_browser_session(session: &Option<Extension<AuthenticatedSession>>) -> bool {
+    session
+        .as_ref()
+        .is_some_and(|Extension(session)| session.claims.role == "member")
+}
+
+fn browser_guardian_has_active_membership(
+    state: &AppState,
+    circle_id: &str,
+) -> Result<bool, ApiError> {
+    Ok(crate::api::auth::authorization::local_active_circle_ids(
+        &state.node_id,
+        &state.device_did,
+    )
+    .map_err(ApiError::Internal)?
+    .contains(circle_id))
+}
+
+fn ensure_member_browser_circle_access(
+    state: &AppState,
+    session: &Option<Extension<AuthenticatedSession>>,
+    circle_id: &str,
+) -> Result<(), ApiError> {
+    if !is_member_browser_session(session)
+        || (session
+            .as_ref()
+            .is_some_and(|Extension(session)| {
+                session
+                    .claims
+                    .circle_ids
+                    .iter()
+                    .any(|allowed| allowed == circle_id)
+            })
+            && browser_guardian_has_active_membership(state, circle_id)?)
+    {
+        Ok(())
+    } else {
+        if let Some(Extension(session)) = session.as_ref() {
+            crate::api::auth::authorization::audit_member_resource_denied(
+                &state.node_id,
+                &session.claims.sub,
+                "Circle",
+            );
+        }
+        Err(ApiError::Forbidden(
+            "Guardian is not an active member of this Circle".into(),
+        ))
+    }
 }
 
 pub async fn accept_invite(
@@ -884,6 +1063,7 @@ pub async fn accept_invite(
     let token_b64 = invite::encode_compact(&received.invite).map_err(map_circle_error)?;
     let result = join(
         State(state),
+        None,
         Json(JoinCircleRequest {
             token_b64,
             owner_host: None,
@@ -1598,7 +1778,7 @@ fn validate_optional_days(days: Option<i64>) -> Result<i64, ApiError> {
     Ok(value)
 }
 
-fn normalize_owner_url(raw: &str) -> Result<String, ApiError> {
+pub(crate) fn normalize_owner_url(raw: &str) -> Result<String, ApiError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(ApiError::BadRequest(

@@ -4,6 +4,7 @@
 pub mod advisory;
 pub mod api;
 pub mod chat;
+pub mod contacts;
 
 pub mod attestation_service;
 pub mod audit;

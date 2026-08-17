@@ -1,5 +1,8 @@
+use crate::api::auth::authorization::{self, AccessDecision};
 use crate::api::auth::session::{self, Claims};
 use crate::api::state::AppState;
+use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use crate::audit::logger::log_audit;
 use axum::{
     extract::State,
     http::{header, HeaderMap, Method, Request},
@@ -28,7 +31,9 @@ pub async fn require_auth(
     if login_disabled() {
         return next.run(req).await;
     }
-    if is_public_route(req.method(), req.uri().path()) || is_cors_preflight(req.headers()) {
+    if is_public_route(req.method(), req.uri().path())
+        || is_cors_preflight(req.method(), req.headers())
+    {
         return next.run(req).await;
     }
 
@@ -106,6 +111,87 @@ pub async fn require_auth(
         return unauthorized("session revoked");
     }
 
+    let user = match state.admin.users.find_by_id(&claims.sub).await {
+        Ok(Some(user)) => user,
+        _ => return unauthorized("session user not found"),
+    };
+    if user.status != "active" {
+        return unauthorized("session user is inactive");
+    }
+    if claims.role != user.role.as_str() {
+        return unauthorized("session role changed; sign in again");
+    }
+    let current_scopes = if user.scopes.is_empty() {
+        authorization::default_scopes(user.role.as_str())
+    } else {
+        user.scopes
+    };
+    // Tokens issued before scopes were introduced remain valid for existing
+    // owner/admin accounts. New scoped sessions fail closed when permissions
+    // change in the account record and must be re-issued by signing in.
+    if !claims.scopes.is_empty() && claims.scopes != current_scopes {
+        return unauthorized("session permissions changed; sign in again");
+    }
+    if claims.role == "member" {
+        if user
+            .registration_expires_at
+            .is_none_or(|expiry| expiry <= Utc::now().timestamp())
+        {
+            log_audit(
+                &state.node_id,
+                AuditCategory::Identity,
+                AuditSeverity::Warning,
+                AuditAction::Rejected,
+                &format!("member browser registration expired actor={}", claims.sub),
+            );
+            return unauthorized("browser registration expired; rejoin this Guardian");
+        }
+        if claims.circle_ids != user.circle_ids
+            || claims.browser_registration_id != user.browser_registration_id
+            || claims.guardian_fingerprint != user.guardian_fingerprint
+        {
+            return unauthorized("browser registration changed; sign in again");
+        }
+        let current_fingerprint =
+            crate::api::handlers::pwa::guardian_fingerprint(&state.device_pubkey_point);
+        if claims.guardian_fingerprint.as_deref() != Some(current_fingerprint.as_str()) {
+            log_audit(
+                &state.node_id,
+                AuditCategory::Identity,
+                AuditSeverity::Warning,
+                AuditAction::Rejected,
+                &format!("Guardian fingerprint rotation requires member re-verification actor={}", claims.sub),
+            );
+            return unauthorized("Guardian fingerprint changed; verification is required");
+        }
+    }
+
+    match authorization::authorize(&claims.role, &current_scopes, req.method(), req.uri().path()) {
+        AccessDecision::Allowed => {
+            if claims.role == "member" {
+                audit_access_decision(
+                    &state.node_id,
+                    &claims,
+                    req.method(),
+                    req.uri().path(),
+                    true,
+                    None,
+                );
+            }
+        }
+        AccessDecision::Denied { required_scope } => {
+            audit_access_decision(
+                &state.node_id,
+                &claims,
+                req.method(),
+                req.uri().path(),
+                false,
+                Some(required_scope),
+            );
+            return forbidden("insufficient role or scope for this operation");
+        }
+    }
+
     req.extensions_mut()
         .insert(AuthenticatedSession { claims, token });
     next.run(req).await
@@ -138,6 +224,9 @@ fn is_public_route(method: &Method, path: &str) -> bool {
             | (&Method::POST, "/api/v1/auth/login")
             | (&Method::POST, "/api/v1/auth/oidc/cylenium/start")
             | (&Method::POST, "/api/v1/auth/oidc/cylenium/callback")
+            | (&Method::GET, "/api/v1/pwa/onboarding")
+            | (&Method::POST, "/api/v1/pwa/onboarding/invite-preview")
+            | (&Method::POST, "/api/v1/pwa/onboarding/join")
             | (&Method::POST, "/api/v1/circles/redeem")
             // Service-authenticated in handlers::circle::receive_invite.
             | (&Method::POST, "/api/v1/circles/invites/inbox")
@@ -147,13 +236,52 @@ fn is_public_route(method: &Method, path: &str) -> bool {
     ) || public_frontend
 }
 
-fn is_cors_preflight(headers: &HeaderMap) -> bool {
-    headers.contains_key(header::ORIGIN)
+fn is_cors_preflight(method: &Method, headers: &HeaderMap) -> bool {
+    method == Method::OPTIONS
+        && headers.contains_key(header::ORIGIN)
         && headers.contains_key(header::ACCESS_CONTROL_REQUEST_METHOD)
 }
 
 fn unauthorized(message: &str) -> Response {
     crate::api::error::ApiError::Unauthorized(message.to_string()).into_response()
+}
+
+fn forbidden(message: &str) -> Response {
+    crate::api::error::ApiError::Forbidden(message.to_string()).into_response()
+}
+
+fn audit_access_decision(
+    node_id: &str,
+    claims: &Claims,
+    method: &Method,
+    path: &str,
+    allowed: bool,
+    required_scope: Option<&str>,
+) {
+    let message = format!(
+        "API authorization {} actor={} role={} method={} path={} required_scope={}",
+        if allowed { "allowed" } else { "denied" },
+        claims.sub,
+        claims.role,
+        method,
+        path,
+        required_scope.unwrap_or("role-default")
+    );
+    log_audit(
+        node_id,
+        AuditCategory::Identity,
+        if allowed {
+            AuditSeverity::Info
+        } else {
+            AuditSeverity::Warning
+        },
+        if allowed {
+            AuditAction::Succeeded
+        } else {
+            AuditAction::Rejected
+        },
+        &message,
+    );
 }
 
 #[cfg(test)]
@@ -180,7 +308,7 @@ mod tests {
     use super::*;
     use crate::api::auth::{
         session,
-        store::{NewUser, UserRole},
+        store::{NewMemberRegistration, NewUser, UserRole},
     };
     use crate::api::state::AppState;
     use crate::test_support::async_env_lock;
@@ -190,7 +318,9 @@ mod tests {
     use tempfile::TempDir;
     use tokio::net::TcpListener;
 
-    async fn spawn_secured_app() -> (String, String, tokio::task::JoinHandle<()>) {
+    async fn spawn_secured_app_for_role(
+        role: UserRole,
+    ) -> (String, String, tokio::task::JoinHandle<()>) {
         let td = TempDir::new().expect("tempdir");
         let base = td.path().to_path_buf();
         let state = AppState::for_tests(
@@ -198,18 +328,38 @@ mod tests {
             "nodeA",
             base.join("config").to_string_lossy().to_string(),
         );
-        let user = state
-            .admin
-            .users
-            .create(NewUser {
-                name: "Admin".into(),
-                email: "admin@example.com".into(),
-                pw_hash: "hash".into(),
-                role: UserRole::Owner,
-                oidc_sub: None,
-            })
-            .await
-            .expect("seed user");
+        let user = if role == UserRole::Member {
+            state
+                .admin
+                .users
+                .create_or_reactivate_member(NewMemberRegistration {
+                    name: "Member".into(),
+                    email: "member@example.com".into(),
+                    pw_hash: "hash".into(),
+                    circle_id: "test-circle".into(),
+                    browser_registration_id: "test-browser".into(),
+                    guardian_fingerprint: crate::api::handlers::pwa::guardian_fingerprint(
+                        &state.device_pubkey_point,
+                    ),
+                    registration_expires_at: Utc::now().timestamp() + 300,
+                    invite_id: "test-invite".into(),
+                })
+                .await
+                .expect("seed member")
+        } else {
+            state
+                .admin
+                .users
+                .create(NewUser {
+                    name: "Admin".into(),
+                    email: "admin@example.com".into(),
+                    pw_hash: "hash".into(),
+                    role,
+                    oidc_sub: None,
+                })
+                .await
+                .expect("seed user")
+        };
         let (token, _, session_rec) = session::issue(
             state.signer.clone(),
             &state.device_did,
@@ -231,6 +381,14 @@ mod tests {
                 "/api/v1/private",
                 get(|| async { Json(json!({ "ok": true })) }),
             )
+            .route(
+                "/api/v1/chat/history",
+                get(|| async { Json(json!({ "messages": [] })) }),
+            )
+            .route(
+                "/api/v1/policy/sign",
+                axum::routing::post(|| async { Json(json!({ "ok": true })) }),
+            )
             .with_state(state.clone())
             .layer(axum::middleware::from_fn_with_state(state, require_auth));
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -242,6 +400,10 @@ mod tests {
             let _ = axum::serve(listener, app.into_make_service()).await;
         });
         (format!("http://{}", addr), token, handle)
+    }
+
+    async fn spawn_secured_app() -> (String, String, tokio::task::JoinHandle<()>) {
+        spawn_secured_app_for_role(UserRole::Owner).await
     }
 
     #[tokio::test]
@@ -282,6 +444,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn member_can_read_messages_but_cannot_sign_policy() {
+        let (base_url, token, handle) = spawn_secured_app_for_role(UserRole::Member).await;
+        let client = reqwest::Client::new();
+
+        let messages = client
+            .get(format!("{}/api/v1/chat/history", base_url))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .expect("member message history");
+        assert_eq!(messages.status(), StatusCode::OK);
+
+        let policy = client
+            .post(format!("{}/api/v1/policy/sign", base_url))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .expect("member policy sign");
+        handle.abort();
+        assert_eq!(policy.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
     async fn cors_preflight_is_allowed_without_bearer_token() {
         let (base_url, _token, handle) = spawn_secured_app().await;
         let response = reqwest::Client::new()
@@ -296,6 +481,20 @@ mod tests {
             .expect("preflight route");
         handle.abort();
         assert_ne!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn forged_preflight_headers_do_not_bypass_auth_on_get() {
+        let (base_url, _token, handle) = spawn_secured_app().await;
+        let response = reqwest::Client::new()
+            .get(format!("{}/api/v1/private", base_url))
+            .header(reqwest::header::ORIGIN, "http://localhost:3001")
+            .header(reqwest::header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+            .send()
+            .await
+            .expect("forged preflight request");
+        handle.abort();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

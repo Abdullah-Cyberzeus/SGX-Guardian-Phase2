@@ -1,11 +1,13 @@
 import { useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { Home, Bell, BellRing, Cpu, Cloud, Settings, MessageSquare, Phone } from "lucide-react";
+import { Home, Bell, BellRing, Cpu, Cloud, Settings, MessageSquare, Phone, UsersRound } from "lucide-react";
 import { mockGuardian, mockAlerts, mockDevices } from "../data/mockData";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 import { useChatUnread } from "../contexts/ChatUnreadContext";
 import { useCircleInviteInbox } from "../hooks/useApiData";
 import { toast } from "sonner";
+import { useAuth } from "../contexts/AuthContext";
+import { isMemberRole } from "../utils/authorization";
 import logoSrc from "@/assets/sgx-guardian-logo.png";
 
 const announcedCircleInviteIds = new Set<string>();
@@ -39,6 +41,7 @@ export function AppSidebar({ variant }: AppSidebarProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const { name, initials } = useCurrentUser();
+  const { session } = useAuth();
   const { total: unreadChats } = useChatUnread();
   const { data: inviteInbox } = useCircleInviteInbox();
   const isExpanded = variant === "expanded";
@@ -58,20 +61,30 @@ export function AppSidebar({ variant }: AppSidebarProps) {
       });
     });
   }, [pendingCircleInvites]);
+  const memberSession = isMemberRole(session?.user.role);
 
   const isActive = (path: string) => location.pathname.startsWith(path);
 
-  const navItems = [
+  const adminNavItems = [
     { label: "Home", icon: Home, path: "/home", custom: false, badge: 0 },
     { label: "Alerts", icon: Bell, path: "/alerts", custom: false, badge: alertBadgeCount },
     { label: "Notifications", icon: BellRing, path: "/notifications", custom: false, badge: 0 },
     { label: "Chats", icon: MessageSquare, path: "/chats", custom: false, badge: unreadChats },
+    { label: "Contacts", icon: UsersRound, path: "/contacts", custom: false, badge: 0 },
     { label: "Calls", icon: Phone, path: "/calls", custom: false, badge: 0 },
     { label: "Circles", icon: null, path: "/network", custom: true, badge: circlesBadgeCount },
     { label: "Devices", icon: Cpu, path: "/devices", custom: false, badge: deviceBadgeCount },
     { label: "All Files", icon: Cloud, path: "/storage", custom: false, badge: 0 },
     { label: "Settings", icon: Settings, path: "/settings", custom: false, badge: 0 },
   ];
+  const memberNavItems = [
+    { label: "Messages", icon: MessageSquare, path: "/chats", custom: false, badge: unreadChats },
+    { label: "Calls", icon: Phone, path: "/calls", custom: false, badge: 0 },
+    { label: "Contacts", icon: UsersRound, path: "/contacts", custom: false, badge: 0 },
+    { label: "Files", icon: Cloud, path: "/storage", custom: false, badge: 0 },
+    { label: "Settings", icon: Settings, path: "/member-settings", custom: false, badge: 0 },
+  ];
+  const navItems = memberSession ? memberNavItems : adminNavItems;
 
   return (
     <aside
@@ -273,7 +286,7 @@ export function AppSidebar({ variant }: AppSidebarProps) {
               style={{
                 bottom: "-1px", right: "-1px",
                 width: "9px", height: "9px",
-                backgroundColor: mockGuardian.status === "online" ? "var(--chart-2)" : "var(--destructive)",
+                backgroundColor: memberSession || mockGuardian.status === "online" ? "var(--chart-2)" : "var(--destructive)",
                 border: "1.5px solid var(--sidebar)",
               }}
             />
@@ -290,10 +303,10 @@ export function AppSidebar({ variant }: AppSidebarProps) {
               </p>
               <p className="truncate" style={{
                 fontFamily: "Inter, sans-serif", fontSize: "10px",
-                color: mockGuardian.status === "online" ? "var(--chart-2)" : "var(--destructive)",
+                color: memberSession || mockGuardian.status === "online" ? "var(--chart-2)" : "var(--destructive)",
                 lineHeight: 1.3,
               }}>
-                {mockGuardian.name} · {mockGuardian.status === "online" ? "Online" : "Offline"}
+                {memberSession ? "Member session · Active" : `${mockGuardian.name} · ${mockGuardian.status === "online" ? "Online" : "Offline"}`}
               </p>
             </div>
           )}

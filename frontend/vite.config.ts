@@ -1,14 +1,35 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
+function pwaAssetManifest(): Plugin {
+  return {
+    name: 'sgx-pwa-asset-manifest',
+    generateBundle(_, bundle) {
+      const assets = Object.values(bundle)
+        .map((entry) => `/${entry.fileName}`)
+        .filter((fileName) => /\.(?:js|css|woff2?|png|jpg|jpeg|svg|webp|ico)$/i.test(fileName))
+        .sort();
+      this.emitFile({
+        type: 'asset',
+        fileName: 'asset-manifest.json',
+        source: JSON.stringify({ assets }, null, 2),
+      });
+    },
+  };
+}
+
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(process.env.npm_package_version || 'dev'),
+  },
   plugins: [
     // The React and Tailwind plugins are both required for Make, even if
     // Tailwind is not being actively used – do not remove them
     react(),
     tailwindcss(),
+    pwaAssetManifest(),
   ],
   resolve: {
     alias: {

@@ -17,7 +17,17 @@ interface GroupCallValue {
   toggleMute(): void; toggleCamera(): void; shareScreen(): Promise<void>;
 }
 
-const Context = createContext<GroupCallValue | null>(null);
+const offlineGroupError = () => Promise.reject(new Error("Group calls require a live Guardian connection"));
+const offlineValue: GroupCallValue = {
+  remoteStreams: {}, muted: false, cameraEnabled: false,
+  error: "Group calls are unavailable while Guardian is offline",
+  createGroup: offlineGroupError, acceptGroup: offlineGroupError, rejoinGroup: offlineGroupError,
+  declineGroup: offlineGroupError, leaveGroup: offlineGroupError, endGroup: offlineGroupError,
+  moderate: offlineGroupError, toggleMute: () => {}, toggleCamera: () => {}, shareScreen: offlineGroupError,
+};
+// Root deliberately omits GroupCallProvider offline. Keep cached screens
+// functional while ensuring no signaling or media request can be started.
+const Context = createContext<GroupCallValue>(offlineValue);
 
 export function GroupCallProvider({ children, localDevice }: { children: ReactNode; localDevice?: string }) {
   const [group, setGroup] = useState<GroupSession>();
@@ -215,7 +225,5 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
 }
 
 export function useGroupCall(): GroupCallValue {
-  const value = useContext(Context);
-  if (!value) throw new Error("useGroupCall must be inside GroupCallProvider");
-  return value;
+  return useContext(Context);
 }

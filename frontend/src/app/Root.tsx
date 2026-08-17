@@ -6,6 +6,7 @@ import { VaultProvider } from "./contexts/VaultContext";
 import { DaemonRestartProvider } from "./contexts/DaemonRestartContext";
 import { NotificationProvider, useNotifications } from "./contexts/NotificationContext";
 import { ChatUnreadProvider } from "./contexts/ChatUnreadContext";
+import { ContactNameProvider } from "./contexts/ContactNameContext";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { DaemonRestartBanner } from "./components/DaemonRestartBanner";
 import { NotificationToastStack } from "./components/notifications/NotificationToastStack";
@@ -18,24 +19,62 @@ import { IncomingGroupCallDialog } from "../features/calls/IncomingGroupCallDial
 import { CertificateRequestProvider } from "../features/certificates/CertificateRequestContext";
 import { IncomingCertificateRequestDialog } from "../features/certificates/IncomingCertificateRequestDialog";
 import { useAuth } from "./contexts/AuthContext";
+import { isAdminRole } from "./utils/authorization";
+import { GuardianConnectivityProvider } from "../pwa/connectivity/GuardianConnectivityContext";
 
-function CallingRuntime({ children }: { children: ReactNode }) {
+function CallSurfaces({ children }: { children: ReactNode }) {
   const { currentDevice, call, error } = useCall();
   const { prefs } = useNotifications();
   const showIncomingCalls = prefs?.circles.incoming_call !== false;
-  const showPendingApprovals = prefs?.devices.pending_approval !== false;
+
   return (
     <GroupCallProvider localDevice={currentDevice}>
-      <CertificateRequestProvider>
+      {children}
+      {showIncomingCalls && <IncomingCallDialog />}
+      <CallingScreen />
+      {showIncomingCalls && <IncomingGroupCallDialog />}
+      <GroupCallingScreen localDevice={currentDevice} />
+      {!call && error && <div className="call-runtime-notice" role="alert">{error}</div>}
+    </GroupCallProvider>
+  );
+}
+
+function CallingRuntime({ children }: { children: ReactNode }) {
+  const { session } = useAuth();
+  const { prefs } = useNotifications();
+  const showPendingApprovals = prefs?.devices.pending_approval !== false;
+
+  // Certificate approval is an administrative Guardian operation. Keeping the
+  // provider out of a member runtime also prevents its polling/socket clients
+  // from touching certificate APIs in the background.
+  if (!isAdminRole(session?.user.role)) {
+    return <CallSurfaces>{children}</CallSurfaces>;
+  }
+
+  return (
+    <CertificateRequestProvider>
+      <CallSurfaces>
         {children}
         {showPendingApprovals && <IncomingCertificateRequestDialog />}
-        {showIncomingCalls && <IncomingCallDialog />}
-        <CallingScreen />
-        {showIncomingCalls && <IncomingGroupCallDialog />}
-        <GroupCallingScreen localDevice={currentDevice} />
-        {!call && error && <div className="call-runtime-notice" role="alert">{error}</div>}
-      </CertificateRequestProvider>
-    </GroupCallProvider>
+      </CallSurfaces>
+    </CertificateRequestProvider>
+  );
+}
+
+function RoleRuntime({ children }: { children: ReactNode }) {
+  const { session } = useAuth();
+
+  if (!isAdminRole(session?.user.role)) {
+    return <ErrorBoundary>{children}</ErrorBoundary>;
+  }
+
+  return (
+    <DaemonRestartProvider>
+      <ErrorBoundary>
+        <DaemonRestartBanner />
+        {children}
+      </ErrorBoundary>
+    </DaemonRestartProvider>
   );
 }
 
@@ -43,6 +82,7 @@ function AuthenticatedRuntime() {
   const { session, loading } = useAuth();
   const { pathname } = useLocation();
   const isPublicFlow = pathname === "/login"
+    || pathname === "/join"
     || pathname === "/signup"
     || pathname.startsWith("/onboarding")
     || pathname.startsWith("/auth/");
@@ -53,24 +93,27 @@ function AuthenticatedRuntime() {
     return <ErrorBoundary><Outlet /></ErrorBoundary>;
   }
 
+  // Disconnected startup uses encrypted IndexedDB data only. Do not start
+  // notification/call/certificate clients that require a live bearer token.
+  if (session.offline) return <ErrorBoundary><Outlet /></ErrorBoundary>;
+
   return (
-    <NotificationProvider>
-      <ChatUnreadProvider>
-        <CallProvider>
-          <CallingRuntime>
-            <VaultProvider>
-              <DaemonRestartProvider>
-                <ErrorBoundary>
-                  <DaemonRestartBanner />
+    <ContactNameProvider>
+      <NotificationProvider>
+        <ChatUnreadProvider>
+          <CallProvider>
+            <CallingRuntime>
+              <VaultProvider>
+                <RoleRuntime>
                   <NotificationToastStack />
                   <Outlet />
-                </ErrorBoundary>
-              </DaemonRestartProvider>
-            </VaultProvider>
-          </CallingRuntime>
-        </CallProvider>
-      </ChatUnreadProvider>
-    </NotificationProvider>
+                </RoleRuntime>
+              </VaultProvider>
+            </CallingRuntime>
+          </CallProvider>
+        </ChatUnreadProvider>
+      </NotificationProvider>
+    </ContactNameProvider>
   );
 }
 
@@ -79,7 +122,9 @@ export function Root() {
     <ThemeProvider>
       <div style={{ minHeight: "100dvh", backgroundColor: "var(--background)" }}>
         <AuthProvider>
-          <AuthenticatedRuntime />
+          <GuardianConnectivityProvider>
+            <AuthenticatedRuntime />
+          </GuardianConnectivityProvider>
         </AuthProvider>
       </div>
     </ThemeProvider>

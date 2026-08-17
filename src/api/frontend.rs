@@ -8,8 +8,16 @@ use axum::{
     http::{header, StatusCode, Uri},
     response::{IntoResponse, Response},
 };
+use axum::response::Redirect;
 
 include!(concat!(env!("OUT_DIR"), "/embedded_frontend.rs"));
+
+/// Standard captive-portal probes are redirected to the local member join
+/// page. The browser must still verify the Guardian fingerprint; a redirect
+/// never establishes trust or grants API access.
+pub async fn captive_portal() -> Redirect {
+    Redirect::temporary("/join")
+}
 
 /// Serve a static frontend asset, falling back to `index.html` for client-side
 /// routes such as `/home`.
@@ -36,16 +44,24 @@ pub async fn serve(uri: Uri) -> Response {
         },
     };
 
-    let cache_control = if is_spa_fallback || requested == "index.html" {
+    let cache_control = if is_spa_fallback
+        || requested == "index.html"
+        || requested == "sw.js"
+        || requested == "manifest.json"
+    {
         "no-cache"
     } else {
         "public, max-age=31536000, immutable"
     };
 
-    Response::builder()
+    let mut response = Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, mime)
-        .header(header::CACHE_CONTROL, cache_control)
+        .header(header::CACHE_CONTROL, cache_control);
+    if requested == "sw.js" {
+        response = response.header("Service-Worker-Allowed", "/");
+    }
+    response
         .body(Body::from(contents))
         .expect("valid embedded frontend response")
 }

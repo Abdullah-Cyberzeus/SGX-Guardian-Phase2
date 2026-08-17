@@ -23,6 +23,8 @@ import { NewFolderDialog } from "../../components/vault/NewFolderDialog";
 import { FolderActionsDialog } from "../../components/vault/FolderActionsDialog";
 import { useVirtualRows } from "../../components/vault/useVirtualRows";
 import { formatBytes, ROOT_ID, type BrowserEntry } from "../../components/vault/types";
+import { useAuth } from "../../contexts/AuthContext";
+import { isMemberRole } from "../../utils/authorization";
 
 type FileTypeFilter = "all" | "image" | "document" | "media";
 type SizeFilter = "all" | "small" | "medium" | "large" | "very-large";
@@ -48,6 +50,8 @@ export function CS01StorageOverview() {
   const navigate = useNavigate();
   const isDesktop = useIsDesktop();
   const vault = useVault();
+  const { session } = useAuth();
+  const canManageVault = !isMemberRole(session?.user.role);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [query, setQuery] = useState("");
@@ -198,7 +202,7 @@ export function CS01StorageOverview() {
               <Send size={15} />
               <span className="hidden sm:inline">Transfer</span>
             </Button>
-            <Button
+            {canManageVault && <Button
               variant="outline"
               size="sm"
               className="flex-shrink-0 gap-1.5"
@@ -206,7 +210,7 @@ export function CS01StorageOverview() {
             >
               <FolderPlus size={15} />
               <span className="hidden sm:inline">New</span>
-            </Button>
+            </Button>}
             <Button
               size="sm"
               className="flex-shrink-0 gap-1.5"
@@ -493,7 +497,9 @@ export function CS01StorageOverview() {
                 >
                   {searching || activeFilterCount > 0
                     ? "Try changing your search or clearing one of the active filters."
-                    : "Upload a file here, create a folder, or share one in a Circle."}
+                    : canManageVault
+                      ? "Upload a file here, create a folder, or share one in a Circle."
+                      : "Upload an encrypted file or receive one from a Guardian contact."}
                 </p>
               </div>
             ) : (
@@ -510,7 +516,7 @@ export function CS01StorageOverview() {
                       }
                       onOpen={() => openEntry(entry)}
                       onToggleStar={
-                        entry.type === "file"
+                        canManageVault && entry.type === "file"
                           ? () => {
                               void vault.toggleStar(entry.file.id).catch((cause) => {
                                 toast.error("Star update failed", {
@@ -521,7 +527,7 @@ export function CS01StorageOverview() {
                           : undefined
                       }
                       onFolderActions={
-                        entry.type === "folder" && entry.folder.kind === "user"
+                        canManageVault && entry.type === "folder" && entry.folder.kind === "user"
                           ? () => setActionFolderId(entry.folder.id)
                           : undefined
                       }
@@ -541,6 +547,7 @@ export function CS01StorageOverview() {
             <FileDetailPanel
               key={selectedFile.id}
               file={selectedFile}
+              canManage={canManageVault}
               onRemoved={() => setSelectedFileId(null)}
               onOpenFolder={navigateFolder}
             />
@@ -549,13 +556,13 @@ export function CS01StorageOverview() {
       </div>
 
       <input ref={uploadRef} type="file" multiple hidden onChange={handleUpload} />
-      <NewFolderDialog
+      {canManageVault && <NewFolderDialog
         open={newFolderOpen}
         onOpenChange={setNewFolderOpen}
         parentName={folder.id === ROOT_ID ? "All Files" : folder.name}
         onCreate={handleCreateFolder}
-      />
-      <FolderActionsDialog
+      />}
+      {canManageVault && <FolderActionsDialog
         folder={actionFolder}
         folders={vault.folders}
         open={!!actionFolder}
@@ -566,7 +573,7 @@ export function CS01StorageOverview() {
           await vault.deleteFolder(id, recursive);
           if (folder.id === id) navigateFolder(ROOT_ID);
         }}
-      />
+      />}
     </div>
   );
 }

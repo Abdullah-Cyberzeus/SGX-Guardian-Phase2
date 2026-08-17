@@ -16,6 +16,7 @@ import {
 } from "../components/vault/types";
 import { vaultService, type VaultRecord } from "../services/vaultService";
 import { useAuth } from "./AuthContext";
+import { fileRepository } from "../../pwa/db/fileRepository";
 
 interface VaultChildren {
   folders: VaultFolder[];
@@ -166,7 +167,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           .map((record) => [String(record.vault_id ?? record.id ?? ""), record] as const)
           .filter(([id]) => Boolean(id)),
       );
-      setFiles([...records.values()].map(mapRecord));
+      const nextFiles = [...records.values()].map(mapRecord);
+      setFiles(nextFiles);
+      nextFiles.forEach((file) => void fileRepository.save({
+        id: file.id,
+        name: file.name,
+        mime: file.mime,
+        size: file.sizeBytes,
+        updatedAt: file.addedAt && file.addedAt !== "—" ? Date.parse(file.addedAt) || Date.now() : Date.now(),
+      }));
       setFolders(() => {
         const root = seedFolders()[0];
         const apiFolders = [...(folderList?.folders ?? []), ...(tree?.folders ?? [])];
@@ -206,8 +215,25 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         ? `Some Vault metadata could not be loaded (${optionalFailures.join(", ")}). Files that are available are still shown.`
         : null);
     } catch (cause) {
-      // Preserve the last successfully loaded view during transient failures.
-      setError(cause instanceof Error ? cause.message : "Unable to load Vault");
+      const cached = await fileRepository.list().catch(() => []);
+      if (cached.length) {
+        setFiles(cached.map((file) => ({
+          id: file.id,
+          name: file.name,
+          sizeBytes: file.size,
+          mime: file.mime,
+          kind: vaultKindOf(file.mime),
+          folderId: ROOT_ID,
+          sharedBy: "Guardian cache",
+          addedAt: new Date(file.updatedAt).toISOString(),
+          encrypted: true,
+        })));
+        setFolders(seedFolders);
+        setError("Showing cached Vault metadata while Guardian is unreachable.");
+      } else {
+        // Preserve the last successfully loaded view during transient failures.
+        setError(cause instanceof Error ? cause.message : "Unable to load Vault");
+      }
     } finally {
       setLoading(false);
     }

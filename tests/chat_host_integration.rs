@@ -76,6 +76,24 @@ async fn wait_for_message(peer_did: &str, message_id: &str) -> ChatMessageRecord
     panic!("timed out waiting for message {message_id} in {peer_did} history");
 }
 
+async fn wait_for_status(
+    peer_did: &str,
+    message_id: &str,
+    status: MessageStatus,
+) -> ChatMessageRecord {
+    for _ in 0..50 {
+        let history = read_p2p_history(peer_did).await.unwrap();
+        if let Some(message) = history
+            .into_iter()
+            .find(|m| m.message_id == message_id && m.status == status)
+        {
+            return message;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("timed out waiting for message {message_id} in {peer_did} history to reach {status:?}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 async fn host_chat_round_trip_group_sync_and_trust_gate() {
     // `chat::storage` reads this once per process. This integration-test file
@@ -112,17 +130,19 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
     // P2P send: use the production REST handler, then observe delivery at B.
     let response = chat::send_message(
         State(state_a.clone()),
+        None,
         Json(SendMessageRequest {
             recipient_did: did_b.clone(),
             content: Some("hello from the host harness".to_string()),
             attachment_id: None,
             is_group: false,
+            message_id: None,
         }),
     )
     .await
     .unwrap()
     .0;
-    assert_eq!(response.status, "queued");
+    assert_eq!(response.status, "accepted_by_guardian");
     let received = wait_for_message(&did_a, &response.message_id).await;
     assert_eq!(
         received.encrypted_payload,
@@ -131,10 +151,52 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
 
     assert_eq!(received.status, MessageStatus::Delivered);
 
+    // The delivery push to B ran in the background; A's own copy should now
+    // reflect that success instead of staying `Pending` forever.
+    let sent_record = wait_for_status(
+        &did_b,
+        &response.message_id,
+        MessageStatus::DeliveredToRemoteGuardian,
+    )
+    .await;
+    assert_eq!(sent_record.status, MessageStatus::DeliveredToRemoteGuardian);
+
+    let replay = chat::send_message(
+        State(state_a.clone()),
+        None,
+        Json(SendMessageRequest {
+            recipient_did: did_b.clone(),
+            content: Some("hello from the host harness".to_string()),
+            attachment_id: None,
+            is_group: false,
+            message_id: Some(response.message_id.clone()),
+        }),
+    )
+    .await
+    .unwrap()
+    .0;
+    assert_eq!(replay.message_id, response.message_id);
+    assert_eq!(replay.status, "delivered_to_remote_guardian");
+
+    let mismatch = chat::send_message(
+        State(state_a.clone()),
+        None,
+        Json(SendMessageRequest {
+            recipient_did: did_b.clone(),
+            content: Some("different body".to_string()),
+            attachment_id: None,
+            is_group: false,
+            message_id: Some(response.message_id.clone()),
+        }),
+    )
+    .await;
+    assert!(mismatch.is_err());
+
     // A receipt follows the same Nebula/plaintext path and no longer needs
     // local mTLS files. B's real DID is accepted by A's trusted-peer gate.
     let receipt = chat::mark_as_read(
         State(state_b.clone()),
+        None,
         Json(MarkReadRequest {
             message_id: response.message_id.clone(),
             original_sender_did: did_a.clone(),
@@ -163,11 +225,13 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
     // receives an individual gRPC push.
     let group_response = chat::send_message(
         State(state_a.clone()),
+        None,
         Json(SendMessageRequest {
             recipient_did: "group:host-test".to_string(),
             content: Some("host group message".to_string()),
             attachment_id: None,
             is_group: true,
+            message_id: None,
         }),
     )
     .await
