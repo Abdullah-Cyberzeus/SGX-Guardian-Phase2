@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MemberLifecycleState {
+    Invited,
     Active,
     Expired,
     Revoked,
@@ -52,11 +53,28 @@ pub struct MemberMutationResult {
 }
 
 pub fn list_members(node_id: &str, circle_id: &str) -> Result<Vec<CircleMember>, CircleError> {
-    let _ = store::get_circle(node_id, circle_id)?;
+    if let Some(snapshot) = crate::circle::snapshot::load(circle_id)? {
+        let mut members = snapshot.members;
+        members.sort_by(|left, right| left.did.cmp(&right.did));
+        return Ok(members);
+    }
+    list_members_from_local_vcs(node_id, circle_id, true)
+}
+
+pub(crate) fn list_members_from_local_vcs(
+    node_id: &str,
+    circle_id: &str,
+    include_invites: bool,
+) -> Result<Vec<CircleMember>, CircleError> {
+    let circle = store::get_circle(node_id, circle_id)?;
     let (issuer, km) = store::load_runtime_signing_context(node_id)?;
     let status_list = StatusListManager::load_or_create(&issuer, &km)?;
     let mut latest_by_subject: BTreeMap<String, VerifiableCredential> = BTreeMap::new();
-    for vc in crate::vc::persistence::list_issued()? {
+    for vc in crate::vc::persistence::list_issued()?
+        .into_iter()
+        .chain(crate::vc::persistence::list_own()?)
+        .chain(crate::vc::persistence::list_peers()?)
+    {
         if vc.credential_subject.circle_id != circle_id {
             continue;
         }
@@ -86,6 +104,39 @@ pub fn list_members(node_id: &str, circle_id: &str) -> Result<Vec<CircleMember>,
             })
         })
         .collect::<Result<Vec<_>, CircleError>>()?;
+    if !members.iter().any(|member| member.did == circle.owner_did) {
+        members.push(CircleMember {
+            did: circle.owner_did.clone(),
+            vc_id: String::new(),
+            issuer_did: circle.owner_did.clone(),
+            role: CredentialRole::Owner,
+            permissions: default_permissions_for_role(CredentialRole::Owner),
+            join_date: circle.created_at.clone(),
+            expiration_date: String::new(),
+            membership_status: MembershipStatus::Active,
+            lifecycle_state: MemberLifecycleState::Active,
+            node_hint: None,
+        });
+    }
+    if include_invites {
+        for invite in crate::circle::invite::list_invites(circle_id)? {
+            if members.iter().any(|member| member.did == invite.target_did) {
+                continue;
+            }
+            members.push(CircleMember {
+                did: invite.target_did.clone(),
+                vc_id: invite.id.clone(),
+                issuer_did: invite.issuer_did.clone(),
+                role: invite.role.clone(),
+                permissions: invite.permissions.clone(),
+                join_date: invite.issued_at.clone(),
+                expiration_date: invite.expires_at.clone(),
+                membership_status: MembershipStatus::Suspended,
+                lifecycle_state: MemberLifecycleState::Invited,
+                node_hint: None,
+            });
+        }
+    }
     members.sort_by(|left, right| left.did.cmp(&right.did));
     Ok(members)
 }

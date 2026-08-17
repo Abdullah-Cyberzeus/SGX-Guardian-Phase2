@@ -30,6 +30,60 @@ pub struct PeersResponse {
     pub timestamp: String,
 }
 
+/// Read-only peer state used by other authenticated API handlers. The DID and
+/// node ID are both required to prevent one Guardian's state being reported
+/// for another Guardian.
+#[derive(Debug, Clone)]
+pub struct GuardianPeerState {
+    pub online: Option<bool>,
+    pub status: String,
+}
+
+pub async fn state_for_guardian(
+    state: &AppState,
+    guardian_did: &str,
+    guardian_node_id: Option<&str>,
+) -> Option<GuardianPeerState> {
+    let filenames = [
+        format!("trusted_peers_{}.json", state.node_id),
+        "trusted_peers.json".to_string(),
+    ];
+
+    for filename in filenames {
+        let text = match safe_read(&filename, &state.log_dir_primary).await {
+            Some(text) => text,
+            None => match safe_read(&filename, &state.log_dir_fallback).await {
+                Some(text) => text,
+                None => continue,
+            },
+        };
+        let peers: Vec<serde_json::Value> = serde_json::from_str(&text).ok()?;
+        if let Some(peer) = peers.into_iter().find(|peer| {
+            peer.get("did")
+                .and_then(|value| value.as_str())
+                .is_some_and(|did| did.eq_ignore_ascii_case(guardian_did))
+                && guardian_node_id.is_none_or(|node_id| {
+                    peer.get("node_id")
+                        .or_else(|| peer.get("nodeId"))
+                        .or_else(|| peer.get("peer_id"))
+                        .and_then(|value| value.as_str())
+                        .is_some_and(|peer_node_id| peer_node_id.eq_ignore_ascii_case(node_id))
+                })
+        }) {
+            return Some(GuardianPeerState {
+                online: peer.get("online").and_then(|value| value.as_bool()),
+                status: peer
+                    .get("status")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("unknown")
+                    .to_string(),
+            });
+        }
+    }
+
+    None
+}
+
 async fn safe_read(filename: &str, base_dir: &str) -> Option<String> {
     let base = std::path::Path::new(base_dir).canonicalize().ok()?;
     let path = base.join(filename);

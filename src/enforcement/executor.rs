@@ -156,8 +156,9 @@ pub fn build_nft_ruleset(rules: &TranslatedRules) -> Result<String> {
     // Allow chat gRPC plaintext (50251, 50252, 50253)
     out.push_str("    tcp dport 50251-50253 counter accept\n");
 
-    // Allow REST API
-    out.push_str("    tcp dport 8443 accept\n");
+    // Allow REST/Admin API on 8443 like the other Guardian service ports.
+    // HTTPS and API authentication remain enforced by the server.
+    out.push_str("    tcp dport 8443 counter accept\n");
 
     // Allow ICMP ping
     out.push_str("    ip protocol icmp accept\n");

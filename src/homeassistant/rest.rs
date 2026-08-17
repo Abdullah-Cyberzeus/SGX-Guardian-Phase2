@@ -32,7 +32,10 @@ impl HaRestClient {
         Fut: std::future::Future<Output = Result<Response, Error>>,
     {
         // 1. Check Circuit Breaker State
-        self.circuit_breaker.can_execute().await.map_err(|e| e.to_string())?;
+        self.circuit_breaker
+            .can_execute()
+            .await
+            .map_err(|e| e.to_string())?;
 
         // 2. Execute with Retry (3 attempts with exponential backoff: 1s, 2s, 4s)
         let mut attempt = 0;
@@ -65,14 +68,14 @@ impl HaRestClient {
     pub async fn check_api_status(&self) -> Result<bool, String> {
         let url = format!("{}/api/", self.config.url);
         let token = self.config.token.clone();
-        
+
         let client_clone = self.client.clone();
-        let resp = self.execute_with_circuit_breaker(move || {
-            let req = client_clone
-                .get(&url)
-                .bearer_auth(&token);
-            req.send()
-        }).await?;
+        let resp = self
+            .execute_with_circuit_breaker(move || {
+                let req = client_clone.get(&url).bearer_auth(&token);
+                req.send()
+            })
+            .await?;
 
         Ok(resp.status().is_success())
     }
@@ -80,52 +83,70 @@ impl HaRestClient {
     pub async fn get_states(&self) -> Result<Vec<serde_json::Value>, String> {
         let url = format!("{}/api/states", self.config.url);
         let token = self.config.token.clone();
-        
+
         let client_clone = self.client.clone();
-        let resp = self.execute_with_circuit_breaker(move || {
-            let req = client_clone
-                .get(&url)
-                .bearer_auth(&token);
-            req.send()
-        }).await?;
+        let resp = self
+            .execute_with_circuit_breaker(move || {
+                let req = client_clone.get(&url).bearer_auth(&token);
+                req.send()
+            })
+            .await?;
 
         if resp.status().is_success() {
-            resp.json::<Vec<serde_json::Value>>().await.map_err(|e| e.to_string())
+            resp.json::<Vec<serde_json::Value>>()
+                .await
+                .map_err(|e| e.to_string())
         } else {
             Err(format!("Failed to get states: HTTP {}", resp.status()))
         }
     }
 
     /// Calls a Home Assistant service (e.g., lock.lock, light.turn_on)
-    pub async fn call_service(&self, domain: &str, service: &str, entity_id: &str, mut service_data: Option<serde_json::Value>) -> Result<(), String> {
+    pub async fn call_service(
+        &self,
+        domain: &str,
+        service: &str,
+        entity_id: &str,
+        mut service_data: Option<serde_json::Value>,
+    ) -> Result<(), String> {
         let url = format!("{}/api/services/{}/{}", self.config.url, domain, service);
         let token = self.config.token.clone();
-        
+
         let payload = match &mut service_data {
             Some(serde_json::Value::Object(map)) => {
-                map.insert("entity_id".to_string(), serde_json::Value::String(entity_id.to_string()));
+                map.insert(
+                    "entity_id".to_string(),
+                    serde_json::Value::String(entity_id.to_string()),
+                );
                 serde_json::Value::Object(map.clone())
             }
             _ => {
                 let mut map = serde_json::Map::new();
-                map.insert("entity_id".to_string(), serde_json::Value::String(entity_id.to_string()));
+                map.insert(
+                    "entity_id".to_string(),
+                    serde_json::Value::String(entity_id.to_string()),
+                );
                 serde_json::Value::Object(map)
             }
         };
 
         let client_clone = self.client.clone();
-        let resp = self.execute_with_circuit_breaker(move || {
-            let req = client_clone
-                .post(&url)
-                .bearer_auth(&token)
-                .json(&payload);
-            req.send()
-        }).await?;
+        let resp = self
+            .execute_with_circuit_breaker(move || {
+                let req = client_clone.post(&url).bearer_auth(&token).json(&payload);
+                req.send()
+            })
+            .await?;
 
         if resp.status().is_success() {
             Ok(())
         } else {
-            Err(format!("Failed to call service {}.{}: HTTP {}", domain, service, resp.status()))
+            Err(format!(
+                "Failed to call service {}.{}: HTTP {}",
+                domain,
+                service,
+                resp.status()
+            ))
         }
     }
 }

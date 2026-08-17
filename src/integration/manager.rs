@@ -4,7 +4,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 
-use crate::integration::provider::{IntegrationMetadata, IntegrationStatus, OAuthCredentials, VendorProvider};
+use crate::integration::provider::{
+    IntegrationMetadata, IntegrationStatus, OAuthCredentials, VendorProvider,
+};
 use crate::integration::store::IntegrationStore;
 
 pub struct IntegrationManager {
@@ -67,14 +69,19 @@ impl IntegrationManager {
     ) -> Result<(), String> {
         let mut guard = self.integrations.write().await;
 
-        let meta = guard.get_mut(&provider).ok_or_else(|| "Unknown provider".to_string())?;
+        let meta = guard
+            .get_mut(&provider)
+            .ok_or_else(|| "Unknown provider".to_string())?;
 
         meta.status = IntegrationStatus::Connected;
         meta.credentials = Some(creds);
         meta.last_synced = Some(Utc::now());
         meta.error_message = None;
 
-        info!("🔌 Connected integration for provider: {}", provider.display_name());
+        info!(
+            "🔌 Connected integration for provider: {}",
+            provider.display_name()
+        );
 
         self.store.save(&guard)?;
         Ok(())
@@ -89,7 +96,9 @@ impl IntegrationManager {
     ) -> Result<usize, String> {
         let mut guard = self.integrations.write().await;
 
-        let meta = guard.get_mut(&VendorProvider::TpLinkKasa).ok_or_else(|| "Unknown provider".to_string())?;
+        let meta = guard
+            .get_mut(&VendorProvider::TpLinkKasa)
+            .ok_or_else(|| "Unknown provider".to_string())?;
 
         // If HA flow client is available, run programmatic setup flow
         if let Some(client) = flow_client {
@@ -115,7 +124,10 @@ impl IntegrationManager {
         meta.kasa_credentials = Some(creds);
         meta.last_synced = Some(Utc::now());
 
-        info!("🔌 Connected TP-Link Kasa integration (mode: {})", meta.kasa_credentials.as_ref().unwrap().mode);
+        info!(
+            "🔌 Connected TP-Link Kasa integration (mode: {})",
+            meta.kasa_credentials.as_ref().unwrap().mode
+        );
 
         self.store.save(&guard)?;
         drop(guard);
@@ -159,7 +171,9 @@ impl IntegrationManager {
     ) -> Result<usize, String> {
         let mut guard = self.integrations.write().await;
 
-        let meta = guard.get_mut(&provider).ok_or_else(|| "Unknown provider".to_string())?;
+        let meta = guard
+            .get_mut(&provider)
+            .ok_or_else(|| "Unknown provider".to_string())?;
 
         // If disconnecting Kasa and an entry_id exists, unbind from HA programmatically
         if provider == VendorProvider::TpLinkKasa {
@@ -167,7 +181,11 @@ impl IntegrationManager {
                 if let Some(ref entry_id) = kasa_creds.config_entry_id {
                     if let Some(client) = flow_client {
                         if let Err(e) = client.remove_kasa_config_entry(entry_id).await {
-                            tracing::warn!("⚠️ Could not remove HA config entry '{}': {}", entry_id, e);
+                            tracing::warn!(
+                                "⚠️ Could not remove HA config entry '{}': {}",
+                                entry_id,
+                                e
+                            );
                         }
                     }
                 }
@@ -177,7 +195,11 @@ impl IntegrationManager {
                 if let Some(ref entry_id) = nest_creds.config_entry_id {
                     if let Some(client) = nest_flow_client {
                         if let Err(e) = client.remove_nest_config_entry(entry_id).await {
-                            tracing::warn!("⚠️ Could not remove HA Nest config entry '{}': {}", entry_id, e);
+                            tracing::warn!(
+                                "⚠️ Could not remove HA Nest config entry '{}': {}",
+                                entry_id,
+                                e
+                            );
                         }
                     }
                 }
@@ -219,7 +241,11 @@ impl IntegrationManager {
         meta.nest_credentials = None;
         meta.error_message = None;
 
-        info!("🔌 Disconnected integration for provider: {} (removed {} devices)", provider.display_name(), devices_removed);
+        info!(
+            "🔌 Disconnected integration for provider: {} (removed {} devices)",
+            provider.display_name(),
+            devices_removed
+        );
 
         self.store.save(&guard)?;
         Ok(devices_removed)
@@ -238,18 +264,26 @@ impl IntegrationManager {
         if let Some(client) = flow_client {
             match client.setup_nest_config_entry(&nest_creds).await {
                 Ok(entry_id) => {
-                    info!("✅ Programmatically created HA Nest config entry '{}'", entry_id);
+                    info!(
+                        "✅ Programmatically created HA Nest config entry '{}'",
+                        entry_id
+                    );
                     nest_creds.config_entry_id = Some(entry_id);
                 }
                 Err(e) => {
-                    tracing::warn!("⚠️ HA Nest config entry automation skipped or failed: {}", e);
+                    tracing::warn!(
+                        "⚠️ HA Nest config entry automation skipped or failed: {}",
+                        e
+                    );
                 }
             }
         }
 
         {
             let mut guard = self.integrations.write().await;
-            let meta = guard.get_mut(&VendorProvider::GoogleNest).ok_or_else(|| "Google Nest provider not found".to_string())?;
+            let meta = guard
+                .get_mut(&VendorProvider::GoogleNest)
+                .ok_or_else(|| "Google Nest provider not found".to_string())?;
 
             meta.nest_credentials = Some(nest_creds);
             meta.status = IntegrationStatus::Connected;
@@ -312,7 +346,9 @@ impl IntegrationManager {
     ) -> Result<(), String> {
         let mut guard = self.integrations.write().await;
 
-        let meta = guard.get_mut(&provider).ok_or_else(|| "Unknown provider".to_string())?;
+        let meta = guard
+            .get_mut(&provider)
+            .ok_or_else(|| "Unknown provider".to_string())?;
 
         meta.status = status;
         meta.error_message = error_msg;
@@ -329,7 +365,9 @@ impl IntegrationManager {
     ) -> Result<(), String> {
         let mut guard = self.integrations.write().await;
 
-        let meta = guard.get_mut(&provider).ok_or_else(|| "Unknown provider".to_string())?;
+        let meta = guard
+            .get_mut(&provider)
+            .ok_or_else(|| "Unknown provider".to_string())?;
 
         meta.credentials = Some(creds);
         meta.last_synced = Some(Utc::now());
@@ -391,12 +429,21 @@ mod tests {
             .await
             .unwrap();
 
-        let nest_meta = manager.get_integration(VendorProvider::GoogleNest).await.unwrap();
+        let nest_meta = manager
+            .get_integration(VendorProvider::GoogleNest)
+            .await
+            .unwrap();
         assert_eq!(nest_meta.status, IntegrationStatus::Connected);
         assert!(nest_meta.credentials.is_some());
 
-        manager.disconnect_integration(VendorProvider::GoogleNest, None, None, None).await.unwrap();
-        let nest_disconnected = manager.get_integration(VendorProvider::GoogleNest).await.unwrap();
+        manager
+            .disconnect_integration(VendorProvider::GoogleNest, None, None, None)
+            .await
+            .unwrap();
+        let nest_disconnected = manager
+            .get_integration(VendorProvider::GoogleNest)
+            .await
+            .unwrap();
         assert_eq!(nest_disconnected.status, IntegrationStatus::Disconnected);
         assert!(nest_disconnected.credentials.is_none());
     }
@@ -424,13 +471,7 @@ mod tests {
             token: "test".to_string(),
         }));
 
-        let dm = DeviceManager::new(
-            registry.clone(),
-            command_tracker,
-            ha_rest,
-            event_bus,
-            None,
-        );
+        let dm = DeviceManager::new(registry.clone(), command_tracker, ha_rest, event_bus, None);
 
         // Add 2 Kasa devices and 1 Nest device to registry
         let dev1 = Device {
@@ -474,14 +515,20 @@ mod tests {
         assert_eq!(initial_devices.len(), 2);
 
         // Disconnect Kasa
-        let removed_count = manager.disconnect_integration(VendorProvider::TpLinkKasa, None, None, Some(&dm)).await.unwrap();
+        let removed_count = manager
+            .disconnect_integration(VendorProvider::TpLinkKasa, None, None, Some(&dm))
+            .await
+            .unwrap();
         assert_eq!(removed_count, 1, "Should remove 1 Kasa device");
 
         let remaining_devices = registry.get_all_devices().await;
         assert_eq!(remaining_devices.len(), 1, "Should retain the Nest device");
         assert_eq!(remaining_devices[0].vendor, "google_nest");
 
-        let kasa_status = manager.get_integration(VendorProvider::TpLinkKasa).await.unwrap();
+        let kasa_status = manager
+            .get_integration(VendorProvider::TpLinkKasa)
+            .await
+            .unwrap();
         assert_eq!(kasa_status.status, IntegrationStatus::Disconnected);
         assert!(kasa_status.kasa_credentials.is_none());
     }
@@ -501,15 +548,24 @@ mod tests {
             Some("refresh_token_nest".to_string()),
         );
 
-        let count = manager.connect_nest(creds.clone(), None, None).await.unwrap();
+        let count = manager
+            .connect_nest(creds.clone(), None, None)
+            .await
+            .unwrap();
         assert_eq!(count, 0);
 
-        let status = manager.get_integration(VendorProvider::GoogleNest).await.unwrap();
+        let status = manager
+            .get_integration(VendorProvider::GoogleNest)
+            .await
+            .unwrap();
         assert_eq!(status.status, IntegrationStatus::Connected);
 
         // Reload store from disk to verify AES-GCM-256 decryption
         let reloaded_manager = IntegrationManager::new(int_file.to_str().unwrap());
-        let reloaded_status = reloaded_manager.get_integration(VendorProvider::GoogleNest).await.unwrap();
+        let reloaded_status = reloaded_manager
+            .get_integration(VendorProvider::GoogleNest)
+            .await
+            .unwrap();
         assert_eq!(reloaded_status.status, IntegrationStatus::Connected);
         assert!(reloaded_status.nest_credentials.is_some());
         let loaded_creds = reloaded_status.nest_credentials.unwrap();
@@ -520,11 +576,15 @@ mod tests {
     #[tokio::test]
     async fn test_disconnect_nest_purges_devices_and_credentials() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let int_file = temp_dir.path().join("integrations_nest_disconnect_test.json");
+        let int_file = temp_dir
+            .path()
+            .join("integrations_nest_disconnect_test.json");
         let dev_file = temp_dir.path().join("devices_nest_disconnect_test.json");
 
         let event_bus = crate::homeassistant::events::EventBus::new();
-        let registry = Arc::new(crate::device::registry::DeviceRegistry::new(dev_file.to_str().unwrap()));
+        let registry = Arc::new(crate::device::registry::DeviceRegistry::new(
+            dev_file.to_str().unwrap(),
+        ));
         let command_tracker = crate::device::command_tracker::CommandTracker::new();
         let ha_rest = Arc::new(crate::homeassistant::rest::HaRestClient::new(
             crate::homeassistant::HomeAssistantConfig {
@@ -567,14 +627,23 @@ mod tests {
 
         manager.connect_nest(creds, None, Some(&dm)).await.unwrap();
 
-        let status = manager.get_integration(VendorProvider::GoogleNest).await.unwrap();
+        let status = manager
+            .get_integration(VendorProvider::GoogleNest)
+            .await
+            .unwrap();
         assert_eq!(status.status, IntegrationStatus::Connected);
         assert!(status.nest_credentials.is_some());
 
-        let removed = manager.disconnect_integration(VendorProvider::GoogleNest, None, None, Some(&dm)).await.unwrap();
+        let removed = manager
+            .disconnect_integration(VendorProvider::GoogleNest, None, None, Some(&dm))
+            .await
+            .unwrap();
         assert_eq!(removed, 1, "Should remove 1 Nest device");
 
-        let status_after = manager.get_integration(VendorProvider::GoogleNest).await.unwrap();
+        let status_after = manager
+            .get_integration(VendorProvider::GoogleNest)
+            .await
+            .unwrap();
         assert_eq!(status_after.status, IntegrationStatus::Disconnected);
         assert!(status_after.nest_credentials.is_none());
         assert_eq!(status_after.device_count, 0);

@@ -34,6 +34,7 @@ pub struct InviteToken {
     pub circle_id: String,
     pub circle_name: String,
     pub issuer_did: String,
+    pub target_did: String,
     pub role: CredentialRole,
     pub permissions: Vec<String>,
     pub issued_at: String,
@@ -51,6 +52,8 @@ pub struct JoinRequest {
     pub context: Vec<String>,
     pub invite_token: InviteToken,
     pub joiner_did: String,
+    #[serde(default)]
+    pub accepted: bool,
     pub nonce: String,
     pub issued_at: String,
     #[serde(default)]
@@ -64,10 +67,29 @@ pub struct InviteRedemption {
     pub redeemed_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceivedInviteState {
+    Pending,
+    Accepted,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReceivedInvite {
+    pub invite: InviteToken,
+    pub received_at: String,
+    pub state: ReceivedInviteState,
+    #[serde(default)]
+    pub updated_at: String,
+}
+
 pub fn mint_invite(
     circle: &Circle,
     issuer: &DidRecord,
     km: &KeyManager,
+    target_did: &str,
     role: CredentialRole,
     ttl_minutes: Option<i64>,
     max_uses: Option<u32>,
@@ -87,6 +109,7 @@ pub fn mint_invite(
         circle_id: circle.circle_id.clone(),
         circle_name: circle.name.clone(),
         issuer_did: issuer.did.clone(),
+        target_did: target_did.to_string(),
         role,
         permissions,
         issued_at: now.to_rfc3339(),
@@ -103,6 +126,9 @@ pub fn mint_invite(
 }
 
 pub async fn verify_invite(token: &InviteToken, resolver: &Resolver) -> Result<(), CircleError> {
+    if token.target_did.trim().is_empty() {
+        return Err(CircleError::Invalid("invite target_did is required".into()));
+    }
     validate_permissions_for_role(&token.role, &token.permissions)?;
     if token.max_uses == 0 {
         return Err(CircleError::Invalid(
@@ -163,6 +189,67 @@ pub fn list_invites(circle_id: &str) -> Result<Vec<InviteToken>, CircleError> {
     Ok(invites)
 }
 
+pub fn list_received_invites() -> Result<Vec<ReceivedInvite>, CircleError> {
+    let dir = persistence::received_invites_dir();
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut invites = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Ok(bytes) = fs::read(&path) else {
+            continue;
+        };
+        let Ok(invite) = serde_json::from_slice::<ReceivedInvite>(&bytes) else {
+            continue;
+        };
+        invites.push(invite);
+    }
+    invites.sort_by(|left, right| left.received_at.cmp(&right.received_at));
+    Ok(invites)
+}
+
+pub fn save_received_invite(token: InviteToken) -> Result<ReceivedInvite, CircleError> {
+    let now = Utc::now().to_rfc3339();
+    let received = ReceivedInvite {
+        invite: token,
+        received_at: now.clone(),
+        state: ReceivedInviteState::Pending,
+        updated_at: now,
+    };
+    persistence::write_atomic(
+        &persistence::received_invite_path(&received.invite.id),
+        &serde_json::to_vec_pretty(&received)?,
+    )?;
+    Ok(received)
+}
+
+pub fn load_received_invite(invite_id: &str) -> Result<ReceivedInvite, CircleError> {
+    let path = persistence::received_invite_path(invite_id);
+    if !path.exists() {
+        return Err(CircleError::NotFound(invite_id.to_string()));
+    }
+    Ok(serde_json::from_slice(&fs::read(path)?)?)
+}
+
+pub fn set_received_invite_state(
+    invite_id: &str,
+    state: ReceivedInviteState,
+) -> Result<ReceivedInvite, CircleError> {
+    let mut invite = load_received_invite(invite_id)?;
+    invite.state = state;
+    invite.updated_at = Utc::now().to_rfc3339();
+    persistence::write_atomic(
+        &persistence::received_invite_path(invite_id),
+        &serde_json::to_vec_pretty(&invite)?,
+    )?;
+    Ok(invite)
+}
+
 pub fn delete_invite(invite_id: &str) -> Result<(), CircleError> {
     let path = persistence::invite_path(invite_id);
     if !path.exists() {
@@ -198,6 +285,72 @@ pub fn build_share_link(token_b64: &str, owner_host: &str) -> Result<String, Cir
     Ok(payload)
 }
 
+pub async fn resolve_circle_endpoint(
+    did: &str,
+    resolver: &Resolver,
+) -> Result<String, CircleError> {
+    let resolved = resolver.resolve(did).await.map_err(|err| {
+        CircleError::Invalid(format!("DID resolution failed for {}: {}", did, err))
+    })?;
+    if crate::crl::is_revoked(did) {
+        return Err(CircleError::Conflict(format!(
+            "DID {} is revoked by CRL",
+            did
+        )));
+    }
+    let mut nebula_endpoint = None;
+    for service in &resolved.services {
+        let service_type = service.r#type.to_ascii_lowercase();
+        if service_type.contains("circle") || service_type.contains("cot") {
+            return normalize_service_endpoint(&service.endpoint);
+        }
+        if service_type.contains("nebula") || service.endpoint.starts_with("nebula://") {
+            nebula_endpoint = Some(service.endpoint.clone());
+        }
+    }
+    if let Some(endpoint) = nebula_endpoint {
+        return normalize_service_endpoint(&endpoint);
+    }
+    Err(CircleError::Invalid(format!(
+        "DID {} has no Circle/CoT/Nebula service endpoint",
+        did
+    )))
+}
+
+fn normalize_service_endpoint(endpoint: &str) -> Result<String, CircleError> {
+    let trimmed = endpoint.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err(CircleError::Invalid("service endpoint is empty".into()));
+    }
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return Ok(trimmed.to_string());
+    }
+    if let Some(rest) = trimmed.strip_prefix("nebula://") {
+        let host = rest.split('/').next().unwrap_or(rest);
+        if host.is_empty() {
+            return Err(CircleError::Invalid(format!(
+                "unreachable endpoint: {}",
+                endpoint
+            )));
+        }
+        return Ok(format!("http://{}:8443", host));
+    }
+    if let Some(rest) = trimmed.strip_prefix("tcp://") {
+        let host = rest.split(':').next().unwrap_or(rest);
+        if host.is_empty() {
+            return Err(CircleError::Invalid(format!(
+                "unreachable endpoint: {}",
+                endpoint
+            )));
+        }
+        return Ok(format!("http://{}:8443", host));
+    }
+    Err(CircleError::Invalid(format!(
+        "unsupported DID service endpoint {}",
+        endpoint
+    )))
+}
+
 pub fn assert_redeemable(
     circle: &Circle,
     invite: &InviteToken,
@@ -213,6 +366,12 @@ pub fn assert_redeemable(
         return Err(CircleError::Invalid(format!(
             "invite {} issuer {} is not the owner of {}",
             invite.id, invite.issuer_did, circle.circle_id
+        )));
+    }
+    if invite.target_did != joiner_did {
+        return Err(CircleError::Invalid(format!(
+            "invite {} targets {}, not {}",
+            invite.id, invite.target_did, joiner_did
         )));
     }
     let stored = load_invite(&invite.id)?;
@@ -279,6 +438,7 @@ pub fn sign_join_request(
         ],
         invite_token,
         joiner_did: joiner.did.clone(),
+        accepted: true,
         nonce: random_nonce_b64(32),
         issued_at: Utc::now().to_rfc3339(),
         proof: Proof::default(),
@@ -293,6 +453,17 @@ pub async fn verify_join_request(
     request: &JoinRequest,
     resolver: &Resolver,
 ) -> Result<(), CircleError> {
+    if !request.accepted {
+        return Err(CircleError::Invalid(
+            "join acceptance was not granted".into(),
+        ));
+    }
+    if request.joiner_did != request.invite_token.target_did {
+        return Err(CircleError::Invalid(format!(
+            "acceptance DID {} does not match invite target {}",
+            request.joiner_did, request.invite_token.target_did
+        )));
+    }
     let resolved = resolver.resolve(&request.joiner_did).await?;
     let public_key = general_purpose::STANDARD.decode(resolved.public_key_der_b64)?;
     let canonical = request.canonical_bytes_for_sign()?;
@@ -352,6 +523,7 @@ mod unit_tests {
             circle_id: "circle-1".to_string(),
             circle_name: "Test Circle".to_string(),
             issuer_did: "did:guardian:owner".to_string(),
+            target_did: "did:guardian:joiner".to_string(),
             role: CredentialRole::Member,
             permissions: vec!["mesh:join".to_string()],
             issued_at: "2026-01-01T00:00:00Z".to_string(),
@@ -393,6 +565,7 @@ mod unit_tests {
             context: vec![JOIN_REQUEST_CONTEXT.to_string()],
             invite_token: sample_token(),
             joiner_did: "did:guardian:joiner".to_string(),
+            accepted: true,
             nonce: "nonce".to_string(),
             issued_at: "2026-01-01T00:00:00Z".to_string(),
             proof: Proof::default(),

@@ -82,6 +82,40 @@ export interface DeviceDetail {
   attestationEndpoint?: string;
 }
 
+export interface PairedGuardianStatus {
+  pairing: {
+    deviceId: string;
+    serial: string;
+    status: string;
+    pairedAt: string;
+    reactivatedAt?: string;
+    updatedAt?: string;
+    method: string;
+  };
+  identity: {
+    nodeName?: string;
+    did: string;
+    deviceFingerprint: string;
+    dkpVersion?: number;
+    didStatus: string;
+    didUpdatedAt?: string;
+  };
+  runtime: { status: string; daemonStatus: string; uptimeSeconds?: number; lastSeen?: string };
+  network: { physicalIp: string; interfaceName: string; transport: string };
+  nebula: { status: string; overlayIp: string; role: string; trustedPeerCount?: number };
+  hardware: { se050Status: string; dkpVersion?: number };
+  security: {
+    attestationStatus: string;
+    attestationEndpoint?: string;
+    pcrStatus: string;
+    integrityStatus: string;
+    secureBootStatus: string;
+    policyStatus: string;
+    policyDigest?: string;
+    trustState: string;
+  };
+}
+
 // ── Response from GET /discovery/devices ─────────────────────────────────────
 export interface DiscoveredDevice {
   device_id: string;
@@ -144,6 +178,10 @@ export const deviceService = {
    */
   getDevice: (deviceId: string): Promise<DeviceDetail> =>
     api.get<DeviceDetail>(`/devices/${deviceId}`),
+
+  /** GET /devices/{deviceId}/status — real persisted/runtime Guardian status. */
+  getGuardianStatus: (deviceId: string): Promise<PairedGuardianStatus> =>
+    api.get<PairedGuardianStatus>(`/devices/${deviceId}/status`),
 
   /**
    * GET /devices/pairing-code?serial=X&ttl_secs=Y

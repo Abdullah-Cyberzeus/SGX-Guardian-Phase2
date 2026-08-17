@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use serde_json::json;
+use std::sync::Arc;
 use tracing::info;
 
 use crate::device::manager::DeviceManager;
@@ -22,9 +22,13 @@ impl NestClimateController {
             payload["hvac_mode"] = json!(mode);
         }
 
-        info!("🌡️ Setting Nest Thermostat '{}' temperature to {:.1}° (hvac_mode: {:?})", entity_id, temperature, hvac_mode);
+        info!(
+            "🌡️ Setting Nest Thermostat '{}' temperature to {:.1}° (hvac_mode: {:?})",
+            entity_id, temperature, hvac_mode
+        );
 
-        dm.send_command(entity_id, "climate", "set_temperature", Some(payload)).await
+        dm.send_command(entity_id, "climate", "set_temperature", Some(payload))
+            .await
     }
 
     /// Sets the operating HVAC mode on a Nest Thermostat (heat, cool, heat_cool, off, fan_only).
@@ -37,9 +41,13 @@ impl NestClimateController {
             "hvac_mode": hvac_mode
         });
 
-        info!("🔥 Setting Nest Thermostat '{}' HVAC mode to '{}'", entity_id, hvac_mode);
+        info!(
+            "🔥 Setting Nest Thermostat '{}' HVAC mode to '{}'",
+            entity_id, hvac_mode
+        );
 
-        dm.send_command(entity_id, "climate", "set_hvac_mode", Some(payload)).await
+        dm.send_command(entity_id, "climate", "set_hvac_mode", Some(payload))
+            .await
     }
 
     /// Sets the preset mode on a Nest Thermostat (eco, none, away).
@@ -52,9 +60,13 @@ impl NestClimateController {
             "preset_mode": preset_mode
         });
 
-        info!("🍃 Setting Nest Thermostat '{}' preset mode to '{}'", entity_id, preset_mode);
+        info!(
+            "🍃 Setting Nest Thermostat '{}' preset mode to '{}'",
+            entity_id, preset_mode
+        );
 
-        dm.send_command(entity_id, "climate", "set_preset_mode", Some(payload)).await
+        dm.send_command(entity_id, "climate", "set_preset_mode", Some(payload))
+            .await
     }
 }
 

@@ -180,7 +180,12 @@ pub async fn scan_now(
     Query(query): Query<ScanTargetRequest>,
     body: Bytes,
 ) -> Result<Json<ScanResponse>, ApiError> {
-    scan_with_args(&s, &["discovery", "scan"], resolve_scan_target(query, &body)?).await
+    scan_with_args(
+        &s,
+        &["discovery", "scan"],
+        resolve_scan_target(query, &body)?,
+    )
+    .await
 }
 
 pub async fn scan_stealth(
@@ -809,7 +814,10 @@ fn publish_rule_events_for_latest_run(state: &AppState) {
             &state.node_id,
             &device,
         ));
-        if matches!(device.status, DeviceStatus::Unauthorized | DeviceStatus::Drifted) {
+        if matches!(
+            device.status,
+            DeviceStatus::Unauthorized | DeviceStatus::Drifted
+        ) {
             crate::rules::publish(crate::rules::RuleEvent::from_device_unauthorized(
                 &state.node_id,
                 &device,

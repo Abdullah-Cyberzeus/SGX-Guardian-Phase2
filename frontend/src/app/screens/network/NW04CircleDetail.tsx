@@ -8,6 +8,7 @@ import {
   Trash2, AlertTriangle, FolderOpen, Settings, Loader2, ArrowLeft
 } from "lucide-react";
 import { StatusBadge } from "../../components/SeverityBadge";
+import { QRCodeSVG } from "qrcode.react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { AttachmentMenu } from "../../components/circle/AttachmentMenu";
 import { MessageAttachment } from "../../components/circle/MessageAttachment";
@@ -48,7 +49,12 @@ export function NW04CircleDetail() {
   const [sheetTab, setSheetTab] = useState<"link" | "qr" | "search">("link");
   const [inviteOpen, setInviteOpen] = useState(false);
   const [activeInvite, setActiveInvite] = useState<CircleInvite | null>(null);
+  const [selectedDid, setSelectedDid] = useState<string>("");
+  const [didSearch, setDidSearch] = useState("");
+  const [inviteCache, setInviteCache] = useState<Record<string, CircleInvite>>({});
+  const [pendingInvites, setPendingInvites] = useState<CircleInvite[]>([]);
   const [inviteLoading, setInviteLoading] = useState(false);
+  const [inviteSending, setInviteSending] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [memberDetailOpen, setMemberDetailOpen] = useState<string | null>(null);
   const [removeDialogOpen, setRemoveDialogOpen] = useState<string | null>(null);
@@ -61,7 +67,23 @@ export function NW04CircleDetail() {
   const [directLoading, setDirectLoading] = useState(false);
   const [sendingDirect, setSendingDirect] = useState(false);
 
-  const members = circle?.members || [];
+  const baseMembers = circle?.members || [];
+  const members = useMemo(() => {
+    const existing = new Set(baseMembers.map((member: any) => String(member.did || "").toLowerCase()));
+    const pending = pendingInvites
+      .map((invite) => invite.targetDid || String(invite.target_did || ""))
+      .filter((did) => did && !existing.has(did.toLowerCase()))
+      .map((did) => ({
+        id: did,
+        did,
+        name: `Guardian ${did.split(":").pop()?.slice(0, 10) || "Invite"}`,
+        role: "member",
+        pending: true,
+        status: "pending",
+        membershipStatus: "pending",
+      }));
+    return [...baseMembers, ...pending];
+  }, [baseMembers, pendingInvites]);
   const callHistory = useCallHistory();
   const selectedMember = members.find((m: any) => String(m.did || m.id) === memberDetailOpen);
   const memberToRemove = members.find((m: any) => String(m.did || m.id) === removeDialogOpen);
@@ -83,29 +105,12 @@ export function NW04CircleDetail() {
     setTimeout(() => setCopiedField(null), 2000);
   };
 
-  const openInviteSheet = async () => {
+  const openInviteSheet = () => {
     if (!circleId) return;
     setInviteOpen(true);
-    setInviteLoading(true);
+    setSheetTab("search");
+    setInviteLoading(false);
     setInviteError(null);
-    try {
-      const invites = await circleService.getInvites(circleId);
-      const now = Date.now();
-      let invite = invites.find((item) => !item.expiresAt || new Date(item.expiresAt).getTime() > now);
-      if (!invite) {
-        invite = await circleService.createInvite(circleId, {
-          role: "member",
-          expiresInMinutes: 24 * 60,
-          maxUses: 10,
-          ownerHost: window.location.origin,
-        });
-      }
-      setActiveInvite(invite);
-    } catch (cause) {
-      setInviteError(cause instanceof Error ? cause.message : "Unable to load a Circle invite.");
-    } finally {
-      setInviteLoading(false);
-    }
   };
 
   const sendMessage = async () => {
@@ -160,6 +165,52 @@ export function NW04CircleDetail() {
     return memberDid
       ? trustedPeers.find((peer) => String(peer.did || "").trim().toLowerCase() === memberDid)
       : undefined;
+  };
+  const didResults = useMemo(() => {
+    const query = didSearch.trim().toLowerCase();
+    const candidates = trustedPeers
+      .map((peer: any) => ({
+        did: String(peer.did || peer.peerDid || "").trim(),
+        label: String(peer.name || peer.displayName || peer.peerId || "Guardian"),
+        sub: String(peer.peerId || peer.nodeId || ""),
+      }))
+      .filter((peer) => peer.did.startsWith("did:guardian:"));
+    const deduped = Array.from(new Map(candidates.map((item) => [item.did, item])).values());
+    return deduped.filter((item) => !query || item.did.toLowerCase().includes(query) || item.label.toLowerCase().includes(query) || item.sub.toLowerCase().includes(query));
+  }, [trustedPeers, didSearch]);
+
+  const normalizeGuardianDid = (did: string) => did.trim().startsWith("did:guardian:") ? did.trim() : `did:guardian:${did.trim()}`;
+
+  const ensureInviteForSelectedDid = async () => {
+    if (!circleId) return null;
+    if (!selectedDid) {
+      setInviteError("Select a Guardian DID first");
+      return null;
+    }
+    const targetDid = normalizeGuardianDid(selectedDid);
+    const cached = inviteCache[targetDid];
+    if (cached) {
+      setActiveInvite(cached);
+      setInviteError(null);
+      return cached;
+    }
+    setInviteLoading(true);
+    setInviteError(null);
+    try {
+      const invite = await circleService.createInvite(circleId, { targetDid, role: "member", deliver: false });
+      const inviteForRecipient = { ...invite, targetDid };
+      setInviteCache((prev) => ({ ...prev, [targetDid]: inviteForRecipient }));
+      setActiveInvite(inviteForRecipient);
+      setPendingInvites((prev) => prev.some((item) => item.id === inviteForRecipient.id) ? prev : [...prev, inviteForRecipient]);
+      void refetchCircles();
+      return inviteForRecipient;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Unable to create a Circle invite.";
+      setInviteError(message);
+      return null;
+    } finally {
+      setInviteLoading(false);
+    }
   };
   const callableMemberIds = useMemo(() => Array.from(new Set(
     members
@@ -302,7 +353,7 @@ export function NW04CircleDetail() {
   ];
   const visibleMessages = directMember ? directMessages : messages;
   const inviteShareValue = activeInvite?.url || activeInvite?.qrPayload || (activeInvite?.token
-    ? `sgx-guardian://circle/join?owner_host=${encodeURIComponent(window.location.origin)}&token=${encodeURIComponent(activeInvite.token)}`
+    ? `sgx-guardian://circle/join?token=${encodeURIComponent(activeInvite.token)}`
     : "");
   const inviteDisplayCode = String(activeInvite?.id || "")
     .replace(/^urn:uuid:/, "")
@@ -311,17 +362,49 @@ export function NW04CircleDetail() {
     .slice(0, 3);
 
   const shareInvite = async () => {
-    if (!inviteShareValue) return;
+    const invite = activeInvite || await ensureInviteForSelectedDid();
+    if (!invite) return;
+    const value = invite?.url || invite?.qrPayload || (invite?.token
+      ? `sgx-guardian://circle/join?token=${encodeURIComponent(invite.token)}`
+      : "");
+    if (!value) return;
     try {
       if (navigator.share) {
-        await navigator.share({ title: `Join ${circle?.name || "my Circle"}`, text: "Join this SG-X Guardian Circle.", url: inviteShareValue });
+        await navigator.share({ title: `Join ${circle?.name || "my Circle"}`, text: "Join this SG-X Guardian Circle.", url: value });
       } else {
-        await navigator.clipboard.writeText(inviteShareValue);
+        await navigator.clipboard.writeText(value);
         toast.success("Invite copied");
       }
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === "AbortError") return;
-      toast.error("Invite could not be shared");
+      toast.error("Manual share unavailable");
+    }
+  };
+
+  const sendDirectInvite = async () => {
+    const invite = activeInvite || await ensureInviteForSelectedDid();
+    if (!circleId || !invite?.id || inviteSending) return;
+    setInviteSending(true);
+    setInviteError(null);
+    try {
+      const delivered = await circleService.deliverInvite(circleId, invite.id);
+      const deliveredInvite = { ...invite, ...delivered, targetDid: invite.targetDid || selectedDid };
+      setActiveInvite(deliveredInvite);
+      setInviteCache((prev) => {
+        const key = normalizeGuardianDid(deliveredInvite.targetDid || selectedDid);
+        return { ...prev, [key]: deliveredInvite };
+      });
+      setPendingInvites((prev) => prev.some((item) => item.id === deliveredInvite.id) ? prev : [...prev, deliveredInvite]);
+      if (deliveredInvite.delivered === true) {
+        toast.success("Invite sent successfully");
+      } else {
+        toast.error("Invite delivery failed", { description: deliveredInvite.deliveryError || "Backend delivery returned delivered:false." });
+      }
+      void refetchCircles();
+    } catch (cause) {
+      toast.error("Invite delivery failed", { description: cause instanceof Error ? cause.message : "Try again." });
+    } finally {
+      setInviteSending(false);
     }
   };
 
@@ -564,7 +647,8 @@ export function NW04CircleDetail() {
                       : !trustedPeer
                         ? "Member is not linked to a trusted Guardian peer"
                         : trustedPeer.callUnavailableReason || (!trustedPeer.callAvailable ? "Peer is not available for calls" : "");
-                  const callsDisabled = busy || isCurrentMember || !target || target === currentDevice || !trustedPeer?.callAvailable;
+                  const invitePending = Boolean((member as any).pending) || String((member as any).status || (member as any).membershipStatus || "").toLowerCase() === "pending";
+                  const callsDisabled = invitePending || busy || isCurrentMember || !target || target === currentDevice || !trustedPeer?.callAvailable;
                   const memberName = String(member.name || member.nodeHint || member.did || "Guardian member");
                   const memberKey = String(member.did || member.id || `${memberName}-${i}`);
                   return (
@@ -582,10 +666,10 @@ export function NW04CircleDetail() {
                     <button className="flex-1 min-w-0 text-left" onClick={() => setMemberDetailOpen(memberKey)}>
                       <div className="flex items-center gap-2">
                         <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{memberName}</p>
-                        {(member as any).pending && <StatusBadge status="Pending" variant="warning" />}
+                        {invitePending && <StatusBadge status="Invited/Pending" variant="warning" />}
                         {member.role.toLowerCase() === "owner"
                           ? <StatusBadge status="Admin" variant="info" />
-                          : <StatusBadge status="Member" variant="info" />}
+                          : !invitePending && <StatusBadge status="Member" variant="info" />}
                       </div>
                       <p className="truncate" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{member.email || member.did}</p>
                       <div className="flex items-center gap-1.5 mt-0.5">
@@ -624,7 +708,20 @@ export function NW04CircleDetail() {
             {/* Invite tabs */}
             <div className="flex gap-0 border-b border-border flex-shrink-0">
               {[{ id: "link", label: "Share Link" }, { id: "qr", label: "QR Code" }, { id: "search", label: "Search DIDs" }].map(({ id, label }) => (
-                <button key={id} onClick={() => setSheetTab(id as any)}
+                <button key={id} onClick={() => {
+                  if (id === "search") {
+                    setSheetTab("search");
+                    setInviteError(null);
+                    return;
+                  }
+                  if (!selectedDid) {
+                    setInviteError("Select a Guardian DID first");
+                    setSheetTab("search");
+                    return;
+                  }
+                  setSheetTab(id as "link" | "qr");
+                  void ensureInviteForSelectedDid();
+                }}
                   className="flex-1 py-3 transition-opacity active:opacity-70"
                   style={{ backgroundColor: "transparent", border: "none", cursor: "pointer", borderBottom: sheetTab === id ? "2px solid var(--primary)" : "2px solid transparent", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: sheetTab === id ? "var(--font-weight-semibold)" : "var(--font-weight-normal)", color: sheetTab === id ? "var(--primary)" : "var(--muted-foreground)" }}>
                   {label}
@@ -635,17 +732,23 @@ export function NW04CircleDetail() {
               {inviteLoading && (
                 <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground"><Loader2 size={18} className="animate-spin" /> Preparing secure invite…</div>
               )}
-              {!inviteLoading && inviteError && (
+              {!inviteLoading && inviteError && inviteError !== "Select a Guardian DID first" && (
                 <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
                   <p className="font-semibold">Invite unavailable</p>
                   <p className="mt-1 text-xs">{inviteError}</p>
                   <button onClick={() => void openInviteSheet()} className="mt-3 rounded-md border border-destructive/30 px-3 py-1.5 text-xs font-semibold">Retry</button>
                 </div>
               )}
-              {!inviteLoading && !inviteError && activeInvite && (
+              {!inviteLoading && (!inviteError || inviteError === "Select a Guardian DID first") && (
               <>
               {sheetTab === "link" && (
                 <div className="flex flex-col gap-4">
+                  {selectedDid && (
+                    <div className="rounded-lg border border-border p-3" style={{ backgroundColor: "var(--background)" }}>
+                      <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginBottom: "4px" }}>Invite recipient</p>
+                      <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--foreground)", wordBreak: "break-all" }}>{normalizeGuardianDid(selectedDid)}</p>
+                    </div>
+                  )}
                   <div className="rounded-lg border border-border p-4" style={{ backgroundColor: "var(--background)" }}>
                     <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", marginBottom: "4px" }}>Share your invite link</p>
                     <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>Anyone with this link can request to join your Circle.</p>
@@ -692,8 +795,11 @@ export function NW04CircleDetail() {
                       </button>
                     </div>
                   </div>
-                  <button onClick={() => void shareInvite()} className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80" style={{ height: "48px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", border: "none", cursor: "pointer", borderRadius: "var(--radius)" }}>
-                    <Link size={16} /> Share Invite
+                  <button onClick={() => void sendDirectInvite()} disabled={inviteSending} className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80 disabled:opacity-50" style={{ height: "48px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", border: "none", cursor: inviteSending ? "not-allowed" : "pointer", borderRadius: "var(--radius)" }}>
+                    {inviteSending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />} {inviteSending ? "Sending..." : "Send Direct Invite"}
+                  </button>
+                  <button onClick={() => void shareInvite()} className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80" style={{ height: "44px", backgroundColor: "var(--secondary)", color: "var(--secondary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", border: "1px solid var(--border)", cursor: "pointer", borderRadius: "var(--radius)" }}>
+                    <Link size={16} /> Copy / Share Link
                   </button>
                   <div className="h-px" style={{ backgroundColor: "var(--border)" }} />
                   <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>Or record an invitation</p>
@@ -706,16 +812,15 @@ export function NW04CircleDetail() {
               )}
               {sheetTab === "qr" && (
                 <div className="flex flex-col items-center gap-4">
+                  {selectedDid && (
+                    <div className="w-full rounded-lg border border-border p-3" style={{ backgroundColor: "var(--background)" }}>
+                      <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginBottom: "4px" }}>Invite recipient</p>
+                      <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--foreground)", wordBreak: "break-all" }}>{normalizeGuardianDid(selectedDid)}</p>
+                    </div>
+                  )}
                   {/* QA-14: Larger, clearer QR code */}
                   <div className="rounded-lg border border-border p-5" style={{ backgroundColor: "var(--card)" }}>
-                    <svg width="240" height="240" viewBox="0 0 240 240">
-                      {Array.from({ length: 9 }, (_, row) =>
-                        Array.from({ length: 9 }, (_, col) => {
-                          const dark = (row + col) % 2 === 0 || (row < 3 && col < 3) || (row < 3 && col > 5) || (row > 5 && col < 3);
-                          return <rect key={`${row}-${col}`} x={col * 24 + 12} y={row * 24 + 12} width={20} height={20} rx={3} fill={dark ? "var(--foreground)" : "transparent"} />;
-                        })
-                      )}
-                    </svg>
+                    <QRCodeSVG value={inviteShareValue || "sgx-guardian://circle/invite/pending"} size={240} bgColor="transparent" fgColor="var(--foreground)" level="M" />
                   </div>
                   <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", textAlign: "center" }}>Share this QR code for quick access</p>
                   <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-sm)", color: "var(--foreground)", letterSpacing: "0.12em" }}>{inviteDisplayCode.join("-")}</p>
@@ -726,17 +831,63 @@ export function NW04CircleDetail() {
               )}
               {sheetTab === "search" && (
                 <div className="flex flex-col gap-4">
+                  {selectedDid && (
+                    <div className="rounded-lg border border-border p-3" style={{ backgroundColor: "var(--background)" }}>
+                      <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginBottom: "4px" }}>Selected Guardian</p>
+                      <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--foreground)", wordBreak: "break-all" }}>{normalizeGuardianDid(selectedDid)}</p>
+                    </div>
+                  )}
+                  {inviteError === "Select a Guardian DID first" && (
+                    <div className="rounded-lg border border-primary/25 bg-primary/10 p-3 text-xs text-primary">
+                      Select a Guardian DID first
+                    </div>
+                  )}
                   <div className="rounded-lg border border-border p-4" style={{ backgroundColor: "color-mix(in srgb, var(--primary) 5%, var(--card))", borderColor: "color-mix(in srgb, var(--primary) 20%, transparent)" }}>
                     <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--primary)", marginBottom: "4px" }}>DID-Based Discovery</p>
                     <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>Find team members by their Decentralized Identifier. The user must have their DID registered on the Cervais network.</p>
                   </div>
                   <div className="flex gap-2">
-                    <input placeholder="Search by DID or user ID..." className="flex-1 px-3 outline-none" style={{ height: "44px", backgroundColor: "var(--input-background)", border: "1px solid var(--border)", borderRadius: "var(--radius)", color: "var(--foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)" }} />
-                    <button className="flex items-center justify-center rounded-md transition-opacity active:opacity-80" style={{ width: "44px", height: "44px", backgroundColor: "var(--primary)", border: "none", cursor: "pointer", borderRadius: "var(--radius)" }}>
+                    <input value={didSearch} onChange={(event) => setDidSearch(event.target.value)} placeholder="Search by DID or user ID..." className="flex-1 px-3 outline-none" style={{ height: "44px", backgroundColor: "var(--input-background)", border: "1px solid var(--border)", borderRadius: "var(--radius)", color: "var(--foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)" }} />
+                    <button onClick={() => {
+                      const candidate = didSearch.trim();
+                      if (!candidate) return;
+                      const did = normalizeGuardianDid(candidate);
+                      setSelectedDid(did);
+                      setActiveInvite(inviteCache[did] || null);
+                      setInviteError(null);
+                    }} className="flex items-center justify-center rounded-md transition-opacity active:opacity-80" style={{ width: "44px", height: "44px", backgroundColor: "var(--primary)", border: "none", cursor: "pointer", borderRadius: "var(--radius)" }}>
                       <Search size={18} style={{ color: "var(--primary-foreground)" }} />
                     </button>
                   </div>
-                  <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", textAlign: "center", marginTop: "24px" }}>Search results will appear here</p>
+                  {didResults.length === 0 ? (
+                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", textAlign: "center", marginTop: "24px" }}>Search results will appear here</p>
+                  ) : (
+                    <div className="flex flex-col rounded-lg border border-border overflow-hidden">
+                      {didResults.slice(0, 8).map((result) => {
+                        const active = normalizeGuardianDid(selectedDid) === result.did;
+                        return (
+                          <button key={result.did} onClick={() => {
+                            setSelectedDid(result.did);
+                            setActiveInvite(inviteCache[result.did] || null);
+                            setInviteError(null);
+                          }} className="flex items-center justify-between gap-3 p-3 text-left" style={{ backgroundColor: active ? "color-mix(in srgb, var(--primary) 12%, var(--card))" : "var(--card)", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer" }}>
+                            <span className="min-w-0">
+                              <span className="block truncate" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--foreground)", fontWeight: "var(--font-weight-medium)" }}>{result.label}</span>
+                              <span className="block truncate" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px", color: "var(--muted-foreground)" }}>{result.did}</span>
+                            </span>
+                            {active && <Check size={16} style={{ color: "var(--primary)" }} />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <button disabled={!selectedDid || inviteLoading} onClick={async () => {
+                    const invite = await ensureInviteForSelectedDid();
+                    if (invite) setSheetTab("link");
+                  }} className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80 disabled:opacity-50" style={{ height: "48px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", border: "none", cursor: selectedDid ? "pointer" : "not-allowed", borderRadius: "var(--radius)" }}>
+                    {inviteLoading ? <Loader2 size={16} className="animate-spin" /> : <UserPlus size={16} />}
+                    {inviteLoading ? "Creating Invite..." : "Invite Selected DID"}
+                  </button>
                 </div>
               )}
               </>
