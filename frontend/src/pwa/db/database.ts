@@ -17,7 +17,11 @@ function transactionDone(transaction: IDBTransaction): Promise<void> {
   });
 }
 
-function migrate(database: IDBDatabase, oldVersion: number) {
+function hasIndex(store: IDBObjectStore, name: string) {
+  return Array.from(store.indexNames).includes(name);
+}
+
+function migrate(database: IDBDatabase, oldVersion: number, transaction: IDBTransaction | null) {
   if (oldVersion < 1) {
     database.createObjectStore(stores.membership, { keyPath: "id" });
     const messages = database.createObjectStore(stores.messages, { keyPath: "id" });
@@ -37,13 +41,24 @@ function migrate(database: IDBDatabase, oldVersion: number) {
       notifications.createIndex("created_at", "createdAt");
     }
   }
+  if (oldVersion < 3) {
+    if (transaction && database.objectStoreNames.contains(stores.messages)) {
+      const messages = transaction.objectStore(stores.messages);
+      if (!hasIndex(messages, "conversation_status")) messages.createIndex("conversation_status", ["conversationId", "status"]);
+      if (!hasIndex(messages, "conversation_updated")) messages.createIndex("conversation_updated", ["conversationId", "updatedAt"]);
+    }
+    if (transaction && database.objectStoreNames.contains(stores.pending)) {
+      const pending = transaction.objectStore(stores.pending);
+      if (!hasIndex(pending, "kind_state_created")) pending.createIndex("kind_state_created", ["kind", "state", "createdAt"]);
+    }
+  }
 }
 
 export function openPwaDatabase(): Promise<IDBDatabase> {
   if (!connection) connection = new Promise((resolve, reject) => {
     if (!("indexedDB" in window)) return reject(new Error("IndexedDB is unavailable"));
     const request = indexedDB.open(PWA_DB_NAME, PWA_DB_VERSION);
-    request.onupgradeneeded = (event) => migrate(request.result, event.oldVersion);
+    request.onupgradeneeded = (event) => migrate(request.result, event.oldVersion, request.transaction);
     request.onsuccess = () => {
       request.result.onversionchange = () => request.result.close();
       resolve(request.result);

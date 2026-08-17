@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileText, Loader2, MessageSquare, Phone, RefreshCw, Send, Video } from "lucide-react";
+import { FileText, Loader2, MessageSquare, Phone, RefreshCw, RotateCcw, Search, Send, Video, XCircle } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { PageHeader } from "../../components/PageHeader";
@@ -48,6 +48,21 @@ function isQueueableSendFailure(cause: unknown) {
     || message.includes("load failed");
 }
 
+function acceptedStatus(status: string | undefined) {
+  return !status || status === "pending" ? "accepted_by_guardian" : status;
+}
+
+function statusLabel(status: string, read: boolean) {
+  if (status === "pending_local" || status === "pending") return "Pending";
+  if (status === "accepted_by_guardian") return "Sent";
+  if (status === "delivered_to_remote_guardian" || status === "delivered") return read ? "Read" : "Delivered";
+  if (status === "read" || read) return "Read";
+  if (status === "failed_retryable" || status === "failed") return "Retry";
+  if (status === "failed_permanent") return "Failed";
+  if (status === "cancelled") return "Cancelled";
+  return "Sent";
+}
+
 export function ChatConversationScreen() {
   const { circleId, peerDid } = useParams<{ circleId: string; peerDid?: string }>();
   const navigate = useNavigate();
@@ -76,10 +91,12 @@ export function ChatConversationScreen() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [search, setSearch] = useState("");
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [startingCall, setStartingCall] = useState<"audio" | "video" | null>(null);
   const [liveConnected, setLiveConnected] = useState(false);
   const [queuedMessageIds, setQueuedMessageIds] = useState<Set<string>>(new Set());
+  const [queuedMessages, setQueuedMessages] = useState<Map<string, { state: string; lastError?: string }>>(new Map());
   const bottomRef = useRef<HTMLDivElement>(null);
   const recordsRef = useRef<ChatMessageRecord[]>(records);
   const markedReadRef = useRef<Set<string>>(new Set());
@@ -146,8 +163,15 @@ export function ChatConversationScreen() {
   }, [loadHistory, session?.user.role]);
   const refreshQueuedMessages = useCallback(() => {
     void pendingRepository.list()
-      .then((pending) => setQueuedMessageIds(new Set(pending.filter((record) => record.kind === "chat.send").map((record) => record.id))))
-      .catch(() => setQueuedMessageIds(new Set()));
+      .then((pending) => {
+        const chatPending = pending.filter((record) => record.kind === "chat.send");
+        setQueuedMessageIds(new Set(chatPending.filter((record) => record.state === "queued" || record.state === "sending").map((record) => record.id)));
+        setQueuedMessages(new Map(chatPending.map((record) => [record.id, { state: record.state, lastError: record.lastError }])));
+      })
+      .catch(() => {
+        setQueuedMessageIds(new Set());
+        setQueuedMessages(new Map());
+      });
   }, []);
   useEffect(() => {
     refreshQueuedMessages();
@@ -241,7 +265,7 @@ export function ChatConversationScreen() {
         timestamp: now,
         seq_no: seqNo,
         encrypted_payload: JSON.stringify({ content: sentContent, attachment_id: attachmentId }),
-        status: response.status || "pending",
+        status: acceptedStatus(response.status),
         read_by: [],
       }]);
       // Sending is complete once /chat/send responds. History refresh must not
@@ -257,7 +281,7 @@ export function ChatConversationScreen() {
           timestamp: now,
           seq_no: seqNo,
           encrypted_payload: JSON.stringify({ content: sentContent, attachment_id: attachmentId }),
-          status: "pending",
+          status: "pending_local",
           read_by: [],
         };
         await messageRepository.saveAndQueue({
@@ -265,7 +289,7 @@ export function ChatConversationScreen() {
           conversationId,
           timestamp: now,
           sequence: seqNo,
-          status: "pending",
+          status: "pending_local",
           value: pendingRecord,
         }, {
           id: messageId,
@@ -290,6 +314,22 @@ export function ChatConversationScreen() {
     }
   };
 
+  const cancelQueuedMessage = async (messageId: string) => {
+    await pendingRepository.cancel(messageId);
+    await messageRepository.markCancelled(messageId);
+    setRecords((current) => current.map((record) => record.message_id === messageId ? { ...record, status: "cancelled" } : record));
+    refreshQueuedMessages();
+    window.dispatchEvent(new CustomEvent("sgx:pending-operation"));
+  };
+
+  const retryQueuedMessage = async (messageId: string) => {
+    await pendingRepository.retry(messageId);
+    await messageRepository.updateStatus(messageId, "pending_local");
+    setRecords((current) => current.map((record) => record.message_id === messageId ? { ...record, status: "pending_local" } : record));
+    refreshQueuedMessages();
+    window.dispatchEvent(new CustomEvent("sgx:pending-operation"));
+  };
+
   const attach = async (file: File) => {
     setSending(true);
     setUploadProgress(0);
@@ -311,18 +351,22 @@ export function ChatConversationScreen() {
       toast.error("Guardian is busy", { description: "End or leave the current call before starting another." });
       return;
     }
-    if (!peer?.callAvailable || !peer.online) {
-      toast.error("Peer is unavailable for calls", { description: peer?.callUnavailableReason || "The peer is currently offline." });
+    if (!peer) {
+      toast.error("Peer is unavailable for calls");
       return;
     }
-    if (peer.peerId === currentDevice) {
+    // Browser Circle members are routed by DID; peer.peerId for a browser
+    // member is a display label (see useCommunicationPeers), not a call
+    // target, so it must never be sent to the call API.
+    const target = peer.memberType === "browser" ? (peer.did || peerDid) : (peer.peerId || peerDid);
+    if (target === currentDevice) {
       toast.info("This is the current Guardian");
       return;
     }
     const mode = media.includes("video") ? "video" : "audio";
     setStartingCall(mode);
     try {
-      await startCall(peer.peerId || peerDid, media);
+      await startCall(target, media, peer.online);
     } catch (cause) {
       toast.error("Call could not start", { description: cause instanceof Error ? cause.message : "The peer may be unavailable." });
     } finally {
@@ -341,6 +385,7 @@ export function ChatConversationScreen() {
       kind: "file" as const,
       url: chatService.downloadUrl(payload.attachment_id),
     } : undefined;
+    const queue = queuedMessages.get(record.message_id);
     return {
       id: record.message_id,
       sender: isMe ? "You" : (contactNameForDid(record.sender_did) || senderMember?.name || member?.name || record.sender_did),
@@ -348,10 +393,16 @@ export function ChatConversationScreen() {
       timestamp: timeLabel(record.timestamp),
       isMe,
       read: record.status === "read" || record.read_by.length > 0,
-      status: record.status === "pending" && isMe && !queuedMessageIds.has(record.message_id) ? "sent" : record.status,
+      status: record.status === "pending" && isMe && !queuedMessageIds.has(record.message_id) ? "accepted_by_guardian" : record.status,
+      queueState: queue?.state,
+      queueError: queue?.lastError,
       attachment,
     };
-  }), [records, localDid, isGroup, peerDid, circle, member, contactNameForDid, queuedMessageIds]);
+  }).filter((item) => {
+    const query = search.trim().toLowerCase();
+    if (!query) return true;
+    return [item.sender, item.content, item.status, item.queueError].join(" ").toLowerCase().includes(query);
+  }), [records, localDid, isGroup, peerDid, circle, member, contactNameForDid, queuedMessageIds, queuedMessages, search]);
 
   const files = useMemo<SharedFile[]>(() => messages.filter((item) => item.attachment).map((item) => ({
     id: item.id,
@@ -372,8 +423,8 @@ export function ChatConversationScreen() {
       <PageHeader title={title} subtitle={subtitle} onBack={() => navigate(isGroup ? `/network/${circleId}?tab=members` : "/chats")} right={
         <div className="flex items-center gap-1">
           {!isGroup && <>
-            <button aria-label={`Voice call ${title}`} title="Voice call" disabled={startingCall !== null || !peer?.callAvailable || !peer?.online} onClick={() => void callPeer(["audio"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "audio" ? <Loader2 size={18} className="animate-spin" /> : <Phone size={18} />}</button>
-            <button aria-label={`Video call ${title}`} title="Video call" disabled={startingCall !== null || !peer?.callAvailable || !peer?.online} onClick={() => void callPeer(["audio", "video"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "video" ? <Loader2 size={18} className="animate-spin" /> : <Video size={18} />}</button>
+            <button aria-label={`Voice call ${title}`} title="Voice call" disabled={startingCall !== null || !peer} onClick={() => void callPeer(["audio"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "audio" ? <Loader2 size={18} className="animate-spin" /> : <Phone size={18} />}</button>
+            <button aria-label={`Video call ${title}`} title="Video call" disabled={startingCall !== null || !peer} onClick={() => void callPeer(["audio", "video"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "video" ? <Loader2 size={18} className="animate-spin" /> : <Video size={18} />}</button>
           </>}
           <button aria-label="Refresh messages" onClick={() => void loadHistory()} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted"><RefreshCw size={18} /></button>
         </div>
@@ -386,6 +437,12 @@ export function ChatConversationScreen() {
         ))}
       </div>
       {view === "files" ? <FilesTab files={files} /> : <>
+        <div className="shrink-0 border-b border-border bg-card px-3 py-2 md:px-6">
+          <div className="mx-auto flex max-w-2xl items-center gap-2 rounded-full border border-border bg-input-background px-3">
+            <Search size={16} className="shrink-0 text-muted-foreground" />
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search messages" className="h-10 flex-1 bg-transparent text-sm outline-none" />
+          </div>
+        </div>
         <div className="flex-1 overflow-y-auto">
           <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col gap-3 p-4 md:p-6">
             {loading && <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 size={18} className="animate-spin" /> Loading secure conversation…</div>}
@@ -395,7 +452,15 @@ export function ChatConversationScreen() {
               <div className="max-w-[78%] overflow-hidden rounded-2xl border border-border px-4 py-2.5" style={{ background: item.isMe ? "var(--primary)" : "var(--card)", borderColor: item.isMe ? "transparent" : undefined }}>
                 {item.attachment ? <MessageAttachment attachment={item.attachment} isMe={item.isMe} /> : <p className="text-sm leading-6" style={{ color: item.isMe ? "var(--primary-foreground)" : "var(--foreground)" }}>{item.content}</p>}
               </div>
-              <span className="mx-1 mt-1 text-[10px] text-muted-foreground">{item.timestamp}{item.isMe ? item.status === "pending" ? " · Pending" : item.read ? " · Read" : " · Sent" : ""}</span>
+              <div className="mx-1 mt-1 flex max-w-[78%] items-center gap-1 text-[10px] text-muted-foreground">
+                <span className="truncate">{item.timestamp}{item.isMe ? ` · ${statusLabel(item.status, item.read)}` : ""}</span>
+                {item.isMe && (item.queueState === "queued" || item.queueState === "sending" || item.queueState === "failed_permanent" || item.status === "failed_permanent") && (
+                  <>
+                    {(item.queueState === "failed_permanent" || item.status === "failed_permanent") && <button type="button" aria-label="Retry message" title={item.queueError || "Retry message"} onClick={() => void retryQueuedMessage(item.id)} className="grid h-6 w-6 place-items-center rounded-full hover:bg-muted"><RotateCcw size={12} /></button>}
+                    {(item.queueState === "queued" || item.queueState === "sending") && <button type="button" aria-label="Cancel queued message" title={item.queueError || "Cancel queued message"} onClick={() => void cancelQueuedMessage(item.id)} className="grid h-6 w-6 place-items-center rounded-full hover:bg-muted"><XCircle size={12} /></button>}
+                  </>
+                )}
+              </div>
             </div>)}
             <div ref={bottomRef} />
           </div>

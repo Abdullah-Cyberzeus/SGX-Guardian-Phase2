@@ -8,8 +8,7 @@ use axum::{
     },
     http::StatusCode,
     response::{sse::Event, sse::KeepAlive, IntoResponse, Sse},
-    Extension,
-    Router,
+    Extension, Router,
 };
 use futures_util::{stream, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -18,8 +17,8 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::api::state::AppState;
 use crate::api::auth::middleware::AuthenticatedSession;
+use crate::api::state::AppState;
 use crate::audit::logger::log_uep_decision;
 use crate::call::{
     CallAnswer, CallOffer, CallSession, CallState as CallStateEnum, MediaType, SignalingEnvelope,
@@ -41,6 +40,7 @@ pub async fn signal_socket(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
     Query(cursor): Query<CallSocketCursor>,
+    session_auth: Option<Extension<AuthenticatedSession>>,
 ) -> impl IntoResponse {
     let session = match state.call_session_manager.get_session(&session_id).await {
         Ok(session) => session,
@@ -52,10 +52,11 @@ pub async fn signal_socket(
                 .into_response()
         }
     };
-    if session.initiator.device_id != state.node_id && session.receiver.device_id != state.node_id {
+    let actor_id = browser_call_actor_id(&state, &session_auth);
+    if session.initiator.device_id != actor_id && session.receiver.device_id != actor_id {
         return (
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({"error":"Local node is not a call participant"})),
+            Json(serde_json::json!({"error":"Authenticated caller is not a call participant"})),
         )
             .into_response();
     }
@@ -205,11 +206,9 @@ async fn browser_member_state_for_call(
     state: &AppState,
     did: &str,
 ) -> Result<Option<crate::api::handlers::browser_member::BrowserMemberState>, ErrorResponse> {
-    let local_circle_ids = crate::api::auth::authorization::local_active_circle_ids(
-        &state.node_id,
-        &state.device_did,
-    )
-    .map_err(|error| ErrorResponse { error })?;
+    let local_circle_ids =
+        crate::api::auth::authorization::local_active_circle_ids(&state.node_id, &state.device_did)
+            .map_err(|error| ErrorResponse { error })?;
     crate::api::handlers::browser_member::state_for_did(state, did, &local_circle_ids)
         .await
         .map_err(|error| ErrorResponse {
@@ -217,18 +216,26 @@ async fn browser_member_state_for_call(
         })
 }
 
-async fn is_local_browser_call(state: &AppState, session: &CallSession) -> Result<bool, ErrorResponse> {
-    let other = if session.initiator.device_id == state.node_id {
-        Some(session.receiver.device_id.as_str())
-    } else if session.receiver.device_id == state.node_id {
-        Some(session.initiator.device_id.as_str())
-    } else {
-        None
-    };
-    let Some(other) = other else {
+async fn is_browser_member_call_participant(
+    state: &AppState,
+    device_id: &str,
+) -> Result<bool, ErrorResponse> {
+    if device_id == state.node_id {
         return Ok(false);
-    };
-    Ok(browser_member_state_for_call(state, other).await?.is_some())
+    }
+    Ok(browser_member_state_for_call(state, device_id)
+        .await?
+        .is_some())
+}
+
+async fn is_local_browser_call(
+    state: &AppState,
+    session: &CallSession,
+) -> Result<bool, ErrorResponse> {
+    Ok(
+        is_browser_member_call_participant(state, &session.initiator.device_id).await?
+            || is_browser_member_call_participant(state, &session.receiver.device_id).await?,
+    )
 }
 
 async fn initiate_local_browser_call(
@@ -343,19 +350,20 @@ pub async fn initiate_browser_call(
             .into_response();
     }
     let actor_id = browser_call_actor_id(&state, &session);
-    if actor_id != state.node_id && request.target_peer_id == state.node_id {
-        return initiate_local_browser_call(
-            state,
-            actor_id,
-            request.target_peer_id,
-            request.media,
-        )
-        .await
-        .into_response();
-    }
-    if actor_id == state.node_id {
+    if request.target_peer_id == state.node_id {
+        if actor_id != state.node_id {
+            return initiate_local_browser_call(
+                state,
+                actor_id,
+                request.target_peer_id,
+                request.media,
+            )
+            .await
+            .into_response();
+        }
+    } else {
         match browser_member_state_for_call(&state, &request.target_peer_id).await {
-            Ok(Some(crate::api::handlers::browser_member::BrowserMemberState::Active)) => {
+            Ok(Some(_)) => {
                 return initiate_local_browser_call(
                     state,
                     actor_id,
@@ -364,15 +372,6 @@ pub async fn initiate_browser_call(
                 )
                 .await
                 .into_response();
-            }
-            Ok(Some(crate::api::handlers::browser_member::BrowserMemberState::Inactive)) => {
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(ErrorResponse {
-                        error: "Browser member is inactive and cannot receive calls".into(),
-                    }),
-                )
-                    .into_response();
             }
             Ok(None) => {}
             Err(error) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response(),
@@ -396,7 +395,10 @@ pub async fn initiate_browser_call(
         ) {
             Ok(allowed) => allowed,
             Err(error) => {
-                return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error }))
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse { error }),
+                )
                     .into_response()
             }
         };
@@ -514,7 +516,10 @@ pub async fn accept_browser_call(
                     .into_response();
             }
             for (next_state, reason) in [
-                (CallStateEnum::Verifying, "Local browser member accepted call"),
+                (
+                    CallStateEnum::Verifying,
+                    "Local browser member accepted call",
+                ),
                 (CallStateEnum::Authorizing, "Local browser call verified"),
                 (CallStateEnum::Accepted, "Local browser call accepted"),
             ] {
@@ -637,7 +642,72 @@ pub async fn reject_browser_call(
 pub async fn end_browser_call(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
+    session_auth: Option<Extension<AuthenticatedSession>>,
 ) -> impl IntoResponse {
+    let actor_id = browser_call_actor_id(&state, &session_auth);
+    let session = match state.call_session_manager.get_session(&session_id).await {
+        Ok(session) => session,
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Session not found".into(),
+                }),
+            )
+                .into_response()
+        }
+    };
+    if session.initiator.device_id != actor_id && session.receiver.device_id != actor_id {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Authenticated caller is not a call participant".into(),
+            }),
+        )
+            .into_response();
+    }
+    if is_local_browser_call(&state, &session)
+        .await
+        .unwrap_or(false)
+    {
+        let local = if session.initiator.device_id == actor_id {
+            &session.initiator
+        } else {
+            &session.receiver
+        };
+        if !session.state.is_terminal() {
+            let envelope = SignalingEnvelope::new(
+                crate::call::SignalKind::Hangup,
+                &session_id,
+                &local.device_id,
+                &local.virtual_id,
+                1,
+                Uuid::new_v4().to_string(),
+                serde_json::json!({"reason_code": "ended_by_user"}),
+            );
+            let _ = state.call_signal_hub.push_remote(&envelope).await;
+        }
+        if state
+            .call_session_manager
+            .end_session(&session_id)
+            .await
+            .is_err()
+        {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to end session".into(),
+                }),
+            )
+                .into_response();
+        }
+        state.call_signal_hub.clear(&session_id).await;
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({"status": "ended", "peer_notified": true})),
+        )
+            .into_response();
+    }
     end_call(State(state), Json(EndCallRequest { session_id }))
         .await
         .into_response()
@@ -872,17 +942,26 @@ pub async fn list_signals(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
     Query(cursor): Query<SignalCursor>,
+    session_auth: Option<Extension<AuthenticatedSession>>,
 ) -> impl IntoResponse {
-    if state
-        .call_session_manager
-        .get_session(&session_id)
-        .await
-        .is_err()
-    {
+    let session = match state.call_session_manager.get_session(&session_id).await {
+        Ok(session) => session,
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Session not found".into(),
+                }),
+            )
+                .into_response()
+        }
+    };
+    let actor_id = browser_call_actor_id(&state, &session_auth);
+    if session.initiator.device_id != actor_id && session.receiver.device_id != actor_id {
         return (
-            StatusCode::NOT_FOUND,
+            StatusCode::FORBIDDEN,
             Json(ErrorResponse {
-                error: "Session not found".into(),
+                error: "Authenticated caller is not a call participant".into(),
             }),
         )
             .into_response();
@@ -942,7 +1021,11 @@ pub async fn media_ready(
             Uuid::new_v4().to_string(),
             serde_json::json!({}),
         );
-        state.call_signal_hub.push_remote(&envelope).await.map(|_| ())
+        state
+            .call_signal_hub
+            .push_remote(&envelope)
+            .await
+            .map(|_| ())
     } else {
         state
             .call_nebula_signaling

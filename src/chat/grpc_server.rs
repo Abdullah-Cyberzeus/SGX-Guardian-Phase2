@@ -161,12 +161,15 @@ impl ChatService for MyChatService {
                     // message we sent while the recipient was offline would
                     // stay "Pending" forever on our side even after they
                     // caught up.
-                    if record.status == MessageStatus::Pending {
+                    if matches!(
+                        record.status,
+                        MessageStatus::Pending | MessageStatus::AcceptedByGuardian
+                    ) {
                         match crate::chat::storage::update_message_status(
                             false,
                             &requester_did,
                             &record.message_id,
-                            MessageStatus::Delivered,
+                            MessageStatus::DeliveredToRemoteGuardian,
                         )
                         .await
                         {

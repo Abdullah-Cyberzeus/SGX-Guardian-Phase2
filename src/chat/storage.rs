@@ -308,7 +308,12 @@ pub async fn update_message_status(
         let trimmed = line.trim();
         if !trimmed.is_empty() {
             if let Ok(mut record) = serde_json::from_str::<ChatMessageRecord>(trimmed) {
-                if record.message_id == message_id && record.status == MessageStatus::Pending {
+                if record.message_id == message_id
+                    && matches!(
+                        record.status,
+                        MessageStatus::Pending | MessageStatus::AcceptedByGuardian
+                    )
+                {
                     record.status = status.clone();
                     updated_record = Some(record.clone());
                 }

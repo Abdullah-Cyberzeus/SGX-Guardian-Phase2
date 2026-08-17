@@ -56,12 +56,9 @@ export function CallsHistoryScreen() {
         toast.success(`Calling ${participantIds.length} group participant${participantIds.length === 1 ? "" : "s"}`);
       } else {
         const target = record.participantIds[0];
-        const targetPeer = peers.find((peer: any) => peer.peerId === target);
         if (!target) throw new Error("The peer for this call is unavailable.");
-        if (targetPeer && (!targetPeer.callAvailable || !targetPeer.online)) {
-          throw new Error(targetPeer.callUnavailableReason || "The peer is currently offline.");
-        }
-        await startCall(target, media);
+        const targetPeer = peers.find((peer: any) => peer.peerId === target);
+        await startCall(target, media, targetPeer?.online);
       }
     } catch (cause) {
       toast.error("Call could not start", { description: cause instanceof Error ? cause.message : "One or more participants may be unavailable." });

@@ -383,6 +383,29 @@ impl SessionManager {
         virtual_id: String,
         accepted_media: Vec<MediaType>,
     ) -> CallResult<()> {
+        self.set_receiver_acceptance_with_device(session_id, virtual_id, accepted_media, None)
+            .await
+    }
+
+    /// Same as `set_receiver_acceptance`, but additionally corrects the
+    /// receiver's `device_id` when it becomes known for the first time.
+    ///
+    /// The initiator creates its session record before the receiver has ever
+    /// spoken, so `receiver.device_id` is provisionally filled from the
+    /// initiator's own trusted-peer registry (keyed by Nebula IP, not by the
+    /// remote device's self-asserted ID). The remote's authenticated answer
+    /// is the first message that actually carries that self-asserted ID, so
+    /// this is where the placeholder gets reconciled. Later signaling
+    /// (SDP/ICE) is matched against `sender_device_id`, so without this
+    /// correction every subsequent authenticated message from the receiver
+    /// would fail the "is a session participant" check.
+    pub async fn set_receiver_acceptance_with_device(
+        &self,
+        session_id: &str,
+        virtual_id: String,
+        accepted_media: Vec<MediaType>,
+        verified_device_id: Option<String>,
+    ) -> CallResult<()> {
         if virtual_id.trim().is_empty() {
             return Err(CallError::InvalidOffer {
                 reason: "Receiver VirtualID is required".into(),
@@ -397,6 +420,9 @@ impl SessionManager {
                 })?;
             session.receiver_accepted(accepted_media)?;
             session.receiver.virtual_id = virtual_id;
+            if let Some(device_id) = verified_device_id {
+                session.receiver.device_id = device_id;
+            }
             session.clone()
         };
         self.publish("call_media_accepted", &snapshot);

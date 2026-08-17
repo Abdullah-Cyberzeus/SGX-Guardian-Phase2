@@ -50,7 +50,8 @@ registerPendingReplayHandler("chat.send", async (record, payload) => {
   const response = operation.mode === "group"
     ? await chatService.sendGroup(operation.recipientId, operation.content, operation.attachmentId, record.id)
     : await chatService.sendDirect(operation.recipientId, operation.content, operation.attachmentId, record.id);
-  await messageRepository.updateStatus(record.id, response.status || "sent").catch(() => undefined);
+  const status = response.status === "pending" ? "accepted_by_guardian" : response.status || "accepted_by_guardian";
+  await messageRepository.updateStatus(record.id, status).catch(() => undefined);
 });
 
 // Only 401 means the credential itself is no longer valid. 403 is an
@@ -89,8 +90,15 @@ async function pullContacts() {
       .filter((peer) => peer.did)
       .map((peer) => ({
         did: peer.did!,
-        displayName: peer.peerId,
+        displayName: peer.displayName || peer.peerId,
+        fullName: peer.fullName,
+        deviceName: peer.deviceName,
+        role: peer.role,
+        memberType: peer.memberType,
+        joinDate: peer.joinDate,
         online: peer.online,
+        presenceStatus: peer.presenceStatus,
+        presenceStale: peer.presenceStale,
         lastSeen: peer.lastSeenAgo,
         updatedAt: Date.now(),
       })),

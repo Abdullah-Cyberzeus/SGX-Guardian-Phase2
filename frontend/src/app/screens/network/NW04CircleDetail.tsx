@@ -207,12 +207,14 @@ export function NW04CircleDetail() {
     const target = trustedPeer?.peerId || (isBrowserMember ? member.did : "");
     if (!target) { toast.error("This Circle member is not linked to a call target."); return; }
     if (!isBrowserMember && !trustedPeer) { toast.error("This Circle member is not linked to a trusted Guardian peer."); return; }
-    if (!isBrowserMember && !trustedPeer?.callAvailable) { toast.error("This trusted peer is not available for calls.", { description: trustedPeer?.callUnavailableReason }); return; }
-    if (isBrowserMember && member.status !== "active") { toast.error("This browser member is inactive."); return; }
     if (!ensureCallAvailable()) return;
     setStartingCall(`${target}:${media.includes("video") ? "video" : "audio"}`);
+    // Browser members have no Nebula reachability check; the closest
+    // available signal is whether their account is active (the same
+    // heuristic the backend uses to decide whether it'll even route the call).
+    const online = isBrowserMember ? String(member?.status || "").toLowerCase() === "active" : trustedPeer?.online;
     try {
-      await startCall(target, media);
+      await startCall(target, media, online);
     } catch (cause) {
       toast.error("Call could not start", { description: cause instanceof Error ? cause.message : "The member may be offline or unavailable." });
     } finally {
@@ -562,12 +564,10 @@ export function NW04CircleDetail() {
                   const busy = !!startingCall;
                   const isBrowserMember = String(member?.memberType || member?.member_type || "").toLowerCase() === "browser";
                   const isCurrentMember = nodeIdsForMember(member).includes(String(currentDevice || "").trim().toLowerCase());
-                  const browserCallAvailable = isBrowserMember && !!member.did && member.status === "active";
+                  const browserCallAvailable = isBrowserMember && !!member.did;
                   const target = trustedPeer?.peerId || (browserCallAvailable ? member.did : "");
                   const callUnavailableReason = isCurrentMember
                     ? "Current Guardian"
-                    : isBrowserMember && member.status !== "active"
-                    ? "Browser member inactive"
                     : isBrowserMember
                     ? ""
                     : peersLoading
@@ -577,7 +577,7 @@ export function NW04CircleDetail() {
                       : !trustedPeer
                         ? "Member is not linked to a trusted Guardian peer"
                         : trustedPeer.callUnavailableReason || (!trustedPeer.callAvailable ? "Peer is not available for calls" : "");
-                  const callsDisabled = busy || isCurrentMember || !target || target === currentDevice || (!browserCallAvailable && !trustedPeer?.callAvailable);
+                  const callsDisabled = busy || isCurrentMember || !target || target === currentDevice || (!browserCallAvailable && !trustedPeer);
                   const memberName = String(displayForDid(member.did, member.name || member.nodeHint || member.did || "Guardian member"));
                   const memberSecondary = member.email || (isBrowserMember ? "Browser PWA member" : displayForDid(member.did, member.did));
                   const memberKey = String(member.did || member.id || `${memberName}-${i}`);

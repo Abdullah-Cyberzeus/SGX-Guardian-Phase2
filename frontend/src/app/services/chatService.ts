@@ -8,7 +8,7 @@ export interface ChatMessageRecord {
   timestamp: number;
   seq_no: number;
   encrypted_payload: string;
-  status: "pending" | "delivered" | "read" | "failed" | string;
+  status: "pending_local" | "accepted_by_guardian" | "delivered_to_remote_guardian" | "pending" | "delivered" | "read" | "failed" | "cancelled" | "failed_permanent" | string;
   read_by: string[];
 }
 
