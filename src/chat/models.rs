@@ -23,9 +23,26 @@ pub struct ChatMessageRecord {
 #[serde(rename_all = "lowercase")]
 pub enum MessageStatus {
     Pending,
+    #[serde(rename = "accepted_by_guardian")]
+    AcceptedByGuardian,
     Delivered,
+    #[serde(rename = "delivered_to_remote_guardian")]
+    DeliveredToRemoteGuardian,
     Read,
     Failed,
+}
+
+impl MessageStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MessageStatus::Pending => "pending",
+            MessageStatus::AcceptedByGuardian => "accepted_by_guardian",
+            MessageStatus::Delivered => "delivered",
+            MessageStatus::DeliveredToRemoteGuardian => "delivered_to_remote_guardian",
+            MessageStatus::Read => "read",
+            MessageStatus::Failed => "failed",
+        }
+    }
 }
 
 /// Metadata record for an encrypted file attachment.
@@ -56,4 +73,5 @@ pub struct ReadReceiptRecord {
 pub enum ChatEvent {
     NewMessage(ChatMessageRecord),
     ReadReceipt(ReadReceiptRecord),
+    MessageStatus(ChatMessageRecord),
 }

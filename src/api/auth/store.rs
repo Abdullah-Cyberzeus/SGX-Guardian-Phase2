@@ -25,6 +25,7 @@ static GLOBAL_ADMIN_STORES: OnceCell<Arc<AdminStores>> = OnceCell::new();
 pub enum UserRole {
     Owner,
     Admin,
+    Member,
 }
 
 impl UserRole {
@@ -32,6 +33,16 @@ impl UserRole {
         match self {
             Self::Owner => "owner",
             Self::Admin => "admin",
+            Self::Member => "member",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "owner" => Some(Self::Owner),
+            "admin" => Some(Self::Admin),
+            "member" => Some(Self::Member),
+            _ => None,
         }
     }
 }
@@ -43,6 +54,22 @@ pub struct User {
     pub email: String,
     pub pw_hash: String,
     pub role: UserRole,
+    /// Server-authoritative API permissions. Empty legacy records are
+    /// resolved to the role defaults when a session is issued or checked.
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    /// Circle IDs this browser account may access. Empty is unrestricted for
+    /// legacy administrative accounts and deny-all for member accounts.
+    #[serde(default)]
+    pub circle_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser_registration_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guardian_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration_expires_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invite_id: Option<String>,
     pub created_at: String,
     #[serde(default = "default_user_status")]
     pub status: String,
@@ -66,6 +93,18 @@ pub struct NewUser {
     pub pw_hash: String,
     pub role: UserRole,
     pub oidc_sub: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewMemberRegistration {
+    pub name: String,
+    pub email: String,
+    pub pw_hash: String,
+    pub circle_id: String,
+    pub browser_registration_id: String,
+    pub guardian_fingerprint: String,
+    pub registration_expires_at: i64,
+    pub invite_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -137,6 +176,7 @@ pub trait UserStore: Send + Sync {
     async fn create(&self, new_user: NewUser) -> Result<User>;
     async fn create_initial_owner(&self, new_user: NewUser) -> Result<User>;
     async fn count(&self) -> Result<usize>;
+    async fn list(&self) -> Result<Vec<User>>;
     async fn find_by_id(&self, user_id: &str) -> Result<Option<User>>;
     async fn find_by_email(&self, email: &str) -> Result<Option<User>>;
     async fn find_by_oidc_sub(&self, oidc_sub: &str) -> Result<Option<User>>;
@@ -154,6 +194,14 @@ pub trait UserStore: Send + Sync {
         lockout_secs: i64,
     ) -> Result<Option<User>>;
     async fn reset_login_failures(&self, email: &str) -> Result<Option<User>>;
+    /// Atomically creates a member or reactivates the same inactive member
+    /// during a verified rejoin. Active accounts cannot be overwritten.
+    async fn create_or_reactivate_member(&self, member: NewMemberRegistration) -> Result<User>;
+    async fn revoke_browser_registration(
+        &self,
+        user_id: &str,
+        registration_id: &str,
+    ) -> Result<User>;
 }
 
 #[async_trait]
@@ -161,6 +209,8 @@ pub trait SessionStore: Send + Sync {
     async fn put(&self, session: SessionRec) -> Result<()>;
     async fn get(&self, jti: &str) -> Result<Option<SessionRec>>;
     async fn revoke(&self, jti: &str) -> Result<()>;
+    /// Revoke every active browser session belonging to one local account.
+    async fn revoke_all_for_user(&self, user_id: &str) -> Result<usize>;
     async fn is_revoked(&self, jti: &str) -> Result<bool>;
 }
 
@@ -570,6 +620,12 @@ impl JsonUserStore {
             email: normalize_email(&new_user.email),
             pw_hash: new_user.pw_hash,
             role: new_user.role,
+            scopes: crate::api::auth::authorization::default_scopes(new_user.role.as_str()),
+            circle_ids: Vec::new(),
+            browser_registration_id: None,
+            guardian_fingerprint: None,
+            registration_expires_at: None,
+            invite_id: None,
             created_at: chrono::Utc::now().to_rfc3339(),
             status: default_user_status(),
             failed_attempts: 0,
@@ -638,6 +694,10 @@ impl UserStore for JsonUserStore {
 
     async fn count(&self) -> Result<usize> {
         Ok(self.file.read().await?.len())
+    }
+
+    async fn list(&self) -> Result<Vec<User>> {
+        Ok(self.file.read().await?)
     }
 
     async fn find_by_id(&self, user_id: &str) -> Result<Option<User>> {
@@ -735,6 +795,80 @@ impl UserStore for JsonUserStore {
             })
             .await
     }
+
+    async fn create_or_reactivate_member(&self, member: NewMemberRegistration) -> Result<User> {
+        self.file
+            .mutate(move |users| {
+                let normalized_email = normalize_email(&member.email);
+                if users.iter().any(|user| {
+                    user.status == "active"
+                        && user.invite_id.as_deref() == Some(member.invite_id.as_str())
+                        && user.email != normalized_email
+                }) {
+                    return Err(anyhow!("member invitation has already been used"));
+                }
+                if let Some(existing) = users.iter_mut().find(|user| user.email == normalized_email) {
+                    let registration_still_valid = existing.status == "active"
+                        && existing
+                            .registration_expires_at
+                            .is_some_and(|expiry| expiry > chrono::Utc::now().timestamp())
+                        && existing.guardian_fingerprint.as_deref()
+                            == Some(member.guardian_fingerprint.as_str());
+                    if existing.role != UserRole::Member || registration_still_valid {
+                        return Err(anyhow!("user already exists"));
+                    }
+                    existing.name = member.name.trim().to_string();
+                    existing.pw_hash = member.pw_hash;
+                    existing.scopes = crate::api::auth::authorization::default_scopes("member");
+                    existing.circle_ids = vec![member.circle_id];
+                    existing.browser_registration_id = Some(member.browser_registration_id);
+                    existing.guardian_fingerprint = Some(member.guardian_fingerprint);
+                    existing.registration_expires_at = Some(member.registration_expires_at);
+                    existing.invite_id = Some(member.invite_id);
+                    existing.status = "active".into();
+                    Self::clear_login_failures(existing);
+                    return Ok(existing.clone());
+                }
+
+                let mut user = Self::build_user(NewUser {
+                    name: member.name,
+                    email: normalized_email,
+                    pw_hash: member.pw_hash,
+                    role: UserRole::Member,
+                    oidc_sub: None,
+                });
+                user.circle_ids = vec![member.circle_id];
+                user.browser_registration_id = Some(member.browser_registration_id);
+                user.guardian_fingerprint = Some(member.guardian_fingerprint);
+                user.registration_expires_at = Some(member.registration_expires_at);
+                user.invite_id = Some(member.invite_id);
+                users.push(user.clone());
+                Ok(user)
+            })
+            .await
+    }
+
+    async fn revoke_browser_registration(
+        &self,
+        user_id: &str,
+        registration_id: &str,
+    ) -> Result<User> {
+        let user_id = user_id.to_string();
+        let registration_id = registration_id.to_string();
+        self.file
+            .mutate(move |users| {
+                let user = users
+                    .iter_mut()
+                    .find(|user| user.user_id == user_id)
+                    .ok_or_else(|| anyhow!("user not found"))?;
+                if user.browser_registration_id.as_deref() != Some(registration_id.as_str()) {
+                    return Err(anyhow!("browser registration not found"));
+                }
+                user.status = "inactive".into();
+                Ok(user.clone())
+            })
+            .await
+    }
 }
 
 struct JsonSessionStore {
@@ -783,6 +917,22 @@ impl SessionStore for JsonSessionStore {
                     .ok_or_else(|| anyhow!("session not found"))?;
                 session.revoked = true;
                 Ok(())
+            })
+            .await
+    }
+
+    async fn revoke_all_for_user(&self, user_id: &str) -> Result<usize> {
+        let target = user_id.to_string();
+        self.file
+            .mutate(move |sessions| {
+                let mut revoked = 0usize;
+                for session in sessions.iter_mut() {
+                    if session.user_id == target && !session.revoked {
+                        session.revoked = true;
+                        revoked += 1;
+                    }
+                }
+                Ok(revoked)
             })
             .await
     }
@@ -1151,6 +1301,26 @@ mod tests {
             .is_revoked(&session.jti)
             .await
             .expect("revoked state after revoke"));
+    }
+
+    #[tokio::test]
+    async fn session_store_revokes_all_sessions_for_only_one_user() {
+        let td = TempDir::new().expect("tempdir");
+        let stores = AdminStores::new(td.path().join("admin"));
+        for (jti, user_id) in [("one", "user-1"), ("two", "user-1"), ("other", "user-2")] {
+            stores.sessions.put(SessionRec {
+                jti: jti.into(),
+                user_id: user_id.into(),
+                issued_at: 1,
+                expires_at: 2,
+                revoked: false,
+            }).await.expect("save session");
+        }
+
+        assert_eq!(stores.sessions.revoke_all_for_user("user-1").await.expect("revoke all"), 2);
+        assert!(stores.sessions.is_revoked("one").await.expect("first state"));
+        assert!(stores.sessions.is_revoked("two").await.expect("second state"));
+        assert!(!stores.sessions.is_revoked("other").await.expect("other state"));
     }
 
     #[tokio::test]

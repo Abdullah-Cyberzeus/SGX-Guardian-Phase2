@@ -17,6 +17,8 @@ export interface CircleMember {
   membershipStatus?: 'active' | 'suspended' | 'revoked' | string;
   lifecycleState?: 'active' | 'expired' | 'revoked' | string;
   nodeHint?: string;
+  memberType?: 'guardian' | 'browser' | string;
+  browserRegistrationId?: string;
   status?: 'online' | 'offline' | string;
   joinedAt?: string;
 }
@@ -126,6 +128,8 @@ function normalizeMember(value: any): CircleMember {
     did,
     role: String(value?.role || 'member').toLowerCase() as CircleRole,
     nodeHint: nodeHint ? String(nodeHint) : undefined,
+    memberType: value?.memberType || value?.member_type,
+    browserRegistrationId: value?.browserRegistrationId || value?.browser_registration_id,
     status: lifecycle,
     joinedAt: value?.joinDate || value?.join_date || value?.joinedAt,
   };
@@ -165,14 +169,18 @@ function normalizeInvite(value: any): CircleInvite {
 export function parseInviteMaterial(value: string): ParsedInviteMaterial {
   const trimmed = value.trim();
   if (!trimmed) return { token: '', ownerHost: '' };
-  if (trimmed.startsWith('sgx-guardian://')) {
+  try {
     const url = new URL(trimmed);
+    const isWebLink = url.protocol === 'http:' || url.protocol === 'https:';
+    const token = url.searchParams.get('token') || url.searchParams.get('invite') || '';
+    if (!token) return { token: trimmed, ownerHost: '' };
     return {
-      token: url.searchParams.get('token') || '',
-      ownerHost: url.searchParams.get('owner_host') || '',
+      token,
+      ownerHost: url.searchParams.get('owner_host') || (isWebLink ? url.origin : ''),
     };
+  } catch {
+    return { token: trimmed, ownerHost: '' };
   }
-  return { token: trimmed, ownerHost: '' };
 }
 
 export const circleService = {

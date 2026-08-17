@@ -18,6 +18,7 @@ import { useVault } from "../../contexts/VaultContext";
 import { useCall } from "../../../features/calls/CallContext";
 import { useGroupCall } from "../../../features/calls/GroupCallContext";
 import type { MediaType } from "../../../features/calls/call.types";
+import { useContactNames } from "../../contexts/ContactNameContext";
 import chatService from "../../services/chatService";
 import circleService, { type CircleInvite } from "../../services/circleService";
 import { toast } from "sonner";
@@ -32,6 +33,7 @@ export function NW04CircleDetail() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const vault = useVault();
+  const { displayForDid } = useContactNames();
   const requestedTab = searchParams.get("tab") as Tab | null;
   const activeTab: Tab = requestedTab && circleDetailTabs.includes(requestedTab) ? requestedTab : "members";
 
@@ -156,6 +158,7 @@ export function NW04CircleDetail() {
   };
 
   const peerForMember = (member: any) => {
+    if (String(member?.memberType || member?.member_type || "").toLowerCase() === "browser") return undefined;
     const candidates = nodeIdsForMember(member);
     const explicitNodeMatch = candidates.length
       ? trustedPeers.find((peer) => candidates.includes(peer.peerId.trim().toLowerCase()))
@@ -250,14 +253,19 @@ export function NW04CircleDetail() {
       toast.info("This member is the current Guardian", { description: "Choose another Circle member to start a call." });
       return;
     }
+    const isBrowserMember = String(member?.memberType || member?.member_type || "").toLowerCase() === "browser";
     const trustedPeer = peerForMember(member);
-    const target = trustedPeer?.peerId || "";
-    if (!trustedPeer) { toast.error("This Circle member is not linked to a trusted Guardian peer."); return; }
-    if (!trustedPeer.callAvailable) { toast.error("This trusted peer is not available for calls.", { description: trustedPeer.callUnavailableReason }); return; }
+    const target = trustedPeer?.peerId || (isBrowserMember ? member.did : "");
+    if (!target) { toast.error("This Circle member is not linked to a call target."); return; }
+    if (!isBrowserMember && !trustedPeer) { toast.error("This Circle member is not linked to a trusted Guardian peer."); return; }
     if (!ensureCallAvailable()) return;
     setStartingCall(`${target}:${media.includes("video") ? "video" : "audio"}`);
+    // Browser members have no Nebula reachability check; the closest
+    // available signal is whether their account is active (the same
+    // heuristic the backend uses to decide whether it'll even route the call).
+    const online = isBrowserMember ? String(member?.status || "").toLowerCase() === "active" : trustedPeer?.online;
     try {
-      await startCall(target, media);
+      await startCall(target, media, online);
     } catch (cause) {
       toast.error("Call could not start", { description: cause instanceof Error ? cause.message : "The member may be offline or unavailable." });
     } finally {
@@ -299,10 +307,11 @@ export function NW04CircleDetail() {
     chatService.history(directMember.did)
       .then(({ messages: history }) => {
         if (cancelled) return;
+        const directMemberName = displayForDid(directMember.did, directMember.name || directMember.nodeHint || directMember.did);
         setDirectMessages(history.map((item) => ({
           id: item.message_id,
-          sender: item.sender_did === directMember.did ? directMember.name : "Me",
-          initials: item.sender_did === directMember.did ? String(directMember.name || "M").slice(0, 2).toUpperCase() : "ME",
+          sender: item.sender_did === directMember.did ? directMemberName : "Me",
+          initials: item.sender_did === directMember.did ? String(directMemberName || "M").slice(0, 2).toUpperCase() : "ME",
           content: "Encrypted historical message",
           timestamp: new Date(item.timestamp * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           isMe: item.sender_did !== directMember.did,
@@ -312,7 +321,7 @@ export function NW04CircleDetail() {
       .catch((cause) => { if (!cancelled) toast.error("Direct-message history unavailable", { description: cause instanceof Error ? cause.message : undefined }); })
       .finally(() => { if (!cancelled) setDirectLoading(false); });
     return () => { cancelled = true; };
-  }, [directMember?.did]);
+  }, [directMember?.did, displayForDid]);
 
   // Picked file → an attachment chat message (object URL, session-only).
   // Also mirrored into All Files so it syncs to the device storage.
@@ -635,11 +644,15 @@ export function NW04CircleDetail() {
                 )}
                 {members.map((member, i) => {
                   const trustedPeer = peerForMember(member);
-                  const target = trustedPeer?.peerId || "";
                   const busy = !!startingCall;
+                  const isBrowserMember = String(member?.memberType || member?.member_type || "").toLowerCase() === "browser";
                   const isCurrentMember = nodeIdsForMember(member).includes(String(currentDevice || "").trim().toLowerCase());
+                  const browserCallAvailable = isBrowserMember && !!member.did;
+                  const target = trustedPeer?.peerId || (browserCallAvailable ? member.did : "");
                   const callUnavailableReason = isCurrentMember
                     ? "Current Guardian"
+                    : isBrowserMember
+                    ? ""
                     : peersLoading
                     ? "Checking trusted peers…"
                     : peersError
@@ -648,8 +661,9 @@ export function NW04CircleDetail() {
                         ? "Member is not linked to a trusted Guardian peer"
                         : trustedPeer.callUnavailableReason || (!trustedPeer.callAvailable ? "Peer is not available for calls" : "");
                   const invitePending = Boolean((member as any).pending) || String((member as any).status || (member as any).membershipStatus || "").toLowerCase() === "pending";
-                  const callsDisabled = invitePending || busy || isCurrentMember || !target || target === currentDevice || !trustedPeer?.callAvailable;
-                  const memberName = String(member.name || member.nodeHint || member.did || "Guardian member");
+                  const callsDisabled = invitePending || busy || isCurrentMember || !target || target === currentDevice || (!browserCallAvailable && !trustedPeer?.callAvailable);
+                  const memberName = String(displayForDid(member.did, member.name || member.nodeHint || member.did || "Guardian member"));
+                  const memberSecondary = member.email || (isBrowserMember ? "Browser PWA member" : displayForDid(member.did, member.did));
                   const memberKey = String(member.did || member.id || `${memberName}-${i}`);
                   return (
                   <div
@@ -667,15 +681,16 @@ export function NW04CircleDetail() {
                       <div className="flex items-center gap-2">
                         <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{memberName}</p>
                         {invitePending && <StatusBadge status="Invited/Pending" variant="warning" />}
+                        {isBrowserMember && <StatusBadge status="PWA" variant="info" />}
                         {member.role.toLowerCase() === "owner"
                           ? <StatusBadge status="Admin" variant="info" />
                           : !invitePending && <StatusBadge status="Member" variant="info" />}
                       </div>
-                      <p className="truncate" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{member.email || member.did}</p>
+                      <p className="truncate" title={member.did} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{memberSecondary}</p>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <div style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: trustedPeer?.online ? "var(--chart-2)" : "var(--muted-foreground)" }} />
                         <span style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--muted-foreground)" }}>
-                          {trustedPeer ? `${trustedPeer.online ? "online" : "offline"} · ${trustedPeer.peerId}` : callUnavailableReason}
+                          {trustedPeer ? `${trustedPeer.online ? "online" : "offline"} · ${displayForDid(trustedPeer.did, trustedPeer.peerId)}` : callUnavailableReason}
                         </span>
                       </div>
                     </button>
@@ -902,7 +917,7 @@ export function NW04CircleDetail() {
         <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center cursor-pointer" style={{ backgroundColor: "rgba(0,0,0,0.6)" }} onClick={() => setMemberDetailOpen(null)}>
           <div className="w-full rounded-t-xl md:rounded-xl border-t md:border border-border" style={{ backgroundColor: "var(--card)", maxWidth: "440px" }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-border">
-              <h3 style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{selectedMember.name}</h3>
+              <h3 style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{displayForDid(selectedMember.did, selectedMember.name || selectedMember.nodeHint || selectedMember.did || "Guardian member")}</h3>
               <button onClick={() => setMemberDetailOpen(null)} style={{ background: "none", border: "none", cursor: "pointer" }}>
                 <X size={20} style={{ color: "var(--muted-foreground)" }} />
               </button>
@@ -911,7 +926,7 @@ export function NW04CircleDetail() {
               <div>
                 <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "8px" }}>DID</p>
                 <div className="rounded-lg border border-border p-3 flex items-start justify-between gap-2" style={{ backgroundColor: "var(--background)" }}>
-                  <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px", color: "var(--foreground)", wordBreak: "break-all", lineHeight: 1.7, flex: 1 }}>{selectedMember.did}</span>
+                  <span title={selectedMember.did} style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px", color: "var(--foreground)", wordBreak: "break-all", lineHeight: 1.7, flex: 1 }}>{displayForDid(selectedMember.did, selectedMember.did)}</span>
                   <button onClick={() => handleCopy(selectedMember.did, "member-did")} style={{ background: "none", border: "none", cursor: "pointer", flexShrink: 0 }}>
                     {copiedField === "member-did" ? <Check size={15} style={{ color: "var(--chart-2)" }} /> : <Copy size={15} style={{ color: "var(--muted-foreground)" }} />}
                   </button>

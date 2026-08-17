@@ -10,6 +10,7 @@ import { SYS02SplashScreen } from "./screens/system/SYS02SplashScreen";
 import { LoginScreen } from "./screens/auth/LoginScreen";
 import { CyleniumCallback } from "./screens/auth/CyleniumCallback";
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import { RoleAccessRoute } from "./components/RoleAccessRoute";
 import { AuthenticatedOnboardingRoute, OnboardingEntryRoute } from "./components/OnboardingRouteGuard";
 
 /** Lazily load a screen by its named export â€” one route chunk per screen. */
@@ -47,9 +48,12 @@ const NW03PeersList = screen(() => import("./screens/network/NW03PeersList"), "N
 const NW04CircleDetail = screen(() => import("./screens/network/NW04CircleDetail"), "NW04CircleDetail");
 const ChatConversationScreen = screen(() => import("./screens/network/ChatConversationScreen"), "ChatConversationScreen");
 const ChatsListScreen = screen(() => import("./screens/chat/ChatsListScreen"), "ChatsListScreen");
+const ContactsRouteScreen = screen(() => import("./screens/contacts/ContactsRouteScreen"), "ContactsRouteScreen");
 const CallsHistoryScreen = screen(() => import("./screens/calls/CallsHistoryScreen"), "CallsHistoryScreen");
 const CircleManagementScreen = screen(() => import("./screens/network/CircleManagementScreen"), "CircleManagementScreen");
 const CircleJoinScreen = screen(() => import("./screens/network/CircleJoinScreen"), "CircleJoinScreen");
+const MemberSettingsScreen = screen(() => import("./screens/member/MemberSettingsScreen"), "MemberSettingsScreen");
+const MemberJoinOnboarding = screen(() => import("./screens/onboarding/MemberJoinOnboarding"), "MemberJoinOnboarding");
 
 // Devices
 const DV01DevicesList = screen(() => import("./screens/devices/DV01DevicesList"), "DV01DevicesList");
@@ -110,6 +114,7 @@ export const router = createBrowserRouter([
 
       // Login (returning users, session expired)
       { path: "login", Component: LoginScreen },
+      { path: "join", Component: MemberJoinOnboarding },
       { path: "auth/cylenium/callback", Component: CyleniumCallback },
       { path: "auth/callback", Component: CyleniumCallback },
       { path: "signup", loader: () => redirect("/onboarding") },
@@ -146,8 +151,10 @@ export const router = createBrowserRouter([
       {
         Component: ProtectedRoute,
         children: [{
-          Component: MainLayout,
-          children: [
+          Component: RoleAccessRoute,
+          children: [{
+            Component: MainLayout,
+            children: [
             // Home tab
             {
               path: "home",
@@ -175,10 +182,12 @@ export const router = createBrowserRouter([
             // Full notification history
             { path: "notifications", Component: NT01Notifications },
 
-            // Standalone peer-to-peer messaging (Circle membership is not required)
+            // Standalone messaging; member access is restricted to shared-Circle contacts.
             { path: "chats", Component: ChatsListScreen },
             { path: "chats/:peerDid", Component: ChatConversationScreen },
+            { path: "contacts", Component: ContactsRouteScreen },
             { path: "calls", Component: CallsHistoryScreen },
+            { path: "member-settings", Component: MemberSettingsScreen },
 
             // Network / Circles tab
             {
@@ -352,7 +361,8 @@ export const router = createBrowserRouter([
               ],
             },
 
-          ],
+            ],
+          }],
         }]
       },
 

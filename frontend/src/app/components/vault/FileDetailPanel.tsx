@@ -36,6 +36,8 @@ import { useNavigate } from "react-router";
 
 interface FileDetailPanelProps {
   file: VaultFile;
+  /** Members can preview, download, and transfer, but cannot mutate shared Vault metadata. */
+  canManage?: boolean;
   /** Called after the file is removed — parent navigates / clears selection. */
   onRemoved: () => void;
   /** Open the folder a file lives in. */
@@ -73,7 +75,7 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
 
 /** Full file detail — preview, security, metadata, actions. Shared by the
  *  mobile detail screen and the desktop split-view panel. */
-export function FileDetailPanel({ file, onRemoved, onOpenFolder }: FileDetailPanelProps) {
+export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolder }: FileDetailPanelProps) {
   const navigate = useNavigate();
   const {
     deviceName, encryption, removeFile, renameFile, moveFile, toggleStar, getFolder, folders,
@@ -317,7 +319,7 @@ export function FileDetailPanel({ file, onRemoved, onOpenFolder }: FileDetailPan
         >
           <Download size={16} /> Download
         </Button>
-        <div className="flex gap-2">
+        {canManage && <div className="flex gap-2">
           <Button
             variant="outline"
             onClick={() => setEditingName((value) => !value)}
@@ -332,8 +334,8 @@ export function FileDetailPanel({ file, onRemoved, onOpenFolder }: FileDetailPan
           >
             <FolderInput size={16} /> Move
           </Button>
-        </div>
-        {moving && (
+        </div>}
+        {canManage && moving && (
           <Card className="gap-1 p-2">
             <p className="px-2 py-1 text-xs font-medium text-muted-foreground">Move to folder</p>
             {folders.filter((item) => item.id !== file.folderId).map((item) => (
@@ -347,7 +349,7 @@ export function FileDetailPanel({ file, onRemoved, onOpenFolder }: FileDetailPan
             ))}
           </Card>
         )}
-        <div className="flex gap-2">
+        {canManage && <div className="flex gap-2">
           <Button
             variant="outline"
             onClick={() => {
@@ -376,11 +378,11 @@ export function FileDetailPanel({ file, onRemoved, onOpenFolder }: FileDetailPan
             <Trash2 size={16} style={{ color: "var(--destructive)" }} />
             <span style={{ color: "var(--destructive)" }}>Remove</span>
           </Button>
-        </div>
+        </div>}
       </div>
 
       {/* Remove confirmation — controlled, so no asChild Button trigger. */}
-      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+      <AlertDialog open={canManage && confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Remove this file?</AlertDialogTitle>

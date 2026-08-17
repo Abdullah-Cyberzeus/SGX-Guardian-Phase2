@@ -8,7 +8,7 @@ export interface ChatMessageRecord {
   timestamp: number;
   seq_no: number;
   encrypted_payload: string;
-  status: "pending" | "delivered" | "read" | "failed" | string;
+  status: "pending_local" | "accepted_by_guardian" | "delivered_to_remote_guardian" | "pending" | "delivered" | "read" | "failed" | "cancelled" | "failed_permanent" | string;
   read_by: string[];
 }
 
@@ -36,19 +36,29 @@ export const chatService = {
     api.get<{ messages: ChatMessageRecord[] }>("/chat/history", { peer_did: peerDid }),
   groupHistory: (groupId: string) =>
     api.get<{ messages: ChatMessageRecord[] }>("/chat/history", { group_id: groupId }),
-  sendDirect: (recipientDid: string, content: string | null, attachmentId: string | null = null) =>
-    api.post<SendChatResponse>("/chat/send", {
+  sendDirect: (recipientDid: string, content: string | null, attachmentId: string | null = null, messageId?: string) =>
+    api.request<SendChatResponse>("/chat/send", {
+      method: "POST",
+      idempotencyKey: messageId,
+      body: JSON.stringify({
       recipient_did: recipientDid,
       content,
       attachment_id: attachmentId,
       is_group: false,
+      message_id: messageId,
+      }),
     }),
-  sendGroup: (groupId: string, content: string | null, attachmentId: string | null = null) =>
-    api.post<SendChatResponse>("/chat/send", {
+  sendGroup: (groupId: string, content: string | null, attachmentId: string | null = null, messageId?: string) =>
+    api.request<SendChatResponse>("/chat/send", {
+      method: "POST",
+      idempotencyKey: messageId,
+      body: JSON.stringify({
       recipient_did: groupId,
       content,
       attachment_id: attachmentId,
       is_group: true,
+      message_id: messageId,
+      }),
     }),
   upload: (file: File, onProgress?: (loaded: number, total: number) => void) => {
     const form = new FormData();
@@ -89,6 +99,7 @@ export function openChatSocket(onChange: () => void, onState?: (connected: boole
     const token = api.getToken();
     if (!token) {
       onState?.(false);
+      window.dispatchEvent(new CustomEvent("sgx:socket-state", { detail: { source: "chat", connected: false } }));
       return;
     }
     const endpoint = new URL(api.publicUrl("/chat/ws"));
@@ -98,6 +109,7 @@ export function openChatSocket(onChange: () => void, onState?: (connected: boole
     socket.onopen = () => {
       retryCount = 0;
       onState?.(true);
+      window.dispatchEvent(new CustomEvent("sgx:socket-state", { detail: { source: "chat", connected: true } }));
       heartbeatTimer = window.setInterval(() => {
         if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "heartbeat" }));
       }, 20_000);
@@ -113,6 +125,7 @@ export function openChatSocket(onChange: () => void, onState?: (connected: boole
     socket.onerror = () => socket?.close();
     socket.onclose = () => {
       onState?.(false);
+      window.dispatchEvent(new CustomEvent("sgx:socket-state", { detail: { source: "chat", connected: false } }));
       if (heartbeatTimer) window.clearInterval(heartbeatTimer);
       if (!stopped) {
         const delay = Math.min(10_000, 500 * 2 ** retryCount++);

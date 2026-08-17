@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "../../components/PageHeader";
+import { useContactNames } from "../../contexts/ContactNameContext";
 import { useDIDDocumentPeers, useVCSummary, useVCShow } from "../../hooks/useApiData";
 import { useCurrentUser } from "../../hooks/useCurrentUser";
 import {
@@ -372,18 +373,21 @@ function CopyButton({ value, label = "Copied" }: { value?: string; label?: strin
 
 function MonoValue({
   value,
+  copyValue,
   truncate = true,
   copyable = true,
 }: {
   value?: string;
+  copyValue?: string;
   truncate?: boolean;
   copyable?: boolean;
 }) {
+  const copyTarget = copyValue ?? value;
   return (
     <div className="flex items-center gap-1 min-w-0">
       <code
         className={truncate ? "truncate" : ""}
-        title={value}
+        title={copyTarget}
         style={{
           fontFamily: "JetBrains Mono, monospace",
           fontSize: "var(--text-xs)",
@@ -395,7 +399,7 @@ function MonoValue({
       >
         {value || "-"}
       </code>
-      {copyable && value && <CopyButton value={value} />}
+      {copyable && copyTarget && <CopyButton value={copyTarget} />}
     </div>
   );
 }
@@ -648,6 +652,7 @@ function DidNodesPanel({
   onCheckDid: (did: string) => void;
   onViewEntry: (entry: CrlEntry) => void;
 }) {
+  const { displayForDid } = useContactNames();
   const sortedPeers = useMemo(
     () => [...peers].sort((a, b) => Number(isActiveDidNode(b.status)) - Number(isActiveDidNode(a.status)) || a.node_name.localeCompare(b.node_name)),
     [peers],
@@ -711,6 +716,7 @@ function DidNodesPanel({
             const running = isActiveDidNode(peer.status);
             const protectedOwner = localRole === "member" && isOwnerDid(peer.did, ownerDid);
             const statusColor = revokedEntry ? "var(--destructive)" : running ? "var(--chart-2)" : "var(--muted-foreground)";
+            const peerDisplayName = displayForDid(peer.did, peer.node_name || "Unnamed node");
             return (
               <div
                 key={peer.did || `${peer.node_name}-${index}`}
@@ -727,7 +733,7 @@ function DidNodesPanel({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="truncate" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
-                        {peer.node_name || "Unnamed node"}
+                        {peerDisplayName}
                       </p>
                       {isOwnerDid(peer.did, ownerDid) && <StatusPill color="var(--primary)">Owner</StatusPill>}
                       <StatusPill color={statusColor}>{revokedEntry ? "Revoked" : peer.status || "Unknown"}</StatusPill>
@@ -735,7 +741,7 @@ function DidNodesPanel({
                       <StatusPill color="var(--muted-foreground)">{`${peer.services} svc`}</StatusPill>
                     </div>
                     <div className="mt-2">
-                      <MonoValue value={peer.did} truncate={false} />
+                      <MonoValue value={displayForDid(peer.did, peer.did)} copyValue={peer.did} truncate={false} />
                     </div>
                   </div>
                 </div>
@@ -960,6 +966,7 @@ function EntriesSection({
   lastUpdated: string | null;
   onRaw: () => void;
 }) {
+  const { displayForDid } = useContactNames();
   const hasFilters = Boolean(search || severityFilter !== "all" || reasonFilter !== "all" || propagationFilter !== "all" || roleFilter !== "all" || dateFilter !== "all");
 
   return (
@@ -1089,14 +1096,14 @@ function EntriesSection({
                     }}
                   >
                     <td style={cellStyle}><SeverityBadge severity={entry.severity} /></td>
-                    <td style={cellStyle}><MonoValue value={entry.revoked_did} /></td>
+                    <td style={cellStyle}><MonoValue value={displayForDid(entry.revoked_did, entry.revoked_did)} copyValue={entry.revoked_did} /></td>
                     <td style={cellStyle}><ReasonBadge reason={entry.reason} /></td>
                     <td style={cellStyle}>
                       <div className="flex flex-col gap-1 min-w-0">
                         <RoleBadge role={entry.revoker_role} />
                         {entry.revoker_did && (
                           <code className="truncate" title={entry.revoker_did} style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px", color: "var(--muted-foreground)" }}>
-                            {shortMiddle(entry.revoker_did, 8, 5)}
+                            {displayForDid(entry.revoker_did, shortMiddle(entry.revoker_did, 8, 5))}
                           </code>
                         )}
                       </div>
@@ -1138,7 +1145,7 @@ function EntriesSection({
                   </div>
                   <span style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--muted-foreground)" }}>{formatDate(entry.timestamp)}</span>
                 </div>
-                <MonoValue value={entry.revoked_did} truncate={false} />
+                <MonoValue value={displayForDid(entry.revoked_did, entry.revoked_did)} copyValue={entry.revoked_did} truncate={false} />
                 <div className="flex items-center gap-2 flex-wrap">
                   <RoleBadge role={entry.revoker_role} />
                   <StatusPill color={entry.propagated ? "var(--chart-2)" : "var(--chart-4)"}>{entry.propagated ? "Propagated" : "Pending"}</StatusPill>
@@ -1384,6 +1391,7 @@ function EntryDrawer({
 }) {
   const [view, setView] = useState<"details" | "raw">("details");
   const [showProof, setShowProof] = useState(false);
+  const { displayForDid } = useContactNames();
   const json = JSON.stringify(entry, null, 2);
   const proofValue = entry.proof?.proofValue;
 
@@ -1449,7 +1457,7 @@ function EntryDrawer({
               <DrawerSection title="Revoked Identity" icon={ShieldX}>
                 <div className="py-2" style={{ borderBottom: "1px solid var(--border)" }}>
                   <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginBottom: "4px" }}>Revoked DID</p>
-                  <MonoValue value={entry.revoked_did} truncate={false} />
+                  <MonoValue value={displayForDid(entry.revoked_did, entry.revoked_did)} copyValue={entry.revoked_did} truncate={false} />
                 </div>
                 <FieldRow label="Device ID" value={entry.device_id} mono />
                 <FieldRow label="User ID" value={entry.user_id} mono />
@@ -1459,7 +1467,7 @@ function EntryDrawer({
               <DrawerSection title="Issuer" icon={ShieldCheck}>
                 <div className="py-2" style={{ borderBottom: "1px solid var(--border)" }}>
                   <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginBottom: "4px" }}>Revoker DID</p>
-                  <MonoValue value={entry.revoker_did} truncate={false} />
+                  <MonoValue value={displayForDid(entry.revoker_did, entry.revoker_did)} copyValue={entry.revoker_did} truncate={false} />
                 </div>
                 <FieldRow label="Revoker role" value={entry.revoker_role} />
                 <p style={{ marginTop: "8px", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>
@@ -1613,6 +1621,7 @@ function RevokeDialog({
   onRevoked: (entry?: CrlEntry) => Promise<void>;
   initialTarget?: QuickRevokeTarget | null;
 }) {
+  const { displayForDid } = useContactNames();
   const [did, setDid] = useState(initialTarget?.did ?? "");
   const [reason, setReason] = useState<CrlReason>("compromised");
   const [severity, setSeverity] = useState<CrlSeverity>("critical");
@@ -1708,10 +1717,10 @@ function RevokeDialog({
               </div>
               <div className="min-w-0 flex-1">
                 <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
-                  {initialTarget.nodeName || "Selected DID node"}
+                  {displayForDid(initialTarget.did, initialTarget.nodeName || "Selected DID node")}
                 </p>
                 <div className="mt-1">
-                  <MonoValue value={initialTarget.did} truncate={false} />
+                  <MonoValue value={displayForDid(initialTarget.did, initialTarget.did)} copyValue={initialTarget.did} truncate={false} />
                 </div>
               </div>
             </div>
@@ -1817,6 +1826,7 @@ function UnrevokeDialog({
   onConfirm: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const { displayForDid } = useContactNames();
 
   async function handleConfirm() {
     setBusy(true);
@@ -1846,7 +1856,7 @@ function UnrevokeDialog({
         </div>
 
         <div className="rounded-md border p-3 flex flex-col gap-2" style={{ backgroundColor: "var(--muted)", borderColor: "var(--border)" }}>
-          <MonoValue value={entry.revoked_did} truncate={false} />
+          <MonoValue value={displayForDid(entry.revoked_did, entry.revoked_did)} copyValue={entry.revoked_did} truncate={false} />
           <div className="flex flex-wrap gap-1.5">
             <SeverityBadge severity={entry.severity} />
             <ReasonBadge reason={entry.reason} />

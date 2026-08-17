@@ -57,6 +57,17 @@ pub struct PairDeviceRequest {
     pub proof: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct OnboardingProofRequest {
+    #[serde(rename = "pairingCode")]
+    pub pairing_code: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OnboardingProofResponse {
+    pub proof: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct DeviceResponse {
     #[serde(rename = "deviceId")]
@@ -367,6 +378,82 @@ pub async fn pairing_code(
         pairing_code: pairing::encode_challenge(&challenge)
             .map_err(|e| ApiError::Internal(e.to_string()))?,
     }))
+}
+
+/// Generate the local Guardian's signed proof for initial serial-number
+/// onboarding. Normal device management intentionally never calls this route.
+pub async fn onboarding_proof(
+    State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
+    Json(body): Json<OnboardingProofRequest>,
+) -> Result<Json<OnboardingProofResponse>, ApiError> {
+    let session = optional_session(session)?;
+    let owner_user_id = session_user_id(session.as_ref());
+    if !state.admin.devices.list(owner_user_id).await?.is_empty() {
+        return Err(ApiError::Conflict(
+            "automatic pairing proof is only available during initial onboarding".into(),
+        ));
+    }
+
+    let pairing_code = body.pairing_code.trim();
+    if pairing_code.is_empty() || pairing_code.len() > 8192 {
+        return Err(ApiError::BadRequest("pairingCode is invalid".into()));
+    }
+    let challenge = pairing::decode_challenge(pairing_code)
+        .map_err(|err| ApiError::BadRequest(format!("invalid pairing code: {}", err)))?;
+    let record = state
+        .admin
+        .pairings
+        .get(&challenge.serial, &challenge.nonce)
+        .await?
+        .ok_or_else(|| ApiError::BadRequest("pairing challenge not found".into()))?;
+    if record.owner_user_id != owner_user_id {
+        return Err(ApiError::Forbidden(
+            "pairing challenge belongs to a different user".into(),
+        ));
+    }
+    if record.challenge != challenge.challenge || record.exp != challenge.exp {
+        return Err(ApiError::BadRequest("pairing challenge mismatch".into()));
+    }
+    if record.api_consumed || record.exp <= Utc::now().timestamp() {
+        return Err(ApiError::BadRequest(
+            "pairing challenge is expired or already used".into(),
+        ));
+    }
+
+    let action = super::dkp::run_cli(&[
+        "pairing",
+        "proof",
+        "--pairing-code",
+        pairing_code,
+        "--node-id",
+        &state.node_id,
+    ])
+    .await?;
+    if !action.success {
+        let reason = action.stderr.trim();
+        return Err(ApiError::Internal(if reason.is_empty() {
+            "pairing proof command failed".into()
+        } else {
+            format!("pairing proof command failed: {}", reason)
+        }));
+    }
+    let proof = action.stdout.trim().to_string();
+    let generated = pairing::verify_proof(&proof)
+        .map_err(|err| ApiError::Internal(format!("generated pairing proof is invalid: {}", err)))?;
+    if generated.serial != challenge.serial
+        || generated.nonce != challenge.nonce
+        || generated.challenge != challenge.challenge
+        || generated.exp != challenge.exp
+        || generated.node_id != state.node_id
+        || generated.device_did != state.device_did
+    {
+        return Err(ApiError::Internal(
+            "generated pairing proof does not match the onboarding challenge".into(),
+        ));
+    }
+
+    Ok(Json(OnboardingProofResponse { proof }))
 }
 
 pub async fn pair(
@@ -2193,6 +2280,10 @@ mod tests {
             claims: Claims {
                 sub: user_id.to_string(),
                 role: "owner".into(),
+                scopes: crate::api::auth::authorization::default_scopes("owner"),
+                circle_ids: Vec::new(),
+                browser_registration_id: None,
+                guardian_fingerprint: None,
                 iss: state.device_did.clone(),
                 iat: 0,
                 exp: i64::MAX,

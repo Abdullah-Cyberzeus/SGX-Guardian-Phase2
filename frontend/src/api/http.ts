@@ -19,7 +19,12 @@ export function errorMessage(body: unknown, fallback: string): string {
 }
 
 export function authToken(): string {
-  return localStorage.getItem("sgx_auth_token") ?? "";
+  // Member credentials are intentionally tab-scoped in sessionStorage;
+  // administrative sessions retain the existing durable localStorage path.
+  // Every legacy REST/SSE helper must use the same precedence as AuthContext.
+  return sessionStorage.getItem("sgx_auth_token")
+    ?? localStorage.getItem("sgx_auth_token")
+    ?? "";
 }
 
 export function operationId(): string {
@@ -43,6 +48,9 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers,
   });
   const body = await response.json().catch(() => ({}));
+  if (response.status === 401 && !path.startsWith("/auth/")) {
+    window.dispatchEvent(new CustomEvent("sgx:unauthorized"));
+  }
   if (!response.ok) throw new ApiError(response.status, errorMessage(body, `Request failed (${response.status})`));
   return body as T;
 }

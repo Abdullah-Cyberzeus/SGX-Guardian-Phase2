@@ -262,6 +262,20 @@ pub fn notify_router() -> Router<Arc<AppState>> {
         )
 }
 
+pub fn contacts_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route(
+            "/api/v1/contacts",
+            get(handlers::contacts::list).post(handlers::contacts::create),
+        )
+        .route(
+            "/api/v1/contacts/{did}",
+            get(handlers::contacts::get)
+                .patch(handlers::contacts::update)
+                .delete(handlers::contacts::delete),
+        )
+}
+
 pub fn rules_router() -> Router<Arc<AppState>> {
     Router::new()
         .route(

@@ -2,8 +2,9 @@ import { Outlet } from "react-router";
 import { BottomNav } from "../components/BottomNav";
 import { OfflineBanner } from "../components/OfflineBanner";
 import { AppSidebar } from "../components/AppSidebar";
-import { Suspense, useState } from "react";
+import { Suspense } from "react";
 import { Loader2 } from "lucide-react";
+import { useGuardianConnectivity } from "../../pwa/connectivity/GuardianConnectivityContext";
 
 /** Shown in the content area while a route's code chunk loads. */
 const routeFallback = (
@@ -13,7 +14,17 @@ const routeFallback = (
 );
 
 export function MainLayout() {
-  const [isOffline] = useState(false);
+  const { reachable, status, lastSeen, pendingCount, syncRunning, retryNow } = useGuardianConnectivity();
+  const showConnectivityBanner = !reachable || status === "credential_revoked";
+  const banner = showConnectivityBanner ? (
+    <OfflineBanner
+      status={status === "guardian_connected" ? "guardian_offline" : status}
+      lastSeen={lastSeen}
+      pendingCount={pendingCount}
+      syncRunning={syncRunning}
+      onRetry={() => void retryNow()}
+    />
+  ) : null;
 
   return (
     <>
@@ -26,7 +37,7 @@ export function MainLayout() {
           className="relative w-full flex flex-col"
           style={{ maxWidth: "440px", height: "100dvh", backgroundColor: "var(--background)" }}
         >
-          {isOffline && <OfflineBanner lastSeen="3 min ago" />}
+          {banner}
           <main
             className="flex-1 overflow-y-auto overflow-x-hidden"
             style={{ WebkitOverflowScrolling: "touch" }}
@@ -42,9 +53,9 @@ export function MainLayout() {
         className="hidden md:flex lg:hidden"
         style={{ height: "100dvh", backgroundColor: "var(--background)" }}
       >
-        {isOffline && (
+        {showConnectivityBanner && (
           <div className="fixed top-0 z-50" style={{ left: "64px", right: 0 }}>
-            <OfflineBanner lastSeen="3 min ago" />
+            {banner}
           </div>
         )}
         <AppSidebar variant="collapsed" />
@@ -62,9 +73,9 @@ export function MainLayout() {
         className="hidden lg:flex"
         style={{ height: "100dvh", backgroundColor: "var(--background)" }}
       >
-        {isOffline && (
+        {showConnectivityBanner && (
           <div className="fixed top-0 z-50" style={{ left: "240px", right: 0 }}>
-            <OfflineBanner lastSeen="3 min ago" />
+            {banner}
           </div>
         )}
         <AppSidebar variant="expanded" />

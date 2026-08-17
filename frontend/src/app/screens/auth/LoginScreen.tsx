@@ -1,32 +1,46 @@
 import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { CervaisLogo } from "../../components/CervaisLogo";
 import { Eye, EyeOff, Shield, Loader2 } from "lucide-react";
-import { useAuth } from "../../contexts/AuthContext";
+import { AUTH_NOTICE_KEY, useAuth } from "../../contexts/AuthContext";
 import { toast } from "sonner";
 import { cyleniumConfigErrorMessage, isCyleniumConfigured } from "../../config/cylenium";
+import { homePathForRole } from "../../utils/authorization";
 
 export function LoginScreen() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { signIn, startCyleniumSignIn } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [cyleniumLoading, setCyleniumLoading] = useState(false);
+  const [authNotice] = useState(() => {
+    const notice = sessionStorage.getItem(AUTH_NOTICE_KEY) || "";
+    sessionStorage.removeItem(AUTH_NOTICE_KEY);
+    return notice;
+  });
   const cyleniumEnabled = isCyleniumConfigured();
+  const returnTo = typeof location.state === "object"
+    && location.state
+    && "returnTo" in location.state
+    && typeof location.state.returnTo === "string"
+    && location.state.returnTo.startsWith("/")
+    ? location.state.returnTo
+    : "";
 
   const canSubmit = email.includes("@") && password.length >= 6;
 
   const handleLogin = async () => {
     if (!canSubmit || loading) return;
     setLoading(true);
-    const { error } = await signIn(email, password);
+    const { error, role } = await signIn(email, password);
     setLoading(false);
     if (error) {
       toast.error(error);
     } else {
-      navigate("/home", { replace: true });
+      navigate(returnTo || homePathForRole(role), { replace: true });
     }
   };
 
@@ -36,7 +50,7 @@ export function LoginScreen() {
       return;
     }
     setCyleniumLoading(true);
-    startCyleniumSignIn("/home");
+    startCyleniumSignIn(returnTo || "/home");
   };
 
   return (
@@ -86,6 +100,11 @@ export function LoginScreen() {
 
       {/* Form */}
       <div className="flex flex-col gap-4 px-6">
+        {authNotice && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-700 dark:text-amber-300" role="status">
+            {authNotice}
+          </div>
+        )}
         {/* Email */}
         <div>
           <label

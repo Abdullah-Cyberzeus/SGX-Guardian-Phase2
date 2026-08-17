@@ -9,6 +9,9 @@ import {
   CYLENIUM_PKCE_CODE_VERIFIER_KEY,
   startCyleniumOidcRedirect,
 } from "../utils/cyleniumAuth";
+import type { GuardianRole } from "../utils/authorization";
+import pwaOnboardingService, { type MemberJoinPayload } from "../services/pwaOnboardingService";
+import { membershipRepository } from "../../pwa/db/membershipRepository";
 
 export interface User {
   id: string;
@@ -22,6 +25,14 @@ export interface Session {
   user: User;
   token: string;
   expiresAt?: number;
+  scopes: string[];
+  guardianDid?: string;
+  guardianFingerprint?: string;
+  circleIds: string[];
+  browserRegistrationId?: string;
+  browserMemberDid?: string;
+  registrationExpiresAt?: number;
+  offline?: boolean;
   [key: string]: any;
 }
 
@@ -29,8 +40,8 @@ interface AuthContextValue {
   session: Session | null;
   user: User | null;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<{ error: string | null }>;
-  signUp: (email: string, password: string, name: string) => Promise<{ error: string | null }>;
+  signIn: (email: string, password: string) => Promise<{ error: string | null; role?: string }>;
+  signUp: (email: string, password: string, name: string, role: GuardianRole) => Promise<{ error: string | null; role?: string }>;
   startCyleniumSignIn: (returnTo: string) => void;
   completeCyleniumSignIn: (code: string, state: string) => Promise<{ error: string | null }>;
   completeCyleniumLogin: (
@@ -39,12 +50,17 @@ interface AuthContextValue {
     codeVerifier?: string | null,
   ) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
+  signOutEverywhere: () => Promise<{ error: string | null }>;
+  joinMember: (payload: MemberJoinPayload) => Promise<{ error: string | null; role?: string }>;
+  refreshSession: () => Promise<{ error: string | null }>;
+  removeBrowserRegistration: () => Promise<{ error: string | null }>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 const TOKEN_KEY = "sgx_auth_token";
 const CYLENIUM_RETURN_TO_KEY = "sgx_cylenium_return_to";
+export const AUTH_NOTICE_KEY = "sgx_auth_notice";
 
 interface AuthPayload {
   token?: string;
@@ -54,6 +70,13 @@ interface AuthPayload {
   email?: string;
   name?: string;
   role?: string;
+  scopes?: string[];
+  guardianDid?: string;
+  guardianFingerprint?: string;
+  circleIds?: string[];
+  browserRegistrationId?: string;
+  browserMemberDid?: string;
+  registrationExpiresAt?: number;
   expiresAt?: number;
   valid?: boolean;
 }
@@ -64,25 +87,51 @@ interface LoginBypassProbe {
 }
 
 function normalizeSession(payload: AuthPayload, fallbackToken = ""): Session {
+  const user = payload.user ?? {
+    id: payload.userId ?? payload.id ?? "",
+    email: payload.email ?? "",
+    name: payload.name,
+    role: payload.role,
+  };
   return {
     token: payload.token || fallbackToken,
     expiresAt: payload.expiresAt,
-    user: payload.user ?? {
-      id: payload.userId ?? payload.id ?? "",
-      email: payload.email ?? "",
-      name: payload.name,
-      role: payload.role,
-    },
+    scopes: payload.scopes ?? (Array.isArray(user.scopes) ? user.scopes : []),
+    guardianDid: payload.guardianDid,
+    guardianFingerprint: payload.guardianFingerprint ?? payload.user?.guardianFingerprint,
+    circleIds: payload.circleIds ?? (Array.isArray(payload.user?.circleIds) ? payload.user.circleIds : []),
+    browserRegistrationId: payload.browserRegistrationId ?? payload.user?.browserRegistrationId,
+    browserMemberDid: payload.browserMemberDid ?? payload.user?.browserMemberDid,
+    registrationExpiresAt: payload.registrationExpiresAt ?? payload.user?.registrationExpiresAt,
+    user,
   };
 }
 
-function injectToken(token: string | null) {
+function injectToken(token: string | null, storage: "local" | "session" = "local") {
   api.setToken(token);
+  localStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(TOKEN_KEY);
   if (token) {
-    localStorage.setItem(TOKEN_KEY, token);
-  } else {
-    localStorage.removeItem(TOKEN_KEY);
+    (storage === "session" ? sessionStorage : localStorage).setItem(TOKEN_KEY, token);
   }
+}
+
+const tokenStorageForRole = (role?: string): "local" | "session" =>
+  role?.toLowerCase() === "member" ? "session" : "local";
+
+async function persistOfflineMembership(session: Session) {
+  if (session.user.role?.toLowerCase() !== "member" || session.offline) return;
+  await membershipRepository.save({
+    guardianDid: session.guardianDid || "",
+    guardianFingerprint: session.guardianFingerprint,
+    circleIds: session.circleIds,
+    actorId: session.user.id,
+    role: "member",
+    browserRegistrationId: session.browserRegistrationId,
+    browserMemberDid: session.browserMemberDid,
+    sessionExpiresAt: session.expiresAt,
+    registrationExpiresAt: session.registrationExpiresAt,
+  });
 }
 
 function makeLoginBypassSession(probe?: LoginBypassProbe): Session {
@@ -90,6 +139,8 @@ function makeLoginBypassSession(probe?: LoginBypassProbe): Session {
   const hostname = probe?.hostname?.trim() || nodeId;
   return {
     token: "",
+    scopes: ["admin:*"],
+    circleIds: [],
     user: {
       id: nodeId,
       email: `${hostname.toLowerCase()}@local.guardian`,
@@ -105,7 +156,7 @@ function makeLoginBypassSession(probe?: LoginBypassProbe): Session {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [initialToken] = useState(() => {
-    const token = localStorage.getItem(TOKEN_KEY) ?? "";
+    const token = sessionStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(TOKEN_KEY) ?? "";
     api.setToken(token || null);
     return token;
   });
@@ -113,7 +164,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (session) void persistOfflineMembership(session).catch(() => {});
+  }, [session]);
+
+  useEffect(() => {
     const handleUnauthorized = () => {
+      sessionStorage.setItem(AUTH_NOTICE_KEY, "Your Guardian session expired or was revoked. Please sign in again.");
       injectToken(null);
       setSession(null);
     };
@@ -134,7 +190,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch {
         if (!cancelled) {
           injectToken(null);
-          setSession(null);
+          try {
+            const health = await fetch("/api/v1/health", { cache: "no-store", signal: AbortSignal.timeout(1500) });
+            if (health.ok) {
+              setSession(null);
+            } else {
+              throw new Error("Guardian unreachable");
+            }
+          } catch {
+            const cached = await membershipRepository.get().catch(() => undefined);
+            const registrationValid = cached?.registrationExpiresAt == null
+              || cached.registrationExpiresAt > Math.floor(Date.now() / 1000);
+            if (cached && registrationValid && !cancelled) {
+              setSession({
+                token: "",
+                offline: true,
+                scopes: [],
+                guardianDid: cached.guardianDid,
+                guardianFingerprint: cached.guardianFingerprint,
+                circleIds: cached.circleIds,
+                browserRegistrationId: cached.browserRegistrationId,
+                browserMemberDid: cached.browserMemberDid,
+                expiresAt: cached.sessionExpiresAt,
+                registrationExpiresAt: cached.registrationExpiresAt,
+                user: { id: cached.actorId, email: "Offline member", role: "member" },
+              });
+            } else {
+              setSession(null);
+            }
+          }
         }
       } finally {
         if (!cancelled) {
@@ -154,7 +238,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then((data) => {
         if (cancelled) return;
         const next = normalizeSession(data, initialToken);
-        injectToken(next.token);
+        injectToken(next.token, tokenStorageForRole(next.user.role));
         setSession(next);
         setLoading(false);
       })
@@ -170,14 +254,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signIn = async (
     email: string,
     password: string,
-  ): Promise<{ error: string | null }> => {
+  ): Promise<{ error: string | null; role?: string }> => {
     try {
       const data = await api.post<AuthPayload>("/auth/login", { email, password });
       const next = normalizeSession(data);
       if (!next.token) throw new Error("Login response did not include a bearer token");
-      injectToken(next.token);
+      await persistOfflineMembership(next);
+      injectToken(next.token, tokenStorageForRole(next.user.role));
       setSession(next);
-      return { error: null };
+      return { error: null, role: next.user.role };
     } catch (e: any) {
       return { error: e.message || "Login failed" };
     }
@@ -187,15 +272,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     email: string,
     password: string,
     name: string,
-  ): Promise<{ error: string | null }> => {
+    role: GuardianRole,
+  ): Promise<{ error: string | null; role?: string }> => {
     try {
-      const data = await api.post<AuthPayload>("/auth/signup", { email, password, name });
+      const data = await api.post<AuthPayload>("/auth/signup", { email, password, name, role });
       const next = normalizeSession(data);
       if (!next.token) throw new Error("Signup response did not include a bearer token");
       injectToken(next.token);
       setSession(next);
       localStorage.removeItem("sgx_onboarded");
-      return { error: null };
+      return { error: null, role: next.user.role };
     } catch (e: any) {
       return { error: e.message || "Signup failed" };
     }
@@ -261,7 +347,67 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     injectToken(null);
     setSession(null);
+    await membershipRepository.remove().catch(() => {});
+    sessionStorage.removeItem(AUTH_NOTICE_KEY);
     localStorage.removeItem("sgx_onboarded");
+  };
+
+  const signOutEverywhere = async (): Promise<{ error: string | null }> => {
+    try {
+      await api.post("/auth/sessions/revoke-all");
+      injectToken(null);
+      setSession(null);
+      await membershipRepository.remove().catch(() => {});
+      sessionStorage.removeItem(AUTH_NOTICE_KEY);
+      localStorage.removeItem("sgx_onboarded");
+      return { error: null };
+    } catch (cause) {
+      return { error: cause instanceof Error ? cause.message : "Unable to revoke sessions" };
+    }
+  };
+
+  const joinMember = async (payload: MemberJoinPayload): Promise<{ error: string | null; role?: string }> => {
+    try {
+      const data = await pwaOnboardingService.join(payload);
+      const next = normalizeSession(data);
+      if (!next.token || next.user.role !== "member") {
+        throw new Error("Guardian did not issue a valid member session");
+      }
+      await persistOfflineMembership(next);
+      injectToken(next.token, "session");
+      setSession(next);
+      localStorage.setItem("sgx_onboarded", "1");
+      return { error: null, role: next.user.role };
+    } catch (cause) {
+      return { error: cause instanceof Error ? cause.message : "Unable to join Guardian" };
+    }
+  };
+
+  const refreshSession = async (): Promise<{ error: string | null }> => {
+    try {
+      const data = await api.post<AuthPayload>("/auth/session/refresh");
+      const next = normalizeSession(data);
+      if (!next.token) throw new Error("Refresh response did not include a session token");
+      await persistOfflineMembership(next);
+      injectToken(next.token, tokenStorageForRole(next.user.role));
+      setSession(next);
+      return { error: null };
+    } catch (cause) {
+      return { error: cause instanceof Error ? cause.message : "Unable to refresh session" };
+    }
+  };
+
+  const removeBrowserRegistration = async (): Promise<{ error: string | null }> => {
+    try {
+      await api.delete("/pwa/registration");
+      injectToken(null);
+      setSession(null);
+      localStorage.removeItem("sgx_onboarded");
+      await membershipRepository.remove();
+      return { error: null };
+    } catch (cause) {
+      return { error: cause instanceof Error ? cause.message : "Unable to remove browser" };
+    }
   };
 
   return (
@@ -276,6 +422,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         completeCyleniumSignIn,
         completeCyleniumLogin,
         signOut,
+        signOutEverywhere,
+        joinMember,
+        refreshSession,
+        removeBrowserRegistration,
       }}
     >
       {children}

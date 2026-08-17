@@ -16,6 +16,14 @@ const JWT_HEADER_JSON: &str = r#"{"alg":"ES256","typ":"JWT"}"#;
 pub struct Claims {
     pub sub: String,
     pub role: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    #[serde(default)]
+    pub circle_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser_registration_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guardian_fingerprint: Option<String>,
     pub iss: String,
     pub iat: i64,
     pub exp: i64,
@@ -39,6 +47,14 @@ pub async fn issue(
     let claims = Claims {
         sub: user.user_id.clone(),
         role: user.role.as_str().to_string(),
+        scopes: if user.scopes.is_empty() {
+            crate::api::auth::authorization::default_scopes(user.role.as_str())
+        } else {
+            user.scopes.clone()
+        },
+        circle_ids: user.circle_ids.clone(),
+        browser_registration_id: user.browser_registration_id.clone(),
+        guardian_fingerprint: user.guardian_fingerprint.clone(),
         iss: device_did.to_string(),
         iat: now,
         exp: now + ttl.as_secs() as i64,
@@ -122,6 +138,12 @@ mod tests {
             email: "admin@example.com".into(),
             pw_hash: "phc".into(),
             role: crate::api::auth::store::UserRole::Owner,
+            scopes: vec![crate::api::auth::authorization::scope::ADMIN_ALL.into()],
+            circle_ids: Vec::new(),
+            browser_registration_id: None,
+            guardian_fingerprint: None,
+            registration_expires_at: None,
+            invite_id: None,
             created_at: "2026-06-29T00:00:00Z".into(),
             status: "active".into(),
             failed_attempts: 0,

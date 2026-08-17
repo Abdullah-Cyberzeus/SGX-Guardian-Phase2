@@ -1,23 +1,25 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { RouterProvider } from "react-router";
 import { router } from "./routes";
 import { Toaster } from "sonner";
+import { PwaUpdatePrompt } from "./components/PwaUpdatePrompt";
+
+const APP_VERSION = __APP_VERSION__;
 
 function usePWA() {
+  const [waiting, setWaiting] = useState<ServiceWorker | null>(null);
+  const [registrationError, setRegistrationError] = useState<string | null>(null);
+  const [offlineReady, setOfflineReady] = useState(false);
   useEffect(() => {
     const isIframe = window.self !== window.top;
-    const isLoopbackHost =
-      window.location.hostname === "localhost" ||
-      window.location.hostname === "127.0.0.1" ||
-      window.location.hostname === "[::1]";
     const isFigmaPreview =
       window.location.hostname.includes("figma.site") ||
       window.location.hostname.includes("figmaiframepreview") ||
       window.location.hostname.includes("makeproxy");
 
-    // In loopback and preview environments, stale service workers are more
-    // harmful than helpful because they can keep serving old route chunks.
-    if ((isIframe || isFigmaPreview || isLoopbackHost) && "serviceWorker" in navigator) {
+    // Embedded design previews are not the deployed Guardian application.
+    if ((isIframe || isFigmaPreview) && "serviceWorker" in navigator) {
+      setOfflineReady(true);
       navigator.serviceWorker.getRegistrations().then((registrations) => {
         registrations.forEach((reg) => {
           reg.unregister();
@@ -64,26 +66,82 @@ function usePWA() {
       viewport.setAttribute("content", "width=device-width, initial-scale=1, viewport-fit=cover");
     }
 
-    // Register Service Worker (production only)
+    if (!window.isSecureContext) {
+      setRegistrationError(
+        `The origin ${window.location.origin} is not browser-trusted. Use HTTP localhost for Docker or trusted HTTPS guardian.local on a board`,
+      );
+      return;
+    }
+
+    // Register the offline worker only from a browser-trusted origin.
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker
-        .register("/sw.js", { scope: "/" })
+        .register(`/sw.js?v=${encodeURIComponent(APP_VERSION)}`, {
+          scope: "/",
+          updateViaCache: "none",
+        })
         .then((reg) => {
           console.log("[SW] Registered, scope:", reg.scope);
+          setRegistrationError(null);
+          if (reg.waiting) {
+            if (navigator.serviceWorker.controller) setWaiting(reg.waiting);
+            else reg.waiting.postMessage({ type: "SKIP_WAITING" });
+          }
+          reg.addEventListener("updatefound", () => {
+            const worker = reg.installing;
+            worker?.addEventListener("statechange", () => {
+              if (worker.state !== "installed") return;
+              // Complete the very first installation immediately. Existing
+              // controlled clients still get the explicit safe-update prompt.
+              if (navigator.serviceWorker.controller) setWaiting(worker);
+              else worker.postMessage({ type: "SKIP_WAITING" });
+            });
+          });
+          return navigator.serviceWorker.ready;
+        })
+        .then(() => {
+          console.log("[SW] Offline shell installed and ready");
+          setOfflineReady(true);
+          // Best-effort protection from storage-pressure eviction. Browsers
+          // that do not expose this API continue with normal IndexedDB rules.
+          void navigator.storage?.persist?.().catch(() => false);
         })
         .catch((err) => {
-          console.warn("[SW] Registration skipped:", err.message);
+          const message = err instanceof Error ? err.message : String(err);
+          setRegistrationError(message);
+          console.warn("[SW] Registration failed:", message);
         });
+    } else {
+      setRegistrationError("This browser does not support service workers");
     }
+    const reloadForController = () => window.location.reload();
+    navigator.serviceWorker?.addEventListener("controllerchange", reloadForController);
+    return () => navigator.serviceWorker?.removeEventListener("controllerchange", reloadForController);
   }, []);
+  return {
+    applyUpdate: waiting ? () => waiting.postMessage({ type: "SKIP_WAITING" }) : null,
+    registrationError,
+    offlineReady,
+  };
 }
 
 export default function App() {
-  usePWA();
+  const { applyUpdate, registrationError, offlineReady } = usePWA();
 
   return (
     <>
       <RouterProvider router={router} />
+      {applyUpdate && <PwaUpdatePrompt apply={applyUpdate} />}
+      {registrationError && (
+        <div role="alert" className="fixed bottom-20 left-1/2 z-[100] w-[min(92vw,560px)] -translate-x-1/2 rounded-lg border border-red-500/40 bg-zinc-950 px-4 py-3 text-sm text-red-300 shadow-xl">
+          Offline installation failed: {registrationError}. Keep Guardian connected and open this page from a trusted HTTPS origin (or localhost), then reload.
+        </div>
+      )}
+      {!registrationError && !offlineReady && (
+        <div role="status" className="fixed bottom-20 left-1/2 z-[99] -translate-x-1/2 rounded-full border border-border bg-zinc-950/95 px-4 py-2 text-xs text-zinc-300 shadow-lg">
+          Preparing offline access… keep Guardian connected
+        </div>
+      )}
       <Toaster
         theme="dark"
         position="top-center"

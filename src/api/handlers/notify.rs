@@ -1,9 +1,11 @@
 use crate::api::{error::ApiError, state::AppState};
+use crate::api::auth::middleware::AuthenticatedSession;
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::notify;
 use crate::notify::prefs::NotificationPrefs;
 use axum::extract::{Path as AxumPath, Query, State};
+use axum::Extension;
 use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
@@ -67,7 +69,9 @@ pub struct CirclePrefsPatch {
 pub async fn stream(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    session: Option<Extension<AuthenticatedSession>>,
 ) -> Result<axum::response::Response, ApiError> {
+    let member_session = is_member_session(&session);
     let prefs = notify::load_or_create_prefs(&state.node_id)
         .await
         .map_err(internal_notify)?;
@@ -75,9 +79,12 @@ pub async fn stream(
         .get("last-event-id")
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
-    let replay = notify::replay_after(last_event_id.as_deref())
+    let mut replay = notify::replay_after(last_event_id.as_deref())
         .await
         .map_err(internal_notify)?;
+    if member_session {
+        replay.retain(member_notification_allowed);
+    }
     let mut rx = notify::subscribe();
     let (tx, out_rx) = mpsc::channel(64);
 
@@ -94,6 +101,9 @@ pub async fn stream(
         loop {
             match rx.recv().await {
                 Ok(event) => {
+                    if member_session && !member_notification_allowed(&event) {
+                        continue;
+                    }
                     if !prefs.allows(event.kind) {
                         continue;
                     }
@@ -107,7 +117,10 @@ pub async fn stream(
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                     let cursor = last_sent.map(|value| value.to_string());
                     match notify::replay_after(cursor.as_deref()).await {
-                        Ok(events) => {
+                        Ok(mut events) => {
+                            if member_session {
+                                events.retain(member_notification_allowed);
+                            }
                             if send_batch(&tx, &prefs, events, &mut last_sent)
                                 .await
                                 .is_err()
@@ -132,26 +145,83 @@ pub async fn stream(
 
 pub async fn history(
     Query(query): Query<HistoryQuery>,
+    session: Option<Extension<AuthenticatedSession>>,
 ) -> Result<Json<Vec<notify::model::NotificationEvent>>, ApiError> {
-    let events = notify::history(query.limit)
+    let mut events = notify::history(query.limit)
         .await
         .map_err(internal_notify)?;
+    if is_member_session(&session) {
+        events.retain(member_notification_allowed);
+    }
     Ok(Json(events))
 }
 
-pub async fn unread_count() -> Result<Json<UnreadCountResponse>, ApiError> {
-    let unread = notify::unread_count().await.map_err(internal_notify)?;
+pub async fn unread_count(
+    session: Option<Extension<AuthenticatedSession>>,
+) -> Result<Json<UnreadCountResponse>, ApiError> {
+    let unread = if is_member_session(&session) {
+        notify::history(None)
+            .await
+            .map_err(internal_notify)?
+            .into_iter()
+            .filter(|event| member_notification_allowed(event) && !event.read)
+            .count()
+    } else {
+        notify::unread_count().await.map_err(internal_notify)?
+    };
     Ok(Json(UnreadCountResponse { unread }))
 }
 
-pub async fn mark_read(AxumPath(id): AxumPath<String>) -> Result<Json<MarkReadResponse>, ApiError> {
+pub async fn mark_read(
+    State(state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+    session: Option<Extension<AuthenticatedSession>>,
+) -> Result<Json<MarkReadResponse>, ApiError> {
+    if is_member_session(&session) {
+        let allowed = notify::history(None)
+            .await
+            .map_err(internal_notify)?
+            .into_iter()
+            .any(|event| event.id == id && member_notification_allowed(&event));
+        if !allowed {
+            if let Some(Extension(session)) = session.as_ref() {
+                crate::api::auth::authorization::audit_member_resource_denied(
+                    &state.node_id,
+                    &session.claims.sub,
+                    "Circle notification",
+                );
+            }
+            return Err(ApiError::Forbidden("notification is outside member scope".into()));
+        }
+    }
     let (updated, unread) = notify::mark_read(&id).await.map_err(internal_notify)?;
+    let unread = if is_member_session(&session) {
+        member_unread_count().await?
+    } else {
+        unread
+    };
     Ok(Json(MarkReadResponse { updated, unread }))
 }
 
-pub async fn mark_all_read() -> Result<Json<MarkAllReadResponse>, ApiError> {
-    let (marked, unread) = notify::mark_all_read().await.map_err(internal_notify)?;
-    Ok(Json(MarkAllReadResponse { marked, unread }))
+pub async fn mark_all_read(
+    session: Option<Extension<AuthenticatedSession>>,
+) -> Result<Json<MarkAllReadResponse>, ApiError> {
+    if !is_member_session(&session) {
+        let (marked, unread) = notify::mark_all_read().await.map_err(internal_notify)?;
+        return Ok(Json(MarkAllReadResponse { marked, unread }));
+    }
+
+    let ids = notify::history(None)
+        .await
+        .map_err(internal_notify)?
+        .into_iter()
+        .filter(|event| member_notification_allowed(event) && !event.read)
+        .map(|event| event.id)
+        .collect::<Vec<_>>();
+    for id in &ids {
+        notify::mark_read(id).await.map_err(internal_notify)?;
+    }
+    Ok(Json(MarkAllReadResponse { marked: ids.len(), unread: 0 }))
 }
 
 pub async fn get_prefs(
@@ -223,6 +293,25 @@ fn apply_patch(prefs: &mut NotificationPrefs, patch: NotificationPrefsPatch) {
             prefs.circles.member_joined = value;
         }
     }
+}
+
+fn is_member_session(session: &Option<Extension<AuthenticatedSession>>) -> bool {
+    session
+        .as_ref()
+        .is_some_and(|Extension(session)| session.claims.role == "member")
+}
+
+fn member_notification_allowed(event: &notify::model::NotificationEvent) -> bool {
+    event.kind.category() == notify::model::NotificationCategory::Circles
+}
+
+async fn member_unread_count() -> Result<usize, ApiError> {
+    Ok(notify::history(None)
+        .await
+        .map_err(internal_notify)?
+        .into_iter()
+        .filter(|event| member_notification_allowed(event) && !event.read)
+        .count())
 }
 
 async fn send_batch(

@@ -4,6 +4,7 @@ import { PageHeader } from "../../components/PageHeader";
 import { mockGuardian, mockDevices } from "../../data/mockData";
 import { X, AlertTriangle, ChevronRight, Ban, Users, UserPlus, Loader2 } from "lucide-react";
 import { useGuardianInfo, useDevices } from "../../hooks/useApiData";
+import { useContactNames } from "../../contexts/ContactNameContext";
 
 interface Node {
   id: string;
@@ -38,6 +39,7 @@ function getNodePosition(index: number, total: number, radius: number, cx: numbe
 // ── Embeddable topology canvas (legacy radial — used inside Settings only) ─────
 function STTopologyCanvas({ scenario = "default" }: { scenario?: TopologyScenario }) {
   const navigate = useNavigate();
+  const { displayForDid } = useContactNames();
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [blockConfirm, setBlockConfirm] = useState(false);
   const [showMore, setShowMore] = useState(false);
@@ -71,6 +73,7 @@ function STTopologyCanvas({ scenario = "default" }: { scenario?: TopologyScenari
       .map((d: any) => ({
         id: d.id,
         label: d.name,
+        did: d.did,
         online: d.status === "online",
         isUnknown: d.category === "pending" || d.manufacturer === "Unknown",
         securityScore: d.securityScore,
@@ -123,6 +126,12 @@ function STTopologyCanvas({ scenario = "default" }: { scenario?: TopologyScenari
     if (s >= 50) return "var(--chart-5)";
     return "var(--destructive)";
   };
+  const displayNodeName = (node: Node) => displayForDid(node.did, node.label);
+  const truncateNodeName = (node: Node, max: number) => {
+    const name = displayNodeName(node);
+    return name.length > max ? `${name.substring(0, max)}…` : name;
+  };
+  const nodeInitials = (node: Node) => displayNodeName(node).substring(0, 2).toUpperCase();
 
   // ── Solo scenario ──────────────────────────────────────────────────────────
   if (scenario === "solo") {
@@ -251,7 +260,7 @@ function STTopologyCanvas({ scenario = "default" }: { scenario?: TopologyScenari
               {visiblePeers.map((node, i) => {
                 const total = MAX_VISIBLE + (hiddenCount > 0 ? 1 : 0);
                 const pos = getNodePosition(i, total, radius, cx, cy);
-                const initials = node.label.substring(0, 2).toUpperCase();
+                const initials = nodeInitials(node);
                 const nodeColor = node.isUnknown ? "var(--chart-5)" : node.online ? "var(--chart-2)" : "var(--border)";
                 return (
                   <g key={node.id} onClick={(e) => handleNodeTap(node, e)} style={{ cursor: "pointer" }}>
@@ -278,7 +287,7 @@ function STTopologyCanvas({ scenario = "default" }: { scenario?: TopologyScenari
                       </>
                     )}
                     <text x={pos.x} y={pos.y + 34} textAnchor="middle" style={{ fontFamily: "Inter, sans-serif", fontSize: "9px", fill: node.isUnknown ? "var(--chart-5)" : "var(--muted-foreground)" }}>
-                      {node.label.length > 16 ? node.label.substring(0, 16) + "…" : node.label}
+                      {truncateNodeName(node, 16)}
                     </text>
                   </g>
                 );
@@ -331,7 +340,7 @@ function STTopologyCanvas({ scenario = "default" }: { scenario?: TopologyScenari
                 {largePeers.slice(MAX_VISIBLE).map((node) => (
                   <div key={node.id} className="flex items-center gap-3 py-3 border-b border-border">
                     <div style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: node.online ? "var(--chart-2)" : "var(--muted-foreground)", flexShrink: 0 }} />
-                    <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--foreground)" }}>{node.label}</span>
+                    <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--foreground)" }}>{displayNodeName(node)}</span>
                     {node.ip && <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px", color: "var(--muted-foreground)", marginLeft: "auto" }}>{node.ip}</span>}
                   </div>
                 ))}
@@ -412,7 +421,7 @@ function STTopologyCanvas({ scenario = "default" }: { scenario?: TopologyScenari
                 const pos = getNodePosition(i, allNodes.length, radius, cx, cy);
                 const isG2 = node.isSecondaryGuardian;
                 const nodeColor = isG2 ? "var(--primary)" : node.online ? "var(--chart-2)" : "var(--border)";
-                const initials = isG2 ? "GX" : node.label.substring(0, 2).toUpperCase();
+                const initials = isG2 ? "GX" : nodeInitials(node);
                 return (
                   <g key={node.id} onClick={(e) => handleNodeTap(node, e)} style={{ cursor: "pointer" }}>
                     {/* Second guardian: outlined ring */}
@@ -429,7 +438,7 @@ function STTopologyCanvas({ scenario = "default" }: { scenario?: TopologyScenari
                       {initials}
                     </text>
                     <text x={pos.x} y={pos.y + 34} textAnchor="middle" style={{ fontFamily: "Inter, sans-serif", fontSize: "9px", fill: isG2 ? "var(--primary)" : "var(--muted-foreground)" }}>
-                      {node.label.length > 12 ? node.label.substring(0, 12) + "…" : node.label}
+                      {truncateNodeName(node, 12)}
                     </text>
                   </g>
                 );
@@ -508,7 +517,7 @@ function STTopologyCanvas({ scenario = "default" }: { scenario?: TopologyScenari
 
             {peerNodes.map((node, i) => {
               const pos = getNodePosition(i, peerNodes.length, radius, cx, cy);
-              const initials = node.label.substring(0, 2).toUpperCase();
+              const initials = nodeInitials(node);
               const nodeColor = node.isUnknown ? "var(--chart-5)" : node.online ? "var(--chart-2)" : "var(--border)";
               return (
                 <g key={node.id} onClick={(e) => handleNodeTap(node, e)} style={{ cursor: "pointer" }}>
@@ -535,7 +544,7 @@ function STTopologyCanvas({ scenario = "default" }: { scenario?: TopologyScenari
                     </>
                   )}
                   <text x={pos.x} y={pos.y + 34} textAnchor="middle" style={{ fontFamily: "Inter, sans-serif", fontSize: "9px", fill: node.isUnknown ? "var(--chart-5)" : "var(--muted-foreground)" }}>
-                    {node.label.length > 16 ? node.label.substring(0, 16) + "…" : node.label}
+                    {truncateNodeName(node, 16)}
                   </text>
                 </g>
               );
@@ -574,6 +583,8 @@ function NodeDetailSheet({
   scoreColor: (s?: number) => string;
 }) {
   const navigate = useNavigate();
+  const { displayForDid } = useContactNames();
+  const nodeDisplayName = displayForDid(node.did, node.label);
   return (
     <div
       className="fixed inset-0 z-50 flex items-end md:items-center justify-center cursor-pointer"
@@ -594,7 +605,7 @@ function NodeDetailSheet({
             {node.isUnknown && <AlertTriangle size={15} style={{ color: "var(--chart-5)" }} />}
             {node.isSecondaryGuardian && <div style={{ width: "8px", height: "8px", borderRadius: "50%", border: "2px solid var(--primary)", flexShrink: 0 }} />}
             <h3 style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: node.isUnknown ? "var(--chart-5)" : node.isSecondaryGuardian ? "var(--primary)" : "var(--foreground)" }}>
-              {node.label}
+              {nodeDisplayName}
             </h3>
             {node.isSecondaryGuardian && (
               <span style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--primary)", backgroundColor: "color-mix(in srgb, var(--primary) 12%, transparent)", padding: "1px 6px", borderRadius: "var(--radius-sm)", border: "1px solid color-mix(in srgb, var(--primary) 25%, transparent)" }}>
@@ -664,7 +675,7 @@ function NodeDetailSheet({
             </div>
           ) : (
             <div className="rounded-lg border p-4 flex flex-col gap-3" style={{ borderColor: "color-mix(in srgb, var(--destructive) 30%, transparent)", backgroundColor: "color-mix(in srgb, var(--destructive) 6%, var(--card))" }}>
-              <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>Block {node.label}?</p>
+              <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>Block {nodeDisplayName}?</p>
               <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>This will immediately revoke network access for this device.</p>
               <div className="flex gap-2">
                 <button onClick={() => setBlockConfirm(false)} className="flex-1 flex items-center justify-center rounded-md transition-opacity active:opacity-80" style={{ height: "40px", backgroundColor: "var(--secondary)", color: "var(--secondary-foreground)", border: "1px solid var(--border)", cursor: "pointer", borderRadius: "var(--radius)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)" }}>Cancel</button>
