@@ -15,14 +15,19 @@ pub struct TrustedPeerIdentity {
 
 #[async_trait]
 pub trait PeerIdentityResolver: Send + Sync {
-    async fn resolve(&self, device_id: &str) -> CallResult<TrustedPeerIdentity>;
+    /// `device_id` is the sender's self-declared identifier from the signaling
+    /// envelope; `peer_ip` is the Nebula overlay IP the message actually
+    /// arrived from. Implementations must anchor trust to `peer_ip`, since
+    /// the trusted-peer registry is keyed by the observed attestation
+    /// address, not by the peer's self-asserted device_id.
+    async fn resolve(&self, device_id: &str, peer_ip: &str) -> CallResult<TrustedPeerIdentity>;
 }
 
 pub struct RejectUnknownPeerResolver;
 
 #[async_trait]
 impl PeerIdentityResolver for RejectUnknownPeerResolver {
-    async fn resolve(&self, device_id: &str) -> CallResult<TrustedPeerIdentity> {
+    async fn resolve(&self, device_id: &str, _peer_ip: &str) -> CallResult<TrustedPeerIdentity> {
         Err(CallError::UnauthorizedDevice {
             reason: format!("No trusted identity resolver configured for {}", device_id),
         })
@@ -37,7 +42,8 @@ pub struct DidPeerIdentityResolver {
 
 #[derive(Debug, Deserialize)]
 struct TrustedPeerRecord {
-    peer_id: String,
+    #[serde(default)]
+    ip: String,
     #[serde(default)]
     status: String,
     #[serde(default)]
@@ -72,7 +78,7 @@ impl DidPeerIdentityResolver {
         }
     }
 
-    async fn trusted_did(&self, device_id: &str) -> CallResult<String> {
+    async fn trusted_did(&self, peer_ip: &str) -> CallResult<String> {
         for path in &self.trusted_peer_files {
             let Ok(bytes) = tokio::fs::read(path).await else {
                 continue;
@@ -81,7 +87,7 @@ impl DidPeerIdentityResolver {
                 serde_json::from_slice(&bytes).map_err(|_| CallError::UnauthorizedDevice {
                     reason: "Trusted peer registry is malformed".into(),
                 })?;
-            if let Some(record) = records.into_iter().find(|peer| peer.peer_id == device_id) {
+            if let Some(record) = records.into_iter().find(|peer| peer.ip == peer_ip) {
                 if !matches!(record.status.as_str(), "verified" | "trusted" | "success") {
                     return Err(CallError::UnauthorizedDevice {
                         reason: "Peer is not currently trusted".into(),
@@ -103,8 +109,8 @@ impl DidPeerIdentityResolver {
 
 #[async_trait]
 impl PeerIdentityResolver for DidPeerIdentityResolver {
-    async fn resolve(&self, device_id: &str) -> CallResult<TrustedPeerIdentity> {
-        let did = self.trusted_did(device_id).await?;
+    async fn resolve(&self, device_id: &str, peer_ip: &str) -> CallResult<TrustedPeerIdentity> {
+        let did = self.trusted_did(peer_ip).await?;
         let resolved =
             self.did_resolver
                 .resolve(&did)

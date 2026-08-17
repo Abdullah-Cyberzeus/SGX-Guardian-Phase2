@@ -239,17 +239,24 @@ impl NebulaSignaling {
                     return Err(CallError::SignatureVerificationFailed);
                 }
                 let session = session_manager.get_session(&answer.session_id).await?;
-                if session.receiver.device_id != answer.device_id || session.nonce != answer.nonce {
+                // The receiver's device_id is not known to the initiator until now
+                // (the session was provisioned from the trusted-peer registry, which
+                // is keyed by Nebula IP, not by the remote's self-asserted ID), so
+                // identity is anchored to the Nebula endpoint the answer arrived on.
+                if session.receiver_nebula_ip.as_deref() != Some(peer_ip.as_str())
+                    || session.nonce != answer.nonce
+                {
                     return Err(CallError::InvalidOffer {
                         reason: "Answer does not match the active session".to_string(),
                     });
                 }
                 if answer.accepted {
                     session_manager
-                        .set_receiver_acceptance(
+                        .set_receiver_acceptance_with_device(
                             &answer.session_id,
                             answer.virtual_id.clone(),
                             answer.accepted_media.clone(),
+                            Some(answer.device_id.clone()),
                         )
                         .await?;
                     session_manager
@@ -298,7 +305,7 @@ impl NebulaSignaling {
         envelope.validate_freshness(chrono::Utc::now())?;
         let _identity = self
             .peer_identities
-            .resolve(&envelope.sender_device_id)
+            .resolve(&envelope.sender_device_id, &peer_ip)
             .await?;
         // Attestation and Nebula authenticate this peer before call traffic.
         // Avoid reopening SE050 for each call-control message.
@@ -361,17 +368,24 @@ impl NebulaSignaling {
                     });
                 }
                 let session = session_manager.get_session(&answer.session_id).await?;
-                if session.receiver.device_id != answer.device_id || session.nonce != answer.nonce {
+                // The receiver's device_id is not known to the initiator until now
+                // (the session was provisioned from the trusted-peer registry, which
+                // is keyed by Nebula IP, not by the remote's self-asserted ID), so
+                // identity is anchored to the Nebula endpoint the answer arrived on.
+                if session.receiver_nebula_ip.as_deref() != Some(peer_ip.as_str())
+                    || session.nonce != answer.nonce
+                {
                     return Err(CallError::InvalidOffer {
                         reason: "Answer does not match the active session".into(),
                     });
                 }
                 if answer.accepted {
                     session_manager
-                        .set_receiver_acceptance(
+                        .set_receiver_acceptance_with_device(
                             &answer.session_id,
                             answer.virtual_id.clone(),
                             answer.accepted_media.clone(),
+                            Some(answer.device_id.clone()),
                         )
                         .await?;
                     for (state, reason) in [
@@ -865,7 +879,7 @@ mod tests {
 
     #[async_trait]
     impl PeerIdentityResolver for StaticIdentity {
-        async fn resolve(&self, device_id: &str) -> CallResult<TrustedPeerIdentity> {
+        async fn resolve(&self, device_id: &str, _peer_ip: &str) -> CallResult<TrustedPeerIdentity> {
             if self.0.device_id == device_id {
                 Ok(self.0.clone())
             } else {

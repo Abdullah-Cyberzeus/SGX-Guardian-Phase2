@@ -105,6 +105,14 @@ pub struct SendMessageResponse {
     pub status: String,
 }
 
+fn request_payload_json(req: &SendMessageRequest) -> String {
+    serde_json::to_string(&serde_json::json!({
+        "content": req.content,
+        "attachment_id": req.attachment_id,
+    }))
+    .unwrap_or_default()
+}
+
 pub async fn send_message(
     State(state): State<Arc<AppState>>,
     session: Option<Extension<AuthenticatedSession>>,
@@ -324,14 +332,21 @@ pub async fn send_message(
             .unwrap_or_default()
     };
 
-    let requested_id = req
-        .message_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|id| !id.is_empty() && id.len() <= 100);
+    let requested_id = req.message_id.as_deref().map(str::trim).filter(|id| !id.is_empty());
+    if requested_id.is_some_and(|id| id.len() > 100) {
+        return Err(ApiError::BadRequest(
+            "message_id must be 100 characters or fewer".to_string(),
+        ));
+    }
+    let content_str = request_payload_json(&req);
 
     if let Some(existing) = requested_id.and_then(|id| history.iter().find(|m| m.message_id == id))
     {
+        if existing.encrypted_payload != content_str {
+            return Err(ApiError::BadRequest(
+                "idempotency replay payload does not match the original message".to_string(),
+            ));
+        }
         // Idempotent replay: this exact message was already accepted, so do
         // not append another log entry or re-dispatch gRPC delivery. Return
         // its real current status rather than a fixed placeholder so a
@@ -350,12 +365,8 @@ pub async fn send_message(
     let timestamp = chrono::Utc::now().timestamp();
     let seq_no = history.iter().map(|m| m.seq_no).max().unwrap_or(0) + 1;
 
-    // 4. Save outbound message locally (plaintext JSON, no encryption)
-    let payload_obj = serde_json::json!({
-        "content": req.content,
-        "attachment_id": req.attachment_id,
-    });
-    let content_str = serde_json::to_string(&payload_obj).unwrap_or_default();
+    // 4. Save outbound message locally. The field name is kept for schema
+    // compatibility while Phase 0's encryption-at-rest decision is finalized.
     let group_id_opt = if req.is_group {
         Some(req.recipient_did.clone())
     } else {
@@ -371,7 +382,7 @@ pub async fn send_message(
         seq_no,
         encrypted_payload: content_str.clone(), // field name kept for schema compat
         signature: String::new(),
-        status: MessageStatus::Pending,
+        status: MessageStatus::AcceptedByGuardian,
         read_by: Vec::new(),
     };
 
@@ -397,7 +408,7 @@ pub async fn send_message(
                 false,
                 &direct_conversation_id,
                 &message_id,
-                crate::chat::models::MessageStatus::Delivered,
+                    crate::chat::models::MessageStatus::DeliveredToRemoteGuardian,
             )
             .await
             {
@@ -414,9 +425,9 @@ pub async fn send_message(
             message_id,
             signature_base64: String::new(),
             status: if delivered {
-                MessageStatus::Delivered.as_str().to_string()
+                MessageStatus::DeliveredToRemoteGuardian.as_str().to_string()
             } else {
-                MessageStatus::Pending.as_str().to_string()
+                MessageStatus::AcceptedByGuardian.as_str().to_string()
             },
         }));
     }
@@ -484,7 +495,7 @@ pub async fn send_message(
                 is_group,
                 &status_target_id,
                 &message_id_clone,
-                crate::chat::models::MessageStatus::Delivered,
+                crate::chat::models::MessageStatus::DeliveredToRemoteGuardian,
             )
             .await
             {
@@ -503,7 +514,7 @@ pub async fn send_message(
     Ok(Json(SendMessageResponse {
         message_id,
         signature_base64: String::new(),
-        status: MessageStatus::Pending.as_str().to_string(),
+        status: MessageStatus::AcceptedByGuardian.as_str().to_string(),
     }))
 }
 
@@ -725,11 +736,14 @@ pub async fn trigger_sync(
 pub struct ChatHistoryQuery {
     pub peer_did: Option<String>,
     pub group_id: Option<String>,
+    pub after_seq: Option<u64>,
+    pub limit: Option<usize>,
 }
 
 #[derive(Serialize)]
 pub struct ChatHistoryResponse {
     pub messages: Vec<crate::chat::models::ChatMessageRecord>,
+    pub next_cursor: Option<u64>,
 }
 
 /// Task 7.1: Local Axum REST API to query paginated chat logs
@@ -738,7 +752,7 @@ pub async fn get_history(
     session: Option<Extension<AuthenticatedSession>>,
     Query(query): Query<ChatHistoryQuery>,
 ) -> Result<Json<ChatHistoryResponse>, ApiError> {
-    let messages = if let Some(peer_did) = query.peer_did {
+    let mut messages = if let Some(peer_did) = query.peer_did {
         ensure_member_contact_access(&state, &session, &peer_did)?;
         let conversation_id = if peer_did == state.device_did {
             crate::api::handlers::browser_member::did_from_session(&session)
@@ -759,8 +773,17 @@ pub async fn get_history(
             "Must provide either peer_did or group_id".to_string(),
         ));
     };
+    messages.sort_by_key(|message| (message.seq_no, message.timestamp));
+    if let Some(after_seq) = query.after_seq {
+        messages.retain(|message| message.seq_no > after_seq);
+    }
+    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+    if messages.len() > limit {
+        messages.truncate(limit);
+    }
+    let next_cursor = messages.last().map(|message| message.seq_no);
 
-    Ok(Json(ChatHistoryResponse { messages }))
+    Ok(Json(ChatHistoryResponse { messages, next_cursor }))
 }
 
 fn ensure_member_contact_access(
