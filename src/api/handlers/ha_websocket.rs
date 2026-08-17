@@ -60,7 +60,10 @@ async fn handle_websocket_session(socket: WebSocket, state: Arc<AppState>) {
                 match rx.recv().await {
                     Ok(HaEvent::StateChanged(val)) => {
                         let active_topics = topics_clone.lock().await;
-                        if active_topics.contains("device_events") || active_topics.contains("telemetry") || active_topics.contains("all") {
+                        if active_topics.contains("device_events")
+                            || active_topics.contains("telemetry")
+                            || active_topics.contains("all")
+                        {
                             let payload = WsOutgoingEvent {
                                 topic: "device_events".to_string(),
                                 event: "state_changed".to_string(),
@@ -75,9 +78,15 @@ async fn handle_websocket_session(socket: WebSocket, state: Arc<AppState>) {
                             }
                         }
                     }
-                    Ok(HaEvent::NotificationCreated { id, title, message, severity }) => {
+                    Ok(HaEvent::NotificationCreated {
+                        id,
+                        title,
+                        message,
+                        severity,
+                    }) => {
                         let active_topics = topics_clone.lock().await;
-                        if active_topics.contains("notifications") || active_topics.contains("all") {
+                        if active_topics.contains("notifications") || active_topics.contains("all")
+                        {
                             let payload = WsOutgoingEvent {
                                 topic: "notifications".to_string(),
                                 event: "notification_created".to_string(),

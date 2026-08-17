@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { Archive, Plus, MessageSquare, Users, Shield, Network, Send, X, ChevronRight, Loader2, Phone, Video, PhoneCall, FolderOpen, Copy, Check, Link } from "lucide-react";
 import { mockCircles, mockUser } from "../../data/mockData";
-import { useCircles } from "../../hooks/useApiData";
+import { useCircleInviteInbox, useCircles } from "../../hooks/useApiData";
 import { EmptyState } from "../../components/EmptyState";
 import { CircleLiveTopology } from "../../components/circle-topology/CircleLiveTopology";
 import { CallScreen } from "../../components/circle/CallScreen";
@@ -12,6 +12,8 @@ import { FilesTab } from "../../components/circle/FilesTab";
 import { collectSharedFiles } from "../../components/circle/types";
 import type { CallMode, CallRecord } from "../../components/circle/types";
 import { useVault } from "../../contexts/VaultContext";
+import circleService, { type CircleInvite } from "../../services/circleService";
+import { toast } from "sonner";
 
 // ── Circle list item row ──────────────────────────────────────────────────────
 function CircleRow({
@@ -461,6 +463,91 @@ function CircleDetailPanel({ circle }: { circle: typeof mockCircles[0] }) {
   );
 }
 
+function isPendingInvite(invite: CircleInvite) {
+  return String(invite.state || invite.status || "").toLowerCase() === "pending";
+}
+
+function IncomingCircleInvites({
+  invites,
+  onRefreshInbox,
+  onRefreshCircles,
+}: {
+  invites: CircleInvite[];
+  onRefreshInbox: () => Promise<void>;
+  onRefreshCircles: () => Promise<void>;
+}) {
+  const [processing, setProcessing] = useState<string | null>(null);
+  const pending = invites.filter(isPendingInvite);
+  if (pending.length === 0) return null;
+
+  const handleDecision = async (invite: CircleInvite, decision: "accept" | "reject") => {
+    if (processing || !invite.id) return;
+    setProcessing(`${decision}:${invite.id}`);
+    try {
+      if (decision === "accept") {
+        await circleService.acceptInvite(invite.id);
+        const circleId = invite.circleId || String((invite as any).circle_id || "");
+        if (circleId) await circleService.getMembers(circleId).catch(() => []);
+        toast.success("Circle invitation accepted");
+      } else {
+        await circleService.rejectInvite(invite.id);
+        toast.success("Circle invitation rejected");
+      }
+      await Promise.all([onRefreshInbox(), onRefreshCircles()]);
+    } catch (cause) {
+      toast.error(decision === "accept" ? "Accept failed" : "Reject failed", {
+        description: cause instanceof Error ? cause.message : "Try again.",
+      });
+    } finally {
+      setProcessing(null);
+    }
+  };
+
+  return (
+    <div className="border-b border-border px-5 py-4" style={{ backgroundColor: "var(--card)" }}>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "11px", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+          Incoming Circle Invites · {pending.length}
+        </p>
+      </div>
+      <div className="flex flex-col gap-3">
+        {pending.map((invite) => {
+          const acceptBusy = processing === `accept:${invite.id}`;
+          const rejectBusy = processing === `reject:${invite.id}`;
+          return (
+            <div key={invite.id} className="rounded-lg border border-border p-3" style={{ backgroundColor: "var(--background)" }}>
+              <div className="mb-3">
+                <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>New Circle Invitation</p>
+                <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginTop: "4px" }}>Circle: {invite.circleName || "Circle invitation"}</p>
+                <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px", color: "var(--muted-foreground)", marginTop: "2px", wordBreak: "break-all" }}>From: {invite.issuerDid || "Unknown issuer"}</p>
+                <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginTop: "2px" }}>Role: {String(invite.role || "member").replace(/^./, (char) => char.toUpperCase())}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => void handleDecision(invite, "accept")}
+                  disabled={!!processing}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-md transition-opacity active:opacity-80 disabled:opacity-50"
+                  style={{ height: "36px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", border: "none", cursor: processing ? "not-allowed" : "pointer", borderRadius: "var(--radius)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)" }}
+                >
+                  {acceptBusy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Accept
+                </button>
+                <button
+                  onClick={() => void handleDecision(invite, "reject")}
+                  disabled={!!processing}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-md transition-opacity active:opacity-80 disabled:opacity-50"
+                  style={{ height: "36px", backgroundColor: "var(--secondary)", color: "var(--secondary-foreground)", border: "1px solid var(--border)", cursor: processing ? "not-allowed" : "pointer", borderRadius: "var(--radius)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)" }}
+                >
+                  {rejectBusy ? <Loader2 size={14} className="animate-spin" /> : <X size={14} />} Reject
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Main exported component ───────────────────────────────────────────────────
 export function NW01CirclesList() {
   const navigate = useNavigate();
@@ -475,9 +562,11 @@ export function NW01CirclesList() {
   }, [navigate, selectedCircleId]);
 
   // Circle and member records come only from the Guardian API.
-  const { data: circlesData, loading } = useCircles();
+  const { data: circlesData, loading, refetch: refetchCircles } = useCircles();
+  const { data: inviteInbox, refetch: refetchInviteInbox } = useCircleInviteInbox();
 
   const circles: any[] = useMemo(() => Array.isArray(circlesData) ? circlesData : [], [circlesData]);
+  const incomingInvites = useMemo(() => Array.isArray(inviteInbox) ? inviteInbox : [], [inviteInbox]);
 
   const activeCircles = useMemo(() => circles.filter((circle: any) => circle.status !== "archived"), [circles]);
   const archivedCircles = useMemo(() => circles.filter((circle: any) => circle.status === "archived"), [circles]);
@@ -519,6 +608,7 @@ export function NW01CirclesList() {
         </button></div>
       </div>
       <div className="flex-1 overflow-y-auto">
+        <IncomingCircleInvites invites={incomingInvites} onRefreshInbox={refetchInviteInbox} onRefreshCircles={refetchCircles} />
         {circles.length === 0 ? (
           <EmptyState icon={Users} heading="No circles yet"
             subtext="Create a Circle to build your trusted team."
@@ -550,6 +640,7 @@ export function NW01CirclesList() {
             <Plus size={20} style={{ color: "var(--primary-foreground)" }} />
           </button></div>
         </div>
+        <IncomingCircleInvites invites={incomingInvites} onRefreshInbox={refetchInviteInbox} onRefreshCircles={refetchCircles} />
         {circles.length === 0 ? (
           <EmptyState icon={Users} heading="No circles yet" subtext="Create a Circle to build your trusted team." ctaLabel="Create your first Circle" ctaAction={() => navigate("/network/create")} />
         ) : (

@@ -1,9 +1,14 @@
+import { useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Home, Bell, BellRing, Cpu, Cloud, Settings, MessageSquare, Phone } from "lucide-react";
 import { mockGuardian, mockAlerts, mockDevices } from "../data/mockData";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 import { useChatUnread } from "../contexts/ChatUnreadContext";
+import { useCircleInviteInbox } from "../hooks/useApiData";
+import { toast } from "sonner";
 import logoSrc from "@/assets/sgx-guardian-logo.png";
+
+const announcedCircleInviteIds = new Set<string>();
 
 function NetworkCirclesIcon({ size = 20, color = "currentColor", strokeWidth = 1.75 }: {
   size?: number; color?: string; strokeWidth?: number;
@@ -24,7 +29,6 @@ function NetworkCirclesIcon({ size = 20, color = "currentColor", strokeWidth = 1
 
 const alertBadgeCount = mockAlerts.filter((a) => !a.archived && a.severity === "HIGH").length;
 const deviceBadgeCount = mockDevices.filter((d) => d.category === "pending").length;
-const circlesBadgeCount = 2; // mock pending invites
 
 interface AppSidebarProps {
   /** "collapsed" = tablet icon-only, "expanded" = desktop with labels */
@@ -36,7 +40,24 @@ export function AppSidebar({ variant }: AppSidebarProps) {
   const navigate = useNavigate();
   const { name, initials } = useCurrentUser();
   const { total: unreadChats } = useChatUnread();
+  const { data: inviteInbox } = useCircleInviteInbox();
   const isExpanded = variant === "expanded";
+  const pendingCircleInvites = useMemo(
+    () => (inviteInbox || []).filter((invite: any) => String(invite.state || invite.status || "").toLowerCase() === "pending"),
+    [inviteInbox],
+  );
+  const circlesBadgeCount = pendingCircleInvites.length;
+
+  useEffect(() => {
+    pendingCircleInvites.forEach((invite: any) => {
+      const id = String(invite.id || invite.invite_id || "");
+      if (!id || announcedCircleInviteIds.has(id)) return;
+      announcedCircleInviteIds.add(id);
+      toast.info("New Circle Invitation", {
+        description: invite.circleName ? `Circle: ${invite.circleName}` : undefined,
+      });
+    });
+  }, [pendingCircleInvites]);
 
   const isActive = (path: string) => location.pathname.startsWith(path);
 

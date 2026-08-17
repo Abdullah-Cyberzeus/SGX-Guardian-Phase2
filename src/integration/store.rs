@@ -9,7 +9,9 @@ use tracing::{info, warn};
 use std::os::unix::fs::PermissionsExt;
 
 use crate::integration::crypto::{decrypt_tokens, encrypt_tokens};
-use crate::integration::provider::{IntegrationMetadata, IntegrationStatus, OAuthCredentials, VendorProvider};
+use crate::integration::provider::{
+    IntegrationMetadata, IntegrationStatus, OAuthCredentials, VendorProvider,
+};
 use crate::storage::file_lock::SecureFileStore;
 use crate::storage::resolve_data_file;
 
@@ -87,26 +89,36 @@ impl IntegrationStore {
 
             if let Some(ref cipher_bytes) = record.encrypted_credentials {
                 match decrypt_tokens(cipher_bytes) {
-                    Ok(plain_bytes) => {
-                        match record.provider {
-                            VendorProvider::GoogleNest => {
-                                if let Ok(parsed_nest) = serde_json::from_slice::<crate::nest::NestCredentials>(&plain_bytes) {
-                                    nest_creds = Some(parsed_nest);
-                                } else if let Ok(parsed_creds) = serde_json::from_slice::<OAuthCredentials>(&plain_bytes) {
-                                    creds = Some(parsed_creds);
-                                } else {
-                                    warn!("Failed to parse Nest credentials for provider {}", provider_key);
-                                }
-                            }
-                            VendorProvider::TpLinkKasa => {
-                                if let Ok(parsed_kasa) = serde_json::from_slice::<crate::kasa::KasaCredentials>(&plain_bytes) {
-                                    kasa_creds = Some(parsed_kasa);
-                                } else {
-                                    warn!("Failed to parse Kasa credentials for provider {}", provider_key);
-                                }
+                    Ok(plain_bytes) => match record.provider {
+                        VendorProvider::GoogleNest => {
+                            if let Ok(parsed_nest) =
+                                serde_json::from_slice::<crate::nest::NestCredentials>(&plain_bytes)
+                            {
+                                nest_creds = Some(parsed_nest);
+                            } else if let Ok(parsed_creds) =
+                                serde_json::from_slice::<OAuthCredentials>(&plain_bytes)
+                            {
+                                creds = Some(parsed_creds);
+                            } else {
+                                warn!(
+                                    "Failed to parse Nest credentials for provider {}",
+                                    provider_key
+                                );
                             }
                         }
-                    }
+                        VendorProvider::TpLinkKasa => {
+                            if let Ok(parsed_kasa) =
+                                serde_json::from_slice::<crate::kasa::KasaCredentials>(&plain_bytes)
+                            {
+                                kasa_creds = Some(parsed_kasa);
+                            } else {
+                                warn!(
+                                    "Failed to parse Kasa credentials for provider {}",
+                                    provider_key
+                                );
+                            }
+                        }
+                    },
                     Err(e) => {
                         warn!("Failed to decrypt credentials for {}: {}", provider_key, e);
                     }
@@ -128,27 +140,36 @@ impl IntegrationStore {
             result.insert(record.provider, meta);
         }
 
-        println!("⚙️ Loaded {} vendor integration(s) from disk.", result.len());
+        println!(
+            "⚙️ Loaded {} vendor integration(s) from disk.",
+            result.len()
+        );
         info!("Loaded {} vendor integration(s) from disk.", result.len());
         result
     }
 
     /// Saves all vendor integrations to `integrations.json` under `flock` atomic protection
-    pub fn save(&self, integrations: &HashMap<VendorProvider, IntegrationMetadata>) -> Result<(), String> {
+    pub fn save(
+        &self,
+        integrations: &HashMap<VendorProvider, IntegrationMetadata>,
+    ) -> Result<(), String> {
         let mut store_data = IntegrationFileStore::default();
 
         for (provider, meta) in integrations {
             let mut encrypted_creds = None;
             if let Some(ref creds) = meta.credentials {
-                let json_bytes = serde_json::to_vec(creds).map_err(|e| format!("Serialization error: {}", e))?;
+                let json_bytes =
+                    serde_json::to_vec(creds).map_err(|e| format!("Serialization error: {}", e))?;
                 let cipher_bytes = encrypt_tokens(&json_bytes)?;
                 encrypted_creds = Some(cipher_bytes);
             } else if let Some(ref kasa_creds) = meta.kasa_credentials {
-                let json_bytes = serde_json::to_vec(kasa_creds).map_err(|e| format!("Serialization error: {}", e))?;
+                let json_bytes = serde_json::to_vec(kasa_creds)
+                    .map_err(|e| format!("Serialization error: {}", e))?;
                 let cipher_bytes = encrypt_tokens(&json_bytes)?;
                 encrypted_creds = Some(cipher_bytes);
             } else if let Some(ref nest_creds) = meta.nest_credentials {
-                let json_bytes = serde_json::to_vec(nest_creds).map_err(|e| format!("Serialization error: {}", e))?;
+                let json_bytes = serde_json::to_vec(nest_creds)
+                    .map_err(|e| format!("Serialization error: {}", e))?;
                 let cipher_bytes = encrypt_tokens(&json_bytes)?;
                 encrypted_creds = Some(cipher_bytes);
             }
@@ -163,10 +184,13 @@ impl IntegrationStore {
                 encrypted_credentials: encrypted_creds,
             };
 
-            store_data.integrations.insert(provider.as_str().to_string(), record);
+            store_data
+                .integrations
+                .insert(provider.as_str().to_string(), record);
         }
 
-        let json_output = serde_json::to_vec_pretty(&store_data).map_err(|e| format!("JSON encode error: {}", e))?;
+        let json_output = serde_json::to_vec_pretty(&store_data)
+            .map_err(|e| format!("JSON encode error: {}", e))?;
 
         self.file_store
             .write_atomic(|_| Ok::<_, std::io::Error>(json_output))

@@ -5,7 +5,7 @@ import {
   Ban, ShieldCheck, ScanSearch, Pencil, Check, X as XIcon2, UserX, RefreshCw, Copy, Home,
 } from "lucide-react";
 import { toast } from "sonner";
-import { deviceService, type PairedDevice, type DeviceDetail, type PairingCodeResponse } from "../../services/deviceService";
+import { deviceService, type PairedDevice, type DeviceDetail, type PairedGuardianStatus, type PairingCodeResponse } from "../../services/deviceService";
 import {
   managedDeviceService,
   type ManagedDevice,
@@ -53,6 +53,22 @@ function StatusDot({ status }: { status: string }) {
   );
 }
 
+function GuardianStatusSection({ title, rows }: { title: string; rows: Array<{ label: string; value: string | number | undefined; mono?: boolean }> }) {
+  return (
+    <div>
+      <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "8px" }}>{title}</p>
+      <div className="rounded-lg border border-border overflow-hidden" style={{ backgroundColor: "var(--background)" }}>
+        {rows.map(({ label, value, mono }, index) => (
+          <div key={label} className="flex items-center justify-between gap-3 px-4 py-3" style={{ borderBottom: index < rows.length - 1 ? "1px solid var(--border)" : undefined }}>
+            <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{label}</span>
+            <span style={{ fontFamily: mono ? "JetBrains Mono, monospace" : "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--foreground)", wordBreak: "break-all", maxWidth: "58%", textAlign: "right" }}>{value === undefined || value === "" ? "Unavailable" : value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── DeviceDetailPanel ────────────────────────────────────────────────────────
 function DeviceDetailPanel({
   deviceId,
@@ -68,11 +84,13 @@ function DeviceDetailPanel({
   onRepair?: (device: PairedDevice) => void;
 }) {
   const [detail, setDetail] = useState<DeviceDetail | null>(null);
+  const [guardianStatus, setGuardianStatus] = useState<PairedGuardianStatus | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let active = true;
     setDetail(null);
+    setGuardianStatus(null);
     setLoading(true);
     deviceService.getDevice(deviceId)
       .then((data) => {
@@ -83,6 +101,13 @@ function DeviceDetailPanel({
       })
       .finally(() => {
         if (active) setLoading(false);
+      });
+    deviceService.getGuardianStatus(deviceId)
+      .then((data) => {
+        if (active) setGuardianStatus(data);
+      })
+      .catch(() => {
+        // The base detail stays usable when optional remote status is unavailable.
       });
     return () => { active = false; };
   }, [deviceId, fallbackDevice?.deviceId]);
@@ -159,6 +184,59 @@ function DeviceDetailPanel({
             ))}
           </div>
         </div>
+
+        {guardianStatus ? (
+          <>
+            <GuardianStatusSection title="IDENTITY" rows={[
+              { label: "Node Name", value: guardianStatus.identity.nodeName },
+              { label: "DID", value: guardianStatus.identity.did, mono: true },
+              { label: "Device Fingerprint", value: guardianStatus.identity.deviceFingerprint, mono: true },
+              { label: "DID Status", value: guardianStatus.identity.didStatus },
+              { label: "DKP Version", value: guardianStatus.identity.dkpVersion },
+            ]} />
+            <GuardianStatusSection title="RUNTIME" rows={[
+              { label: "Connectivity", value: guardianStatus.runtime.status },
+              { label: "Daemon", value: guardianStatus.runtime.daemonStatus },
+              { label: "Last Seen", value: guardianStatus.runtime.lastSeen },
+              { label: "Uptime (seconds)", value: guardianStatus.runtime.uptimeSeconds },
+            ]} />
+            <GuardianStatusSection title="NETWORK" rows={[
+              { label: "Physical IP", value: guardianStatus.network.physicalIp, mono: true },
+              { label: "Interface", value: guardianStatus.network.interfaceName },
+              { label: "Transport", value: guardianStatus.network.transport },
+            ]} />
+            <GuardianStatusSection title="NEBULA" rows={[
+              { label: "Status", value: guardianStatus.nebula.status },
+              { label: "Overlay IP", value: guardianStatus.nebula.overlayIp, mono: true },
+              { label: "Role", value: guardianStatus.nebula.role },
+              { label: "Trusted Peers", value: guardianStatus.nebula.trustedPeerCount },
+            ]} />
+            <GuardianStatusSection title="HARDWARE SECURITY" rows={[
+              { label: "SE050", value: guardianStatus.hardware.se050Status },
+              { label: "DKP Version", value: guardianStatus.hardware.dkpVersion },
+            ]} />
+            <GuardianStatusSection title="ATTESTATION / INTEGRITY" rows={[
+              { label: "Attestation", value: guardianStatus.security.attestationStatus },
+              { label: "Attestation Endpoint", value: guardianStatus.security.attestationEndpoint, mono: true },
+              { label: "PCR", value: guardianStatus.security.pcrStatus },
+              { label: "Integrity", value: guardianStatus.security.integrityStatus },
+              { label: "Secure Boot / HAB", value: guardianStatus.security.secureBootStatus },
+            ]} />
+            <GuardianStatusSection title="POLICY / TRUST" rows={[
+              { label: "Policy", value: guardianStatus.security.policyStatus },
+              { label: "Policy Digest", value: guardianStatus.security.policyDigest, mono: true },
+              { label: "Trust", value: guardianStatus.security.trustState },
+            ]} />
+            <GuardianStatusSection title="PAIRING" rows={[
+              { label: "Paired At", value: guardianStatus.pairing.pairedAt },
+              { label: "Method", value: guardianStatus.pairing.method },
+              { label: "State", value: guardianStatus.pairing.status },
+              { label: "Reactivated At", value: guardianStatus.pairing.reactivatedAt },
+            ]} />
+          </>
+        ) : (
+          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>Runtime status is currently unavailable for this Guardian.</p>
+        )}
 
         {/* Actions */}
         {isUnpaired ? (

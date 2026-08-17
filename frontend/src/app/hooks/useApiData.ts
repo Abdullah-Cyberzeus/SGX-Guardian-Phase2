@@ -233,6 +233,10 @@ export function useCircles() {
   return useApiData(() => circleService.getAll(), { pollingInterval: 30000 });
 }
 
+export function useCircleInviteInbox() {
+  return useApiData(() => circleService.getInviteInbox(), { pollingInterval: 15000 });
+}
+
 /**
  * Hook for devices
  * Note: No backend endpoint exists yet - returns empty/default data

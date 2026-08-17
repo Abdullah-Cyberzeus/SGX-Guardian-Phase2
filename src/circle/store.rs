@@ -24,7 +24,7 @@ pub fn load_runtime_signing_context(
 }
 
 pub fn mesh_circle_id() -> Result<String, CircleError> {
-    let membership = crate::vc::persistence::load_own_any()?.ok_or_else(|| {
+    let membership = crate::vc::persistence::load_own_mesh()?.ok_or_else(|| {
         CircleError::Invalid("local membership VC not found for mesh-circle resolution".into())
     })?;
     Ok(membership.credential_subject.circle_id)
@@ -216,7 +216,7 @@ fn load_or_seed_unlocked(node_id: &str) -> Result<CircleRegistry, CircleError> {
         return load_registry(path);
     }
 
-    let membership = crate::vc::persistence::load_own_any()?.ok_or_else(|| {
+    let membership = crate::vc::persistence::load_own_mesh()?.ok_or_else(|| {
         CircleError::Invalid("local membership VC not found for circle registry seed".into())
     })?;
     let mesh = Circle {

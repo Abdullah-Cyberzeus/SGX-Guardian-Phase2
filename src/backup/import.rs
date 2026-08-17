@@ -49,9 +49,12 @@ pub async fn import_staged_bundle(
         });
     }
 
-    let decoded =
-        crate::backup::validate::decode_backup_file(staged_path, passphrase, config.max_bundle_bytes)
-            .await?;
+    let decoded = crate::backup::validate::decode_backup_file(
+        staged_path,
+        passphrase,
+        config.max_bundle_bytes,
+    )
+    .await?;
     crate::backup::validate::validate_manifest(&decoded)?;
 
     let backup_id = decoded.manifest.backup_id.clone();
