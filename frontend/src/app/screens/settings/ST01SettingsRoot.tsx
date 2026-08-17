@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import {
-  User, Users, BarChart2, Database, Network, Link, Shield, Settings2,
+  User, Users, BarChart2, Database, Link, Shield, Settings2,
   Wifi, Bell, SlidersHorizontal, BookOpen, Info, LogOut, ChevronRight, Key, ShieldCheck, FileCheck, FileText, Radio, Fingerprint, Cable, Award, Radar, ShieldX, ClipboardCheck,
 } from "lucide-react";
 import { mockGuardian } from "../../data/mockData";
@@ -33,7 +33,6 @@ import { SC04VirtualId } from "../security/SC04VirtualId";
 import { SC05CRLStatus } from "../security/SC05CRLStatus";
 import { PL01PolicyManagement } from "../policy/PL01PolicyManagement";
 import { LG01LogsViewer } from "../logs/LG01LogsViewer";
-import { STTopology } from "./STTopology";
 import { NW03PeersList } from "../network/NW03PeersList";
 import { NW05TransportStatus } from "../network/NW05TransportStatus";
 import { NW06RelayList } from "../network/NW06RelayList";
@@ -53,7 +52,6 @@ const groups = [
   {
     label: "Network",
     items: [
-      { icon: Network, label: "Network Topology", path: "/settings/topology", key: "topology" },
       { icon: Users, label: "Peers", path: "/settings/peers", key: "peers" },
       { icon: Cable, label: "Transport Interfaces", path: "/settings/transport", key: "transport" },
       { icon: Radio, label: "Network Nodes", path: "/settings/relay", key: "relay" },
@@ -108,7 +106,6 @@ function SettingContent({ settingKey }: { settingKey: string }) {
   if (settingKey === "profile") return <ST03Profile />;
   if (settingKey === "data-usage") return <ST04DataUsage />;
   if (settingKey === "backup") return <ST05BackupRestore />;
-  if (settingKey === "topology") return <STTopology />;
   if (settingKey === "peers") return <NW03PeersList />;
   if (settingKey === "geofencing") return <ST07Geofencing />;
   if (settingKey === "device-pairing") return <ST08DevicePairing />;

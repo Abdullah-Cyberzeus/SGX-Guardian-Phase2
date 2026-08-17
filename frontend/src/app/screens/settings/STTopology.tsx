@@ -678,47 +678,12 @@ function NodeDetailSheet({
   );
 }
 
-// ── Full-page screen (with header + scenario picker) ──────────────────────────
+// ── Full-page screen ──────────────────────────────────────────
 export function STTopology() {
-  const [scenario, setScenario] = useState<TopologyScenario>("default");
-
-  const scenarios: { id: TopologyScenario; label: string }[] = [
-    { id: "default", label: "Active" },
-    { id: "solo", label: "Solo" },
-    { id: "large", label: "Large" },
-    { id: "dual-guardian", label: "Dual GX" },
-  ];
-
   return (
     <div className="flex flex-col h-full">
       <PageHeader title="Network Topology" />
-
-      {/* Scenario picker */}
-      <div className="px-4 md:px-6 py-3 border-b border-border" style={{ backgroundColor: "var(--card)" }}>
-        <div className="flex p-1 rounded-lg" style={{ backgroundColor: "var(--muted)" }}>
-          {scenarios.map(({ id, label }) => (
-            <button
-              key={id}
-              onClick={() => setScenario(id)}
-              className="flex-1 flex items-center justify-center"
-              style={{
-                height: "30px",
-                borderRadius: "var(--radius)",
-                backgroundColor: scenario === id ? "var(--card)" : "transparent",
-                color: scenario === id ? "var(--foreground)" : "var(--muted-foreground)",
-                fontFamily: "Inter, sans-serif", fontSize: "10px",
-                fontWeight: scenario === id ? "var(--font-weight-semibold)" : "var(--font-weight-normal)",
-                border: scenario === id ? "1px solid var(--border)" : "none",
-                cursor: "pointer",
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <STTopologyCanvas scenario={scenario} />
+      <STTopologyCanvas />
     </div>
   );
 }
