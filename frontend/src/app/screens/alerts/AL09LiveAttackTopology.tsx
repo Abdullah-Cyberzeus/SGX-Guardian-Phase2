@@ -22,7 +22,7 @@ import {
 const VIEW_BOX = { w: 1160, h: 720 };
 const ACTIVE_WINDOW_MS = 12_000;
 
-const NODE_A = { id: "node-a", label: "Node A", role: "SERVER + IDS", ip: "192.168.50.115", sub: "Suricata + Modbus TCP :502", x: 570, y: 360, r: 48, color: "#38bdf8" };
+const NODE_A = { id: "node-a", label: "Node A", role: "SERVER + IDS", ip: "192.168.50.115", sub: "Guardian + Modbus TCP :502", x: 570, y: 360, r: 48, color: "#38bdf8" };
 const NODE_B = { id: "node-b", label: "Node B", role: "ATTACKER", ip: "192.168.50.248", sub: "Modbus TCP client", x: 175, y: 360, r: 42, color: "#f97316" };
 
 type SceneNodeKind = "attacker" | "server" | "sensor";
@@ -534,7 +534,7 @@ export function AL09LiveAttackTopology() {
           </div>
         </div>
         <div className="modbus-hud-stats">
-          <span className={suricataActive || mode === "demo" ? "is-good" : "is-warn"}>{mode === "demo" ? "DEMO STREAM" : suricataActive ? "SURICATA LIVE" : "SURICATA WAITING"}</span>
+          <span className={suricataActive || mode === "demo" ? "is-good" : "is-warn"}>{mode === "demo" ? "DEMO STREAM" : suricataActive ? "GUARDIAN LIVE" : "GUARDIAN WAITING"}</span>
           <span>{activeAttacks.length} active attacks</span>
           <span>{activeSensorCount}/4 sensors hit</span>
           <span>source {latestSourceIp}</span>

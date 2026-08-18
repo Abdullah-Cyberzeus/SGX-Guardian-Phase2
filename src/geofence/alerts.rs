@@ -127,6 +127,7 @@ mod tests {
         GeofenceZone {
             zone_id: "zone-a".to_string(),
             name: "Control Room".to_string(),
+            topology_node_ref: None,
             kind: ZoneKind::Coordinate,
             center_lat: Some(1.0),
             center_lng: Some(1.0),

@@ -457,7 +457,7 @@ function AlertListPanel({
         <div className="grid grid-cols-2 gap-2">
           {[
             { label: "Threat Score", value: "34", color: "var(--destructive)", note: "Critical" },
-            { label: "IDS Alerts", value: threatStatus ? String(threatStatus.alert_count) : "12", color: "var(--destructive)", note: threatStatus ? "Suricata" : "+4 from yesterday" },
+            { label: "IDS Alerts", value: threatStatus ? String(threatStatus.alert_count) : "12", color: "var(--destructive)", note: threatStatus ? "Guardian" : "+4 from yesterday" },
             { label: "Blocked", value: threatStatus ? String(threatStatus.block_count) : "47", color: "var(--chart-2)", note: threatStatus ? "Active blocks" : "Auto-blocked" },
             { label: "Quarantined", value: "3", color: "var(--chart-4)", note: "Pending review" },
           ].map(({ label, value, color, note }) => (
@@ -776,7 +776,7 @@ export function AL01AlertsList() {
                 )}
                 {t.label}
                 {t.key === "threat" && threatStatus && (
-                  <span title={`Suricata ${threatStatus.suricata}`} style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: suricataActive ? "var(--chart-2)" : "var(--muted-foreground)", display: "inline-block" }} />
+                  <span title={`Guardian ${threatStatus.suricata}`} style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: suricataActive ? "var(--chart-2)" : "var(--muted-foreground)", display: "inline-block" }} />
                 )}
               </button>
             );

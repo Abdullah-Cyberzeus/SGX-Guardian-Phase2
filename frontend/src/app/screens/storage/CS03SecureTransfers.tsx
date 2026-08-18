@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import {
   AlertCircle, ArrowDownToLine, ArrowLeft, ArrowUpFromLine, Ban, Download, File,
@@ -8,8 +8,9 @@ import { toast } from "sonner";
 import { PageHeader } from "../../components/PageHeader";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
-import { Input } from "../../components/ui/input";
 import { useContactNames } from "../../contexts/ContactNameContext";
+import { useCommunicationPeers } from "../../hooks/useApiData";
+import type { Peer } from "../../services/peerService";
 import { formatBytes } from "../../components/vault/types";
 import {
   xferService, type InboxFile, type TransferListResponse, type TransferSummary,
@@ -55,6 +56,12 @@ export function CS03SecureTransfers() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { displayForDid } = useContactNames();
+  const {
+    data: peerData,
+    loading: peersLoading,
+    error: peersError,
+    refetch: refetchPeers,
+  } = useCommunicationPeers();
   const [tab, setTab] = useState<Tab>("send");
   const [peerDid, setPeerDid] = useState("");
   const [selectedVaultIds, setSelectedVaultIds] = useState<string[]>(
@@ -86,6 +93,21 @@ export function CS03SecureTransfers() {
   );
   const childFiles = vaultFiles.filter((file) => fileFolderId(file) === currentFolderId);
   const currentFolder = vaultFolders.find((folder) => folderId(folder) === currentFolderId);
+  const peers = useMemo(() => {
+    const byDid = new Map<string, Peer>();
+    for (const peer of peerData ?? []) {
+      if (!peer.did || peer.status !== "verified" || peer.memberType === "browser") continue;
+      const current = byDid.get(peer.did);
+      if (!current || (!current.online && peer.online)) byDid.set(peer.did, peer);
+    }
+    return [...byDid.values()].sort((a, b) => {
+      if (a.online !== b.online) return a.online ? -1 : 1;
+      const aName = displayForDid(a.did, a.displayName || a.peerId || a.deviceName);
+      const bName = displayForDid(b.did, b.displayName || b.peerId || b.deviceName);
+      return aName.localeCompare(bName);
+    });
+  }, [peerData, displayForDid]);
+  const selectedPeer = peers.find((peer) => peer.did === peerDid);
 
   const loadVault = async () => {
     setVaultLoading(true);
@@ -155,14 +177,9 @@ export function CS03SecureTransfers() {
 
   const handleSend = async (event: FormEvent) => {
     event.preventDefault();
-    if (!peerDid.trim() || selectedVaultIds.length === 0) {
-      setSendError("Destination DID and at least one Vault file are required.");
-      toast.error("Destination DID and at least one Vault file are required");
-      return;
-    }
-    if (!peerDid.trim().startsWith("did:")) {
-      setSendError("The destination must start with did:.");
-      toast.error("Enter a valid destination DID", { description: "The destination must start with did:." });
+    if (!selectedPeer?.did || selectedVaultIds.length === 0) {
+      setSendError("Select a peer and at least one Vault file.");
+      toast.error("Select a peer and at least one Vault file");
       return;
     }
     setSendError(null);
@@ -178,7 +195,7 @@ export function CS03SecureTransfers() {
       for (const vaultId of selectedVaultIds) {
         try {
           await xferService.send({
-            peer_did: peerDid.trim(),
+            peer_did: selectedPeer.did,
             vault_id: vaultId,
           });
           queued += 1;
@@ -192,7 +209,7 @@ export function CS03SecureTransfers() {
       setSelectedVaultIds(failedIds);
       if (queued > 0) {
         toast.success(`${queued} transfer${queued === 1 ? "" : "s"} queued`, {
-          description: `Sending to ${peerDid.trim()}`,
+          description: `Sending to ${displayForDid(selectedPeer.did, selectedPeer.displayName || selectedPeer.peerId)}`,
         });
         await refresh(true);
       }
@@ -329,15 +346,66 @@ export function CS03SecureTransfers() {
                   </p>
                 </div>
               </div>
-              <label className="space-y-1.5 text-xs font-medium">
-                Destination peer DID
-                <Input
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-3">
+                  <label htmlFor="secure-transfer-peer" className="text-xs font-medium">
+                    Destination peer
+                  </label>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => void refetchPeers()}
+                    disabled={peersLoading}
+                  >
+                    <RefreshCw size={14} className={peersLoading ? "animate-spin" : ""} />
+                    Refresh
+                  </Button>
+                </div>
+                <select
+                  id="secure-transfer-peer"
                   value={peerDid}
-                  onChange={(event) => setPeerDid(event.target.value)}
-                  placeholder="did:guardian:TARGET"
-                  autoComplete="off"
-                />
-              </label>
+                  onChange={(event) => {
+                    setPeerDid(event.target.value);
+                    setSendError(null);
+                  }}
+                  disabled={peersLoading || peers.length === 0}
+                  className="h-11 w-full rounded-md border border-border bg-input-background px-3 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <option value="">
+                    {peersLoading
+                      ? "Loading trusted peers…"
+                      : peers.length === 0
+                        ? "No trusted peers available"
+                        : "Select a trusted peer"}
+                  </option>
+                  {peers.map((peer) => (
+                    <option key={peer.did} value={peer.did}>
+                      {displayForDid(peer.did, peer.displayName || peer.peerId || peer.deviceName)}
+                      {peer.deviceName && peer.deviceName !== peer.displayName ? ` — ${peer.deviceName}` : ""}
+                      {peer.online ? " (Online)" : " (Offline)"}
+                    </option>
+                  ))}
+                </select>
+                {peersError && (
+                  <p className="text-xs text-destructive" role="alert">
+                    Trusted peers could not be loaded. Refresh and try again.
+                  </p>
+                )}
+                {!peersLoading && !peersError && peers.length === 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    No attested Guardian peers are available for secure transfer.
+                  </p>
+                )}
+                {selectedPeer && (
+                  <div className="flex items-center gap-2 rounded-md bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+                    <ShieldCheck size={14} className="shrink-0 text-primary" />
+                    <span className="truncate">
+                      {selectedPeer.online ? "Online" : selectedPeer.lastSeenAgo || "Offline"} · Verified Guardian peer
+                    </span>
+                  </div>
+                )}
+              </div>
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-medium">Vault file</span>
@@ -470,7 +538,7 @@ export function CS03SecureTransfers() {
                   <span>{sendError}</span>
                 </div>
               )}
-              <Button type="submit" disabled={sending || !peerDid.trim() || selectedVaultIds.length === 0} className="h-11 w-full gap-2">
+              <Button type="submit" disabled={sending || !selectedPeer || selectedVaultIds.length === 0} className="h-11 w-full gap-2">
                 {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
                 {sending
                   ? `Queuing ${sendProgress.queued} of ${sendProgress.total}…`

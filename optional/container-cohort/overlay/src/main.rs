@@ -2872,6 +2872,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // every node role (nodeA is an ordinary gossip peer, not a hub).
     sgx_guardian_client::crl::gossip::spawn(node_id.clone(), did_resolver.clone());
 
+    // Start the Secure XFER listener and outbound engine on every cohort node.
+    // Without this, queued transfers remain at `connecting` until TCP timeout.
+    sgx_guardian_client::xfer::spawn(node_id.clone(), did_resolver.clone());
+
     // === Alert-rules automation engine ===
     // Subscribes to the rule event bus and dispatches actions under dry-run,
     // cooldown, rate-limit, and destructive-action guards.

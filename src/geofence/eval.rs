@@ -353,6 +353,7 @@ mod tests {
         GeofenceZone {
             zone_id: "rf-zone".to_string(),
             name: "RF Zone".to_string(),
+            topology_node_ref: None,
             kind: ZoneKind::RfSignature,
             center_lat: None,
             center_lng: None,
@@ -375,6 +376,7 @@ mod tests {
         GeofenceZone {
             zone_id: "coord-zone".to_string(),
             name: "Coordinate Zone".to_string(),
+            topology_node_ref: None,
             kind: ZoneKind::Coordinate,
             center_lat: Some(24.8607),
             center_lng: Some(67.0011),

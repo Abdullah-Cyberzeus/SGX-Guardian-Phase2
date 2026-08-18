@@ -550,6 +550,7 @@ export function CS01StorageOverview() {
               canManage={canManageVault}
               onRemoved={() => setSelectedFileId(null)}
               onOpenFolder={navigateFolder}
+              onClose={() => setSelectedFileId(null)}
             />
           </div>
         )}

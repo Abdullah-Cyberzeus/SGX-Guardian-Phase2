@@ -49,9 +49,9 @@ RUN chmod 0755 /usr/local/bin/sgx-entrypoint
 
 VOLUME ["/etc/sgx-guardian", "/var/lib/sgx-guardian", "/var/log/sgx-guardian"]
 
-# gRPC 50051-50053 | cert bootstrap 50061 | registry 50062 | CRL gossip 50063
+# gRPC 50051-50053 | cert bootstrap 50061 | registry 50062 | CRL gossip 50063 | XFER 50064
 # REST 8443 | discovery UDP 9000 | nebula UDP 4242 | attestation 50151-50153
-EXPOSE 50051-50053 50061-50063 8443 50151-50153 9000/udp 4242/udp
+EXPOSE 50051-50053 50061-50064 8443 50151-50153 9000/udp 4242/udp
 
 WORKDIR /var/lib/sgx-guardian
 ENTRYPOINT ["/usr/local/bin/sgx-entrypoint"]

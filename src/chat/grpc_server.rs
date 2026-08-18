@@ -2,7 +2,9 @@ use crate::api::state::AppState;
 use crate::chat::models::{ChatMessageRecord, MessageStatus};
 use crate::proto::sgx::chat_service_server::ChatService;
 use crate::proto::sgx::{PushMessageRequest, PushMessageResponse};
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
+use tokio::io::AsyncReadExt;
 use tonic::{Request, Response, Status};
 
 pub struct MyChatService {
@@ -20,6 +22,21 @@ impl ChatService for MyChatService {
 
         // 1. Verify sender is a trusted attested peer
         verify_peer_is_trusted(&self.state, &req.sender_did).await?;
+
+        // A chat envelope contains only attachment metadata. Pull the bytes
+        // from the attested sender before acknowledging the message so the UI
+        // never receives a download link for a file absent on this Guardian.
+        if let Some(attachment_id) = attachment_id_from_payload(&req.encrypted_payload) {
+            let sender_addr = trusted_peer_grpc_addr(&self.state, &req.sender_did).await?;
+            crate::chat::grpc_client::download_attachment_from_peer(
+                self.state.device_did.clone(),
+                req.sender_did.clone(),
+                sender_addr,
+                attachment_id,
+            )
+            .await
+            .map_err(|error| Status::unavailable(format!("attachment transfer failed: {error}")))?;
+        }
 
         let group_id = if req.group_id.is_empty() {
             None
@@ -211,47 +228,156 @@ impl ChatService for MyChatService {
             tokio_stream::wrappers::ReceiverStream::new(rx),
         ))
     }
+
+    type GetAttachmentStream = tokio_stream::wrappers::ReceiverStream<
+        Result<crate::proto::sgx::AttachmentChunk, tonic::Status>,
+    >;
+
+    async fn get_attachment(
+        &self,
+        request: tonic::Request<crate::proto::sgx::GetAttachmentRequest>,
+    ) -> Result<tonic::Response<Self::GetAttachmentStream>, tonic::Status> {
+        let req = request.into_inner();
+        verify_peer_is_trusted(&self.state, &req.requester_did).await?;
+        uuid::Uuid::parse_str(&req.attachment_id)
+            .map_err(|_| Status::invalid_argument("invalid attachment ID"))?;
+
+        let metadata = crate::chat::storage::get_attachment_metadata(&req.attachment_id)
+            .await
+            .map_err(|error| Status::internal(format!("attachment metadata read failed: {error}")))?
+            .ok_or_else(|| Status::not_found("attachment metadata not found"))?;
+        let path = crate::chat::storage::attachment_path(&req.attachment_id);
+        let file_metadata = tokio::fs::metadata(&path)
+            .await
+            .map_err(|_| Status::not_found("attachment file not found"))?;
+        if file_metadata.len() > crate::chat::storage::MAX_ATTACHMENT_BYTES {
+            return Err(Status::resource_exhausted("attachment exceeds 50 MiB limit"));
+        }
+
+        let mut file = tokio::fs::File::open(path)
+            .await
+            .map_err(|_| Status::not_found("attachment file not found"))?;
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        tokio::spawn(async move {
+            let mut buffer = vec![0u8; 64 * 1024];
+            let mut hasher = Sha256::new();
+            loop {
+                let read = match file.read(&mut buffer).await {
+                    Ok(0) => break,
+                    Ok(read) => read,
+                    Err(error) => {
+                        let _ = tx
+                            .send(Err(Status::internal(format!(
+                                "attachment read failed: {error}"
+                            ))))
+                            .await;
+                        return;
+                    }
+                };
+                hasher.update(&buffer[..read]);
+                let chunk = crate::proto::sgx::AttachmentChunk {
+                    attachment_id: metadata.file_id.clone(),
+                    file_name: metadata.file_name.clone(),
+                    mime_type: metadata.mime_type.clone(),
+                    total_size: metadata.encrypted_size,
+                    sha256_hash: metadata.sha256_hash.clone(),
+                    data: buffer[..read].to_vec(),
+                };
+                if tx.send(Ok(chunk)).await.is_err() {
+                    return;
+                }
+            }
+
+            // Empty files still need one metadata-bearing chunk.
+            if metadata.encrypted_size == 0 {
+                let chunk = crate::proto::sgx::AttachmentChunk {
+                    attachment_id: metadata.file_id.clone(),
+                    file_name: metadata.file_name.clone(),
+                    mime_type: metadata.mime_type.clone(),
+                    total_size: 0,
+                    sha256_hash: metadata.sha256_hash.clone(),
+                    data: Vec::new(),
+                };
+                let _ = tx.send(Ok(chunk)).await;
+                return;
+            }
+
+            let actual_hash = hex::encode(hasher.finalize());
+            if actual_hash != metadata.sha256_hash {
+                let _ = tx
+                    .send(Err(Status::data_loss(
+                        "stored attachment checksum does not match metadata",
+                    )))
+                    .await;
+            }
+        });
+
+        Ok(tonic::Response::new(
+            tokio_stream::wrappers::ReceiverStream::new(rx),
+        ))
+    }
+}
+
+fn attachment_id_from_payload(payload: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(payload)
+        .ok()?
+        .get("attachment_id")?
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+async fn trusted_peer_grpc_addr(state: &Arc<AppState>, did: &str) -> Result<String, Status> {
+    let peers = load_trusted_peers(state).await;
+    let target_peer_id = did.strip_prefix("did:guardian:").unwrap_or(did);
+    let peer = peers.iter().find(|peer| {
+        let status = peer.get("status").and_then(|value| value.as_str());
+        matches!(status, Some("trusted" | "verified"))
+            && (peer.get("did").and_then(|value| value.as_str()) == Some(did)
+                || peer.get("peer_id").and_then(|value| value.as_str()) == Some(target_peer_id))
+    });
+    let peer = peer.ok_or_else(|| Status::permission_denied("sender is not trusted"))?;
+    let ip = peer
+        .get("ip")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| Status::failed_precondition("trusted sender has no overlay IP"))?;
+    let peer_id = peer
+        .get("peer_id")
+        .and_then(|value| value.as_str())
+        .unwrap_or(target_peer_id);
+    Ok(crate::api::handlers::chat::get_grpc_addr(ip, peer_id))
+}
+
+async fn load_trusted_peers(state: &Arc<AppState>) -> Vec<serde_json::Value> {
+    let per_node_name = format!("trusted_peers_{}.json", state.node_id);
+    let global_path = std::path::Path::new(&state.log_dir_primary).join("trusted_peers.json");
+    let pernode_path = std::path::Path::new(&state.log_dir_primary).join(per_node_name);
+    let mut peers: Vec<serde_json::Value> = tokio::fs::read_to_string(global_path)
+        .await
+        .ok()
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default();
+    let per_node: Vec<serde_json::Value> = tokio::fs::read_to_string(pernode_path)
+        .await
+        .ok()
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default();
+    for candidate in per_node {
+        let did = candidate.get("did").and_then(|value| value.as_str());
+        if did.is_some_and(|did| {
+            !peers
+                .iter()
+                .any(|peer| peer.get("did").and_then(|value| value.as_str()) == Some(did))
+        }) {
+            peers.push(candidate);
+        }
+    }
+    peers
 }
 
 async fn verify_peer_is_trusted(state: &Arc<AppState>, did: &str) -> Result<(), Status> {
     let target_peer_id = did.strip_prefix("did:guardian:").unwrap_or(did);
-
-    let node_id_for_file = state.node_id.clone();
-    let per_node_name = format!("trusted_peers_{}.json", node_id_for_file);
-
-    let global_path = std::path::Path::new(&state.log_dir_primary).join("trusted_peers.json");
-    let pernode_path = std::path::Path::new(&state.log_dir_primary).join(&per_node_name);
-
-    let global_json = tokio::fs::read_to_string(&global_path)
-        .await
-        .unwrap_or_else(|_| "[]".to_string());
-    let pernode_json = tokio::fs::read_to_string(&pernode_path)
-        .await
-        .unwrap_or_else(|_| "[]".to_string());
-
-    let mut global_peers: Vec<serde_json::Value> =
-        serde_json::from_str(&global_json).unwrap_or_default();
-    let pernode_peers: Vec<serde_json::Value> =
-        serde_json::from_str(&pernode_json).unwrap_or_default();
-
-    for p in pernode_peers {
-        let p_did = p
-            .get("did")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        if p_did.is_empty() {
-            continue;
-        }
-        let already = global_peers
-            .iter()
-            .any(|g| g.get("did").and_then(|v| v.as_str()).unwrap_or("") == p_did.as_str());
-        if !already {
-            global_peers.push(p);
-        }
-    }
-
-    let is_trusted = global_peers.iter().any(|p| {
+    let is_trusted = load_trusted_peers(state).await.iter().any(|p| {
         let status = p.get("status").and_then(|v| v.as_str());
         let is_valid_status = status == Some("trusted") || status == Some("verified");
         let matches_did = p.get("did").and_then(|v| v.as_str()) == Some(did)

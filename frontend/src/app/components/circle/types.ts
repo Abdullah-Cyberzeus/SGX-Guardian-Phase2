@@ -13,6 +13,7 @@ export interface CallRecord {
 
 /** Metadata for a file/image attached to a chat message. */
 export interface AttachmentMeta {
+  attachmentId?: string;
   name: string;
   sizeBytes: number;
   mime: string;
@@ -23,6 +24,7 @@ export interface AttachmentMeta {
 
 /** A file shared in the chat, surfaced in the Files tab. */
 export interface SharedFile {
+  attachmentId?: string;
   id: string;
   name: string;
   sizeBytes: number;
@@ -62,6 +64,7 @@ export function collectSharedFiles(messages: any[]): SharedFile[] {
     .filter((m) => m && m.attachment)
     .map((m) => ({
       id: m.id,
+      attachmentId: m.attachment.attachmentId,
       name: m.attachment.name,
       sizeBytes: m.attachment.sizeBytes,
       mime: m.attachment.mime,

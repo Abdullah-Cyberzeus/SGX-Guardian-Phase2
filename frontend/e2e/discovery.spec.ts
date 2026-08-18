@@ -29,7 +29,7 @@ test.describe('Network Discovery Page', () => {
   });
 
   test('shows NMAP Inventory subtitle', async ({ page }) => {
-    await expect(page.locator('body')).toContainText('NMAP Inventory');
+    await expect(page.locator('body')).toContainText('Guardian Inventory');
   });
 
   test('no error boundary shown', async ({ page }) => {

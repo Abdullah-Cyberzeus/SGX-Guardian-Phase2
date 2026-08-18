@@ -1,7 +1,9 @@
-import { useState, type ComponentType } from "react";
-import { FileText, Download, ImageIcon, FolderOpen } from "lucide-react";
+import { useEffect, useState, type ComponentType } from "react";
+import { FileText, Download, ImageIcon, FolderOpen, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { Dialog, DialogContent, DialogTitle } from "../ui/dialog";
 import { formatBytes, type SharedFile } from "./types";
+import chatService from "../../services/chatService";
 
 interface FilesTabProps {
   /** Files shared in the chat — see `collectSharedFiles`. */
@@ -26,6 +28,30 @@ function SectionLabel({ icon: Icon, text }: { icon: ComponentType<{ size?: numbe
   );
 }
 
+function AuthenticatedImage({ file, className }: { file: SharedFile; className?: string }) {
+  const [source, setSource] = useState(file.attachmentId ? "" : file.url);
+  useEffect(() => {
+    if (!file.attachmentId) {
+      setSource(file.url);
+      return;
+    }
+    let active = true;
+    let objectUrl = "";
+    void chatService.download(file.attachmentId).then((blob) => {
+      if (!active) return;
+      objectUrl = URL.createObjectURL(blob);
+      setSource(objectUrl);
+    }).catch(() => { if (active) setSource(""); });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [file.attachmentId, file.url]);
+  return source
+    ? <img src={source} alt={file.name} className={className} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+    : <Loader2 className="m-auto animate-spin text-muted-foreground" />;
+}
+
 /**
  * Files tab — a read-only view of every photo and file shared in the chat.
  * There is no separate upload here: sharing happens in the chat via the
@@ -36,6 +62,19 @@ export function FilesTab({ files }: FilesTabProps) {
 
   const media = files.filter((f) => f.kind === "image");
   const docs = files.filter((f) => f.kind === "file");
+  const download = async (file: SharedFile) => {
+    try {
+      if (file.attachmentId) await chatService.downloadToBrowser(file.attachmentId, file.name);
+      else {
+        const anchor = document.createElement("a");
+        anchor.href = file.url;
+        anchor.download = file.name;
+        anchor.click();
+      }
+    } catch (cause) {
+      toast.error("File could not be downloaded", { description: cause instanceof Error ? cause.message : undefined });
+    }
+  };
 
   if (files.length === 0) {
     return (
@@ -86,11 +125,7 @@ export function FilesTab({ files }: FilesTabProps) {
                   background: "var(--muted)",
                 }}
               >
-                <img
-                  src={f.url}
-                  alt={f.name}
-                  style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                />
+                <AuthenticatedImage file={f} />
               </button>
             ))}
           </div>
@@ -105,12 +140,17 @@ export function FilesTab({ files }: FilesTabProps) {
             style={{ backgroundColor: "var(--card)" }}
           >
             {docs.map((f, i) => (
-              <a
+              <button
                 key={f.id}
-                href={f.url}
-                download={f.name}
+                type="button"
+                onClick={() => void download(f)}
                 className="flex items-center gap-3 px-4 py-3"
                 style={{
+                  width: "100%",
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  textAlign: "left",
                   textDecoration: "none",
                   borderBottom: i < docs.length - 1 ? "1px solid var(--border)" : undefined,
                 }}
@@ -148,7 +188,7 @@ export function FilesTab({ files }: FilesTabProps) {
                   </p>
                 </div>
                 <Download size={16} style={{ color: "var(--muted-foreground)", flexShrink: 0 }} />
-              </a>
+              </button>
             ))}
           </div>
         </div>
@@ -158,11 +198,7 @@ export function FilesTab({ files }: FilesTabProps) {
         <DialogContent className="max-w-[92vw] border-0 bg-transparent p-0 shadow-none sm:max-w-md">
           <DialogTitle className="sr-only">{lightbox?.name ?? "Image"}</DialogTitle>
           {lightbox && (
-            <img
-              src={lightbox.url}
-              alt={lightbox.name}
-              className="max-h-[80vh] w-full rounded-lg object-contain"
-            />
+            <AuthenticatedImage file={lightbox} className="max-h-[80vh] w-full rounded-lg object-contain" />
           )}
         </DialogContent>
       </Dialog>
