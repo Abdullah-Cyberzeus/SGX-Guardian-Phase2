@@ -140,11 +140,9 @@ async fn ensure_saveable_contact_did(state: &AppState, did: &str) -> Result<(), 
 }
 
 async fn is_active_browser_member_contact(state: &AppState, did: &str) -> Result<bool, ApiError> {
-    let local_circle_ids = crate::api::auth::authorization::local_active_circle_ids(
-        &state.node_id,
-        &state.device_did,
-    )
-    .map_err(ApiError::Internal)?;
+    let local_circle_ids =
+        crate::api::auth::authorization::local_active_circle_ids(&state.node_id, &state.device_did)
+            .map_err(ApiError::Internal)?;
     Ok(matches!(
         crate::api::handlers::browser_member::state_for_did(state, did, &local_circle_ids).await?,
         Some(crate::api::handlers::browser_member::BrowserMemberState::Active)

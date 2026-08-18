@@ -10,11 +10,12 @@ function StreamTile({ peerId, stream }: { peerId: string; stream?: MediaStream }
   </article>;
 }
 
-export function GroupCallingScreen({ localDevice }: { localDevice?: string }) {
+export function GroupCallingScreen({ localDevice: fallbackLocalDevice }: { localDevice?: string }) {
   const {
-    group, incoming, localStream, remoteStreams, error, muted, cameraEnabled,
+    group, incoming, localStream, remoteStreams, error, muted, cameraEnabled, localDevice: resolvedLocalDevice,
     toggleMute, toggleCamera, shareScreen, leaveGroup, endGroup, moderate, rejoinGroup,
   } = useGroupCall();
+  const localDevice = resolvedLocalDevice || fallbackLocalDevice;
   if (!group || incoming || !localDevice) return null;
   const local = group.participants[localDevice];
   if (!local || local.state === "kicked" || local.state === "declined") return null;

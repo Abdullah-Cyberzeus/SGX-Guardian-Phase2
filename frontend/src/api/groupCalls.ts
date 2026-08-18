@@ -4,7 +4,7 @@ import type {
 } from "../features/calls/call.types";
 
 export const groupCallsApi = {
-  active: () => api<{ groups: GroupSession[]; total: number }>("/group-calls/active"),
+  active: () => api<{ groups: GroupSession[]; total: number; local_device_id?: string }>("/group-calls/active"),
   create: (title: string, member_ids: string[], call_all: boolean, media: MediaType[]) =>
     api<{ session: GroupSession; failed_invites: string[] }>("/group-calls", {
       method: "POST", body: JSON.stringify({ title, member_ids, call_all, media }),

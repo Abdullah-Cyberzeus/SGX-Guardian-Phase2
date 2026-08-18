@@ -1,14 +1,14 @@
-use crate::api::{error::ApiError, state::AppState};
 use crate::api::auth::middleware::AuthenticatedSession;
+use crate::api::{error::ApiError, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::notify;
 use crate::notify::prefs::NotificationPrefs;
 use axum::extract::{Path as AxumPath, Query, State};
-use axum::Extension;
 use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
+use axum::Extension;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
@@ -191,7 +191,9 @@ pub async fn mark_read(
                     "Circle notification",
                 );
             }
-            return Err(ApiError::Forbidden("notification is outside member scope".into()));
+            return Err(ApiError::Forbidden(
+                "notification is outside member scope".into(),
+            ));
         }
     }
     let (updated, unread) = notify::mark_read(&id).await.map_err(internal_notify)?;
@@ -221,7 +223,10 @@ pub async fn mark_all_read(
     for id in &ids {
         notify::mark_read(id).await.map_err(internal_notify)?;
     }
-    Ok(Json(MarkAllReadResponse { marked: ids.len(), unread: 0 }))
+    Ok(Json(MarkAllReadResponse {
+        marked: ids.len(),
+        unread: 0,
+    }))
 }
 
 pub async fn get_prefs(

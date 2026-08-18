@@ -1,5 +1,5 @@
-use crate::api::error::ApiError;
 use crate::api::auth::middleware::AuthenticatedSession;
+use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::chat::models::{ChatMessageRecord, MessageStatus};
 use axum::extract::{
@@ -129,11 +129,9 @@ pub async fn send_message(
     }
     let sender_did = crate::api::handlers::browser_member::did_from_session(&session)
         .unwrap_or_else(|| state.device_did.clone());
-    let local_circle_ids = crate::api::auth::authorization::local_active_circle_ids(
-        &state.node_id,
-        &state.device_did,
-    )
-    .map_err(ApiError::Internal)?;
+    let local_circle_ids =
+        crate::api::auth::authorization::local_active_circle_ids(&state.node_id, &state.device_did)
+            .map_err(ApiError::Internal)?;
     let browser_recipient_state = if !req.is_group {
         crate::api::handlers::browser_member::state_for_did(
             &state,
@@ -332,7 +330,11 @@ pub async fn send_message(
             .unwrap_or_default()
     };
 
-    let requested_id = req.message_id.as_deref().map(str::trim).filter(|id| !id.is_empty());
+    let requested_id = req
+        .message_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
     if requested_id.is_some_and(|id| id.len() > 100) {
         return Err(ApiError::BadRequest(
             "message_id must be 100 characters or fewer".to_string(),
@@ -408,7 +410,7 @@ pub async fn send_message(
                 false,
                 &direct_conversation_id,
                 &message_id,
-                    crate::chat::models::MessageStatus::DeliveredToRemoteGuardian,
+                crate::chat::models::MessageStatus::DeliveredToRemoteGuardian,
             )
             .await
             {
@@ -425,7 +427,9 @@ pub async fn send_message(
             message_id,
             signature_base64: String::new(),
             status: if delivered {
-                MessageStatus::DeliveredToRemoteGuardian.as_str().to_string()
+                MessageStatus::DeliveredToRemoteGuardian
+                    .as_str()
+                    .to_string()
             } else {
                 MessageStatus::AcceptedByGuardian.as_str().to_string()
             },
@@ -539,8 +543,17 @@ pub async fn mark_as_read(
 ) -> Result<Json<MarkReadResponse>, ApiError> {
     // Peers are authorised by DID. Transport confidentiality and endpoint
     // authentication are supplied by the Nebula overlay.
-    let reader_did = state.device_did.clone();
+    let reader_did = crate::api::handlers::browser_member::did_from_session(&session)
+        .unwrap_or_else(|| state.device_did.clone());
     let timestamp = chrono::Utc::now().timestamp();
+    let local_guardian_direct = req.group_id.is_none()
+        && req.original_sender_did == state.device_did
+        && reader_did != state.device_did;
+    let p2p_conversation_id = if local_guardian_direct {
+        reader_did.clone()
+    } else {
+        req.original_sender_did.clone()
+    };
 
     // 1. Verify the message exists
     if let Some(ref gid) = req.group_id {
@@ -556,9 +569,7 @@ pub async fn mark_as_read(
                 "Group conversation history not found".to_string(),
             ));
         }
-    } else if let Ok(history) =
-        crate::chat::storage::read_p2p_history(&req.original_sender_did).await
-    {
+    } else if let Ok(history) = crate::chat::storage::read_p2p_history(&p2p_conversation_id).await {
         ensure_member_contact_access(&state, &session, &req.original_sender_did)?;
         if !history.iter().any(|m| m.message_id == req.message_id) {
             return Err(ApiError::BadRequest(
@@ -585,14 +596,23 @@ pub async fn mark_as_read(
 
     // Also update read_by in local storage file for this node
     let is_group = req.group_id.is_some();
-    let target_file_id = req.group_id.as_deref().unwrap_or(&req.original_sender_did);
-    let _ = crate::chat::storage::update_message_read_by(
+    let target_file_id = req.group_id.as_deref().unwrap_or(&p2p_conversation_id);
+    let updated_record = crate::chat::storage::update_message_read_by(
         is_group,
         target_file_id,
         &req.message_id,
         &reader_did,
     )
-    .await;
+    .await
+    .map_err(|e| ApiError::Internal(format!("Failed to update read status: {}", e)))?;
+    let _ = state
+        .chat_events
+        .send(crate::chat::models::ChatEvent::ReadReceipt(receipt.clone()));
+    if let Some(record) = updated_record {
+        let _ = state
+            .chat_events
+            .send(crate::chat::models::ChatEvent::MessageStatus(record));
+    }
 
     // 3. Fetch peer IP to notify original sender
     let peers_path = std::path::Path::new(&state.log_dir_primary).join("trusted_peers.json");
@@ -755,8 +775,7 @@ pub async fn get_history(
     let mut messages = if let Some(peer_did) = query.peer_did {
         ensure_member_contact_access(&state, &session, &peer_did)?;
         let conversation_id = if peer_did == state.device_did {
-            crate::api::handlers::browser_member::did_from_session(&session)
-                .unwrap_or(peer_did)
+            crate::api::handlers::browser_member::did_from_session(&session).unwrap_or(peer_did)
         } else {
             peer_did
         };
@@ -783,7 +802,10 @@ pub async fn get_history(
     }
     let next_cursor = messages.last().map(|message| message.seq_no);
 
-    Ok(Json(ChatHistoryResponse { messages, next_cursor }))
+    Ok(Json(ChatHistoryResponse {
+        messages,
+        next_cursor,
+    }))
 }
 
 fn ensure_member_contact_access(
@@ -809,9 +831,9 @@ fn ensure_member_contact_access(
             .unwrap_or(&[]),
     )
     .map_err(ApiError::Internal)?;
-    let browser_allowed =
-        crate::api::handlers::browser_member::did_from_session(session).as_deref()
-            == Some(contact_did);
+    let browser_allowed = crate::api::handlers::browser_member::did_from_session(session)
+        .as_deref()
+        == Some(contact_did);
     if contacts.contains(contact_did) || browser_allowed {
         Ok(())
     } else {

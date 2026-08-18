@@ -223,7 +223,7 @@ pub async fn update_message_read_by(
     target_id: &str,
     message_id: &str,
     reader_did: &str,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Option<ChatMessageRecord>, Box<dyn std::error::Error + Send + Sync>> {
     let dir_name = if is_group { "group" } else { "p2p" };
     let path = PathBuf::from(&*BASE_DIR)
         .join(dir_name)
@@ -237,7 +237,7 @@ pub async fn update_message_read_by(
 
     let file = match File::open(&path).await {
         Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e.into()),
     };
 
@@ -245,6 +245,7 @@ pub async fn update_message_read_by(
     let mut updated_lines = Vec::new();
     let mut line = String::new();
     let mut modified = false;
+    let mut updated_record = None;
 
     while reader.read_line(&mut line).await? > 0 {
         let trimmed = line.trim();
@@ -254,6 +255,8 @@ pub async fn update_message_read_by(
                     && !record.read_by.contains(&reader_did.to_string())
                 {
                     record.read_by.push(reader_did.to_string());
+                    record.status = MessageStatus::Read;
+                    updated_record = Some(record.clone());
                     modified = true;
                 }
                 updated_lines.push(serde_json::to_string(&record)?);
@@ -269,7 +272,7 @@ pub async fn update_message_read_by(
         tokio::fs::write(&path, content.as_bytes()).await?;
     }
 
-    Ok(())
+    Ok(updated_record)
 }
 
 /// Advances a message's delivery status (e.g. `Pending` -> `Delivered`) in its

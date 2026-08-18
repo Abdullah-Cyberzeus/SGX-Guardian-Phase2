@@ -1,6 +1,6 @@
-use crate::api::{error::ApiError, state::AppState};
 use crate::api::auth::middleware::AuthenticatedSession;
 use crate::api::auth::store::UserRole;
+use crate::api::{error::ApiError, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::circle::invite::{self, InviteToken, JoinRequest, ReceivedInvite, ReceivedInviteState};
@@ -13,6 +13,7 @@ use crate::vc::credential::{CredentialRole, VerifiableCredential};
 use crate::vc::issue::{
     self, default_permissions_for_role, IssueMembershipOutcome, IssueRequest, VcAdminAction,
 };
+use axum::Extension;
 use axum::{
     extract::{Path, State},
     http::{header, HeaderMap, StatusCode},
@@ -20,7 +21,6 @@ use axum::{
 };
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Utc};
-use axum::Extension;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -228,8 +228,7 @@ pub async fn list(
         registry.circles.retain(|circle| {
             session.as_ref().is_some_and(|Extension(session)| {
                 session.claims.circle_ids.contains(&circle.circle_id)
-            }) && browser_guardian_has_active_membership(&state, &circle.circle_id)
-                .unwrap_or(false)
+            }) && browser_guardian_has_active_membership(&state, &circle.circle_id).unwrap_or(false)
         });
     }
     Ok(Json(CircleListResponse {
@@ -453,7 +452,8 @@ pub async fn member_snapshot(
     Path(id): Path<String>,
 ) -> Result<Json<CircleMemberSnapshot>, ApiError> {
     let circle = store::get_circle(&state.node_id, &id).map_err(map_circle_error)?;
-    let (local, km) = store::load_runtime_signing_context(&state.node_id).map_err(map_circle_error)?;
+    let (local, km) =
+        store::load_runtime_signing_context(&state.node_id).map_err(map_circle_error)?;
     if local.did != circle.owner_did {
         return Err(ApiError::Forbidden(format!(
             "only owner {} can serve snapshot for {}",
@@ -514,7 +514,10 @@ async fn append_browser_members(
         }
         members.push(CircleMember {
             did,
-            vc_id: user.invite_id.clone().unwrap_or_else(|| user.user_id.clone()),
+            vc_id: user
+                .invite_id
+                .clone()
+                .unwrap_or_else(|| user.user_id.clone()),
             issuer_did: state.device_did.clone(),
             role: CredentialRole::Member,
             permissions: user.scopes.clone(),
@@ -1009,12 +1012,11 @@ fn browser_guardian_has_active_membership(
     state: &AppState,
     circle_id: &str,
 ) -> Result<bool, ApiError> {
-    Ok(crate::api::auth::authorization::local_active_circle_ids(
-        &state.node_id,
-        &state.device_did,
+    Ok(
+        crate::api::auth::authorization::local_active_circle_ids(&state.node_id, &state.device_did)
+            .map_err(ApiError::Internal)?
+            .contains(circle_id),
     )
-    .map_err(ApiError::Internal)?
-    .contains(circle_id))
 }
 
 fn ensure_member_browser_circle_access(
@@ -1023,16 +1025,13 @@ fn ensure_member_browser_circle_access(
     circle_id: &str,
 ) -> Result<(), ApiError> {
     if !is_member_browser_session(session)
-        || (session
-            .as_ref()
-            .is_some_and(|Extension(session)| {
-                session
-                    .claims
-                    .circle_ids
-                    .iter()
-                    .any(|allowed| allowed == circle_id)
-            })
-            && browser_guardian_has_active_membership(state, circle_id)?)
+        || (session.as_ref().is_some_and(|Extension(session)| {
+            session
+                .claims
+                .circle_ids
+                .iter()
+                .any(|allowed| allowed == circle_id)
+        }) && browser_guardian_has_active_membership(state, circle_id)?)
     {
         Ok(())
     } else {
@@ -1282,19 +1281,19 @@ async fn broadcast_member_snapshot(
         };
         let timestamp = Utc::now().to_rfc3339();
         let nonce = Uuid::new_v4().to_string();
-        let canonical =
-            match guardian_snapshot_auth_bytes(&owner.did, &timestamp, &nonce, snapshot) {
-                Ok(bytes) => bytes,
-                Err(err) => {
-                    tracing::warn!(
-                        "Circle member snapshot auth canonical failed circle={} target={} error={}",
-                        snapshot.circle_id,
-                        member.did,
-                        err
-                    );
-                    continue;
-                }
-            };
+        let canonical = match guardian_snapshot_auth_bytes(&owner.did, &timestamp, &nonce, snapshot)
+        {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                tracing::warn!(
+                    "Circle member snapshot auth canonical failed circle={} target={} error={}",
+                    snapshot.circle_id,
+                    member.did,
+                    err
+                );
+                continue;
+            }
+        };
         let digest = Sha256::digest(&canonical);
         let signature = match km.sign(&digest) {
             Ok(signature) => signature,

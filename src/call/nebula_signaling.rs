@@ -101,6 +101,16 @@ impl NebulaSignaling {
         }
     }
 
+    /// Sign an outbound envelope with this node's device key. Every envelope
+    /// that leaves over Nebula must carry a real signature: `process_envelope`
+    /// verifies it against the sender's trusted public key on receipt.
+    fn sign_envelope(&self, envelope: SignalingEnvelope) -> CallResult<SignalingEnvelope> {
+        let signer = self.signer.as_ref().ok_or_else(|| {
+            CallError::KeyManagerError("No signer configured for secure call signaling".into())
+        })?;
+        envelope.sign(signer)
+    }
+
     /// Run the inbound signaling listener on the local Nebula interface.
     /// Binding specifically to the overlay address prevents the call control
     /// plane from being exposed through LAN/WAN interfaces.
@@ -303,17 +313,21 @@ impl NebulaSignaling {
         local_device_id: String,
     ) -> CallResult<()> {
         envelope.validate_freshness(chrono::Utc::now())?;
-        let _identity = self
+        let identity = self
             .peer_identities
             .resolve(&envelope.sender_device_id, &peer_ip)
             .await?;
+        // peer_ip + trusted-peer lookup establishes WHO the sender claims to
+        // be; the signature proves the message actually came from them and
+        // was not forged/altered by anything else reachable on the overlay.
+        envelope.verify(&identity.public_key_point)?;
         // Attestation and Nebula authenticate this peer before call traffic.
         // Avoid reopening SE050 for each call-control message.
         self.replay.check_and_record(&envelope).await?;
 
         if envelope.kind == SignalKind::GroupControl {
             return self
-                .process_group_control(envelope, group_sessions, local_device_id)
+                .process_group_control(envelope, peer_ip, group_sessions, local_device_id)
                 .await;
         }
 
@@ -329,6 +343,10 @@ impl NebulaSignaling {
                         reason: "Offer fields do not match the authenticated envelope".into(),
                     });
                 }
+                // The envelope signature already authenticates the transport
+                // message; this additionally binds the offer's own content to
+                // the sender's key, independent of how it was carried.
+                offer.verify_signature(&identity.public_key_point)?;
                 let is_retry = session_manager.get_session(&offer.session_id).await.is_ok();
                 let busy = !is_retry
                     && (!session_manager.get_active_sessions().await.is_empty()
@@ -367,6 +385,10 @@ impl NebulaSignaling {
                         reason: "Answer fields do not match the authenticated envelope".into(),
                     });
                 }
+                // The envelope signature already authenticates the transport
+                // message; this additionally binds the answer's own content to
+                // the sender's key, independent of how it was carried.
+                answer.verify_signature(&identity.public_key_point)?;
                 let session = session_manager.get_session(&answer.session_id).await?;
                 // The receiver's device_id is not known to the initiator until now
                 // (the session was provisioned from the trusted-peer registry, which
@@ -473,7 +495,12 @@ impl NebulaSignaling {
                         .map(|_| ())
                 } else {
                     group_sessions
-                        .mark_media_ready(&envelope.session_id, &envelope.sender_device_id, true)
+                        .mark_media_ready(
+                            &envelope.session_id,
+                            &envelope.sender_device_id,
+                            true,
+                            &peer_ip,
+                        )
                         .await
                         .map(|_| ())
                 }
@@ -500,6 +527,7 @@ impl NebulaSignaling {
     async fn process_group_control(
         &self,
         envelope: SignalingEnvelope,
+        peer_ip: String,
         group_sessions: Arc<GroupSessionManager>,
         local_device_id: String,
     ) -> CallResult<()> {
@@ -514,8 +542,11 @@ impl NebulaSignaling {
                         reason: "Group invitation host mismatch".into(),
                     });
                 }
+                // We're the invitee here, reconciling our OWN participant
+                // entry, so the anchor is our own Nebula IP, not the sender's.
+                let local_nebula_ip = self.get_local_nebula_ip().await.unwrap_or_default();
                 group_sessions
-                    .register_invite(session, &local_device_id)
+                    .register_invite(session, &local_device_id, &local_nebula_ip)
                     .await
                     .map(|_| ())
             }
@@ -528,7 +559,10 @@ impl NebulaSignaling {
                         reason: "Group join sender mismatch".into(),
                     });
                 }
-                let snapshot = group_sessions.join(&group_id, &device_id).await?;
+                // We're the host here, reconciling the SENDER's participant
+                // entry, so the anchor is the IP this message actually
+                // arrived from — the sender's real, unspoofable Nebula IP.
+                let snapshot = group_sessions.join(&group_id, &device_id, &peer_ip).await?;
                 self.broadcast_group_snapshot(&snapshot, &local_device_id)
                     .await
             }
@@ -541,7 +575,9 @@ impl NebulaSignaling {
                         reason: "Group decline sender mismatch".into(),
                     });
                 }
-                let snapshot = group_sessions.decline(&group_id, &device_id).await?;
+                let snapshot = group_sessions
+                    .decline(&group_id, &device_id, &peer_ip)
+                    .await?;
                 self.broadcast_group_snapshot(&snapshot, &local_device_id)
                     .await
             }
@@ -554,7 +590,9 @@ impl NebulaSignaling {
                         reason: "Group leave sender mismatch".into(),
                     });
                 }
-                let snapshot = group_sessions.leave(&group_id, &device_id).await?;
+                let snapshot = group_sessions
+                    .leave(&group_id, &device_id, &peer_ip)
+                    .await?;
                 self.broadcast_group_snapshot(&snapshot, &local_device_id)
                     .await
             }
@@ -567,7 +605,9 @@ impl NebulaSignaling {
                         reason: "Group heartbeat sender mismatch".into(),
                     });
                 }
-                let snapshot = group_sessions.heartbeat(&group_id, &device_id).await?;
+                let snapshot = group_sessions
+                    .heartbeat(&group_id, &device_id, &peer_ip)
+                    .await?;
                 self.broadcast_group_snapshot(&snapshot, &local_device_id)
                     .await
             }
@@ -579,8 +619,11 @@ impl NebulaSignaling {
                         reason: "Group snapshot host mismatch".into(),
                     });
                 }
+                // We're a participant receiving the host's view here,
+                // reconciling our OWN entry against our own Nebula IP.
+                let local_nebula_ip = self.get_local_nebula_ip().await.unwrap_or_default();
                 group_sessions
-                    .apply_snapshot(session, &local_device_id)
+                    .apply_snapshot(session, &local_device_id, &local_nebula_ip)
                     .await
                     .map(|_| ())
             }
@@ -596,7 +639,7 @@ impl NebulaSignaling {
         receiver_nebula_ip: &str,
     ) -> CallResult<()> {
         let sequence = self.outbound_sequence.fetch_add(1, Ordering::Relaxed) + 1;
-        let envelope = SignalingEnvelope::new(
+        let envelope = self.sign_envelope(SignalingEnvelope::new(
             SignalKind::GroupControl,
             group_id,
             sender_device_id,
@@ -605,7 +648,7 @@ impl NebulaSignaling {
             uuid::Uuid::new_v4().to_string(),
             serde_json::to_value(message)
                 .map_err(|e| CallError::SerializationError(e.to_string()))?,
-        );
+        ))?;
         self.send_envelope(&envelope, receiver_nebula_ip).await
     }
 
@@ -626,6 +669,7 @@ impl NebulaSignaling {
         let mut first_error = None;
         for participant in session.participants.values() {
             if participant.device_id == local_device_id
+                || participant.is_local_browser
                 || matches!(
                     participant.state,
                     GroupMemberState::Declined | GroupMemberState::Left
@@ -672,7 +716,7 @@ impl NebulaSignaling {
             });
         }
         let sequence = self.outbound_sequence.fetch_add(1, Ordering::Relaxed) + 1;
-        let envelope = SignalingEnvelope::new(
+        let envelope = self.sign_envelope(SignalingEnvelope::new(
             kind,
             session_id,
             sender_device_id,
@@ -680,14 +724,14 @@ impl NebulaSignaling {
             sequence,
             uuid::Uuid::new_v4().to_string(),
             payload,
-        );
+        ))?;
         self.send_envelope(&envelope, receiver_nebula_ip).await
     }
 
     /// Send call offer via Nebula overlay
     pub async fn send_offer(&self, offer: &CallOffer, receiver_nebula_ip: &str) -> CallResult<()> {
         if self.signer.is_some() {
-            let envelope = SignalingEnvelope::new(
+            let envelope = self.sign_envelope(SignalingEnvelope::new(
                 SignalKind::Offer,
                 &offer.session_id,
                 &offer.device_id,
@@ -697,7 +741,7 @@ impl NebulaSignaling {
                 serde_json::to_value(offer).map_err(|e| {
                     CallError::SerializationError(format!("Failed to encode offer: {}", e))
                 })?,
-            );
+            ))?;
             return self.send_envelope(&envelope, receiver_nebula_ip).await;
         }
         let payload = json!({
@@ -726,7 +770,7 @@ impl NebulaSignaling {
         receiver_nebula_ip: &str,
     ) -> CallResult<()> {
         if self.signer.is_some() {
-            let envelope = SignalingEnvelope::new(
+            let envelope = self.sign_envelope(SignalingEnvelope::new(
                 SignalKind::Answer,
                 &answer.session_id,
                 &answer.device_id,
@@ -736,7 +780,7 @@ impl NebulaSignaling {
                 serde_json::to_value(answer).map_err(|e| {
                     CallError::SerializationError(format!("Failed to encode answer: {}", e))
                 })?,
-            );
+            ))?;
             return self.send_envelope(&envelope, receiver_nebula_ip).await;
         }
         let payload = json!({
@@ -879,7 +923,11 @@ mod tests {
 
     #[async_trait]
     impl PeerIdentityResolver for StaticIdentity {
-        async fn resolve(&self, device_id: &str, _peer_ip: &str) -> CallResult<TrustedPeerIdentity> {
+        async fn resolve(
+            &self,
+            device_id: &str,
+            _peer_ip: &str,
+        ) -> CallResult<TrustedPeerIdentity> {
             if self.0.device_id == device_id {
                 Ok(self.0.clone())
             } else {
@@ -1033,6 +1081,7 @@ mod tests {
                     media_ready: false,
                     joined_at: None,
                     last_seen_at: None,
+                    is_local_browser: false,
                 },
                 vec![crate::call::GroupParticipant {
                     device_id: "nodeB".into(),
@@ -1045,6 +1094,7 @@ mod tests {
                     media_ready: false,
                     joined_at: None,
                     last_seen_at: None,
+                    is_local_browser: false,
                 }],
                 vec![MediaType::Audio, MediaType::Video],
             )
@@ -1064,7 +1114,9 @@ mod tests {
                 session: group.clone(),
             })
             .unwrap(),
-        );
+        )
+        .sign(&caller)
+        .unwrap();
         signaling
             .process_envelope(
                 invite,
@@ -1077,7 +1129,7 @@ mod tests {
             .await
             .unwrap();
         receiver_groups
-            .join(&group.group_id, "nodeB")
+            .join(&group.group_id, "nodeB", "192.168.100.2")
             .await
             .unwrap();
 
@@ -1089,7 +1141,9 @@ mod tests {
             2,
             "group-sdp",
             serde_json::json!({"type":"offer","sdp":"v=0\r\nm=audio\r\nm=video"}),
-        );
+        )
+        .sign(&caller)
+        .unwrap();
         signaling
             .process_envelope(
                 sdp,

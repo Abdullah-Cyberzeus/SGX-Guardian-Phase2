@@ -174,9 +174,9 @@ impl ChatService for MyChatService {
                         .await
                         {
                             Ok(Some(updated)) => {
-                                let _ = sync_state.chat_events.send(
-                                    crate::chat::models::ChatEvent::MessageStatus(updated),
-                                );
+                                let _ = sync_state
+                                    .chat_events
+                                    .send(crate::chat::models::ChatEvent::MessageStatus(updated));
                             }
                             Ok(None) => {}
                             Err(e) => tracing::warn!(

@@ -439,8 +439,9 @@ pub async fn onboarding_proof(
         }));
     }
     let proof = action.stdout.trim().to_string();
-    let generated = pairing::verify_proof(&proof)
-        .map_err(|err| ApiError::Internal(format!("generated pairing proof is invalid: {}", err)))?;
+    let generated = pairing::verify_proof(&proof).map_err(|err| {
+        ApiError::Internal(format!("generated pairing proof is invalid: {}", err))
+    })?;
     if generated.serial != challenge.serial
         || generated.nonce != challenge.nonce
         || generated.challenge != challenge.challenge
