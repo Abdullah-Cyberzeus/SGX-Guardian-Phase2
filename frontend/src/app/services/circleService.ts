@@ -247,7 +247,13 @@ export const circleService = {
   // 11. POST /circles/{id}/invites
   async createInvite(id: string, data: { targetDid?: string; role?: CircleRole; expiresInMinutes?: number; maxUses?: number; ownerHost?: string; deliver?: boolean }): Promise<CircleInvite> {
     const body = data.targetDid
-      ? { target_did: data.targetDid, role: data.role || 'member', deliver: data.deliver ?? false }
+      ? {
+          target_did: data.targetDid,
+          role: data.role || 'member',
+          expires_in_minutes: data.expiresInMinutes,
+          max_uses: data.maxUses,
+          deliver: data.deliver ?? false,
+        }
       : {
           role: data.role,
           expires_in_minutes: data.expiresInMinutes,
