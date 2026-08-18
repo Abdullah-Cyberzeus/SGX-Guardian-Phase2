@@ -11,6 +11,11 @@ service ChatService {
 
   // Synchronizes missed messages using server-side streaming
   rpc SyncMessages(SyncRequest) returns (stream PushMessageRequest);
+
+  // Streams a chat attachment from the Guardian that owns the bytes. The
+  // caller is authenticated by its attested Guardian DID before any data is
+  // returned; chunks keep individual gRPC messages small for 50 MiB files.
+  rpc GetAttachment(GetAttachmentRequest) returns (stream AttachmentChunk);
 }
 
 message PushMessageRequest {
@@ -44,4 +49,18 @@ message PushReceiptResponse {
 message SyncRequest {
   string requester_did = 1;
   uint64 last_known_seq_no = 2;
+}
+
+message GetAttachmentRequest {
+  string requester_did = 1;
+  string attachment_id = 2;
+}
+
+message AttachmentChunk {
+  string attachment_id = 1;
+  string file_name = 2;
+  string mime_type = 3;
+  uint64 total_size = 4;
+  string sha256_hash = 5;
+  bytes data = 6;
 }

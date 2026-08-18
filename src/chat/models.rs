@@ -45,17 +45,22 @@ impl MessageStatus {
     }
 }
 
-/// Metadata record for an encrypted file attachment.
-/// Maps the local file path to the ECDH-encrypted symmetric key.
+/// Metadata for a chat attachment stored on the local Guardian.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AttachmentRecord {
     pub file_id: String,
     pub message_id: String,
     pub file_name: String,
+    #[serde(default = "default_attachment_mime")]
+    pub mime_type: String,
     pub encrypted_size: u64,
     pub sha256_hash: String,
     pub local_path: String,
     pub encrypted_file_key: String,
+}
+
+fn default_attachment_mime() -> String {
+    "application/octet-stream".to_string()
 }
 
 /// Represents a historical event when a specific message was read by a user.

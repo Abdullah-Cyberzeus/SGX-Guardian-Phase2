@@ -12,6 +12,7 @@ import {
   Pencil,
   FolderInput,
   Send,
+  X,
 } from "lucide-react";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
@@ -42,6 +43,8 @@ interface FileDetailPanelProps {
   onRemoved: () => void;
   /** Open the folder a file lives in. */
   onOpenFolder: (folderId: string) => void;
+  /** Close the desktop split-view panel. */
+  onClose?: () => void;
 }
 
 function DetailRow({ label, children }: { label: string; children: ReactNode }) {
@@ -75,7 +78,7 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
 
 /** Full file detail — preview, security, metadata, actions. Shared by the
  *  mobile detail screen and the desktop split-view panel. */
-export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolder }: FileDetailPanelProps) {
+export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolder, onClose }: FileDetailPanelProps) {
   const navigate = useNavigate();
   const {
     deviceName, encryption, removeFile, renameFile, moveFile, toggleStar, getFolder, folders,
@@ -144,6 +147,22 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
 
   return (
     <div className="flex h-full w-full flex-col gap-4 overflow-y-auto p-4">
+      {onClose && (
+        <div className="flex shrink-0 items-center justify-between">
+          <p className="text-sm font-semibold text-foreground">File details</p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            aria-label="Close file details"
+            title="Close file details"
+          >
+            <X size={18} />
+          </Button>
+        </div>
+      )}
+
       {/* Preview — tap to open the full viewer when there's content to show */}
       {previewable ? (
         <button
@@ -301,7 +320,7 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
       <div className="mt-auto flex flex-col gap-2 pt-1">
         {file.backendPath && (
           <Button
-            onClick={() => navigate(`/storage/transfers?path=${encodeURIComponent(file.backendPath!)}`)}
+            onClick={() => navigate(`/storage/transfers?vault_id=${encodeURIComponent(file.id)}`)}
             className="h-11 w-full gap-2"
           >
             <Send size={16} /> Send to peer

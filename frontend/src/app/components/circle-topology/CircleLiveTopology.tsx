@@ -97,7 +97,7 @@ const DEFAULT_AUTOMATION: ZoneAutomation = {
   min_confidence: 0.9,
 };
 
-function ZoneDialog({ zone, fix, busy, onClose, onSave }: { zone?: GeofenceZone; fix: { lat: number; lng: number } | null; busy: boolean; onClose: () => void; onSave: (body: CreateZoneRequest) => void }) {
+function ZoneDialog({ zone, node, fix, busy, onClose, onSave }: { zone?: GeofenceZone; node: CircleTopologyNode | null; fix: { lat: number; lng: number } | null; busy: boolean; onClose: () => void; onSave: (body: CreateZoneRequest) => void }) {
   const [name, setName] = useState(zone?.name ?? "");
   const [lat, setLat] = useState(String(zone?.center_lat ?? fix?.lat ?? ""));
   const [lng, setLng] = useState(String(zone?.center_lng ?? fix?.lng ?? ""));
@@ -105,8 +105,9 @@ function ZoneDialog({ zone, fix, busy, onClose, onSave }: { zone?: GeofenceZone;
   const [severity, setSeverity] = useState(zone?.severity ?? "high");
   const valid = name.trim() && Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) && Number(radius) > 0;
   return <div className="clt-zone-modal" role="dialog" aria-modal="true" aria-label={zone ? "Edit zone" : "Create zone"} onClick={onClose}>
-    <form className="clt-zone-dialog" onClick={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); if (valid) onSave({ name: name.trim(), kind: "coordinate", center_lat: Number(lat), center_lng: Number(lng), radius_m: Number(radius), severity, enabled: zone?.enabled ?? true, on_entry: zone?.on_entry ?? true, on_exit: zone?.on_exit ?? true, automation: zone?.automation ?? DEFAULT_AUTOMATION }); }}>
+    <form className="clt-zone-dialog" onClick={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); if (valid) onSave({ name: name.trim(), topology_node_ref: zone?.topology_node_ref ?? node?.did ?? node?.id ?? null, kind: "coordinate", center_lat: Number(lat), center_lng: Number(lng), radius_m: Number(radius), severity, enabled: zone?.enabled ?? true, on_entry: zone?.on_entry ?? true, on_exit: zone?.on_exit ?? true, automation: zone?.automation ?? DEFAULT_AUTOMATION }); }}>
       <header><div><span>{zone ? "EDIT GEOFENCE" : "NEW GEOFENCE"}</span><h3>{zone ? "Edit zone" : "Name your zone"}</h3></div><button type="button" onClick={onClose}><X size={16} /></button></header>
+      <div className="clt-zone-dialog__anchor"><Network size={14} /><span>Topology node</span><b>{node?.label ?? zone?.topology_node_ref ?? "Not assigned"}</b></div>
       <label>Zone name<input autoFocus value={name} placeholder="Office" onChange={(event) => setName(event.target.value)} /></label>
       <div><label>Latitude<input type="number" step="any" value={lat} onChange={(event) => setLat(event.target.value)} /></label><label>Longitude<input type="number" step="any" value={lng} onChange={(event) => setLng(event.target.value)} /></label></div>
       <div><label>Radius (m)<input type="number" min="1" value={radius} onChange={(event) => setRadius(event.target.value)} /></label><label>Severity<select value={severity} onChange={(event) => setSeverity(event.target.value)}><option>low</option><option>medium</option><option>high</option><option>critical</option></select></label></div>
@@ -116,6 +117,16 @@ function ZoneDialog({ zone, fix, busy, onClose, onSave }: { zone?: GeofenceZone;
 }
 
 const ZONE_COLORS = ["#18B5C8", "#20C7D9", "#3AC569", "#F4B640", "#E14D4D", "#7A7A7A"];
+
+function zoneMatchesNode(zone: GeofenceZone, node: CircleTopologyNode) {
+  const reference = zone.topology_node_ref;
+  return !!reference && (reference === node.id || reference === node.did);
+}
+
+function topologyZoneRadius(zone: GeofenceZone, index: number) {
+  const meters = Math.max(1, zone.radius_m ?? 250);
+  return 48 + Math.min(22, Math.log10(meters + 1) * 8) + index * 15;
+}
 
 function projectLocation(lat: number, lng: number) {
   const clampedLat = Math.max(-85, Math.min(85, lat));
@@ -520,6 +531,11 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
     [selected, membershipIndex],
   );
   const selectedZone = geofenceZones.find((zone) => zone.zone_id === selectedZoneId) ?? null;
+  const editingZoneNode = useMemo(() => {
+    if (!editingZone) return selected;
+    if (!editingZone.topology_node_ref) return null;
+    return nodes.find((node) => zoneMatchesNode(editingZone, node)) ?? null;
+  }, [editingZone, nodes, selected]);
   const deviceFix = geofenceStatus?.location?.fix?.kind === "coordinate" ? geofenceStatus.location.fix : null;
   const devicePoint = useMemo(() => (deviceFix ? projectLocation(deviceFix.lat, deviceFix.lng) : null), [deviceFix]);
   const orderedGeofenceEvents = useMemo(() => [...geofenceEvents].sort((a, b) => {
@@ -636,8 +652,13 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
   const saveZone = async (body: CreateZoneRequest) => {
     setGeofenceBusy("Creating zone");
     try {
-      if (editingZone) await geofenceApi.editZone(editingZone.zone_id, body);
-      else await geofenceApi.createZone(body);
+      const result = editingZone
+        ? await geofenceApi.editZone(editingZone.zone_id, body)
+        : await geofenceApi.createZone(body);
+      setGeofenceZones((current) => editingZone
+        ? current.map((zone) => zone.zone_id === result.zone.zone_id ? result.zone : zone)
+        : [...current, result.zone]);
+      setSelectedZoneId(result.zone.zone_id);
       setEditingZone(undefined);
       await refreshGeofence();
     } catch (err) {
@@ -653,8 +674,14 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
     setGeofenceToast(null);
     setGeofenceError(null);
     setGeofenceBusy(action);
+    if (action === "toggle") {
+      setGeofenceZones((current) => current.map((item) => item.zone_id === zone.zone_id ? { ...item, enabled: !zone.enabled } : item));
+    }
     try {
-      if (action === "toggle") await geofenceApi.editZone(zone.zone_id, { enabled: !zone.enabled });
+      if (action === "toggle") {
+        const result = await geofenceApi.editZone(zone.zone_id, { enabled: !zone.enabled });
+        setGeofenceZones((current) => current.map((item) => item.zone_id === zone.zone_id ? result.zone : item));
+      }
       if (action === "delete") await geofenceApi.deleteZone(zone.zone_id);
       if (action === "rf") {
         setGeofenceBusy("Capturing current RF environment...");
@@ -672,6 +699,9 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
         await refreshGeofence();
       }
     } catch (err) {
+      if (action === "toggle") {
+        setGeofenceZones((current) => current.map((item) => item.zone_id === zone.zone_id ? zone : item));
+      }
       const requestName = action === "toggle" ? "Zone enable/disable" : action === "delete" ? "Zone delete" : action === "rf" ? "RF capture" : action === "actions" ? "Zone actions update" : `Zone ${action} action test`;
       const message = `${requestName} request failed: ${err instanceof Error ? err.message : "Unknown error"}`;
       setGeofenceError(message);
@@ -953,6 +983,7 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
                     const kind = nodeKind(node);
                     const dotRadius = node.primaryLighthouse ? 8 : node.roles.includes("lighthouse") ? 7 : node.roles.includes("relay") ? 6 : 5;
                     const nodeCircleEntries = getNodeCircles(membershipIndex, node.id);
+                    const nodeZones = geofenceZones.filter((zone) => zoneMatchesNode(zone, node));
                     return (
                       <g
                         key={node.id}
@@ -966,6 +997,20 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
                           if (event.key === "Enter" || event.key === " ") selectNode(node);
                         }}
                       >
+                        <g className="clt-node-zones" aria-label={`${nodeZones.length} zones on ${nodeDisplayName}`}>
+                          {nodeZones.map((zone, zoneIndex) => {
+                            const zoneRadius = topologyZoneRadius(zone, zoneIndex);
+                            const evaluation = geofenceStatus?.zones.find((item) => item.zone_id === zone.zone_id);
+                            const zoneColor = ZONE_COLORS[geofenceZones.findIndex((item) => item.zone_id === zone.zone_id) % ZONE_COLORS.length];
+                            return <g key={zone.zone_id} className={`clt-node-zone ${zone.enabled ? "is-enabled" : "is-disabled"} ${evaluation?.inside ? "is-inside" : ""} ${selectedZoneId === zone.zone_id ? "is-selected" : ""}`} style={{ "--zone-color": zoneColor } as React.CSSProperties}>
+                              <circle r={zoneRadius} className="clt-node-zone__fill" />
+                              {zone.enabled && <circle r={zoneRadius} className="clt-node-zone__pulse" />}
+                              <circle r={zoneRadius} className="clt-node-zone__boundary" />
+                              <text y={-zoneRadius - 7}>{zone.name}{zone.enabled ? "" : " · OFF"}</text>
+                              <title>{`${zone.name}: ${zone.enabled ? "enabled" : "disabled"}, radius ${Math.round(zone.radius_m ?? 0)} m`}</title>
+                            </g>;
+                          })}
+                        </g>
                         <g className="clt-node-scale">
                           <circle r={dotRadius} className="clt-node__map-dot" style={{ fill: presence.color, stroke: trust.color }} />
                           {node.presence === "online" && kind !== "member" && <circle r={radius + 5} className="clt-node__pulse" style={{ stroke: presence.color }} />}
@@ -1133,7 +1178,7 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
           <div className="clt-geofence-actions">
             <button onClick={() => void refreshGeofence()} disabled={!!geofenceBusy} title="Refresh geofence" aria-label="Refresh geofence"><RefreshCw size={12} /></button>
             <button onClick={reportLocation} disabled={!!geofenceBusy} title="Update browser location" aria-label="Update browser location"><MapPin size={12} /></button>
-            <button onClick={() => setEditingZone(null)} disabled={!!geofenceBusy} title="Create zone" aria-label="Create zone"><Plus size={12} /></button>
+            <button onClick={() => setEditingZone(null)} disabled={!!geofenceBusy || !selected} title={selected ? `Create zone on ${displayForDid(selected.did, selected.label)}` : "Select a topology node first"} aria-label="Create zone on selected node"><Plus size={12} /></button>
             <button onClick={() => setEditingZone(selectedZone)} disabled={!!geofenceBusy || !selectedZone} title="Edit selected zone" aria-label="Edit selected zone"><Pencil size={12} /></button>
             <button onClick={() => selectedZone && void runZoneAction(selectedZone, "toggle")} disabled={!!geofenceBusy || !selectedZone} title={selectedZone?.enabled ? "Disable zone" : "Enable zone"} aria-label={selectedZone?.enabled ? "Disable zone" : "Enable zone"}><ShieldCheck size={12} /></button>
             <button onClick={() => selectedZone && void runZoneAction(selectedZone, "rf")} disabled={!!geofenceBusy || !selectedZone} title={selectedZone?.kind === "rf_signature" ? "Re-capture RF baseline" : "Capture RF for selected zone"} aria-label={selectedZone?.kind === "rf_signature" ? "Re-capture RF baseline" : "Capture RF for selected zone"}><Radio size={12} /></button>
@@ -1143,7 +1188,7 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
             <button onClick={() => selectedZone && void runZoneAction(selectedZone, "delete")} disabled={!!geofenceBusy || !selectedZone} title="Delete zone" aria-label="Delete zone"><Trash2 size={12} /></button>
           </div>
           <div className="clt-zone-cards">{geofenceZones.map((zone) => { const evaluation = geofenceStatus?.zones.find((item) => item.zone_id === zone.zone_id); const membership = evaluation?.inside === true ? "Inside" : evaluation?.inside === false ? "Outside" : "Pending"; const selectZone = () => setSelectedZoneId(zone.zone_id); return <div className={`clt-geofence-detail${selectedZoneId === zone.zone_id ? " is-selected" : ""}`} key={zone.zone_id} role="button" tabIndex={0} aria-pressed={selectedZoneId === zone.zone_id} onClick={selectZone} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectZone(); } }}>
-            <b>{zone.name}</b><span>Zone Type: {zoneTypeLabel(zone.kind)}</span><span>{zone.enabled ? "Enabled" : "Disabled"} | {membership}</span>
+            <b>{zone.name}</b><span>Topology node: {nodes.find((node) => zoneMatchesNode(zone, node))?.label ?? "Not assigned"}</span><span>Zone Type: {zoneTypeLabel(zone.kind)}</span><span>{zone.enabled ? "Enabled" : "Disabled"} | {membership}</span>
             {zone.kind === "coordinate" ? <><span>Radius: {zone.radius_m != null ? `${Math.round(zone.radius_m)} m` : "Not set"}</span><span>Current distance: {evaluation?.distance_m != null ? `${Math.round(evaluation.distance_m)} m` : "Unavailable"}</span></> : <><span>Captured AP count: {zone.rf_signature?.aps?.length ?? 0}</span><span>Current RF score: {evaluation?.rf_score != null ? evaluation.rf_score.toFixed(2) : "Unavailable"}</span><span>Match threshold: {zone.rf_signature?.threshold ?? "Unavailable"}</span></>}
             <span>Configured actions: {configuredActions(zone)}</span>
           </div>; })}</div>
@@ -1161,7 +1206,7 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
           {(geofenceError || geofenceBusy) && <p className="clt-card-note">{geofenceBusy ?? geofenceError}</p>}
         </section>
       </aside>
-      {editingZone !== undefined && <ZoneDialog zone={editingZone ?? undefined} fix={geofenceStatus?.location?.fix ?? null} busy={!!geofenceBusy} onClose={() => setEditingZone(undefined)} onSave={(body) => void saveZone(body)} />}
+      {editingZone !== undefined && <ZoneDialog zone={editingZone ?? undefined} node={editingZoneNode} fix={geofenceStatus?.location?.fix ?? null} busy={!!geofenceBusy} onClose={() => setEditingZone(undefined)} onSave={(body) => void saveZone(body)} />}
       </div>
 
       <footer className="clt-footer">

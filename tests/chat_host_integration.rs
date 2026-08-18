@@ -10,9 +10,10 @@ use axum::{extract::State, Json};
 use sgx_guardian_client::api::handlers::chat::{self, MarkReadRequest, SendMessageRequest};
 use sgx_guardian_client::api::state::AppState;
 use sgx_guardian_client::chat::grpc_server::MyChatService;
-use sgx_guardian_client::chat::models::{ChatMessageRecord, MessageStatus};
+use sgx_guardian_client::chat::models::{AttachmentRecord, ChatMessageRecord, MessageStatus};
 use sgx_guardian_client::chat::storage::{
-    append_p2p_message, read_group_history, read_p2p_history,
+    append_attachment_metadata, append_p2p_message, attachment_path, read_group_history,
+    read_p2p_history,
 };
 use sgx_guardian_client::proto::sgx::chat_service_client::ChatServiceClient;
 use sgx_guardian_client::proto::sgx::chat_service_server::ChatServiceServer;
@@ -23,6 +24,7 @@ use tempfile::TempDir;
 use tokio::sync::oneshot;
 use tonic::transport::{Channel, Server};
 use tonic::Code;
+use sha2::{Digest, Sha256};
 
 fn state(node_id: &str, root: &std::path::Path) -> std::sync::Arc<AppState> {
     AppState::for_tests(root, node_id, root.join("config").display().to_string())
@@ -321,6 +323,52 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
         .await
         .unwrap_err();
     assert_eq!(err.code(), Code::PermissionDenied);
+
+    // Attachment streaming is a separate, chunked protocol: the chat message
+    // carries metadata while the receiver pulls verified bytes over the same
+    // attested Nebula gRPC channel.
+    let attachment_id = uuid::Uuid::new_v4().to_string();
+    let attachment_bytes = vec![0x5au8; 150_000];
+    let attachment_file = attachment_path(&attachment_id);
+    tokio::fs::create_dir_all(attachment_file.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&attachment_file, &attachment_bytes)
+        .await
+        .unwrap();
+    append_attachment_metadata(&AttachmentRecord {
+        file_id: attachment_id.clone(),
+        message_id: "host-attachment-message".to_string(),
+        file_name: "host-proof.bin".to_string(),
+        mime_type: "application/octet-stream".to_string(),
+        encrypted_size: attachment_bytes.len() as u64,
+        sha256_hash: hex::encode(Sha256::digest(&attachment_bytes)),
+        local_path: attachment_file.to_string_lossy().to_string(),
+        encrypted_file_key: "nebula_transport".to_string(),
+    })
+    .await
+    .unwrap();
+
+    let channel = Channel::from_shared(format!("http://{addr_a}"))
+        .unwrap()
+        .connect_lazy();
+    let mut attachment_client = ChatServiceClient::new(channel);
+    let mut attachment_stream = attachment_client
+        .get_attachment(sgx_guardian_client::proto::sgx::GetAttachmentRequest {
+            requester_did: did_b.clone(),
+            attachment_id: attachment_id.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    let mut downloaded = Vec::new();
+    while let Some(chunk) = attachment_stream.message().await.unwrap() {
+        assert_eq!(chunk.attachment_id, attachment_id);
+        assert_eq!(chunk.file_name, "host-proof.bin");
+        assert_eq!(chunk.total_size, attachment_bytes.len() as u64);
+        downloaded.extend_from_slice(&chunk.data);
+    }
+    assert_eq!(downloaded, attachment_bytes);
 
     let _ = shutdown_a.send(());
     let _ = shutdown_b.send(());

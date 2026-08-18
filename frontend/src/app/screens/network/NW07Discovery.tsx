@@ -62,6 +62,10 @@ import { toast } from "sonner";
 
 type Tab = "inventory" | "whitelist" | "schedule" | "runs";
 
+function guardianDisplayText(value: string) {
+  return value.replace(/suricata|nmap/gi, "Guardian");
+}
+
 // ScanKey / ScanRun / LastRunRecord and the scan lifecycle live in the shared
 // useDiscoveryScan store so a running scan survives this screen unmounting
 // (e.g. switching Settings panels).
@@ -888,7 +892,7 @@ function InventoryTab({ data, loading, error, refetch, scanning, onScan, whiteli
       ) : error ? (
         <div className="rounded-lg border p-6 text-center" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>
-            {error.message.includes("404") ? "No discovery inventory yet. Run a scan to populate it." : error.message}
+            {error.message.includes("404") ? "No discovery inventory yet. Run a scan to populate it." : guardianDisplayText(error.message)}
           </p>
         </div>
       ) : shown.length === 0 ? (
@@ -956,7 +960,7 @@ function ApproveDialog({
       });
       onApproved();
     } catch (err) {
-      toast.error("Approval failed", { description: err instanceof Error ? err.message : undefined });
+      toast.error("Approval failed", { description: err instanceof Error ? guardianDisplayText(err.message) : undefined });
     } finally {
       setSubmitting(false);
     }
@@ -1349,7 +1353,7 @@ function WhitelistTab({ inventoryDevices, data, loading, error, refetch, onSaved
       refetch();
       onSaved?.();
     } catch (err) {
-      toast.error("Save failed", { description: err instanceof Error ? err.message : undefined });
+      toast.error("Save failed", { description: err instanceof Error ? guardianDisplayText(err.message) : undefined });
     } finally {
       setSaving(false);
     }
@@ -1395,7 +1399,7 @@ function WhitelistTab({ inventoryDevices, data, loading, error, refetch, onSaved
       </p>
 
       {error && (
-        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--destructive)" }}>{error.message}</p>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--destructive)" }}>{guardianDisplayText(error.message)}</p>
       )}
 
       {view === "json" ? (
@@ -1553,7 +1557,7 @@ function ScheduleTab() {
       toast.success("Schedule updated");
       refetch();
     } catch (err) {
-      toast.error("Save failed", { description: err instanceof Error ? err.message : undefined });
+      toast.error("Save failed", { description: err instanceof Error ? guardianDisplayText(err.message) : undefined });
     } finally {
       setSaving(false);
     }
@@ -1573,7 +1577,7 @@ function ScheduleTab() {
 
       {error && (
         <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--chart-4)" }}>
-          Couldn't load the current schedule ({error.message}). Showing defaults — saving will overwrite the stored config.
+          Couldn't load the current schedule ({guardianDisplayText(error.message)}). Showing defaults — saving will overwrite the stored config.
         </p>
       )}
 
@@ -2415,7 +2419,7 @@ function ScheduleRunCard({ run, onClick }: { run: ScheduleRun; onClick?: () => v
       </div>
       {run.error_message && (
         <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px", color: "var(--destructive)" }}>
-          {run.error_message}
+          {guardianDisplayText(run.error_message)}
         </p>
       )}
     </div>
@@ -2566,9 +2570,9 @@ function ScanStatusBanner({ run, now }: { run: ScanRun; now: number }) {
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
             }}
-            title={run.message}
+            title={guardianDisplayText(run.message)}
           >
-            {run.message}
+            {guardianDisplayText(run.message)}
           </p>
         )}
       </div>
@@ -2650,7 +2654,7 @@ export function NW07Discovery() {
 
   return (
     <div className="flex flex-col h-full">
-      <PageHeader title="Network Discovery" subtitle="NMAP Inventory" onBack={() => navigate("/network")} />
+      <PageHeader title="Network Discovery" subtitle="Guardian Inventory" onBack={() => navigate("/network")} />
 
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-4xl p-4 md:p-6 flex flex-col gap-4">

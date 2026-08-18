@@ -225,6 +225,8 @@ fn query_parameter(query: Option<&str>, name: &str) -> Option<String> {
 
 fn is_public_route(method: &Method, path: &str) -> bool {
     let public_frontend = method == Method::GET && !path.starts_with("/api/");
+    let circle_snapshot_pull =
+        method == Method::GET && path.starts_with("/api/v1/circles/") && path.ends_with("/members/snapshot");
 
     matches!(
         (method, path),
@@ -238,10 +240,13 @@ fn is_public_route(method: &Method, path: &str) -> bool {
             | (&Method::POST, "/api/v1/circles/redeem")
             // Service-authenticated in handlers::circle::receive_invite.
             | (&Method::POST, "/api/v1/circles/invites/inbox")
+            // Service-authenticated in handlers::circle::receive_member_snapshot.
+            | (&Method::POST, "/api/v1/circles/snapshots/inbox")
             | (&Method::POST, "/api/v1/restore/validate")
             | (&Method::GET, "/api/v1/restore/status")
             | (&Method::GET, "/api/v1/health")
-    ) || public_frontend
+    ) || circle_snapshot_pull
+        || public_frontend
 }
 
 fn is_cors_preflight(method: &Method, headers: &HeaderMap) -> bool {

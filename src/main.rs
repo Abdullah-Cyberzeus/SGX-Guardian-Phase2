@@ -2810,6 +2810,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // periodically after reconnect, matching the live Mesh/CRL sync posture.
     sgx_guardian_client::circle::snapshot::spawn(node_id.clone(), did_resolver.clone());
 
+    // Secure XFER must listen on every Guardian before another peer can
+    // connect to it. The REST send endpoint only queues the outbound job; the
+    // engine owns both the TCP listener and the background sender tasks.
+    sgx_guardian_client::xfer::spawn(node_id.clone(), did_resolver.clone());
     // Subscribes to the notification bus and durably appends live events so
     // reconnecting consoles can replay missed notifications.
     sgx_guardian_client::notify::spawn(node_id.clone());

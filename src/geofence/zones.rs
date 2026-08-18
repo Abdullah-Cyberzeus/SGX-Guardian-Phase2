@@ -18,6 +18,7 @@ const EARTH_RADIUS_M: f64 = 6_371_000.0;
 #[derive(Debug, Clone, Default)]
 pub struct ZonePatch {
     pub name: Option<String>,
+    pub topology_node_ref: Option<Option<String>>,
     pub kind: Option<ZoneKind>,
     pub center_lat: Option<Option<f64>>,
     pub center_lng: Option<Option<f64>>,
@@ -33,6 +34,7 @@ pub struct ZonePatch {
 #[derive(Debug, Clone)]
 pub struct NewZoneInput {
     pub name: String,
+    pub topology_node_ref: Option<String>,
     pub kind: ZoneKind,
     pub center_lat: Option<f64>,
     pub center_lng: Option<f64>,
@@ -93,6 +95,9 @@ pub fn update_zone(id: &str, patch: ZonePatch) -> GeofenceResult<GeofenceZone> {
 
     if let Some(name) = patch.name {
         zone.name = name;
+    }
+    if let Some(topology_node_ref) = patch.topology_node_ref {
+        zone.topology_node_ref = topology_node_ref;
     }
     if let Some(kind) = patch.kind {
         zone.kind = kind;
@@ -330,6 +335,7 @@ fn seed_zones() -> Vec<GeofenceZone> {
         GeofenceZone {
             zone_id: "urn:sgx-guardian:geofence:facility-perimeter".to_string(),
             name: "Facility Perimeter".to_string(),
+            topology_node_ref: None,
             kind: ZoneKind::Coordinate,
             center_lat: Some(24.8607),
             center_lng: Some(67.0011),
@@ -346,6 +352,7 @@ fn seed_zones() -> Vec<GeofenceZone> {
         GeofenceZone {
             zone_id: "urn:sgx-guardian:geofence:control-room".to_string(),
             name: "Control Room".to_string(),
+            topology_node_ref: None,
             kind: ZoneKind::Coordinate,
             center_lat: Some(24.8607),
             center_lng: Some(67.0011),
@@ -404,6 +411,7 @@ pub fn new_zone(input: NewZoneInput) -> GeofenceZone {
     GeofenceZone {
         zone_id: format!("urn:uuid:{}", uuid::Uuid::new_v4()),
         name: input.name,
+        topology_node_ref: input.topology_node_ref,
         kind: input.kind,
         center_lat: input.center_lat,
         center_lng: input.center_lng,
@@ -438,6 +446,7 @@ mod tests {
     fn validation_rejects_invalid_coordinate_zone() {
         let zone = new_zone(NewZoneInput {
             name: "bad".to_string(),
+            topology_node_ref: None,
             kind: ZoneKind::Coordinate,
             center_lat: Some(100.0),
             center_lng: Some(0.0),
@@ -496,6 +505,7 @@ mod tests {
         );
         let zone = create_zone(new_zone(NewZoneInput {
             name: "User Zone".to_string(),
+            topology_node_ref: Some("did:example:topology-node".to_string()),
             kind: ZoneKind::Coordinate,
             center_lat: Some(24.8607),
             center_lng: Some(67.0011),
@@ -510,6 +520,10 @@ mod tests {
         .expect("create zone");
 
         let restarted = load_or_seed_registry().expect("registry after restart");
+        assert_eq!(
+            restarted.zones[0].topology_node_ref.as_deref(),
+            Some("did:example:topology-node")
+        );
 
         assert_eq!(restarted.zones.len(), 1);
         assert_eq!(restarted.zones[0].zone_id, zone.zone_id);

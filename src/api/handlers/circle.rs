@@ -1308,68 +1308,88 @@ async fn broadcast_member_snapshot(
             }
         };
         let signature_b64 = general_purpose::STANDARD.encode(signature);
-        let endpoint = match invite::resolve_circle_endpoint(&member.did, &state.did_resolver).await
-        {
-            Ok(endpoint) => endpoint,
-            Err(err) => {
-                tracing::warn!(
-                    "Circle member snapshot endpoint resolve failed circle={} target={} error={}",
-                    snapshot.circle_id,
-                    member.did,
-                    err
-                );
-                continue;
-            }
-        };
-        let response = client
-            .post(format!(
-                "{}/api/v1/circles/snapshots/inbox",
-                endpoint.trim_end_matches('/')
-            ))
-            .header(
-                reqwest::header::AUTHORIZATION,
-                format!("{}{}", GUARDIAN_SERVICE_AUTH_SCHEME, signature_b64),
-            )
-            .header(HEADER_GUARDIAN_DID, owner.did)
-            .header(HEADER_GUARDIAN_TIMESTAMP, timestamp)
-            .header(HEADER_GUARDIAN_NONCE, nonce)
-            .json(snapshot)
-            .send()
-            .await;
-        match response {
-            Ok(response) if response.status().is_success() => {
-                tracing::info!(
-                    "Circle member snapshot delivered circle={} version={} target={}",
-                    snapshot.circle_id,
-                    snapshot.version,
-                    member.did
-                );
-            }
-            Ok(response) => {
-                let status = response.status();
-                let body = response
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| "snapshot delivery failed".to_string());
-                tracing::warn!(
-                    "Circle member snapshot delivery rejected circle={} target={} status={} body={}",
-                    snapshot.circle_id,
-                    member.did,
-                    status,
-                    body
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    "Circle member snapshot delivery failed circle={} target={} endpoint={} error={}",
-                    snapshot.circle_id,
-                    member.did,
-                    endpoint,
-                    err
-                );
+        let endpoints = circle_member_delivery_endpoints(&member.did, &owner.did, &state.did_resolver).await;
+        if endpoints.is_empty() {
+            tracing::warn!(
+                "Circle member snapshot endpoint resolve failed circle={} target={}",
+                snapshot.circle_id,
+                member.did
+            );
+            continue;
+        }
+        for endpoint in endpoints {
+            let response = client
+                .post(format!(
+                    "{}/api/v1/circles/snapshots/inbox",
+                    endpoint.trim_end_matches('/')
+                ))
+                .header(
+                    reqwest::header::AUTHORIZATION,
+                    format!("{}{}", GUARDIAN_SERVICE_AUTH_SCHEME, signature_b64),
+                )
+                .header(HEADER_GUARDIAN_DID, owner.did.clone())
+                .header(HEADER_GUARDIAN_TIMESTAMP, timestamp.clone())
+                .header(HEADER_GUARDIAN_NONCE, nonce.clone())
+                .json(snapshot)
+                .send()
+                .await;
+            match response {
+                Ok(response) if response.status().is_success() => {
+                    tracing::info!(
+                        "Circle member snapshot delivered circle={} version={} target={}",
+                        snapshot.circle_id,
+                        snapshot.version,
+                        member.did
+                    );
+                    break;
+                }
+                Ok(response) => {
+                    let status = response.status();
+                    let body = response
+                        .text()
+                        .await
+                        .unwrap_or_else(|_| "snapshot delivery failed".to_string());
+                    tracing::warn!(
+                        "Circle member snapshot delivery rejected circle={} target={} endpoint={} status={} body={}",
+                        snapshot.circle_id,
+                        member.did,
+                        endpoint,
+                        status,
+                        body
+                    );
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        "Circle member snapshot delivery failed circle={} target={} endpoint={} error={}",
+                        snapshot.circle_id,
+                        member.did,
+                        endpoint,
+                        err
+                    );
+                }
             }
         }
     }
+}
+
+async fn circle_member_delivery_endpoints(
+    target_did: &str,
+    self_did: &str,
+    resolver: &crate::did::Resolver,
+) -> Vec<String> {
+    let mut endpoints = Vec::new();
+    if let Ok(endpoint) = invite::resolve_circle_endpoint(target_did, resolver).await {
+        endpoints.push(endpoint);
+    }
+    for peer in crate::crl::gossip::engine::active_gossip_peers(self_did) {
+        if peer.did == target_did {
+            let endpoint = format!("http://{}:8443", peer.overlay_ip);
+            if !endpoints.iter().any(|existing| existing == &endpoint) {
+                endpoints.push(endpoint);
+            }
+        }
+    }
+    endpoints
 }
 
 async fn deliver_invite(state: &Arc<AppState>, token: &InviteToken) -> Result<(), CircleError> {

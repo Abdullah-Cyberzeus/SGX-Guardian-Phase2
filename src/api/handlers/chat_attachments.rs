@@ -39,11 +39,16 @@ pub async fn upload_attachment(
         if name == "file" {
             file_received = true;
             let file_name = field.file_name().unwrap_or("unknown").to_string();
+            let mime_type = field
+                .content_type()
+                .unwrap_or("application/octet-stream")
+                .to_string();
             attachment_id = Uuid::new_v4().to_string();
 
-            let base_dir = std::env::var("CHAT_STORAGE_DIR")
-                .unwrap_or_else(|_| "/var/lib/sgx-guardian/chat".to_string());
-            let attachments_dir = std::path::Path::new(&base_dir).join("attachments");
+            let file_path = crate::chat::storage::attachment_path(&attachment_id);
+            let attachments_dir = file_path.parent().ok_or_else(|| {
+                ApiError::Internal("Invalid attachment storage path".to_string())
+            })?;
             if let Err(e) = tokio::fs::create_dir_all(&attachments_dir).await {
                 return Err(ApiError::Internal(format!(
                     "Failed to create attachments dir: {}",
@@ -51,7 +56,6 @@ pub async fn upload_attachment(
                 )));
             }
 
-            let file_path = attachments_dir.join(&attachment_id);
             let mut file = OpenOptions::new()
                 .write(true)
                 .create(true)
@@ -63,8 +67,9 @@ pub async fn upload_attachment(
             let mut hasher = Sha256::new();
             let mut total_size = 0;
 
-            const MAX_ATTACHMENT_BYTES: usize = 50 * 1024 * 1024; // 50 MB
-                                                                  // Task 4.2: Stream the chunks directly to disk and hash simultaneously
+            const MAX_ATTACHMENT_BYTES: usize =
+                crate::chat::storage::MAX_ATTACHMENT_BYTES as usize;
+            // Stream chunks directly to disk and hash simultaneously.
             while let Some(chunk) = field
                 .chunk()
                 .await
@@ -95,6 +100,7 @@ pub async fn upload_attachment(
                 file_id: attachment_id.clone(),
                 message_id: "pending_upload".to_string(),
                 file_name,
+                mime_type,
                 encrypted_size: total_size as u64,
                 sha256_hash: checksum,
                 local_path: file_path.to_string_lossy().to_string(),
@@ -133,11 +139,7 @@ pub async fn download_attachment(
         ));
     }
 
-    let base_dir = std::env::var("CHAT_STORAGE_DIR")
-        .unwrap_or_else(|_| "/var/lib/sgx-guardian/chat".to_string());
-    let file_path = std::path::Path::new(&base_dir)
-        .join("attachments")
-        .join(&attachment_id);
+    let file_path = crate::chat::storage::attachment_path(&attachment_id);
 
     // 2. Open the file
     let file = match File::open(&file_path).await {
@@ -156,14 +158,23 @@ pub async fn download_attachment(
 
     // Fetch original filename from metadata, fallback to attachment_id if missing
     let mut filename = attachment_id.clone();
+    let mut mime_type = "application/octet-stream".to_string();
     if let Ok(Some(metadata)) = crate::chat::storage::get_attachment_metadata(&attachment_id).await
     {
         filename = metadata.file_name;
+        mime_type = metadata.mime_type;
     }
+    let filename = filename
+        .chars()
+        .map(|character| match character {
+            '\r' | '\n' | '"' | '\\' => '_',
+            _ => character,
+        })
+        .collect::<String>();
 
-    // Provide a raw octet-stream since these are encrypted binary blobs anyway
+    // Stream the stored bytes with the original media type and safe filename.
     let response = Response::builder()
-        .header("Content-Type", "application/octet-stream")
+        .header("Content-Type", mime_type)
         .header(
             "Content-Disposition",
             format!("attachment; filename=\"{}\"", filename),
