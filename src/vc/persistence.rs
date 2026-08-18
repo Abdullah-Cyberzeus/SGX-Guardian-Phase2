@@ -123,11 +123,18 @@ pub fn load_status_list_index_raw() -> Result<String, VcError> {
 }
 
 pub fn load_own_any() -> Result<Option<VerifiableCredential>, VcError> {
+    if let Some(mesh) = load_own_mesh()? {
+        return Ok(Some(mesh));
+    }
+    load_own_latest()
+}
+
+pub fn load_own_mesh() -> Result<Option<VerifiableCredential>, VcError> {
     let dir = own_dir();
     if !dir.exists() {
         return Ok(None);
     }
-    let mut preferred: Option<(bool, std::time::SystemTime, VerifiableCredential)> = None;
+    let mut preferred: Option<(std::time::SystemTime, VerifiableCredential)> = None;
     for entry in fs::read_dir(&dir)? {
         let entry = entry?;
         let modified = entry.metadata()?.modified()?;
@@ -137,19 +144,44 @@ pub fn load_own_any() -> Result<Option<VerifiableCredential>, VcError> {
         let Ok(vc) = serde_json::from_slice::<VerifiableCredential>(&bytes) else {
             continue;
         };
-        let is_mesh_circle = vc.credential_subject.circle_id == crate::vc::issue::DEFAULT_CIRCLE_ID;
+        if vc.credential_subject.circle_id != crate::vc::issue::DEFAULT_CIRCLE_ID {
+            continue;
+        }
         let should_replace = preferred
             .as_ref()
-            .map(|(best_is_mesh, ts, _)| {
-                (is_mesh_circle && !best_is_mesh)
-                    || (is_mesh_circle == *best_is_mesh && modified > *ts)
-            })
+            .map(|(ts, _)| modified > *ts)
             .unwrap_or(true);
         if should_replace {
-            preferred = Some((is_mesh_circle, modified, vc));
+            preferred = Some((modified, vc));
         }
     }
-    Ok(preferred.map(|(_, _, vc)| vc))
+    Ok(preferred.map(|(_, vc)| vc))
+}
+
+fn load_own_latest() -> Result<Option<VerifiableCredential>, VcError> {
+    let dir = own_dir();
+    if !dir.exists() {
+        return Ok(None);
+    }
+    let mut preferred: Option<(std::time::SystemTime, VerifiableCredential)> = None;
+    for entry in fs::read_dir(&dir)? {
+        let entry = entry?;
+        let modified = entry.metadata()?.modified()?;
+        let Ok(bytes) = fs::read(entry.path()) else {
+            continue;
+        };
+        let Ok(vc) = serde_json::from_slice::<VerifiableCredential>(&bytes) else {
+            continue;
+        };
+        let should_replace = preferred
+            .as_ref()
+            .map(|(ts, _)| modified > *ts)
+            .unwrap_or(true);
+        if should_replace {
+            preferred = Some((modified, vc));
+        }
+    }
+    Ok(preferred.map(|(_, vc)| vc))
 }
 
 pub fn list_issued() -> Result<Vec<VerifiableCredential>, VcError> {

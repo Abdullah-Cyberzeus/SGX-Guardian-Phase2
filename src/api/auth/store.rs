@@ -1021,8 +1021,7 @@ impl OidcTransactionStore for JsonOidcTransactionStore {
     async fn put(&self, record: OidcTransactionRecord) -> Result<()> {
         self.file
             .mutate(move |records| {
-                if let Some(existing) = records.iter_mut().find(|item| item.state == record.state)
-                {
+                if let Some(existing) = records.iter_mut().find(|item| item.state == record.state) {
                     *existing = record.clone();
                 } else {
                     records.push(record);

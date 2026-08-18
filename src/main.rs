@@ -3250,6 +3250,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // revocations + flush the outbound queue. No new port/listener.
     sgx_guardian_client::crl::offline::spawn(node_id.clone(), did_resolver.clone());
 
+    // === Comms Circle member snapshot sync ===
+    // Pulls latest owner-signed Comms Circle membership state after boot and
+    // periodically after reconnect, matching the live Mesh/CRL sync posture.
+    sgx_guardian_client::circle::snapshot::spawn(node_id.clone(), did_resolver.clone());
+
     // Subscribes to the notification bus and durably appends live events so
     // reconnecting consoles can replay missed notifications.
     sgx_guardian_client::notify::spawn(node_id.clone());
@@ -3411,16 +3416,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize Event Bus for Home Assistant events
     let ha_event_bus = sgx_guardian_client::homeassistant::events::EventBus::new();
-    
+
     // Start the Event Dispatcher (Phase 2 core)
-    sgx_guardian_client::homeassistant::events::start_event_dispatcher(std::sync::Arc::clone(&ha_event_bus)).await;
-    
+    sgx_guardian_client::homeassistant::events::start_event_dispatcher(std::sync::Arc::clone(
+        &ha_event_bus,
+    ))
+    .await;
+
     // Start the Telemetry Subsystem (Phase 4: 60s sampling, 50MB early rotation, 72h retention)
     let telemetry_collector = std::sync::Arc::new(
         sgx_guardian_client::telemetry::collector::TelemetryCollector::new(
             std::sync::Arc::clone(&ha_event_bus),
             sgx_guardian_client::storage::resolve_telemetry_dir(),
-        )
+        ),
     );
     telemetry_collector.start().await;
 
@@ -3428,24 +3436,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match sgx_guardian_client::homeassistant::HomeAssistantConfig::from_env() {
         Ok(ha_config) => {
             println!("🏠 Found HA Config! Starting Home Assistant Client & Device Manager in background...");
-            
+
             // Initialize Device Subsystem (Phase 3)
             let devices_file = sgx_guardian_client::storage::resolve_data_file("devices.json");
-            let pending_file = sgx_guardian_client::storage::resolve_data_file("pending_actions.json");
-            let automations_file = sgx_guardian_client::storage::resolve_data_file("automations.json");
+            let pending_file =
+                sgx_guardian_client::storage::resolve_data_file("pending_actions.json");
+            let automations_file =
+                sgx_guardian_client::storage::resolve_data_file("automations.json");
 
             // Initialize Persistent Notification System (Phase 9)
-            let notifications_file = sgx_guardian_client::storage::resolve_data_file("notifications.json");
+            let notifications_file =
+                sgx_guardian_client::storage::resolve_data_file("notifications.json");
             let notification_manager = std::sync::Arc::new(
                 sgx_guardian_client::notification::manager::NotificationManager::load_or_create(
                     notifications_file.into(),
                     Some(std::sync::Arc::clone(&ha_event_bus)),
-                )
+                ),
             );
 
-            let ha_rest = std::sync::Arc::new(sgx_guardian_client::homeassistant::rest::HaRestClient::new(ha_config.clone()));
-            let registry = std::sync::Arc::new(sgx_guardian_client::device::registry::DeviceRegistry::new(&devices_file));
-            let command_tracker = sgx_guardian_client::device::command_tracker::CommandTracker::new();
+            let ha_rest = std::sync::Arc::new(
+                sgx_guardian_client::homeassistant::rest::HaRestClient::new(ha_config.clone()),
+            );
+            let registry = std::sync::Arc::new(
+                sgx_guardian_client::device::registry::DeviceRegistry::new(&devices_file),
+            );
+            let command_tracker =
+                sgx_guardian_client::device::command_tracker::CommandTracker::new();
             let device_manager = sgx_guardian_client::device::manager::DeviceManager::new(
                 registry,
                 command_tracker,
@@ -3455,15 +3471,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
 
             // Start listening for state_changed events and run startup reconciliation
-            std::sync::Arc::clone(&device_manager).start_event_listener().await;
+            std::sync::Arc::clone(&device_manager)
+                .start_event_listener()
+                .await;
             let dm_reconcile = std::sync::Arc::clone(&device_manager);
             tokio::spawn(async move {
                 dm_reconcile.reconcile_state().await;
             });
 
             // Initialize Automation Engine (Phase 5)
-            let presence_tracker = sgx_guardian_client::automation::presence::PresenceTracker::new();
-            let timer_store = sgx_guardian_client::automation::timer_store::PendingActionStore::new(&pending_file);
+            let presence_tracker =
+                sgx_guardian_client::automation::presence::PresenceTracker::new();
+            let timer_store = sgx_guardian_client::automation::timer_store::PendingActionStore::new(
+                &pending_file,
+            );
             let automation_engine = sgx_guardian_client::automation::engine::AutomationEngine::new(
                 &automations_file,
                 std::sync::Arc::clone(&device_manager),
@@ -3474,24 +3495,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             automation_engine.clone().start().await;
 
             // Initialize Vendor Integrations & Encrypted OAuth Token Storage (Phase 6)
-            let integrations_file = sgx_guardian_client::storage::resolve_data_file("integrations.json");
-            let integration_manager = sgx_guardian_client::integration::manager::IntegrationManager::new(&integrations_file);
+            let integrations_file =
+                sgx_guardian_client::storage::resolve_data_file("integrations.json");
+            let integration_manager =
+                sgx_guardian_client::integration::manager::IntegrationManager::new(
+                    &integrations_file,
+                );
             let refresh_worker = std::sync::Arc::new(
                 sgx_guardian_client::integration::refresh_worker::TokenRefreshWorker::new(
                     std::sync::Arc::clone(&integration_manager),
-                )
+                ),
             );
             refresh_worker.start();
 
             // Populate API State for Phase 7 REST & WebSocket endpoints
             *api_state.device_manager.write().await = Some(std::sync::Arc::clone(&device_manager));
-            *api_state.automation_engine.write().await = Some(std::sync::Arc::clone(&automation_engine));
-            *api_state.integration_manager.write().await = Some(std::sync::Arc::clone(&integration_manager));
+            *api_state.automation_engine.write().await =
+                Some(std::sync::Arc::clone(&automation_engine));
+            *api_state.integration_manager.write().await =
+                Some(std::sync::Arc::clone(&integration_manager));
             *api_state.ha_event_bus.write().await = Some(std::sync::Arc::clone(&ha_event_bus));
-            *api_state.notification_manager.write().await = Some(std::sync::Arc::clone(&notification_manager));
+            *api_state.notification_manager.write().await =
+                Some(std::sync::Arc::clone(&notification_manager));
             println!("🌐 Connected HA, Automation, Integration, Notification, & WebSocket subsystems to REST API Server.");
 
-            sgx_guardian_client::homeassistant::websocket::start_websocket_client(ha_config, ha_event_bus).await;
+            sgx_guardian_client::homeassistant::websocket::start_websocket_client(
+                ha_config,
+                ha_event_bus,
+            )
+            .await;
         }
         Err(e) => {
             println!("⚠️ HA Config not found: {}", e);

@@ -335,10 +335,13 @@ fn invite_roundtrip_verifies_and_fits_qr_budget() {
         owner.did.clone(),
     )
     .expect("create circle");
+    let (_member_km, member, member_doc) = make_material("nodeB", 2, "192.168.100.2/24");
+    save_peer_context(&member_doc);
     let token = invite::mint_invite(
         &circle,
         &owner,
         &km,
+        &member.did,
         CredentialRole::Member,
         Some(60),
         Some(1),
@@ -358,6 +361,100 @@ fn invite_roundtrip_verifies_and_fits_qr_budget() {
 
     let link = invite::build_share_link(&compact, "http://owner.example:8443").expect("link");
     assert!(link.len() <= invite::MAX_QR_PAYLOAD_SIZE);
+}
+
+#[test]
+fn targeted_invite_acceptance_issues_vc_and_persists_circle_state() {
+    let _guard = lock_test_env();
+    let _env = EnvGuard::new();
+    let (owner_km, owner, owner_doc) = make_material("nodeA", 1, "192.168.100.1/24");
+    save_local_owner(&owner, &owner_doc);
+    issue::ensure_owner_vc(&owner, &owner_km).expect("owner vc");
+    let (member_km, member, member_doc) = make_material("nodeB", 2, "192.168.100.2/24");
+    save_peer_context(&member_doc);
+
+    let circle = store::create_circle(
+        "nodeA",
+        "circle-ops".to_string(),
+        "Ops".to_string(),
+        String::new(),
+        owner.did.clone(),
+    )
+    .expect("create circle");
+    let token = invite::mint_invite(
+        &circle,
+        &owner,
+        &owner_km,
+        &member.did,
+        CredentialRole::Member,
+        Some(60),
+        Some(1),
+    )
+    .expect("mint invite");
+
+    let members_before = members::list_members("nodeA", "circle-ops").expect("members");
+    assert!(members_before.iter().any(|entry| {
+        entry.did == member.did
+            && matches!(
+                entry.lifecycle_state,
+                crate::circle::members::MemberLifecycleState::Invited
+            )
+    }));
+
+    invite::save_received_invite(token.clone()).expect("nodeB stores invite");
+    let join_request =
+        invite::sign_join_request(&member, &member_km, token.clone()).expect("signed acceptance");
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    rt.block_on(async {
+        invite::verify_invite(&token, &resolver()).await?;
+        invite::verify_join_request(&join_request, &resolver()).await
+    })
+    .expect("verified acceptance");
+    invite::assert_redeemable(&circle, &token, &join_request.joiner_did).expect("redeemable");
+
+    let outcome = issue::issue_membership_vc_with_outcome(
+        &owner,
+        &owner_km,
+        IssueRequest {
+            subject_did: &join_request.joiner_did,
+            role: token.role.clone(),
+            permissions: issue::default_permissions_for_role(token.role.clone()),
+            circle_id: &circle.circle_id,
+            node_hint: None,
+            duration_days: Some(issue::DEFAULT_VC_DURATION_DAYS),
+        },
+    )
+    .expect("issue vc");
+    invite::record_redemption(&token.id, &join_request.joiner_did).expect("record redemption");
+    let vc = outcome.into_vc();
+    crate::vc::persistence::save_own(&vc).expect("nodeB stores own vc");
+    invite::save_joined_circle("nodeB", &token).expect("nodeB saves circle");
+    invite::set_received_invite_state(&token.id, invite::ReceivedInviteState::Accepted)
+        .expect("accepted state");
+
+    let members_after = members::list_members("nodeA", "circle-ops").expect("nodeA members");
+    assert!(members_after.iter().any(|entry| {
+        entry.did == member.did
+            && matches!(
+                entry.lifecycle_state,
+                crate::circle::members::MemberLifecycleState::Active
+            )
+    }));
+    let node_b_circle = store::get_circle("nodeB", "circle-ops").expect("nodeB circle reload");
+    assert_eq!(node_b_circle.owner_did, owner.did);
+    let node_b_members = members::list_members("nodeB", "circle-ops").expect("nodeB members");
+    assert!(node_b_members.iter().any(|entry| entry.did == owner.did));
+    assert!(node_b_members.iter().any(|entry| entry.did == member.did));
+
+    let replay = invite::assert_redeemable(&circle, &token, &join_request.joiner_did)
+        .expect_err("replay rejected after restart/reload");
+    assert!(matches!(
+        replay,
+        crate::circle::CircleError::InviteReplay(_)
+    ));
 }
 
 #[test]
@@ -393,6 +490,7 @@ fn expired_invite_is_rejected() {
         &circle,
         &owner,
         &km,
+        &owner.did,
         CredentialRole::Member,
         Some(60),
         Some(1),
@@ -431,6 +529,7 @@ fn tampered_invite_is_rejected() {
         &circle,
         &owner,
         &km,
+        &owner.did,
         CredentialRole::Member,
         Some(60),
         Some(1),
@@ -477,6 +576,7 @@ fn invite_replay_and_non_owner_invites_are_rejected() {
         &circle,
         &owner,
         &owner_km,
+        &joiner.did,
         CredentialRole::Member,
         Some(60),
         Some(1),
@@ -495,6 +595,7 @@ fn invite_replay_and_non_owner_invites_are_rejected() {
         &circle,
         &member,
         &member_km,
+        &joiner.did,
         CredentialRole::Member,
         Some(60),
         Some(1),

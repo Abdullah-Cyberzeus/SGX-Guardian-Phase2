@@ -51,7 +51,10 @@ impl NestHaConfigFlowClient {
 
     /// Programmatically establishes the Google Nest integration in Home Assistant.
     pub async fn setup_nest_config_entry(&self, creds: &NestCredentials) -> Result<String, String> {
-        let flow_url = format!("{}/api/config/config_entries/flow", self.ha_url.trim_end_matches('/'));
+        let flow_url = format!(
+            "{}/api/config/config_entries/flow",
+            self.ha_url.trim_end_matches('/')
+        );
 
         // Step 1: Initiate 'nest' config flow
         let init_resp = self
@@ -68,7 +71,10 @@ impl NestHaConfigFlowClient {
 
         if !init_resp.status().is_success() {
             let err_text = init_resp.text().await.unwrap_or_default();
-            return Err(format!("HA config flow initiate failed for Nest: {}", err_text));
+            return Err(format!(
+                "HA config flow initiate failed for Nest: {}",
+                err_text
+            ));
         }
 
         let init_data: FlowInitiateResponse = init_resp
@@ -77,7 +83,10 @@ impl NestHaConfigFlowClient {
             .map_err(|e| format!("Failed to parse Nest flow response: {}", e))?;
 
         let flow_id = init_data.flow_id;
-        info!("🔑 Initiated HA config flow for Nest (flow_id: {})", flow_id);
+        info!(
+            "🔑 Initiated HA config flow for Nest (flow_id: {})",
+            flow_id
+        );
 
         let step_url = format!(
             "{}/api/config/config_entries/flow/{}",
@@ -90,21 +99,27 @@ impl NestHaConfigFlowClient {
             .project_id
             .as_deref()
             .or(project_id_env.as_deref())
-            .ok_or_else(|| "Google Nest project_id is required for HA config flow setup".to_string())?;
+            .ok_or_else(|| {
+                "Google Nest project_id is required for HA config flow setup".to_string()
+            })?;
 
         let client_id_env = std::env::var("SGX_NEST_CLIENT_ID").ok();
         let client_id = creds
             .client_id
             .as_deref()
             .or(client_id_env.as_deref())
-            .ok_or_else(|| "Google Nest client_id is required for HA config flow setup".to_string())?;
+            .ok_or_else(|| {
+                "Google Nest client_id is required for HA config flow setup".to_string()
+            })?;
 
         let client_secret_env = std::env::var("SGX_NEST_CLIENT_SECRET").ok();
         let client_secret = creds
             .client_secret
             .as_deref()
             .or(client_secret_env.as_deref())
-            .ok_or_else(|| "Google Nest client_secret is required for HA config flow setup".to_string())?;
+            .ok_or_else(|| {
+                "Google Nest client_secret is required for HA config flow setup".to_string()
+            })?;
 
         // Step 2: Submit SDM Project & OAuth credentials
         let step_payload = serde_json::json!({
@@ -126,7 +141,10 @@ impl NestHaConfigFlowClient {
 
         if !step_resp.status().is_success() {
             let err_text = step_resp.text().await.unwrap_or_default();
-            return Err(format!("HA config flow submission failed for Nest: {}", err_text));
+            return Err(format!(
+                "HA config flow submission failed for Nest: {}",
+                err_text
+            ));
         }
 
         let step_data: FlowStepResponse = step_resp
@@ -140,7 +158,10 @@ impl NestHaConfigFlowClient {
         }
 
         if let Some(res) = step_data.result {
-            info!("✅ Successfully created HA Nest config entry: {}", res.entry_id);
+            info!(
+                "✅ Successfully created HA Nest config entry: {}",
+                res.entry_id
+            );
             return Ok(res.entry_id);
         }
 
@@ -161,14 +182,25 @@ impl NestHaConfigFlowClient {
             .header("Authorization", format!("Bearer {}", self.ha_token))
             .send()
             .await
-            .map_err(|e| format!("Failed to send delete config entry request to HA for Nest: {}", e))?;
+            .map_err(|e| {
+                format!(
+                    "Failed to send delete config entry request to HA for Nest: {}",
+                    e
+                )
+            })?;
 
         if !resp.status().is_success() {
             let err_text = resp.text().await.unwrap_or_default();
-            return Err(format!("Failed to remove HA Nest config entry '{}': {}", entry_id, err_text));
+            return Err(format!(
+                "Failed to remove HA Nest config entry '{}': {}",
+                entry_id, err_text
+            ));
         }
 
-        info!("🗑️ Successfully removed HA Nest config entry '{}'", entry_id);
+        info!(
+            "🗑️ Successfully removed HA Nest config entry '{}'",
+            entry_id
+        );
         Ok(())
     }
 }

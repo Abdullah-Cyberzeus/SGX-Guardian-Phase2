@@ -41,6 +41,13 @@ export interface CircleInvite {
   token?: string;
   url?: string;
   qrPayload?: string;
+  targetDid?: string;
+  issuerDid?: string;
+  circleId?: string;
+  circleName?: string;
+  state?: string;
+  delivered?: boolean;
+  deliveryError?: string | null;
   role?: CircleRole;
   status?: string;
   expiresAt?: string;
@@ -125,22 +132,33 @@ function normalizeMember(value: any): CircleMember {
 }
 
 function normalizeInvite(value: any): CircleInvite {
-  let compactToken = value?.token || value?.tokenB64 || value?.token_b64;
-  if (!compactToken && value?.proof && (value?.id || value?.inviteId || value?.invite_id)) {
-    const bytes = new TextEncoder().encode(JSON.stringify(value));
+  const inviteBody = value?.invite && typeof value.invite === 'object' ? value.invite : {};
+  const merged = { ...inviteBody, ...value };
+  const circle = merged?.circle || {};
+  let compactToken = merged?.token || merged?.tokenB64 || merged?.token_b64;
+  const rawInviteId = merged?.id || merged?.inviteId || merged?.invite_id;
+  if (!compactToken && merged?.proof && rawInviteId) {
+    const bytes = new TextEncoder().encode(JSON.stringify(inviteBody && Object.keys(inviteBody).length ? inviteBody : merged));
     let binary = '';
     bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
     compactToken = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   }
   return {
-    ...value,
-    id: String(value?.id || value?.inviteId || value?.invite_id || ''),
+    ...merged,
+    id: String(rawInviteId || ''),
     token: compactToken,
-    url: value?.url || value?.link,
-    qrPayload: value?.qrPayload || value?.qr_payload,
-    role: String(value?.role || 'member').toLowerCase() as CircleRole,
-    expiresAt: value?.expiresAt || value?.expires_at,
-    createdAt: value?.createdAt || value?.issuedAt || value?.issued_at,
+    url: merged?.url || merged?.link,
+    qrPayload: merged?.qrPayload || merged?.qr_payload,
+    targetDid: merged?.targetDid || merged?.target_did,
+    issuerDid: merged?.issuerDid || merged?.issuer_did || merged?.createdBy || merged?.created_by,
+    circleId: merged?.circleId || merged?.circle_id || circle?.id || circle?.circle_id,
+    circleName: merged?.circleName || merged?.circle_name || circle?.name,
+    state: String(merged?.state || merged?.status || '').toLowerCase(),
+    delivered: typeof merged?.delivered === 'boolean' ? merged.delivered : undefined,
+    deliveryError: merged?.deliveryError || merged?.delivery_error || null,
+    role: String(merged?.role || 'member').toLowerCase() as CircleRole,
+    expiresAt: merged?.expiresAt || merged?.expires_at,
+    createdAt: merged?.createdAt || merged?.receivedAt || merged?.received_at || merged?.issuedAt || merged?.issued_at,
   };
 }
 
@@ -219,15 +237,41 @@ export const circleService = {
   },
 
   // 11. POST /circles/{id}/invites
-  async createInvite(id: string, data: { role?: CircleRole; expiresInMinutes?: number; maxUses?: number; ownerHost?: string }): Promise<CircleInvite> {
-    const payload = await api.post<any>(`/circles/${encode(id)}/invites`, {
-      role: data.role,
-      expires_in_minutes: data.expiresInMinutes,
-      max_uses: data.maxUses,
-      owner_host: data.ownerHost,
-    });
+  async createInvite(id: string, data: { targetDid?: string; role?: CircleRole; expiresInMinutes?: number; maxUses?: number; ownerHost?: string; deliver?: boolean }): Promise<CircleInvite> {
+    const body = data.targetDid
+      ? {
+          target_did: data.targetDid,
+          role: data.role || 'member',
+          expires_in_minutes: data.expiresInMinutes,
+          max_uses: data.maxUses,
+          deliver: data.deliver ?? false,
+        }
+      : {
+          role: data.role,
+          expires_in_minutes: data.expiresInMinutes,
+          max_uses: data.maxUses,
+          owner_host: data.ownerHost,
+          deliver: data.deliver,
+        };
+    const payload = await api.post<any>(`/circles/${encode(id)}/invites`, body);
     return normalizeInvite({ ...payload?.invite, ...payload });
   },
+
+  async deliverInvite(id: string, inviteId: string): Promise<CircleInvite> {
+    const payload = await api.post<any>(`/circles/${encode(id)}/invites/${encode(inviteId)}/deliver`);
+    return normalizeInvite({ ...payload?.invite, ...payload });
+  },
+
+  // GET /circles/invites/inbox
+  async getInviteInbox(): Promise<CircleInvite[]> {
+    return listFrom<any>(await api.get<unknown>('/circles/invites/inbox'), 'invites').map(normalizeInvite);
+  },
+
+  acceptInvite: (inviteId: string) =>
+    api.post<CircleMutationResult>(`/circles/invites/${encode(inviteId)}/accept`),
+
+  rejectInvite: (inviteId: string) =>
+    api.post<CircleMutationResult>(`/circles/invites/${encode(inviteId)}/reject`),
 
   // 12. DELETE /circles/{id}/invites/{invite_id}
   revokeInvite: (id: string, inviteId: string) =>

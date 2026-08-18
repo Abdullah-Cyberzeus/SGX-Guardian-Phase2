@@ -21,8 +21,24 @@ pub fn invites_dir() -> PathBuf {
     base_dir().join("invites")
 }
 
+pub fn received_invites_dir() -> PathBuf {
+    base_dir().join("received_invites")
+}
+
+pub fn snapshots_dir() -> PathBuf {
+    base_dir().join("member_snapshots")
+}
+
 pub fn invite_path(invite_id: &str) -> PathBuf {
     invites_dir().join(format!("{}.json", safe_id(invite_id)))
+}
+
+pub fn snapshot_path(circle_id: &str) -> PathBuf {
+    snapshots_dir().join(format!("{}.json", safe_id(circle_id)))
+}
+
+pub fn received_invite_path(invite_id: &str) -> PathBuf {
+    received_invites_dir().join(format!("{}.json", safe_id(invite_id)))
 }
 
 pub fn redeemed_path() -> PathBuf {

@@ -88,6 +88,108 @@ pub struct DeviceDetailResponse {
     pub attestation_endpoint: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct PairedGuardianStatus {
+    pub pairing: GuardianPairingStatus,
+    pub identity: GuardianIdentityStatus,
+    pub runtime: GuardianRuntimeStatus,
+    pub network: GuardianNetworkStatus,
+    pub nebula: GuardianNebulaStatus,
+    pub hardware: GuardianHardwareStatus,
+    pub security: GuardianSecurityStatus,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GuardianPairingStatus {
+    #[serde(rename = "deviceId")]
+    pub device_id: String,
+    pub serial: String,
+    pub status: String,
+    #[serde(rename = "pairedAt")]
+    pub paired_at: String,
+    #[serde(rename = "reactivatedAt", skip_serializing_if = "Option::is_none")]
+    pub reactivated_at: Option<String>,
+    #[serde(rename = "updatedAt", skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+    pub method: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GuardianIdentityStatus {
+    #[serde(rename = "nodeName", skip_serializing_if = "Option::is_none")]
+    pub node_name: Option<String>,
+    pub did: String,
+    #[serde(rename = "deviceFingerprint")]
+    pub device_fingerprint: String,
+    #[serde(rename = "dkpVersion", skip_serializing_if = "Option::is_none")]
+    pub dkp_version: Option<u32>,
+    #[serde(rename = "didStatus")]
+    pub did_status: String,
+    #[serde(rename = "didUpdatedAt", skip_serializing_if = "Option::is_none")]
+    pub did_updated_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GuardianRuntimeStatus {
+    pub status: String,
+    #[serde(rename = "daemonStatus")]
+    pub daemon_status: String,
+    #[serde(rename = "uptimeSeconds", skip_serializing_if = "Option::is_none")]
+    pub uptime_seconds: Option<u64>,
+    #[serde(rename = "lastSeen", skip_serializing_if = "Option::is_none")]
+    pub last_seen: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GuardianNetworkStatus {
+    #[serde(rename = "physicalIp")]
+    pub physical_ip: String,
+    #[serde(rename = "interfaceName")]
+    pub interface_name: String,
+    pub transport: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GuardianNebulaStatus {
+    pub status: String,
+    #[serde(rename = "overlayIp")]
+    pub overlay_ip: String,
+    pub role: String,
+    #[serde(rename = "trustedPeerCount", skip_serializing_if = "Option::is_none")]
+    pub trusted_peer_count: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GuardianHardwareStatus {
+    #[serde(rename = "se050Status")]
+    pub se050_status: String,
+    #[serde(rename = "dkpVersion", skip_serializing_if = "Option::is_none")]
+    pub dkp_version: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GuardianSecurityStatus {
+    #[serde(rename = "attestationStatus")]
+    pub attestation_status: String,
+    #[serde(
+        rename = "attestationEndpoint",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub attestation_endpoint: Option<String>,
+    #[serde(rename = "pcrStatus")]
+    pub pcr_status: String,
+    #[serde(rename = "integrityStatus")]
+    pub integrity_status: String,
+    #[serde(rename = "secureBootStatus")]
+    pub secure_boot_status: String,
+    #[serde(rename = "policyStatus")]
+    pub policy_status: String,
+    #[serde(rename = "policyDigest", skip_serializing_if = "Option::is_none")]
+    pub policy_digest: Option<String>,
+    #[serde(rename = "trustState")]
+    pub trust_state: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct PairingStatusQuery {
     pub serial: String,
@@ -483,6 +585,269 @@ pub async fn paired_detail(
         overlay_ip: overlay_ip_for_device(&device.did),
         attestation_endpoint: doc_service_endpoint(&device.did, "SGXAttestation"),
     }))
+}
+
+pub async fn paired_guardian_status(
+    State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
+    Path(device_id): Path<String>,
+) -> Result<Json<PairedGuardianStatus>, ApiError> {
+    let session = optional_session(session)?;
+    let device = state
+        .admin
+        .devices
+        .get(&device_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("device not found".into()))?;
+    if session
+        .as_ref()
+        .is_some_and(|session| device.owner_user_id != session.claims.sub)
+    {
+        return Err(ApiError::NotFound("device not found".into()));
+    }
+
+    let did = crate::did::Did::parse(&device.did).ok();
+    let peer_doc = did
+        .as_ref()
+        .and_then(|did| crate::did::doc_persistence::load_peer(did).ok().flatten());
+    let node_name = peer_doc
+        .as_ref()
+        .and_then(|doc| doc.sgx_node_name.clone())
+        .or_else(|| device.node_id.clone());
+    let peer_last_seen = did.as_ref().and_then(|did| {
+        crate::did::registry::get(crate::did::registry::default_peers_dir(), did)
+            .ok()
+            .flatten()
+            .map(|entry| entry.last_seen)
+    });
+    let dkp_version = peer_doc.as_ref().and_then(peer_dkp_version);
+    let runtime_root = PathBuf::from(&state.keys_dir)
+        .parent()
+        .map(|path| path.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("/var/lib/sgx-guardian"));
+    let nebula_dir = runtime_root.join("nebula");
+    let overlay = node_name
+        .as_deref()
+        .and_then(|node| {
+            crate::nebula::overlay_registry::OverlayRegistry::load(
+                nebula_dir
+                    .join("overlay_registry.json")
+                    .to_string_lossy()
+                    .as_ref(),
+            )
+            .ok()
+            .and_then(|registry| registry.get_ip_cidr(node).map(str::to_string))
+        })
+        .or_else(|| overlay_ip_for_device(&device.did));
+    let role = guardian_nebula_role(
+        node_name.as_deref(),
+        nebula_dir.join("lighthouse_registry.json"),
+        nebula_dir.join("relay_registry.json"),
+    );
+    let local_guardian = node_name.as_deref() == Some(state.node_id.as_str());
+    let network = local_guardian
+        .then(|| crate::cot::interface_detector::InterfaceDetector::best_interface().ok())
+        .flatten();
+    let dkp = if local_guardian {
+        crate::api::handlers::dkp::status(State(state.clone()))
+            .await
+            .ok()
+            .map(|response| response.0)
+    } else {
+        None
+    };
+    let pcr = if local_guardian {
+        crate::api::handlers::pcr::status(State(state.clone()))
+            .await
+            .ok()
+            .map(|response| response.0)
+    } else {
+        None
+    };
+    let boot = if local_guardian {
+        crate::api::handlers::node::boot_status(State(state.clone()))
+            .await
+            .ok()
+            .map(|response| response.0)
+    } else {
+        None
+    };
+    let policy_digest = if local_guardian {
+        crate::policy_state::current_active_policy_digest()
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    let attestation =
+        crate::api::handlers::attestation::latest_for_peer(state.as_ref(), &device.did).await;
+    let peer_state = crate::api::handlers::peers::state_for_guardian(
+        state.as_ref(),
+        &device.did,
+        node_name.as_deref(),
+    )
+    .await;
+    let trust_state = if peer_state
+        .as_ref()
+        .is_some_and(|peer| peer.status.eq_ignore_ascii_case("verified"))
+        && attestation
+            .as_ref()
+            .is_some_and(|record| record.result.eq_ignore_ascii_case("success"))
+    {
+        "trusted"
+    } else {
+        "unknown"
+    };
+
+    Ok(Json(PairedGuardianStatus {
+        pairing: GuardianPairingStatus {
+            device_id: device.device_id.clone(),
+            serial: device.serial.clone(),
+            status: device.status.clone(),
+            paired_at: device.paired_at.clone(),
+            reactivated_at: device.reactivated_at.clone(),
+            updated_at: device.updated_at.clone(),
+            method: "signed_proof".into(),
+        },
+        identity: GuardianIdentityStatus {
+            node_name,
+            did: device.did.clone(),
+            device_fingerprint: device.device_id.clone(),
+            dkp_version,
+            did_status: peer_doc
+                .as_ref()
+                .and_then(|doc| doc.sgx_status.clone())
+                .unwrap_or_else(|| "unknown".into()),
+            did_updated_at: peer_doc.as_ref().map(|doc| doc.sgx_updated.clone()),
+        },
+        runtime: GuardianRuntimeStatus {
+            status: peer_state
+                .as_ref()
+                .and_then(|peer| peer.online)
+                .map(|online| if online { "online" } else { "offline" })
+                .unwrap_or("unknown")
+                .into(),
+            daemon_status: "unknown".into(),
+            uptime_seconds: None,
+            last_seen: peer_last_seen,
+        },
+        network: GuardianNetworkStatus {
+            physical_ip: network
+                .as_ref()
+                .and_then(|interface| interface.ip_addr.map(|ip| ip.to_string()))
+                .unwrap_or_else(|| "unknown".into()),
+            interface_name: network
+                .as_ref()
+                .map(|interface| interface.name.clone())
+                .unwrap_or_else(|| "unknown".into()),
+            transport: network
+                .as_ref()
+                .map(|interface| interface.transport_type.to_string())
+                .unwrap_or_else(|| "unknown".into()),
+        },
+        nebula: GuardianNebulaStatus {
+            status: if overlay.is_some() {
+                "configured"
+            } else {
+                "unknown"
+            }
+            .into(),
+            overlay_ip: overlay.unwrap_or_else(|| "unknown".into()),
+            role,
+            trusted_peer_count: None,
+        },
+        hardware: GuardianHardwareStatus {
+            se050_status: dkp
+                .as_ref()
+                .map(|status| {
+                    if status.se050_available {
+                        "available"
+                    } else {
+                        "unavailable"
+                    }
+                })
+                .unwrap_or("unknown")
+                .into(),
+            dkp_version: dkp
+                .as_ref()
+                .and_then(|status| status.active_version)
+                .or(dkp_version),
+        },
+        security: GuardianSecurityStatus {
+            attestation_status: attestation
+                .as_ref()
+                .map(|record| record.result.clone())
+                .unwrap_or_else(|| "unknown".into()),
+            attestation_endpoint: doc_service_endpoint(&device.did, "SGXAttestation"),
+            pcr_status: pcr.as_ref().map(|_| "measured").unwrap_or("unknown").into(),
+            integrity_status: pcr
+                .as_ref()
+                .map(|status| status.integrity_status.clone())
+                .unwrap_or_else(|| "unknown".into()),
+            secure_boot_status: boot
+                .as_ref()
+                .map(|status| {
+                    if status.boot_chain_intact {
+                        "verified"
+                    } else {
+                        "mismatch"
+                    }
+                })
+                .unwrap_or("unknown")
+                .into(),
+            policy_status: if policy_digest.is_some() {
+                "loaded"
+            } else {
+                "unknown"
+            }
+            .into(),
+            policy_digest,
+            trust_state: trust_state.into(),
+        },
+    }))
+}
+
+fn peer_dkp_version(doc: &crate::did::document::DidDocument) -> Option<u32> {
+    doc.verification_method
+        .first()?
+        .public_key_jwk
+        .kid
+        .strip_prefix("dkp-v")?
+        .parse()
+        .ok()
+}
+
+fn guardian_nebula_role(
+    node_name: Option<&str>,
+    lighthouse_path: PathBuf,
+    relay_path: PathBuf,
+) -> String {
+    let Some(node_name) = node_name else {
+        return "unknown".into();
+    };
+    let lighthouse_registry = crate::nebula::lighthouse::LighthouseRegistry::load(
+        lighthouse_path.to_string_lossy().as_ref(),
+    )
+    .ok();
+    let relay_registry =
+        crate::nebula::relay_registry::RelayRegistry::load(relay_path.to_string_lossy().as_ref())
+            .ok();
+    if lighthouse_registry.is_none() && relay_registry.is_none() {
+        return "unknown".into();
+    }
+    let lighthouse = lighthouse_registry
+        .as_ref()
+        .is_some_and(|registry| registry.is_lighthouse(node_name));
+    let relay = relay_registry
+        .as_ref()
+        .is_some_and(|registry| registry.is_relay(node_name));
+    match (lighthouse, relay) {
+        (true, true) => "lighthouse + relay",
+        (true, false) => "lighthouse",
+        (false, true) => "relay",
+        (false, false) => "member",
+    }
+    .into()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2153,6 +2518,237 @@ mod tests {
             Err(error) => error,
         };
         assert!(matches!(error, ApiError::DeviceAlreadyPaired(_)));
+    }
+
+    async fn remote_guardian_status_for_test(
+        peer_records: serde_json::Value,
+        attestation_records: serde_json::Value,
+        guardian_did: String,
+        node_id: &str,
+    ) -> PairedGuardianStatus {
+        let td = TempDir::new().expect("tempdir");
+        let state = AppState::for_tests(
+            td.path(),
+            "nodeA",
+            td.path().join("config").to_string_lossy().to_string(),
+        );
+        std::fs::write(
+            std::path::Path::new(&state.log_dir_primary).join("trusted_peers_nodeA.json"),
+            serde_json::to_vec(&peer_records).expect("serialize peers"),
+        )
+        .expect("write peers");
+        std::fs::write(
+            std::path::Path::new(&state.log_dir_primary).join("last_attestation.json"),
+            serde_json::to_vec(&attestation_records).expect("serialize attestations"),
+        )
+        .expect("write attestations");
+        state
+            .admin
+            .devices
+            .upsert(PairedDevice {
+                device_id: "guardian-fingerprint".into(),
+                serial: "GX-2026-STATUS".into(),
+                did: guardian_did,
+                owner_user_id: "user-1".into(),
+                paired_at: "2026-08-11T00:00:00Z".into(),
+                reactivated_at: None,
+                updated_at: None,
+                status: "active".into(),
+                node_id: Some(node_id.into()),
+            })
+            .await
+            .expect("seed paired guardian");
+
+        paired_guardian_status(
+            State(state.clone()),
+            Some(Extension(test_session(&state, "user-1"))),
+            Path("guardian-fingerprint".into()),
+        )
+        .await
+        .expect("guardian status")
+        .0
+    }
+
+    fn attestation_record(did: &str, result: &str) -> serde_json::Value {
+        serde_json::json!({
+            "peer_id": "nodeC",
+            "policy_digest": "matching-policy",
+            "result": result,
+            "timestamp": "2026-08-11T02:00:00Z",
+            "peer_did": did,
+            "count": 1
+        })
+    }
+
+    #[tokio::test]
+    async fn paired_guardian_status_uses_matching_online_verified_peer_and_successful_attestation()
+    {
+        let did = crate::did::Did::from_id_bytes(&[51u8; 32]).to_string();
+        let response = remote_guardian_status_for_test(
+            serde_json::json!([{
+                "peer_id": "nodeC",
+                "did": did,
+                "status": "verified",
+                "online": true
+            }]),
+            serde_json::json!([attestation_record(&did, "success")]),
+            did,
+            "nodeC",
+        )
+        .await;
+
+        assert_eq!(response.runtime.status, "online");
+        assert_eq!(response.security.trust_state, "trusted");
+    }
+
+    #[tokio::test]
+    async fn paired_guardian_status_uses_matching_offline_peer() {
+        let did = crate::did::Did::from_id_bytes(&[52u8; 32]).to_string();
+        let response = remote_guardian_status_for_test(
+            serde_json::json!([{
+                "peer_id": "nodeC",
+                "did": did,
+                "status": "verified",
+                "online": false
+            }]),
+            serde_json::json!([attestation_record(&did, "success")]),
+            did,
+            "nodeC",
+        )
+        .await;
+
+        assert_eq!(response.runtime.status, "offline");
+    }
+
+    #[tokio::test]
+    async fn paired_guardian_status_does_not_trust_failed_attestation() {
+        let did = crate::did::Did::from_id_bytes(&[53u8; 32]).to_string();
+        let response = remote_guardian_status_for_test(
+            serde_json::json!([{
+                "peer_id": "nodeC",
+                "did": did,
+                "status": "verified",
+                "online": true
+            }]),
+            serde_json::json!([attestation_record(&did, "failed")]),
+            did,
+            "nodeC",
+        )
+        .await;
+
+        assert_eq!(response.runtime.status, "online");
+        assert_eq!(response.security.trust_state, "unknown");
+    }
+
+    #[tokio::test]
+    async fn paired_guardian_status_requires_matching_did_and_node_peer_state() {
+        let target_did = crate::did::Did::from_id_bytes(&[54u8; 32]).to_string();
+        let node_b_did = crate::did::Did::from_id_bytes(&[55u8; 32]).to_string();
+        let response = remote_guardian_status_for_test(
+            serde_json::json!([
+                {
+                    "peer_id": "nodeB",
+                    "did": node_b_did,
+                    "status": "verified",
+                    "online": true
+                },
+                {
+                    "peer_id": "nodeB",
+                    "did": target_did,
+                    "status": "verified",
+                    "online": true
+                }
+            ]),
+            serde_json::json!([
+                attestation_record(&node_b_did, "success"),
+                attestation_record(&target_did, "success")
+            ]),
+            target_did,
+            "nodeC",
+        )
+        .await;
+
+        assert_eq!(response.runtime.status, "unknown");
+        assert_eq!(response.security.trust_state, "unknown");
+    }
+
+    #[tokio::test]
+    async fn paired_guardian_status_reads_binding_without_mutating_it() {
+        let td = TempDir::new().expect("tempdir");
+        let state = AppState::for_tests(
+            td.path(),
+            "nodeA",
+            td.path().join("config").to_string_lossy().to_string(),
+        );
+        let guardian_did = crate::did::Did::from_id_bytes(&[41u8; 32]).to_string();
+        let other_did = crate::did::Did::from_id_bytes(&[42u8; 32]).to_string();
+        let records = serde_json::json!([
+            {
+                "peer_id": "other-peer",
+                "policy_digest": "other-policy",
+                "result": "FAILED",
+                "timestamp": "2026-08-11T01:00:00Z",
+                "peer_did": other_did,
+                "count": 1
+            },
+            {
+                "peer_id": "guardian-peer",
+                "policy_digest": "matching-policy",
+                "result": "VERIFIED",
+                "timestamp": "2026-08-11T02:00:00Z",
+                "peer_did": guardian_did.clone(),
+                "count": 1
+            }
+        ]);
+        std::fs::write(
+            std::path::Path::new(&state.log_dir_primary).join("last_attestation.json"),
+            serde_json::to_vec(&records).expect("serialize attestation records"),
+        )
+        .expect("write attestation records");
+
+        state
+            .admin
+            .devices
+            .upsert(PairedDevice {
+                device_id: "guardian-fingerprint".into(),
+                serial: "GX-2026-STATUS".into(),
+                did: guardian_did,
+                owner_user_id: "user-1".into(),
+                paired_at: "2026-08-11T00:00:00Z".into(),
+                reactivated_at: None,
+                updated_at: None,
+                status: "active".into(),
+                node_id: Some("nodeB".into()),
+            })
+            .await
+            .expect("seed paired guardian");
+
+        let response = paired_guardian_status(
+            State(state.clone()),
+            Some(Extension(test_session(&state, "user-1"))),
+            Path("guardian-fingerprint".into()),
+        )
+        .await
+        .expect("guardian status");
+
+        assert_eq!(response.0.pairing.serial, "GX-2026-STATUS");
+        assert_eq!(
+            response.0.identity.device_fingerprint,
+            "guardian-fingerprint"
+        );
+        assert_eq!(response.0.runtime.status, "unknown");
+        assert_eq!(response.0.network.physical_ip, "unknown");
+        assert_eq!(response.0.nebula.role, "unknown");
+        assert_eq!(response.0.security.attestation_status, "VERIFIED");
+        let stored = state
+            .admin
+            .devices
+            .get("guardian-fingerprint")
+            .await
+            .expect("read binding")
+            .expect("binding exists");
+        assert_eq!(stored.status, "active");
+        assert_eq!(stored.paired_at, "2026-08-11T00:00:00Z");
     }
 
     #[tokio::test]
