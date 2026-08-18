@@ -39,6 +39,7 @@ export interface RfSignature {
 export interface GeofenceZone {
   zone_id: string;
   name: string;
+  topology_node_ref?: string | null;
   kind: GeofenceZoneKind;
   center_lat: number | null;
   center_lng: number | null;
@@ -110,6 +111,7 @@ export type ReportLocationRequest = {
 
 export type CreateZoneRequest = {
   name: string;
+  topology_node_ref?: string | null;
   kind: GeofenceZoneKind;
   center_lat?: number | null;
   center_lng?: number | null;

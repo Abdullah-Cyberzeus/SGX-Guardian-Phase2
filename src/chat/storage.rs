@@ -16,6 +16,12 @@ static BASE_DIR: Lazy<String> = Lazy::new(|| {
     std::env::var("CHAT_STORAGE_DIR").unwrap_or_else(|_| "/var/lib/sgx-guardian/chat".to_string())
 });
 
+pub const MAX_ATTACHMENT_BYTES: u64 = 50 * 1024 * 1024;
+
+pub fn attachment_path(file_id: &str) -> PathBuf {
+    PathBuf::from(&*BASE_DIR).join("attachments").join(file_id)
+}
+
 /// Appends a new chat message to a specific peer's P2P conversation log.
 /// This function is thread-safe and writes to the bottom of the `.jsonl` file.
 pub async fn append_p2p_message(
@@ -93,6 +99,17 @@ pub async fn append_attachment_metadata(
     let json_line = serde_json::to_string(record)?;
 
     append_line(&path, &json_line).await
+}
+
+/// Stores attachment metadata once. Retries and offline sync may retrieve the
+/// same attachment repeatedly, but the metadata journal must stay idempotent.
+pub async fn append_attachment_metadata_if_absent(
+    record: &AttachmentRecord,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if get_attachment_metadata(&record.file_id).await?.is_some() {
+        return Ok(());
+    }
+    append_attachment_metadata(record).await
 }
 
 pub async fn get_attachment_metadata(

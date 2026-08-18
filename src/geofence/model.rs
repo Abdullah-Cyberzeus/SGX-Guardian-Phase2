@@ -108,6 +108,10 @@ impl SourceSelectionStatus {
 pub struct GeofenceZone {
     pub zone_id: String,
     pub name: String,
+    /// The topology node this zone is visualized around. This is metadata only;
+    /// coordinate/RF evaluation continues to use the zone's configured fix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topology_node_ref: Option<String>,
     pub kind: ZoneKind,
     pub center_lat: Option<f64>,
     pub center_lng: Option<f64>,

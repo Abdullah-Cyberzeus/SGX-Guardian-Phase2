@@ -46,7 +46,7 @@ test.describe('Threat Protection (Suricata IDS)', () => {
 
   test('Overview shows the Suricata engine card and actions', async ({ page }) => {
     // Always rendered, even on a status error.
-    await expect(page.getByText('Suricata engine')).toBeVisible();
+    await expect(page.getByText('Guardian engine')).toBeVisible();
 
     // The action buttons only render once GET /threat/status resolves; if the
     // endpoint is unreachable the tab shows an error banner instead. Skip the

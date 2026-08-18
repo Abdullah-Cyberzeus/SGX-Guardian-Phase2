@@ -37,6 +37,10 @@ import type {
 } from "../../services/threatService";
 import { toast } from "sonner";
 
+function guardianDisplayText(value: string) {
+  return value.replace(/suricata|nmap/gi, "Guardian");
+}
+
 type Tab = "overview" | "alerts" | "blocks" | "config";
 
 const TABS: { key: Tab; label: string }[] = [
@@ -93,13 +97,13 @@ function canonicalIp(ip: string): string {
 
 /** Surface a ThreatActionResponse as a toast, respecting its success flag. */
 function toastAction(res: ThreatActionResponse, okTitle: string) {
-  const detail = (res.stdout || res.stderr || "").split("\n").find((l) => l.trim());
+  const detail = guardianDisplayText((res.stdout || res.stderr || "").split("\n").find((l) => l.trim()) ?? "");
   if (res.success) {
     toast.success(okTitle, {
       description: [detail, res.restartRequired ? "Restart required." : null].filter(Boolean).join(" · ") || undefined,
     });
   } else {
-    toast.error(`${okTitle} failed`, { description: res.stderr || detail || undefined });
+    toast.error(`${okTitle} failed`, { description: res.stderr ? guardianDisplayText(res.stderr) : detail || undefined });
   }
 }
 
@@ -174,7 +178,7 @@ function OverviewTab({ onManageConfig }: { onManageConfig: () => void }) {
       toastAction(await fn(), okTitle);
       status.refetch();
     } catch (err) {
-      toast.error(`${okTitle} failed`, { description: err instanceof Error ? err.message : undefined });
+      toast.error(`${okTitle} failed`, { description: err instanceof Error ? guardianDisplayText(err.message) : undefined });
     } finally {
       setBusy(null);
     }
@@ -187,7 +191,7 @@ function OverviewTab({ onManageConfig }: { onManageConfig: () => void }) {
           <div className="flex items-center gap-2">
             <Shield size={16} style={{ color: "var(--primary)" }} />
             <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
-              Suricata engine
+              Guardian engine
             </p>
             {status.loading && !s && <Loader2 className="animate-spin" size={13} style={{ color: "var(--muted-foreground)" }} />}
           </div>
@@ -196,7 +200,7 @@ function OverviewTab({ onManageConfig }: { onManageConfig: () => void }) {
 
         {status.error && !s ? (
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>
-            Couldn't load threat status ({status.error.message}).
+            Couldn't load threat status ({guardianDisplayText(status.error.message)}).
           </p>
         ) : (
           <>
@@ -219,8 +223,8 @@ function OverviewTab({ onManageConfig }: { onManageConfig: () => void }) {
                   busy={busy === "start"}
                   disabled={busy !== null}
                   icon={Play}
-                  label="Start Suricata"
-                  onClick={() => run("start", () => threatService.start(), "Suricata start")}
+                  label="Start Guardian"
+                  onClick={() => run("start", () => threatService.start(), "Guardian start")}
                 />
               )}
               <ActionButton
@@ -340,7 +344,7 @@ function AlertsTab({ onBlocked }: { onBlocked: () => void }) {
       blocksQuery.refetch();
       onBlocked();
     } catch (err) {
-      toast.error("Block failed", { description: err instanceof Error ? err.message : undefined });
+      toast.error("Block failed", { description: err instanceof Error ? guardianDisplayText(err.message) : undefined });
     } finally {
       setBlockingIp(null);
     }
@@ -381,9 +385,9 @@ function AlertsTab({ onBlocked }: { onBlocked: () => void }) {
       </div>
 
       {is404 ? (
-        <EmptyBox icon={ShieldCheck} title="No IDS alerts yet" subtitle="Suricata hasn't produced any events. Alerts appear here as the engine detects threats." />
+        <EmptyBox icon={ShieldCheck} title="No IDS alerts yet" subtitle="Guardian hasn't produced any events. Alerts appear here as the engine detects threats." />
       ) : alertsQuery.error && !alertsQuery.data ? (
-        <EmptyBox icon={ShieldQuestion} title="Couldn't load alerts" subtitle={alertsQuery.error.message} />
+        <EmptyBox icon={ShieldQuestion} title="Couldn't load alerts" subtitle={guardianDisplayText(alertsQuery.error.message)} />
       ) : shown.length === 0 ? (
         <EmptyBox icon={ShieldCheck} title="No matching alerts" subtitle="No alerts for the selected severity." />
       ) : (
@@ -569,7 +573,7 @@ function BlocksTab({ onChanged }: { onChanged: () => void }) {
       blocksQuery.refetch();
       onChanged();
     } catch (err) {
-      toast.error("Block failed", { description: err instanceof Error ? err.message : undefined });
+      toast.error("Block failed", { description: err instanceof Error ? guardianDisplayText(err.message) : undefined });
     } finally {
       setAdding(false);
     }
@@ -581,7 +585,7 @@ function BlocksTab({ onChanged }: { onChanged: () => void }) {
       toastAction(await threatService.unblock(ip), `Unblocked ${ip}`);
     } catch (err) {
       // e.g. backend reports "not currently blocked" (block-list desync).
-      toast.error("Unblock failed", { description: err instanceof Error ? err.message : undefined });
+      toast.error("Unblock failed", { description: err instanceof Error ? guardianDisplayText(err.message) : undefined });
     } finally {
       // Reconcile the list either way so a stale/desynced entry drops off.
       blocksQuery.refetch();
@@ -691,7 +695,7 @@ function ConfigTab({ onSaved }: { onSaved: () => void }) {
       cfgQuery.refetch();
       onSaved();
     } catch (err) {
-      toast.error("Save failed", { description: err instanceof Error ? err.message : undefined });
+      toast.error("Save failed", { description: err instanceof Error ? guardianDisplayText(err.message) : undefined });
     } finally {
       setSaving(false);
     }
@@ -761,8 +765,8 @@ function ConfigTab({ onSaved }: { onSaved: () => void }) {
       <div className="rounded-lg border overflow-hidden" style={{ borderColor: "var(--border)" }}>
         {[
           { label: "Interface", value: form.interface || "auto" },
-          { label: "EVE log", value: form.eve_path },
-          { label: "Suricata YAML", value: form.suricata_yaml },
+          { label: "EVE log", value: guardianDisplayText(form.eve_path) },
+          { label: "Guardian YAML", value: guardianDisplayText(form.suricata_yaml) },
         ].map((row, i, arr) => (
           <div key={row.label} className="flex items-center justify-between px-3 py-2.5" style={{ backgroundColor: "var(--card)", borderBottom: i < arr.length - 1 ? "1px solid var(--border)" : undefined }}>
             <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{row.label}</span>
@@ -845,7 +849,7 @@ export function AL08ThreatProtection() {
   const navigate = useNavigate();
   return (
     <div className="flex flex-col h-full">
-      <PageHeader title="Threat Protection" subtitle="Suricata IDS/IPS" onBack={() => navigate("/alerts")} />
+      <PageHeader title="Threat Protection" subtitle="Guardian IDS/IPS" onBack={() => navigate("/alerts")} />
       <div className="flex-1 min-h-0">
         <ThreatProtectionPanel />
       </div>

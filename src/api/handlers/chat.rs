@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
-fn get_grpc_addr(ip: &str, peer_id_str: &str) -> String {
+pub(crate) fn get_grpc_addr(ip: &str, peer_id_str: &str) -> String {
     let parsed_port = peer_id_str
         .split(':')
         .nth(1)
@@ -105,12 +105,25 @@ pub struct SendMessageResponse {
     pub status: String,
 }
 
-fn request_payload_json(req: &SendMessageRequest) -> String {
+fn request_payload_json(
+    req: &SendMessageRequest,
+    attachment: Option<&crate::chat::models::AttachmentRecord>,
+) -> String {
     serde_json::to_string(&serde_json::json!({
         "content": req.content,
         "attachment_id": req.attachment_id,
+        "attachment_name": attachment.map(|record| record.file_name.as_str()),
+        "attachment_mime": attachment.map(|record| record.mime_type.as_str()),
+        "attachment_size": attachment.map(|record| record.encrypted_size),
     }))
     .unwrap_or_default()
+}
+
+fn payload_matches_request(payload: &str, req: &SendMessageRequest) -> bool {
+    serde_json::from_str::<serde_json::Value>(payload).is_ok_and(|value| {
+        value.get("content") == Some(&serde_json::json!(req.content))
+            && value.get("attachment_id") == Some(&serde_json::json!(req.attachment_id))
+    })
 }
 
 pub async fn send_message(
@@ -124,6 +137,20 @@ pub async fn send_message(
             "Message must contain either content or an attachment".to_string(),
         ));
     }
+    let attachment = if let Some(attachment_id) = req.attachment_id.as_deref() {
+        uuid::Uuid::parse_str(attachment_id)
+            .map_err(|_| ApiError::BadRequest("Invalid attachment ID format".to_string()))?;
+        let metadata = crate::chat::storage::get_attachment_metadata(attachment_id)
+            .await
+            .map_err(|error| ApiError::Internal(format!("Failed to read attachment: {error}")))?
+            .ok_or_else(|| ApiError::NotFound("Attachment metadata not found".to_string()))?;
+        tokio::fs::metadata(crate::chat::storage::attachment_path(attachment_id))
+            .await
+            .map_err(|_| ApiError::NotFound("Attachment file not found".to_string()))?;
+        Some(metadata)
+    } else {
+        None
+    };
     if !req.is_group {
         ensure_member_contact_access(&state, &session, &req.recipient_did)?;
     }
@@ -338,11 +365,11 @@ pub async fn send_message(
             "message_id must be 100 characters or fewer".to_string(),
         ));
     }
-    let content_str = request_payload_json(&req);
+    let content_str = request_payload_json(&req, attachment.as_ref());
 
     if let Some(existing) = requested_id.and_then(|id| history.iter().find(|m| m.message_id == id))
     {
-        if existing.encrypted_payload != content_str {
+        if !payload_matches_request(&existing.encrypted_payload, &req) {
             return Err(ApiError::BadRequest(
                 "idempotency replay payload does not match the original message".to_string(),
             ));
@@ -539,7 +566,8 @@ pub async fn mark_as_read(
 ) -> Result<Json<MarkReadResponse>, ApiError> {
     // Peers are authorised by DID. Transport confidentiality and endpoint
     // authentication are supplied by the Nebula overlay.
-    let reader_did = state.device_did.clone();
+    let reader_did = crate::api::handlers::browser_member::did_from_session(&session)
+        .unwrap_or_else(|| state.device_did.clone());
     let timestamp = chrono::Utc::now().timestamp();
 
     // 1. Verify the message exists

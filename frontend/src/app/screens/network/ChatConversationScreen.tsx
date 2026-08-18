@@ -84,7 +84,7 @@ export function ChatConversationScreen() {
   const isGroup = Boolean(circleId && !peerDid);
   const { startCall, call, currentDevice } = useCall();
   const { group } = useGroupCall();
-  const { clearPeerUnread, refresh: refreshUnread } = useChatUnread();
+  const { clearPeerUnread, clearCircleUnread, refresh: refreshUnread } = useChatUnread();
   const { contactNameForDid } = useContactNames();
   const [records, setRecords] = useState<ChatMessageRecord[]>([]);
   const [localDid, setLocalDid] = useState("");
@@ -100,7 +100,16 @@ export function ChatConversationScreen() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const recordsRef = useRef<ChatMessageRecord[]>(records);
   const markedReadRef = useRef<Set<string>>(new Set());
+  const unreadRefreshTimerRef = useRef<number | undefined>(undefined);
   const view: View = searchParams.get("view") === "files" ? "files" : "chat";
+  const openedFromChats = isGroup && searchParams.get("from") === "chats";
+
+  const setView = (nextView: View) => {
+    const next = new URLSearchParams(searchParams);
+    if (nextView === "files") next.set("view", "files");
+    else next.delete("view");
+    setSearchParams(next);
+  };
 
   useEffect(() => {
     if (!peerDid || !peersError) return;
@@ -194,29 +203,38 @@ export function ChatConversationScreen() {
 
   useEffect(() => { recordsRef.current = records; }, [records]);
 
+  const scheduleUnreadRefresh = useCallback(() => {
+    if (unreadRefreshTimerRef.current) window.clearTimeout(unreadRefreshTimerRef.current);
+    unreadRefreshTimerRef.current = window.setTimeout(refreshUnread, 250);
+  }, [refreshUnread]);
+
+  useEffect(() => () => {
+    if (unreadRefreshTimerRef.current) window.clearTimeout(unreadRefreshTimerRef.current);
+  }, []);
+
   // A message is marked read while its conversation is the active, foreground view.
   // The backend persists the receipt before this promise resolves, so refreshing the
   // conversation list afterwards returns the canonical unread count.
   const markMessageRead = useCallback((messageId: string) => {
     if (markedReadRef.current.has(messageId)) return;
     const record = recordsRef.current.find((entry) => entry.message_id === messageId);
-    if (!record || !localDid || record.sender_did === localDid || record.status === "read" || record.read_by.includes(localDid)) return;
+    if (!record || !localDid || record.sender_did === localDid || (!isGroup && record.status === "read") || record.read_by.includes(localDid)) return;
     markedReadRef.current.add(messageId);
     void chatService.markRead(record.message_id, record.sender_did, isGroup ? circleId : undefined)
       .then(() => {
         setRecords((current) => current.map((entry) => (entry.message_id === messageId
           ? { ...entry, status: "read", read_by: entry.read_by.includes(localDid) ? entry.read_by : [...entry.read_by, localDid] }
           : entry)));
-        refreshUnread();
+        scheduleUnreadRefresh();
       })
       .catch(() => { markedReadRef.current.delete(messageId); });
-  }, [localDid, isGroup, circleId, refreshUnread]);
+  }, [localDid, isGroup, circleId, scheduleUnreadRefresh]);
 
   const markConversationRead = useCallback(() => {
     recordsRef.current
-      .filter((record) => record.sender_did !== localDid && record.status !== "read" && !record.read_by.includes(localDid))
+      .filter((record) => record.sender_did !== localDid && (isGroup || record.status !== "read") && !record.read_by.includes(localDid))
       .forEach((record) => markMessageRead(record.message_id));
-  }, [localDid, markMessageRead]);
+  }, [localDid, isGroup, markMessageRead]);
 
   // Do not depend on the bottom sentinel for read receipts. It has zero height and
   // IntersectionObserver can miss it during the history-load/auto-scroll transition,
@@ -226,6 +244,7 @@ export function ChatConversationScreen() {
     const isForeground = () => document.visibilityState === "visible" && document.hasFocus();
     const recheck = () => {
       if (!isForeground()) return;
+      if (isGroup && circleId) clearCircleUnread(circleId);
       if (!isGroup && peerDid) clearPeerUnread(peerDid);
       markConversationRead();
     };
@@ -237,7 +256,7 @@ export function ChatConversationScreen() {
       document.removeEventListener("visibilitychange", recheck);
       window.removeEventListener("focus", recheck);
     };
-  }, [view, localDid, records, isGroup, peerDid, clearPeerUnread, markConversationRead]);
+  }, [view, localDid, records, isGroup, circleId, peerDid, clearPeerUnread, clearCircleUnread, markConversationRead]);
 
   const send = async (content: string | null, attachmentId: string | null = null) => {
     if ((isGroup && !circleId) || (!isGroup && !peerDid) || (!content?.trim() && !attachmentId)) return;
@@ -379,10 +398,11 @@ export function ChatConversationScreen() {
     const isMe = record.sender_did === "local" || (localDid ? record.sender_did === localDid : (isGroup ? false : record.sender_did !== peerDid));
     const senderMember = circle?.members?.find((item: any) => item.did === record.sender_did);
     const attachment = payload.attachment_id ? {
-      name: payload.content || `Attachment ${payload.attachment_id.slice(0, 8)}`,
-      sizeBytes: 0,
-      mime: "application/octet-stream",
-      kind: "file" as const,
+      attachmentId: payload.attachment_id,
+      name: payload.attachment_name || payload.content || `Attachment ${payload.attachment_id.slice(0, 8)}`,
+      sizeBytes: payload.attachment_size || 0,
+      mime: payload.attachment_mime || "application/octet-stream",
+      kind: payload.attachment_mime?.startsWith("image/") ? "image" as const : "file" as const,
       url: chatService.downloadUrl(payload.attachment_id),
     } : undefined;
     const queue = queuedMessages.get(record.message_id);
@@ -420,7 +440,7 @@ export function ChatConversationScreen() {
   const peerComposerName = peerContactName || member?.name || peer?.peerId || "peer";
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title={title} subtitle={subtitle} onBack={() => navigate(isGroup ? `/network/${circleId}?tab=members` : "/chats")} right={
+      <PageHeader title={title} subtitle={subtitle} onBack={() => navigate(isGroup ? (openedFromChats ? "/chats" : `/network/${circleId}?tab=members`) : "/chats")} right={
         <div className="flex items-center gap-1">
           {!isGroup && <>
             <button aria-label={`Voice call ${title}`} title="Voice call" disabled={startingCall !== null || !peer} onClick={() => void callPeer(["audio"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "audio" ? <Loader2 size={18} className="animate-spin" /> : <Phone size={18} />}</button>
@@ -431,7 +451,7 @@ export function ChatConversationScreen() {
       } />
       <div className="flex shrink-0 border-b border-border bg-card">
         {(["chat", "files"] as View[]).map((item) => (
-          <button key={item} onClick={() => setSearchParams(item === "files" ? { view: "files" } : {})} className="flex flex-1 items-center justify-center gap-2 py-3 text-sm font-medium capitalize" style={{ color: view === item ? "var(--primary)" : "var(--muted-foreground)", borderBottom: view === item ? "2px solid var(--primary)" : "2px solid transparent" }}>
+          <button key={item} onClick={() => setView(item)} className="flex flex-1 items-center justify-center gap-2 py-3 text-sm font-medium capitalize" style={{ color: view === item ? "var(--primary)" : "var(--muted-foreground)", borderBottom: view === item ? "2px solid var(--primary)" : "2px solid transparent" }}>
             {item === "chat" ? <MessageSquare size={16} /> : <FileText size={16} />}{item}
           </button>
         ))}

@@ -91,7 +91,7 @@ function normalizeThreatAlert(alert: ThreatAlertApi): Alert {
     device: alert.src_ip || 'Unknown source',
     deviceIp: alert.src_ip || '',
     os: alert.protocol || 'Unknown protocol',
-    aiSummary: `Suricata detected ${alert.signature || 'suspicious traffic'} targeting ${alert.dst_ip || 'an unknown destination'}.`,
+    aiSummary: `Guardian detected ${alert.signature || 'suspicious traffic'} targeting ${alert.dst_ip || 'an unknown destination'}.`,
     archived: false,
     rawTimestamp: alert.timestamp,
     srcIp: alert.src_ip,

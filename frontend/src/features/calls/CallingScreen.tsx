@@ -1,4 +1,16 @@
 import { useEffect, useRef, useState } from "react";
+import {
+  AudioLines,
+  LockKeyhole,
+  Mic,
+  MicOff,
+  MonitorUp,
+  PhoneOff,
+  ShieldCheck,
+  Video as VideoIcon,
+  VideoOff,
+} from "lucide-react";
+import { useContactNames } from "../../app/contexts/ContactNameContext";
 import { useCall } from "./CallContext";
 import type { CallSession } from "./call.types";
 
@@ -37,27 +49,158 @@ function useCallDuration(call?: CallSession) {
   return elapsed;
 }
 
+function formatDuration(seconds: number) {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`
+    : `${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+}
+
+function peerInitials(name: string) {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length > 1) return `${words[0][0]}${words[words.length - 1][0]}`.toUpperCase();
+  return (words[0] || "GX").slice(0, 2).toUpperCase();
+}
+
+function compactIdentity(identity: string) {
+  return identity.length > 32 ? `${identity.slice(0, 15)}…${identity.slice(-10)}` : identity;
+}
+
+function ControlButton({
+  label,
+  active = false,
+  danger = false,
+  disabled = false,
+  onClick,
+  children,
+}: {
+  label: string;
+  active?: boolean;
+  danger?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="direct-call-control-wrap">
+      <button
+        type="button"
+        className={`direct-call-control${active ? " is-active" : ""}${danger ? " is-danger" : ""}`}
+        aria-label={label}
+        aria-pressed={active || undefined}
+        title={label}
+        disabled={disabled}
+        onClick={onClick}
+      >
+        {children}
+      </button>
+      <span>{label}</span>
+    </div>
+  );
+}
+
 export function CallingScreen() {
   const { call, incoming, peerId, peerOnline, localStream, remoteStream, error, muted, cameraEnabled, toggleMute, toggleCamera, sendTestTone, shareScreen, end } = useCall();
+  const { displayForDid } = useContactNames();
   const elapsed = useCallDuration(call);
+  const [testingAudio, setTestingAudio] = useState(false);
   // While a call is still ringing (offer_received), the incoming toast owns the UI —
   // the full-screen overlay must only appear once the callee has accepted.
-  if (!call || incoming) return null; const peer = peerId ?? "Remote Guardian";
+  if (!call || incoming) return null;
+
+  const peer = peerId ?? "Remote Guardian";
+  const displayName = displayForDid(peer, compactIdentity(peer));
+  const showIdentity = displayName !== peer;
   const label = stateLabel(call.state, peerOnline);
-  return <div className="call-overlay" role="dialog" aria-modal="true" aria-label="Active call">
-    <header className="call-header"><div><strong>{peer}</strong><span className="secure-label">◆ {label}</span></div><div>{call.state === "connected" ? `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}` : ""}</div></header>
-    <main className="video-stage">
-      <Video stream={remoteStream} className="remote-video" />
-      {!remoteStream && <div className="remote-placeholder"><div className="avatar large">{peer.slice(0, 2).toUpperCase()}</div><h2>{label}</h2><p>Identity and policy checks remain active</p></div>}
-      <Video stream={localStream} muted className="local-video" />
+  const connected = call.state === "connected";
+  const supportsAudio = call.requested_media.includes("audio") || call.accepted_media.includes("audio");
+  const supportsVideo = call.requested_media.includes("video") || call.accepted_media.includes("video");
+  const remoteHasVideo = supportsVideo && Boolean(remoteStream?.getVideoTracks().some((track) => track.readyState === "live"));
+  const localHasVideo = supportsVideo && Boolean(localStream?.getVideoTracks().some((track) => track.readyState === "live"));
+
+  const testAudio = () => {
+    if (testingAudio) return;
+    setTestingAudio(true);
+    sendTestTone()
+      .catch(() => undefined)
+      .finally(() => window.setTimeout(() => setTestingAudio(false), 1250));
+  };
+
+  return <div className="call-overlay direct-call-overlay" role="dialog" aria-modal="true" aria-label={`${supportsVideo ? "Video" : "Audio"} call with ${displayName}`}>
+    <header className="direct-call-header">
+      <div className="direct-call-brand">
+        <span className="direct-call-brand-icon"><LockKeyhole size={15} /></span>
+        <div>
+          <strong>SG-X Secure Call</strong>
+          <span>End-to-end protected</span>
+        </div>
+      </div>
+      <div className={`direct-call-network${connected ? " is-connected" : ""}`}>
+        <span className="direct-call-network-dot" />
+        {connected ? "Connected" : label}
+      </div>
+    </header>
+
+    <main className={`video-stage direct-call-stage${remoteHasVideo ? " has-video" : " is-audio"}`}>
+      {remoteHasVideo && <Video stream={remoteStream} className="remote-video" />}
+      {!remoteHasVideo && <div className="direct-audio-scene">
+        <div className="direct-call-ambient direct-call-ambient-one" />
+        <div className="direct-call-ambient direct-call-ambient-two" />
+
+        <div className={`direct-call-avatar-shell${connected && !muted ? " is-speaking" : ""}`}>
+          <span className="direct-call-pulse pulse-one" />
+          <span className="direct-call-pulse pulse-two" />
+          <div className="direct-call-avatar">{peerInitials(displayName)}</div>
+          <span className="direct-call-verified" title="Verified Guardian identity"><ShieldCheck size={18} /></span>
+        </div>
+
+        <div className="direct-call-person">
+          <p className="direct-call-kicker">{supportsVideo ? "Camera unavailable" : "Audio call"}</p>
+          <h1>{displayName}</h1>
+          {showIdentity && <p className="direct-call-peer-id" title={peer}>{compactIdentity(peer)}</p>}
+        </div>
+
+        <div className={`direct-call-status${connected ? " is-live" : ""}`}>
+          {connected ? <>
+            <div className="direct-call-equalizer" aria-hidden="true">
+              <i /><i /><i /><i /><i />
+            </div>
+            <time>{formatDuration(elapsed)}</time>
+          </> : <>
+            <span className="direct-call-spinner" aria-hidden="true" />
+            <span>{label}</span>
+          </>}
+        </div>
+
+        <p className="direct-call-security-note"><ShieldCheck size={14} /> Identity and call policy verified continuously</p>
+      </div>}
+
+      {remoteHasVideo && <div className="direct-video-info">
+        <div><strong>{displayName}</strong>{showIdentity && <span>{compactIdentity(peer)}</span>}</div>
+        <time>{connected ? formatDuration(elapsed) : label}</time>
+      </div>}
+      {localHasVideo && <Video stream={localStream} muted className="local-video" />}
       {error && <div className="call-error" role="alert">{error}</div>}
     </main>
-    <footer className="call-controls">
-      <button aria-label={muted ? "Unmute microphone" : "Mute microphone"} aria-pressed={muted} onClick={toggleMute}>{muted ? "Mic off" : "Mic"}</button>
-      <button aria-label={cameraEnabled ? "Turn camera off" : "Turn camera on"} aria-pressed={!cameraEnabled} onClick={toggleCamera}>{cameraEnabled ? "Camera" : "Camera off"}</button>
-      <button aria-label="Send test audio to remote peer" disabled={call.state !== "connected" || !call.requested_media.includes("audio")} onClick={() => sendTestTone().catch(() => undefined)}>Test audio</button>
-      <button aria-label="Share screen" onClick={() => shareScreen().catch(() => undefined)}>Share</button>
-      <button className="end-call" aria-label="End call" onClick={() => end()}>End</button>
+
+    <footer className="call-controls direct-call-controls">
+      <ControlButton label={muted ? "Unmute" : "Mute"} active={muted} onClick={toggleMute}>
+        {muted ? <MicOff size={22} /> : <Mic size={22} />}
+      </ControlButton>
+      <ControlButton label={testingAudio ? "Testing…" : "Audio test"} active={testingAudio} disabled={!connected || !supportsAudio} onClick={testAudio}>
+        <AudioLines size={22} />
+      </ControlButton>
+      <ControlButton label={!supportsVideo ? "Audio only" : cameraEnabled ? "Camera off" : "Camera on"} active={supportsVideo && !cameraEnabled} disabled={!supportsVideo} onClick={toggleCamera}>
+        {supportsVideo && cameraEnabled ? <VideoIcon size={22} /> : <VideoOff size={22} />}
+      </ControlButton>
+      {supportsVideo && <ControlButton label="Share screen" disabled={!connected} onClick={() => { void shareScreen().catch(() => undefined); }}>
+        <MonitorUp size={22} />
+      </ControlButton>}
+      <ControlButton label="End call" danger onClick={() => { void end(); }}>
+        <PhoneOff size={24} />
+      </ControlButton>
     </footer>
   </div>;
 }

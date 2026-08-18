@@ -1,7 +1,9 @@
-import { useState } from "react";
-import { FileText, Download } from "lucide-react";
+import { useEffect, useState } from "react";
+import { FileText, Download, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { Dialog, DialogContent, DialogTitle } from "../ui/dialog";
 import { formatBytes, type AttachmentMeta } from "./types";
+import chatService from "../../services/chatService";
 
 interface MessageAttachmentProps {
   attachment: AttachmentMeta;
@@ -12,6 +14,50 @@ interface MessageAttachmentProps {
 /** Renders a file/image attachment inside a chat bubble. */
 export function MessageAttachment({ attachment, isMe }: MessageAttachmentProps) {
   const [lightbox, setLightbox] = useState(false);
+  const [imageUrl, setImageUrl] = useState<string | null>(
+    attachment.attachmentId ? null : attachment.url,
+  );
+  const [downloading, setDownloading] = useState(false);
+
+  useEffect(() => {
+    if (attachment.kind !== "image" || !attachment.attachmentId) {
+      setImageUrl(attachment.url);
+      return;
+    }
+    let active = true;
+    let objectUrl: string | null = null;
+    void chatService.download(attachment.attachmentId)
+      .then((blob) => {
+        if (!active) return;
+        objectUrl = URL.createObjectURL(blob);
+        setImageUrl(objectUrl);
+      })
+      .catch(() => { if (active) setImageUrl(null); });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [attachment.attachmentId, attachment.kind, attachment.url]);
+
+  const download = async () => {
+    if (!attachment.attachmentId) {
+      const anchor = document.createElement("a");
+      anchor.href = attachment.url;
+      anchor.download = attachment.name;
+      anchor.click();
+      return;
+    }
+    setDownloading(true);
+    try {
+      await chatService.downloadToBrowser(attachment.attachmentId, attachment.name);
+    } catch (cause) {
+      toast.error("File could not be downloaded", {
+        description: cause instanceof Error ? cause.message : undefined,
+      });
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   if (attachment.kind === "image") {
     return (
@@ -22,8 +68,8 @@ export function MessageAttachment({ attachment, isMe }: MessageAttachmentProps) 
           className="block overflow-hidden rounded-xl"
           style={{ cursor: "pointer", background: "none", border: "none", padding: 0 }}
         >
-          <img
-            src={attachment.url}
+          {imageUrl ? <img
+            src={imageUrl}
             alt={attachment.name}
             style={{
               maxWidth: "240px",
@@ -32,16 +78,16 @@ export function MessageAttachment({ attachment, isMe }: MessageAttachmentProps) 
               objectFit: "cover",
               display: "block",
             }}
-          />
+          /> : <Loader2 className="m-8 animate-spin text-muted-foreground" />}
         </button>
         <Dialog open={lightbox} onOpenChange={setLightbox}>
           <DialogContent className="max-w-[92vw] border-0 bg-transparent p-0 shadow-none sm:max-w-md">
             <DialogTitle className="sr-only">{attachment.name}</DialogTitle>
-            <img
-              src={attachment.url}
+            {imageUrl && <img
+              src={imageUrl}
               alt={attachment.name}
               className="max-h-[80vh] w-full rounded-lg object-contain"
-            />
+            />}
           </DialogContent>
         </Dialog>
       </>
@@ -55,11 +101,21 @@ export function MessageAttachment({ attachment, isMe }: MessageAttachmentProps) 
     : "var(--muted-foreground)";
 
   return (
-    <a
-      href={attachment.url}
-      download={attachment.name}
+    <button
+      type="button"
+      onClick={() => void download()}
+      disabled={downloading}
       className="flex items-center gap-3"
-      style={{ textDecoration: "none", minWidth: "180px", maxWidth: "240px" }}
+      style={{
+        background: "none",
+        border: "none",
+        cursor: downloading ? "wait" : "pointer",
+        padding: 0,
+        textAlign: "left",
+        textDecoration: "none",
+        minWidth: "180px",
+        maxWidth: "240px",
+      }}
     >
       <div
         className="flex flex-shrink-0 items-center justify-center rounded-lg"
@@ -89,7 +145,9 @@ export function MessageAttachment({ attachment, isMe }: MessageAttachmentProps) 
           {formatBytes(attachment.sizeBytes)}
         </p>
       </div>
-      <Download size={16} style={{ color: sub, flexShrink: 0 }} />
-    </a>
+      {downloading
+        ? <Loader2 size={16} className="animate-spin" style={{ color: sub, flexShrink: 0 }} />
+        : <Download size={16} style={{ color: sub, flexShrink: 0 }} />}
+    </button>
   );
 }

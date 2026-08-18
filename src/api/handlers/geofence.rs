@@ -15,6 +15,8 @@ use std::sync::Arc;
 #[derive(Debug, Deserialize)]
 pub struct CreateZoneRequest {
     pub name: String,
+    #[serde(default)]
+    pub topology_node_ref: Option<String>,
     pub kind: ZoneKind,
     pub center_lat: Option<f64>,
     pub center_lng: Option<f64>,
@@ -35,6 +37,7 @@ pub struct CreateZoneRequest {
 #[derive(Debug, Deserialize)]
 pub struct EditZoneRequest {
     pub name: Option<String>,
+    pub topology_node_ref: Option<Option<String>>,
     pub kind: Option<ZoneKind>,
     pub center_lat: Option<Option<f64>>,
     pub center_lng: Option<Option<f64>>,
@@ -121,6 +124,7 @@ pub async fn create_zone(
 ) -> Result<Json<ZoneResponse>, ApiError> {
     let zone = zones::new_zone(zones::NewZoneInput {
         name: request.name,
+        topology_node_ref: request.topology_node_ref,
         kind: request.kind,
         center_lat: request.center_lat,
         center_lng: request.center_lng,
@@ -143,6 +147,7 @@ pub async fn edit_zone(
 ) -> Result<Json<ZoneResponse>, ApiError> {
     let patch = zones::ZonePatch {
         name: request.name,
+        topology_node_ref: request.topology_node_ref,
         kind: request.kind,
         center_lat: request.center_lat,
         center_lng: request.center_lng,
@@ -503,6 +508,7 @@ mod tests {
     fn save_zone(automation: ZoneAutomation) -> GeofenceZone {
         let zone = zones::new_zone(zones::NewZoneInput {
             name: "Coordinate Zone".to_string(),
+            topology_node_ref: None,
             kind: ZoneKind::Coordinate,
             center_lat: Some(24.8607),
             center_lng: Some(67.0011),

@@ -15,6 +15,9 @@ export interface ChatMessageRecord {
 export interface ChatPayload {
   content: string | null;
   attachment_id: string | null;
+  attachment_name: string | null;
+  attachment_mime: string | null;
+  attachment_size: number | null;
 }
 
 export interface UploadChatAttachmentResponse {
@@ -26,6 +29,11 @@ export interface SendChatResponse {
   message_id: string;
   signature_base64: string;
   status: string;
+}
+
+export interface ChatSocketEvent extends Partial<ChatMessageRecord> {
+  event_type?: "NewMessage" | "ReadReceipt" | "MessageStatus" | "new_message" | "read_receipt" | "message_status" | string;
+  type?: string;
 }
 
 export const chatService = {
@@ -66,6 +74,24 @@ export const chatService = {
     return api.upload<UploadChatAttachmentResponse>("/chat/upload", form, { onProgress });
   },
   downloadUrl: (attachmentId: string) => api.publicUrl(`/chat/download/${encodeURIComponent(attachmentId)}`),
+  download: async (attachmentId: string) => {
+    const response = await api.raw(`/chat/download/${encodeURIComponent(attachmentId)}`);
+    return response.blob();
+  },
+  downloadToBrowser: async (attachmentId: string, fileName: string) => {
+    const blob = await chatService.download(attachmentId);
+    const url = URL.createObjectURL(blob);
+    try {
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+    } finally {
+      window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+    }
+  },
   markRead: (messageId: string, originalSenderDid: string, groupId?: string) =>
     api.post<{ status: string }>("/chat/read", {
       message_id: messageId,
@@ -81,13 +107,22 @@ export function parseChatPayload(record: ChatMessageRecord): ChatPayload {
     return {
       content: typeof value.content === "string" ? value.content : null,
       attachment_id: typeof value.attachment_id === "string" ? value.attachment_id : null,
+      attachment_name: typeof value.attachment_name === "string" ? value.attachment_name : null,
+      attachment_mime: typeof value.attachment_mime === "string" ? value.attachment_mime : null,
+      attachment_size: typeof value.attachment_size === "number" ? value.attachment_size : null,
     };
   } catch {
-    return { content: record.encrypted_payload || null, attachment_id: null };
+    return {
+      content: record.encrypted_payload || null,
+      attachment_id: null,
+      attachment_name: null,
+      attachment_mime: null,
+      attachment_size: null,
+    };
   }
 }
 
-export function openChatSocket(onChange: () => void, onState?: (connected: boolean) => void): () => void {
+export function openChatSocket(onChange: (event?: ChatSocketEvent) => void, onState?: (connected: boolean) => void): () => void {
   let socket: WebSocket | null = null;
   let retryTimer: number | undefined;
   let heartbeatTimer: number | undefined;
@@ -116,7 +151,10 @@ export function openChatSocket(onChange: () => void, onState?: (connected: boole
     };
     socket.onmessage = (event) => {
       try {
-        if (JSON.parse(String(event.data))?.type === "heartbeat_ack") return;
+        const payload = JSON.parse(String(event.data)) as ChatSocketEvent;
+        if (payload.type === "heartbeat_ack") return;
+        onChange(payload);
+        return;
       } catch {
         // Chat events are still handled by refreshing canonical history.
       }
