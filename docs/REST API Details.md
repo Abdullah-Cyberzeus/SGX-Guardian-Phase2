@@ -7,7 +7,7 @@
 
 Transport notes:
 
-- The admin API binds on `nodeA` only.
+- Each Guardian exposes its own authenticated admin/service API on `:8443`; examples use `nodeA` where the owner/CA role is being described.
 - Plaintext `http://<nodeA-ip>:8443` is rejected; use HTTPS on `:8443`.
 - The NodeA device certificate is self-signed by default, so clients must trust or pin it explicitly.
 - Local email/password login remains active. Cylenium SSO is stubbed and disabled by default.
@@ -171,6 +171,7 @@ Transport notes:
 | GET | `/devices/pairing-status` | Poll pairing/bootstrap status for a device serial |
 | GET | `/devices/{device_id}` | Return one paired device detail by device ID |
 | GET | `/devices/paired/{device_id}` | Alias of paired-device detail lookup |
+| GET | `/devices/{device_id}/status` | Read current persisted/runtime status available for a paired Guardian |
 | POST | `/devices/{id}/unpair` | Unpair one Guardian device from the current operator account |
 
 ### 2.2 Discovery & Threat
@@ -305,8 +306,12 @@ Transport notes:
 | PATCH | `/circles/{id}/members/{did}` | Change one member's circle role |
 | DELETE | `/circles/{id}/members/{did}` | Remove one member from a circle |
 | GET | `/circles/{id}/invites` | List active circle invites |
-| POST | `/circles/{id}/invites` | Mint a new invite for a circle |
+| POST | `/circles/{id}/invites` | Mint and deliver a DID-targeted invite for a circle |
 | DELETE | `/circles/{id}/invites/{invite_id}` | Revoke one circle invite |
+| GET | `/circles/invites/inbox` | List circle invitations received by the local Guardian |
+| POST | `/circles/invites/inbox` | Receive a delivered circle invite from a trusted Guardian service peer |
+| POST | `/circles/invites/{invite_id}/accept` | Accept one received circle invitation |
+| POST | `/circles/invites/{invite_id}/reject` | Reject one received circle invitation |
 | POST | `/circles/join/preview` | Validate or preview an inbound circle invite before joining |
 | POST | `/circles/join` | Join a circle using invite material |
 | POST | `/circles/redeem` | Redeem a circle invite token |
@@ -325,6 +330,298 @@ Transport notes:
 | DELETE | `/rules/{id}` | Delete one automation rule |
 | POST | `/rules/{id}/enable` | Enable or disable one automation rule |
 | POST | `/rules/{id}/test` | Execute a dry-run test for one automation rule |
+
+#### Circle Invite Flow
+
+Circle invitations are DID-based. The Guardian DID is the canonical member identity; IP address, host, and port are transport metadata only.
+
+Owner flow:
+
+```text
+Create Circle
+→ select target Guardian DID
+→ POST /circles/{id}/invites
+→ backend resolves/delivers invite to target Guardian
+→ target sees pending inbox invite
+→ Accept/Reject
+→ Accept issues membership VC
+→ member becomes active on both nodes
+```
+
+QR/share-link fallback must not depend on `owner_host=127.0.0.1` for cross-device use. Automatic DID-based backend delivery is the primary path; QR/link is fallback.
+
+Frontend/operator calls use:
+
+```http
+Authorization: Bearer <session-token>
+```
+
+Guardian-to-Guardian invite delivery uses authenticated/signed service requests between trusted Guardians. The frontend user bearer token must not be blindly reused as Node-B authentication. Remote invite delivery and accept/redeem requests are verified with Guardian DID/DKP proofs, target-DID binding, expiry/replay checks, and CRL/security-state checks. Circle receive endpoints are not public; missing operator or trusted peer/service authentication returns `401 UNAUTHORIZED`.
+
+Frontend integration:
+
+```text
+POST /circles/{id}/invites
+GET  /circles/invites/inbox
+POST /circles/invites/{invite_id}/accept
+POST /circles/invites/{invite_id}/reject
+GET  /circles
+GET  /circles/{id}/members
+```
+
+Incoming invite notifications should be surfaced through the existing notification stream/history UI, then reconciled with `GET /circles/invites/inbox` for the actionable Accept/Reject state.
+
+Expected UI behavior:
+
+```text
+Owner:
+Select DID → Send Invite → Invited/Pending
+
+Member:
+Incoming Invite notification
+→ Accept / Reject
+
+Accept:
+VC issued → Circle appears → Active member
+```
+
+#### POST `/circles/{id}/invites`
+
+Purpose:
+
+- Mint a signed invite for a specific target Guardian DID.
+- Resolve `target_did` to its DID Document service endpoint and deliver the invite to the target Guardian.
+- Keep the member in `invited`/pending state until the target Guardian accepts.
+
+Request:
+
+- Auth: `Authorization: Bearer <session-token>` required
+- Path params:
+  - `id` (`string`): Circle id
+- JSON body:
+
+```json
+{
+  "target_did": "did:guardian:...",
+  "role": "member"
+}
+```
+
+- Required fields:
+  - `target_did` (`string`, DID): canonical invite target and future member identity.
+- Optional fields:
+  - `role` (`string`): `member` or `owner`. Defaults to `member`.
+  - `expires_in_minutes` (`integer`): invite TTL.
+  - `max_uses` (`integer`): defaults to `1`.
+  - `deliver` (`boolean`): defaults to `true`; when `false`, only QR/link fallback material is produced.
+  - `owner_host` (`string`): legacy/fallback share-link metadata only; not the member identity.
+
+Success response (`201 Created`):
+
+```json
+{
+  "status": "success",
+  "invite_id": "urn:uuid:...",
+  "token_b64": "...",
+  "qr_payload": "sgx-guardian://circle/join?...",
+  "link": "sgx-guardian://circle/join?...",
+  "expires_at": "2026-08-12T12:00:00Z",
+  "delivered": true,
+  "delivery_error": null,
+  "invite": {
+    "circleId": "circle-ops",
+    "issuerDid": "did:guardian:owner...",
+    "targetDid": "did:guardian:member...",
+    "role": "Member",
+    "expiresAt": "2026-08-12T12:00:00Z",
+    "nonce": "...",
+    "proof": {}
+  }
+}
+```
+
+Notes:
+
+- `delivered: true` means the remote Guardian successfully received and stored the invite.
+- `delivered: false` with `delivery_error` means QR/link fallback material was still generated, but automatic backend delivery failed or was disabled.
+- DID is the canonical member identity. IP/host is transport metadata only.
+- The owner UI should show the target member as `invited`/pending until acceptance. Membership becomes `active` only after signed acceptance is verified and a membership VC is issued.
+
+Error responses:
+
+- `400 BAD_REQUEST`: missing/invalid `target_did`, invalid role/TTL, DID resolution failure, expired/invalid invite, unreachable endpoint, or invalid delivery response
+- `401 UNAUTHORIZED`: missing operator token or missing trusted peer/service authentication for Guardian-to-Guardian delivery
+- `403 FORBIDDEN`: local Guardian is not authorized to invite for this Circle
+- `404 NOT_FOUND`: Circle not found
+- `409 CONFLICT`: Circle is archived or target DID is revoked by CRL
+- `500 INTERNAL_SERVER_ERROR`: DID/key material, signing, persistence, or state-sync failure
+
+#### GET `/circles/invites/inbox`
+
+Purpose:
+
+- List Circle invitations received by the local Guardian.
+
+Request:
+
+- Auth: `Authorization: Bearer <session-token>` required
+- Query params: none
+- Body: none
+
+Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "count": 1,
+  "invites": [
+    {
+      "invite": {
+        "id": "urn:uuid:...",
+        "circleId": "circle-ops",
+        "circleName": "Ops",
+        "issuerDid": "did:guardian:owner...",
+        "targetDid": "did:guardian:member...",
+        "role": "Member",
+        "expiresAt": "2026-08-12T12:00:00Z"
+      },
+      "receivedAt": "2026-08-12T10:00:00Z",
+      "state": "pending",
+      "updatedAt": "2026-08-12T10:00:00Z"
+    }
+  ]
+}
+```
+
+States:
+
+- `pending`
+- `accepted`
+- `rejected`
+- `expired`
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing or invalid operator session token
+- `500 INTERNAL_SERVER_ERROR`: inbox persistence read failure
+
+#### POST `/circles/invites/inbox`
+
+Purpose:
+
+- Receive and store a signed Circle invitation delivered by another trusted Guardian.
+- Verify the invite proof before placing it in the local pending inbox.
+- Verify the invite `targetDid`/`target_did` matches the local Guardian DID.
+
+Request:
+
+- Auth: Guardian-to-Guardian trusted peer/service authentication required. This endpoint is not public and is not a frontend/operator call.
+- Query params: none
+- JSON body: signed invite token
+
+```json
+{
+  "id": "urn:uuid:...",
+  "circleId": "circle-ops",
+  "issuerDid": "did:guardian:owner...",
+  "targetDid": "did:guardian:member...",
+  "role": "Member",
+  "expiresAt": "2026-08-12T12:00:00Z",
+  "nonce": "...",
+  "proof": {}
+}
+```
+
+Success response (`201 Created`):
+
+```json
+{
+  "status": "success",
+  "message": "Circle invite received",
+  "invite": {
+    "state": "pending"
+  }
+}
+```
+
+Error responses:
+
+- `400 BAD_REQUEST`: invalid signed invite, target DID mismatch, expired invite, or DID resolution/proof failure
+- `401 UNAUTHORIZED`: missing trusted peer/service authentication
+- `409 CONFLICT`: issuer or target DID is revoked by CRL
+- `500 INTERNAL_SERVER_ERROR`: inbox persistence failure
+
+#### POST `/circles/invites/{invite_id}/accept`
+
+Purpose:
+
+- Verify the signed invite.
+- Verify target DID matches the local Guardian DID.
+- Verify expiry, replay, security state, and CRL status.
+- Send signed acceptance to the owner Guardian.
+- Issue/store Circle membership VC.
+- Persist the Circle locally.
+- Change membership to `active`.
+
+Request:
+
+- Auth: `Authorization: Bearer <session-token>` required
+- Path params:
+  - `invite_id` (`string`): invite id. Values such as `urn:uuid:...` should be URL-encoded when used in the path.
+- Body: none
+
+Success response (`201 Created`):
+
+```json
+{
+  "status": "success",
+  "message": "Circle membership issued",
+  "vc": {},
+  "circle": {}
+}
+```
+
+Error responses:
+
+- `400 BAD_REQUEST`: invalid/expired/replayed invite, target DID mismatch, signature failure, owner endpoint resolution failure, or owner redeem failure
+- `401 UNAUTHORIZED`: missing operator token or missing trusted peer/service authentication
+- `404 NOT_FOUND`: invite id not found in local inbox
+- `409 CONFLICT`: invite rejected, Circle archived, or DID revoked by CRL
+- `500 INTERNAL_SERVER_ERROR`: signing, VC persistence, Circle persistence, or state-sync failure
+
+#### POST `/circles/invites/{invite_id}/reject`
+
+Purpose:
+
+- Reject a pending invitation.
+- Update inbox state to `rejected`.
+- Do not issue a membership VC.
+- Do not activate Circle membership.
+
+Request:
+
+- Auth: `Authorization: Bearer <session-token>` required
+- Path params:
+  - `invite_id` (`string`): invite id. Values such as `urn:uuid:...` should be URL-encoded when used in the path.
+- Body: none
+
+Success response (`200 OK`):
+
+```json
+{
+  "status": "success",
+  "message": "Circle invite rejected",
+  "invite": {
+    "state": "rejected"
+  }
+}
+```
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing or invalid operator session token
+- `404 NOT_FOUND`: invite id not found in local inbox
+- `500 INTERNAL_SERVER_ERROR`: inbox persistence update failure
 
 ### 2.8 File Transfer & Vault
 
@@ -1209,6 +1506,25 @@ Error responses:
 - `401 UNAUTHORIZED`: missing, invalid, expired, tampered, unknown, or revoked bearer token
 - `404 NOT_FOUND`: device does not exist or is not visible to the authenticated user
 - `500 INTERNAL_SERVER_ERROR`: device store read failure
+
+#### GET `/devices/{deviceId}/status`
+
+Purpose:
+Return the paired Guardian's status using the binding record, persisted peer DID document, and Nebula registries. Remote fields that are not currently published by a Guardian are returned as `"unknown"`; this endpoint never writes pairing data or returns private key material.
+
+Request:
+
+- Auth: `Authorization: Bearer <token>` required
+- Path params:
+  - `deviceId` (required, string)
+
+Success response (`200 OK`):
+Structured `pairing`, `identity`, `runtime`, `network`, `nebula`, `hardware`, and `security` sections. `/guardians/{deviceId}/status` is an equivalent compatibility alias.
+
+Error responses:
+
+- `401 UNAUTHORIZED`: missing or invalid bearer token
+- `404 NOT_FOUND`: device does not exist or is not visible to the authenticated user
 
 #### GET `/devices/pairing-status`
 

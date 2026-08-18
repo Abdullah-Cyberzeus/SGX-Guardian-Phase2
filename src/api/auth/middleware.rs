@@ -50,27 +50,59 @@ pub async fn require_auth(
                 .flatten()
         });
     let Some(token) = token else {
+        tracing::warn!(
+            "operator auth failed path={} reason=missing bearer token",
+            req.uri().path()
+        );
         return unauthorized("missing bearer token");
     };
 
     let claims = match session::verify(&state.device_pubkey_point, &token) {
         Ok(claims) => claims,
-        Err(_) => return unauthorized("invalid bearer token"),
+        Err(_) => {
+            tracing::warn!(
+                "operator auth failed path={} reason=invalid bearer token",
+                req.uri().path()
+            );
+            return unauthorized("invalid bearer token");
+        }
     };
     if claims.iss != state.device_did {
+        tracing::warn!(
+            "operator auth failed path={} reason=token issuer mismatch",
+            req.uri().path()
+        );
         return unauthorized("token issuer mismatch");
     }
     if claims.exp <= Utc::now().timestamp() {
+        tracing::warn!(
+            "operator auth failed path={} reason=token expired",
+            req.uri().path()
+        );
         return unauthorized("token expired");
     }
     let stored_session = match state.admin.sessions.get(&claims.jti).await {
         Ok(session) => session,
-        Err(_) => return unauthorized("invalid session"),
+        Err(_) => {
+            tracing::warn!(
+                "operator auth failed path={} reason=session store error",
+                req.uri().path()
+            );
+            return unauthorized("invalid session");
+        }
     };
     let Some(stored_session) = stored_session else {
+        tracing::warn!(
+            "operator auth failed path={} reason=unknown session",
+            req.uri().path()
+        );
         return unauthorized("unknown session");
     };
     if stored_session.revoked || stored_session.expires_at <= Utc::now().timestamp() {
+        tracing::warn!(
+            "operator auth failed path={} reason=session revoked",
+            req.uri().path()
+        );
         return unauthorized("session revoked");
     }
 
@@ -99,6 +131,8 @@ fn query_parameter(query: Option<&str>, name: &str) -> Option<String> {
 
 fn is_public_route(method: &Method, path: &str) -> bool {
     let public_frontend = method == Method::GET && !path.starts_with("/api/");
+    let circle_snapshot_pull =
+        method == Method::GET && path.starts_with("/api/v1/circles/") && path.ends_with("/members/snapshot");
 
     matches!(
         (method, path),
@@ -107,10 +141,15 @@ fn is_public_route(method: &Method, path: &str) -> bool {
             | (&Method::POST, "/api/v1/auth/oidc/cylenium/start")
             | (&Method::POST, "/api/v1/auth/oidc/cylenium/callback")
             | (&Method::POST, "/api/v1/circles/redeem")
+            // Service-authenticated in handlers::circle::receive_invite.
+            | (&Method::POST, "/api/v1/circles/invites/inbox")
+            // Service-authenticated in handlers::circle::receive_member_snapshot.
+            | (&Method::POST, "/api/v1/circles/snapshots/inbox")
             | (&Method::POST, "/api/v1/restore/validate")
             | (&Method::GET, "/api/v1/restore/status")
             | (&Method::GET, "/api/v1/health")
-    ) || public_frontend
+    ) || circle_snapshot_pull
+        || public_frontend
 }
 
 fn is_cors_preflight(headers: &HeaderMap) -> bool {

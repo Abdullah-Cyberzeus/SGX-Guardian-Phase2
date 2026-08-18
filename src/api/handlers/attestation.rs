@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct ApiLastAttestation {
     #[serde(rename = "peerId")]
     pub peer_id: String,
@@ -24,6 +24,48 @@ pub struct ApiLastAttestation {
     #[serde(rename = "pcrCompositeDigest", skip_serializing_if = "Option::is_none")]
     pub pcr_composite_digest: Option<String>,
     pub count: u64,
+}
+
+pub async fn latest_for_peer(state: &AppState, peer_did: &str) -> Option<ApiLastAttestation> {
+    let text = match read_json_from_dir(&state.log_dir_primary, "last_attestation.json").await {
+        Ok(text) => text,
+        Err(_) => read_json_from_dir(&state.log_dir_fallback, "last_attestation.json")
+            .await
+            .ok()?,
+    };
+    let records = if let Ok(records) =
+        serde_json::from_str::<Vec<crate::attestation_service::LastAttestation>>(&text)
+    {
+        records
+    } else if let Ok(mut record) =
+        serde_json::from_str::<crate::attestation_service::LastAttestation>(&text)
+    {
+        record.count = 1;
+        vec![record]
+    } else {
+        return None;
+    };
+
+    records
+        .into_iter()
+        .filter(|record| {
+            record
+                .peer_did
+                .as_deref()
+                .is_some_and(|did| did.eq_ignore_ascii_case(peer_did))
+        })
+        .max_by(|left, right| left.timestamp.cmp(&right.timestamp))
+        .map(|record| ApiLastAttestation {
+            peer_id: record.peer_id,
+            policy_digest: record.policy_digest,
+            result: record.result,
+            timestamp: record.timestamp,
+            peer_did: record.peer_did,
+            virtual_id: record.virtual_id,
+            dkp_pubkey_sha256_b16: record.dkp_pubkey_sha256_b16,
+            pcr_composite_digest: record.pcr_composite_digest,
+            count: record.count,
+        })
 }
 
 #[derive(Deserialize)]

@@ -1,8 +1,9 @@
 use crate::api::{error::ApiError, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
-use crate::circle::invite::{self, InviteToken, JoinRequest};
+use crate::circle::invite::{self, InviteToken, JoinRequest, ReceivedInvite, ReceivedInviteState};
 use crate::circle::members::{self, CircleMember};
+use crate::circle::snapshot::{self, CircleMemberSnapshot};
 use crate::circle::store::{self, CIRCLE_WRITE_LOCK};
 use crate::circle::{Circle, CircleError};
 use crate::did::Did;
@@ -12,13 +13,25 @@ use crate::vc::issue::{
 };
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{header, HeaderMap, StatusCode},
     Json,
 };
+use base64::{engine::general_purpose, Engine as _};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
+
+const GUARDIAN_SERVICE_AUTH_SCHEME: &str = "GuardianService ";
+const GUARDIAN_SERVICE_AUTH_CONTEXT: &str = "SGX-GUARDIAN-SERVICE-AUTH-V1";
+const GUARDIAN_SERVICE_AUTH_PATH: &str = "/api/v1/circles/invites/inbox";
+const GUARDIAN_SERVICE_SNAPSHOT_PATH: &str = "/api/v1/circles/snapshots/inbox";
+const GUARDIAN_SERVICE_AUTH_SKEW_SECS: i64 = 300;
+const HEADER_GUARDIAN_DID: &str = "x-sgx-guardian-did";
+const HEADER_GUARDIAN_TIMESTAMP: &str = "x-sgx-guardian-timestamp";
+const HEADER_GUARDIAN_NONCE: &str = "x-sgx-guardian-nonce";
 
 #[derive(Serialize)]
 pub struct CircleListResponse {
@@ -69,6 +82,12 @@ pub struct MemberListResponse {
     pub members: Vec<CircleMember>,
 }
 
+#[derive(Serialize)]
+pub struct CircleSnapshotSyncResponse {
+    pub status: String,
+    pub snapshots_applied: usize,
+}
+
 #[derive(Deserialize, Default)]
 pub struct AddMemberRequest {
     pub did: Option<String>,
@@ -107,10 +126,12 @@ pub struct InviteListResponse {
 
 #[derive(Deserialize, Default)]
 pub struct MintInviteRequest {
+    pub target_did: Option<String>,
     pub role: Option<String>,
     pub expires_in_minutes: Option<i64>,
     pub max_uses: Option<u32>,
     pub owner_host: Option<String>,
+    pub deliver: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -121,6 +142,8 @@ pub struct InviteMintResponse {
     pub qr_payload: String,
     pub link: String,
     pub expires_at: String,
+    pub delivered: bool,
+    pub delivery_error: Option<String>,
     pub invite: InviteToken,
 }
 
@@ -150,7 +173,7 @@ pub struct JoinPreviewResponse {
 #[derive(Deserialize)]
 pub struct JoinCircleRequest {
     pub token_b64: String,
-    pub owner_host: String,
+    pub owner_host: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -158,6 +181,8 @@ pub struct RedeemCircleResponse {
     pub status: String,
     pub message: String,
     pub vc: VerifiableCredential,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub member_snapshot: Option<CircleMemberSnapshot>,
 }
 
 #[derive(Serialize)]
@@ -166,6 +191,29 @@ pub struct JoinCircleResponse {
     pub message: String,
     pub vc: VerifiableCredential,
     pub circle: Circle,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub member_snapshot: Option<CircleMemberSnapshot>,
+}
+
+#[derive(Serialize)]
+pub struct ReceivedInviteListResponse {
+    pub status: String,
+    pub count: usize,
+    pub invites: Vec<ReceivedInvite>,
+}
+
+#[derive(Serialize)]
+pub struct ReceiveInviteResponse {
+    pub status: String,
+    pub message: String,
+    pub invite: ReceivedInvite,
+}
+
+#[derive(Serialize)]
+pub struct RejectInviteResponse {
+    pub status: String,
+    pub message: String,
+    pub invite: ReceivedInvite,
 }
 
 pub async fn list(
@@ -248,6 +296,13 @@ pub async fn create(
         AuditAction::Created,
         &format!("Circle created: {} ({})", circle.circle_id, circle.name),
     );
+    if let Err(err) = refresh_and_broadcast_member_snapshot(&state, &circle.circle_id).await {
+        tracing::warn!(
+            "Circle member snapshot refresh failed after create circle={} error={}",
+            circle.circle_id,
+            err
+        );
+    }
     if matches!(owner_vc, IssueMembershipOutcome::IssuedNew { .. }) {
         log_audit(
             &state.node_id,
@@ -376,6 +431,41 @@ pub async fn list_members(
     }))
 }
 
+pub async fn member_snapshot(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<CircleMemberSnapshot>, ApiError> {
+    let circle = store::get_circle(&state.node_id, &id).map_err(map_circle_error)?;
+    let (local, km) = store::load_runtime_signing_context(&state.node_id).map_err(map_circle_error)?;
+    if local.did != circle.owner_did {
+        return Err(ApiError::Forbidden(format!(
+            "only owner {} can serve snapshot for {}",
+            circle.owner_did, id
+        )));
+    }
+    let snapshot = match snapshot::load(&id).map_err(map_circle_error)? {
+        Some(snapshot) => snapshot,
+        None => {
+            let members = members::list_members_from_local_vcs(&state.node_id, &id, false)
+                .map_err(map_circle_error)?;
+            snapshot::build_authoritative(&id, &local, &km, members).map_err(map_circle_error)?
+        }
+    };
+    Ok(Json(snapshot))
+}
+
+pub async fn sync_member_snapshots(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<CircleSnapshotSyncResponse>, ApiError> {
+    let applied = snapshot::pull_latest_for_joined_circles(&state.node_id, &state.did_resolver)
+        .await
+        .map_err(map_circle_error)?;
+    Ok(Json(CircleSnapshotSyncResponse {
+        status: "success".to_string(),
+        snapshots_applied: applied,
+    }))
+}
+
 pub async fn add_member(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -386,6 +476,14 @@ pub async fn add_member(
     let days = validate_optional_days(body.days)?;
     let result = members::add_member(&state.node_id, &id, &did, role.clone(), days)
         .map_err(map_circle_error)?;
+    if let Err(err) = refresh_and_broadcast_member_snapshot(&state, &id).await {
+        tracing::warn!(
+            "Circle member snapshot broadcast failed after add circle={} subject={} error={}",
+            id,
+            did,
+            err
+        );
+    }
     log_audit(
         &state.node_id,
         AuditCategory::Circle,
@@ -423,6 +521,14 @@ pub async fn remove_member(
     let did = required_did(Some(&did))?;
     let revoked_vc_ids = members::remove_member(&state.node_id, &id, &did, "circle member removed")
         .map_err(map_circle_error)?;
+    if let Err(err) = refresh_and_broadcast_member_snapshot(&state, &id).await {
+        tracing::warn!(
+            "Circle member snapshot broadcast failed after remove circle={} subject={} error={}",
+            id,
+            did,
+            err
+        );
+    }
     log_audit(
         &state.node_id,
         AuditCategory::Circle,
@@ -447,6 +553,14 @@ pub async fn change_role(
     let days = validate_optional_days(body.days)?;
     let result = members::change_role(&state.node_id, &id, &did, role.clone(), days)
         .map_err(map_circle_error)?;
+    if let Err(err) = refresh_and_broadcast_member_snapshot(&state, &id).await {
+        tracing::warn!(
+            "Circle member snapshot broadcast failed after role change circle={} subject={} error={}",
+            id,
+            did,
+            err
+        );
+    }
     log_audit(
         &state.node_id,
         AuditCategory::Circle,
@@ -490,25 +604,36 @@ pub async fn mint_invite(
         return Err(ApiError::Conflict(format!("circle {} is archived", id)));
     }
     let role = parse_role(body.role.as_deref().unwrap_or("member"))?;
+    let target_did = required_did(body.target_did.as_deref())?;
     let (issuer, km) =
         store::load_runtime_signing_context(&state.node_id).map_err(map_circle_error)?;
     let invite_token = invite::mint_invite(
         &circle,
         &issuer,
         &km,
+        &target_did,
         role.clone(),
         body.expires_in_minutes,
         body.max_uses,
     )
     .map_err(map_circle_error)?;
     let token_b64 = invite::encode_compact(&invite_token).map_err(map_circle_error)?;
-    let owner_host = body
-        .owner_host
-        .as_deref()
-        .map(normalize_owner_url)
-        .transpose()?
-        .unwrap_or_else(|| "http://127.0.0.1:8443".to_string());
+    let owner_host = match body.owner_host.as_deref() {
+        Some(raw) => normalize_owner_url(raw)?,
+        None => resolve_owner_share_url(&state, &issuer.did).await?,
+    };
     let link = invite::build_share_link(&token_b64, &owner_host).map_err(map_circle_error)?;
+    let (delivered, delivery_error) = if body.deliver.unwrap_or(true) {
+        match deliver_invite(&state, &invite_token).await {
+            Ok(()) => (true, None),
+            Err(err) => (false, Some(err.to_string())),
+        }
+    } else {
+        (
+            false,
+            Some("delivery disabled; QR/link fallback generated".to_string()),
+        )
+    };
     log_audit(
         &state.node_id,
         AuditCategory::Circle,
@@ -528,7 +653,57 @@ pub async fn mint_invite(
             qr_payload: link.clone(),
             link,
             expires_at: invite_token.expires_at.clone(),
+            delivered,
+            delivery_error,
             invite: invite_token,
+        }),
+    ))
+}
+
+pub async fn received_invites(
+    State(_state): State<Arc<AppState>>,
+) -> Result<Json<ReceivedInviteListResponse>, ApiError> {
+    let invites = invite::list_received_invites().map_err(map_circle_error)?;
+    Ok(Json(ReceivedInviteListResponse {
+        status: "success".to_string(),
+        count: invites.len(),
+        invites,
+    }))
+}
+
+pub async fn receive_invite(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<InviteToken>,
+) -> Result<(StatusCode, Json<ReceiveInviteResponse>), ApiError> {
+    verify_guardian_service_auth(&state, &headers, &body).await?;
+    invite::verify_invite(&body, &state.did_resolver)
+        .await
+        .map_err(|err| {
+            tracing::warn!(
+                "invite signature failed invite={} issuer={} target={} error={}",
+                body.id,
+                body.issuer_did,
+                body.target_did,
+                err
+            );
+            map_circle_error(err)
+        })?;
+    let (local, _) =
+        store::load_runtime_signing_context(&state.node_id).map_err(map_circle_error)?;
+    if body.target_did != local.did {
+        return Err(ApiError::BadRequest(format!(
+            "invite targets {}, this node is {}",
+            body.target_did, local.did
+        )));
+    }
+    let received = invite::save_received_invite(body).map_err(map_circle_error)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(ReceiveInviteResponse {
+            status: "success".to_string(),
+            message: "Circle invite received".to_string(),
+            invite: received,
         }),
     ))
 }
@@ -557,6 +732,38 @@ pub async fn revoke_invite(
         status: "success".to_string(),
         message: "Circle invite revoked".to_string(),
         invite_id,
+    }))
+}
+
+pub async fn deliver_existing_invite(
+    State(state): State<Arc<AppState>>,
+    Path((id, invite_id)): Path<(String, String)>,
+) -> Result<Json<InviteMintResponse>, ApiError> {
+    ensure_circle_owner_access(&state, &id, VcAdminAction::Issue)?;
+    let invite_token = invite::load_invite(&invite_id).map_err(map_circle_error)?;
+    if invite_token.circle_id != id {
+        return Err(ApiError::BadRequest(format!(
+            "invite {} does not belong to {}",
+            invite_id, id
+        )));
+    }
+    let token_b64 = invite::encode_compact(&invite_token).map_err(map_circle_error)?;
+    let owner_host = resolve_owner_share_url(&state, &invite_token.issuer_did).await?;
+    let link = invite::build_share_link(&token_b64, &owner_host).map_err(map_circle_error)?;
+    let (delivered, delivery_error) = match deliver_invite(&state, &invite_token).await {
+        Ok(()) => (true, None),
+        Err(err) => (false, Some(err.to_string())),
+    };
+    Ok(Json(InviteMintResponse {
+        status: "success".to_string(),
+        invite_id: invite_token.id.clone(),
+        token_b64,
+        qr_payload: link.clone(),
+        link,
+        expires_at: invite_token.expires_at.clone(),
+        delivered,
+        delivery_error,
+        invite: invite_token,
     }))
 }
 
@@ -591,7 +798,18 @@ pub async fn join(
         store::load_runtime_signing_context(&state.node_id).map_err(map_circle_error)?;
     let join_request =
         invite::sign_join_request(&joiner, &km, invite_token.clone()).map_err(map_circle_error)?;
-    let owner_url = normalize_owner_url(&body.owner_host)?;
+    if invite_token.target_did != joiner.did {
+        return Err(ApiError::BadRequest(format!(
+            "invite targets {}, this node is {}",
+            invite_token.target_did, joiner.did
+        )));
+    }
+    let owner_url = match body.owner_host.as_deref() {
+        Some(raw) => normalize_owner_url(raw)?,
+        None => invite::resolve_circle_endpoint(&invite_token.issuer_did, &state.did_resolver)
+            .await
+            .map_err(map_circle_error)?,
+    };
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
@@ -625,6 +843,11 @@ pub async fn join(
     crate::vc::persistence::save_own(&redeemed.vc).map_err(map_vc_error)?;
     let circle =
         invite::save_joined_circle(&state.node_id, &invite_token).map_err(map_circle_error)?;
+    if let Some(snapshot) = redeemed.member_snapshot.clone() {
+        snapshot::accept_from_owner(snapshot, &state.did_resolver)
+            .await
+            .map_err(map_circle_error)?;
+    }
     log_audit(
         &state.node_id,
         AuditCategory::Circle,
@@ -642,8 +865,47 @@ pub async fn join(
             message: redeemed.message,
             vc: redeemed.vc,
             circle,
+            member_snapshot: redeemed.member_snapshot,
         }),
     ))
+}
+
+pub async fn accept_invite(
+    State(state): State<Arc<AppState>>,
+    Path(invite_id): Path<String>,
+) -> Result<(StatusCode, Json<JoinCircleResponse>), ApiError> {
+    let received = invite::load_received_invite(&invite_id).map_err(map_circle_error)?;
+    if matches!(received.state, ReceivedInviteState::Rejected) {
+        return Err(ApiError::Conflict(format!(
+            "invite {} was rejected",
+            invite_id
+        )));
+    }
+    let token_b64 = invite::encode_compact(&received.invite).map_err(map_circle_error)?;
+    let result = join(
+        State(state),
+        Json(JoinCircleRequest {
+            token_b64,
+            owner_host: None,
+        }),
+    )
+    .await?;
+    invite::set_received_invite_state(&invite_id, ReceivedInviteState::Accepted)
+        .map_err(map_circle_error)?;
+    Ok(result)
+}
+
+pub async fn reject_invite(
+    State(_state): State<Arc<AppState>>,
+    Path(invite_id): Path<String>,
+) -> Result<Json<RejectInviteResponse>, ApiError> {
+    let invite = invite::set_received_invite_state(&invite_id, ReceivedInviteState::Rejected)
+        .map_err(map_circle_error)?;
+    Ok(Json(RejectInviteResponse {
+        status: "success".to_string(),
+        message: "Circle invite rejected".to_string(),
+        invite,
+    }))
 }
 
 pub async fn redeem(
@@ -685,29 +947,50 @@ pub async fn redeem(
         )));
     }
 
-    let _guard = CIRCLE_WRITE_LOCK
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
-    issue::ensure_circle_owner(&issuer, &circle.circle_id, VcAdminAction::Issue, false)
-        .map_err(map_vc_error)?;
-    invite::assert_redeemable(&circle, &body.invite_token, &body.joiner_did)
-        .map_err(map_circle_error)?;
+    let vc = {
+        let _guard = CIRCLE_WRITE_LOCK
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        issue::ensure_circle_owner(&issuer, &circle.circle_id, VcAdminAction::Issue, false)
+            .map_err(map_vc_error)?;
+        invite::assert_redeemable(&circle, &body.invite_token, &body.joiner_did)
+            .map_err(map_circle_error)?;
 
-    let outcome = issue::issue_membership_vc_with_outcome(
-        &issuer,
-        &km,
-        IssueRequest {
-            subject_did: &body.joiner_did,
-            role: body.invite_token.role.clone(),
-            permissions: default_permissions_for_role(body.invite_token.role.clone()),
-            circle_id: &circle.circle_id,
-            node_hint: None,
-            duration_days: Some(issue::DEFAULT_VC_DURATION_DAYS),
-        },
+        let outcome = issue::issue_membership_vc_with_outcome(
+            &issuer,
+            &km,
+            IssueRequest {
+                subject_did: &body.joiner_did,
+                role: body.invite_token.role.clone(),
+                permissions: default_permissions_for_role(body.invite_token.role.clone()),
+                circle_id: &circle.circle_id,
+                node_hint: None,
+                duration_days: Some(issue::DEFAULT_VC_DURATION_DAYS),
+            },
+        )
+        .map_err(map_vc_error)?;
+        invite::record_redemption(&body.invite_token.id, &body.joiner_did)
+            .map_err(map_circle_error)?;
+        outcome.into_vc()
+    };
+    let member_snapshot = match refresh_and_broadcast_member_snapshot_skipping(
+        &state,
+        &circle.circle_id,
+        Some(body.joiner_did.as_str()),
     )
-    .map_err(map_vc_error)?;
-    invite::record_redemption(&body.invite_token.id, &body.joiner_did).map_err(map_circle_error)?;
-    let vc = outcome.into_vc();
+    .await
+    {
+        Ok(snapshot) => Some(snapshot),
+        Err(err) => {
+            tracing::warn!(
+                "Circle member snapshot broadcast failed after redeem circle={} joiner={} error={}",
+                circle.circle_id,
+                body.joiner_did,
+                err
+            );
+            None
+        }
+    };
     log_audit(
         &state.node_id,
         AuditCategory::Circle,
@@ -724,8 +1007,535 @@ pub async fn redeem(
             status: "success".to_string(),
             message: "Circle membership issued".to_string(),
             vc,
+            member_snapshot,
         }),
     ))
+}
+
+pub async fn receive_member_snapshot(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<CircleMemberSnapshot>,
+) -> Result<Json<MemberListResponse>, ApiError> {
+    verify_guardian_snapshot_auth(&state, &headers, &body).await?;
+    let snapshot = snapshot::accept_from_owner(body, &state.did_resolver)
+        .await
+        .map_err(map_circle_error)?;
+    log_audit(
+        &state.node_id,
+        AuditCategory::Circle,
+        AuditSeverity::Info,
+        AuditAction::Updated,
+        &format!(
+            "Circle member snapshot synchronized: circle={} version={} members={}",
+            snapshot.circle_id,
+            snapshot.version,
+            snapshot.members.len()
+        ),
+    );
+    Ok(Json(MemberListResponse {
+        status: "success".to_string(),
+        count: snapshot.members.len(),
+        members: snapshot.members,
+    }))
+}
+
+async fn refresh_and_broadcast_member_snapshot(
+    state: &Arc<AppState>,
+    circle_id: &str,
+) -> Result<CircleMemberSnapshot, CircleError> {
+    refresh_and_broadcast_member_snapshot_skipping(state, circle_id, None).await
+}
+
+async fn refresh_and_broadcast_member_snapshot_skipping(
+    state: &Arc<AppState>,
+    circle_id: &str,
+    skip_did: Option<&str>,
+) -> Result<CircleMemberSnapshot, CircleError> {
+    let (owner, km) = store::load_runtime_signing_context(&state.node_id)?;
+    let circle = store::get_circle(&state.node_id, circle_id)?;
+    if owner.did != circle.owner_did {
+        return Err(CircleError::Invalid(format!(
+            "local DID {} is not owner {} for {}",
+            owner.did, circle.owner_did, circle_id
+        )));
+    }
+    let members = members::list_members_from_local_vcs(&state.node_id, circle_id, false)?;
+    let snapshot = snapshot::build_authoritative(circle_id, &owner, &km, members)?;
+    broadcast_member_snapshot(state, &snapshot, skip_did).await;
+    Ok(snapshot)
+}
+
+async fn broadcast_member_snapshot(
+    state: &Arc<AppState>,
+    snapshot: &CircleMemberSnapshot,
+    skip_did: Option<&str>,
+) {
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+    {
+        Ok(client) => client,
+        Err(err) => {
+            tracing::warn!("Circle member snapshot client creation failed: {}", err);
+            return;
+        }
+    };
+    for member in snapshot.members.iter() {
+        if member.did == snapshot.owner_did {
+            continue;
+        }
+        if skip_did == Some(member.did.as_str()) {
+            continue;
+        }
+        let (owner, km) = match store::load_runtime_signing_context(&state.node_id) {
+            Ok(context) => context,
+            Err(err) => {
+                tracing::warn!(
+                    "Circle member snapshot auth context failed circle={} target={} error={}",
+                    snapshot.circle_id,
+                    member.did,
+                    err
+                );
+                continue;
+            }
+        };
+        let timestamp = Utc::now().to_rfc3339();
+        let nonce = Uuid::new_v4().to_string();
+        let canonical =
+            match guardian_snapshot_auth_bytes(&owner.did, &timestamp, &nonce, snapshot) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    tracing::warn!(
+                        "Circle member snapshot auth canonical failed circle={} target={} error={}",
+                        snapshot.circle_id,
+                        member.did,
+                        err
+                    );
+                    continue;
+                }
+            };
+        let digest = Sha256::digest(&canonical);
+        let signature = match km.sign(&digest) {
+            Ok(signature) => signature,
+            Err(err) => {
+                tracing::warn!(
+                    "Circle member snapshot auth signing failed circle={} target={} error={}",
+                    snapshot.circle_id,
+                    member.did,
+                    err
+                );
+                continue;
+            }
+        };
+        let signature_b64 = general_purpose::STANDARD.encode(signature);
+        let endpoints = circle_member_delivery_endpoints(&member.did, &owner.did, &state.did_resolver).await;
+        if endpoints.is_empty() {
+            tracing::warn!(
+                "Circle member snapshot endpoint resolve failed circle={} target={}",
+                snapshot.circle_id,
+                member.did
+            );
+            continue;
+        }
+        for endpoint in endpoints {
+            let response = client
+                .post(format!(
+                    "{}/api/v1/circles/snapshots/inbox",
+                    endpoint.trim_end_matches('/')
+                ))
+                .header(
+                    reqwest::header::AUTHORIZATION,
+                    format!("{}{}", GUARDIAN_SERVICE_AUTH_SCHEME, signature_b64),
+                )
+                .header(HEADER_GUARDIAN_DID, owner.did.clone())
+                .header(HEADER_GUARDIAN_TIMESTAMP, timestamp.clone())
+                .header(HEADER_GUARDIAN_NONCE, nonce.clone())
+                .json(snapshot)
+                .send()
+                .await;
+            match response {
+                Ok(response) if response.status().is_success() => {
+                    tracing::info!(
+                        "Circle member snapshot delivered circle={} version={} target={}",
+                        snapshot.circle_id,
+                        snapshot.version,
+                        member.did
+                    );
+                    break;
+                }
+                Ok(response) => {
+                    let status = response.status();
+                    let body = response
+                        .text()
+                        .await
+                        .unwrap_or_else(|_| "snapshot delivery failed".to_string());
+                    tracing::warn!(
+                        "Circle member snapshot delivery rejected circle={} target={} endpoint={} status={} body={}",
+                        snapshot.circle_id,
+                        member.did,
+                        endpoint,
+                        status,
+                        body
+                    );
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        "Circle member snapshot delivery failed circle={} target={} endpoint={} error={}",
+                        snapshot.circle_id,
+                        member.did,
+                        endpoint,
+                        err
+                    );
+                }
+            }
+        }
+    }
+}
+
+async fn circle_member_delivery_endpoints(
+    target_did: &str,
+    self_did: &str,
+    resolver: &crate::did::Resolver,
+) -> Vec<String> {
+    let mut endpoints = Vec::new();
+    if let Ok(endpoint) = invite::resolve_circle_endpoint(target_did, resolver).await {
+        endpoints.push(endpoint);
+    }
+    for peer in crate::crl::gossip::engine::active_gossip_peers(self_did) {
+        if peer.did == target_did {
+            let endpoint = format!("http://{}:8443", peer.overlay_ip);
+            if !endpoints.iter().any(|existing| existing == &endpoint) {
+                endpoints.push(endpoint);
+            }
+        }
+    }
+    endpoints
+}
+
+async fn deliver_invite(state: &Arc<AppState>, token: &InviteToken) -> Result<(), CircleError> {
+    let endpoint = invite::resolve_circle_endpoint(&token.target_did, &state.did_resolver).await?;
+    let (issuer, km) = store::load_runtime_signing_context(&state.node_id)
+        .map_err(|err| CircleError::Invalid(format!("service auth signing context: {}", err)))?;
+    if issuer.did != token.issuer_did {
+        return Err(CircleError::Invalid(format!(
+            "service auth DID {} does not match invite issuer {}",
+            issuer.did, token.issuer_did
+        )));
+    }
+    let timestamp = Utc::now().to_rfc3339();
+    let nonce = Uuid::new_v4().to_string();
+    let canonical = guardian_service_auth_bytes(&issuer.did, token, &timestamp, &nonce)
+        .map_err(|err| CircleError::Invalid(format!("service auth canonical bytes: {}", err)))?;
+    let digest = Sha256::digest(&canonical);
+    let signature = km
+        .sign(&digest)
+        .map_err(|err| CircleError::Invalid(format!("service auth sign: {}", err)))?;
+    let signature_b64 = general_purpose::STANDARD.encode(signature);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|err| CircleError::Invalid(format!("invite delivery client: {}", err)))?;
+    let response = client
+        .post(format!(
+            "{}/api/v1/circles/invites/inbox",
+            endpoint.trim_end_matches('/')
+        ))
+        .header(
+            reqwest::header::AUTHORIZATION,
+            format!("{}{}", GUARDIAN_SERVICE_AUTH_SCHEME, signature_b64),
+        )
+        .header(HEADER_GUARDIAN_DID, issuer.did)
+        .header(HEADER_GUARDIAN_TIMESTAMP, timestamp)
+        .header(HEADER_GUARDIAN_NONCE, nonce)
+        .json(token)
+        .send()
+        .await
+        .map_err(|err| {
+            CircleError::Invalid(format!(
+                "unreachable endpoint for {} at {}: {}",
+                token.target_did, endpoint, err
+            ))
+        })?;
+    if response.status().is_success() {
+        tracing::info!(
+            "Circle invite delivered target_did={} endpoint={}",
+            token.target_did,
+            endpoint
+        );
+        Ok(())
+    } else {
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "delivery failed".to_string());
+        tracing::warn!(
+            "remote delivery failed target_did={} status={} body={}",
+            token.target_did,
+            status,
+            body
+        );
+        Err(CircleError::Invalid(format!(
+            "invite delivery failed for {} ({}): {}",
+            token.target_did, status, body
+        )))
+    }
+}
+
+async fn verify_guardian_service_auth(
+    state: &Arc<AppState>,
+    headers: &HeaderMap,
+    token: &InviteToken,
+) -> Result<(), ApiError> {
+    let canonical =
+        guardian_service_auth_bytes(&token.issuer_did, token, "", "").map_err(|err| {
+            tracing::warn!(
+                "peer/service auth failed invite={} issuer={} reason=canonical template {}",
+                token.id,
+                token.issuer_did,
+                err
+            );
+            ApiError::Unauthorized("peer/service auth failed".to_string())
+        })?;
+    verify_guardian_service_auth_for_payload(
+        state,
+        headers,
+        &token.issuer_did,
+        &format!("invite={}", token.id),
+        move |service_did, timestamp, nonce| {
+            let _ = &canonical;
+            guardian_service_auth_bytes(service_did, token, timestamp, nonce)
+        },
+    )
+    .await
+}
+
+async fn verify_guardian_snapshot_auth(
+    state: &Arc<AppState>,
+    headers: &HeaderMap,
+    snapshot: &CircleMemberSnapshot,
+) -> Result<(), ApiError> {
+    verify_guardian_service_auth_for_payload(
+        state,
+        headers,
+        &snapshot.owner_did,
+        &format!(
+            "snapshot circle={} version={}",
+            snapshot.circle_id, snapshot.version
+        ),
+        move |service_did, timestamp, nonce| {
+            guardian_snapshot_auth_bytes(service_did, timestamp, nonce, snapshot)
+        },
+    )
+    .await
+}
+
+async fn verify_guardian_service_auth_for_payload<F>(
+    state: &Arc<AppState>,
+    headers: &HeaderMap,
+    expected_service_did: &str,
+    label: &str,
+    canonical: F,
+) -> Result<(), ApiError>
+where
+    F: Fn(&str, &str, &str) -> Result<Vec<u8>, serde_json::Error>,
+{
+    let auth = header_value(headers, header::AUTHORIZATION.as_str()).ok_or_else(|| {
+        tracing::warn!(
+            "peer/service auth failed {} reason=missing authorization header",
+            label
+        );
+        ApiError::Unauthorized("peer/service auth failed".to_string())
+    })?;
+    let signature_b64 = auth
+        .strip_prefix(GUARDIAN_SERVICE_AUTH_SCHEME)
+        .ok_or_else(|| {
+            tracing::warn!(
+                "peer/service auth failed {} reason=unsupported authorization scheme",
+                label
+            );
+            ApiError::Unauthorized("peer/service auth failed".to_string())
+        })?;
+    let service_did = header_value(headers, HEADER_GUARDIAN_DID).ok_or_else(|| {
+        tracing::warn!(
+            "peer/service auth failed {} reason=missing guardian did header",
+            label
+        );
+        ApiError::Unauthorized("peer/service auth failed".to_string())
+    })?;
+    let timestamp = header_value(headers, HEADER_GUARDIAN_TIMESTAMP).ok_or_else(|| {
+        tracing::warn!(
+            "peer/service auth failed {} reason=missing timestamp header",
+            label
+        );
+        ApiError::Unauthorized("peer/service auth failed".to_string())
+    })?;
+    let nonce = header_value(headers, HEADER_GUARDIAN_NONCE).ok_or_else(|| {
+        tracing::warn!(
+            "peer/service auth failed {} reason=missing nonce header",
+            label
+        );
+        ApiError::Unauthorized("peer/service auth failed".to_string())
+    })?;
+
+    if service_did != expected_service_did {
+        tracing::warn!(
+            "peer/service auth failed {} reason=service DID {} does not match expected {}",
+            label,
+            service_did,
+            expected_service_did
+        );
+        return Err(ApiError::Unauthorized(
+            "peer/service auth failed".to_string(),
+        ));
+    }
+    if nonce.trim().len() < 8 {
+        tracing::warn!(
+            "peer/service auth failed {} issuer={} reason=nonce too short",
+            label,
+            service_did
+        );
+        return Err(ApiError::Unauthorized(
+            "peer/service auth failed".to_string(),
+        ));
+    }
+    let created_at = DateTime::parse_from_rfc3339(timestamp).map_err(|err| {
+        tracing::warn!(
+            "peer/service auth failed {} issuer={} reason=bad timestamp {}",
+            label,
+            service_did,
+            err
+        );
+        ApiError::Unauthorized("peer/service auth failed".to_string())
+    })?;
+    let age = (Utc::now() - created_at.with_timezone(&Utc))
+        .num_seconds()
+        .abs();
+    if age > GUARDIAN_SERVICE_AUTH_SKEW_SECS {
+        tracing::warn!(
+            "peer/service auth failed {} issuer={} reason=timestamp skew {}s",
+            label,
+            service_did,
+            age
+        );
+        return Err(ApiError::Unauthorized(
+            "peer/service auth failed".to_string(),
+        ));
+    }
+
+    let signature = general_purpose::STANDARD
+        .decode(signature_b64)
+        .map_err(|err| {
+            tracing::warn!(
+                "peer/service auth failed {} issuer={} reason=signature base64 {}",
+                label,
+                service_did,
+                err
+            );
+            ApiError::Unauthorized("peer/service auth failed".to_string())
+        })?;
+    let canonical = canonical(service_did, timestamp, nonce).map_err(|err| {
+        tracing::warn!(
+            "peer/service auth failed {} issuer={} reason=canonical bytes {}",
+            label,
+            service_did,
+            err
+        );
+        ApiError::Unauthorized("peer/service auth failed".to_string())
+    })?;
+    let digest = Sha256::digest(&canonical);
+    let resolved = state
+        .did_resolver
+        .resolve(service_did)
+        .await
+        .map_err(|err| {
+            tracing::warn!(
+                "peer/service auth failed {} issuer={} reason=DID resolve {}",
+                label,
+                service_did,
+                err
+            );
+            ApiError::Unauthorized("peer/service auth failed".to_string())
+        })?;
+    let public_key = general_purpose::STANDARD
+        .decode(resolved.public_key_der_b64)
+        .map_err(|err| {
+            tracing::warn!(
+                "peer/service auth failed {} issuer={} reason=public key decode {}",
+                label,
+                service_did,
+                err
+            );
+            ApiError::Unauthorized("peer/service auth failed".to_string())
+        })?;
+    crate::did::doc_sign::ecdsa_p256_verify_der_or_raw(&public_key, &digest, &signature).map_err(
+        |err| {
+            tracing::warn!(
+                "peer/service auth failed {} issuer={} reason=signature verify {}",
+                label,
+                service_did,
+                err
+            );
+            ApiError::Unauthorized("peer/service auth failed".to_string())
+        },
+    )?;
+    Ok(())
+}
+
+fn guardian_service_auth_bytes(
+    service_did: &str,
+    token: &InviteToken,
+    timestamp: &str,
+    nonce: &str,
+) -> Result<Vec<u8>, serde_json::Error> {
+    let token_hash = Sha256::digest(token.canonical_bytes_for_sign()?);
+    guardian_service_auth_bytes_for_hash(
+        GUARDIAN_SERVICE_AUTH_PATH,
+        service_did,
+        timestamp,
+        nonce,
+        &token_hash,
+    )
+}
+
+fn guardian_snapshot_auth_bytes(
+    service_did: &str,
+    timestamp: &str,
+    nonce: &str,
+    snapshot: &CircleMemberSnapshot,
+) -> Result<Vec<u8>, serde_json::Error> {
+    let snapshot_hash = Sha256::digest(snapshot.canonical_bytes_for_sign()?);
+    guardian_service_auth_bytes_for_hash(
+        GUARDIAN_SERVICE_SNAPSHOT_PATH,
+        service_did,
+        timestamp,
+        nonce,
+        &snapshot_hash,
+    )
+}
+
+fn guardian_service_auth_bytes_for_hash(
+    path: &str,
+    service_did: &str,
+    timestamp: &str,
+    nonce: &str,
+    payload_hash: &[u8],
+) -> Result<Vec<u8>, serde_json::Error> {
+    Ok(format!(
+        "{}\nPOST\n{}\n{}\n{}\n{}\n{}",
+        GUARDIAN_SERVICE_AUTH_CONTEXT,
+        path,
+        service_did,
+        timestamp,
+        nonce,
+        general_purpose::STANDARD.encode(payload_hash)
+    )
+    .into_bytes())
+}
+
+fn header_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name).and_then(|value| value.to_str().ok())
 }
 
 fn ensure_circle_owner_access(
@@ -818,7 +1628,7 @@ fn normalize_owner_url(raw: &str) -> Result<String, ApiError> {
     let with_scheme = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
         trimmed.to_string()
     } else {
-        format!("http://{}", trimmed)
+        format!("https://{}", trimmed)
     };
     let (scheme, rest) = with_scheme
         .split_once("://")
@@ -834,6 +1644,19 @@ fn normalize_owner_url(raw: &str) -> Result<String, ApiError> {
         format!("{}:8443", authority)
     };
     Ok(format!("{}://{}{}", scheme, authority, suffix))
+}
+
+async fn resolve_owner_share_url(
+    state: &Arc<AppState>,
+    owner_did: &str,
+) -> Result<String, ApiError> {
+    if let Ok(raw) = std::env::var("SGX_PUBLIC_API_URL") {
+        return normalize_owner_url(&raw);
+    }
+    invite::resolve_circle_endpoint(owner_did, &state.did_resolver)
+        .await
+        .map(|endpoint| endpoint.replacen("http://", "https://", 1))
+        .map_err(map_circle_error)
 }
 
 fn map_circle_error(err: CircleError) -> ApiError {

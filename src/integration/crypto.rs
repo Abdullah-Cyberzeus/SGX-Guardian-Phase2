@@ -48,7 +48,8 @@ fn get_machine_id() -> String {
     }
 
     // Fallback: persistent machine seed file in SGX data directory or hostname
-    let data_dir = std::env::var("SGX_DATA_DIR").unwrap_or_else(|_| "/var/lib/sgx-guardian".to_string());
+    let data_dir =
+        std::env::var("SGX_DATA_DIR").unwrap_or_else(|_| "/var/lib/sgx-guardian".to_string());
     let seed_path = PathBuf::from(&data_dir).join(".machine_seed");
     if let Ok(seed) = fs::read_to_string(&seed_path) {
         return seed.trim().to_string();
@@ -127,7 +128,7 @@ mod tests {
     fn test_tamper_detection() {
         let plaintext = b"sensitive_token";
         let mut encrypted = encrypt_tokens(plaintext).expect("Encryption failed");
-        
+
         // Tamper with payload byte
         let last_idx = encrypted.len() - 1;
         encrypted[last_idx] ^= 0xFF;

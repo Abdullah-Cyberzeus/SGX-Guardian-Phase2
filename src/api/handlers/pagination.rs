@@ -17,7 +17,10 @@ where
             if s.trim().is_empty() {
                 Ok(None)
             } else {
-                s.trim().parse::<usize>().map(Some).map_err(de::Error::custom)
+                s.trim()
+                    .parse::<usize>()
+                    .map(Some)
+                    .map_err(de::Error::custom)
             }
         }
         None => Ok(None),
