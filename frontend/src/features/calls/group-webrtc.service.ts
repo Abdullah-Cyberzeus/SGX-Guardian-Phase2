@@ -23,13 +23,15 @@ export class GroupWebRtcService {
     this.iceServers = iceServers;
   }
 
-  async prepare(media: MediaType[]): Promise<MediaStream> {
+  async prepare(media: MediaType[]): Promise<{ stream: MediaStream; actualMedia: MediaType[]; warning?: string }> {
     this.close();
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
       throw new Error("Microphone and camera access requires a trusted HTTPS connection (or localhost). Open this Guardian using its HTTPS address and trust its certificate.");
     }
     const tracks: MediaStreamTrack[] = [];
     const inputs: MediaStreamTrack[] = [];
+    const actualMedia: MediaType[] = [];
+    let warning: string | undefined;
     if (media.includes("audio")) {
       const microphone = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
@@ -37,18 +39,30 @@ export class GroupWebRtcService {
       });
       tracks.push(...microphone.getAudioTracks());
       inputs.push(...microphone.getTracks());
+      actualMedia.push("audio");
     }
     if (media.includes("video")) {
-      const camera = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
-      });
-      tracks.push(...camera.getVideoTracks());
-      inputs.push(...camera.getTracks());
+      try {
+        const camera = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+        });
+        tracks.push(...camera.getVideoTracks());
+        inputs.push(...camera.getTracks());
+        actualMedia.push("video");
+      } catch (error) {
+        if (!actualMedia.includes("audio")) throw error;
+        const reason = error instanceof Error ? error.name : "";
+        warning = reason === "NotFoundError"
+          ? "No camera was found on this device. Continuing with audio only."
+          : reason === "NotAllowedError"
+            ? "Camera access was denied. Continuing with audio only — allow camera access and restart the call for video."
+            : "Camera could not be started (it may already be in use in another tab). Continuing with audio only.";
+      }
     }
     this.input = new MediaStream(inputs);
     this.local = new MediaStream(tracks);
-    return this.local;
+    return { stream: this.local, actualMedia, warning };
   }
 
   configure(callbacks: GroupRtcCallbacks): void {
@@ -99,6 +113,7 @@ export class GroupWebRtcService {
       await pc.setLocalDescription(answer);
       await this.sendReliable(peerId, "sdp_answer", { type: answer.type, sdp: answer.sdp });
     } else if (signal.type === "sdp_answer") {
+      if (pc.signalingState !== "have-local-offer") return;
       await pc.setRemoteDescription(signal.payload as RTCSessionDescriptionInit);
       await this.flush(peerId);
     } else if (signal.type === "ice_candidate") {

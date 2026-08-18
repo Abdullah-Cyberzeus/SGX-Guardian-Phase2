@@ -2736,7 +2736,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let chat_addr = format!("0.0.0.0:{}", chat_grpc_port);
         async move {
             if let Err(e) = server::start_chat_plaintext_server(chat_addr.clone(), state).await {
-                eprintln!("Chat plaintext gRPC server failed at {}: {:?}", chat_addr, e);
+                eprintln!(
+                    "Chat plaintext gRPC server failed at {}: {:?}",
+                    chat_addr, e
+                );
             }
         }
     });
@@ -3031,9 +3034,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // never fully idle between real signing bursts. Errors are
                 // expected while nodeA is mid rotation and are simply
                 // retried on the next cycle.
-                if let Ok(km) = sgx_guardian_client::key_manager::KeyManager::load_or_generate(
-                    &key_path,
-                ) {
+                if let Ok(km) =
+                    sgx_guardian_client::key_manager::KeyManager::load_or_generate(&key_path)
+                {
                     for _ in 0..(4 + keepalive_tick % 5) {
                         if km.refresh_for_active_dkp().is_err() {
                             break;

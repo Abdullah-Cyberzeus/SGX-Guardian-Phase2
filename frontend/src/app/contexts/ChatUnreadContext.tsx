@@ -1,8 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { peerService } from "../services/peerService";
 import chatService, { openChatSocket, parseChatPayload } from "../services/chatService";
 import { useAuth } from "./AuthContext";
 import { isMemberRole } from "../utils/authorization";
+import { fetchCommunicationPeers } from "../hooks/useApiData";
 
 export interface ChatPreview {
   text: string;
@@ -42,12 +42,11 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(() => {
     const thisRequest = ++requestId.current;
-    // The member-safe contacts endpoint exposes only communication identities;
-    // it intentionally omits network addresses and policy/topology metadata.
-    const loadPeers = isMemberRole(session?.user.role)
-      ? peerService.getContacts
-      : peerService.getAll;
-    void loadPeers().then(async (peers) => {
+    // Guardian sessions must include browser Circle members here too — they
+    // never appear in the Nebula trust registry (peerService.getAll alone),
+    // so a member->guardian message would otherwise never move the unread
+    // badge/preview until the conversation was opened directly.
+    void fetchCommunicationPeers(isMemberRole(session?.user.role), session?.guardianDid).then(async (peers) => {
       const verified = peers.filter((peer) => peer.status === "verified" && peer.did);
       const entries = await Promise.all(verified.map(async (peer) => {
         try {
@@ -72,7 +71,7 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
         setPreviews(Object.fromEntries(entries.filter((entry): entry is [string, number, ChatPreview] => Boolean(entry[2])).map(([did, , preview]) => [did, preview])));
       }
     }).catch(() => {});
-  }, [session?.user.role]);
+  }, [session?.user.role, session?.guardianDid]);
 
   useEffect(() => { refresh(); }, [refresh]);
 

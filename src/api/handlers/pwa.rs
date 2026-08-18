@@ -5,7 +5,7 @@ use crate::api::{error::ApiError, handlers::peers, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::circle::{invite, store};
-use axum::{Extension, Json, extract::State};
+use axum::{extract::State, Extension, Json};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -368,7 +368,8 @@ pub async fn onboarding(
         fingerprint_bits: 80,
         circles,
         internet_required: false,
-        multiple_guardian_note: "If more than one Guardian is reachable, verify this fingerprint before continuing.",
+        multiple_guardian_note:
+            "If more than one Guardian is reachable, verify this fingerprint before continuing.",
     }))
 }
 
@@ -751,6 +752,14 @@ pub async fn contacts(
     allowed_dids.extend(
         crate::api::handlers::browser_member::dids_for_circles(&state, &scoped_circle_ids).await?,
     );
+    let current_browser_member_did = (auth.claims.role == "member")
+        .then(|| {
+            auth.claims
+                .browser_registration_id
+                .as_deref()
+                .map(crate::api::handlers::browser_member::did_for_registration)
+        })
+        .flatten();
     let metadata = contact_metadata(&state, &auth.claims.circle_ids).await?;
     let Json(response) = peers::list(State(state.clone())).await?;
     let now = chrono::Utc::now().to_rfc3339();
@@ -788,6 +797,7 @@ pub async fn contacts(
                         .did
                         .as_ref()
                         .is_some_and(|did| allowed_dids.contains(did))
+                    && peer.did.as_ref() != current_browser_member_did.as_ref()
                     && matches!(peer.status.as_str(), "verified" | "trusted" | "success")
             })
             .filter_map(|peer| {
@@ -825,7 +835,10 @@ pub async fn contacts(
             .collect::<Vec<_>>(),
     );
     for (did, meta) in metadata {
-        if included_dids.contains(&did) || !allowed_dids.contains(&did) {
+        if included_dids.contains(&did)
+            || !allowed_dids.contains(&did)
+            || Some(&did) == current_browser_member_did.as_ref()
+        {
             continue;
         }
         let active = meta.active_browser_member;

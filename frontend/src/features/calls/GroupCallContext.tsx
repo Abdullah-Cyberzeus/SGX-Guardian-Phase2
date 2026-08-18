@@ -10,7 +10,7 @@ import callHistoryService from "../../app/services/callHistoryService";
 
 interface GroupCallValue {
   group?: GroupSession; incoming?: GroupSession; localStream?: MediaStream;
-  remoteStreams: Record<string, MediaStream>; error?: string; muted: boolean; cameraEnabled: boolean;
+  remoteStreams: Record<string, MediaStream>; error?: string; muted: boolean; cameraEnabled: boolean; localDevice?: string;
   createGroup(memberIds: string[], callAll: boolean, media: MediaType[], title?: string): Promise<void>;
   acceptGroup(): Promise<void>; rejoinGroup(): Promise<void>; declineGroup(): Promise<void>; leaveGroup(): Promise<void>;
   endGroup(): Promise<void>; moderate(action: GroupModerationAction): Promise<void>;
@@ -31,6 +31,7 @@ const Context = createContext<GroupCallValue>(offlineValue);
 
 export function GroupCallProvider({ children, localDevice }: { children: ReactNode; localDevice?: string }) {
   const [group, setGroup] = useState<GroupSession>();
+  const [groupLocalDevice, setGroupLocalDevice] = useState<string | undefined>(localDevice);
   const [localStream, setLocalStream] = useState<MediaStream>();
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const [error, setError] = useState<string>();
@@ -44,7 +45,8 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
   const lastGroup = useRef<GroupSession>();
   const socketConnected = useRef(false);
   const signalApplyChain = useRef(Promise.resolve());
-  const localParticipantState = localDevice ? group?.participants[localDevice]?.state : undefined;
+  const effectiveLocalDevice = groupLocalDevice || localDevice;
+  const localParticipantState = effectiveLocalDevice ? group?.participants[effectiveLocalDevice]?.state : undefined;
 
   useEffect(() => {
     groupCallsApi.iceServers()
@@ -54,17 +56,19 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
 
   const refresh = useCallback(async () => {
     const response = await groupCallsApi.active();
+    const localId = response.local_device_id || localDevice;
+    setGroupLocalDevice(localId);
     const next = response.groups[0];
     if (next) lastGroup.current = next;
-    if (!next && lastGroup.current && localDevice) {
-      callHistoryService.recordGroup(lastGroup.current, localDevice);
+    if (!next && lastGroup.current && localId) {
+      callHistoryService.recordGroup(lastGroup.current, localId);
       lastGroup.current = undefined;
     }
     setGroup(next);
     if (!next) {
       rtc.current.close(); setLocalStream(undefined); setRemoteStreams({}); return;
     }
-    const local = localDevice ? next.participants[localDevice] : undefined;
+    const local = localId ? next.participants[localId] : undefined;
     if (!local || ["kicked", "declined"].includes(local.state)) {
       rtc.current.close(); setLocalStream(undefined); setRemoteStreams({}); return;
     }
@@ -73,12 +77,12 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
       rtc.current.setVideo(local.video_allowed && cameraEnabled);
       for (const participant of Object.values(next.participants)) {
         if (
-          participant.device_id !== localDevice
+          participant.device_id !== localId
           && participant.state === "joined"
         ) {
           await rtc.current.ensurePeer(
             participant.device_id,
-            (localDevice ?? "").localeCompare(participant.device_id) < 0,
+            (localId ?? "").localeCompare(participant.device_id) < 0,
           );
         } else if (["kicked", "left", "declined"].includes(participant.state)) {
           rtc.current.removePeer(participant.device_id);
@@ -101,7 +105,7 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
   }, [refresh]);
 
   useEffect(() => {
-    if (!group || !localDevice || !localStream || localParticipantState !== "joined") return;
+    if (!group || !effectiveLocalDevice || !localStream || localParticipantState !== "joined") return;
     rtc.current.configure({
       sendSignal: (target, type, payload, id) =>
         groupCallsApi.signal(group.group_id, target, type, payload, id).then(() => undefined),
@@ -110,7 +114,7 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
         if (state === "connected") connectedPeers.current.add(peerId);
         else connectedPeers.current.delete(peerId);
         const expected = Object.values(group.participants)
-          .filter((participant) => participant.device_id !== localDevice && participant.state === "joined").length;
+          .filter((participant) => participant.device_id !== effectiveLocalDevice && participant.state === "joined").length;
         if (expected > 0 && connectedPeers.current.size >= expected && !mediaReadySent.current) {
           mediaReadySent.current = true;
           groupCallsApi.mediaReady(group.group_id).catch((reason) => setError(reason.message));
@@ -121,6 +125,10 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
     const applySignal = (signal: GroupSignal) => {
       signalApplyChain.current = signalApplyChain.current.then(async () => {
         if (signal.id <= signalCursor.current) return;
+        if (signal.sender_device_id === effectiveLocalDevice) {
+          signalCursor.current = Math.max(signalCursor.current, signal.id);
+          return;
+        }
         await rtc.current.apply(signal);
         signalCursor.current = Math.max(signalCursor.current, signal.id);
       }).catch((reason) => {
@@ -156,16 +164,18 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
       cancelled = true; socketConnected.current = false; closeSocket();
       window.clearInterval(timer); window.clearInterval(heartbeat);
     };
-  }, [group?.group_id, localDevice, localParticipantState, localStream]);
+  }, [group?.group_id, effectiveLocalDevice, localParticipantState, localStream]);
 
-  const prepare = async (media: MediaType[]) => {
+  const prepare = async (media: MediaType[]): Promise<MediaType[]> => {
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error("Camera and microphone access requires HTTPS or localhost.");
       }
-      const stream = await rtc.current.prepare(media);
+      const { stream, actualMedia, warning } = await rtc.current.prepare(media);
       setLocalStream(stream); setRemoteStreams({}); signalCursor.current = 0;
       connectedPeers.current.clear(); mediaReadySent.current = false;
+      if (warning) setError(warning);
+      return actualMedia;
     } catch (reason) {
       rtc.current.close();
       setLocalStream(undefined);
@@ -177,8 +187,8 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
     }
   };
   const createGroup = async (memberIds: string[], callAll: boolean, media: MediaType[], title = "") => {
-    setError(undefined); await prepare(media);
-    try { setGroup((await groupCallsApi.create(title, memberIds, callAll, media)).session); }
+    setError(undefined); const actualMedia = await prepare(media);
+    try { setGroup((await groupCallsApi.create(title, memberIds, callAll, actualMedia)).session); }
     catch (reason) { rtc.current.close(); setLocalStream(undefined); throw reason; }
   };
   const acceptGroup = async () => {
@@ -194,33 +204,33 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
     setGroup(await groupCallsApi.join(group.group_id));
   };
   const declineGroup = async () => {
-    if (!group) return; const ended = await groupCallsApi.decline(group.group_id); if (localDevice) callHistoryService.recordGroup(ended, localDevice, "declined"); lastGroup.current = undefined; setGroup(undefined);
+    if (!group) return; const ended = await groupCallsApi.decline(group.group_id); if (effectiveLocalDevice) callHistoryService.recordGroup(ended, effectiveLocalDevice, "declined"); lastGroup.current = undefined; setGroup(undefined);
   };
   const leaveGroup = async () => {
-    if (!group) return; const ended = await groupCallsApi.leave(group.group_id); if (localDevice) callHistoryService.recordGroup(ended, localDevice); lastGroup.current = undefined; rtc.current.close(); setGroup(undefined);
+    if (!group) return; const ended = await groupCallsApi.leave(group.group_id); if (effectiveLocalDevice) callHistoryService.recordGroup(ended, effectiveLocalDevice); lastGroup.current = undefined; rtc.current.close(); setGroup(undefined);
   };
   const endGroup = async () => {
-    if (!group) return; const ended = await groupCallsApi.end(group.group_id); if (localDevice) callHistoryService.recordGroup(ended, localDevice); lastGroup.current = undefined; rtc.current.close(); setGroup(undefined);
+    if (!group) return; const ended = await groupCallsApi.end(group.group_id); if (effectiveLocalDevice) callHistoryService.recordGroup(ended, effectiveLocalDevice); lastGroup.current = undefined; rtc.current.close(); setGroup(undefined);
   };
   const moderate = async (action: GroupModerationAction) => {
     if (group) setGroup(await groupCallsApi.moderate(group.group_id, action));
   };
   const toggleMute = () => {
     const next = !muted; setMuted(next);
-    const allowed = !!(group && localDevice && group.participants[localDevice]?.audio_allowed);
+    const allowed = !!(group && effectiveLocalDevice && group.participants[effectiveLocalDevice]?.audio_allowed);
     rtc.current.setAudio(allowed && !next);
   };
   const toggleCamera = () => {
     const next = !cameraEnabled; setCameraEnabled(next);
-    const allowed = !!(group && localDevice && group.participants[localDevice]?.video_allowed);
+    const allowed = !!(group && effectiveLocalDevice && group.participants[effectiveLocalDevice]?.video_allowed);
     rtc.current.setVideo(allowed && next);
   };
-  const incoming = group && localDevice && group.participants[localDevice]?.state === "invited" ? group : undefined;
+  const incoming = group && effectiveLocalDevice && group.participants[effectiveLocalDevice]?.state === "invited" ? group : undefined;
   const value = useMemo(() => ({
-    group, incoming, localStream, remoteStreams, error, muted, cameraEnabled, createGroup,
+    group, incoming, localStream, remoteStreams, error, muted, cameraEnabled, localDevice: effectiveLocalDevice, createGroup,
     acceptGroup, rejoinGroup, declineGroup, leaveGroup, endGroup, moderate, toggleMute, toggleCamera,
     shareScreen: () => rtc.current.shareScreen(),
-  }), [group, incoming, localStream, remoteStreams, error, muted, cameraEnabled]);
+  }), [group, incoming, localStream, remoteStreams, error, muted, cameraEnabled, effectiveLocalDevice]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 

@@ -385,6 +385,7 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         )
         .route("/api/v1/call/initiate", post(handlers::call::initiate_call))
         .route("/api/v1/calls", get(handlers::call::list_calls))
+        .route("/api/v1/calls/history", get(handlers::call::call_history))
         .route(
             "/api/v1/calls/initiate",
             post(handlers::call::initiate_browser_call),

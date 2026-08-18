@@ -38,14 +38,14 @@ function useCallDuration(call?: CallSession) {
 }
 
 export function CallingScreen() {
-  const { call, incoming, peerId, peerOnline, localStream, remoteStream, error, muted, cameraEnabled, toggleMute, toggleCamera, sendTestTone, shareScreen, end } = useCall();
+  const { call, incoming, peerId, peerOnline, localStream, remoteStream, error, muted, cameraEnabled, qualityLabel, toggleMute, toggleCamera, sendTestTone, shareScreen, end } = useCall();
   const elapsed = useCallDuration(call);
   // While a call is still ringing (offer_received), the incoming toast owns the UI —
   // the full-screen overlay must only appear once the callee has accepted.
   if (!call || incoming) return null; const peer = peerId ?? "Remote Guardian";
   const label = stateLabel(call.state, peerOnline);
   return <div className="call-overlay" role="dialog" aria-modal="true" aria-label="Active call">
-    <header className="call-header"><div><strong>{peer}</strong><span className="secure-label">◆ {label}</span></div><div>{call.state === "connected" ? `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}` : ""}</div></header>
+    <header className="call-header"><div><strong>{peer}</strong><span className="secure-label">◆ {label}{qualityLabel ? ` · ${qualityLabel}` : ""}{call.encryption_verified ? " · Encryption verified" : ""}</span></div><div>{call.state === "connected" ? `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}` : ""}</div></header>
     <main className="video-stage">
       <Video stream={remoteStream} className="remote-video" />
       {!remoteStream && <div className="remote-placeholder"><div className="avatar large">{peer.slice(0, 2).toUpperCase()}</div><h2>{label}</h2><p>Identity and policy checks remain active</p></div>}

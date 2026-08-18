@@ -169,50 +169,62 @@ export function usePeers() {
   return useApiData(() => peerService.getAll(), { pollingInterval: 15000 });
 }
 
+/**
+ * Member-safe peer/contact roster: Nebula-attested Guardian peers merged with
+ * browser Circle members (who never appear in the Nebula trust registry).
+ * Shared by useCommunicationPeers and anything else (e.g. ChatUnreadContext)
+ * that needs the same complete "who can I chat/call with" list as the chat
+ * screens render, rather than the Guardian-only `peerService.getAll()` list.
+ */
+export async function fetchCommunicationPeers(isMember: boolean, guardianDid?: string): Promise<Peer[]> {
+  if (isMember) return peerService.getContacts();
+  const [peers, circles] = await Promise.all([
+    peerService.getAll(),
+    circleService.getAll().catch(() => []),
+  ]);
+  const byDid = new Map(peers.filter((peer) => peer.did).map((peer) => [peer.did!, peer]));
+  for (const circle of circles) {
+    for (const circleMember of circle.members || []) {
+      const did = circleMember.did;
+      if (!did || did === guardianDid || circleMember.memberType !== "browser" || byDid.has(did)) continue;
+      const active = circleMember.status === "active"
+        || circleMember.status === "online"
+        || circleMember.lifecycleState === "active";
+      byDid.set(did, {
+        id: `member_${did}`,
+        peerId: circleMember.name || circleMember.email || did,
+        displayName: circleMember.name || circleMember.email || did,
+        fullName: circleMember.name,
+        deviceName: circleMember.deviceName || circleMember.nodeHint || "Browser",
+        did,
+        ip: "",
+        port: 0,
+        status: "verified",
+        role: circleMember.role || "member",
+        memberType: circleMember.memberType || "browser",
+        joinDate: circleMember.joinedAt || circleMember.joinDate,
+        lastSeen: circleMember.joinedAt || circleMember.joinDate || "",
+        lastSeenAgo: active ? "Active browser member" : "Inactive browser member",
+        attestationCount: 0,
+        online: active,
+        presenceStatus: active ? "online" : "offline",
+        presenceStale: false,
+        callAvailable: active,
+        callUnavailableReason: active ? undefined : "The member browser is inactive.",
+      } as Peer);
+    }
+  }
+  return [...byDid.values()];
+}
+
 /** Member-safe peers for chat, calls, and Contacts. */
 export function useCommunicationPeers() {
   const { session } = useAuth();
   const member = isMemberRole(session?.user.role);
-  return useApiData(async () => {
-    if (member) return peerService.getContacts();
-    const [peers, circles] = await Promise.all([
-      peerService.getAll(),
-      circleService.getAll().catch(() => []),
-    ]);
-    const byDid = new Map(peers.filter((peer) => peer.did).map((peer) => [peer.did!, peer]));
-    for (const circle of circles) {
-      for (const circleMember of circle.members || []) {
-        const did = circleMember.did;
-        if (!did || did === session?.guardianDid || circleMember.memberType !== "browser" || byDid.has(did)) continue;
-        const active = circleMember.status === "active"
-          || circleMember.status === "online"
-          || circleMember.lifecycleState === "active";
-        byDid.set(did, {
-          id: `member_${did}`,
-          peerId: circleMember.name || circleMember.email || did,
-          displayName: circleMember.name || circleMember.email || did,
-          fullName: circleMember.name,
-          deviceName: circleMember.deviceName || circleMember.nodeHint || "Browser",
-          did,
-          ip: "",
-          port: 0,
-          status: "verified",
-          role: circleMember.role || "member",
-          memberType: circleMember.memberType || "browser",
-          joinDate: circleMember.joinedAt || circleMember.joinDate,
-          lastSeen: circleMember.joinedAt || circleMember.joinDate || "",
-          lastSeenAgo: active ? "Active browser member" : "Inactive browser member",
-          attestationCount: 0,
-          online: active,
-          presenceStatus: active ? "online" : "offline",
-          presenceStale: false,
-          callAvailable: active,
-          callUnavailableReason: active ? undefined : "The member browser is inactive.",
-        } as Peer);
-      }
-    }
-    return [...byDid.values()];
-  }, { pollingInterval: 15000 });
+  return useApiData(
+    () => fetchCommunicationPeers(member, session?.guardianDid),
+    { pollingInterval: 15000 },
+  );
 }
 
 /**

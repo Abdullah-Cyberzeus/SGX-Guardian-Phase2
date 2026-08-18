@@ -63,6 +63,14 @@ function statusLabel(status: string, read: boolean) {
   return "Sent";
 }
 
+function conversationIdForRoute(isGroup: boolean, circleId?: string, peerDid?: string, guardianDid?: string, browserMemberDid?: string) {
+  if (isGroup) return `circle:${circleId}`;
+  const canonicalPeerDid = peerDid && guardianDid && browserMemberDid && peerDid === guardianDid
+    ? browserMemberDid
+    : peerDid;
+  return `peer:${canonicalPeerDid}`;
+}
+
 export function ChatConversationScreen() {
   const { circleId, peerDid } = useParams<{ circleId: string; peerDid?: string }>();
   const navigate = useNavigate();
@@ -112,6 +120,7 @@ export function ChatConversationScreen() {
 
   const loadHistory = useCallback(async () => {
     if ((isGroup && !circleId) || (!isGroup && !peerDid)) return;
+    const conversationId = conversationIdForRoute(isGroup, circleId, peerDid, session?.guardianDid, session?.browserMemberDid);
     setLoading(true);
     try {
       const response = isGroup
@@ -119,7 +128,6 @@ export function ChatConversationScreen() {
         : await chatService.directHistory(peerDid!);
       const sorted = [...response.messages].sort((a, b) => a.seq_no - b.seq_no || a.timestamp - b.timestamp);
       setRecords(sorted);
-      const conversationId = isGroup ? `circle:${circleId}` : `peer:${peerDid}`;
       await Promise.all(sorted.map((record) => messageRepository.save({
         id: record.message_id,
         conversationId,
@@ -129,7 +137,6 @@ export function ChatConversationScreen() {
         value: record,
       })));
     } catch (cause) {
-      const conversationId = isGroup ? `circle:${circleId}` : `peer:${peerDid}`;
       try {
         const cached = await messageRepository.list(conversationId);
         const restored = await Promise.all(cached.map((record) => decryptValue<ChatMessageRecord>(record.payload)));
@@ -142,7 +149,7 @@ export function ChatConversationScreen() {
     } finally {
       setLoading(false);
     }
-  }, [circleId, isGroup, peerDid]);
+  }, [circleId, isGroup, peerDid, session?.browserMemberDid, session?.guardianDid]);
 
   useEffect(() => {
     if (isMemberRole(session?.user.role) && session.browserMemberDid) {
@@ -244,7 +251,7 @@ export function ChatConversationScreen() {
     setSending(true);
     const sentContent = content?.trim() || null;
     const recipientId = isGroup ? circleId! : peerDid!;
-    const conversationId = isGroup ? `circle:${circleId}` : `peer:${peerDid}`;
+    const conversationId = conversationIdForRoute(isGroup, circleId, peerDid, session?.guardianDid, session?.browserMemberDid);
     // Generated before the first attempt and reused on every retry, so a
     // network failure followed by an offline-queue replay resends the same
     // canonical ID rather than minting a new one — the backend recognizes the
