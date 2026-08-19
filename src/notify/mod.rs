@@ -147,6 +147,46 @@ pub fn publish_guardian_offline(device: &ConnectedDevice) {
     ));
 }
 
+pub fn publish_circle_new_message(sender_label: &str, message_id: &str) {
+    publish(build_event(
+        NotificationKind::CircleNewMessage,
+        "New message".to_string(),
+        format!("New message from {}", sender_label),
+        "info",
+        Some(message_id.to_string()),
+    ));
+}
+
+pub fn publish_circle_incoming_call(caller_label: &str, call_id: &str) {
+    publish(build_event(
+        NotificationKind::CircleIncomingCall,
+        "Incoming call".to_string(),
+        format!("{} is calling", caller_label),
+        "medium",
+        Some(call_id.to_string()),
+    ));
+}
+
+pub fn publish_circle_member_joined(member_label: &str, circle_label: &str, circle_id: &str) {
+    publish(build_event(
+        NotificationKind::CircleMemberJoined,
+        "Member joined".to_string(),
+        format!("{} joined {}", member_label, circle_label),
+        "info",
+        Some(circle_id.to_string()),
+    ));
+}
+
+pub fn publish_circle_file_shared(sender_label: &str, file_name: &str, vault_id: &str) {
+    publish(build_event(
+        NotificationKind::CircleFileShared,
+        "File shared".to_string(),
+        format!("{} shared \"{}\"", sender_label, file_name),
+        "info",
+        Some(vault_id.to_string()),
+    ));
+}
+
 pub async fn history(limit: Option<usize>) -> NotifyResult<Vec<NotificationEvent>> {
     let config = NotifyConfig::from_env();
     tokio::task::spawn_blocking(move || {

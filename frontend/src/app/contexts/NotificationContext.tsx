@@ -7,6 +7,7 @@ import {
   type NotificationPrefs,
 } from "../../api/notifications";
 import { notificationRepository } from "../../pwa/db/notificationRepository";
+import { isWithinDnd, loadLocalNotificationPrefs, playNotificationSound, vibrateForNotification } from "../lib/notificationLocalPrefs";
 
 const LAST_ID_KEY = "sgx_notify_last_id";
 const MAX_ITEMS = 150;
@@ -23,11 +24,17 @@ interface NotificationContextValue {
   prefs: NotificationPrefs | null;
   connected: boolean;
   toasts: NotificationToast[];
+  /** Browser Notification API permission state — "default" until the user
+   * has been asked (see `requestPermission`), then "granted"/"denied". */
+  permission: NotificationPermission;
   refresh: () => Promise<void>;
   markRead: (id: string) => Promise<void>;
   markAllRead: () => Promise<void>;
   updatePrefs: (patch: Partial<NotificationPrefs>) => Promise<void>;
   dismissToast: (toastId: string) => void;
+  /** Only called from an explicit user action (a settings toggle, after an
+   * explanatory dialog) — never on mount. */
+  requestPermission: () => Promise<void>;
 }
 
 const Context = createContext<NotificationContextValue | null>(null);
@@ -67,7 +74,20 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const [prefs, setPrefs] = useState<NotificationPrefs | null>(null);
   const [connected, setConnected] = useState(false);
   const [toasts, setToasts] = useState<NotificationToast[]>([]);
+  const [permission, setPermission] = useState<NotificationPermission>(
+    typeof Notification !== "undefined" ? Notification.permission : "denied",
+  );
   const lastEventId = useRef<string | undefined>(localStorage.getItem(LAST_ID_KEY) ?? undefined);
+
+  const requestPermission = useCallback(async () => {
+    if (typeof Notification === "undefined") return;
+    try {
+      const result = await Notification.requestPermission();
+      setPermission(result);
+    } catch {
+      // Some browsers/contexts (e.g. insecure origins) reject outright.
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     const [history, unread, currentPrefs] = await Promise.all([
@@ -120,6 +140,26 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     if (!notificationEnabled(prefs, item.kind)) return;
     const toastId = `${item.id}-${Date.now()}`;
     setToasts((prev) => [{ ...item, toastId }, ...prev].slice(0, MAX_TOASTS));
+
+    void loadLocalNotificationPrefs().then((local) => {
+      if (!local.masterEnabled) return;
+      const quiet = isWithinDnd(local);
+      if (!quiet) {
+        if (local.sound) playNotificationSound();
+        if (local.vibration) vibrateForNotification();
+      }
+      // Only fires while this tab has an open connection (foreground/
+      // backgrounded, not fully closed) — see the "background push
+      // unavailable" note in NotificationDeliverySettings.
+      if (typeof Notification !== "undefined" && Notification.permission === "granted" && document.hidden) {
+        try {
+          new Notification(item.title, { body: item.body, silent: quiet });
+        } catch {
+          // Notification construction can throw in some contexts; never
+          // let it break in-app delivery.
+        }
+      }
+    });
   }, [prefs]);
 
   // Immediately remove visible toasts when their preference is switched off.
@@ -212,8 +252,14 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<NotificationContextValue>(
-    () => ({ items, unreadCount, prefs, connected, toasts, refresh, markRead, markAllRead, updatePrefs, dismissToast }),
-    [items, unreadCount, prefs, connected, toasts, refresh, markRead, markAllRead, updatePrefs, dismissToast],
+    () => ({
+      items, unreadCount, prefs, connected, toasts, permission,
+      refresh, markRead, markAllRead, updatePrefs, dismissToast, requestPermission,
+    }),
+    [
+      items, unreadCount, prefs, connected, toasts, permission,
+      refresh, markRead, markAllRead, updatePrefs, dismissToast, requestPermission,
+    ],
   );
 
   return <Context.Provider value={value}>{children}</Context.Provider>;

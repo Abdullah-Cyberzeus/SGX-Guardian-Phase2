@@ -235,6 +235,18 @@ pub fn vault_router() -> Router<Arc<AppState>> {
             "/api/v1/vault/files/{id}/star",
             post(handlers::vault::toggle_star),
         )
+        .route(
+            "/api/v1/vault/files/{id}/revoke",
+            post(handlers::vault::revoke),
+        )
+        .route(
+            "/api/v1/vault/files/{id}/expiry",
+            patch(handlers::vault::set_expiry),
+        )
+        .route(
+            "/api/v1/vault/files/{id}/history",
+            get(handlers::vault::history),
+        )
 }
 
 pub fn notify_router() -> Router<Arc<AppState>> {

@@ -223,6 +223,7 @@ class ApiClient {
       params?: Record<string, string | number | boolean>;
       signal?: AbortSignal;
       onProgress?: (loaded: number, total: number) => void;
+      idempotencyKey?: string;
     } = {},
   ): Promise<T> {
     const url = this.buildUrl(endpoint, options.params);
@@ -233,6 +234,7 @@ class ApiClient {
       xhr.responseType = "json";
       if (shouldSendNgrokSkipHeader(url)) xhr.setRequestHeader("ngrok-skip-browser-warning", "true");
       if (this.token) xhr.setRequestHeader("Authorization", `Bearer ${this.token}`);
+      xhr.setRequestHeader("Idempotency-Key", options.idempotencyKey || operationId());
       const uploadFile = body.get("file");
       const fallbackTotal = uploadFile instanceof File ? uploadFile.size : 0;
       xhr.upload.onprogress = (event) => {

@@ -29,6 +29,41 @@ struct ContactMetadata {
     member_type: Option<String>,
     join_date: Option<String>,
     active_browser_member: bool,
+    /// Guardian-enforced privacy: this actor opted to hide their presence
+    /// from other local actors. Only meaningful for identities this Guardian
+    /// issues a `User` record for (its own owner/admin + its own browser
+    /// members) — a remote Guardian's own privacy choice is enforced on
+    /// their own box when they serve their own `/pwa/contacts`.
+    hide_presence: bool,
+}
+
+const HIDDEN_PRESENCE_STATUS: &str = "hidden";
+
+struct PresenceFields {
+    online: bool,
+    presence_status: String,
+    last_seen: String,
+    presence_expires_at: Option<String>,
+}
+
+/// Guardian-enforced presence privacy: when `hide_presence` is set, every
+/// field that could reveal actual online/last-seen state is scrubbed,
+/// regardless of the real underlying `online`/`last_seen` values.
+fn presence_fields(hide_presence: bool, online: bool, last_seen: &str) -> PresenceFields {
+    if hide_presence {
+        return PresenceFields {
+            online: false,
+            presence_status: HIDDEN_PRESENCE_STATUS.to_string(),
+            last_seen: String::new(),
+            presence_expires_at: None,
+        };
+    }
+    PresenceFields {
+        online,
+        presence_status: presence_status(online, false),
+        last_seen: last_seen.to_string(),
+        presence_expires_at: presence_expiry_from(last_seen),
+    }
 }
 
 fn role_label(role: &crate::vc::credential::CredentialRole) -> &'static str {
@@ -161,6 +196,7 @@ async fn contact_metadata(
         entry.member_type = Some("browser".to_string());
         entry.join_date.get_or_insert(user.created_at);
         entry.active_browser_member = true;
+        entry.hide_presence = user.hide_presence;
     }
 
     Ok(metadata)
@@ -706,6 +742,24 @@ mod tests {
         assert_eq!(presence_status(true, true), "stale");
         assert_eq!(presence_status(false, false), "offline");
     }
+
+    #[test]
+    fn hidden_presence_scrubs_online_status_and_last_seen() {
+        let hidden = presence_fields(true, true, "2026-08-17T12:00:00Z");
+        assert!(!hidden.online);
+        assert_eq!(hidden.presence_status, "hidden");
+        assert_eq!(hidden.last_seen, "");
+        assert!(hidden.presence_expires_at.is_none());
+    }
+
+    #[test]
+    fn visible_presence_reports_real_status_when_not_hidden() {
+        let visible = presence_fields(false, true, "2026-08-17T12:00:00Z");
+        assert!(visible.online);
+        assert_eq!(visible.presence_status, "online");
+        assert_eq!(visible.last_seen, "2026-08-17T12:00:00Z");
+        assert!(visible.presence_expires_at.is_some());
+    }
 }
 
 pub async fn identity(State(state): State<Arc<AppState>>) -> Json<PwaIdentityResponse> {
@@ -763,10 +817,22 @@ pub async fn contacts(
     let metadata = contact_metadata(&state, &auth.claims.circle_ids).await?;
     let Json(response) = peers::list(State(state.clone())).await?;
     let now = chrono::Utc::now().to_rfc3339();
-    let guardian_presence_expires_at = Some(
-        (chrono::Utc::now() + chrono::Duration::seconds(CONTACT_PRESENCE_EXPIRY_SECONDS as i64))
-            .to_rfc3339(),
-    );
+    // The Guardian's own operator (owner, falling back to admin if no owner
+    // account exists) can hide their presence too — this row isn't purely
+    // device-health, it's also the human running the Guardian.
+    let owner_hide_presence = {
+        let users = state.admin.users.list().await?;
+        users
+            .iter()
+            .find(|user| user.role == crate::api::auth::store::UserRole::Owner)
+            .or_else(|| {
+                users
+                    .iter()
+                    .find(|user| user.role == crate::api::auth::store::UserRole::Admin)
+            })
+            .is_some_and(|user| user.hide_presence)
+    };
+    let self_presence = presence_fields(owner_hide_presence, true, &now);
     let mut contacts = vec![PwaContact {
         peer_id: state.node_id.clone(),
         display_name: state.node_id.clone(),
@@ -777,11 +843,11 @@ pub async fn contacts(
         role: "owner".to_string(),
         member_type: "guardian".to_string(),
         join_date: None,
-        last_seen: now,
-        online: true,
-        presence_status: "online".to_string(),
+        last_seen: self_presence.last_seen,
+        online: self_presence.online,
+        presence_status: self_presence.presence_status,
         presence_stale: false,
-        presence_expires_at: guardian_presence_expires_at,
+        presence_expires_at: self_presence.presence_expires_at,
         heartbeat_interval_seconds: CONTACT_PRESENCE_HEARTBEAT_SECONDS,
         call_available: true,
         call_unavailable_reason: None,
@@ -808,6 +874,8 @@ pub async fn contacts(
                 let device_name = meta
                     .and_then(|item| item.device_name.clone())
                     .unwrap_or_else(|| peer.peer_id.clone());
+                let hide_presence = meta.is_some_and(|item| item.hide_presence);
+                let presence = presence_fields(hide_presence, peer.online, &peer.last_seen);
                 Some(PwaContact {
                     peer_id: peer.peer_id,
                     display_name,
@@ -822,11 +890,11 @@ pub async fn contacts(
                         .and_then(|item| item.member_type.clone())
                         .unwrap_or_else(|| "guardian".to_string()),
                     join_date: meta.and_then(|item| item.join_date.clone()),
-                    last_seen: peer.last_seen.clone(),
-                    online: peer.online,
-                    presence_status: presence_status(peer.online, false),
+                    last_seen: presence.last_seen,
+                    online: presence.online,
+                    presence_status: presence.presence_status,
                     presence_stale: false,
-                    presence_expires_at: presence_expiry_from(&peer.last_seen),
+                    presence_expires_at: presence.presence_expires_at,
                     heartbeat_interval_seconds: CONTACT_PRESENCE_HEARTBEAT_SECONDS,
                     call_available: peer.call_available,
                     call_unavailable_reason: peer.call_unavailable_reason,
@@ -842,6 +910,7 @@ pub async fn contacts(
             continue;
         }
         let active = meta.active_browser_member;
+        let presence = presence_fields(meta.hide_presence, active, "");
         let display_name = display_name_from(&did, Some(&meta), &did);
         contacts.push(PwaContact {
             peer_id: did.clone(),
@@ -853,11 +922,11 @@ pub async fn contacts(
             role: meta.role.unwrap_or_else(|| "member".to_string()),
             member_type: meta.member_type.unwrap_or_else(|| "browser".to_string()),
             join_date: meta.join_date,
-            last_seen: String::new(),
-            online: active,
-            presence_status: presence_status(active, false),
+            last_seen: presence.last_seen,
+            online: presence.online,
+            presence_status: presence.presence_status,
             presence_stale: false,
-            presence_expires_at: None,
+            presence_expires_at: presence.presence_expires_at,
             heartbeat_interval_seconds: CONTACT_PRESENCE_HEARTBEAT_SECONDS,
             call_available: active,
             call_unavailable_reason: (!active)

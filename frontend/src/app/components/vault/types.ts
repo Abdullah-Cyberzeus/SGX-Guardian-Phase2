@@ -42,6 +42,16 @@ export interface VaultFile {
   /** Backend path when exposed by the Vault record; usable by Secure XFER. */
   backendPath?: string;
   namespace?: string;
+  /** Optional free-text note set at upload time (Files-tab uploads only). */
+  description?: string;
+  /** DID of the file's owner — drives owner-only controls in the UI. */
+  ownerDid?: string;
+  /** True once the owner has revoked future access to this file. */
+  revoked?: boolean;
+  /** RFC3339 expiry timestamp, or undefined if the file never expires. */
+  expiresAt?: string;
+  /** True once this file's cached bytes are available for offline download. */
+  cachedForOffline?: boolean;
 }
 
 /** A row in the browser — either a folder or a file. */

@@ -255,6 +255,7 @@ async fn initiate_local_browser_call(
         Ok(value) => value,
         Err(error) => return (StatusCode::SERVICE_UNAVAILABLE, Json(error)).into_response(),
     };
+    let caller_label = initiator_device_id.clone();
     let nonce = Uuid::new_v4().to_string();
     let session_id = match state
         .call_session_manager
@@ -297,6 +298,7 @@ async fn initiate_local_browser_call(
         )
             .into_response();
     }
+    crate::notify::publish_circle_incoming_call(&caller_label, &session_id);
     (
         StatusCode::OK,
         Json(InitiateCallResponse {

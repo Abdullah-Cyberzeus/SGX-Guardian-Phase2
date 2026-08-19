@@ -1617,6 +1617,7 @@ mod tests {
                 chunk_bytes: crate::vault::VaultConfig::DEFAULT_CHUNK_BYTES,
             },
             String::new(),
+            String::new(),
         )
         .await
         .expect("store sender vault record")
@@ -2254,6 +2255,13 @@ mod tests {
             source: crate::vault::VaultSource::Upload,
             folder_id: String::new(),
             starred: false,
+            description: String::new(),
+            owner_did: String::new(),
+            revoked: false,
+            revoked_at: None,
+            expires_at: None,
+            conversation_recipient_did: None,
+            message_id: None,
             enc: crate::vault::EncMeta {
                 algo: "AES-256-GCM/STREAM-BE32".into(),
                 chunk_bytes: crate::vault::VaultConfig::DEFAULT_CHUNK_BYTES,

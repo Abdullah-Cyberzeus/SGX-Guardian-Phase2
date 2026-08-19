@@ -3100,6 +3100,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     telemetry_collector.start().await;
 
+    // Start the Vault expiry reaper (Phase 7: automatic expiry cleanup)
+    sgx_guardian_client::vault::VaultExpiryReaper::new(
+        sgx_guardian_client::vault::VaultConfig::from_env(),
+    )
+    .start_background();
+
     // Start Home Assistant WebSocket Client & Device Manager if configured
     match sgx_guardian_client::homeassistant::HomeAssistantConfig::from_env() {
         Ok(ha_config) => {

@@ -47,11 +47,10 @@ pub async fn issue(
     let claims = Claims {
         sub: user.user_id.clone(),
         role: user.role.as_str().to_string(),
-        scopes: if user.scopes.is_empty() {
-            crate::api::auth::authorization::default_scopes(user.role.as_str())
-        } else {
-            user.scopes.clone()
-        },
+        scopes: crate::api::auth::authorization::effective_scopes(
+            user.role.as_str(),
+            &user.scopes,
+        ),
         circle_ids: user.circle_ids.clone(),
         browser_registration_id: user.browser_registration_id.clone(),
         guardian_fingerprint: user.guardian_fingerprint.clone(),
@@ -150,6 +149,9 @@ mod tests {
             locked_until: None,
             last_failed_at: None,
             oidc_sub: None,
+            hide_presence: false,
+            hide_read_receipts: false,
+            hide_typing: false,
         };
 
         let (token, claims, _) = issue(
