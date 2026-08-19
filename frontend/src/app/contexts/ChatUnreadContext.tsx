@@ -7,6 +7,7 @@ import { useAuth } from "./AuthContext";
 import { useNotifications } from "./NotificationContext";
 import { isMemberRole } from "../utils/authorization";
 import { fetchCommunicationPeers } from "../hooks/useApiData";
+import { isWithinDnd, loadLocalNotificationPrefs, playNotificationSound, vibrateForNotification } from "../lib/notificationLocalPrefs";
 
 export interface ChatPreview {
   text: string;
@@ -79,6 +80,7 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
   const [circleChats, setCircleChats] = useState<CircleChatSummary[]>([]);
   const [messageToasts, setMessageToasts] = useState<MessageToast[]>([]);
   const [localDid, setLocalDid] = useState(session?.browserMemberDid ?? "");
+  const ownDid = session?.browserMemberDid || session?.guardianDid;
   const requestId = useRef(0);
   const localDidRef = useRef(localDid);
   const circleNamesRef = useRef<Record<string, string>>({});
@@ -208,15 +210,25 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
     const text = payload.attachment_id ? `File: ${payload.content || "Attachment"}` : (payload.content || "New message");
     const title = groupId ? (circleNamesRef.current[groupId] || "Circle chat") : (peerNamesRef.current[event.sender_did] || "New message");
     const sender = groupId ? (peerNamesRef.current[event.sender_did] || event.sender_did) : title;
-    setMessageToasts((current) => [{
-      toastId: `${event.message_id}-${Date.now()}`,
-      messageId: event.message_id!,
-      mode: groupId ? "group" : "direct",
-      conversationId,
-      title,
-      sender,
-      text,
-    }, ...current].slice(0, 6));
+    // This is the device-local delivery toggle (Settings > Notifications),
+    // separate from the Guardian-enforced `prefs.circles.new_message`
+    // category check above — both must allow it through.
+    void loadLocalNotificationPrefs(ownDid).then((local) => {
+      if (!local.masterEnabled) return;
+      setMessageToasts((current) => [{
+        toastId: `${event.message_id}-${Date.now()}`,
+        messageId: event.message_id!,
+        mode: groupId ? "group" : "direct",
+        conversationId,
+        title,
+        sender,
+        text,
+      }, ...current].slice(0, 6));
+      if (!isWithinDnd(local)) {
+        if (local.sound) playNotificationSound();
+        if (local.vibration) vibrateForNotification();
+      }
+    });
   };
 
   const total = useMemo(() => [...Object.values(counts), ...Object.values(circleCounts)].reduce((sum, count) => sum + count, 0), [counts, circleCounts]);

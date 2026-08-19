@@ -3,6 +3,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import type { CertificateDecision, CertificateRequest } from "../../../api/certificates";
 import { useCertificateRequest } from "../../../features/certificates/CertificateRequestContext";
+import { useGuardianConnectivity } from "../../../pwa/connectivity/GuardianConnectivityContext";
 import { PageHeader } from "../../components/PageHeader";
 
 const validRoles = new Set<CertificateDecision>(["member", "lighthouse", "relay", "lh_relay"]);
@@ -14,7 +15,10 @@ function approvalRole(request: CertificateRequest): CertificateDecision {
 
 export function ST16PendingApprovals() {
   const { pendingRequests, socketConnected, working, error, decide } = useCertificateRequest();
+  const { reachable } = useGuardianConnectivity();
   const [activeNode, setActiveNode] = useState<string>();
+  const actionsDisabled = working || !reachable;
+  const disabledTitle = !reachable ? "Guardian unreachable — reconnect to make changes" : undefined;
 
   const act = async (request: CertificateRequest, decision: CertificateDecision) => {
     setActiveNode(request.node_id);
@@ -68,8 +72,8 @@ export function ST16PendingApprovals() {
                   </div>
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2 mt-4 sm:justify-end">
-                  <button disabled={working} onClick={() => void act(request, "reject")} className="rounded-md px-4 py-2.5 text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-50" style={{ border: "1px solid color-mix(in srgb, var(--destructive) 40%, var(--border))", color: "var(--destructive)", background: "transparent" }}><X size={15} /> Reject</button>
-                  <button disabled={working} onClick={() => void act(request, role)} className="rounded-md px-4 py-2.5 text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50" style={{ border: 0, color: "var(--primary-foreground)", background: "var(--primary)" }}>
+                  <button disabled={actionsDisabled} title={disabledTitle} onClick={() => void act(request, "reject")} className="rounded-md px-4 py-2.5 text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-50" style={{ border: "1px solid color-mix(in srgb, var(--destructive) 40%, var(--border))", color: "var(--destructive)", background: "transparent" }}><X size={15} /> Reject</button>
+                  <button disabled={actionsDisabled} title={disabledTitle} onClick={() => void act(request, role)} className="rounded-md px-4 py-2.5 text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50" style={{ border: 0, color: "var(--primary-foreground)", background: "var(--primary)" }}>
                     {isActive ? <Loader2 className="animate-spin" size={15} /> : <ShieldCheck size={15} />} Approve {role.replace("_", " + ")}
                   </button>
                 </div>

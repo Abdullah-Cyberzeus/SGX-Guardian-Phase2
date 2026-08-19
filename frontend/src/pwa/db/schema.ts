@@ -25,7 +25,7 @@ export interface CallRecord { id: string; kind: "direct" | "group"; direction: s
 export interface PendingRecord { id: string; kind: string; createdAt: number; attempts: number; state: "queued" | "sending" | "failed" | "failed_permanent" | "cancelled"; payload: EncryptedRecord; lastAttemptAt?: number; lastError?: string; expiresAt?: number; }
 export interface SettingRecord { key: string; value: unknown; updatedAt: number; }
 export interface SyncStateRecord { key: string; cursor?: string; sequence?: number; lastSuccessfulSync?: number; value?: unknown; }
-export interface NotificationRecord { id: string; kind: string; title: string; body: string; severity: string; refId?: string; createdAt: string; read: boolean; updatedAt: number; }
+export interface NotificationRecord { id: string; kind: string; title: string; body: string; severity: string; refId?: string; createdAt: string; read: boolean; actorDid?: string; updatedAt: number; }
 
 export interface StoreRecordMap {
   membership: MembershipRecord;

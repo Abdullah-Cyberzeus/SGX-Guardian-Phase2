@@ -89,8 +89,18 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // The notify bus has no per-client delivery targeting — every locally
+  // connected client (admin + every browser member) receives every event —
+  // so self-origination is filtered on the client instead, by comparing
+  // each event's actorDid against this session's own identity.
+  const ownDid = session?.browserMemberDid || session?.guardianDid;
+  const isOwnEvent = useCallback(
+    (item: NotificationItem) => Boolean(ownDid) && item.actorDid === ownDid,
+    [ownDid],
+  );
+
   const refresh = useCallback(async () => {
-    const [history, unread, currentPrefs] = await Promise.all([
+    const [rawHistory, unread, currentPrefs] = await Promise.all([
       notificationsApi.history().catch(async () => {
         const cached = await notificationRepository.list().catch(() => []);
         return cached.map((item) => ({
@@ -102,11 +112,13 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
           refId: item.refId,
           createdAt: item.createdAt,
           read: item.read,
+          actorDid: item.actorDid,
         })) as NotificationItem[];
       }),
       notificationsApi.unreadCount().catch(() => ({ unread: 0 })),
       notificationsApi.getPrefs().catch(() => null),
     ]);
+    const history = rawHistory.filter((item) => !isOwnEvent(item));
     setItems(history.slice(0, MAX_ITEMS));
     void notificationRepository.replaceAll(history.map((item) => ({
       id: item.id,
@@ -117,11 +129,14 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       refId: item.refId,
       createdAt: item.createdAt,
       read: item.read,
+      actorDid: item.actorDid,
       updatedAt: Date.now(),
     })));
-    setUnreadCount(unread.unread ?? 0);
+    // Computed from the filtered list rather than trusting the backend's
+    // raw tally, which has no notion of "mine" to exclude either.
+    setUnreadCount(history.filter((item) => !item.read).length);
     if (currentPrefs) setPrefs(currentPrefs);
-  }, []);
+  }, [isOwnEvent]);
 
   // Initial hydrate (and reset) whenever auth state changes.
   useEffect(() => {
@@ -138,11 +153,17 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
 
   const pushToast = useCallback((item: NotificationItem) => {
     if (!notificationEnabled(prefs, item.kind)) return;
-    const toastId = `${item.id}-${Date.now()}`;
-    setToasts((prev) => [{ ...item, toastId }, ...prev].slice(0, MAX_TOASTS));
 
-    void loadLocalNotificationPrefs().then((local) => {
+    void loadLocalNotificationPrefs(ownDid).then((local) => {
+      // The master toggle silences delivery entirely on this device — no
+      // toast, sound, vibration, or OS notification. The event itself is
+      // still recorded in items/history (handled by the caller), only its
+      // presentation on this tab is suppressed.
       if (!local.masterEnabled) return;
+
+      const toastId = `${item.id}-${Date.now()}`;
+      setToasts((prev) => [{ ...item, toastId }, ...prev].slice(0, MAX_TOASTS));
+
       const quiet = isWithinDnd(local);
       if (!quiet) {
         if (local.sound) playNotificationSound();
@@ -153,14 +174,17 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       // unavailable" note in NotificationDeliverySettings.
       if (typeof Notification !== "undefined" && Notification.permission === "granted" && document.hidden) {
         try {
-          new Notification(item.title, { body: item.body, silent: quiet });
+          // The native popup has its own OS-level sound, independent of our
+          // synthesized beep — silence it too whenever DND is active or the
+          // user has turned the Sound toggle off, not just during DND.
+          new Notification(item.title, { body: item.body, silent: quiet || !local.sound });
         } catch {
           // Notification construction can throw in some contexts; never
           // let it break in-app delivery.
         }
       }
     });
-  }, [prefs]);
+  }, [prefs, ownDid]);
 
   // Immediately remove visible toasts when their preference is switched off.
   useEffect(() => {
@@ -187,6 +211,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
           lastEventId.current = eventId;
           localStorage.setItem(LAST_ID_KEY, eventId);
         }
+        if (isOwnEvent(item)) return;
         if (!notificationEnabled(prefs, item.kind)) return;
         setItems((prev) => (prev.some((n) => n.id === item.id) ? prev : [item, ...prev].slice(0, MAX_ITEMS)));
         void notificationRepository.save({
@@ -198,6 +223,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
           refId: item.refId,
           createdAt: item.createdAt,
           read: item.read,
+          actorDid: item.actorDid,
           updatedAt: Date.now(),
         });
         if (!item.read) setUnreadCount((c) => c + 1);
@@ -216,7 +242,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       abort.abort();
       if (retryTimer) window.clearTimeout(retryTimer);
     };
-  }, [session, prefs, pushToast]);
+  }, [session, prefs, pushToast, isOwnEvent]);
 
   const markRead = useCallback(async (id: string) => {
     let wasUnread = false;

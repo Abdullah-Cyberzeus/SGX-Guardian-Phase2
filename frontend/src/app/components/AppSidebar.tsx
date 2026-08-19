@@ -1,10 +1,10 @@
 import { useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Home, Bell, BellRing, Cpu, Cloud, Settings, MessageSquare, Phone, UsersRound } from "lucide-react";
-import { mockGuardian, mockAlerts, mockDevices } from "../data/mockData";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 import { useChatUnread } from "../contexts/ChatUnreadContext";
-import { useCircleInviteInbox } from "../hooks/useApiData";
+import { useCircleInviteInbox, useAlerts, useGuardianInfo } from "../hooks/useApiData";
+import { useGuardianConnectivity } from "../../pwa/connectivity/GuardianConnectivityContext";
 import { toast } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
 import { isMemberRole } from "../utils/authorization";
@@ -29,9 +29,6 @@ function NetworkCirclesIcon({ size = 20, color = "currentColor", strokeWidth = 1
   );
 }
 
-const alertBadgeCount = mockAlerts.filter((a) => !a.archived && a.severity === "HIGH").length;
-const deviceBadgeCount = mockDevices.filter((d) => d.category === "pending").length;
-
 interface AppSidebarProps {
   /** "collapsed" = tablet icon-only, "expanded" = desktop with labels */
   variant: "collapsed" | "expanded";
@@ -44,7 +41,14 @@ export function AppSidebar({ variant }: AppSidebarProps) {
   const { session } = useAuth();
   const { total: unreadChats } = useChatUnread();
   const { data: inviteInbox } = useCircleInviteInbox();
+  const { data: alertsData } = useAlerts();
+  const { data: guardianData } = useGuardianInfo();
+  const { reachable } = useGuardianConnectivity();
   const isExpanded = variant === "expanded";
+  const alertBadgeCount = useMemo(
+    () => (alertsData?.alerts ?? []).filter((a) => !a.archived && a.severity === "HIGH").length,
+    [alertsData],
+  );
   const pendingCircleInvites = useMemo(
     () => (inviteInbox || []).filter((invite: any) => String(invite.state || invite.status || "").toLowerCase() === "pending"),
     [inviteInbox],
@@ -73,7 +77,7 @@ export function AppSidebar({ variant }: AppSidebarProps) {
     { label: "Contacts", icon: UsersRound, path: "/contacts", custom: false, badge: 0 },
     { label: "Calls", icon: Phone, path: "/calls", custom: false, badge: 0 },
     { label: "Circles", icon: null, path: "/network", custom: true, badge: circlesBadgeCount },
-    { label: "Devices", icon: Cpu, path: "/devices", custom: false, badge: deviceBadgeCount },
+    { label: "Devices", icon: Cpu, path: "/devices", custom: false, badge: 0 },
     { label: "All Files", icon: Cloud, path: "/storage", custom: false, badge: 0 },
     { label: "Settings", icon: Settings, path: "/settings", custom: false, badge: 0 },
   ];
@@ -286,7 +290,7 @@ export function AppSidebar({ variant }: AppSidebarProps) {
               style={{
                 bottom: "-1px", right: "-1px",
                 width: "9px", height: "9px",
-                backgroundColor: memberSession || mockGuardian.status === "online" ? "var(--chart-2)" : "var(--destructive)",
+                backgroundColor: reachable ? "var(--chart-2)" : "var(--destructive)",
                 border: "1.5px solid var(--sidebar)",
               }}
             />
@@ -303,10 +307,12 @@ export function AppSidebar({ variant }: AppSidebarProps) {
               </p>
               <p className="truncate" style={{
                 fontFamily: "Inter, sans-serif", fontSize: "10px",
-                color: memberSession || mockGuardian.status === "online" ? "var(--chart-2)" : "var(--destructive)",
+                color: reachable ? "var(--chart-2)" : "var(--destructive)",
                 lineHeight: 1.3,
               }}>
-                {memberSession ? "Member session · Active" : `${mockGuardian.name} · ${mockGuardian.status === "online" ? "Online" : "Offline"}`}
+                {memberSession
+                  ? `Member session · ${reachable ? "Active" : "Unreachable"}`
+                  : `${guardianData?.name || "Guardian"} · ${reachable ? "Online" : "Offline"}`}
               </p>
             </div>
           )}

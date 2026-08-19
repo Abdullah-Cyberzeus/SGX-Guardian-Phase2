@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { PageHeader } from "../../components/PageHeader";
 import { Copy, Check, ChevronDown, ChevronRight, Share2 } from "lucide-react";
-import { mockGuardian } from "../../data/mockData";
 import { useCurrentUser } from "../../hooks/useCurrentUser";
+import { useGuardianInfo } from "../../hooks/useApiData";
 import { QRCodeSVG } from "qrcode.react";
 
 type DIDTab = "full" | "alias" | "qr";
@@ -17,7 +17,9 @@ function buildAlias(guardianName: string, initials: string): { alias: string; gr
 
 export function ST02GuardianInfo() {
   const { name, email, role, initials, did } = useCurrentUser();
-  const { alias: SHORT_ALIAS, groups: ALIAS_GROUPS } = buildAlias(mockGuardian.name, initials);
+  const { data: guardianData } = useGuardianInfo();
+  const guardianName = guardianData?.name || "Guardian";
+  const { alias: SHORT_ALIAS, groups: ALIAS_GROUPS } = buildAlias(guardianName, initials);
   const [didTab, setDIDTab] = useState<DIDTab>("full");
   const [copied, setCopied] = useState(false);
   const [aliasCopied, setAliasCopied] = useState(false);
@@ -72,7 +74,7 @@ export function ST02GuardianInfo() {
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginBottom: "8px" }}>Viewing settings for:</p>
           <div className="rounded-lg border border-border p-4 flex items-center gap-3" style={{ backgroundColor: "var(--card)" }}>
             <div style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "var(--chart-2)", flexShrink: 0 }} />
-            <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{mockGuardian.name}</p>
+            <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{guardianName}</p>
             <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginLeft: "auto" }}>Online</p>
           </div>
         </div>
@@ -236,8 +238,8 @@ export function ST02GuardianInfo() {
         {/* Connection type & signal */}
         <div className="rounded-lg border border-border overflow-hidden" style={{ backgroundColor: "var(--card)" }}>
           {[
-            { label: "Connection Type", value: mockGuardian.connectionType },
-            { label: "Signal Strength", value: `${mockGuardian.signal}%` },
+            { label: "Connection Type", value: guardianData?.connectionType || "Unknown" },
+            { label: "Signal Strength", value: guardianData?.signal != null ? `${guardianData.signal}%` : "—" },
           ].map(({ label, value }, i) => (
             <div key={label} className="flex items-center justify-between px-4 py-3.5" style={{ borderBottom: i === 0 ? "1px solid var(--border)" : undefined }}>
               <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>{label}</span>

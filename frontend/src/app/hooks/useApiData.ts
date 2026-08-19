@@ -11,7 +11,6 @@ import { logService } from '../services/logService';
 import { auditLogService } from '../services/auditLogService';
 import type { AuditLogsFilters } from '../services/auditLogService';
 import { peerService, type Peer } from '../services/peerService';
-import { deviceService } from '../services/deviceService';
 import { didService } from '../services/didService';
 import { transportService } from '../services/transportService';
 import { relayService } from '../services/relayService';
@@ -178,41 +177,23 @@ export function usePeers() {
  */
 export async function fetchCommunicationPeers(isMember: boolean, guardianDid?: string): Promise<Peer[]> {
   if (isMember) return peerService.getContacts();
-  const [peers, circles] = await Promise.all([
+  // The raw Nebula trust registry (`/peers`) has no notion of presence
+  // privacy at all — it's a network-level reachability probe. The
+  // member-safe `/pwa/contacts` endpoint (open to admin/owner sessions too)
+  // is the one place that actually applies each contact's `hide_presence`
+  // preference, and it does so for *every* contact type — browser Circle
+  // members and other paired Guardian devices alike (see
+  // `pwa.rs::contacts`). Overlay all of it by DID rather than re-deriving
+  // presence from the ungated raw peer list, and rather than restricting
+  // the overlay to browser members only.
+  const [peers, contacts] = await Promise.all([
     peerService.getAll(),
-    circleService.getAll().catch(() => []),
+    peerService.getContacts().catch(() => [] as Peer[]),
   ]);
   const byDid = new Map(peers.filter((peer) => peer.did).map((peer) => [peer.did!, peer]));
-  for (const circle of circles) {
-    for (const circleMember of circle.members || []) {
-      const did = circleMember.did;
-      if (!did || did === guardianDid || circleMember.memberType !== "browser" || byDid.has(did)) continue;
-      const active = circleMember.status === "active"
-        || circleMember.status === "online"
-        || circleMember.lifecycleState === "active";
-      byDid.set(did, {
-        id: `member_${did}`,
-        peerId: circleMember.name || circleMember.email || did,
-        displayName: circleMember.name || circleMember.email || did,
-        fullName: circleMember.name,
-        deviceName: circleMember.deviceName || circleMember.nodeHint || "Browser",
-        did,
-        ip: "",
-        port: 0,
-        status: "verified",
-        role: circleMember.role || "member",
-        memberType: circleMember.memberType || "browser",
-        joinDate: circleMember.joinedAt || circleMember.joinDate,
-        lastSeen: circleMember.joinedAt || circleMember.joinDate || "",
-        lastSeenAgo: active ? "Active browser member" : "Inactive browser member",
-        attestationCount: 0,
-        online: active,
-        presenceStatus: active ? "online" : "offline",
-        presenceStale: false,
-        callAvailable: active,
-        callUnavailableReason: active ? undefined : "The member browser is inactive.",
-      } as Peer);
-    }
+  for (const contact of contacts) {
+    if (!contact.did || contact.did === guardianDid) continue;
+    byDid.set(contact.did, contact);
   }
   return [...byDid.values()];
 }
@@ -287,7 +268,6 @@ export function useAlerts(filters?: { severity?: string; status?: string; limit?
 
 /**
  * Hook for circles
- * Note: No backend endpoint exists yet - returns empty/default data
  */
 export function useCircles() {
   return useApiData(() => circleService.getAll(), { pollingInterval: 30000 });
@@ -295,14 +275,6 @@ export function useCircles() {
 
 export function useCircleInviteInbox() {
   return useApiData(() => circleService.getInviteInbox(), { pollingInterval: 15000 });
-}
-
-/**
- * Hook for devices
- * Note: No backend endpoint exists yet - returns empty/default data
- */
-export function useDevices(filters?: { status?: string; type?: string }) {
-  return useApiData(() => deviceService.getAll(filters), { pollingInterval: 15000 });
 }
 
 /**

@@ -241,7 +241,7 @@ fn member_required_scope(method: &Method, path: &str) -> Option<&'static str> {
             (&Method::GET, "/api/v1/chat/history" | "/api/v1/chat/ws") => {
                 Some(scope::MESSAGES_READ)
             }
-            (&Method::POST, "/api/v1/chat/send" | "/api/v1/chat/read" | "/api/v1/chat/typing") => {
+            (&Method::POST, "/api/v1/chat/send" | "/api/v1/chat/read") => {
                 Some(scope::MESSAGES_SEND)
             }
             (&Method::POST, "/api/v1/chat/upload") => Some(scope::FILES_UPLOAD),

@@ -168,6 +168,27 @@ pub(crate) async fn group_min_reader_count(state: &AppState, circle_id: &str, se
     roster.len().max(1)
 }
 
+/// A friendly label for a notification body — the display name for a local
+/// browser member, a generic label for the Guardian device itself, or the
+/// raw DID as a last resort (a remote peer's own Guardian, whose `User`
+/// record lives on their box, not ours).
+async fn resolve_actor_label(state: &AppState, did: &str) -> String {
+    if did == state.device_did {
+        return "the Guardian administrator".to_string();
+    }
+    if let Ok(users) = state.admin.users.list().await {
+        for user in users {
+            let Some(registration_id) = user.browser_registration_id.as_deref() else {
+                continue;
+            };
+            if crate::api::handlers::browser_member::did_for_registration(registration_id) == did {
+                return user.name;
+            }
+        }
+    }
+    did.to_string()
+}
+
 pub async fn send_message(
     State(state): State<Arc<AppState>>,
     session: Option<Extension<AuthenticatedSession>>,
@@ -181,6 +202,7 @@ pub async fn send_message(
     }
     let sender_did = crate::api::handlers::browser_member::did_from_session(&session)
         .unwrap_or_else(|| state.device_did.clone());
+    let sender_label = resolve_actor_label(&state, &sender_did).await;
 
     // Chat attachments are Vault records uploaded before the destination is
     // known (Personal namespace, owned by the sender). Now that the
@@ -522,6 +544,7 @@ pub async fn send_message(
         if is_local_direct || req.is_group {
             crate::notify::publish_circle_file_shared(
                 &sender_did,
+                &sender_label,
                 &attachment_record.filename,
                 &attachment_record.vault_id,
             );
@@ -535,7 +558,7 @@ pub async fn send_message(
         // Group history is one shared local file with no per-recipient
         // delivery step (see the file-shared notification above for the
         // same reasoning), so notify unconditionally here.
-        crate::notify::publish_circle_new_message(&sender_did, &message_id);
+        crate::notify::publish_circle_new_message(&sender_did, &sender_label, &message_id);
     } else {
         crate::chat::storage::append_p2p_message(&direct_conversation_id, &record)
             .await
@@ -546,7 +569,7 @@ pub async fn send_message(
         .send(crate::chat::models::ChatEvent::NewMessage(record.clone()));
 
     if is_local_direct {
-        crate::notify::publish_circle_new_message(&sender_did, &message_id);
+        crate::notify::publish_circle_new_message(&sender_did, &sender_label, &message_id);
         let delivered = is_local_guardian_recipient
             || browser_recipient_state
                 == Some(crate::api::handlers::browser_member::BrowserMemberState::Active);
@@ -668,70 +691,6 @@ pub async fn send_message(
 }
 
 #[derive(Deserialize)]
-pub struct TypingRequest {
-    pub recipient_did: String,
-    #[serde(default)]
-    pub is_group: bool,
-    pub is_typing: bool,
-}
-
-#[derive(Serialize)]
-pub struct TypingResponse {
-    pub status: String,
-}
-
-/// Broadcasts a typing indicator on the existing chat WS relay (no new
-/// transport — the same `state.chat_events` channel `ws_handler` already
-/// relays `NewMessage`/`ReadReceipt`/`MessageStatus` over). Ephemeral: never
-/// persisted. No-ops (but still returns success) when the caller has
-/// opted to hide their typing status.
-pub async fn typing(
-    State(state): State<Arc<AppState>>,
-    session: Option<Extension<AuthenticatedSession>>,
-    Json(req): Json<TypingRequest>,
-) -> Result<Json<TypingResponse>, ApiError> {
-    let sender_did = crate::api::handlers::browser_member::did_from_session(&session)
-        .unwrap_or_else(|| state.device_did.clone());
-
-    let hide_typing = match session.as_ref() {
-        Some(Extension(authed)) => state
-            .admin
-            .users
-            .find_by_id(&authed.claims.sub)
-            .await?
-            .is_some_and(|user| user.hide_typing),
-        None => false,
-    };
-
-    if req.is_group {
-        ensure_local_guardian_circle_access(&state, &session, &req.recipient_did)?;
-    } else {
-        ensure_member_contact_access(&state, &session, &req.recipient_did).await?;
-    }
-
-    if !hide_typing {
-        let conversation_id = if req.is_group {
-            req.recipient_did.clone()
-        } else {
-            local_pair_conversation_id(&state, &sender_did, &req.recipient_did)
-        };
-        let _ = state
-            .chat_events
-            .send(crate::chat::models::ChatEvent::Typing(
-                crate::chat::models::TypingEvent {
-                    conversation_id,
-                    sender_did,
-                    is_typing: req.is_typing,
-                },
-            ));
-    }
-
-    Ok(Json(TypingResponse {
-        status: "ok".to_string(),
-    }))
-}
-
-#[derive(Deserialize)]
 pub struct MarkReadRequest {
     pub message_id: String,
     pub original_sender_did: String,
@@ -795,10 +754,11 @@ pub async fn mark_as_read(
         ));
     }
 
-    // 2. Log the receipt locally — unless this reader has opted to hide read
-    // receipts, in which case neither the durable record nor the broadcast
-    // event is produced (they never contribute to `read_by`, matching the
-    // privacy this preference promises: senders can't tell they've read it).
+    // 2. Log the receipt locally — gated by *this reader's current*
+    // preference, at the moment they read it. Once recorded (or skipped),
+    // it's permanent: toggling the preference later never rewrites past
+    // messages in either direction — only reads that happen after a change
+    // are affected, matching what the reader's setting was at read time.
     if !hide_read_receipts {
         let receipt = crate::chat::models::ReadReceiptRecord {
             message_id: req.message_id.clone(),
@@ -1024,6 +984,12 @@ pub async fn get_history(
     }
     let next_cursor = messages.last().map(|message| message.seq_no);
 
+    // Read-receipt privacy is enforced at write time in `mark_as_read`
+    // (a reader hiding receipts simply never gets recorded into `read_by`),
+    // not here — so history returned here needs no further filtering. That
+    // keeps a toggle's effect strictly forward-only: whatever was already
+    // recorded before a preference change stays exactly as it was.
+
     Ok(Json(ChatHistoryResponse {
         messages,
         next_cursor,
@@ -1170,49 +1136,12 @@ async fn handle_socket(
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    use tokio::time::{timeout, Duration};
 
     /// `session: None` (the admin/device-level caller) short-circuits every
     /// circle/contact-membership check in this file before it touches any
     /// VC or key-manager state — see `ensure_member_contact_access`'s
     /// `if !is_member { return Ok(()); }`. That keeps this test hardware-
     /// free, unlike a `role: "member"` session would be.
-    #[tokio::test]
-    async fn typing_broadcasts_event_for_direct_conversation() {
-        let td = TempDir::new().expect("tempdir");
-        let state = AppState::for_tests(
-            td.path(),
-            "nodeA",
-            td.path().join("config").to_string_lossy().to_string(),
-        );
-        let mut rx = state.chat_events.subscribe();
-
-        let response = typing(
-            State(state.clone()),
-            None,
-            Json(TypingRequest {
-                recipient_did: "did:guardian:peer".to_string(),
-                is_group: false,
-                is_typing: true,
-            }),
-        )
-        .await
-        .expect("typing request succeeds");
-        assert_eq!(response.0.status, "ok");
-
-        let event = timeout(Duration::from_secs(1), rx.recv())
-            .await
-            .expect("receive timeout")
-            .expect("receive event");
-        match event {
-            crate::chat::models::ChatEvent::Typing(typing_event) => {
-                assert_eq!(typing_event.sender_did, state.device_did);
-                assert!(typing_event.is_typing);
-            }
-            other => panic!("expected a Typing event, got {other:?}"),
-        }
-    }
-
     #[tokio::test]
     async fn mark_as_read_updates_read_by_for_admin_caller() {
         let td = TempDir::new().expect("tempdir");
@@ -1264,5 +1193,188 @@ mod tests {
             .find(|entry| entry.message_id == "msg-1")
             .expect("message present");
         assert!(updated.read_by.contains(&state.device_did));
+
+        // --- Read-receipt privacy is enforced at write time: a reader's
+        // *current* preference when they call mark_as_read decides whether
+        // that read ever gets recorded, permanently. Toggling the
+        // preference later never rewrites past reads in either direction.
+        // Reuses this test's already-bound CHAT_STORAGE_DIR (the Lazy only
+        // binds once per process).
+        let member = state
+            .admin
+            .users
+            .create_or_reactivate_member(crate::api::auth::store::NewMemberRegistration {
+                name: "Reader".into(),
+                email: "reader@example.com".into(),
+                pw_hash: "hash".into(),
+                circle_id: "circle-1".into(),
+                browser_registration_id: "reg-reader".into(),
+                guardian_fingerprint: "fp".into(),
+                registration_expires_at: chrono::Utc::now().timestamp() + 3600,
+                invite_id: "invite-1".into(),
+            })
+            .await
+            .expect("create member");
+        let member_did =
+            crate::api::handlers::browser_member::did_for_registration("reg-reader");
+        let member_session = Some(Extension(AuthenticatedSession {
+            claims: crate::api::auth::session::Claims {
+                sub: member.user_id.clone(),
+                role: "member".to_string(),
+                scopes: crate::api::auth::authorization::default_scopes("member"),
+                circle_ids: vec!["circle-1".to_string()],
+                browser_registration_id: Some("reg-reader".to_string()),
+                guardian_fingerprint: None,
+                iss: state.device_did.clone(),
+                iat: chrono::Utc::now().timestamp(),
+                exp: chrono::Utc::now().timestamp() + 300,
+                jti: uuid::Uuid::new_v4().to_string(),
+            },
+            token: String::new(),
+        }));
+
+        let sender_conversation_id =
+            local_pair_conversation_id(&state, &state.device_did, &member_did);
+        let seed_message = |message_id: &str| ChatMessageRecord {
+            message_id: message_id.to_string(),
+            sender_did: state.device_did.clone(),
+            recipient_did: member_did.clone(),
+            group_id: None,
+            timestamp: chrono::Utc::now().timestamp(),
+            seq_no: 1,
+            encrypted_payload: "{}".to_string(),
+            signature: String::new(),
+            status: MessageStatus::Delivered,
+            read_by: Vec::new(),
+        };
+        crate::chat::storage::append_p2p_message(&sender_conversation_id, &seed_message("msg-2"))
+            .await
+            .expect("seed sender-side p2p history (msg-2)");
+
+        // Read while visible: recorded normally.
+        let _ = mark_as_read(
+            State(state.clone()),
+            member_session.clone(),
+            Json(MarkReadRequest {
+                message_id: "msg-2".to_string(),
+                original_sender_did: state.device_did.clone(),
+                group_id: None,
+            }),
+        )
+        .await
+        .expect("member marks msg-2 read while visible");
+
+        let after_visible_read = get_history(
+            State(state.clone()),
+            None,
+            Query(ChatHistoryQuery {
+                peer_did: Some(member_did.clone()),
+                group_id: None,
+                after_seq: None,
+                limit: None,
+            }),
+        )
+        .await
+        .expect("sender reads history")
+        .0;
+        let msg2 = after_visible_read
+            .messages
+            .iter()
+            .find(|m| m.message_id == "msg-2")
+            .expect("msg-2 present");
+        assert!(msg2.read_by.contains(&member_did), "read while visible should be recorded");
+        assert_eq!(msg2.status, MessageStatus::Read);
+
+        // Now hide read receipts, then read a second message while hidden.
+        state
+            .admin
+            .users
+            .update_profile(
+                &member.user_id,
+                crate::api::auth::store::ProfilePatch {
+                    hide_read_receipts: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("enable hide_read_receipts");
+
+        crate::chat::storage::append_p2p_message(&sender_conversation_id, &seed_message("msg-3"))
+            .await
+            .expect("seed sender-side p2p history (msg-3)");
+        let _ = mark_as_read(
+            State(state.clone()),
+            member_session.clone(),
+            Json(MarkReadRequest {
+                message_id: "msg-3".to_string(),
+                original_sender_did: state.device_did.clone(),
+                group_id: None,
+            }),
+        )
+        .await
+        .expect("member marks msg-3 read while hidden");
+
+        let while_hidden = get_history(
+            State(state.clone()),
+            None,
+            Query(ChatHistoryQuery {
+                peer_did: Some(member_did.clone()),
+                group_id: None,
+                after_seq: None,
+                limit: None,
+            }),
+        )
+        .await
+        .expect("sender reads history while reader is hidden")
+        .0;
+        let msg2 = while_hidden.messages.iter().find(|m| m.message_id == "msg-2").expect("msg-2 present");
+        let msg3 = while_hidden.messages.iter().find(|m| m.message_id == "msg-3").expect("msg-3 present");
+        assert!(
+            msg2.read_by.contains(&member_did),
+            "a read recorded before the toggle must be unaffected by it"
+        );
+        assert_eq!(msg2.status, MessageStatus::Read);
+        assert!(
+            !msg3.read_by.contains(&member_did),
+            "a read while hidden must never be recorded"
+        );
+        assert_eq!(msg3.status, MessageStatus::Delivered);
+
+        // Un-hide again: the read that happened while hidden must stay
+        // unrecorded — toggling back does not retroactively add it.
+        state
+            .admin
+            .users
+            .update_profile(
+                &member.user_id,
+                crate::api::auth::store::ProfilePatch {
+                    hide_read_receipts: Some(false),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("disable hide_read_receipts");
+
+        let after_unhide = get_history(
+            State(state.clone()),
+            None,
+            Query(ChatHistoryQuery {
+                peer_did: Some(member_did.clone()),
+                group_id: None,
+                after_seq: None,
+                limit: None,
+            }),
+        )
+        .await
+        .expect("sender reads history after un-hiding")
+        .0;
+        let msg2 = after_unhide.messages.iter().find(|m| m.message_id == "msg-2").expect("msg-2 present");
+        let msg3 = after_unhide.messages.iter().find(|m| m.message_id == "msg-3").expect("msg-3 present");
+        assert!(msg2.read_by.contains(&member_did), "the earlier visible read must still be recorded");
+        assert!(
+            !msg3.read_by.contains(&member_did),
+            "un-hiding must not retroactively reveal a read that happened while hidden"
+        );
+        assert_eq!(msg3.status, MessageStatus::Delivered);
     }
 }
