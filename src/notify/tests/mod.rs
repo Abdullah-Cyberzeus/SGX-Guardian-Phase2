@@ -181,6 +181,52 @@ async fn subscribe_receives_published_events() {
     assert_eq!(received.kind, event.kind);
 }
 
+/// The notify bus is one process-global broadcast channel (see
+/// `notify::bus`), shared by every test in this binary — so a subscriber can
+/// observe events published by other tests running concurrently. Filter by
+/// `ref_id` (unique per call below) instead of assuming the next `recv()` is
+/// necessarily ours.
+async fn recv_by_ref_id(
+    rx: &mut tokio::sync::broadcast::Receiver<NotificationEvent>,
+    ref_id: &str,
+) -> NotificationEvent {
+    loop {
+        let event = timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("receive timeout")
+            .expect("receive event");
+        if event.ref_id.as_deref() == Some(ref_id) {
+            return event;
+        }
+    }
+}
+
+#[tokio::test]
+async fn publish_circle_helpers_broadcast_the_right_kind() {
+    let mut rx = bus::subscribe();
+
+    super::publish_circle_new_message("did:guardian:alice", "publish-helpers-msg-1");
+    let event = recv_by_ref_id(&mut rx, "publish-helpers-msg-1").await;
+    assert_eq!(event.kind, NotificationKind::CircleNewMessage);
+
+    super::publish_circle_incoming_call("did:guardian:bob", "publish-helpers-call-1");
+    let event = recv_by_ref_id(&mut rx, "publish-helpers-call-1").await;
+    assert_eq!(event.kind, NotificationKind::CircleIncomingCall);
+
+    super::publish_circle_member_joined("Alice", "Family", "publish-helpers-circle-1");
+    let event = recv_by_ref_id(&mut rx, "publish-helpers-circle-1").await;
+    assert_eq!(event.kind, NotificationKind::CircleMemberJoined);
+    assert!(event.body.contains("Alice") && event.body.contains("Family"));
+
+    super::publish_circle_file_shared(
+        "did:guardian:carol",
+        "report.pdf",
+        "urn:uuid:publish-helpers-vault-1",
+    );
+    let event = recv_by_ref_id(&mut rx, "urn:uuid:publish-helpers-vault-1").await;
+    assert_eq!(event.kind, NotificationKind::CircleFileShared);
+}
+
 #[test]
 fn prefs_filter_mapping_matches_kinds() {
     let mut prefs = NotificationPrefs::default();

@@ -23,13 +23,24 @@ export class WebRtcService {
 
   configureIceServers(iceServers: RTCIceServer[]): void { this.iceServers = iceServers; }
 
-  async prepareMedia(media: MediaType[]): Promise<MediaStream> {
+  /**
+   * Requests the media the caller asked for. If video specifically fails
+   * (camera denied/missing/busy) but audio was also requested, the call
+   * continues audio-only rather than aborting outright — `actualMedia`
+   * reports what was actually captured so the caller can declare that to
+   * the backend and let the user know they've been downgraded. A pure
+   * video-only request, or an audio failure, still throws: there is no
+   * lesser fallback for those.
+   */
+  async prepareMedia(media: MediaType[]): Promise<{ stream: MediaStream; actualMedia: MediaType[]; warning?: string }> {
     this.close();
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
       throw new Error("Microphone and camera access requires a trusted HTTPS connection (or localhost). Open this Guardian using its HTTPS address and trust its certificate.");
     }
     const tracks: MediaStreamTrack[] = [];
     const inputTracks: MediaStreamTrack[] = [];
+    const actualMedia: MediaType[] = [];
+    let warning: string | undefined;
 
     if (media.includes("audio")) {
       const microphone = await navigator.mediaDevices.getUserMedia({
@@ -52,20 +63,32 @@ export class WebRtcService {
       this.testOscillator = oscillator;
       this.testGain = gain;
       tracks.push(...destination.stream.getAudioTracks());
+      actualMedia.push("audio");
     }
 
     if (media.includes("video")) {
-      const camera = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
-      });
-      inputTracks.push(...camera.getTracks());
-      tracks.push(...camera.getVideoTracks());
+      try {
+        const camera = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+        });
+        inputTracks.push(...camera.getTracks());
+        tracks.push(...camera.getVideoTracks());
+        actualMedia.push("video");
+      } catch (error) {
+        if (!actualMedia.includes("audio")) throw error;
+        const reason = error instanceof Error ? error.name : "";
+        warning = reason === "NotFoundError"
+          ? "No camera was found on this device. Continuing with audio only."
+          : reason === "NotAllowedError"
+            ? "Camera access was denied. Continuing with audio only — allow camera access and restart the call for video."
+            : "Camera could not be started. Continuing with audio only.";
+      }
     }
 
     this.mediaInput = new MediaStream(inputTracks);
     this.local = new MediaStream(tracks);
-    return this.local;
+    return { stream: this.local, actualMedia, warning };
   }
 
   setup(callbacks: WebRtcCallbacks): RTCPeerConnection {
@@ -102,6 +125,7 @@ export class WebRtcService {
       await pc.setLocalDescription(answer);
       await this.sendSignalReliable("sdp_answer", { type: answer.type, sdp: answer.sdp });
     } else if (signal.type === "sdp_answer") {
+      if (pc.signalingState !== "have-local-offer") return;
       await pc.setRemoteDescription(signal.payload as RTCSessionDescriptionInit);
       await this.flushCandidates();
     } else if (signal.type === "ice_candidate") {
@@ -180,6 +204,26 @@ export class WebRtcService {
     }
   }
 
+  /**
+   * The SHA-256 DTLS certificate fingerprint this peer connection's own local
+   * description is actually using, once negotiation has produced one. Read
+   * directly from the SDP `a=fingerprint` line — the same value the backend
+   * extracted from this same SDP when it was signaled — so submitting it back
+   * at media-ready time lets the backend confirm the live connection matches
+   * what was cryptographically committed to, not just what was requested.
+   */
+  localDtlsFingerprint(): string | undefined {
+    const sdp = this.pc?.localDescription?.sdp;
+    if (!sdp) return undefined;
+    for (const line of sdp.split(/\r?\n/)) {
+      const match = /^a=fingerprint:sha-256 (.+)$/i.exec(line.trim());
+      if (!match) continue;
+      const normalized = match[1].replace(/:/g, "").toLowerCase();
+      if (/^[0-9a-f]{64}$/.test(normalized)) return `sha-256 ${normalized}`;
+    }
+    return undefined;
+  }
+
   async quality(): Promise<Record<string, number | string>> {
     const reports = await this.requirePeer().getStats();
     const result: Record<string, number | string> = {};
@@ -193,6 +237,23 @@ export class WebRtcService {
       if (report.type === "codec") result.codec = report.mimeType ?? "unknown";
     });
     return result;
+  }
+
+  async adaptBitrate(report: Record<string, number | string>): Promise<void> {
+    const loss = typeof report.packet_loss_percent === "number" ? report.packet_loss_percent : 0;
+    const rtt = typeof report.rtt_ms === "number" ? report.rtt_ms : 0;
+    const maxBitrate = loss >= 8 || rtt >= 500
+      ? 350_000
+      : loss >= 3 || rtt >= 250
+        ? 800_000
+        : 1_800_000;
+    const senders = this.requirePeer().getSenders().filter((sender) => sender.track?.kind === "video");
+    await Promise.all(senders.map(async (sender) => {
+      const parameters = sender.getParameters();
+      parameters.encodings = parameters.encodings?.length ? parameters.encodings : [{}];
+      parameters.encodings = parameters.encodings.map((encoding) => ({ ...encoding, maxBitrate }));
+      await sender.setParameters(parameters);
+    }));
   }
 
   close(): void {

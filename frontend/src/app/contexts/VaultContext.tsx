@@ -14,7 +14,7 @@ import {
   type VaultFile,
   type VaultFolder,
 } from "../components/vault/types";
-import { vaultService, type VaultRecord } from "../services/vaultService";
+import { vaultService, type VaultRecord, type VaultDownloadRecord } from "../services/vaultService";
 import { useAuth } from "./AuthContext";
 import { fileRepository } from "../../pwa/db/fileRepository";
 
@@ -42,6 +42,8 @@ interface VaultContextValue {
   usedBytes: number;
   loading: boolean;
   error: string | null;
+  /** True when the current file list is a cached fallback (Guardian unreachable). */
+  offline: boolean;
   uploads: VaultUpload[];
   refresh: () => Promise<void>;
   getFolder: (id: string) => VaultFolder | undefined;
@@ -60,7 +62,7 @@ interface VaultContextValue {
   renameFolder: (id: string, name: string) => Promise<void>;
   moveFolder: (id: string, parentId: string) => Promise<void>;
   deleteFolder: (id: string, recursive?: boolean) => Promise<void>;
-  uploadFile: (file: File, folderId?: string) => Promise<VaultFile>;
+  uploadFile: (file: File, folderId?: string, description?: string) => Promise<VaultFile>;
   cancelUpload: (id: string) => void;
   retryUpload: (id: string) => Promise<void>;
   dismissUpload: (id: string) => void;
@@ -68,6 +70,12 @@ interface VaultContextValue {
   renameFile: (id: string, filename: string) => Promise<void>;
   moveFile: (id: string, folderId: string) => Promise<void>;
   toggleStar: (id: string) => Promise<void>;
+  /** Owner-only: blocks future downloads without deleting the file. */
+  revokeFile: (id: string) => Promise<void>;
+  /** Owner-only: sets or clears (pass null) the file's expiry timestamp. */
+  setFileExpiry: (id: string, expiresAt: string | null) => Promise<void>;
+  /** Owner-only: who downloaded this file and when. */
+  getFileHistory: (id: string) => Promise<VaultDownloadRecord[]>;
 }
 
 const VaultContext = createContext<VaultContextValue | null>(null);
@@ -100,9 +108,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [capacityBytes, setCapacityBytes] = useState(0);
+  const [offline, setOffline] = useState(false);
   const [uploads, setUploads] = useState<VaultUpload[]>([]);
   const uploadControllers = useRef(new Map<string, AbortController>());
-  const uploadSources = useRef(new Map<string, { file: File; folderId: string }>());
+  const uploadSources = useRef(
+    new Map<string, { file: File; folderId: string; description: string; idempotencyKey: string }>(),
+  );
 
   const mapRecord = useCallback((record: VaultRecord): VaultFile => {
     const id = String(record.vault_id ?? record.id ?? "");
@@ -120,6 +131,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       starred: Boolean(record.starred),
       backendPath: typeof record.path === "string" ? record.path : undefined,
       namespace: typeof record.namespace === "string" ? record.namespace : undefined,
+      description: typeof record.description === "string" ? record.description : undefined,
+      ownerDid: typeof record.owner_did === "string" ? record.owner_did : undefined,
+      revoked: Boolean(record.revoked),
+      expiresAt: typeof record.expires_at === "string" ? record.expires_at : undefined,
     };
   }, []);
 
@@ -175,6 +190,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         mime: file.mime,
         size: file.sizeBytes,
         updatedAt: file.addedAt && file.addedAt !== "—" ? Date.parse(file.addedAt) || Date.now() : Date.now(),
+        revoked: file.revoked,
+        expiresAt: file.expiresAt,
       }));
       setFolders(() => {
         const root = seedFolders()[0];
@@ -204,6 +221,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         return [root, ...mapped, ...discovered];
       });
       setCapacityBytes(quota?.quota_bytes || overview?.capacity_bytes || 0);
+      setOffline(false);
 
       const optionalFailures = [
         folderResult.status === "rejected" ? "folders" : null,
@@ -227,12 +245,16 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           sharedBy: "Guardian cache",
           addedAt: new Date(file.updatedAt).toISOString(),
           encrypted: true,
+          revoked: file.revoked,
+          expiresAt: file.expiresAt,
         })));
         setFolders(seedFolders);
         setError("Showing cached Vault metadata while Guardian is unreachable.");
+        setOffline(true);
       } else {
         // Preserve the last successfully loaded view during transient failures.
         setError(cause instanceof Error ? cause.message : "Unable to load Vault");
+        setOffline(true);
       }
     } finally {
       setLoading(false);
@@ -388,13 +410,22 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     if (recursive) setFiles((items) => items.filter((item) => !descendants.has(item.folderId)));
   }, [folderById, folders]);
 
-  const uploadFile = useCallback(async (source: File, folderId = ROOT_ID): Promise<VaultFile> => {
+  const uploadFile = useCallback(async (
+    source: File,
+    folderId = ROOT_ID,
+    description = "",
+    existingIdempotencyKey?: string,
+  ): Promise<VaultFile> => {
     const id = typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
       : `upload-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    // A retry passes the original attempt's key so a dropped response that
+    // actually succeeded server-side resolves to the same Vault record
+    // instead of creating a duplicate.
+    const idempotencyKey = existingIdempotencyKey ?? id;
     const controller = new AbortController();
     uploadControllers.current.set(id, controller);
-    uploadSources.current.set(id, { file: source, folderId });
+    uploadSources.current.set(id, { file: source, folderId, description, idempotencyKey });
     setUploads((items) => [{
       id, name: source.name, sizeBytes: source.size, loadedBytes: 0,
       progress: 0, status: "uploading",
@@ -402,7 +433,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     try {
       const result = await vaultService.upload(source, {
         folder_id: folderId === ROOT_ID ? undefined : folderId,
+        description,
         signal: controller.signal,
+        idempotencyKey,
         onProgress: (loaded, total) => {
           const denominator = total || source.size || 1;
           setUploads((items) => items.map((item) => item.id === id ? {
@@ -444,7 +477,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     if (!source) throw new Error("The original file is no longer available. Select it again.");
     setUploads((items) => items.filter((item) => item.id !== id));
     uploadSources.current.delete(id);
-    await uploadFile(source.file, source.folderId);
+    await uploadFile(source.file, source.folderId, source.description, source.idempotencyKey);
   }, [uploadFile]);
 
   const dismissUpload = useCallback((id: string) => {
@@ -484,6 +517,21 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     }
   }, [files, mapRecord]);
 
+  const revokeFile = useCallback(async (id: string) => {
+    const updated = mapRecord(await vaultService.revoke(id));
+    setFiles((prev) => prev.map((file) => file.id === id ? updated : file));
+  }, [mapRecord]);
+
+  const setFileExpiry = useCallback(async (id: string, expiresAt: string | null) => {
+    const updated = mapRecord(await vaultService.setExpiry(id, expiresAt));
+    setFiles((prev) => prev.map((file) => file.id === id ? updated : file));
+  }, [mapRecord]);
+
+  const getFileHistory = useCallback(async (id: string) => {
+    const response = await vaultService.history(id);
+    return response.downloads;
+  }, []);
+
   const usedBytes = useMemo(
     () => files.reduce((sum, f) => sum + f.sizeBytes, 0),
     [files],
@@ -499,6 +547,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       usedBytes,
       loading,
       error,
+      offline,
       uploads,
       refresh,
       getFolder,
@@ -521,6 +570,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       renameFile,
       moveFile,
       toggleStar,
+      revokeFile,
+      setFileExpiry,
+      getFileHistory,
     }),
     [
       folders,
@@ -528,6 +580,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       capacityBytes,
       loading,
       error,
+      offline,
       uploads,
       refresh,
       usedBytes,
@@ -551,6 +604,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       renameFile,
       moveFile,
       toggleStar,
+      revokeFile,
+      setFileExpiry,
+      getFileHistory,
     ],
   );
 

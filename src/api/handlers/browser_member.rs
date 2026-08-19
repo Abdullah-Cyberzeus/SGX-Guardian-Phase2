@@ -86,6 +86,9 @@ pub async fn dids_for_circles(
                     .iter()
                     .any(|circle_id| allowed_circle_ids.contains(circle_id))
         })
-        .filter_map(|user| user.browser_registration_id.map(|id| did_for_registration(&id)))
+        .filter_map(|user| {
+            user.browser_registration_id
+                .map(|id| did_for_registration(&id))
+        })
         .collect())
 }

@@ -49,14 +49,14 @@ impl CallOffer {
         Ok(payload.to_string())
     }
 
-    /// Create a new offer with signature from key manager
+    /// Create a new offer, signed with the device's key.
     pub async fn new(
         device_id: String,
         virtual_id: String,
         session_id: String,
         nonce: String,
         requested_media: Vec<MediaType>,
-        _key_manager: &crate::key_manager::KeyManager,
+        key_manager: &crate::key_manager::KeyManager,
     ) -> CallResult<Self> {
         // Validate inputs
         if device_id.is_empty() || virtual_id.is_empty() || session_id.is_empty() {
@@ -75,19 +75,24 @@ impl CallOffer {
             });
         }
 
-        let offer = CallOffer {
+        let mut offer = CallOffer {
             device_id: device_id.clone(),
             virtual_id: virtual_id.clone(),
             session_id: session_id.clone(),
             timestamp: Utc::now(),
             nonce: nonce.clone(),
             requested_media,
-            signature: String::new(), // Placeholder, will be filled
+            signature: String::new(),
         };
 
         // Peer identity already passed attestation. Call control travels only
         // through the authenticated Nebula overlay, so opening a new SE050
         // session for every call message is unnecessary.
+        let payload = offer.payload_to_sign()?;
+        let signature = key_manager.sign(payload.as_bytes()).map_err(|error| {
+            CallError::KeyManagerError(format!("Failed to sign offer: {}", error))
+        })?;
+        offer.signature = hex::encode(signature);
         Ok(offer)
     }
 
@@ -147,14 +152,14 @@ impl CallAnswer {
         Ok(payload.to_string())
     }
 
-    /// Create acceptance answer
+    /// Create acceptance answer, signed with the device's key.
     pub async fn accept(
         device_id: String,
         virtual_id: String,
         session_id: String,
         nonce: String,
         accepted_media: Vec<MediaType>,
-        _key_manager: &crate::key_manager::KeyManager,
+        key_manager: &crate::key_manager::KeyManager,
     ) -> CallResult<Self> {
         if accepted_media.is_empty() {
             return Err(CallError::InvalidOffer {
@@ -162,7 +167,7 @@ impl CallAnswer {
             });
         }
 
-        let answer = CallAnswer {
+        let mut answer = CallAnswer {
             device_id: device_id.clone(),
             virtual_id: virtual_id.clone(),
             session_id: session_id.clone(),
@@ -173,20 +178,20 @@ impl CallAnswer {
             rejection_reason: None,
             signature: String::new(),
         };
-
+        answer.sign(key_manager)?;
         Ok(answer)
     }
 
-    /// Create rejection answer
+    /// Create rejection answer, signed with the device's key.
     pub async fn reject(
         device_id: String,
         virtual_id: String,
         session_id: String,
         nonce: String,
         reason: String,
-        _key_manager: &crate::key_manager::KeyManager,
+        key_manager: &crate::key_manager::KeyManager,
     ) -> CallResult<Self> {
-        let answer = CallAnswer {
+        let mut answer = CallAnswer {
             device_id: device_id.clone(),
             virtual_id: virtual_id.clone(),
             session_id: session_id.clone(),
@@ -197,8 +202,18 @@ impl CallAnswer {
             rejection_reason: Some(reason),
             signature: String::new(),
         };
-
+        answer.sign(key_manager)?;
         Ok(answer)
+    }
+
+    /// Sign this answer's payload in place with the device's key.
+    fn sign(&mut self, key_manager: &crate::key_manager::KeyManager) -> CallResult<()> {
+        let payload = self.payload_to_sign()?;
+        let signature = key_manager.sign(payload.as_bytes()).map_err(|error| {
+            CallError::KeyManagerError(format!("Failed to sign answer: {}", error))
+        })?;
+        self.signature = hex::encode(signature);
+        Ok(())
     }
 
     /// Verify this answer's signature with the peer's trusted SEC1 P-256 point.
@@ -323,7 +338,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn offer_reuses_attested_transport_identity() {
+    async fn offer_is_signed_and_verifies_against_the_signers_key() {
         let (_temp, signer) = key_manager("offer.pk8");
         let offer = CallOffer::new(
             "device-1".into(),
@@ -336,11 +351,19 @@ mod tests {
         .await
         .expect("offer");
 
-        assert!(offer.signature.is_empty());
+        assert!(!offer.signature.is_empty());
+        offer
+            .verify_signature(&signer.pubkey_der().expect("pubkey"))
+            .expect("signature verifies against the signer's own key");
+
+        let (_other_temp, other_signer) = key_manager("offer-other.pk8");
+        assert!(offer
+            .verify_signature(&other_signer.pubkey_der().expect("pubkey"))
+            .is_err());
     }
 
     #[tokio::test]
-    async fn answer_reuses_attested_transport_identity() {
+    async fn answer_is_signed_and_verifies_against_the_signers_key() {
         let (_signer_temp, signer) = key_manager("answer.pk8");
         let answer = CallAnswer::accept(
             "device-2".into(),
@@ -353,6 +376,14 @@ mod tests {
         .await
         .expect("answer");
 
-        assert!(answer.signature.is_empty());
+        assert!(!answer.signature.is_empty());
+        answer
+            .verify_signature(&signer.pubkey_der().expect("pubkey"))
+            .expect("signature verifies against the signer's own key");
+
+        let (_other_temp, other_signer) = key_manager("answer-other.pk8");
+        assert!(answer
+            .verify_signature(&other_signer.pubkey_der().expect("pubkey"))
+            .is_err());
     }
 }

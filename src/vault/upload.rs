@@ -15,6 +15,7 @@ pub struct StagedUpload {
     pub size_plain: u64,
     pub sha256_plain: String,
     pub chunk_bytes: u32,
+    pub description: String,
 }
 
 impl StagedUpload {
@@ -41,6 +42,7 @@ pub async fn ingest_staged_upload(
             chunk_bytes: upload.chunk_bytes,
         },
         folder_id,
+        upload.description,
     )
     .await;
 

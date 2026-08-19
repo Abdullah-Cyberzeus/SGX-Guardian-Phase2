@@ -1,11 +1,13 @@
 use crate::vault::crypto;
 use crate::vault::errors::VaultError;
+use crate::vault::mime_policy;
 use crate::vault::model::{VaultRecord, VaultSource};
 use crate::vault::namespace::VaultNamespace;
 use crate::vault::persistence;
 use crate::vault::quota;
 use crate::vault::wrapper;
 use crate::vault::VaultConfig;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
@@ -45,6 +47,19 @@ pub fn infer_mime(filename: &str) -> String {
     }
 }
 
+/// Extra fields set by callers that need more than the base file-transfer
+/// shape (Files-tab uploads and chat attachments).
+#[derive(Debug, Clone, Default)]
+pub struct IngestExtras {
+    pub description: String,
+    pub conversation_recipient_did: Option<String>,
+    /// Preserves a specific `vault_id` instead of minting a new one, and
+    /// skips filename de-duplication. Used only when replicating a peer's
+    /// chat attachment: the local copy must be addressable by the same id
+    /// the chat message already references.
+    pub vault_id_override: Option<String>,
+}
+
 pub async fn ingest_file(
     circle_id: &str,
     sender_did: &str,
@@ -58,6 +73,7 @@ pub async fn ingest_file(
         meta,
         VaultSource::FileTransfer,
         String::new(),
+        IngestExtras::default(),
     )
     .await
 }
@@ -68,7 +84,9 @@ pub async fn ingest_upload_file(
     path: &Path,
     meta: IngestMeta,
     folder_id: String,
+    description: String,
 ) -> Result<VaultRecord, VaultError> {
+    mime_policy::ensure_mime_allowed(&meta.mime)?;
     ingest_file_with_namespace(
         namespace,
         sender_did,
@@ -76,6 +94,66 @@ pub async fn ingest_upload_file(
         meta,
         VaultSource::Upload,
         folder_id,
+        IngestExtras {
+            description,
+            conversation_recipient_did: None,
+            vault_id_override: None,
+        },
+    )
+    .await
+}
+
+/// Chat attachments (Files-tab-independent) land in the sender's namespace —
+/// the group's Circle for group chat, or the sender's Personal store (with
+/// `conversation_recipient_did` set) for a 1:1 direct message.
+pub async fn ingest_chat_attachment(
+    namespace: VaultNamespace,
+    sender_did: &str,
+    path: &Path,
+    meta: IngestMeta,
+    conversation_recipient_did: Option<String>,
+) -> Result<VaultRecord, VaultError> {
+    mime_policy::ensure_mime_allowed(&meta.mime)?;
+    ingest_file_with_namespace(
+        namespace,
+        sender_did,
+        path,
+        meta,
+        VaultSource::ChatAttachment,
+        String::new(),
+        IngestExtras {
+            description: String::new(),
+            conversation_recipient_did,
+            vault_id_override: None,
+        },
+    )
+    .await
+}
+
+/// Stores a chat attachment pulled from its owning peer over gRPC as a local
+/// `VaultRecord`, preserving `vault_id` so it stays addressable by the id
+/// the chat message already references.
+#[allow(clippy::too_many_arguments)]
+pub async fn ingest_replicated_chat_attachment(
+    vault_id: String,
+    namespace: VaultNamespace,
+    sender_did: &str,
+    path: &Path,
+    meta: IngestMeta,
+    conversation_recipient_did: Option<String>,
+) -> Result<VaultRecord, VaultError> {
+    ingest_file_with_namespace(
+        namespace,
+        sender_did,
+        path,
+        meta,
+        VaultSource::ChatAttachment,
+        String::new(),
+        IngestExtras {
+            description: String::new(),
+            conversation_recipient_did,
+            vault_id_override: Some(vault_id),
+        },
     )
     .await
 }
@@ -87,6 +165,7 @@ async fn ingest_file_with_namespace(
     meta: IngestMeta,
     source: VaultSource,
     folder_id: String,
+    extras: IngestExtras,
 ) -> Result<VaultRecord, VaultError> {
     let config = VaultConfig::from_env();
     let reservation = quota::reserve_namespace_capacity_for_plaintext(
@@ -96,7 +175,11 @@ async fn ingest_file_with_namespace(
         meta.chunk_bytes,
     )
     .await?;
-    let vault_id = format!("urn:uuid:{}", Uuid::new_v4());
+    let is_replicated_copy = extras.vault_id_override.is_some();
+    let vault_id = extras
+        .vault_id_override
+        .clone()
+        .unwrap_or_else(|| format!("urn:uuid:{}", Uuid::new_v4()));
     let blob_path = persistence::blob_path_for_namespace(&config, &namespace, &vault_id);
     let tmp_blob_path = blob_path.with_extension("enc.tmp");
 
@@ -133,7 +216,7 @@ async fn ingest_file_with_namespace(
         return Err(error.into());
     }
 
-    let record = VaultRecord {
+    let mut record = VaultRecord {
         vault_id,
         namespace: if namespace.is_personal() {
             VaultNamespace::PERSONAL_STORAGE_KEY.to_string()
@@ -154,12 +237,31 @@ async fn ingest_file_with_namespace(
         source,
         folder_id,
         starred: false,
+        description: extras.description,
+        owner_did: sender_did.to_string(),
+        revoked: false,
+        revoked_at: None,
+        expires_at: None,
+        conversation_recipient_did: extras.conversation_recipient_did,
+        message_id: None,
         enc: outcome.enc,
     };
 
     let save_result = {
         let _guard = crate::vault::write_lock().lock().await;
-        let result = persistence::save_record(&config, &record).await;
+        let result = if is_replicated_copy {
+            persistence::save_record(&config, &record).await
+        } else {
+            match resolve_unique_filename(&config, &namespace, &record.folder_id, &record.filename)
+                .await
+            {
+                Ok(unique_filename) => {
+                    record.filename = unique_filename;
+                    persistence::save_record(&config, &record).await
+                }
+                Err(error) => Err(error),
+            }
+        };
         quota::release_reservation(&reservation);
         result
     };
@@ -176,6 +278,40 @@ async fn ingest_file_with_namespace(
     }
 
     Ok(record)
+}
+
+/// Deterministically resolves a filename collision within the same
+/// namespace/folder by appending " (n)" before the extension, incrementing
+/// until free. Must be called while holding `crate::vault::write_lock()` so
+/// concurrent uploads of the same name can't race past each other.
+async fn resolve_unique_filename(
+    config: &VaultConfig,
+    namespace: &VaultNamespace,
+    folder_id: &str,
+    filename: &str,
+) -> Result<String, VaultError> {
+    let taken: HashSet<String> = persistence::list_records(config, Some(&namespace.storage_key()))
+        .await?
+        .into_iter()
+        .filter(|record| record.folder_id == folder_id)
+        .map(|record| record.filename)
+        .collect();
+    if !taken.contains(filename) {
+        return Ok(filename.to_string());
+    }
+
+    let (stem, ext) = match filename.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => (stem, format!(".{}", ext)),
+        _ => (filename, String::new()),
+    };
+    let mut counter = 1u32;
+    loop {
+        let candidate = format!("{stem} ({counter}){ext}");
+        if !taken.contains(&candidate) {
+            return Ok(candidate);
+        }
+        counter += 1;
+    }
 }
 
 pub async fn decrypt_record_to_temp(record: &VaultRecord) -> Result<PathBuf, VaultError> {

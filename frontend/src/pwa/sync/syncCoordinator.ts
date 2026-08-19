@@ -177,10 +177,8 @@ async function run(trigger: SyncTrigger): Promise<SyncResult> {
     });
     await optionalStep("contacts", pullContacts);
     await optionalStep("files", pullFiles);
-    // No server-persisted call history endpoint exists yet (Phase 8 backend
-    // work); this reflects the local cache rather than pulling from Guardian.
     await optionalStep("calls", async () => {
-      const calls = callHistoryService.list();
+      const calls = await callHistoryService.syncFromGuardian().catch(() => callHistoryService.list());
       const newest = calls
         .map((call) => Date.parse(call.endedAt || call.startedAt))
         .filter((value) => Number.isFinite(value))

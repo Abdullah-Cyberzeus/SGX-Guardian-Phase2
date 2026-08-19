@@ -6,6 +6,7 @@ import { didService } from "../services/didService";
 import { useAuth } from "./AuthContext";
 import { useNotifications } from "./NotificationContext";
 import { isMemberRole } from "../utils/authorization";
+import { fetchCommunicationPeers } from "../hooks/useApiData";
 
 export interface ChatPreview {
   text: string;
@@ -97,12 +98,14 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(() => {
     const thisRequest = ++requestId.current;
-    // The member-safe contacts endpoint exposes only communication identities;
-    // it intentionally omits network addresses and policy/topology metadata.
-    const loadPeers = isMemberRole(session?.user.role)
-      ? peerService.getContacts
-      : peerService.getAll;
-    void Promise.all([loadPeers(), circleService.getAll().catch(() => [])]).then(async ([peers, circles]) => {
+    // Guardian sessions must include browser Circle members here too — they
+    // never appear in the Nebula trust registry (peerService.getAll alone),
+    // so a member->guardian message would otherwise never move the unread
+    // badge/preview until the conversation was opened directly.
+    void Promise.all([
+      fetchCommunicationPeers(isMemberRole(session?.user.role), session?.guardianDid),
+      circleService.getAll().catch(() => []),
+    ]).then(async ([peers, circles]) => {
       const verified = peers.filter((peer) => peer.status === "verified" && peer.did);
       peerNamesRef.current = Object.fromEntries([
         ...circles.flatMap((circle) => (circle.members ?? []).filter((member) => member.did).map((member) => [member.did!, member.name || member.did!] as const)),
@@ -116,7 +119,11 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
           // that DID are incoming, so no administrative local-DID lookup is
           // needed to calculate unread state.
           const unread = messages.filter((record) => record.sender_did === peer.did && record.status !== "read").length;
-          const latest = [...messages].sort((a, b) => b.timestamp - a.timestamp)[0];
+          // seq_no is the authoritative recency order: timestamps only have
+          // second resolution, so a burst of messages (e.g. an offline queue
+          // flushing several at once) can tie on timestamp and fall back to
+          // array order, silently picking a stale "latest" message.
+          const latest = [...messages].sort((a, b) => (b.seq_no - a.seq_no) || (b.timestamp - a.timestamp))[0];
           let preview: ChatPreview | undefined;
           if (latest) {
             const payload = parseChatPayload(latest);
@@ -134,7 +141,11 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
           const unread = localDid
             ? messages.filter((record) => record.sender_did !== localDid && !record.read_by.includes(localDid)).length
             : 0;
-          const latest = [...messages].sort((a, b) => b.timestamp - a.timestamp)[0];
+          // seq_no is the authoritative recency order: timestamps only have
+          // second resolution, so a burst of messages (e.g. an offline queue
+          // flushing several at once) can tie on timestamp and fall back to
+          // array order, silently picking a stale "latest" message.
+          const latest = [...messages].sort((a, b) => (b.seq_no - a.seq_no) || (b.timestamp - a.timestamp))[0];
           const payload = parseChatPayload(latest);
           const preview: ChatPreview = {
             text: payload.attachment_id ? `File: ${payload.content || "Attachment"}` : (payload.content || "Message"),
@@ -153,7 +164,7 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
         setCircleChats(groupEntries.filter((entry) => entry[5]).map(([circleId, name, memberCount]) => ({ circleId, name, memberCount })));
       }
     }).catch(() => {});
-  }, [localDid, session?.user.role]);
+  }, [localDid, session?.guardianDid, session?.user.role]);
 
   useEffect(() => { refresh(); }, [refresh]);
 

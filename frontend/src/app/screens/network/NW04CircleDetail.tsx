@@ -217,9 +217,15 @@ export function NW04CircleDetail() {
   };
   const callableMemberIds = useMemo(() => Array.from(new Set(
     members
-      .map((member: any) => peerForMember(member))
-      .filter((peer): peer is NonNullable<typeof peer> => Boolean(peer?.callAvailable))
-      .map((peer) => peer.peerId)
+      .map((member: any) => {
+        const isBrowserMember = String(member?.memberType || member?.member_type || "").toLowerCase() === "browser";
+        // Browser members have no Nebula peer entry at all — they're
+        // targeted by DID directly, same as 1:1 calls to them.
+        if (isBrowserMember) return member.did || undefined;
+        const peer = peerForMember(member);
+        return peer?.callAvailable ? peer.peerId : undefined;
+      })
+      .filter((id): id is string => Boolean(id))
       .filter((id: string) => id !== currentDevice),
   )) as string[], [members, trustedPeers, currentDevice]);
   const circleCallParticipantIds = useMemo(() => new Set(members.flatMap((member: any) => [
@@ -249,11 +255,14 @@ export function NW04CircleDetail() {
   };
 
   const startMemberCall = async (media: MediaType[], member: any) => {
-    if (nodeIdsForMember(member).includes(String(currentDevice || "").trim().toLowerCase())) {
+    const isBrowserMember = String(member?.memberType || member?.member_type || "").toLowerCase() === "browser";
+    // A browser member's nodeHint is the Guardian device that hosts their
+    // session, not their own identity, so it must never be compared against
+    // currentDevice — a browser member can never BE the current Guardian.
+    if (!isBrowserMember && nodeIdsForMember(member).includes(String(currentDevice || "").trim().toLowerCase())) {
       toast.info("This member is the current Guardian", { description: "Choose another Circle member to start a call." });
       return;
     }
-    const isBrowserMember = String(member?.memberType || member?.member_type || "").toLowerCase() === "browser";
     const trustedPeer = peerForMember(member);
     const target = trustedPeer?.peerId || (isBrowserMember ? member.did : "");
     if (!target) { toast.error("This Circle member is not linked to a call target."); return; }
@@ -646,7 +655,10 @@ export function NW04CircleDetail() {
                   const trustedPeer = peerForMember(member);
                   const busy = !!startingCall;
                   const isBrowserMember = String(member?.memberType || member?.member_type || "").toLowerCase() === "browser";
-                  const isCurrentMember = nodeIdsForMember(member).includes(String(currentDevice || "").trim().toLowerCase());
+                  // A browser member's nodeHint is the Guardian device that hosts their
+                  // session, not their own identity, so it must never be compared against
+                  // currentDevice — a browser member can never BE the current Guardian.
+                  const isCurrentMember = !isBrowserMember && nodeIdsForMember(member).includes(String(currentDevice || "").trim().toLowerCase());
                   const browserCallAvailable = isBrowserMember && !!member.did;
                   const target = trustedPeer?.peerId || (browserCallAvailable ? member.did : "");
                   const callUnavailableReason = isCurrentMember

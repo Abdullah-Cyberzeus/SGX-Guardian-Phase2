@@ -63,6 +63,14 @@ function statusLabel(status: string, read: boolean) {
   return "Sent";
 }
 
+function conversationIdForRoute(isGroup: boolean, circleId?: string, peerDid?: string, guardianDid?: string, browserMemberDid?: string) {
+  if (isGroup) return `circle:${circleId}`;
+  const canonicalPeerDid = peerDid && guardianDid && browserMemberDid && peerDid === guardianDid
+    ? browserMemberDid
+    : peerDid;
+  return `peer:${canonicalPeerDid}`;
+}
+
 export function ChatConversationScreen() {
   const { circleId, peerDid } = useParams<{ circleId: string; peerDid?: string }>();
   const navigate = useNavigate();
@@ -95,12 +103,16 @@ export function ChatConversationScreen() {
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [startingCall, setStartingCall] = useState<"audio" | "video" | null>(null);
   const [liveConnected, setLiveConnected] = useState(false);
+  const [typingSenderDid, setTypingSenderDid] = useState<string | null>(null);
   const [queuedMessageIds, setQueuedMessageIds] = useState<Set<string>>(new Set());
   const [queuedMessages, setQueuedMessages] = useState<Map<string, { state: string; lastError?: string }>>(new Map());
   const bottomRef = useRef<HTMLDivElement>(null);
   const recordsRef = useRef<ChatMessageRecord[]>(records);
   const markedReadRef = useRef<Set<string>>(new Set());
   const unreadRefreshTimerRef = useRef<number | undefined>(undefined);
+  const peerTypingTimeoutRef = useRef<number | undefined>(undefined);
+  const typingSendTimeoutRef = useRef<number | undefined>(undefined);
+  const isTypingSentRef = useRef(false);
   const view: View = searchParams.get("view") === "files" ? "files" : "chat";
   const openedFromChats = isGroup && searchParams.get("from") === "chats";
 
@@ -121,6 +133,7 @@ export function ChatConversationScreen() {
 
   const loadHistory = useCallback(async () => {
     if ((isGroup && !circleId) || (!isGroup && !peerDid)) return;
+    const conversationId = conversationIdForRoute(isGroup, circleId, peerDid, session?.guardianDid, session?.browserMemberDid);
     setLoading(true);
     try {
       const response = isGroup
@@ -128,7 +141,6 @@ export function ChatConversationScreen() {
         : await chatService.directHistory(peerDid!);
       const sorted = [...response.messages].sort((a, b) => a.seq_no - b.seq_no || a.timestamp - b.timestamp);
       setRecords(sorted);
-      const conversationId = isGroup ? `circle:${circleId}` : `peer:${peerDid}`;
       await Promise.all(sorted.map((record) => messageRepository.save({
         id: record.message_id,
         conversationId,
@@ -138,7 +150,6 @@ export function ChatConversationScreen() {
         value: record,
       })));
     } catch (cause) {
-      const conversationId = isGroup ? `circle:${circleId}` : `peer:${peerDid}`;
       try {
         const cached = await messageRepository.list(conversationId);
         const restored = await Promise.all(cached.map((record) => decryptValue<ChatMessageRecord>(record.payload)));
@@ -151,7 +162,7 @@ export function ChatConversationScreen() {
     } finally {
       setLoading(false);
     }
-  }, [circleId, isGroup, peerDid]);
+  }, [circleId, isGroup, peerDid, session?.browserMemberDid, session?.guardianDid]);
 
   useEffect(() => {
     if (isMemberRole(session?.user.role) && session.browserMemberDid) {
@@ -193,12 +204,32 @@ export function ChatConversationScreen() {
   }, [refreshQueuedMessages]);
   useEffect(() => {
     let refreshTimer: number | undefined;
-    const close = openChatSocket(() => {
+    const close = openChatSocket((event) => {
+      if (event?.event_type === "Typing") {
+        const isThisConversation = isGroup
+          ? event.conversation_id === circleId
+          : event.sender_did === peerDid;
+        if (!isThisConversation || event.sender_did === localDid) return;
+        if (peerTypingTimeoutRef.current) window.clearTimeout(peerTypingTimeoutRef.current);
+        if (event.is_typing) {
+          setTypingSenderDid(event.sender_did ?? null);
+          // A "stopped typing" signal can be dropped (tab closed, network
+          // blip) — clear the indicator on its own after a pause regardless.
+          peerTypingTimeoutRef.current = window.setTimeout(() => setTypingSenderDid(null), 6_000);
+        } else {
+          setTypingSenderDid(null);
+        }
+        return;
+      }
       if (refreshTimer) window.clearTimeout(refreshTimer);
       refreshTimer = window.setTimeout(() => void loadHistory(), 100);
     }, setLiveConnected);
-    return () => { if (refreshTimer) window.clearTimeout(refreshTimer); close(); };
-  }, [loadHistory]);
+    return () => {
+      if (refreshTimer) window.clearTimeout(refreshTimer);
+      if (peerTypingTimeoutRef.current) window.clearTimeout(peerTypingTimeoutRef.current);
+      close();
+    };
+  }, [loadHistory, isGroup, circleId, peerDid, localDid]);
   useEffect(() => { if (view === "chat") bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [records, view]);
 
   useEffect(() => { recordsRef.current = records; }, [records]);
@@ -258,12 +289,39 @@ export function ChatConversationScreen() {
     };
   }, [view, localDid, records, isGroup, circleId, peerDid, clearPeerUnread, clearCircleUnread, markConversationRead]);
 
+  const sendTypingSignal = useCallback((isTyping: boolean) => {
+    if ((isGroup && !circleId) || (!isGroup && !peerDid)) return;
+    if (isTypingSentRef.current === isTyping) return;
+    isTypingSentRef.current = isTyping;
+    const recipientId = isGroup ? circleId! : peerDid!;
+    void chatService.setTyping(recipientId, isGroup, isTyping).catch(() => {
+      // Best-effort — a dropped typing signal just means the peer's
+      // indicator clears itself after its own timeout.
+    });
+  }, [isGroup, circleId, peerDid]);
+
+  const handleComposerChange = useCallback((value: string) => {
+    setMessage(value);
+    if (typingSendTimeoutRef.current) window.clearTimeout(typingSendTimeoutRef.current);
+    if (value.trim()) {
+      sendTypingSignal(true);
+      typingSendTimeoutRef.current = window.setTimeout(() => sendTypingSignal(false), 3_000);
+    } else {
+      sendTypingSignal(false);
+    }
+  }, [sendTypingSignal]);
+
+  useEffect(() => () => {
+    if (typingSendTimeoutRef.current) window.clearTimeout(typingSendTimeoutRef.current);
+    isTypingSentRef.current = false;
+  }, [circleId, peerDid]);
+
   const send = async (content: string | null, attachmentId: string | null = null) => {
     if ((isGroup && !circleId) || (!isGroup && !peerDid) || (!content?.trim() && !attachmentId)) return;
     setSending(true);
     const sentContent = content?.trim() || null;
     const recipientId = isGroup ? circleId! : peerDid!;
-    const conversationId = isGroup ? `circle:${circleId}` : `peer:${peerDid}`;
+    const conversationId = conversationIdForRoute(isGroup, circleId, peerDid, session?.guardianDid, session?.browserMemberDid);
     // Generated before the first attempt and reused on every retry, so a
     // network failure followed by an offline-queue replay resends the same
     // canonical ID rather than minting a new one — the backend recognizes the
@@ -276,6 +334,8 @@ export function ChatConversationScreen() {
         ? await chatService.sendGroup(recipientId, sentContent, attachmentId, messageId)
         : await chatService.sendDirect(recipientId, sentContent, attachmentId, messageId);
       setMessage("");
+      if (typingSendTimeoutRef.current) window.clearTimeout(typingSendTimeoutRef.current);
+      sendTypingSignal(false);
       setRecords((current) => current.some((record) => record.message_id === response.message_id) ? current : [...current, {
         message_id: response.message_id,
         sender_did: localDid || "local",
@@ -412,7 +472,10 @@ export function ChatConversationScreen() {
       content: attachment ? "" : (payload.content || ""),
       timestamp: timeLabel(record.timestamp),
       isMe,
-      read: record.status === "read" || record.read_by.length > 0,
+      // For a group, a single reader shouldn't flip the sender's view to
+      // "Read" — the backend only sets status to "read" once every circle
+      // member has read it, so trust that instead of read_by.length > 0.
+      read: record.status === "read",
       status: record.status === "pending" && isMe && !queuedMessageIds.has(record.message_id) ? "accepted_by_guardian" : record.status,
       queueState: queue?.state,
       queueError: queue?.lastError,
@@ -486,10 +549,15 @@ export function ChatConversationScreen() {
           </div>
         </div>
         <div className="shrink-0 border-t border-border bg-card px-3 py-3 md:px-6">
+          {typingSenderDid && (
+            <div className="mx-auto mb-2 max-w-2xl text-xs italic text-muted-foreground">
+              {isGroup ? contactNameForDid(typingSenderDid) : peerComposerName} is typing…
+            </div>
+          )}
           {uploadProgress !== null && <div className="mx-auto mb-2 max-w-2xl text-xs text-muted-foreground">Uploading file… {uploadProgress}%</div>}
           <div className="mx-auto flex max-w-2xl items-center gap-2">
             <AttachmentMenu onPick={(file) => void attach(file)} disabled={sending} />
-            <input value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void send(message); }} disabled={sending} placeholder={isGroup ? "Secure Circle message…" : `Message ${peerComposerName}…`} className="h-11 flex-1 rounded-full border border-border bg-input-background px-4 text-sm outline-none" />
+            <input value={message} onChange={(event) => handleComposerChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void send(message); }} disabled={sending} placeholder={isGroup ? "Secure Circle message…" : `Message ${peerComposerName}…`} className="h-11 flex-1 rounded-full border border-border bg-input-background px-4 text-sm outline-none" />
             <button type="button" aria-label="Send message" onClick={() => void send(message)} disabled={sending || !message.trim()} className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground disabled:opacity-40">{sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}</button>
           </div>
         </div>

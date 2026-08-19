@@ -3,12 +3,12 @@
 //! `frontend/dist` is produced before Cargo builds the binary.
 //! No Node.js runtime is required on the deployed board.
 
+use axum::response::Redirect;
 use axum::{
     body::Body,
     http::{header, StatusCode, Uri},
     response::{IntoResponse, Response},
 };
-use axum::response::Redirect;
 
 include!(concat!(env!("OUT_DIR"), "/embedded_frontend.rs"));
 

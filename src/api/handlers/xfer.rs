@@ -1,5 +1,5 @@
-use crate::api::error::ApiError;
 use crate::api::auth::middleware::AuthenticatedSession;
+use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::vault::namespace::validate_vault_id;
 use crate::vault::{persistence as vault_persistence, VaultConfig};
@@ -7,8 +7,7 @@ use crate::xfer::errors::XferError;
 use crate::xfer::store::{self, ReceiverState, SenderProgress};
 use axum::{
     extract::{Path, State},
-    Extension,
-    Json,
+    Extension, Json,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

@@ -175,7 +175,7 @@ async fn trusted_call_target(
     })
 }
 
-fn browser_call_actor_id(
+pub(crate) fn browser_call_actor_id(
     state: &AppState,
     session: &Option<Extension<AuthenticatedSession>>,
 ) -> String {
@@ -183,7 +183,10 @@ fn browser_call_actor_id(
         .unwrap_or_else(|| state.node_id.clone())
 }
 
-fn local_virtual_id_for_actor(state: &AppState, actor_id: &str) -> Result<String, ErrorResponse> {
+pub(crate) fn local_virtual_id_for_actor(
+    state: &AppState,
+    actor_id: &str,
+) -> Result<String, ErrorResponse> {
     if actor_id != state.node_id {
         return Ok(actor_id.to_string());
     }
@@ -202,7 +205,7 @@ fn local_virtual_id_for_actor(state: &AppState, actor_id: &str) -> Result<String
         })
 }
 
-async fn browser_member_state_for_call(
+pub(crate) async fn browser_member_state_for_call(
     state: &AppState,
     did: &str,
 ) -> Result<Option<crate::api::handlers::browser_member::BrowserMemberState>, ErrorResponse> {
@@ -252,6 +255,7 @@ async fn initiate_local_browser_call(
         Ok(value) => value,
         Err(error) => return (StatusCode::SERVICE_UNAVAILABLE, Json(error)).into_response(),
     };
+    let caller_label = initiator_device_id.clone();
     let nonce = Uuid::new_v4().to_string();
     let session_id = match state
         .call_session_manager
@@ -294,6 +298,7 @@ async fn initiate_local_browser_call(
         )
             .into_response();
     }
+    crate::notify::publish_circle_incoming_call(&caller_label, &session_id);
     (
         StatusCode::OK,
         Json(InitiateCallResponse {
@@ -888,6 +893,26 @@ pub async fn submit_signal(
         )
             .into_response();
     }
+    // The SDP a=fingerprint line is what this participant is cryptographically
+    // committing to for their live DTLS certificate. Recording it here, at the
+    // authenticated signaling boundary, is what `media-ready` later checks
+    // the browser's self-reported live fingerprint against.
+    if matches!(
+        request.kind,
+        crate::call::SignalKind::SdpOffer | crate::call::SignalKind::SdpAnswer
+    ) {
+        if let Some(fingerprint) = request
+            .payload
+            .get("sdp")
+            .and_then(|value| value.as_str())
+            .and_then(crate::media::dtls::extract_sdp_fingerprint)
+        {
+            let _ = state
+                .call_session_manager
+                .record_signaled_fingerprint(&session_id, &local.device_id, fingerprint)
+                .await;
+        }
+    }
     let sent = if is_local_browser {
         let envelope = SignalingEnvelope::new(
             request.kind,
@@ -975,10 +1000,22 @@ pub async fn list_signals(
     .into_response()
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub struct MediaReadyRequest {
+    /// SHA-256 DTLS certificate fingerprint this participant's own browser
+    /// reports it is actually using, extracted from `RTCPeerConnection`'s
+    /// local description now that media has connected. Optional so older
+    /// clients (and the no-op "{}" body already in use) keep working; without
+    /// it, this session simply never reaches `encryption_verified`.
+    #[serde(default)]
+    pub dtls_fingerprint: Option<String>,
+}
+
 pub async fn media_ready(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
     session_auth: Option<Extension<AuthenticatedSession>>,
+    request: Option<Json<MediaReadyRequest>>,
 ) -> impl IntoResponse {
     let actor_id = browser_call_actor_id(&state, &session_auth);
     let session = match state.call_session_manager.get_session(&session_id).await {
@@ -1011,6 +1048,15 @@ pub async fn media_ready(
         }
         Err(error) => return (StatusCode::CONFLICT, Json(error)).into_response(),
     };
+    if let Some(fingerprint) = request
+        .and_then(|Json(body)| body.dtls_fingerprint)
+        .filter(|value| !value.trim().is_empty())
+    {
+        let _ = state
+            .call_session_manager
+            .confirm_dtls_fingerprint(&session_id, &local.device_id, fingerprint)
+            .await;
+    }
     let sent = if is_local_browser {
         let envelope = SignalingEnvelope::new(
             crate::call::SignalKind::MediaReady,
@@ -1119,6 +1165,20 @@ pub async fn report_quality(
 pub async fn list_calls(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let calls = state.call_session_manager.list_statuses().await;
     Json(CallListResponse {
+        total: calls.len(),
+        calls,
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct CallHistoryResponse {
+    pub calls: Vec<crate::call::CallHistoryRecord>,
+    pub total: usize,
+}
+
+pub async fn call_history(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let calls = state.call_session_manager.call_history().list();
+    Json(CallHistoryResponse {
         total: calls.len(),
         calls,
     })
@@ -1556,10 +1616,19 @@ pub async fn reject_call(
             .into_response();
     }
 
+    let receiver_virtual_id = if session.receiver.virtual_id.trim().is_empty() {
+        match local_virtual_id_for_actor(&state, &req.device_id) {
+            Ok(value) => value,
+            Err(error) => return (StatusCode::SERVICE_UNAVAILABLE, Json(error)).into_response(),
+        }
+    } else {
+        session.receiver.virtual_id.clone()
+    };
+
     // Create rejection answer
     let answer = match CallAnswer::reject(
         req.device_id,
-        session.receiver.virtual_id,
+        receiver_virtual_id,
         req.session_id.clone(),
         session.nonce,
         req.reason.clone(),

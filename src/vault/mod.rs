@@ -1,19 +1,23 @@
 //! Encrypted attachment vault used by in-circle file transfer.
 
 pub mod crypto;
+pub mod downloads;
 pub mod errors;
 pub mod folders;
 pub mod ingest;
+pub mod mime_policy;
 pub mod model;
 pub mod namespace;
 pub mod persistence;
 pub mod quota;
+pub mod reaper;
 pub mod upload;
 pub mod wrapper;
 
 pub use errors::VaultError;
 pub use model::{EncMeta, VaultRecord, VaultSource};
 pub use namespace::VaultNamespace;
+pub use reaper::VaultExpiryReaper;
 
 use std::env;
 use std::path::PathBuf;

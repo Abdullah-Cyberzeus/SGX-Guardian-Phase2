@@ -75,6 +75,7 @@ const ST05BackupRestore = screen(() => import("./screens/settings/ST05BackupRest
 const ST07Geofencing = screen(() => import("./screens/settings/ST07Geofencing"), "ST07Geofencing");
 const ST08DevicePairing = screen(() => import("./screens/settings/ST08DevicePairing"), "ST08DevicePairing");
 const ST09ManageGuardians = screen(() => import("./screens/settings/ST09ManageGuardians"), "ST09ManageGuardians");
+const ST10DeviceSettings = screen(() => import("./screens/settings/ST10DeviceSettings"), "ST10DeviceSettings");
 const ST11Notifications = screen(() => import("./screens/settings/ST11Notifications"), "ST11Notifications");
 const ST12AlertRules = screen(() => import("./screens/settings/ST12AlertRules"), "ST12AlertRules");
 const ST13DualWifi = screen(() => import("./screens/settings/ST13DualWifi"), "ST13DualWifi");
@@ -241,6 +242,7 @@ export const router = createBrowserRouter([
                 { path: "geofencing", Component: ST07Geofencing },
                 { path: "device-pairing", Component: ST08DevicePairing },
                 { path: "guardians", Component: ST09ManageGuardians },
+                { path: "device-settings", Component: ST10DeviceSettings },
                 { path: "notifications", Component: ST11Notifications },
                 { path: "pending-approvals", Component: ST16PendingApprovals },
                 { path: "alert-rules", Component: ST12AlertRules },

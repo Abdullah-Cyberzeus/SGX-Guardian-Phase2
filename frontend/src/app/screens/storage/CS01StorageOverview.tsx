@@ -20,6 +20,7 @@ import { EntryRow, ENTRY_ROW_HEIGHT } from "../../components/vault/EntryRow";
 import { StorageBar } from "../../components/vault/StorageBar";
 import { FileDetailPanel } from "../../components/vault/FileDetailPanel";
 import { NewFolderDialog } from "../../components/vault/NewFolderDialog";
+import { UploadDescriptionDialog } from "../../components/vault/UploadDescriptionDialog";
 import { FolderActionsDialog } from "../../components/vault/FolderActionsDialog";
 import { useVirtualRows } from "../../components/vault/useVirtualRows";
 import { formatBytes, ROOT_ID, type BrowserEntry } from "../../components/vault/types";
@@ -58,6 +59,7 @@ export function CS01StorageOverview() {
   const [searchResults, setSearchResults] = useState<typeof vault.files>([]);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [pendingUpload, setPendingUpload] = useState<File[] | null>(null);
   const [actionFolderId, setActionFolderId] = useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [starredOnly, setStarredOnly] = useState(false);
@@ -150,11 +152,18 @@ export function CS01StorageOverview() {
     else navigate(`/storage/${entry.file.id}`);
   };
 
-  const handleUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+  const handleUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(e.target.files ?? []);
     e.target.value = "";
     if (!selected.length) return;
-    const results = await Promise.allSettled(selected.map((file) => vault.uploadFile(file, folder.id)));
+    setPendingUpload(selected);
+  };
+
+  const handleConfirmUpload = async (description: string) => {
+    const selected = pendingUpload ?? [];
+    const results = await Promise.allSettled(
+      selected.map((file) => vault.uploadFile(file, folder.id, description)),
+    );
     const uploaded = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
     const failed = results.length - uploaded.length;
     if (uploaded.length) {
@@ -557,6 +566,13 @@ export function CS01StorageOverview() {
       </div>
 
       <input ref={uploadRef} type="file" multiple hidden onChange={handleUpload} />
+      <UploadDescriptionDialog
+        open={!!pendingUpload}
+        onOpenChange={(open) => { if (!open) setPendingUpload(null); }}
+        fileCount={pendingUpload?.length ?? 0}
+        folderName={folder.id === ROOT_ID ? "All Files" : folder.name}
+        onConfirm={handleConfirmUpload}
+      />
       {canManageVault && <NewFolderDialog
         open={newFolderOpen}
         onOpenChange={setNewFolderOpen}
