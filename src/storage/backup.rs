@@ -10,7 +10,8 @@ impl BackupManager {
     pub fn create_backup(data_dir: &Path, backup_base_dir: &Path) -> Result<PathBuf, String> {
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
         let backup_dir = backup_base_dir.join(format!("backup_{}", timestamp));
-        fs::create_dir_all(&backup_dir).map_err(|e| format!("Failed to create backup dir: {}", e))?;
+        fs::create_dir_all(&backup_dir)
+            .map_err(|e| format!("Failed to create backup dir: {}", e))?;
 
         let files = vec![
             "devices.json",
@@ -45,7 +46,10 @@ impl BackupManager {
     /// Restores all JSON files from a backup directory into the active data directory.
     pub fn restore_backup(backup_dir: &Path, data_dir: &Path) -> Result<usize, String> {
         if !backup_dir.exists() {
-            return Err(format!("Backup directory {} does not exist", backup_dir.display()));
+            return Err(format!(
+                "Backup directory {} does not exist",
+                backup_dir.display()
+            ));
         }
 
         let files = vec![
@@ -63,10 +67,14 @@ impl BackupManager {
                 // Validate JSON syntax before restoring
                 if Self::validate_json_file(&src) {
                     let dest = data_dir.join(file_name);
-                    fs::copy(&src, &dest).map_err(|e| format!("Failed to restore {}: {}", file_name, e))?;
+                    fs::copy(&src, &dest)
+                        .map_err(|e| format!("Failed to restore {}: {}", file_name, e))?;
                     restored_count += 1;
                 } else {
-                    warn!("⚠️ Backup file {} is corrupted JSON, skipping restore", src.display());
+                    warn!(
+                        "⚠️ Backup file {} is corrupted JSON, skipping restore",
+                        src.display()
+                    );
                 }
             }
         }
@@ -97,7 +105,11 @@ impl BackupManager {
         let lock_path = file_path.with_file_name(format!("{}.lock", file_stem));
 
         if lock_path.exists() && Self::validate_json_file(&lock_path) {
-            info!("🩹 Auto-healing {} from {} lock snapshot...", file_path.display(), lock_path.display());
+            info!(
+                "🩹 Auto-healing {} from {} lock snapshot...",
+                file_path.display(),
+                lock_path.display()
+            );
             if fs::copy(&lock_path, file_path).is_ok() {
                 return true;
             }
@@ -160,9 +172,10 @@ mod tests {
         fs::write(&file_path, "corrupted { json ...").unwrap();
         fs::write(&lock_path, r#"{"devices":{}}"#).unwrap();
 
-        assert!(!BackupManager::validate_and_heal(&file_path));
+        assert!(BackupManager::validate_and_heal(&file_path));
+        assert_eq!(fs::read_to_string(&file_path).unwrap(), r#"{"devices":{}}"#);
 
-        // After healing, devices.json should match devices.lock
+        // A second pass should remain healthy and keep the healed file intact.
         let healed = BackupManager::validate_and_heal(&file_path);
         assert!(healed);
     }

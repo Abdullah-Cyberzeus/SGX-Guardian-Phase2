@@ -1,18 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum FailurePolicy {
+    #[default]
     Continue,
     Abort,
     Log,
     Retry,
-}
-
-impl Default for FailurePolicy {
-    fn default() -> Self {
-        FailurePolicy::Continue
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

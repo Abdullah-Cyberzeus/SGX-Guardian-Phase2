@@ -17,7 +17,10 @@ where
             if s.trim().is_empty() {
                 Ok(None)
             } else {
-                s.trim().parse::<usize>().map(Some).map_err(de::Error::custom)
+                s.trim()
+                    .parse::<usize>()
+                    .map(Some)
+                    .map_err(de::Error::custom)
             }
         }
         None => Ok(None),
@@ -59,7 +62,7 @@ impl<T: Clone> PaginatedResponse<T> {
         let total_pages = if total_count == 0 {
             1
         } else {
-            (total_count + per_page - 1) / per_page
+            total_count.div_ceil(per_page)
         };
 
         let start = (page - 1) * per_page;

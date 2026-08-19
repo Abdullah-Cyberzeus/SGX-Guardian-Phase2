@@ -69,7 +69,11 @@ impl NotificationStore {
         list.push(notif);
     }
 
-    pub async fn get_notifications(&self, unread_only: bool, severity_filter: Option<&str>) -> Vec<NotificationRecord> {
+    pub async fn get_notifications(
+        &self,
+        unread_only: bool,
+        severity_filter: Option<&str>,
+    ) -> Vec<NotificationRecord> {
         let list = self.notifications.read().await;
         list.iter()
             .filter(|n| {
@@ -100,6 +104,12 @@ impl NotificationStore {
     }
 }
 
+impl Default for NotificationStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub static GLOBAL_NOTIFICATIONS: once_cell::sync::Lazy<Arc<NotificationStore>> =
     once_cell::sync::Lazy::new(|| Arc::new(NotificationStore::new()));
 
@@ -109,10 +119,12 @@ pub async fn list_notifications(
     Query(query): Query<NotificationQueryParams>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let unread_only = query.unread.unwrap_or(false);
-    
+
     let records = match state.get_notification_manager().await {
         Some(mgr) => {
-            let notifs = mgr.list_notifications(unread_only, query.severity.as_deref()).await;
+            let notifs = mgr
+                .list_notifications(unread_only, query.severity.as_deref())
+                .await;
             notifs
                 .into_iter()
                 .map(|n| NotificationRecord {
@@ -144,7 +156,11 @@ pub async fn mark_notifications_read(
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let count = match state.get_notification_manager().await {
         Some(mgr) => mgr.mark_as_read(&payload.notification_ids).await,
-        None => GLOBAL_NOTIFICATIONS.mark_as_read(&payload.notification_ids).await,
+        None => {
+            GLOBAL_NOTIFICATIONS
+                .mark_as_read(&payload.notification_ids)
+                .await
+        }
     };
 
     Ok((

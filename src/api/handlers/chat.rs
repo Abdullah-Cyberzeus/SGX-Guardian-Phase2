@@ -26,7 +26,11 @@ fn get_grpc_addr(ip: &str, peer_id_str: &str) -> String {
             "nodeB" => 50252,
             "nodeC" => 50253,
             _ => {
-                if let Some(last_octet) = ip.split('.').last().and_then(|s| s.parse::<u16>().ok()) {
+                if let Some(last_octet) = ip
+                    .split('.')
+                    .next_back()
+                    .and_then(|s| s.parse::<u16>().ok())
+                {
                     if (1..=9).contains(&last_octet) {
                         50250 + last_octet
                     } else {

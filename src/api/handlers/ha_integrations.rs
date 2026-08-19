@@ -74,7 +74,7 @@ pub async fn get_integration_status(
         }
     };
 
-    let provider = VendorProvider::from_str(&provider_str).ok_or_else(|| {
+    let provider = provider_str.parse::<VendorProvider>().map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": format!("Unknown vendor provider '{}'", provider_str) })),
@@ -133,7 +133,7 @@ pub async fn connect_integration(
         }
     };
 
-    let provider = VendorProvider::from_str(&provider_str).ok_or_else(|| {
+    let provider = provider_str.parse::<VendorProvider>().map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": format!("Unknown vendor provider '{}'", provider_str) })),
@@ -144,7 +144,9 @@ pub async fn connect_integration(
         let kasa_payload: KasaConnectPayload = serde_json::from_value(body).map_err(|e| {
             (
                 StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": format!("Invalid Kasa connect payload: {}", e) })),
+                Json(
+                    serde_json::json!({ "error": format!("Invalid Kasa connect payload: {}", e) }),
+                ),
             )
         })?;
 
@@ -168,7 +170,12 @@ pub async fn connect_integration(
         let discovered_count = manager
             .connect_kasa(creds, flow_client.as_ref(), device_manager.as_ref())
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))))?;
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": e })),
+                )
+            })?;
 
         return Ok((
             StatusCode::OK,
@@ -186,7 +193,9 @@ pub async fn connect_integration(
         let nest_payload: NestConnectPayload = serde_json::from_value(body).map_err(|e| {
             (
                 StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": format!("Invalid Nest connect payload: {}", e) })),
+                Json(
+                    serde_json::json!({ "error": format!("Invalid Nest connect payload: {}", e) }),
+                ),
             )
         })?;
 
@@ -217,7 +226,12 @@ pub async fn connect_integration(
         let discovered_count = manager
             .connect_nest(creds, flow_client.as_ref(), device_manager.as_ref())
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))))?;
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": e })),
+                )
+            })?;
 
         return Ok((
             StatusCode::OK,
@@ -237,7 +251,9 @@ pub async fn connect_integration(
         )
     })?;
 
-    let expires_at = payload.expires_in_secs.map(|s| chrono::Utc::now() + chrono::Duration::seconds(s));
+    let expires_at = payload
+        .expires_in_secs
+        .map(|s| chrono::Utc::now() + chrono::Duration::seconds(s));
 
     let creds = OAuthCredentials {
         access_token: payload.access_token,
@@ -250,7 +266,12 @@ pub async fn connect_integration(
     manager
         .connect_integration(provider, creds)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e })),
+            )
+        })?;
 
     Ok((
         StatusCode::OK,
@@ -277,7 +298,7 @@ pub async fn disconnect_integration(
         }
     };
 
-    let provider = VendorProvider::from_str(&provider_str).ok_or_else(|| {
+    let provider = provider_str.parse::<VendorProvider>().map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": format!("Unknown vendor provider '{}'", provider_str) })),
@@ -289,9 +310,19 @@ pub async fn disconnect_integration(
     let device_manager = state.get_device_manager().await;
 
     let devices_removed = manager
-        .disconnect_integration(provider, flow_client.as_ref(), nest_flow_client.as_ref(), device_manager.as_ref())
+        .disconnect_integration(
+            provider,
+            flow_client.as_ref(),
+            nest_flow_client.as_ref(),
+            device_manager.as_ref(),
+        )
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e })),
+            )
+        })?;
 
     Ok((
         StatusCode::OK,
@@ -305,12 +336,14 @@ pub async fn disconnect_integration(
 }
 
 /// GET /api/v1/ha/integrations/google_nest/oauth/auth_url
-pub async fn get_nest_oauth_url() -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+pub async fn get_nest_oauth_url() -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)>
+{
     let client_id = std::env::var("SGX_NEST_CLIENT_ID").ok();
     let project_id = std::env::var("SGX_NEST_PROJECT_ID").ok();
 
-    let redirect_uri = std::env::var("SGX_NEST_REDIRECT_URI")
-        .unwrap_or_else(|_| "https://localhost:8443/api/v1/ha/integrations/google_nest/oauth/callback".to_string());
+    let redirect_uri = std::env::var("SGX_NEST_REDIRECT_URI").unwrap_or_else(|_| {
+        "https://localhost:8443/api/v1/ha/integrations/google_nest/oauth/callback".to_string()
+    });
 
     let is_configured = client_id.is_some() && project_id.is_some();
 
@@ -363,23 +396,29 @@ pub async fn nest_oauth_callback(
         )
     })?;
 
-    let client_id = std::env::var("SGX_NEST_CLIENT_ID")
-        .unwrap_or_else(|_| "826937801762-i23ak49q222h42sffqmgvemb9pnl5jvr.apps.googleusercontent.com".to_string());
+    let client_id = std::env::var("SGX_NEST_CLIENT_ID").unwrap_or_else(|_| {
+        "826937801762-i23ak49q222h42sffqmgvemb9pnl5jvr.apps.googleusercontent.com".to_string()
+    });
 
-    let client_secret = std::env::var("SGX_NEST_CLIENT_SECRET")
-        .unwrap_or_default();
+    let client_secret = std::env::var("SGX_NEST_CLIENT_SECRET").unwrap_or_default();
 
     let project_id = std::env::var("SGX_NEST_PROJECT_ID")
         .ok()
         .or_else(|| Some("be666f67-3423-4a5d-b82d-38ec2865e1fa".to_string()));
 
-    let redirect_uri = std::env::var("SGX_NEST_REDIRECT_URI")
-        .unwrap_or_else(|_| "https://localhost:8443/api/v1/ha/integrations/google_nest/oauth/callback".to_string());
+    let redirect_uri = std::env::var("SGX_NEST_REDIRECT_URI").unwrap_or_else(|_| {
+        "https://localhost:8443/api/v1/ha/integrations/google_nest/oauth/callback".to_string()
+    });
 
     let http_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() }))))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+        })?;
 
     let params = [
         ("client_id", client_id.as_str()),
@@ -400,7 +439,9 @@ pub async fn nest_oauth_callback(
         let err_body = resp.text().await.unwrap_or_default();
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": format!("Google OAuth token exchange failed: {}", err_body) })),
+            Json(
+                serde_json::json!({ "error": format!("Google OAuth token exchange failed: {}", err_body) }),
+            ),
         ));
     }
 
@@ -430,7 +471,12 @@ pub async fn nest_oauth_callback(
     let discovered_count = manager
         .connect_nest(creds, flow_client.as_ref(), device_manager.as_ref())
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e })),
+            )
+        })?;
 
     let html_content = format!(
         "<!DOCTYPE html><html><head><title>SG-X Guardian</title><style>body{{font-family:sans-serif;text-align:center;padding:50px;background:#121212;color:#fff;}}h1{{color:#4caf50;}}</style></head><body><h1>🎉 Google Nest Connected Successfully!</h1><p>Discovered {} device(s). You may now close this window.</p></body></html>",
@@ -470,7 +516,8 @@ mod tests {
         }"#;
 
         let parsed: KasaConnectPayload = serde_json::from_str(cloud_json).unwrap();
-        let creds = crate::kasa::KasaCredentials::new(parsed.mode, parsed.username, parsed.password);
+        let creds =
+            crate::kasa::KasaCredentials::new(parsed.mode, parsed.username, parsed.password);
         assert!(creds.validate().is_ok());
         assert_eq!(creds.mode, "cloud");
 
@@ -479,12 +526,20 @@ mod tests {
             "username": "user@kasa.com"
         }"#;
         let parsed_invalid: KasaConnectPayload = serde_json::from_str(missing_pass_json).unwrap();
-        let creds_invalid = crate::kasa::KasaCredentials::new(parsed_invalid.mode, parsed_invalid.username, parsed_invalid.password);
+        let creds_invalid = crate::kasa::KasaCredentials::new(
+            parsed_invalid.mode,
+            parsed_invalid.username,
+            parsed_invalid.password,
+        );
         assert!(creds_invalid.validate().is_err());
 
         let local_json = r#"{ "mode": "local" }"#;
         let parsed_local: KasaConnectPayload = serde_json::from_str(local_json).unwrap();
-        let creds_local = crate::kasa::KasaCredentials::new(parsed_local.mode, parsed_local.username, parsed_local.password);
+        let creds_local = crate::kasa::KasaCredentials::new(
+            parsed_local.mode,
+            parsed_local.username,
+            parsed_local.password,
+        );
         assert!(creds_local.validate().is_ok());
         assert_eq!(creds_local.mode, "local");
     }

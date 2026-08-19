@@ -29,14 +29,15 @@ impl SecureFileStore {
         E: From<io::Error>,
     {
         let lock_path = self.path.with_extension("lock");
-        
+
         // 1. Acquire exclusive lock on {filename}.lock
         let lock_file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(&lock_path)?;
-            
+
         lock_file.lock_exclusive()?;
 
         // 2. Read current file content
@@ -58,7 +59,7 @@ impl SecureFileStore {
             .create(true)
             .truncate(true)
             .open(&tmp_path)?;
-            
+
         tmp_file.write_all(&new_data)?;
 
         // 5. fsync the temp file
@@ -76,13 +77,14 @@ impl SecureFileStore {
     /// Safely read data with shared lock
     pub fn read(&self) -> io::Result<Option<Vec<u8>>> {
         let lock_path = self.path.with_extension("lock");
-        
+
         let lock_file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(&lock_path)?;
-            
+
         lock_file.lock_shared()?;
 
         let mut data = None;
@@ -110,7 +112,7 @@ mod tests {
     fn test_concurrent_writes() {
         let file = NamedTempFile::new().unwrap();
         let path = file.path().to_path_buf();
-        
+
         // Initialize file with "0"
         fs::write(&path, "0").unwrap();
 
@@ -121,12 +123,14 @@ mod tests {
         for _ in 0..10 {
             let store_clone = Arc::clone(&store);
             let handle = thread::spawn(move || {
-                store_clone.write_atomic(|data| {
-                    let old_val_str = String::from_utf8(data.unwrap()).unwrap();
-                    let old_val: i32 = old_val_str.parse().unwrap();
-                    let new_val = old_val + 1;
-                    Ok::<Vec<u8>, io::Error>(new_val.to_string().into_bytes())
-                }).unwrap();
+                store_clone
+                    .write_atomic(|data| {
+                        let old_val_str = String::from_utf8(data.unwrap()).unwrap();
+                        let old_val: i32 = old_val_str.parse().unwrap();
+                        let new_val = old_val + 1;
+                        Ok::<Vec<u8>, io::Error>(new_val.to_string().into_bytes())
+                    })
+                    .unwrap();
             });
             handles.push(handle);
         }

@@ -28,7 +28,10 @@ impl NotificationManager {
     pub fn load_or_create(storage_path: PathBuf, event_bus: Option<Arc<EventBus>>) -> Self {
         let notifs = if storage_path.exists() {
             Self::read_from_disk_internal(&storage_path).unwrap_or_else(|e| {
-                eprintln!("⚠️ Failed to read notifications.json: {}, starting empty", e);
+                eprintln!(
+                    "⚠️ Failed to read notifications.json: {}, starting empty",
+                    e
+                );
                 Vec::new()
             })
         } else {
@@ -130,11 +133,9 @@ impl NotificationManager {
         let mut updated = 0;
         if let Ok(mut list) = self.notifications.write() {
             for n in list.iter_mut() {
-                if ids.contains(&n.id) {
-                    if !n.read {
-                        n.read = true;
-                        updated += 1;
-                    }
+                if ids.contains(&n.id) && !n.read {
+                    n.read = true;
+                    updated += 1;
                 }
             }
         }
@@ -150,11 +151,9 @@ impl NotificationManager {
             Err(_) => return Err("Lock poisoned".to_string()),
         };
         let path = self.storage_path.clone();
-        tokio::task::spawn_blocking(move || {
-            Self::write_to_disk_internal(&path, &list)
-        })
-        .await
-        .map_err(|e| e.to_string())?
+        tokio::task::spawn_blocking(move || Self::write_to_disk_internal(&path, &list))
+            .await
+            .map_err(|e| e.to_string())?
     }
 
     fn save_to_disk_sync(&self) -> Result<(), String> {
@@ -168,7 +167,8 @@ impl NotificationManager {
     fn read_from_disk_internal(path: &Path) -> Result<Vec<NotificationRecord>, String> {
         let mut file = File::open(path).map_err(|e| e.to_string())?;
         let mut contents = String::new();
-        file.read_to_string(&mut contents).map_err(|e| e.to_string())?;
+        file.read_to_string(&mut contents)
+            .map_err(|e| e.to_string())?;
         serde_json::from_str(&contents).map_err(|e| e.to_string())
     }
 
@@ -210,12 +210,14 @@ mod tests {
         let path = td.path().join("notifications.json");
 
         let manager = NotificationManager::load_or_create(path, None);
-        let notif = manager.create_notification("Critical Alert", "Battery empty", "critical").await;
+        let notif = manager
+            .create_notification("Critical Alert", "Battery empty", "critical")
+            .await;
 
         let unread = manager.list_notifications(true, None).await;
         assert!(unread.iter().any(|n| n.id == notif.id));
 
-        let updated = manager.mark_as_read(&[notif.id.clone()]).await;
+        let updated = manager.mark_as_read(std::slice::from_ref(&notif.id)).await;
         assert_eq!(updated, 1);
 
         let unread_after = manager.list_notifications(true, None).await;

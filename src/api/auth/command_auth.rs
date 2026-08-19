@@ -56,9 +56,12 @@ impl CommandAuthorizer {
                         }
                     }
 
-                    if let Some(color_temp) = params_val.get("color_temp").or_else(|| params_val.get("color_temp_kelvin")) {
+                    if let Some(color_temp) = params_val
+                        .get("color_temp")
+                        .or_else(|| params_val.get("color_temp_kelvin"))
+                    {
                         if let Some(ct) = color_temp.as_u64() {
-                            if ct < 1500 || ct > 6500 {
+                            if !(1500..=6500).contains(&ct) {
                                 return Err(CommandAuthError::InvalidSchema(format!(
                                     "Invalid color_temp {}: must be between 1500K and 6500K",
                                     ct
@@ -66,7 +69,8 @@ impl CommandAuthorizer {
                             }
                         } else {
                             return Err(CommandAuthError::InvalidSchema(
-                                "Color temperature must be an integer between 1500 and 6500".to_string(),
+                                "Color temperature must be an integer between 1500 and 6500"
+                                    .to_string(),
                             ));
                         }
                     }
@@ -75,7 +79,8 @@ impl CommandAuthorizer {
                         if let Some(arr) = rgb_color.as_array() {
                             if arr.len() != 3 {
                                 return Err(CommandAuthError::InvalidSchema(
-                                    "rgb_color must be an array of 3 RGB values [r, g, b]".to_string(),
+                                    "rgb_color must be an array of 3 RGB values [r, g, b]"
+                                        .to_string(),
                                 ));
                             }
                             for val in arr {
@@ -88,7 +93,8 @@ impl CommandAuthorizer {
                                     }
                                 } else {
                                     return Err(CommandAuthError::InvalidSchema(
-                                        "RGB color values must be integers between 0 and 255".to_string(),
+                                        "RGB color values must be integers between 0 and 255"
+                                            .to_string(),
                                     ));
                                 }
                             }
@@ -103,7 +109,8 @@ impl CommandAuthorizer {
                         if let Some(arr) = hs_color.as_array() {
                             if arr.len() != 2 {
                                 return Err(CommandAuthError::InvalidSchema(
-                                    "hs_color must be an array of 2 values [hue, saturation]".to_string(),
+                                    "hs_color must be an array of 2 values [hue, saturation]"
+                                        .to_string(),
                                 ));
                             }
                         } else {
@@ -119,7 +126,7 @@ impl CommandAuthorizer {
                     if let Some(params_val) = params {
                         if let Some(temp) = params_val.get("temperature") {
                             if let Some(t) = temp.as_f64() {
-                                if t < 10.0 || t > 95.0 {
+                                if !(10.0..=95.0).contains(&t) {
                                     return Err(CommandAuthError::InvalidSchema(format!(
                                         "Target temperature {:.1} out of bounds (10.0 to 95.0)",
                                         t
@@ -201,9 +208,9 @@ impl CommandAuthorizer {
         }
 
         match command {
-            "turn_off" if normalized_state == "off" => Err(CommandAuthError::NoOp(
-                "Device is already off".to_string(),
-            )),
+            "turn_off" if normalized_state == "off" => {
+                Err(CommandAuthError::NoOp("Device is already off".to_string()))
+            }
             "lock" if normalized_state == "locked" => Err(CommandAuthError::NoOp(
                 "Device is already locked".to_string(),
             )),
@@ -270,7 +277,10 @@ mod tests {
             "turn_on",
             &Some(serde_json::json!({"color_temp": 1000})),
         );
-        assert!(matches!(invalid_ct, Err(CommandAuthError::InvalidSchema(_))));
+        assert!(matches!(
+            invalid_ct,
+            Err(CommandAuthError::InvalidSchema(_))
+        ));
 
         let valid_rgb = CommandAuthorizer::validate_command_schema(
             "light",
@@ -284,7 +294,10 @@ mod tests {
             "turn_on",
             &Some(serde_json::json!({"rgb_color": [255, 300, 0]})),
         );
-        assert!(matches!(invalid_rgb, Err(CommandAuthError::InvalidSchema(_))));
+        assert!(matches!(
+            invalid_rgb,
+            Err(CommandAuthError::InvalidSchema(_))
+        ));
     }
 
     #[test]
@@ -292,7 +305,11 @@ mod tests {
         let res = CommandAuthorizer::check_no_op("on", "turn_on", &None);
         assert!(matches!(res, Err(CommandAuthError::NoOp(_))));
 
-        let valid_with_param = CommandAuthorizer::check_no_op("on", "turn_on", &Some(serde_json::json!({"brightness": 120})));
+        let valid_with_param = CommandAuthorizer::check_no_op(
+            "on",
+            "turn_on",
+            &Some(serde_json::json!({"brightness": 120})),
+        );
         assert!(valid_with_param.is_ok());
 
         let valid = CommandAuthorizer::check_no_op("off", "turn_on", &None);

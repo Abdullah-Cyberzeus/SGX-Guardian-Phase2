@@ -1,8 +1,8 @@
+use crate::nest::credentials::NestCredentials;
 use chrono::{Duration, Utc};
 use reqwest::Client;
 use serde::Deserialize;
 use tracing::info;
-use crate::nest::credentials::NestCredentials;
 
 #[derive(Debug, Deserialize)]
 pub struct GoogleOAuthTokenResponse {
@@ -43,14 +43,20 @@ impl NestTokenRefresher {
             .client_id
             .as_deref()
             .or(client_id_env.as_deref())
-            .ok_or_else(|| "Google Nest client_id is required but missing from credentials and environment".to_string())?;
+            .ok_or_else(|| {
+                "Google Nest client_id is required but missing from credentials and environment"
+                    .to_string()
+            })?;
 
         let client_secret_env = std::env::var("SGX_NEST_CLIENT_SECRET").ok();
         let client_secret = creds
             .client_secret
             .as_deref()
             .or(client_secret_env.as_deref())
-            .ok_or_else(|| "Google Nest client_secret is required but missing from credentials and environment".to_string())?;
+            .ok_or_else(|| {
+                "Google Nest client_secret is required but missing from credentials and environment"
+                    .to_string()
+            })?;
 
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(15))
@@ -76,7 +82,10 @@ impl NestTokenRefresher {
         let status = resp.status();
         if !status.is_success() {
             let err_text = resp.text().await.unwrap_or_default();
-            return Err(format!("Google OAuth token refresh error (HTTP {}): {}", status, err_text));
+            return Err(format!(
+                "Google OAuth token refresh error (HTTP {}): {}",
+                status, err_text
+            ));
         }
 
         let token_data: GoogleOAuthTokenResponse = resp
@@ -94,7 +103,10 @@ impl NestTokenRefresher {
             updated_creds.refresh_token = Some(new_refresh);
         }
 
-        info!("✅ Google Nest OAuth access token refreshed successfully (expires at {})", expires_at);
+        info!(
+            "✅ Google Nest OAuth access token refreshed successfully (expires at {})",
+            expires_at
+        );
         Ok(updated_creds)
     }
 }

@@ -27,7 +27,7 @@ pub async fn append_p2p_message(
         .join(safe_filename(peer_did));
     let json_line = serde_json::to_string(record)?;
 
-    append_message_if_absent(&path, &record.message_id, &json_line).await
+    append_message_if_absent(&path, record, &json_line).await
 }
 
 /// Appends a new chat message to a specific Group/Circle conversation log.
@@ -40,7 +40,7 @@ pub async fn append_group_message(
         .join(safe_filename(group_id));
     let json_line = serde_json::to_string(record)?;
 
-    append_message_if_absent(&path, &record.message_id, &json_line).await
+    append_message_if_absent(&path, record, &json_line).await
 }
 
 /// Persist a message exactly once. Network retries and an overlapping history
@@ -48,7 +48,7 @@ pub async fn append_group_message(
 /// idempotency key for every conversation log.
 async fn append_message_if_absent(
     path: &PathBuf,
-    message_id: &str,
+    record: &ChatMessageRecord,
     line: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let lock = FILE_LOCKS
@@ -65,9 +65,10 @@ async fn append_message_if_absent(
         let mut reader = BufReader::new(file);
         let mut existing = String::new();
         while reader.read_line(&mut existing).await? > 0 {
-            if serde_json::from_str::<ChatMessageRecord>(existing.trim())
-                .is_ok_and(|record| record.message_id == message_id)
-            {
+            if serde_json::from_str::<ChatMessageRecord>(existing.trim()).is_ok_and(|existing| {
+                existing.message_id == record.message_id
+                    && existing.recipient_did == record.recipient_did
+            }) {
                 return Ok(());
             }
             existing.clear();
@@ -330,7 +331,9 @@ async fn read_history_file(
 
     let mut reader = BufReader::new(file);
     let mut messages = Vec::new();
-    let mut seen_message_ids = HashSet::new();
+    // Group fan-out stores one copy per recipient, so keep retries idempotent
+    // per (message_id, recipient_did) rather than collapsing the whole message.
+    let mut seen_entries: HashSet<(String, String)> = HashSet::new();
     let mut line = String::new();
 
     while reader.read_line(&mut line).await? > 0 {
@@ -338,7 +341,7 @@ async fn read_history_file(
         if !trimmed.is_empty() {
             let record = serde_json::from_str::<ChatMessageRecord>(trimmed)
                 .map_err(|e| format!("Corrupted JSON in chat history: {}", e))?;
-            if seen_message_ids.insert(record.message_id.clone()) {
+            if seen_entries.insert((record.message_id.clone(), record.recipient_did.clone())) {
                 messages.push(record);
             }
         }
