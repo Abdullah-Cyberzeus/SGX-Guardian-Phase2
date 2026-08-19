@@ -110,6 +110,8 @@ fn is_public_route(method: &Method, path: &str) -> bool {
             | (&Method::POST, "/api/v1/restore/validate")
             | (&Method::GET, "/api/v1/restore/status")
             | (&Method::GET, "/api/v1/health")
+            | (&Method::GET, "/api/v1/ha/integrations/google_nest/oauth/callback")
+            | (&Method::GET, "/api/v1/ha/integrations/google_nest/oauth/auth_url")
     ) || public_frontend
 }
 

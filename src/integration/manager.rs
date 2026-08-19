@@ -226,19 +226,29 @@ impl IntegrationManager {
     }
 
     /// Connects and configures Google Nest integration
+    /// Returns `(devices_discovered_so_far, ha_is_restarting)`. When `ha_is_restarting` is
+    /// true, `devices_discovered_so_far` is always 0 — discovery is still running in the
+    /// background (see below) and the caller should tell the user devices will appear
+    /// shortly rather than treating 0 as "no devices found".
     pub async fn connect_nest(
-        &self,
+        self: &Arc<Self>,
         mut nest_creds: crate::nest::NestCredentials,
         flow_client: Option<&crate::nest::NestHaConfigFlowClient>,
         device_manager: Option<&Arc<crate::device::manager::DeviceManager>>,
-    ) -> Result<usize, String> {
+    ) -> Result<(usize, bool), String> {
         nest_creds.validate()?;
 
         // Programmatically set up HA config entry if flow_client is available
+        let mut ha_restarting = false;
+        let mut pending_entry_id: Option<String> = None;
         if let Some(client) = flow_client {
             match client.setup_nest_config_entry(&nest_creds).await {
-                Ok(entry_id) => {
+                Ok((entry_id, restarted)) => {
                     info!("✅ Programmatically created HA Nest config entry '{}'", entry_id);
+                    ha_restarting = restarted;
+                    if restarted {
+                        pending_entry_id = Some(entry_id.clone());
+                    }
                     nest_creds.config_entry_id = Some(entry_id);
                 }
                 Err(e) => {
@@ -261,9 +271,58 @@ impl IntegrationManager {
 
         info!("✅ Google Nest integration credentials saved (AES-GCM-256 encrypted).");
 
+        if ha_restarting {
+            // The entry was just injected directly into HA's storage, which only takes
+            // effect after HA restarts (see `NestHaConfigFlowClient::inject_direct_storage_entry`).
+            // That restart is already in flight. Don't block this call on it — it can take
+            // up to a minute — poll and reconcile in the background instead. The frontend
+            // already refetches the device list periodically, so devices simply appear once
+            // HA is back, with no manual restart or "Sync Devices" click required.
+            if let (Some(client), Some(dm), Some(entry_id)) =
+                (flow_client.cloned(), device_manager.cloned(), pending_entry_id)
+            {
+                let integration_manager = Arc::clone(self);
+                tokio::spawn(async move {
+                    // Wait for the *specific* Nest entry to reach "loaded" — not just for
+                    // HA's HTTP API to answer. HA's web server comes back well before the
+                    // Nest integration finishes calling the SDM API and registering its
+                    // entities; reconciling in that gap would see zero Nest entities and
+                    // read that as "these devices were deleted", purging them from the very
+                    // registry this task is trying to populate.
+                    if !client
+                        .wait_for_entry_loaded(&entry_id, std::time::Duration::from_secs(90))
+                        .await
+                    {
+                        tracing::warn!(
+                            "⚠️ Nest config entry {} did not finish loading within 90s after the reconnect restart",
+                            entry_id
+                        );
+                        return;
+                    }
+
+                    let _ = dm.reconcile_state().await;
+                    let all_devices = dm.get_registry().get_all_devices().await;
+                    let count = all_devices
+                        .iter()
+                        .filter(|d| d.vendor == "google_nest" || d.ha_entity_id.contains("nest"))
+                        .count();
+
+                    let mut write_guard = integration_manager.integrations.write().await;
+                    if let Some(meta_mut) = write_guard.get_mut(&VendorProvider::GoogleNest) {
+                        meta_mut.device_count = count;
+                        meta_mut.last_synced = Some(Utc::now());
+                        let _ = integration_manager.store.save(&write_guard);
+                    }
+                    info!("✅ Nest device discovery complete after HA restart: {} device(s)", count);
+                });
+            }
+            return Ok((0, true));
+        }
+
         let mut discovered_count = 0usize;
         if let Some(dm) = device_manager {
-            // Pause 2.5 seconds to allow HA's Nest driver time to discover SDM devices
+            // Config-flow fallback path: the entry is already live in HA, no restart needed.
+            // Pause briefly to allow HA's Nest driver time to discover SDM devices.
             tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
 
             let _ = dm.reconcile_state().await;
@@ -281,7 +340,7 @@ impl IntegrationManager {
             }
         }
 
-        Ok(discovered_count)
+        Ok((discovered_count, false))
     }
 
     /// Updates Google Nest credentials silently (used by TokenRefreshWorker without re-triggering HA config flow)
@@ -403,8 +462,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_disconnect_purges_vendor_devices() {
-        use crate::device::command_tracker::CommandTracker;
-        use crate::device::manager::DeviceManager;
+                use crate::device::manager::DeviceManager;
         use crate::device::registry::DeviceRegistry;
         use crate::device::state::{Device, DeviceHealth};
         use crate::homeassistant::events::EventBus;
@@ -418,7 +476,6 @@ mod tests {
 
         let event_bus = EventBus::new();
         let registry = Arc::new(DeviceRegistry::new(dev_file.to_str().unwrap()));
-        let command_tracker = CommandTracker::new();
         let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
             url: "http://localhost:8123".to_string(),
             token: "test".to_string(),
@@ -426,7 +483,6 @@ mod tests {
 
         let dm = DeviceManager::new(
             registry.clone(),
-            command_tracker,
             ha_rest,
             event_bus,
             None,
@@ -443,6 +499,7 @@ mod tests {
             current_state: "on".to_string(),
             health_status: DeviceHealth::Online,
             last_seen: Utc::now(),
+            attributes: Default::default(),
         };
 
         let dev2 = Device {
@@ -455,6 +512,7 @@ mod tests {
             current_state: "heat".to_string(),
             health_status: DeviceHealth::Online,
             last_seen: Utc::now(),
+            attributes: Default::default(),
         };
 
         registry.upsert_device(dev1).await.unwrap();
@@ -501,8 +559,9 @@ mod tests {
             Some("refresh_token_nest".to_string()),
         );
 
-        let count = manager.connect_nest(creds.clone(), None, None).await.unwrap();
+        let (count, ha_restarting) = manager.connect_nest(creds.clone(), None, None).await.unwrap();
         assert_eq!(count, 0);
+        assert!(!ha_restarting, "no flow_client supplied, so no restart should be triggered");
 
         let status = manager.get_integration(VendorProvider::GoogleNest).await.unwrap();
         assert_eq!(status.status, IntegrationStatus::Connected);
@@ -525,7 +584,6 @@ mod tests {
 
         let event_bus = crate::homeassistant::events::EventBus::new();
         let registry = Arc::new(crate::device::registry::DeviceRegistry::new(dev_file.to_str().unwrap()));
-        let command_tracker = crate::device::command_tracker::CommandTracker::new();
         let ha_rest = Arc::new(crate::homeassistant::rest::HaRestClient::new(
             crate::homeassistant::HomeAssistantConfig {
                 url: "http://localhost:8123".to_string(),
@@ -535,7 +593,6 @@ mod tests {
 
         let dm = crate::device::manager::DeviceManager::new(
             registry.clone(),
-            command_tracker,
             ha_rest,
             event_bus,
             None,
@@ -551,6 +608,7 @@ mod tests {
             current_state: "heat".to_string(),
             health_status: crate::device::state::DeviceHealth::Online,
             last_seen: Utc::now(),
+            attributes: Default::default(),
         };
 
         registry.upsert_device(nest_dev).await.unwrap();

@@ -340,6 +340,7 @@ pub fn ha_api_router() -> Router<Arc<AppState>> {
         .route("/api/v1/ha/devices", get(handlers::ha_devices::list_devices))
         .route("/api/v1/ha/devices/{id}", get(handlers::ha_devices::get_device))
         .route("/api/v1/ha/devices/{id}/state", get(handlers::ha_devices::get_device_state))
+        .route("/api/v1/ha/devices/{id}/capabilities", get(handlers::ha_devices::get_device_capabilities))
         .route("/api/v1/ha/devices/{id}/command", post(handlers::ha_devices::execute_device_command))
         .route("/api/v1/ha/devices/sync", post(handlers::ha_devices::sync_devices))
 

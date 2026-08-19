@@ -1,5 +1,8 @@
 use std::fmt;
 
+use crate::device::capabilities::{CommandParamSpec, DeviceCapabilities, ParamKind};
+use crate::device::state::Device;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CommandAuthError {
     InvalidSchema(String),
@@ -17,157 +20,143 @@ impl fmt::Display for CommandAuthError {
     }
 }
 
+fn invalid(msg: impl Into<String>) -> CommandAuthError {
+    CommandAuthError::InvalidSchema(msg.into())
+}
+
+/// Renders a numeric range for an error message, including the unit when there is one.
+fn describe_bounds(spec: &CommandParamSpec) -> String {
+    match (spec.min, spec.max) {
+        (Some(min), Some(max)) => match &spec.unit {
+            Some(unit) => format!("{}–{} {}", min, max, unit),
+            None => format!("{}–{}", min, max),
+        },
+        (Some(min), None) => format!("at least {}", min),
+        (None, Some(max)) => format!("at most {}", max),
+        (None, None) => "any numeric value".to_string(),
+    }
+}
+
 pub struct CommandAuthorizer;
 
 impl CommandAuthorizer {
-    /// Validates command name and parameter bounds per device domain/type.
+    /// Validates a command against what the device actually supports.
+    ///
+    /// Bounds, modes and presets all come from the device's live Home Assistant attributes
+    /// (see `device::capabilities`), so the errors name real limits — a thermostat on a °F
+    /// scale rejects `22` and says so, instead of forwarding it for HA to refuse.
     pub fn validate_command_schema(
-        device_type: &str,
+        caps: &DeviceCapabilities,
         command: &str,
         params: &Option<serde_json::Value>,
     ) -> Result<(), CommandAuthError> {
-        let domain = device_type.split('.').next().unwrap_or(device_type);
+        if !caps.controllable {
+            return Err(invalid(format!(
+                "Device '{}' is read-only and accepts no commands",
+                caps.ha_entity_id
+            )));
+        }
 
-        match domain {
-            "light" | "switch" | "input_boolean" => {
-                match command {
-                    "turn_on" | "turn_off" | "toggle" => {}
-                    _ => {
-                        return Err(CommandAuthError::InvalidSchema(format!(
-                            "Command '{}' is not supported for domain '{}'",
-                            command, domain
-                        )))
-                    }
-                }
+        let spec = caps.command(command).ok_or_else(|| {
+            invalid(format!(
+                "Command '{}' is not supported by {} (supported: {})",
+                command,
+                caps.ha_entity_id,
+                caps.command_names().join(", ")
+            ))
+        })?;
 
-                if let Some(params_val) = params {
-                    if let Some(brightness) = params_val.get("brightness") {
-                        if let Some(b) = brightness.as_u64() {
-                            if b > 255 {
-                                return Err(CommandAuthError::InvalidSchema(format!(
-                                    "Invalid brightness {}: must be between 0 and 255",
-                                    b
-                                )));
-                            }
-                        } else {
-                            return Err(CommandAuthError::InvalidSchema(
-                                "Brightness must be an integer between 0 and 255".to_string(),
-                            ));
-                        }
-                    }
-
-                    if let Some(color_temp) = params_val.get("color_temp").or_else(|| params_val.get("color_temp_kelvin")) {
-                        if let Some(ct) = color_temp.as_u64() {
-                            if ct < 1500 || ct > 6500 {
-                                return Err(CommandAuthError::InvalidSchema(format!(
-                                    "Invalid color_temp {}: must be between 1500K and 6500K",
-                                    ct
-                                )));
-                            }
-                        } else {
-                            return Err(CommandAuthError::InvalidSchema(
-                                "Color temperature must be an integer between 1500 and 6500".to_string(),
-                            ));
-                        }
-                    }
-
-                    if let Some(rgb_color) = params_val.get("rgb_color") {
-                        if let Some(arr) = rgb_color.as_array() {
-                            if arr.len() != 3 {
-                                return Err(CommandAuthError::InvalidSchema(
-                                    "rgb_color must be an array of 3 RGB values [r, g, b]".to_string(),
-                                ));
-                            }
-                            for val in arr {
-                                if let Some(v) = val.as_u64() {
-                                    if v > 255 {
-                                        return Err(CommandAuthError::InvalidSchema(format!(
-                                            "RGB color values must be between 0 and 255, got {}",
-                                            v
-                                        )));
-                                    }
-                                } else {
-                                    return Err(CommandAuthError::InvalidSchema(
-                                        "RGB color values must be integers between 0 and 255".to_string(),
-                                    ));
-                                }
-                            }
-                        } else {
-                            return Err(CommandAuthError::InvalidSchema(
-                                "rgb_color must be a 3-element array [r, g, b]".to_string(),
-                            ));
-                        }
-                    }
-
-                    if let Some(hs_color) = params_val.get("hs_color") {
-                        if let Some(arr) = hs_color.as_array() {
-                            if arr.len() != 2 {
-                                return Err(CommandAuthError::InvalidSchema(
-                                    "hs_color must be an array of 2 values [hue, saturation]".to_string(),
-                                ));
-                            }
-                        } else {
-                            return Err(CommandAuthError::InvalidSchema(
-                                "hs_color must be a 2-element array [hue, saturation]".to_string(),
-                            ));
-                        }
-                    }
-                }
+        // Params must be an object when present.
+        let provided = match params {
+            Some(serde_json::Value::Object(map)) => Some(map),
+            Some(serde_json::Value::Null) | None => None,
+            Some(_) => {
+                return Err(invalid(
+                    "Command parameters must be a JSON object".to_string(),
+                ))
             }
-            "climate" => match command {
-                "set_temperature" => {
-                    if let Some(params_val) = params {
-                        if let Some(temp) = params_val.get("temperature") {
-                            if let Some(t) = temp.as_f64() {
-                                if t < 10.0 || t > 95.0 {
-                                    return Err(CommandAuthError::InvalidSchema(format!(
-                                        "Target temperature {:.1} out of bounds (10.0 to 95.0)",
-                                        t
-                                    )));
-                                }
-                            } else {
-                                return Err(CommandAuthError::InvalidSchema(
-                                    "Temperature parameter must be a numeric value".to_string(),
-                                ));
-                            }
-                        } else {
-                            return Err(CommandAuthError::InvalidSchema(
-                                "Command 'set_temperature' requires a 'temperature' parameter"
-                                    .to_string(),
-                            ));
-                        }
+        };
+
+        let empty = serde_json::Map::new();
+        let provided = provided.unwrap_or(&empty);
+
+        // Reject anything the command does not declare, so a stray `temperature` cannot
+        // ride along on `set_hvac_mode` and be silently forwarded to HA.
+        for key in provided.keys() {
+            if !spec.params.iter().any(|p| &p.name == key) {
+                let accepted: Vec<&str> = spec.params.iter().map(|p| p.name.as_str()).collect();
+                return Err(invalid(format!(
+                    "Unknown parameter '{}' for command '{}' (accepted: {})",
+                    key,
+                    command,
+                    if accepted.is_empty() {
+                        "none".to_string()
                     } else {
-                        return Err(CommandAuthError::InvalidSchema(
-                            "Command 'set_temperature' requires a 'params' payload".to_string(),
-                        ));
+                        accepted.join(", ")
                     }
+                )));
+            }
+        }
+
+        for param in &spec.params {
+            let value = provided.get(&param.name);
+
+            let Some(value) = value else {
+                if param.required {
+                    return Err(invalid(format!(
+                        "Command '{}' requires a '{}' parameter",
+                        command, param.name
+                    )));
                 }
-                "set_hvac_mode" | "set_preset_mode" | "set_fan_mode" | "turn_on" | "turn_off" => {}
-                _ => {
-                    return Err(CommandAuthError::InvalidSchema(format!(
-                        "Command '{}' is not supported for domain 'climate'",
-                        command
-                    )))
+                continue;
+            };
+
+            if value.is_null() {
+                if param.required {
+                    return Err(invalid(format!(
+                        "Parameter '{}' must not be null",
+                        param.name
+                    )));
                 }
-            },
-            "lock" => match command {
-                "lock" | "unlock" => {}
-                _ => {
-                    return Err(CommandAuthError::InvalidSchema(format!(
-                        "Command '{}' is not supported for domain 'lock'",
-                        command
-                    )))
-                }
-            },
-            _ => {
-                // Generic fallback validation for other domains (e.g. input_button, fan, cover)
-                match command {
-                    "turn_on" | "turn_off" | "toggle" | "press" | "open_cover" | "close_cover" => {}
-                    _ => {
-                        return Err(CommandAuthError::InvalidSchema(format!(
-                            "Command '{}' is not supported for domain '{}'",
-                            command, domain
-                        )))
+                continue;
+            }
+
+            Self::validate_param(command, param, value)?;
+        }
+
+        // A climate entity takes either a single setpoint or a low/high pair, never both.
+        if spec.command == "set_temperature" {
+            let single = provided.contains_key("temperature");
+            let low = provided.contains_key("target_temp_low");
+            let high = provided.contains_key("target_temp_high");
+
+            if single && (low || high) {
+                return Err(invalid(
+                    "Provide either 'temperature' or the 'target_temp_low'/'target_temp_high' pair, not both"
+                        .to_string(),
+                ));
+            }
+            if low != high {
+                return Err(invalid(
+                    "'target_temp_low' and 'target_temp_high' must be provided together"
+                        .to_string(),
+                ));
+            }
+            if !single && !low {
+                return Err(invalid(format!(
+                    "Command '{}' requires a temperature setpoint",
+                    command
+                )));
+            }
+            if low && high {
+                let lo = provided.get("target_temp_low").and_then(|v| v.as_f64());
+                let hi = provided.get("target_temp_high").and_then(|v| v.as_f64());
+                if let (Some(lo), Some(hi)) = (lo, hi) {
+                    if lo > hi {
+                        return Err(invalid(format!(
+                            "'target_temp_low' ({}) must not exceed 'target_temp_high' ({})",
+                            lo, hi
+                        )));
                     }
                 }
             }
@@ -176,40 +165,162 @@ impl CommandAuthorizer {
         Ok(())
     }
 
-    /// Rejects redundant no-op commands (e.g. turning on an already on device without parameter adjustments).
+    fn validate_param(
+        command: &str,
+        param: &CommandParamSpec,
+        value: &serde_json::Value,
+    ) -> Result<(), CommandAuthError> {
+        match param.kind {
+            ParamKind::Number => {
+                let n = value.as_f64().ok_or_else(|| {
+                    invalid(format!("Parameter '{}' must be a number", param.name))
+                })?;
+                if !n.is_finite() {
+                    return Err(invalid(format!(
+                        "Parameter '{}' must be a finite number",
+                        param.name
+                    )));
+                }
+                let below = param.min.is_some_and(|min| n < min);
+                let above = param.max.is_some_and(|max| n > max);
+                if below || above {
+                    return Err(invalid(format!(
+                        "{} {} is out of range for this device ({})",
+                        param.label,
+                        n,
+                        describe_bounds(param)
+                    )));
+                }
+            }
+            ParamKind::Enum => {
+                let s = value.as_str().ok_or_else(|| {
+                    invalid(format!("Parameter '{}' must be a string", param.name))
+                })?;
+                if !param.options.iter().any(|opt| opt == s) {
+                    return Err(invalid(format!(
+                        "'{}' is not a valid {} for this device (supported: {})",
+                        s,
+                        param.name,
+                        param.options.join(", ")
+                    )));
+                }
+            }
+            ParamKind::Bool => {
+                if !value.is_boolean() {
+                    return Err(invalid(format!(
+                        "Parameter '{}' must be true or false",
+                        param.name
+                    )));
+                }
+            }
+            ParamKind::Rgb => {
+                let arr = value.as_array().ok_or_else(|| {
+                    invalid(format!(
+                        "Parameter '{}' must be a 3-element array [r, g, b]",
+                        param.name
+                    ))
+                })?;
+                if arr.len() != 3 {
+                    return Err(invalid(format!(
+                        "Parameter '{}' must contain exactly 3 values [r, g, b]",
+                        param.name
+                    )));
+                }
+                for component in arr {
+                    match component.as_u64() {
+                        Some(v) if v <= 255 => {}
+                        _ => {
+                            return Err(invalid(format!(
+                                "{} values must be integers between 0 and 255",
+                                param.label
+                            )))
+                        }
+                    }
+                }
+            }
+            ParamKind::Text => {
+                if !value.is_string() {
+                    return Err(invalid(format!(
+                        "Parameter '{}' of command '{}' must be a string",
+                        param.name, command
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Rejects commands that would not change anything.
+    ///
+    /// The rules are domain-scoped: a climate entity's state is its HVAC mode
+    /// (`cool`/`heat`/`off`), not `on`/`off`, so applying the generic power semantics to a
+    /// thermostat used to reject perfectly valid commands.
     pub fn check_no_op(
-        current_state: &str,
+        device: &Device,
         command: &str,
         params: &Option<serde_json::Value>,
     ) -> Result<(), CommandAuthError> {
-        let normalized_state = current_state.to_lowercase();
+        let domain = device
+            .ha_entity_id
+            .split('.')
+            .next()
+            .unwrap_or(&device.device_type);
+        let state = device.current_state.to_lowercase();
 
-        // If turn_on includes light adjustment parameters (brightness, color_temp, color_temp_kelvin, rgb_color, etc.), allow it
-        if command == "turn_on" && normalized_state == "on" {
-            if let Some(params_val) = params {
-                if params_val.get("brightness").is_some()
-                    || params_val.get("color_temp").is_some()
-                    || params_val.get("color_temp_kelvin").is_some()
-                    || params_val.get("rgb_color").is_some()
-                    || params_val.get("hs_color").is_some()
-                    || params_val.get("effect").is_some()
-                {
-                    return Ok(());
+        match domain {
+            "climate" => {
+                if command == "turn_off" && state == "off" {
+                    return Err(CommandAuthError::NoOp(
+                        "Thermostat is already off".to_string(),
+                    ));
                 }
+                if command == "set_hvac_mode" {
+                    if let Some(mode) = params
+                        .as_ref()
+                        .and_then(|p| p.get("hvac_mode"))
+                        .and_then(|m| m.as_str())
+                    {
+                        if mode.eq_ignore_ascii_case(&state) {
+                            return Err(CommandAuthError::NoOp(format!(
+                                "Thermostat is already in '{}' mode",
+                                mode
+                            )));
+                        }
+                    }
+                }
+                // Deliberately not no-ops: re-asserting a setpoint (thermostats drift), and
+                // `turn_on` in any state (HA restores the previous mode).
+                Ok(())
             }
-            return Err(CommandAuthError::NoOp("Device is already on".to_string()));
-        }
-
-        match command {
-            "turn_off" if normalized_state == "off" => Err(CommandAuthError::NoOp(
-                "Device is already off".to_string(),
-            )),
-            "lock" if normalized_state == "locked" => Err(CommandAuthError::NoOp(
-                "Device is already locked".to_string(),
-            )),
-            "unlock" if normalized_state == "unlocked" => Err(CommandAuthError::NoOp(
-                "Device is already unlocked".to_string(),
-            )),
+            "light" | "switch" | "input_boolean" | "fan" | "siren" | "humidifier" => {
+                if command == "turn_on" && state == "on" {
+                    // An adjustment (brightness, color, ...) makes it a real change.
+                    if let Some(params_val) = params {
+                        let adjusts = ["brightness", "color_temp", "color_temp_kelvin", "rgb_color", "hs_color", "effect"]
+                            .iter()
+                            .any(|key| params_val.get(key).is_some());
+                        if adjusts {
+                            return Ok(());
+                        }
+                    }
+                    return Err(CommandAuthError::NoOp("Device is already on".to_string()));
+                }
+                if command == "turn_off" && state == "off" {
+                    return Err(CommandAuthError::NoOp("Device is already off".to_string()));
+                }
+                Ok(())
+            }
+            "lock" => match command {
+                "lock" if state == "locked" => Err(CommandAuthError::NoOp(
+                    "Device is already locked".to_string(),
+                )),
+                "unlock" if state == "unlocked" => Err(CommandAuthError::NoOp(
+                    "Device is already unlocked".to_string(),
+                )),
+                _ => Ok(()),
+            },
+            // Covers, media players and everything else have state vocabularies of their own
+            // (`open`/`closed`, `playing`/`paused`), so the power rules must not run.
             _ => Ok(()),
         }
     }
@@ -218,84 +329,298 @@ impl CommandAuthorizer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::device::capabilities;
+    use crate::device::state::DeviceHealth;
 
-    #[test]
-    fn test_valid_light_turn_on() {
-        let res = CommandAuthorizer::validate_command_schema(
-            "light",
-            "turn_on",
-            &Some(serde_json::json!({"brightness": 200})),
-        );
-        assert!(res.is_ok());
+    fn device(entity_id: &str, state: &str, attributes: serde_json::Value) -> Device {
+        Device {
+            id: "dev_test".to_string(),
+            ha_entity_id: entity_id.to_string(),
+            vendor: "test".to_string(),
+            device_type: entity_id.split('.').next().unwrap().to_string(),
+            room: None,
+            friendly_name: "Test".to_string(),
+            current_state: state.to_string(),
+            health_status: DeviceHealth::Online,
+            last_seen: chrono::Utc::now(),
+            attributes: attributes.as_object().cloned().unwrap_or_default(),
+        }
+    }
+
+    /// Builds capabilities through the real derivation path, so these tests exercise
+    /// derivation and validation together rather than a hand-written fixture.
+    fn caps_for(entity_id: &str, state: &str, attributes: serde_json::Value, unit: &str) -> DeviceCapabilities {
+        capabilities::derive(&device(entity_id, state, attributes), unit)
+    }
+
+    fn nest_caps() -> DeviceCapabilities {
+        caps_for(
+            "climate.basement_room_2",
+            "cool",
+            serde_json::json!({
+                "hvac_modes": ["cool", "off"],
+                "min_temp": 50, "max_temp": 90,
+                "preset_modes": ["none", "eco"],
+                "current_temperature": 71, "temperature": 74,
+                "supported_features": 401
+            }),
+            "°F",
+        )
     }
 
     #[test]
-    fn test_invalid_brightness_bounds() {
-        let res = CommandAuthorizer::validate_command_schema(
-            "light",
-            "turn_on",
-            &Some(serde_json::json!({"brightness": 999})),
-        );
-        assert!(matches!(res, Err(CommandAuthError::InvalidSchema(_))));
-    }
-
-    #[test]
-    fn test_climate_temperature_bounds() {
-        let valid = CommandAuthorizer::validate_command_schema(
-            "climate",
+    fn accepts_valid_thermostat_commands() {
+        let caps = nest_caps();
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
             "set_temperature",
-            &Some(serde_json::json!({"temperature": 22.5})),
-        );
-        assert!(valid.is_ok());
+            &Some(serde_json::json!({"temperature": 72}))
+        )
+        .is_ok());
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "set_hvac_mode",
+            &Some(serde_json::json!({"hvac_mode": "cool"}))
+        )
+        .is_ok());
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "set_preset_mode",
+            &Some(serde_json::json!({"preset_mode": "eco"}))
+        )
+        .is_ok());
+        assert!(CommandAuthorizer::validate_command_schema(&caps, "turn_off", &None).is_ok());
+    }
 
-        let invalid = CommandAuthorizer::validate_command_schema(
-            "climate",
+    /// The original bug: a Celsius-looking value on a °F thermostat.
+    #[test]
+    fn rejects_out_of_range_temperature() {
+        let caps = nest_caps();
+        let err = CommandAuthorizer::validate_command_schema(
+            &caps,
             "set_temperature",
-            &Some(serde_json::json!({"temperature": 2.0})),
-        );
-        assert!(matches!(invalid, Err(CommandAuthError::InvalidSchema(_))));
+            &Some(serde_json::json!({"temperature": 22})),
+        )
+        .unwrap_err();
+
+        let msg = err.to_string();
+        assert!(msg.contains("50"), "error names the real minimum: {}", msg);
+        assert!(msg.contains("90"), "error names the real maximum: {}", msg);
+        assert!(msg.contains("°F"), "error names the real unit: {}", msg);
+
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "set_temperature",
+            &Some(serde_json::json!({"temperature": 95}))
+        )
+        .is_err());
     }
 
     #[test]
-    fn test_color_temp_and_rgb_validation() {
-        let valid_ct = CommandAuthorizer::validate_command_schema(
-            "light",
-            "turn_on",
-            &Some(serde_json::json!({"color_temp": 4000})),
-        );
-        assert!(valid_ct.is_ok());
-
-        let invalid_ct = CommandAuthorizer::validate_command_schema(
-            "light",
-            "turn_on",
-            &Some(serde_json::json!({"color_temp": 1000})),
-        );
-        assert!(matches!(invalid_ct, Err(CommandAuthError::InvalidSchema(_))));
-
-        let valid_rgb = CommandAuthorizer::validate_command_schema(
-            "light",
-            "turn_on",
-            &Some(serde_json::json!({"rgb_color": [255, 128, 0]})),
-        );
-        assert!(valid_rgb.is_ok());
-
-        let invalid_rgb = CommandAuthorizer::validate_command_schema(
-            "light",
-            "turn_on",
-            &Some(serde_json::json!({"rgb_color": [255, 300, 0]})),
-        );
-        assert!(matches!(invalid_rgb, Err(CommandAuthError::InvalidSchema(_))));
+    fn rejects_unknown_hvac_mode() {
+        let caps = nest_caps();
+        for mode in ["heat", "auto", "heat_cool"] {
+            let err = CommandAuthorizer::validate_command_schema(
+                &caps,
+                "set_hvac_mode",
+                &Some(serde_json::json!({ "hvac_mode": mode })),
+            )
+            .unwrap_err();
+            assert!(
+                err.to_string().contains("cool"),
+                "error should list the real modes, got: {}",
+                err
+            );
+        }
     }
 
     #[test]
-    fn test_no_op_rejection() {
-        let res = CommandAuthorizer::check_no_op("on", "turn_on", &None);
-        assert!(matches!(res, Err(CommandAuthError::NoOp(_))));
+    fn rejects_missing_required_param() {
+        let caps = nest_caps();
+        // Previously this forwarded a bare entity_id to HA, which 400'd.
+        assert!(CommandAuthorizer::validate_command_schema(&caps, "set_hvac_mode", &None).is_err());
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "set_temperature",
+            &Some(serde_json::json!({}))
+        )
+        .is_err());
+    }
 
-        let valid_with_param = CommandAuthorizer::check_no_op("on", "turn_on", &Some(serde_json::json!({"brightness": 120})));
-        assert!(valid_with_param.is_ok());
+    #[test]
+    fn rejects_unsupported_command_and_unknown_params() {
+        let caps = nest_caps();
+        let err = CommandAuthorizer::validate_command_schema(
+            &caps,
+            "set_fan_mode",
+            &Some(serde_json::json!({"fan_mode": "auto"})),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("not supported"));
 
-        let valid = CommandAuthorizer::check_no_op("off", "turn_on", &None);
-        assert!(valid.is_ok());
+        let err = CommandAuthorizer::validate_command_schema(
+            &caps,
+            "set_hvac_mode",
+            &Some(serde_json::json!({"hvac_mode": "cool", "temperature": 70})),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("Unknown parameter"));
+    }
+
+    #[test]
+    fn read_only_device_accepts_nothing() {
+        let caps = caps_for(
+            "sensor.basement_room_2_temperature",
+            "71.42",
+            serde_json::json!({"unit_of_measurement": "°F"}),
+            "°F",
+        );
+        assert!(CommandAuthorizer::validate_command_schema(&caps, "turn_on", &None).is_err());
+    }
+
+    #[test]
+    fn temperature_range_xor() {
+        let caps = caps_for(
+            "climate.dual",
+            "heat_cool",
+            serde_json::json!({
+                "hvac_modes": ["heat_cool", "off"],
+                "min_temp": 50, "max_temp": 90,
+                "supported_features": 1 | 2
+            }),
+            "°F",
+        );
+
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "set_temperature",
+            &Some(serde_json::json!({"target_temp_low": 68, "target_temp_high": 74}))
+        )
+        .is_ok());
+
+        // Both forms at once.
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "set_temperature",
+            &Some(serde_json::json!({"temperature": 70, "target_temp_low": 68}))
+        )
+        .is_err());
+
+        // Half a pair.
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "set_temperature",
+            &Some(serde_json::json!({"target_temp_low": 68}))
+        )
+        .is_err());
+
+        // Inverted pair.
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "set_temperature",
+            &Some(serde_json::json!({"target_temp_low": 78, "target_temp_high": 70}))
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn validates_light_params_against_entity_bounds() {
+        let caps = caps_for(
+            "light.desk",
+            "on",
+            serde_json::json!({
+                "supported_color_modes": ["color_temp", "hs"],
+                "min_color_temp_kelvin": 2000,
+                "max_color_temp_kelvin": 6535,
+                "supported_features": 0
+            }),
+            "°C",
+        );
+
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "turn_on",
+            &Some(serde_json::json!({"brightness": 200}))
+        )
+        .is_ok());
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "turn_on",
+            &Some(serde_json::json!({"brightness": 999}))
+        )
+        .is_err());
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "turn_on",
+            &Some(serde_json::json!({"rgb_color": [255, 128, 0]}))
+        )
+        .is_ok());
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "turn_on",
+            &Some(serde_json::json!({"rgb_color": [255, 300, 0]}))
+        )
+        .is_err());
+        // 1000K is outside this entity's advertised range.
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "turn_on",
+            &Some(serde_json::json!({"color_temp_kelvin": 1000}))
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn climate_no_op_semantics() {
+        let off = device("climate.t", "off", serde_json::json!({}));
+        let cooling = device("climate.t", "cool", serde_json::json!({}));
+
+        assert!(matches!(
+            CommandAuthorizer::check_no_op(&off, "turn_off", &None),
+            Err(CommandAuthError::NoOp(_))
+        ));
+        assert!(CommandAuthorizer::check_no_op(&cooling, "turn_off", &None).is_ok());
+        // `turn_on` on a thermostat reporting a mode is NOT a no-op.
+        assert!(CommandAuthorizer::check_no_op(&cooling, "turn_on", &None).is_ok());
+        // Re-asserting a setpoint is legitimate; thermostats drift.
+        assert!(CommandAuthorizer::check_no_op(
+            &cooling,
+            "set_temperature",
+            &Some(serde_json::json!({"temperature": 72}))
+        )
+        .is_ok());
+
+        assert!(matches!(
+            CommandAuthorizer::check_no_op(
+                &cooling,
+                "set_hvac_mode",
+                &Some(serde_json::json!({"hvac_mode": "cool"}))
+            ),
+            Err(CommandAuthError::NoOp(_))
+        ));
+        assert!(CommandAuthorizer::check_no_op(
+            &cooling,
+            "set_hvac_mode",
+            &Some(serde_json::json!({"hvac_mode": "off"}))
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn switch_no_op_semantics_unchanged() {
+        let on = device("light.a", "on", serde_json::json!({}));
+        let off = device("light.a", "off", serde_json::json!({}));
+
+        assert!(matches!(
+            CommandAuthorizer::check_no_op(&on, "turn_on", &None),
+            Err(CommandAuthError::NoOp(_))
+        ));
+        assert!(CommandAuthorizer::check_no_op(
+            &on,
+            "turn_on",
+            &Some(serde_json::json!({"brightness": 120}))
+        )
+        .is_ok());
+        assert!(CommandAuthorizer::check_no_op(&off, "turn_on", &None).is_ok());
     }
 }

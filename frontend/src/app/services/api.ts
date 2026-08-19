@@ -16,7 +16,12 @@ function shouldSendNgrokSkipHeader(url: string): boolean {
 interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean>;
   suppressUnauthorizedEvent?: boolean;
+  /** Overrides the default request timeout. Device commands need longer than a read,
+   *  because Home Assistant blocks on the vendor cloud round-trip before replying. */
+  timeoutMs?: number;
 }
+
+const DEFAULT_TIMEOUT_MS = 20_000;
 
 export class ApiError extends Error {
   status: number;
@@ -95,7 +100,7 @@ class ApiClient {
   }
 
   async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-    const { params, suppressUnauthorizedEvent, ...fetchOptions } = options;
+    const { params, suppressUnauthorizedEvent, timeoutMs, ...fetchOptions } = options;
     const url = this.buildUrl(endpoint, params);
     const method = (fetchOptions.method || 'GET').toUpperCase();
     const t0 = performance.now();
@@ -116,7 +121,8 @@ class ApiClient {
 
     let response: Response;
     const timeout = new AbortController();
-    const timeoutId = window.setTimeout(() => timeout.abort(), 20_000);
+    const timeoutLimit = timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const timeoutId = window.setTimeout(() => timeout.abort(), timeoutLimit);
     const suppliedSignal = fetchOptions.signal;
     const abortFromCaller = () => timeout.abort();
     suppliedSignal?.addEventListener('abort', abortFromCaller, { once: true });
@@ -125,7 +131,7 @@ class ApiClient {
     } catch (netErr) {
       const duration = Math.round(performance.now() - t0);
       const message = timeout.signal.aborted && !suppliedSignal?.aborted
-        ? 'Request timed out after 20 seconds'
+        ? `Request timed out after ${Math.round(timeoutLimit / 1000)} seconds`
         : netErr instanceof Error ? netErr.message : 'Network error';
       monitoring.trackApiCall(method, endpoint, null, duration, message);
       throw new Error(message);
@@ -235,14 +241,14 @@ class ApiClient {
     return this.request<T>(endpoint, { method: 'GET', params });
   }
 
-  async post<T>(endpoint: string, data?: unknown): Promise<T> {
+  async post<T>(endpoint: string, data?: unknown, options?: { timeoutMs?: number }): Promise<T> {
     const body =
       data === undefined || data === null
         ? undefined
         : data instanceof FormData
           ? data
           : JSON.stringify(data);
-    return this.request<T>(endpoint, { method: 'POST', body });
+    return this.request<T>(endpoint, { method: 'POST', body, timeoutMs: options?.timeoutMs });
   }
 
   async put<T>(endpoint: string, data?: unknown): Promise<T> {

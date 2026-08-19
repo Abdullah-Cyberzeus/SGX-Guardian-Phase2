@@ -1,40 +1,118 @@
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
-use crate::device::command_tracker::{CommandResult, CommandTracker};
 use crate::device::registry::DeviceRegistry;
 use crate::device::state::{Device, DeviceHealth, is_supported_domain};
 use crate::homeassistant::events::{EventBus, HaEvent};
 use crate::homeassistant::rest::HaRestClient;
 
+/// Unit used when Home Assistant's configuration has not been read yet.
+const DEFAULT_TEMPERATURE_UNIT: &str = "°C";
+
 pub struct DeviceManager {
     registry: Arc<DeviceRegistry>,
-    command_tracker: Arc<CommandTracker>,
     ha_rest: Arc<HaRestClient>,
     event_bus: Arc<EventBus>,
     notification_manager: Option<Arc<crate::notification::manager::NotificationManager>>,
+    /// Cached `unit_system.temperature` from HA (e.g. "°F"). Mutable because a user can
+    /// switch HA between metric and US customary at any time.
+    temperature_unit: RwLock<Option<String>>,
+    /// Used to decide whether an unbranded `climate.*` entity belongs to Nest.
+    integration_manager: RwLock<Option<Arc<crate::integration::manager::IntegrationManager>>>,
 }
 
 impl DeviceManager {
     pub fn new(
         registry: Arc<DeviceRegistry>,
-        command_tracker: Arc<CommandTracker>,
         ha_rest: Arc<HaRestClient>,
         event_bus: Arc<EventBus>,
         notification_manager: Option<Arc<crate::notification::manager::NotificationManager>>,
     ) -> Arc<Self> {
         Arc::new(Self {
             registry,
-            command_tracker,
             ha_rest,
             event_bus,
             notification_manager,
+            temperature_unit: RwLock::new(None),
+            integration_manager: RwLock::new(None),
         })
     }
 
     pub fn get_registry(&self) -> &Arc<DeviceRegistry> {
         &self.registry
+    }
+
+    /// Wires up the integration manager after construction (they are created in either order).
+    pub async fn set_integration_manager(
+        &self,
+        manager: Arc<crate::integration::manager::IntegrationManager>,
+    ) {
+        *self.integration_manager.write().await = Some(manager);
+    }
+
+    async fn is_nest_connected(&self) -> bool {
+        let guard = self.integration_manager.read().await;
+        let Some(manager) = guard.as_ref() else {
+            // Unknown wiring — assume connected so a thermostat is not silently untagged.
+            return true;
+        };
+        match manager
+            .get_integration(crate::integration::provider::VendorProvider::GoogleNest)
+            .await
+        {
+            Some(meta) => {
+                meta.status == crate::integration::provider::IntegrationStatus::Connected
+            }
+            None => false,
+        }
+    }
+
+    /// HA's configured temperature unit, e.g. "°F". Fetches lazily on first use.
+    ///
+    /// This sits on request-serving paths, so a failed lookup caches the default rather
+    /// than re-attempting (and re-timing-out) on every subsequent call. `reconcile_state`
+    /// calls `refresh_unit_system` directly, which always re-reads and corrects the cache.
+    pub async fn temperature_unit(&self) -> String {
+        if let Some(unit) = self.temperature_unit.read().await.clone() {
+            return unit;
+        }
+
+        if let Err(e) = self.refresh_unit_system().await {
+            warn!(
+                "Could not read HA unit system, defaulting to {}: {}",
+                DEFAULT_TEMPERATURE_UNIT, e
+            );
+            let mut guard = self.temperature_unit.write().await;
+            let unit = guard
+                .get_or_insert_with(|| DEFAULT_TEMPERATURE_UNIT.to_string())
+                .clone();
+            return unit;
+        }
+
+        self.temperature_unit
+            .read()
+            .await
+            .clone()
+            .unwrap_or_else(|| DEFAULT_TEMPERATURE_UNIT.to_string())
+    }
+
+    /// Re-reads `unit_system.temperature` from Home Assistant's configuration.
+    pub async fn refresh_unit_system(&self) -> Result<(), String> {
+        let config = self.ha_rest.get_config().await?;
+        let unit = config
+            .get("unit_system")
+            .and_then(|u| u.get("temperature"))
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| "HA config did not include unit_system.temperature".to_string())?;
+
+        let mut guard = self.temperature_unit.write().await;
+        if guard.as_deref() != Some(unit) {
+            info!("Home Assistant temperature unit: {}", unit);
+        }
+        *guard = Some(unit.to_string());
+        Ok(())
     }
 
     /// Fetches all states from Home Assistant and reconciles them with the local registry.
@@ -50,9 +128,18 @@ impl DeviceManager {
         println!("🔄 Starting device state reconciliation with Home Assistant...");
         info!("Starting device state reconciliation with Home Assistant...");
 
+        // Pick up any change to HA's unit system (metric vs US customary) before deriving
+        // anything from the attributes we are about to store.
+        if let Err(e) = self.refresh_unit_system().await {
+            warn!("Could not refresh HA unit system, keeping cached value: {}", e);
+        }
+
+        let nest_connected = self.is_nest_connected().await;
+
         match self.ha_rest.get_states().await {
             Ok(states) => {
                 let mut updated_count = 0;
+                let mut pending_upserts: Vec<crate::device::state::Device> = Vec::new();
 
                 // Collect every supported entity_id that HA currently knows about
                 let mut ha_entity_ids: std::collections::HashSet<String> =
@@ -90,10 +177,15 @@ impl DeviceManager {
                             || friendly_name.to_lowercase().contains("tp-link")
                             || entity_id.contains("tplink");
 
-                        let is_nest = entity_id.contains("nest")
-                            || friendly_name.to_lowercase().contains("nest")
-                            || friendly_name.to_lowercase().contains("google_nest")
-                            || friendly_name.to_lowercase().contains("google nest");
+                        let is_nest = is_nest_entity(entity_id, &friendly_name, nest_connected);
+
+                        // Preserve HA's full attribute object — this is what drives capability
+                        // derivation (supported_features, hvac_modes, min/max temp, ...).
+                        let attributes = state_val
+                            .get("attributes")
+                            .and_then(|a| a.as_object())
+                            .cloned()
+                            .unwrap_or_default();
 
                         let initial_vendor = if is_kasa {
                             "tp_link".to_string()
@@ -120,6 +212,7 @@ impl DeviceManager {
                                     current_state: state_str.to_string(),
                                     health_status: DeviceHealth::Online,
                                     last_seen: chrono::Utc::now(),
+                                    attributes: attributes.clone(),
                                 },
                             };
 
@@ -134,6 +227,7 @@ impl DeviceManager {
                         device.current_state = state_str.to_string();
                         device.friendly_name = friendly_name;
                         device.last_seen = chrono::Utc::now();
+                        device.attributes = attributes;
 
                         // Unavailable/unknown → Offline but KEEP the entry
                         device.health_status =
@@ -143,12 +237,14 @@ impl DeviceManager {
                                 DeviceHealth::Online
                             };
 
-                        if let Err(e) = self.registry.upsert_device(device).await {
-                            error!("Failed to persist device {}: {}", entity_id, e);
-                        } else {
-                            updated_count += 1;
-                        }
+                        pending_upserts.push(device);
+                        updated_count += 1;
                     }
+                }
+
+                // Single write for the whole reconcile pass, rather than one per entity.
+                if let Err(e) = self.registry.upsert_devices_bulk(pending_upserts).await {
+                    error!("Failed to persist reconciled devices: {}", e);
                 }
 
                 // --- Pass 2: clean up stale Guardian entries ---
@@ -254,10 +350,15 @@ impl DeviceManager {
             || friendly_name.to_lowercase().contains("tp-link")
             || entity_id.contains("tplink");
 
-        let is_nest = entity_id.contains("nest")
-            || friendly_name.to_lowercase().contains("nest")
-            || friendly_name.to_lowercase().contains("google_nest")
-            || friendly_name.to_lowercase().contains("google nest");
+        let is_nest = is_nest_entity(entity_id, &friendly_name, self.is_nest_connected().await);
+
+        // Keep HA's full attribute object in sync so capability derivation stays current.
+        let attributes = data
+            .get("new_state")
+            .and_then(|n| n.get("attributes"))
+            .and_then(|a| a.as_object())
+            .cloned()
+            .unwrap_or_default();
 
         let initial_vendor = if is_kasa {
             "tp_link".to_string()
@@ -279,6 +380,7 @@ impl DeviceManager {
                 current_state: new_state.to_string(),
                 health_status: DeviceHealth::Online,
                 last_seen: chrono::Utc::now(),
+                attributes: attributes.clone(),
             },
         };
 
@@ -295,6 +397,7 @@ impl DeviceManager {
         device.current_state = new_state.to_string();
         device.friendly_name = friendly_name;
         device.last_seen = chrono::Utc::now();
+        device.attributes = attributes;
         device.health_status = if new_state == "unavailable" || new_state == "unknown" {
             DeviceHealth::Offline
         } else {
@@ -346,15 +449,17 @@ impl DeviceManager {
             }
         }
 
-        if let Err(e) = self.registry.upsert_device(device).await {
-            error!("Failed to update state for {}: {}", entity_id, e);
-        } else {
-            // Notify command tracker so pending API calls can return success
-            self.command_tracker.resolve_commands_for_entity(entity_id).await;
-        }
+        // Deferred: HA ticks attributes constantly, so this must not fsync the whole
+        // registry on every event. The background flusher writes it out shortly after.
+        self.registry.upsert_device_deferred(device).await;
     }
 
-    /// Sends a command to HA and waits for the acknowledgment (state change).
+    /// Sends a command to Home Assistant.
+    ///
+    /// Acknowledgment is optimistic: HA's REST API only returns 2xx *after* the service
+    /// handler has finished (for a cloud thermostat that includes the vendor round-trip),
+    /// so a successful response is the acknowledgment. The authoritative state arrives
+    /// moments later over the WebSocket and updates the registry via `handle_state_changed`.
     pub async fn send_command(
         &self,
         entity_id: &str,
@@ -363,24 +468,81 @@ impl DeviceManager {
         service_data: Option<serde_json::Value>,
     ) -> Result<(), String> {
         // Ensure device exists in our registry first
-        if self.registry.get_device_by_entity_id(entity_id).await.is_none() {
-            return Err(format!("Device with entity_id {} not found in registry", entity_id));
-        }
+        let device = self
+            .registry
+            .get_device_by_entity_id(entity_id)
+            .await
+            .ok_or_else(|| format!("Device with entity_id {} not found in registry", entity_id))?;
 
-        // Register tracking before sending command to avoid race conditions
-        let (cmd_id, rx) = self.command_tracker.register_command(entity_id).await;
-        
-        info!("Sending command {} to {} (Tracking ID: {})", service, entity_id, cmd_id);
-        
-        // Execute the REST call
-        self.ha_rest.call_service(domain, service, entity_id, service_data).await?;
-        
-        // Wait for the state_changed event to acknowledge success
-        match CommandTracker::wait_for_command(rx).await {
-            CommandResult::Success => Ok(()),
-            CommandResult::Timeout => Err("Command timed out waiting for acknowledgment".to_string()),
-        }
+        // Defensive validation: this path is also reached by the automation engine, which
+        // does not go through the HTTP handler's checks.
+        let caps = self.capabilities_for(&device).await;
+        crate::api::auth::command_auth::CommandAuthorizer::validate_command_schema(
+            &caps,
+            service,
+            &service_data,
+        )
+        .map_err(|e| format!("invalid command: {}", e))?;
+
+        info!("Sending command {} to {}", service, entity_id);
+
+        self.ha_rest
+            .call_service(domain, service, entity_id, service_data)
+            .await
     }
+
+    /// Derives the live capability descriptor for a device.
+    pub async fn capabilities_for(
+        &self,
+        device: &Device,
+    ) -> crate::device::capabilities::DeviceCapabilities {
+        crate::device::capabilities::derive(device, &self.temperature_unit().await)
+    }
+
+    /// Re-reads one entity's attributes from HA and stores them.
+    ///
+    /// Used when a registry entry predates attribute capture, so capabilities can still be
+    /// derived without waiting for a full reconciliation.
+    pub async fn refresh_device_attributes(
+        &self,
+        entity_id: &str,
+    ) -> Result<Option<Device>, String> {
+        let Some(mut device) = self.registry.get_device_by_entity_id(entity_id).await else {
+            return Ok(None);
+        };
+
+        let state_val = self.ha_rest.get_state(entity_id).await?;
+
+        if let Some(attributes) = state_val.get("attributes").and_then(|a| a.as_object()) {
+            device.attributes = attributes.clone();
+        }
+        if let Some(state_str) = state_val.get("state").and_then(|s| s.as_str()) {
+            device.current_state = state_str.to_string();
+        }
+        device.last_seen = chrono::Utc::now();
+
+        self.registry.upsert_device(device.clone()).await?;
+        Ok(Some(device))
+    }
+}
+
+/// Whether an entity should be attributed to the Google Nest integration.
+///
+/// `climate.*` only counts as Nest when the Nest integration is actually connected —
+/// otherwise an ecobee or Honeywell thermostat would be mislabeled. Temperature/humidity
+/// `sensor.*` entities are deliberately NOT matched on their name: that swept up Kasa
+/// energy sensors and generic Zigbee probes and inflated the Nest device count.
+fn is_nest_entity(entity_id: &str, friendly_name: &str, nest_connected: bool) -> bool {
+    let name = friendly_name.to_lowercase();
+    if entity_id.contains("nest")
+        || name.contains("nest")
+        || name.contains("google_nest")
+        || name.contains("google nest")
+    {
+        return true;
+    }
+
+    nest_connected && entity_id.starts_with("climate.")
 }
 
 #[cfg(test)]
@@ -397,7 +559,6 @@ mod tests {
 
         let event_bus = EventBus::new();
         let registry = Arc::new(DeviceRegistry::new(dev_file.to_str().unwrap()));
-        let command_tracker = CommandTracker::new();
         let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
             url: "http://localhost:8123".to_string(),
             token: "test".to_string(),
@@ -409,7 +570,6 @@ mod tests {
 
         let dm = DeviceManager::new(
             registry,
-            command_tracker,
             ha_rest,
             event_bus.clone(),
             Some(notif_mgr.clone()),
@@ -472,13 +632,12 @@ mod tests {
 
         let event_bus = EventBus::new();
         let registry = Arc::new(DeviceRegistry::new(dev_file.to_str().unwrap()));
-        let command_tracker = CommandTracker::new();
         let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
             url: "http://localhost:8123".to_string(),
             token: "test".to_string(),
         }));
 
-        let dm = DeviceManager::new(registry.clone(), command_tracker, ha_rest, event_bus, None);
+        let dm = DeviceManager::new(registry.clone(), ha_rest, event_bus, None);
 
         dm.handle_state_changed(serde_json::json!({
             "data": {

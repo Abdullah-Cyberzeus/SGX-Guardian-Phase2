@@ -21,6 +21,8 @@ import { smartHomeService, openSmartHomeSocket } from "../../services/smartHomeS
 import type {
   SmartDevice,
   DeviceStateSnapshot,
+  DeviceCapabilities,
+  CommandParamSpec,
   DeviceHealthSummary,
   IntegrationsOverview,
   IntegrationProvider,
@@ -49,40 +51,34 @@ const PROVIDER_META: Record<string, { label: string; icon: any; desc: string }> 
   tp_link_kasa: { label: "TP-Link Kasa", icon: Zap, desc: "Smart plugs and switches" },
 };
 
-const COMMANDS_BY_DOMAIN: Record<string, { value: string; label: string }[]> = {
-  light: [
-    { value: "turn_on", label: "Turn On" },
-    { value: "turn_off", label: "Turn Off" },
-  ],
-  switch: [
-    { value: "turn_on", label: "Turn On" },
-    { value: "turn_off", label: "Turn Off" },
-  ],
-  input_boolean: [
-    { value: "turn_on", label: "Turn On" },
-    { value: "turn_off", label: "Turn Off" },
-  ],
-  lock: [
-    { value: "lock", label: "Lock" },
-    { value: "unlock", label: "Unlock" },
-  ],
-  climate: [
-    { value: "set_temperature", label: "Set Temperature" },
-    { value: "set_hvac_mode", label: "Set HVAC Mode" },
-    { value: "turn_on", label: "Turn On" },
-    { value: "turn_off", label: "Turn Off" },
-  ],
-};
-
-function commandsForDomain(domain: string): { value: string; label: string }[] {
-  return COMMANDS_BY_DOMAIN[domain] ?? [
-    { value: "turn_on", label: "Turn On" },
-    { value: "turn_off", label: "Turn Off" },
-  ];
-}
-
 function domainOf(entityId: string): string {
   return entityId.split(".")[0] || "";
+}
+
+/** Turns an HA mode token ("heat_cool", "eco") into a readable label. */
+function humanizeOption(value: string): string {
+  return value
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+function formatReading(value: unknown, unit?: string | null): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const text = typeof value === "number" ? String(value) : humanizeOption(String(value));
+  return unit ? `${text} ${unit}` : text;
+}
+
+/** A climate entity's state is its HVAC mode, so "on" is not the only active state. */
+const ACTIVE_CLIMATE_STATES = new Set(["cool", "heat", "heat_cool", "auto", "dry", "fan_only"]);
+
+function stateVariant(device: SmartDevice): "success" | "muted" {
+  const state = (device.current_state || "").toLowerCase();
+  if (domainOf(device.ha_entity_id) === "climate") {
+    return ACTIVE_CLIMATE_STATES.has(state) ? "success" : "muted";
+  }
+  return state === "on" ? "success" : "muted";
 }
 
 function formatTimestamp(iso: string | null | undefined): string {
@@ -286,62 +282,241 @@ function HealthStrip({ health, loading }: { health: DeviceHealthSummary | null; 
 }
 
 // ── Devices tab ───────────────────────────────────────────────────────────────
+/**
+ * Renders one command parameter using the bounds/options the backend derived from the
+ * device's Home Assistant attributes — so a thermostat gets its real scale and range,
+ * and a mode it does not support is never offered.
+ */
+function ParamField({
+  spec, value, onChange,
+}: { spec: CommandParamSpec; value: string; onChange: (v: string) => void }) {
+  const label = spec.unit ? `${spec.label} (${spec.unit})` : spec.label;
+
+  if (spec.kind === "enum") {
+    const options = spec.options ?? [];
+    return (
+      <div className="mt-2">
+        <label className={labelClass}>{label}</label>
+        <select className={inputClass} value={value} onChange={(e) => onChange(e.target.value)}>
+          {/* Optional params may be left unset; required ones always have a valid value. */}
+          {!spec.required && <option value="">Leave unchanged</option>}
+          {options.map((opt) => (
+            <option key={opt} value={opt}>{humanizeOption(opt)}</option>
+          ))}
+        </select>
+      </div>
+    );
+  }
+
+  if (spec.kind === "bool") {
+    return (
+      <div className="mt-2 flex items-center gap-2">
+        <input
+          id={`param-${spec.name}`}
+          type="checkbox"
+          checked={value === "true"}
+          onChange={(e) => onChange(e.target.checked ? "true" : "false")}
+        />
+        <label htmlFor={`param-${spec.name}`} className="text-sm" style={{ color: "var(--foreground)" }}>
+          {label}
+        </label>
+      </div>
+    );
+  }
+
+  if (spec.kind === "number") {
+    const range =
+      spec.min !== undefined && spec.max !== undefined ? `${spec.min} – ${spec.max}` : undefined;
+    return (
+      <div className="mt-2">
+        <label className={labelClass}>{label}</label>
+        <input
+          className={inputClass}
+          type="number"
+          min={spec.min}
+          max={spec.max}
+          step={spec.step}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={range}
+        />
+        {range && (
+          <p style={{ fontSize: "10px", color: "var(--muted-foreground)", marginTop: "4px" }}>
+            Allowed range: {range}{spec.unit ? ` ${spec.unit}` : ""}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  // rgb / text
+  return (
+    <div className="mt-2">
+      <label className={labelClass}>{label}</label>
+      <input
+        className={inputClass}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={spec.kind === "rgb" ? "255,255,255" : undefined}
+      />
+    </div>
+  );
+}
+
 function DeviceDetailDialog({ device, onClose, onChanged }: { device: SmartDevice; onClose: () => void; onChanged: () => void }) {
   const [state, setState] = useState<DeviceStateSnapshot | null>(null);
+  const [caps, setCaps] = useState<DeviceCapabilities | null>(null);
   const [loadingState, setLoadingState] = useState(true);
-  const domain = domainOf(device.ha_entity_id);
-  const commands = commandsForDomain(domain);
-  const [command, setCommand] = useState(commands[0]?.value ?? "turn_on");
-  const [brightness, setBrightness] = useState("");
-  const [colorTemp, setColorTemp] = useState("");
-  const [rgb, setRgb] = useState("");
-  const [temperature, setTemperature] = useState("");
-  const [hvacMode, setHvacMode] = useState("");
+  const [capsError, setCapsError] = useState<string | null>(null);
+  const [command, setCommand] = useState<string>("");
+  const [paramValues, setParamValues] = useState<Record<string, string>>({});
+  const [formError, setFormError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const domain = domainOf(device.ha_entity_id);
+
+  const spec = useMemo(
+    () => caps?.supported_commands.find((c) => c.command === command) ?? null,
+    [caps, command],
+  );
 
   useEffect(() => {
     let active = true;
     setLoadingState(true);
-    smartHomeService
-      .getDeviceState(device.id)
-      .then((s) => { if (active) setState(s); })
-      .catch(() => { /* fall back to the list record — non-fatal */ })
-      .finally(() => { if (active) setLoadingState(false); });
+    setCapsError(null);
+
+    Promise.allSettled([
+      smartHomeService.getDeviceCapabilities(device.id),
+      smartHomeService.getDeviceState(device.id),
+    ]).then(([capsRes, stateRes]) => {
+      if (!active) return;
+      if (capsRes.status === "fulfilled") {
+        setCaps(capsRes.value);
+        setCommand(capsRes.value.supported_commands[0]?.command ?? "");
+      } else {
+        setCapsError(errorMessage(capsRes.reason));
+      }
+      if (stateRes.status === "fulfilled") setState(stateRes.value);
+      setLoadingState(false);
+    });
+
     return () => { active = false; };
   }, [device.id]);
 
+  // Pre-fill each control with the device's current value whenever the command changes.
+  useEffect(() => {
+    if (!spec) {
+      setParamValues({});
+      return;
+    }
+    const initial: Record<string, string> = {};
+    for (const p of spec.params) {
+      initial[p.name] =
+        p.default === null || p.default === undefined ? "" : String(p.default);
+    }
+    setParamValues(initial);
+    setFormError(null);
+  }, [spec]);
+
+  const refreshState = useCallback(async () => {
+    const fresh = await smartHomeService.getDeviceState(device.id).catch(() => null);
+    if (fresh) setState(fresh);
+  }, [device.id]);
+
   const handleSend = async () => {
+    if (!spec) return;
+
+    // Build the payload strictly from the declared params — nothing extra is ever sent.
+    const params: Record<string, unknown> = {};
+    for (const p of spec.params) {
+      const raw = (paramValues[p.name] ?? "").trim();
+
+      if (!raw) {
+        if (p.required) {
+          setFormError(`${p.label} is required.`);
+          return;
+        }
+        continue;
+      }
+
+      if (p.kind === "number") {
+        const n = Number(raw);
+        if (Number.isNaN(n)) {
+          setFormError(`${p.label} must be a number.`);
+          return;
+        }
+        if (p.min !== undefined && n < p.min) {
+          setFormError(`${p.label} must be at least ${p.min}${p.unit ? ` ${p.unit}` : ""}.`);
+          return;
+        }
+        if (p.max !== undefined && n > p.max) {
+          setFormError(`${p.label} must be at most ${p.max}${p.unit ? ` ${p.unit}` : ""}.`);
+          return;
+        }
+        params[p.name] = n;
+      } else if (p.kind === "rgb") {
+        const parts = raw.split(",").map((s) => Number(s.trim()));
+        if (parts.length !== 3 || parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) {
+          setFormError(`${p.label} must be three values 0-255, e.g. 255,128,0.`);
+          return;
+        }
+        params[p.name] = parts;
+      } else if (p.kind === "bool") {
+        params[p.name] = raw === "true";
+      } else {
+        params[p.name] = raw;
+      }
+    }
+
+    setFormError(null);
     setSending(true);
     try {
-      const params: Record<string, unknown> = {};
-      if (domain === "light" && command === "turn_on") {
-        if (brightness.trim()) params.brightness = Number(brightness);
-        if (rgb.trim()) {
-          const parts = rgb.split(",").map((s) => Number(s.trim())).filter((n) => !Number.isNaN(n));
-          if (parts.length === 3) params.rgb_color = parts;
-        } else if (colorTemp.trim()) {
-          params.color_temp_kelvin = Number(colorTemp);
-        }
-      }
-      if (domain === "climate" && command === "set_temperature" && temperature.trim()) {
-        params.temperature = Number(temperature);
-      }
-      if (domain === "climate" && command === "set_hvac_mode" && hvacMode.trim()) {
-        params.hvac_mode = hvacMode.trim();
-      }
       const res = await smartHomeService.sendDeviceCommand(device.id, {
         command, domain, params: Object.keys(params).length ? params : undefined,
       });
-      toast.success(res.message || "Command dispatched", { description: `command_id: ${res.command_id}` });
-      const fresh = await smartHomeService.getDeviceState(device.id).catch(() => null);
-      if (fresh) setState(fresh);
+      toast.success("Command accepted", { description: res.message });
+
+      // Home Assistant has applied the command; the confirmed state follows over the
+      // WebSocket. Re-read shortly after so the dialog reflects it too.
+      await refreshState();
+      window.setTimeout(() => { void refreshState(); }, 1500);
       onChanged();
     } catch (err) {
+      // The backend now names the real bounds / supported modes, so surface it verbatim.
       toast.error("Command failed", { description: errorMessage(err) });
     } finally {
       setSending(false);
     }
   };
+
+  const readings = caps?.readings ?? [];
+  const commands = caps?.supported_commands ?? [];
+  const controllable = Boolean(caps?.controllable) && commands.length > 0;
+  const currentState = (state?.current_state ?? device.current_state ?? "").toLowerCase();
+
+  // Mirrors the backend's no-op rules so an unchanged selection is caught here rather
+  // than as a rejected request. Matters most for climate, where the dropdown starts on
+  // the mode the device is already in.
+  const noOpReason = useMemo(() => {
+    if (!spec) return null;
+    if (domain === "climate") {
+      if (command === "turn_off" && currentState === "off") return "Thermostat is already off.";
+      if (command === "set_hvac_mode" && (paramValues.hvac_mode ?? "").toLowerCase() === currentState) {
+        return `Thermostat is already in ${humanizeOption(currentState)} mode.`;
+      }
+      return null;
+    }
+    if (["light", "switch", "input_boolean", "fan", "siren", "humidifier"].includes(domain)) {
+      const hasAdjustment = spec.params.some((p) => (paramValues[p.name] ?? "").trim() !== "");
+      if (command === "turn_on" && currentState === "on" && !hasAdjustment) return "Device is already on.";
+      if (command === "turn_off" && currentState === "off") return "Device is already off.";
+      return null;
+    }
+    if (domain === "lock") {
+      if (command === "lock" && currentState === "locked") return "Device is already locked.";
+      if (command === "unlock" && currentState === "unlocked") return "Device is already unlocked.";
+    }
+    return null;
+  }, [spec, command, paramValues, domain, currentState]);
 
   return (
     <Dialog.Root open onOpenChange={(o) => !o && onClose()}>
@@ -373,58 +548,73 @@ function DeviceDetailDialog({ device, onClose, onChanged }: { device: SmartDevic
             <InfoRow label="Last seen" value={formatTimestamp(state?.last_seen ?? device.last_seen)} />
           </div>
 
+          {readings.length > 0 && (
+            <div className="border-t border-border pt-3 mb-1">
+              <p className={labelClass}>Readings</p>
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                {readings.map((r) => (
+                  <span key={r.key} style={{ fontSize: "12px", color: "var(--foreground)" }}>
+                    <span style={{ color: "var(--muted-foreground)" }}>{r.label}:</span>{" "}
+                    {formatReading(r.value, r.unit)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="border-t border-border pt-4">
-            <p className={labelClass}>Send command</p>
-            <select className={inputClass} value={command} onChange={(e) => setCommand(e.target.value)}>
-              {commands.map((c) => (
-                <option key={c.value} value={c.value}>{c.label}</option>
-              ))}
-            </select>
+            {loadingState && !caps ? (
+              <p style={{ fontSize: "12px", color: "var(--muted-foreground)" }}>
+                Loading device controls…
+              </p>
+            ) : capsError ? (
+              <p style={{ fontSize: "12px", color: "var(--destructive)" }}>
+                Controls unavailable — could not read this device's capabilities. {capsError}
+              </p>
+            ) : !controllable ? (
+              // Read-only entity (sensor, camera, ...). Never render a control it cannot honor.
+              <p style={{ fontSize: "12px", color: "var(--muted-foreground)" }}>
+                This device is read-only and does not accept commands.
+              </p>
+            ) : (
+              <>
+                <p className={labelClass}>Send command</p>
+                <select className={inputClass} value={command} onChange={(e) => setCommand(e.target.value)}>
+                  {commands.map((c) => (
+                    <option key={c.command} value={c.command}>{c.label}</option>
+                  ))}
+                </select>
 
-            {domain === "light" && command === "turn_on" && (
-              <div className="grid grid-cols-3 gap-2 mt-2">
-                <div>
-                  <label className={labelClass}>Brightness</label>
-                  <input className={inputClass} value={brightness} onChange={(e) => setBrightness(e.target.value)} placeholder="0-255" />
-                </div>
-                <div>
-                  <label className={labelClass}>Color temp (K)</label>
-                  <input
-                    className={inputClass}
-                    value={colorTemp}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setColorTemp(e.target.value)}
-                    disabled={Boolean(rgb.trim())}
-                    placeholder="2700-6500"
+                {spec?.params.map((p) => (
+                  <ParamField
+                    key={p.name}
+                    spec={p}
+                    value={paramValues[p.name] ?? ""}
+                    onChange={(v) => setParamValues((prev) => ({ ...prev, [p.name]: v }))}
                   />
-                </div>
-                <div>
-                  <label className={labelClass}>RGB</label>
-                  <input
-                    className={inputClass}
-                    value={rgb}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRgb(e.target.value)}
-                    disabled={Boolean(colorTemp.trim())}
-                    placeholder="255,255,255"
-                  />
-                </div>
-              </div>
-            )}
-            {domain === "climate" && command === "set_temperature" && (
-              <div className="mt-2">
-                <label className={labelClass}>Temperature (°C)</label>
-                <input className={inputClass} value={temperature} onChange={(e) => setTemperature(e.target.value)} placeholder="22.5" />
-              </div>
-            )}
-            {domain === "climate" && command === "set_hvac_mode" && (
-              <div className="mt-2">
-                <label className={labelClass}>HVAC mode</label>
-                <input className={inputClass} value={hvacMode} onChange={(e) => setHvacMode(e.target.value)} placeholder="heat / cool / off" />
-              </div>
-            )}
+                ))}
 
-            <button onClick={handleSend} disabled={sending} className="mt-3" style={primaryButtonStyle({ disabled: sending, fullWidth: true })}>
-              {sending ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />} Send Command
-            </button>
+                {formError && (
+                  <p style={{ fontSize: "11px", color: "var(--destructive)", marginTop: "8px" }}>
+                    {formError}
+                  </p>
+                )}
+                {!formError && noOpReason && (
+                  <p style={{ fontSize: "11px", color: "var(--muted-foreground)", marginTop: "8px" }}>
+                    {noOpReason}
+                  </p>
+                )}
+
+                <button
+                  onClick={handleSend}
+                  disabled={sending || Boolean(noOpReason)}
+                  className="mt-3"
+                  style={primaryButtonStyle({ disabled: sending || Boolean(noOpReason), fullWidth: true })}
+                >
+                  {sending ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />} Send Command
+                </button>
+              </>
+            )}
           </div>
         </Dialog.Content>
       </Dialog.Portal>
@@ -521,7 +711,7 @@ function DevicesTab({
                   {d.ha_entity_id} · {d.vendor}{d.room ? ` · ${d.room}` : ""}
                 </p>
               </div>
-              <StatusBadge status={d.current_state} variant={d.current_state === "on" ? "success" : "muted"} />
+              <StatusBadge status={d.current_state} variant={stateVariant(d)} />
               <StatusBadge status={d.health_status} variant={healthVariant(d.health_status)} />
             </button>
           ))}
@@ -565,8 +755,8 @@ function ConnectIntegrationDialog({
 
   const handleNestRedirect = () => {
     if (nestAuthUrl) {
-      window.open(nestAuthUrl, "_blank", "width=600,height=700");
-      toast.info("Google OAuth consent window opened. Complete authorization to connect.");
+      window.open(nestAuthUrl, "_blank");
+      toast.info("Google OAuth consent tab opened. Complete authorization to connect.");
     } else {
       toast.error("Google OAuth URL not available");
     }

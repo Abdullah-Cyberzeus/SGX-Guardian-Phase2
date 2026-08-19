@@ -59,6 +59,7 @@ services:
       - nodeA-etc:/etc/sgx-guardian
       - nodeA-lib:/var/lib/sgx-guardian
       - nodeA-log:/var/log/sgx-guardian
+      - ./ha-dev-config:/ha-config
     healthcheck:
       test: ["CMD", "curl", "-ksf", "https://127.0.0.1:8443/api/v1/health"]
       interval: 10s

@@ -144,8 +144,60 @@ pub async fn get_device_state(
             "current_state": device.current_state,
             "health_status": device.health_status,
             "last_seen": device.last_seen,
+            // Live readings (current temperature, humidity, hvac_action, ...) so the control
+            // dialog can refresh without re-fetching the full capability document.
+            "attributes": device.attributes,
+            "temperature_unit": dm.temperature_unit().await,
         })),
     ))
+}
+
+/// GET /api/devices/{id}/capabilities
+///
+/// Describes what this device can actually do, derived from its Home Assistant attributes.
+/// The UI renders its controls exclusively from this, so an option appears only when the
+/// device really supports it.
+pub async fn get_device_capabilities(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let dm = match state.get_device_manager().await {
+        Some(m) => m,
+        None => {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({ "error": "DeviceManager not initialized" })),
+            ))
+        }
+    };
+
+    let mut device = find_device(&dm, &id).await.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("Device '{}' not found", id) })),
+        )
+    })?;
+
+    // A registry entry written before attributes were captured (or one that has not been
+    // reconciled yet) carries none. Fetch them on demand so the dialog is never empty.
+    if device.attributes.is_empty() {
+        match dm.refresh_device_attributes(&device.ha_entity_id).await {
+            Ok(Some(refreshed)) => device = refreshed,
+            Ok(None) => {}
+            Err(e) => {
+                // Degrade to whatever is cached rather than failing the request — an HA
+                // outage must not blank out the controls.
+                tracing::warn!(
+                    "Could not refresh attributes for {}: {}",
+                    device.ha_entity_id,
+                    e
+                );
+            }
+        }
+    }
+
+    let caps = dm.capabilities_for(&device).await;
+    Ok((StatusCode::OK, Json(serde_json::json!(caps))))
 }
 
 /// POST /api/devices/{id}/command
@@ -171,9 +223,10 @@ pub async fn execute_device_command(
         )
     })?;
 
-    // 1. Schema & Parameter Bounds Validation
+    // 1. Schema & Parameter Bounds Validation, against this device's real capabilities
+    let caps = dm.capabilities_for(&device).await;
     if let Err(e) = crate::api::auth::command_auth::CommandAuthorizer::validate_command_schema(
-        &device.device_type,
+        &caps,
         &payload.command,
         &payload.params,
     ) {
@@ -193,7 +246,7 @@ pub async fn execute_device_command(
 
     // 3. No-Op Command Rejection
     if let Err(e) = crate::api::auth::command_auth::CommandAuthorizer::check_no_op(
-        &device.current_state,
+        &device,
         &payload.command,
         &payload.params,
     ) {
@@ -212,23 +265,45 @@ pub async fn execute_device_command(
             .to_string()
     });
 
-    dm.send_command(
-        &device.ha_entity_id,
-        &domain,
-        &payload.command,
-        payload.params,
-    )
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))))?;
-
+    // Generated before dispatch so the id appears in logs alongside the attempt.
     let cmd_id = format!("cmd_{}", uuid::Uuid::new_v4().simple());
+    let echoed_params = payload.params.clone();
 
+    if let Err(e) = dm
+        .send_command(
+            &device.ha_entity_id,
+            &domain,
+            &payload.command,
+            payload.params,
+        )
+        .await
+    {
+        // Distinguish caller error from upstream failure instead of collapsing to a 500.
+        let status = if e.starts_with("invalid command:") {
+            StatusCode::BAD_REQUEST
+        } else if e.contains("not found in registry") {
+            StatusCode::NOT_FOUND
+        } else if e.contains("Circuit breaker") {
+            StatusCode::SERVICE_UNAVAILABLE
+        } else {
+            // Home Assistant refused or was unreachable — an upstream problem.
+            StatusCode::BAD_GATEWAY
+        };
+        return Err((status, Json(serde_json::json!({ "error": e, "command_id": cmd_id }))));
+    }
+
+    // Home Assistant returns 2xx only after the service handler completes, so the command
+    // is accepted at this point. The confirmed state arrives over the WebSocket shortly after.
     Ok((
         StatusCode::OK,
         Json(serde_json::json!({
-            "status": "pending",
+            "status": "accepted",
             "command_id": cmd_id,
-            "message": format!("Command '{}' dispatched to {}", payload.command, device.friendly_name)
+            "entity_id": device.ha_entity_id,
+            "command": payload.command,
+            "params": echoed_params,
+            "accepted_at": chrono::Utc::now(),
+            "message": format!("{} sent to {}", payload.command, device.friendly_name)
         })),
     ))
 }
@@ -289,6 +364,7 @@ mod tests {
             current_state: "on".to_string(),
             health_status: crate::device::state::DeviceHealth::Online,
             last_seen: chrono::Utc::now(),
+            attributes: Default::default(),
         };
         assert_eq!(dev.ha_entity_id, "light.living_room_light");
     }
