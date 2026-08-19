@@ -32,8 +32,11 @@ export interface SendChatResponse {
 }
 
 export interface ChatSocketEvent extends Partial<ChatMessageRecord> {
-  event_type?: "NewMessage" | "ReadReceipt" | "MessageStatus" | "new_message" | "read_receipt" | "message_status" | string;
+  event_type?: "NewMessage" | "ReadReceipt" | "MessageStatus" | "Typing" | "new_message" | "read_receipt" | "message_status" | "typing" | string;
   type?: string;
+  /** Present on ephemeral typing events. */
+  conversation_id?: string;
+  is_typing?: boolean;
 }
 
 export const chatService = {
@@ -97,6 +100,12 @@ export const chatService = {
       message_id: messageId,
       original_sender_did: originalSenderDid,
       ...(groupId ? { group_id: groupId } : {}),
+    }),
+  setTyping: (recipientDid: string, isGroup: boolean, isTyping: boolean) =>
+    api.post<{ status: string }>("/chat/typing", {
+      recipient_did: recipientDid,
+      is_group: isGroup,
+      is_typing: isTyping,
     }),
   sync: () => api.post<{ status: string; peers_synced: number }>("/chat/sync"),
 };

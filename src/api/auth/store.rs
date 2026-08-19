@@ -90,6 +90,8 @@ pub struct User {
     pub hide_presence: bool,
     #[serde(default)]
     pub hide_read_receipts: bool,
+    #[serde(default)]
+    pub hide_typing: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -98,6 +100,7 @@ pub struct ProfilePatch {
     pub email: Option<String>,
     pub hide_presence: Option<bool>,
     pub hide_read_receipts: Option<bool>,
+    pub hide_typing: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -650,6 +653,7 @@ impl JsonUserStore {
             oidc_sub: new_user.oidc_sub,
             hide_presence: false,
             hide_read_receipts: false,
+            hide_typing: false,
         }
     }
 
@@ -931,6 +935,9 @@ impl UserStore for JsonUserStore {
                 }
                 if let Some(hide_read_receipts) = patch.hide_read_receipts {
                     user.hide_read_receipts = hide_read_receipts;
+                }
+                if let Some(hide_typing) = patch.hide_typing {
+                    user.hide_typing = hide_typing;
                 }
                 Ok(user.clone())
             })
@@ -1317,6 +1324,7 @@ mod tests {
             .expect("create user");
         assert!(!created.hide_presence);
         assert!(!created.hide_read_receipts);
+        assert!(!created.hide_typing);
 
         let updated = stores
             .users
@@ -1327,6 +1335,7 @@ mod tests {
                     email: None,
                     hide_presence: Some(true),
                     hide_read_receipts: Some(true),
+                    hide_typing: None,
                 },
             )
             .await
@@ -1334,6 +1343,7 @@ mod tests {
         assert_eq!(updated.name, "New Name");
         assert!(updated.hide_presence);
         assert!(updated.hide_read_receipts);
+        assert!(!updated.hide_typing);
 
         // Survives reload from disk.
         let reloaded_stores = AdminStores::new(td.path().join("admin"));
@@ -1346,6 +1356,7 @@ mod tests {
         assert_eq!(reloaded.name, "New Name");
         assert!(reloaded.hide_presence);
         assert!(reloaded.hide_read_receipts);
+        assert!(!reloaded.hide_typing);
     }
 
     #[tokio::test]

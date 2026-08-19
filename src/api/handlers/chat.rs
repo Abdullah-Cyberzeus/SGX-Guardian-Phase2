@@ -691,6 +691,65 @@ pub async fn send_message(
 }
 
 #[derive(Deserialize)]
+pub struct TypingRequest {
+    pub recipient_did: String,
+    #[serde(default)]
+    pub is_group: bool,
+    pub is_typing: bool,
+}
+
+#[derive(Serialize)]
+pub struct TypingResponse {
+    pub status: String,
+}
+
+/// Broadcast an ephemeral typing indicator on the existing authenticated chat
+/// WebSocket. The event is never persisted and respects the sender's privacy setting.
+pub async fn typing(
+    State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
+    Json(req): Json<TypingRequest>,
+) -> Result<Json<TypingResponse>, ApiError> {
+    let sender_did = crate::api::handlers::browser_member::did_from_session(&session)
+        .unwrap_or_else(|| state.device_did.clone());
+
+    let hide_typing = match session.as_ref() {
+        Some(Extension(authed)) => state
+            .admin
+            .users
+            .find_by_id(&authed.claims.sub)
+            .await?
+            .is_some_and(|user| user.hide_typing),
+        None => false,
+    };
+
+    if req.is_group {
+        ensure_local_guardian_circle_access(&state, &session, &req.recipient_did)?;
+    } else {
+        ensure_member_contact_access(&state, &session, &req.recipient_did).await?;
+    }
+
+    if !hide_typing {
+        let conversation_id = if req.is_group {
+            req.recipient_did.clone()
+        } else {
+            local_pair_conversation_id(&state, &sender_did, &req.recipient_did)
+        };
+        let _ = state.chat_events.send(crate::chat::models::ChatEvent::Typing(
+            crate::chat::models::TypingEvent {
+                conversation_id,
+                sender_did,
+                is_typing: req.is_typing,
+            },
+        ));
+    }
+
+    Ok(Json(TypingResponse {
+        status: "ok".to_string(),
+    }))
+}
+
+#[derive(Deserialize)]
 pub struct MarkReadRequest {
     pub message_id: String,
     pub original_sender_did: String,
