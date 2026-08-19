@@ -48,6 +48,8 @@ pub enum GroupCallState {
 pub struct GroupParticipant {
     pub device_id: String,
     pub virtual_id: String,
+    /// Empty for a browser member hosted on this same Guardian — see
+    /// `is_local_browser`. Otherwise a Nebula overlay IP.
     pub nebula_ip: String,
     pub role: GroupRole,
     pub state: GroupMemberState,
@@ -57,6 +59,15 @@ pub struct GroupParticipant {
     pub joined_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub last_seen_at: Option<DateTime<Utc>>,
+    /// True for a browser Circle member hosted on this same Guardian process.
+    /// Such a participant has no Nebula identity at all — group-control
+    /// delivery to them is in-process (they share this exact session store),
+    /// never over Nebula, and their `device_id` (a DID) is already correct
+    /// from the moment the invite is built, so it's exempt from the
+    /// connection-address placeholder reconciliation device peers need (see
+    /// `reconcile_participant_key`).
+    #[serde(default)]
+    pub is_local_browser: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -107,11 +118,42 @@ struct GroupLogRecord<'a> {
     detail: &'a str,
 }
 
+/// The host cannot know an invitee's self-asserted `device_id` when it builds
+/// the invite — it only knows them by the connection-address `peer_id` in its
+/// trusted-peer registry (see `group_call.rs::create`), so a participant's map
+/// entry may still be keyed by that placeholder instead of their real
+/// device_id. Any lookup keyed by device_id must reconcile this first: match
+/// the stale entry by Nebula IP, which is always reliably known, and re-key
+/// it to the real device_id. A no-op once the entry is already correct.
+fn reconcile_participant_key(session: &mut GroupSession, device_id: &str, nebula_ip: &str) {
+    if device_id.is_empty() || nebula_ip.is_empty() || session.participants.contains_key(device_id)
+    {
+        return;
+    }
+    let stale_key = session
+        .participants
+        .iter()
+        .find(|(key, participant)| key.as_str() != device_id && participant.nebula_ip == nebula_ip)
+        .map(|(key, _)| key.clone());
+    if let Some(stale_key) = stale_key {
+        if let Some(mut participant) = session.participants.remove(&stale_key) {
+            participant.device_id = device_id.to_string();
+            session
+                .participants
+                .insert(device_id.to_string(), participant);
+        }
+    }
+}
+
 pub struct GroupSessionManager {
     sessions: RwLock<HashMap<String, GroupSession>>,
     events: broadcast::Sender<GroupEvent>,
     log_path: PathBuf,
     persistence_path: PathBuf,
+    /// Same normalized, queryable history store direct calls persist to
+    /// (`crate::call::history::CallHistoryStore`), so group calls show up
+    /// alongside 1:1 calls instead of only in the append-only text log.
+    history: std::sync::Arc<crate::call::history::CallHistoryStore>,
 }
 
 impl Default for GroupSessionManager {
@@ -122,6 +164,16 @@ impl Default for GroupSessionManager {
 
 impl GroupSessionManager {
     pub fn new(log_path: impl Into<PathBuf>) -> Self {
+        Self::with_history_store(
+            log_path,
+            std::sync::Arc::new(crate::call::history::CallHistoryStore::default()),
+        )
+    }
+
+    pub fn with_history_store(
+        log_path: impl Into<PathBuf>,
+        history: std::sync::Arc<crate::call::history::CallHistoryStore>,
+    ) -> Self {
         let (events, _) = broadcast::channel(512);
         let log_path = log_path.into();
         let persistence_path = log_path.with_extension("sessions.json");
@@ -138,6 +190,7 @@ impl GroupSessionManager {
             events,
             log_path,
             persistence_path,
+            history,
         }
     }
 
@@ -182,7 +235,8 @@ impl GroupSessionManager {
             if invitee.device_id == host_device_id
                 || participants.contains_key(&invitee.device_id)
                 || invitee.device_id.trim().is_empty()
-                || invitee.nebula_ip.parse::<std::net::IpAddr>().is_err()
+                || (!invitee.is_local_browser
+                    && invitee.nebula_ip.parse::<std::net::IpAddr>().is_err())
             {
                 return Err(CallError::InvalidOffer {
                     reason: "Group contains duplicate or invalid participants".into(),
@@ -232,9 +286,11 @@ impl GroupSessionManager {
 
     pub async fn register_invite(
         &self,
-        session: GroupSession,
+        mut session: GroupSession,
         local_device_id: &str,
+        local_nebula_ip: &str,
     ) -> CallResult<GroupSession> {
+        reconcile_participant_key(&mut session, local_device_id, local_nebula_ip);
         let participant = session.participants.get(local_device_id).ok_or_else(|| {
             CallError::UnauthorizedDevice {
                 reason: "Local node was not invited to this group".into(),
@@ -270,9 +326,15 @@ impl GroupSessionManager {
         Ok(session)
     }
 
-    pub async fn join(&self, group_id: &str, device_id: &str) -> CallResult<GroupSession> {
+    pub async fn join(
+        &self,
+        group_id: &str,
+        device_id: &str,
+        sender_nebula_ip: &str,
+    ) -> CallResult<GroupSession> {
         let session = self
             .update(group_id, "group_joined", |session| {
+                reconcile_participant_key(session, device_id, sender_nebula_ip);
                 let participant = session.participants.get_mut(device_id).ok_or_else(|| {
                     CallError::UnauthorizedDevice {
                         reason: "Device was not invited".into(),
@@ -308,9 +370,15 @@ impl GroupSessionManager {
         Ok(session)
     }
 
-    pub async fn decline(&self, group_id: &str, device_id: &str) -> CallResult<GroupSession> {
+    pub async fn decline(
+        &self,
+        group_id: &str,
+        device_id: &str,
+        sender_nebula_ip: &str,
+    ) -> CallResult<GroupSession> {
         let session = self
             .update(group_id, "group_declined", |session| {
+                reconcile_participant_key(session, device_id, sender_nebula_ip);
                 let participant = session.participants.get_mut(device_id).ok_or_else(|| {
                     CallError::UnauthorizedDevice {
                         reason: "Device was not invited".into(),
@@ -330,7 +398,12 @@ impl GroupSessionManager {
         Ok(session)
     }
 
-    pub async fn leave(&self, group_id: &str, device_id: &str) -> CallResult<GroupSession> {
+    pub async fn leave(
+        &self,
+        group_id: &str,
+        device_id: &str,
+        sender_nebula_ip: &str,
+    ) -> CallResult<GroupSession> {
         let session = self
             .update(group_id, "group_left", |session| {
                 if device_id == session.host_device_id {
@@ -338,6 +411,7 @@ impl GroupSessionManager {
                         reason: "Host must end the group call".into(),
                     });
                 }
+                reconcile_participant_key(session, device_id, sender_nebula_ip);
                 let participant = session.participants.get_mut(device_id).ok_or_else(|| {
                     CallError::UnauthorizedDevice {
                         reason: "Device is not a group member".into(),
@@ -417,9 +491,11 @@ impl GroupSessionManager {
         group_id: &str,
         device_id: &str,
         ready: bool,
+        sender_nebula_ip: &str,
     ) -> CallResult<GroupSession> {
         let session = self
             .update(group_id, "group_media_ready", |session| {
+                reconcile_participant_key(session, device_id, sender_nebula_ip);
                 let participant = session.participants.get_mut(device_id).ok_or_else(|| {
                     CallError::UnauthorizedDevice {
                         reason: "Device is not a group member".into(),
@@ -451,9 +527,11 @@ impl GroupSessionManager {
 
     pub async fn apply_snapshot(
         &self,
-        incoming: GroupSession,
+        mut incoming: GroupSession,
         local_device_id: &str,
+        local_nebula_ip: &str,
     ) -> CallResult<GroupSession> {
+        reconcile_participant_key(&mut incoming, local_device_id, local_nebula_ip);
         if !incoming.participants.contains_key(local_device_id) {
             return Err(CallError::UnauthorizedDevice {
                 reason: "Local node is absent from group snapshot".into(),
@@ -519,6 +597,7 @@ impl GroupSessionManager {
             None,
             "host ended group call",
         );
+        self.history.record_group(&session);
         Ok(session)
     }
 
@@ -568,8 +647,14 @@ impl GroupSessionManager {
 
     /// Record liveness and restore a temporarily disconnected participant.
     /// Explicitly kicked or declined participants can never use heartbeat to rejoin.
-    pub async fn heartbeat(&self, group_id: &str, device_id: &str) -> CallResult<GroupSession> {
+    pub async fn heartbeat(
+        &self,
+        group_id: &str,
+        device_id: &str,
+        sender_nebula_ip: &str,
+    ) -> CallResult<GroupSession> {
         self.update(group_id, "group_heartbeat", |session| {
+            reconcile_participant_key(session, device_id, sender_nebula_ip);
             let participant = session.participants.get_mut(device_id).ok_or_else(|| {
                 CallError::UnauthorizedDevice {
                     reason: "Device is not a group member".into(),
@@ -758,7 +843,80 @@ mod tests {
             media_ready: false,
             joined_at: None,
             last_seen_at: None,
+            is_local_browser: false,
         }
+    }
+
+    /// Reproduces the real bug: the host cannot know an invitee's
+    /// self-asserted device_id when building the invite (it only knows them
+    /// by the connection-address `peer_id` from its trusted-peer registry —
+    /// see `group_call.rs::create`), so the participant map is keyed by that
+    /// placeholder, not "nodeB". Both the invitee reconciling its own entry
+    /// (`register_invite`) and the host reconciling the sender's entry when
+    /// it later receives a Join must recover from this via Nebula IP.
+    fn invitee_with_placeholder_key(nebula_ip: &str) -> GroupParticipant {
+        GroupParticipant {
+            device_id: format!("{nebula_ip}:50152"), // what group_call.rs::create currently does
+            virtual_id: "vid-nodeb".into(),
+            nebula_ip: nebula_ip.into(),
+            role: GroupRole::Member,
+            state: GroupMemberState::Invited,
+            audio_allowed: true,
+            video_allowed: true,
+            media_ready: false,
+            joined_at: None,
+            last_seen_at: None,
+            is_local_browser: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn invitee_reconciles_placeholder_keyed_invite_to_its_real_device_id() {
+        let dir = tempdir().unwrap();
+        let host_manager = GroupSessionManager::new(dir.path().join("host.log"));
+        let invite = host_manager
+            .create(
+                "Ops".into(),
+                participant("nodeA", GroupRole::Host),
+                vec![invitee_with_placeholder_key("192.168.100.2")],
+                vec![MediaType::Audio],
+            )
+            .await
+            .unwrap();
+        assert!(!invite.participants.contains_key("nodeB"));
+
+        let receiver_manager = GroupSessionManager::new(dir.path().join("receiver.log"));
+        let registered = receiver_manager
+            .register_invite(invite, "nodeB", "192.168.100.2")
+            .await
+            .unwrap();
+        assert!(registered.participants.contains_key("nodeB"));
+        assert_eq!(registered.participants["nodeB"].device_id, "nodeB");
+    }
+
+    #[tokio::test]
+    async fn host_reconciles_placeholder_keyed_participant_when_it_joins() {
+        let dir = tempdir().unwrap();
+        let manager = GroupSessionManager::new(dir.path().join("group.log"));
+        let created = manager
+            .create(
+                "Ops".into(),
+                participant("nodeA", GroupRole::Host),
+                vec![invitee_with_placeholder_key("192.168.100.2")],
+                vec![MediaType::Audio],
+            )
+            .await
+            .unwrap();
+        assert!(!created.participants.contains_key("nodeB"));
+
+        // Mirrors what process_group_control does: nodeB's Join arrives over
+        // Nebula from 192.168.100.2, which is nodeB's real, unspoofable IP.
+        let joined = manager
+            .join(&created.group_id, "nodeB", "192.168.100.2")
+            .await
+            .unwrap();
+        assert_eq!(joined.participants["nodeB"].state, GroupMemberState::Joined);
+        assert_eq!(joined.participants.len(), 2);
     }
 
     #[tokio::test]
@@ -774,7 +932,10 @@ mod tests {
             )
             .await
             .unwrap();
-        let joined = manager.join(&created.group_id, "nodeB").await.unwrap();
+        let joined = manager
+            .join(&created.group_id, "nodeB", "192.168.100.2")
+            .await
+            .unwrap();
         assert_eq!(joined.state, GroupCallState::Active);
         let muted = manager
             .moderate(
@@ -808,6 +969,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ended_group_call_is_persisted_to_normalized_history() {
+        let dir = tempdir().unwrap();
+        let history = std::sync::Arc::new(crate::call::history::CallHistoryStore::new(
+            dir.path().join("call_history.json"),
+        ));
+        let manager =
+            GroupSessionManager::with_history_store(dir.path().join("group.log"), history.clone());
+        let created = manager
+            .create(
+                "Ops".into(),
+                participant("nodeA", GroupRole::Host),
+                vec![participant("nodeB", GroupRole::Member)],
+                vec![MediaType::Audio],
+            )
+            .await
+            .unwrap();
+        manager
+            .join(&created.group_id, "nodeB", "192.168.100.2")
+            .await
+            .unwrap();
+        manager.end(&created.group_id, "nodeA").await.unwrap();
+
+        let records = history.list();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id, created.group_id);
+        assert_eq!(records[0].kind, "group");
+        assert_eq!(records[0].outcome, "completed");
+        assert_eq!(records[0].participant_ids, vec!["nodeA", "nodeB"]);
+    }
+
+    #[tokio::test]
+    async fn group_call_nobody_joined_is_recorded_as_cancelled() {
+        let dir = tempdir().unwrap();
+        let history = std::sync::Arc::new(crate::call::history::CallHistoryStore::new(
+            dir.path().join("call_history.json"),
+        ));
+        let manager =
+            GroupSessionManager::with_history_store(dir.path().join("group.log"), history.clone());
+        let created = manager
+            .create(
+                "Ops".into(),
+                participant("nodeA", GroupRole::Host),
+                vec![participant("nodeB", GroupRole::Member)],
+                vec![MediaType::Audio],
+            )
+            .await
+            .unwrap();
+        manager.end(&created.group_id, "nodeA").await.unwrap();
+
+        let records = history.list();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].outcome, "cancelled");
+    }
+
+    #[tokio::test]
     async fn invitation_rejects_unlisted_local_node() {
         let dir = tempdir().unwrap();
         let host_manager = GroupSessionManager::new(dir.path().join("host.log"));
@@ -822,11 +1038,11 @@ mod tests {
             .await
             .unwrap();
         assert!(receiver_manager
-            .register_invite(session.clone(), "nodeC")
+            .register_invite(session.clone(), "nodeC", "192.168.100.3")
             .await
             .is_err());
         assert!(receiver_manager
-            .register_invite(session, "nodeB")
+            .register_invite(session, "nodeB", "192.168.100.2")
             .await
             .is_ok());
     }
@@ -846,7 +1062,7 @@ mod tests {
             .await
             .unwrap();
         receiver_manager
-            .register_invite(old.clone(), "nodeB")
+            .register_invite(old.clone(), "nodeB", "192.168.100.2")
             .await
             .unwrap();
 
@@ -860,7 +1076,7 @@ mod tests {
             .await
             .unwrap();
         receiver_manager
-            .register_invite(replacement.clone(), "nodeB")
+            .register_invite(replacement.clone(), "nodeB", "192.168.100.2")
             .await
             .unwrap();
 
@@ -906,8 +1122,14 @@ mod tests {
             .await
             .unwrap();
         let stale = created.clone();
-        manager.join(&created.group_id, "nodeB").await.unwrap();
-        assert!(manager.apply_snapshot(stale, "nodeA").await.is_err());
+        manager
+            .join(&created.group_id, "nodeB", "192.168.100.2")
+            .await
+            .unwrap();
+        assert!(manager
+            .apply_snapshot(stale, "nodeA", "192.168.100.1")
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -938,6 +1160,7 @@ mod tests {
                 media_ready: false,
                 joined_at: None,
                 last_seen_at: None,
+                is_local_browser: false,
             })
             .collect();
         assert!(manager
@@ -964,15 +1187,21 @@ mod tests {
             )
             .await
             .unwrap();
-        manager.join(&created.group_id, "nodeB").await.unwrap();
-        manager.leave(&created.group_id, "nodeB").await.unwrap();
+        manager
+            .join(&created.group_id, "nodeB", "192.168.100.2")
+            .await
+            .unwrap();
+        manager
+            .leave(&created.group_id, "nodeB", "192.168.100.2")
+            .await
+            .unwrap();
         assert!(
             manager.active_for("nodeB").await.is_empty(),
             "a deliberately left session must not block a new call"
         );
         assert_eq!(
             manager
-                .join(&created.group_id, "nodeB")
+                .join(&created.group_id, "nodeB", "192.168.100.2")
                 .await
                 .unwrap()
                 .participants["nodeB"]
@@ -989,8 +1218,14 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(manager.join(&created.group_id, "nodeB").await.is_err());
-        assert!(manager.heartbeat(&created.group_id, "nodeB").await.is_err());
+        assert!(manager
+            .join(&created.group_id, "nodeB", "192.168.100.2")
+            .await
+            .is_err());
+        assert!(manager
+            .heartbeat(&created.group_id, "nodeB", "192.168.100.2")
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -1007,7 +1242,10 @@ mod tests {
             )
             .await
             .unwrap();
-        manager.join(&created.group_id, "nodeB").await.unwrap();
+        manager
+            .join(&created.group_id, "nodeB", "192.168.100.2")
+            .await
+            .unwrap();
         {
             let mut sessions = manager.sessions.write().await;
             sessions
@@ -1033,7 +1271,7 @@ mod tests {
         );
         assert_eq!(
             restored
-                .join(&created.group_id, "nodeB")
+                .join(&created.group_id, "nodeB", "192.168.100.2")
                 .await
                 .unwrap()
                 .participants["nodeB"]

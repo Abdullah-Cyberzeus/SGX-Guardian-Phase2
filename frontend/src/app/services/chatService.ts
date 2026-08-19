@@ -32,8 +32,11 @@ export interface SendChatResponse {
 }
 
 export interface ChatSocketEvent extends Partial<ChatMessageRecord> {
-  event_type?: "NewMessage" | "ReadReceipt" | "MessageStatus" | "new_message" | "read_receipt" | "message_status" | string;
+  event_type?: "NewMessage" | "ReadReceipt" | "MessageStatus" | "Typing" | "new_message" | "read_receipt" | "message_status" | "typing" | string;
   type?: string;
+  /** Present on `Typing` events. */
+  conversation_id?: string;
+  is_typing?: boolean;
 }
 
 export const chatService = {
@@ -99,6 +102,12 @@ export const chatService = {
       ...(groupId ? { group_id: groupId } : {}),
     }),
   sync: () => api.post<{ status: string; peers_synced: number }>("/chat/sync"),
+  setTyping: (recipientDid: string, isGroup: boolean, isTyping: boolean) =>
+    api.post<{ status: string }>("/chat/typing", {
+      recipient_did: recipientDid,
+      is_group: isGroup,
+      is_typing: isTyping,
+    }),
 };
 
 export function parseChatPayload(record: ChatMessageRecord): ChatPayload {

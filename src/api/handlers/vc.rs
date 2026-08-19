@@ -897,6 +897,7 @@ fn api_error_to_vc_error(err: ApiError) -> VcError {
         | ApiError::TooManyRequests(message)
         | ApiError::PayloadTooLarge(message)
         | ApiError::Unauthorized(message)
+        | ApiError::Gone(message)
         | ApiError::Internal(message) => VcError::InvalidStructure(message),
         ApiError::ServiceUnavailable { message, .. } => VcError::InvalidStructure(message),
     }

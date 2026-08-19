@@ -102,7 +102,7 @@ function ControlButton({
 }
 
 export function CallingScreen() {
-  const { call, incoming, peerId, peerOnline, localStream, remoteStream, error, muted, cameraEnabled, toggleMute, toggleCamera, sendTestTone, shareScreen, end } = useCall();
+  const { call, incoming, peerId, peerOnline, localStream, remoteStream, error, muted, cameraEnabled, qualityLabel, toggleMute, toggleCamera, sendTestTone, shareScreen, end } = useCall();
   const { displayForDid } = useContactNames();
   const elapsed = useCallDuration(call);
   const [testingAudio, setTestingAudio] = useState(false);
@@ -139,7 +139,7 @@ export function CallingScreen() {
       </div>
       <div className={`direct-call-network${connected ? " is-connected" : ""}`}>
         <span className="direct-call-network-dot" />
-        {connected ? "Connected" : label}
+        {connected ? `Connected${qualityLabel ? ` · ${qualityLabel}` : ""}` : label}
       </div>
     </header>
 
@@ -175,11 +175,12 @@ export function CallingScreen() {
         </div>
 
         <p className="direct-call-security-note"><ShieldCheck size={14} /> Identity and call policy verified continuously</p>
+        {call.encryption_verified && <p className="direct-call-security-note"><ShieldCheck size={14} /> Encryption verified</p>}
       </div>}
 
       {remoteHasVideo && <div className="direct-video-info">
         <div><strong>{displayName}</strong>{showIdentity && <span>{compactIdentity(peer)}</span>}</div>
-        <time>{connected ? formatDuration(elapsed) : label}</time>
+        <time>{connected ? `${formatDuration(elapsed)}${qualityLabel ? ` · ${qualityLabel}` : ""}` : label}</time>
       </div>}
       {localHasVideo && <Video stream={localStream} muted className="local-video" />}
       {error && <div className="call-error" role="alert">{error}</div>}

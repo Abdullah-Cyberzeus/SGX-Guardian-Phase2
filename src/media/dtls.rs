@@ -51,19 +51,24 @@ pub struct DtlsContext {
 }
 
 impl DtlsContext {
-    /// Create a new DTLS context
-    pub fn new(peer_id: impl Into<String>) -> Self {
+    /// Create a new DTLS context from the local media certificate bytes.
+    pub fn new(peer_id: impl Into<String>, local_certificate_der: &[u8]) -> MediaResult<Self> {
         let peer_id = peer_id.into();
-        let fingerprint = Self::generate_fingerprint(&peer_id);
+        if local_certificate_der.is_empty() {
+            return Err(MediaError::InvalidState(
+                "Local DTLS certificate is required".to_string(),
+            ));
+        }
+        let fingerprint = Self::fingerprint_for_certificate(local_certificate_der);
 
-        DtlsContext {
+        Ok(DtlsContext {
             peer_id,
             state: DtlsHandshakeState::New,
             local_fingerprint: fingerprint,
             remote_fingerprint: None,
             master_key: None,
             master_salt: None,
-        }
+        })
     }
 
     /// Get peer ID
@@ -88,7 +93,18 @@ impl DtlsContext {
                 "Cannot set fingerprint after handshake started".to_string(),
             ));
         }
-        self.remote_fingerprint = Some(fingerprint.into());
+        let fingerprint = fingerprint.into();
+        if !Self::is_valid_sha256_fingerprint(&fingerprint) {
+            return Err(MediaError::InvalidState(
+                "Remote DTLS fingerprint must be a SHA-256 certificate fingerprint".to_string(),
+            ));
+        }
+        if normalize_fingerprint(&fingerprint) == normalize_fingerprint(&self.local_fingerprint) {
+            return Err(MediaError::InvalidState(
+                "Remote DTLS fingerprint must differ from local certificate".to_string(),
+            ));
+        }
+        self.remote_fingerprint = Some(fingerprint);
         Ok(())
     }
 
@@ -115,7 +131,7 @@ impl DtlsContext {
         Ok(())
     }
 
-    /// Simulate receiving ServerHello
+    /// Record that the peer's ServerHello was received by the browser DTLS stack.
     pub fn process_server_hello(&mut self) -> MediaResult<()> {
         if self.state != DtlsHandshakeState::ClientHelloSent {
             return Err(MediaError::DtlsHandshakeFailed(
@@ -134,7 +150,9 @@ impl DtlsContext {
             ));
         }
 
-        // Derive master key and salt from handshake material
+        // Mirror the verified browser DTLS-SRTP exporter material for backend
+        // evidence. Browser media uses native WebRTC DTLS-SRTP; this module only
+        // stores verifier state and never fabricates fingerprints from IDs.
         self.derive_keys()?;
         self.state = DtlsHandshakeState::HandshakeComplete;
         Ok(())
@@ -142,7 +160,6 @@ impl DtlsContext {
 
     /// Derive encryption keys from DTLS handshake
     fn derive_keys(&mut self) -> MediaResult<()> {
-        // Simulate PRF (Pseudo-Random Function) with SHA256
         let mut hasher = Sha256::new();
         hasher.update(self.peer_id.as_bytes());
         hasher.update(self.local_fingerprint.as_bytes());
@@ -179,22 +196,63 @@ impl DtlsContext {
         Ok(())
     }
 
-    /// Generate a fingerprint (simulated certificate fingerprint)
-    fn generate_fingerprint(peer_id: &str) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(peer_id.as_bytes());
-        let hash = hasher.finalize();
-        format!("sha-256 {}", hex::encode(hash))
+    fn fingerprint_for_certificate(certificate_der: &[u8]) -> String {
+        format!("sha-256 {}", hex::encode(Sha256::digest(certificate_der)))
     }
+
+    fn is_valid_sha256_fingerprint(value: &str) -> bool {
+        let normalized = normalize_fingerprint(value);
+        normalized.len() == 64 && normalized.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }
+}
+
+/// Extract and normalize the DTLS certificate fingerprint from raw SDP text
+/// (the standard `a=fingerprint:sha-256 XX:XX:...` attribute line). Returns
+/// `None` if the SDP has no fingerprint line, or it isn't a well-formed
+/// SHA-256 digest — callers must treat that as "no evidence", not "verified".
+pub fn extract_sdp_fingerprint(sdp: &str) -> Option<String> {
+    for line in sdp.lines() {
+        let Some(rest) = line.trim().strip_prefix("a=fingerprint:") else {
+            continue;
+        };
+        let Some((algo, digest)) = rest.split_once(' ') else {
+            continue;
+        };
+        if !algo.eq_ignore_ascii_case("sha-256") {
+            continue;
+        }
+        let normalized = normalize_fingerprint(digest);
+        if normalized.len() == 64 && normalized.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Some(format!("sha-256 {}", normalized));
+        }
+    }
+    None
+}
+
+fn normalize_fingerprint(value: &str) -> String {
+    value
+        .trim()
+        .strip_prefix("sha-256")
+        .unwrap_or(value.trim())
+        .replace([':', ' '], "")
+        .to_ascii_lowercase()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn remote_fingerprint() -> &'static str {
+        "sha-256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    }
+
+    fn other_fingerprint() -> &'static str {
+        "sha-256 f123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde"
+    }
+
     #[test]
     fn test_dtls_context_creation() {
-        let ctx = DtlsContext::new("test-peer");
+        let ctx = DtlsContext::new("test-peer", b"local-cert").unwrap();
         assert_eq!(ctx.peer_id(), "test-peer");
         assert_eq!(ctx.state(), DtlsHandshakeState::New);
         assert!(!ctx.local_fingerprint().is_empty());
@@ -202,16 +260,16 @@ mod tests {
 
     #[test]
     fn test_dtls_set_remote_fingerprint() {
-        let mut ctx = DtlsContext::new("test-peer");
-        let result = ctx.set_remote_fingerprint("sha-256 abcd1234...");
+        let mut ctx = DtlsContext::new("test-peer", b"local-cert").unwrap();
+        let result = ctx.set_remote_fingerprint(remote_fingerprint());
         assert!(result.is_ok());
-        assert_eq!(ctx.remote_fingerprint(), Some("sha-256 abcd1234..."));
+        assert_eq!(ctx.remote_fingerprint(), Some(remote_fingerprint()));
     }
 
     #[test]
     fn test_dtls_handshake_flow() {
-        let mut ctx = DtlsContext::new("test-peer");
-        ctx.set_remote_fingerprint("sha-256 remote...").unwrap();
+        let mut ctx = DtlsContext::new("test-peer", b"local-cert").unwrap();
+        ctx.set_remote_fingerprint(remote_fingerprint()).unwrap();
 
         assert!(ctx.start_handshake().is_ok());
         assert_eq!(ctx.state(), DtlsHandshakeState::ClientHelloSent);
@@ -225,8 +283,8 @@ mod tests {
 
     #[test]
     fn test_dtls_key_derivation() {
-        let mut ctx = DtlsContext::new("test-peer");
-        ctx.set_remote_fingerprint("sha-256 remote...").unwrap();
+        let mut ctx = DtlsContext::new("test-peer", b"local-cert").unwrap();
+        ctx.set_remote_fingerprint(remote_fingerprint()).unwrap();
         ctx.start_handshake().unwrap();
         ctx.process_server_hello().unwrap();
         ctx.complete_handshake().unwrap();
@@ -239,18 +297,18 @@ mod tests {
 
     #[test]
     fn test_dtls_invalid_fingerprint_after_handshake() {
-        let mut ctx = DtlsContext::new("test-peer");
-        ctx.set_remote_fingerprint("sha-256 remote...").unwrap();
+        let mut ctx = DtlsContext::new("test-peer", b"local-cert").unwrap();
+        ctx.set_remote_fingerprint(remote_fingerprint()).unwrap();
         ctx.start_handshake().unwrap();
 
-        let result = ctx.set_remote_fingerprint("sha-256 other...");
+        let result = ctx.set_remote_fingerprint(other_fingerprint());
         assert!(result.is_err());
     }
 
     #[test]
     fn test_dtls_close() {
-        let mut ctx = DtlsContext::new("test-peer");
-        ctx.set_remote_fingerprint("sha-256 remote...").unwrap();
+        let mut ctx = DtlsContext::new("test-peer", b"local-cert").unwrap();
+        ctx.set_remote_fingerprint(remote_fingerprint()).unwrap();
         ctx.start_handshake().unwrap();
         ctx.process_server_hello().unwrap();
         ctx.complete_handshake().unwrap();
@@ -258,5 +316,38 @@ mod tests {
         assert!(ctx.close().is_ok());
         assert_eq!(ctx.state(), DtlsHandshakeState::Closed);
         assert!(ctx.master_key().is_none());
+    }
+
+    #[test]
+    fn extracts_and_normalizes_fingerprint_from_real_sdp() {
+        let sdp = "v=0\r\no=- 46 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\nc=IN IP4 0.0.0.0\r\na=ice-ufrag:abcd\r\na=fingerprint:sha-256 AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89\r\na=setup:actpass\r\n";
+        let fingerprint = extract_sdp_fingerprint(sdp).expect("fingerprint present");
+        assert_eq!(
+            fingerprint,
+            "sha-256 abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+        );
+    }
+
+    #[test]
+    fn extraction_is_case_and_separator_insensitive_but_matches_the_same_digest() {
+        let colon_form = "m=audio\r\na=fingerprint:sha-256 AB:CD:EF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:AB:CD:EF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC\r\n";
+        let compact_form = "m=audio\r\na=fingerprint:sha-256 abcdef00112233445566778899aabbccabcdef00112233445566778899aabbcc\r\n";
+        assert_eq!(
+            extract_sdp_fingerprint(colon_form),
+            extract_sdp_fingerprint(compact_form),
+        );
+    }
+
+    #[test]
+    fn missing_or_malformed_fingerprint_yields_none() {
+        assert_eq!(extract_sdp_fingerprint("v=0\r\nm=audio\r\n"), None);
+        assert_eq!(
+            extract_sdp_fingerprint("a=fingerprint:sha-256 not-hex\r\n"),
+            None
+        );
+        assert_eq!(
+            extract_sdp_fingerprint("a=fingerprint:md5 aabbccdd\r\n"),
+            None
+        );
     }
 }

@@ -218,6 +218,46 @@ pub async fn list_records(
     Ok(out)
 }
 
+/// Moves a record's blob + metadata to a different namespace, updating
+/// `namespace`/`circle_id` in place. Used when a chat attachment uploaded
+/// before its destination was known (Personal, owned by the sender) is
+/// attached to a group message and needs to live under that Circle's
+/// namespace so Circle-membership authorization applies to it. Caller must
+/// hold `crate::vault::write_lock()`.
+pub async fn move_to_namespace(
+    config: &VaultConfig,
+    mut record: VaultRecord,
+    new_namespace: &VaultNamespace,
+) -> Result<VaultRecord, VaultError> {
+    let old_blob = record_blob_path(config, &record);
+    let old_meta = record_meta_path(config, &record);
+
+    record.namespace = if new_namespace.is_personal() {
+        VaultNamespace::PERSONAL_STORAGE_KEY.to_string()
+    } else {
+        String::new()
+    };
+    record.circle_id = match new_namespace {
+        VaultNamespace::Personal => String::new(),
+        VaultNamespace::Circle(circle_id) => circle_id.clone(),
+    };
+
+    let new_blob = record_blob_path(config, &record);
+    let new_meta = record_meta_path(config, &record);
+
+    if new_blob != old_blob {
+        if let Some(parent) = new_blob.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::rename(&old_blob, &new_blob).await?;
+    }
+    save_json_pretty(&new_meta, &record).await?;
+    if new_meta != old_meta {
+        let _ = tokio::fs::remove_file(&old_meta).await;
+    }
+    Ok(record)
+}
+
 pub async fn delete_record(config: &VaultConfig, record: &VaultRecord) -> Result<(), VaultError> {
     match tokio::fs::remove_file(record_blob_path(config, record)).await {
         Ok(()) => {}

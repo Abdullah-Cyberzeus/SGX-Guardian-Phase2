@@ -102,6 +102,12 @@ function normalizePeers(peers: PeersResponse['peers']): Peer[] {
   }));
 }
 
+/** True when this peer opted to hide their online status (Guardian-enforced
+ * privacy) — render as neutral "hidden," not "offline." */
+export function presenceHidden(peer: Pick<Peer, "presenceStatus">): boolean {
+  return peer.presenceStatus === "hidden";
+}
+
 export const peerService = {
   getLocalIdentity: () => api.get<{ did: string }>('/pwa/identity'),
 

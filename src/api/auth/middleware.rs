@@ -121,11 +121,7 @@ pub async fn require_auth(
     if claims.role != user.role.as_str() {
         return unauthorized("session role changed; sign in again");
     }
-    let current_scopes = if user.scopes.is_empty() {
-        authorization::default_scopes(user.role.as_str())
-    } else {
-        user.scopes
-    };
+    let current_scopes = authorization::effective_scopes(user.role.as_str(), &user.scopes);
     // Tokens issued before scopes were introduced remain valid for existing
     // owner/admin accounts. New scoped sessions fail closed when permissions
     // change in the account record and must be re-issued by signing in.
@@ -160,13 +156,21 @@ pub async fn require_auth(
                 AuditCategory::Identity,
                 AuditSeverity::Warning,
                 AuditAction::Rejected,
-                &format!("Guardian fingerprint rotation requires member re-verification actor={}", claims.sub),
+                &format!(
+                    "Guardian fingerprint rotation requires member re-verification actor={}",
+                    claims.sub
+                ),
             );
             return unauthorized("Guardian fingerprint changed; verification is required");
         }
     }
 
-    match authorization::authorize(&claims.role, &current_scopes, req.method(), req.uri().path()) {
+    match authorization::authorize(
+        &claims.role,
+        &current_scopes,
+        req.method(),
+        req.uri().path(),
+    ) {
         AccessDecision::Allowed => {
             if claims.role == "member" {
                 audit_access_decision(

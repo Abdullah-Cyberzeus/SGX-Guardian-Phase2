@@ -10,6 +10,9 @@ export interface CallSession {
   requested_media: MediaType[]; accepted_media: MediaType[];
   created_at: string; updated_at: string; started_at?: string; ended_at?: string;
   duration_seconds: number; local_media_ready: boolean; remote_media_ready: boolean;
+  /** True only once both sides' live media is confirmed using exactly the
+   * DTLS certificate each side signaled in their SDP. */
+  encryption_verified: boolean;
 }
 export interface BrowserSignal { id: number; session_id: string; type: SignalKind; sender_device_id: string; payload: unknown; received_at: string; }
 export interface Peer {

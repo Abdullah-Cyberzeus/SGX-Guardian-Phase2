@@ -1,22 +1,25 @@
+use crate::api::auth::middleware::AuthenticatedSession;
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
+use crate::vault::downloads::{self, DownloadRecord};
 use crate::vault::errors::VaultError;
 use crate::vault::folders::{self, FolderIndex, FolderNode};
 use crate::vault::namespace::{validate_folder_id, validate_vault_id, VaultNamespace};
 use crate::vault::{
     download_path, ingest, persistence, quota as vault_quota, upload, VaultConfig, VaultRecord,
+    VaultSource,
 };
 use axum::body::{Body, Bytes};
 use axum::extract::{Multipart, Path, Query, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
+use axum::{Extension, Json};
 use futures_core::Stream;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -200,15 +203,18 @@ pub struct VaultQuotaResponse {
 }
 
 pub async fn list(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Query(query): Query<VaultListQuery>,
 ) -> Result<Json<VaultListResponse>, ApiError> {
     let config = VaultConfig::from_env();
+    let caller_did = resolve_caller_did(&state, &session);
     let namespace = optional_namespace(query.namespace.as_deref(), query.circle_id.as_deref())?;
     let namespace_key = namespace.as_ref().map(VaultNamespace::storage_key);
     let mut records = persistence::list_records(&config, namespace_key.as_deref())
         .await
         .map_err(map_vault_error)?;
+    records.retain(|record| authorize_record_access(&session, &caller_did, record).is_ok());
 
     if let Some(folder_id) = query.folder_id.as_deref() {
         let folder_id = normalize_folder_id(Some(folder_id))?;
@@ -225,25 +231,27 @@ pub async fn list(
 }
 
 pub async fn detail(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Path(id): Path<String>,
 ) -> Result<Json<VaultRecord>, ApiError> {
     let id = validate_vault_id(&id).map_err(map_vault_error)?;
     let config = VaultConfig::from_env();
-    let record = persistence::find_record(&config, &id)
-        .await
-        .map_err(map_vault_error)?
-        .ok_or_else(|| ApiError::NotFound(format!("vault file not found: {}", id)))?;
+    let caller_did = resolve_caller_did(&state, &session);
+    let record = load_authorized_record(&config, &session, &caller_did, &id).await?;
     Ok(Json(record))
 }
 
 pub async fn overview(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
 ) -> Result<Json<VaultOverviewResponse>, ApiError> {
     let config = VaultConfig::from_env();
-    let records = persistence::list_records(&config, None)
+    let caller_did = resolve_caller_did(&state, &session);
+    let mut records = persistence::list_records(&config, None)
         .await
         .map_err(map_vault_error)?;
+    records.retain(|record| authorize_record_access(&session, &caller_did, record).is_ok());
     let quota = vault_quota::compute(&config)
         .await
         .map_err(map_vault_error)?;
@@ -322,9 +330,11 @@ pub async fn quota_status(
 
 pub async fn tree(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Query(query): Query<VaultTreeQuery>,
 ) -> Result<Json<VaultTreeResponse>, ApiError> {
     let config = VaultConfig::from_env();
+    let caller_did = resolve_caller_did(&state, &session);
     let namespace = required_namespace(query.ns.as_deref())?;
     let folder_id = normalize_folder_id(query.folder.as_deref())?;
     let namespace_key = namespace.storage_key();
@@ -343,6 +353,7 @@ pub async fn tree(
         .map_err(map_vault_error)?
         .into_iter()
         .filter(|record| record.folder_id == folder_id)
+        .filter(|record| authorize_record_access(&session, &caller_did, record).is_ok())
         .collect::<Vec<_>>();
     files.sort_by(|left, right| {
         left.filename
@@ -374,6 +385,7 @@ pub async fn tree(
 
 pub async fn search(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Query(query): Query<VaultSearchQuery>,
 ) -> Result<Json<VaultSearchResponse>, ApiError> {
     let needle = query.q.trim().to_lowercase();
@@ -384,6 +396,7 @@ pub async fn search(
     }
     let limit = query.limit.unwrap_or(50).min(100);
     let config = VaultConfig::from_env();
+    let caller_did = resolve_caller_did(&state, &session);
     let records = persistence::list_records(&config, None)
         .await
         .map_err(map_vault_error)?;
@@ -393,6 +406,7 @@ pub async fn search(
     for record in records
         .into_iter()
         .filter(|record| record.filename.to_lowercase().contains(&needle))
+        .filter(|record| authorize_record_access(&session, &caller_did, record).is_ok())
         .take(limit)
     {
         let namespace_key = record.namespace_key();
@@ -430,24 +444,62 @@ pub async fn search(
 
 pub async fn upload(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Query(query): Query<VaultUploadQuery>,
+    headers: axum::http::HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Json<VaultUploadResponse>, ApiError> {
     let config = VaultConfig::from_env();
+    let caller_did = resolve_caller_did(&state, &session);
     let namespace = required_namespace(query.ns.as_deref())?;
+    if let VaultNamespace::Circle(circle_id) = &namespace {
+        if !is_admin_caller(&session) {
+            let Some(Extension(authed)) = session.as_ref() else {
+                return Err(ApiError::Forbidden("not a member of this Circle".to_string()));
+            };
+            if !authed.claims.circle_ids.contains(circle_id) {
+                return Err(ApiError::Forbidden(
+                    "not a member of this Circle".to_string(),
+                ));
+            }
+        }
+    }
     let folder_id = normalize_folder_id(query.folder_id.as_deref())?;
     ensure_folder_exists(&config, &namespace, &state.node_id, &folder_id).await?;
+
+    let idempotency_key = headers
+        .get("idempotency-key")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    if let Some(key) = idempotency_key.as_deref() {
+        if let Some(vault_id) = idempotency_lookup(&namespace.storage_key(), key) {
+            if let Some(record) = persistence::find_record(&config, &vault_id)
+                .await
+                .map_err(map_vault_error)?
+            {
+                return Ok(Json(VaultUploadResponse {
+                    download_path: download_path(&record.vault_id),
+                    record,
+                }));
+            }
+        }
+    }
 
     let chunk_bytes = VaultConfig::DEFAULT_CHUNK_BYTES;
     let namespace_quota_bytes = vault_quota::configured_quota_bytes(&config, &namespace)
         .await
         .map_err(map_vault_error)?;
 
+    let mut description = String::new();
     while let Some(field) = multipart
         .next_field()
         .await
         .map_err(|error| ApiError::BadRequest(error.to_string()))?
     {
+        if field.name() == Some("description") {
+            description = field.text().await.unwrap_or_default();
+            continue;
+        }
         let is_file_field = field.file_name().is_some() || field.name() == Some("file");
         if !is_file_field {
             continue;
@@ -499,15 +551,20 @@ pub async fn upload(
                 folder_id,
                 filename,
                 mime,
-                sender_did: resolve_sender_did(&state),
+                sender_did: caller_did.clone(),
                 staging_path,
                 size_plain,
                 sha256_plain: hex::encode(hasher.finalize()),
                 chunk_bytes,
+                description,
             },
         )
         .await
         .map_err(map_vault_error)?;
+
+        if let Some(key) = idempotency_key.as_deref() {
+            idempotency_store(&record.namespace_key(), key, &record.vault_id);
+        }
 
         log_audit(
             &state.node_id,
@@ -744,15 +801,14 @@ pub async fn delete_folder(
 
 pub async fn rename_or_move_file(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Path(id): Path<String>,
     Json(body): Json<UpdateFileRequest>,
 ) -> Result<Json<VaultRecord>, ApiError> {
     let config = VaultConfig::from_env();
     let id = validate_vault_id(&id).map_err(map_vault_error)?;
-    let mut record = persistence::find_record(&config, &id)
-        .await
-        .map_err(map_vault_error)?
-        .ok_or_else(|| ApiError::NotFound(format!("vault file not found: {}", id)))?;
+    let caller_did = resolve_caller_did(&state, &session);
+    let mut record = load_authorized_record(&config, &session, &caller_did, &id).await?;
     let mut changed = false;
 
     if let Some(filename) = body.filename.as_deref() {
@@ -796,14 +852,13 @@ pub async fn rename_or_move_file(
 
 pub async fn delete_file(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Path(id): Path<String>,
 ) -> Result<Json<VaultActionResponse>, ApiError> {
     let config = VaultConfig::from_env();
     let id = validate_vault_id(&id).map_err(map_vault_error)?;
-    let record = persistence::find_record(&config, &id)
-        .await
-        .map_err(map_vault_error)?
-        .ok_or_else(|| ApiError::NotFound(format!("vault file not found: {}", id)))?;
+    let caller_did = resolve_caller_did(&state, &session);
+    let record = load_authorized_record(&config, &session, &caller_did, &id).await?;
     persistence::delete_record(&config, &record)
         .await
         .map_err(map_vault_error)?;
@@ -829,15 +884,14 @@ pub async fn delete_file(
 
 pub async fn toggle_star(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Path(id): Path<String>,
     body: Option<Json<ToggleStarRequest>>,
 ) -> Result<Json<VaultRecord>, ApiError> {
     let config = VaultConfig::from_env();
     let id = validate_vault_id(&id).map_err(map_vault_error)?;
-    let mut record = persistence::find_record(&config, &id)
-        .await
-        .map_err(map_vault_error)?
-        .ok_or_else(|| ApiError::NotFound(format!("vault file not found: {}", id)))?;
+    let caller_did = resolve_caller_did(&state, &session);
+    let mut record = load_authorized_record(&config, &session, &caller_did, &id).await?;
     let next = body
         .map(|payload| payload.starred.unwrap_or(!record.starred))
         .unwrap_or(!record.starred);
@@ -861,22 +915,30 @@ pub async fn toggle_star(
 }
 
 pub async fn download(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Path(id): Path<String>,
 ) -> Result<Response, ApiError> {
     let config = VaultConfig::from_env();
-    let record = load_record_by_id(&config, &id).await?;
-    stream_record(record, "attachment")
+    let caller_did = resolve_caller_did(&state, &session);
+    let record = load_authorized_record(&config, &session, &caller_did, &id).await?;
+    ensure_downloadable(&record)?;
+    let response = stream_record(record.clone(), "attachment")
         .await
-        .map_err(map_vault_error)
+        .map_err(map_vault_error)?;
+    record_download_audit(&config, &record.vault_id, &caller_did, "direct").await;
+    Ok(response)
 }
 
 pub async fn preview(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Path(id): Path<String>,
 ) -> Result<Response, ApiError> {
     let config = VaultConfig::from_env();
-    let record = load_record_by_id(&config, &id).await?;
+    let caller_did = resolve_caller_did(&state, &session);
+    let record = load_authorized_record(&config, &session, &caller_did, &id).await?;
+    ensure_downloadable(&record)?;
     if !is_previewable(&record) {
         return Ok(Json(VaultPreviewMetadata {
             previewable: false,
@@ -891,12 +953,255 @@ pub async fn preview(
         .into_response());
     }
 
-    stream_record(record, "inline")
+    let response = stream_record(record.clone(), "inline")
         .await
-        .map_err(map_vault_error)
+        .map_err(map_vault_error)?;
+    record_download_audit(&config, &record.vault_id, &caller_did, "preview").await;
+    Ok(response)
 }
 
-fn map_vault_error(error: VaultError) -> ApiError {
+pub async fn revoke(
+    State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
+    Path(id): Path<String>,
+) -> Result<Json<VaultRecord>, ApiError> {
+    let config = VaultConfig::from_env();
+    let id = validate_vault_id(&id).map_err(map_vault_error)?;
+    let caller_did = resolve_caller_did(&state, &session);
+    let mut record = load_record_by_id(&config, &id).await?;
+    authorize_owner_only(&session, &caller_did, &record)?;
+    record.revoked = true;
+    record.revoked_at = Some(chrono::Utc::now().to_rfc3339());
+    persistence::save_record(&config, &record)
+        .await
+        .map_err(map_vault_error)?;
+
+    log_audit(
+        &state.node_id,
+        AuditCategory::Vault,
+        AuditSeverity::Warning,
+        AuditAction::Revoked,
+        &format!(
+            "vault file access revoked id={} namespace={} by={}",
+            record.vault_id,
+            record.namespace_key(),
+            caller_did
+        ),
+    );
+
+    Ok(Json(record))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetExpiryRequest {
+    pub expires_at: Option<String>,
+}
+
+pub async fn set_expiry(
+    State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
+    Path(id): Path<String>,
+    Json(body): Json<SetExpiryRequest>,
+) -> Result<Json<VaultRecord>, ApiError> {
+    let config = VaultConfig::from_env();
+    let id = validate_vault_id(&id).map_err(map_vault_error)?;
+    let caller_did = resolve_caller_did(&state, &session);
+    let mut record = load_record_by_id(&config, &id).await?;
+    authorize_owner_only(&session, &caller_did, &record)?;
+
+    record.expires_at = match body.expires_at {
+        Some(raw) => {
+            let parsed = chrono::DateTime::parse_from_rfc3339(&raw).map_err(|_| {
+                ApiError::BadRequest("expires_at must be an RFC3339 timestamp".to_string())
+            })?;
+            if parsed <= chrono::Utc::now() {
+                return Err(ApiError::BadRequest(
+                    "expires_at must be in the future".to_string(),
+                ));
+            }
+            Some(raw)
+        }
+        None => None,
+    };
+    persistence::save_record(&config, &record)
+        .await
+        .map_err(map_vault_error)?;
+
+    log_audit(
+        &state.node_id,
+        AuditCategory::Vault,
+        AuditSeverity::Info,
+        AuditAction::Updated,
+        &format!(
+            "vault file expiry updated id={} namespace={} expires_at={:?}",
+            record.vault_id,
+            record.namespace_key(),
+            record.expires_at
+        ),
+    );
+
+    Ok(Json(record))
+}
+
+#[derive(Debug, Serialize)]
+pub struct VaultHistoryResponse {
+    pub vault_id: String,
+    pub count: usize,
+    pub downloads: Vec<DownloadRecord>,
+}
+
+pub async fn history(
+    State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
+    Path(id): Path<String>,
+) -> Result<Json<VaultHistoryResponse>, ApiError> {
+    let config = VaultConfig::from_env();
+    let id = validate_vault_id(&id).map_err(map_vault_error)?;
+    let caller_did = resolve_caller_did(&state, &session);
+    let record = load_record_by_id(&config, &id).await?;
+    authorize_owner_only(&session, &caller_did, &record)?;
+
+    let entries = downloads::list_downloads_for(&config, &record.vault_id)
+        .await
+        .map_err(map_vault_error)?;
+
+    Ok(Json(VaultHistoryResponse {
+        vault_id: record.vault_id,
+        count: entries.len(),
+        downloads: entries,
+    }))
+}
+
+pub(crate) fn ensure_downloadable(record: &VaultRecord) -> Result<(), ApiError> {
+    if record.revoked {
+        return Err(ApiError::Forbidden(
+            "access to this file has been revoked by its owner".to_string(),
+        ));
+    }
+    if record.is_expired() {
+        return Err(ApiError::Gone("this file has expired".to_string()));
+    }
+    Ok(())
+}
+
+pub(crate) async fn record_download_audit(config: &VaultConfig, vault_id: &str, caller_did: &str, source: &str) {
+    if let Err(error) = downloads::record_download(config, vault_id, caller_did, source).await {
+        tracing::warn!(%vault_id, %error, "failed to record vault download audit entry");
+    }
+}
+
+/// Client-supplied `Idempotency-Key` -> vault_id, scoped per namespace. A
+/// retried upload with the same key returns the record already created
+/// instead of ingesting a duplicate. No TTL: keys are one-shot client UUIDs.
+static IDEMPOTENCY_CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<(String, String), String>>> =
+    std::sync::OnceLock::new();
+
+fn idempotency_cache() -> &'static std::sync::Mutex<HashMap<(String, String), String>> {
+    IDEMPOTENCY_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+pub(crate) fn idempotency_lookup(namespace_key: &str, key: &str) -> Option<String> {
+    idempotency_cache()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .get(&(namespace_key.to_string(), key.to_string()))
+        .cloned()
+}
+
+pub(crate) fn idempotency_store(namespace_key: &str, key: &str, vault_id: &str) {
+    idempotency_cache()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .insert((namespace_key.to_string(), key.to_string()), vault_id.to_string());
+}
+
+/// The Guardian device itself (admin/owner session, or no session when login
+/// is disabled) is unrestricted. Only browser member sessions are scoped.
+fn is_admin_caller(session: &Option<Extension<AuthenticatedSession>>) -> bool {
+    session
+        .as_ref()
+        .map(|Extension(session)| session.claims.role != "member")
+        .unwrap_or(true)
+}
+
+pub(crate) fn resolve_caller_did(state: &AppState, session: &Option<Extension<AuthenticatedSession>>) -> String {
+    crate::api::handlers::browser_member::did_from_session(session)
+        .unwrap_or_else(|| resolve_sender_did(state))
+}
+
+/// A member may access a Circle-namespace file iff they belong to that
+/// Circle, a Personal-namespace file iff they own it, and a 1:1 DM chat
+/// attachment iff they are the sender or the named recipient. The Guardian
+/// device itself (admin/owner) is always allowed.
+pub(crate) fn authorize_record_access(
+    session: &Option<Extension<AuthenticatedSession>>,
+    caller_did: &str,
+    record: &VaultRecord,
+) -> Result<(), ApiError> {
+    if is_admin_caller(session) {
+        return Ok(());
+    }
+    let Some(Extension(authed)) = session.as_ref() else {
+        return Ok(());
+    };
+    match record.namespace_ref() {
+        VaultNamespace::Circle(circle_id) => {
+            if authed.claims.circle_ids.contains(&circle_id) {
+                Ok(())
+            } else {
+                Err(ApiError::Forbidden(
+                    "not a member of this Circle".to_string(),
+                ))
+            }
+        }
+        VaultNamespace::Personal => {
+            if record.source == VaultSource::ChatAttachment {
+                if let Some(recipient) = record.conversation_recipient_did.as_deref() {
+                    if caller_did == record.owner_did || caller_did == recipient {
+                        return Ok(());
+                    }
+                    return Err(ApiError::Forbidden(
+                        "not a participant in this conversation".to_string(),
+                    ));
+                }
+            }
+            if caller_did == record.owner_did {
+                Ok(())
+            } else {
+                Err(ApiError::Forbidden(
+                    "not the owner of this file".to_string(),
+                ))
+            }
+        }
+    }
+}
+
+fn authorize_owner_only(
+    session: &Option<Extension<AuthenticatedSession>>,
+    caller_did: &str,
+    record: &VaultRecord,
+) -> Result<(), ApiError> {
+    if is_admin_caller(session) || caller_did == record.owner_did {
+        Ok(())
+    } else {
+        Err(ApiError::Forbidden(
+            "only the file owner can perform this action".to_string(),
+        ))
+    }
+}
+
+pub(crate) async fn load_authorized_record(
+    config: &VaultConfig,
+    session: &Option<Extension<AuthenticatedSession>>,
+    caller_did: &str,
+    id: &str,
+) -> Result<VaultRecord, ApiError> {
+    let record = load_record_by_id(config, id).await?;
+    authorize_record_access(session, caller_did, &record)?;
+    Ok(record)
+}
+
+pub(crate) fn map_vault_error(error: VaultError) -> ApiError {
     match error {
         VaultError::NotFound(message) => ApiError::NotFound(message),
         VaultError::InvalidStructure(message) => ApiError::BadRequest(message),
@@ -974,7 +1279,7 @@ async fn ensure_folder_exists(
     Ok(())
 }
 
-async fn load_record_by_id(config: &VaultConfig, id: &str) -> Result<VaultRecord, ApiError> {
+pub(crate) async fn load_record_by_id(config: &VaultConfig, id: &str) -> Result<VaultRecord, ApiError> {
     let id = validate_vault_id(id).map_err(map_vault_error)?;
     persistence::find_record(config, &id)
         .await
@@ -982,7 +1287,7 @@ async fn load_record_by_id(config: &VaultConfig, id: &str) -> Result<VaultRecord
         .ok_or_else(|| ApiError::NotFound(format!("vault file not found: {}", id)))
 }
 
-async fn stream_record(
+pub(crate) async fn stream_record(
     record: VaultRecord,
     disposition_kind: &str,
 ) -> Result<Response, VaultError> {
@@ -1090,5 +1395,295 @@ impl Drop for TempFileStream {
         tokio::spawn(async move {
             let _ = tokio::fs::remove_file(path).await;
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::auth::session::Claims;
+    use crate::api::handlers::browser_member::did_for_registration;
+    use crate::vault::ingest::IngestMeta;
+    use tempfile::TempDir;
+
+    /// Points `VaultConfig::from_env()` at a temp directory for the
+    /// duration of one test, restoring the previous value on drop.
+    struct TestVaultBase {
+        previous: Option<String>,
+    }
+
+    impl TestVaultBase {
+        fn set(path: &std::path::Path) -> Self {
+            let previous = std::env::var(crate::vault::VAULT_BASE_ENV).ok();
+            std::env::set_var(crate::vault::VAULT_BASE_ENV, path);
+            Self { previous }
+        }
+    }
+
+    impl Drop for TestVaultBase {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var(crate::vault::VAULT_BASE_ENV, value),
+                None => std::env::remove_var(crate::vault::VAULT_BASE_ENV),
+            }
+        }
+    }
+
+    fn member_session(circle_ids: Vec<String>, registration_id: &str) -> Option<Extension<AuthenticatedSession>> {
+        Some(Extension(AuthenticatedSession {
+            claims: Claims {
+                sub: format!("user-{registration_id}"),
+                role: "member".to_string(),
+                scopes: crate::api::auth::authorization::default_scopes("member"),
+                circle_ids,
+                browser_registration_id: Some(registration_id.to_string()),
+                guardian_fingerprint: None,
+                iss: "did:guardian:test-device".to_string(),
+                iat: chrono::Utc::now().timestamp(),
+                exp: chrono::Utc::now().timestamp() + 300,
+                jti: uuid::Uuid::new_v4().to_string(),
+            },
+            token: String::new(),
+        }))
+    }
+
+    fn member_did(registration_id: &str) -> String {
+        did_for_registration(registration_id)
+    }
+
+    async fn ingest_test_file(
+        temp: &TempDir,
+        namespace: VaultNamespace,
+        owner_did: &str,
+        filename: &str,
+    ) -> VaultRecord {
+        let payload = b"vault authorization test payload".to_vec();
+        let source = temp.path().join(format!("{}-source", uuid::Uuid::new_v4()));
+        tokio::fs::write(&source, &payload).await.expect("write source");
+        ingest::ingest_upload_file(
+            namespace,
+            owner_did,
+            &source,
+            IngestMeta {
+                filename: filename.to_string(),
+                mime: "text/plain".to_string(),
+                sha256_plain: hex::encode(Sha256::digest(&payload)),
+                size_plain: payload.len() as u64,
+                chunk_bytes: VaultConfig::DEFAULT_CHUNK_BYTES,
+            },
+            String::new(),
+            String::new(),
+        )
+        .await
+        .expect("ingest test file")
+    }
+
+    #[tokio::test]
+    async fn duplicate_filename_gets_deterministic_suffix() {
+        let _env_lock = crate::vault::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = TestVaultBase::set(temp.path());
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+
+        let first = ingest_test_file(&temp, VaultNamespace::Personal, "did:guardian:owner", "notes.txt").await;
+        let second = ingest_test_file(&temp, VaultNamespace::Personal, "did:guardian:owner", "notes.txt").await;
+        let third = ingest_test_file(&temp, VaultNamespace::Personal, "did:guardian:owner", "notes.txt").await;
+
+        assert_eq!(first.filename, "notes.txt");
+        assert_eq!(second.filename, "notes (1).txt");
+        assert_eq!(third.filename, "notes (2).txt");
+    }
+
+    #[tokio::test]
+    async fn disallowed_mime_type_is_rejected() {
+        let _env_lock = crate::vault::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = TestVaultBase::set(temp.path());
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let source = temp.path().join("payload.bin");
+        tokio::fs::write(&source, b"binary").await.expect("write source");
+
+        let error = ingest::ingest_upload_file(
+            VaultNamespace::Personal,
+            "did:guardian:owner",
+            &source,
+            IngestMeta {
+                filename: "malware.exe".to_string(),
+                mime: "application/x-msdownload".to_string(),
+                sha256_plain: hex::encode(Sha256::digest(b"binary")),
+                size_plain: 6,
+                chunk_bytes: VaultConfig::DEFAULT_CHUNK_BYTES,
+            },
+            String::new(),
+            String::new(),
+        )
+        .await
+        .expect_err("disallowed mime must be rejected");
+        assert!(matches!(error, VaultError::InvalidStructure(_)));
+    }
+
+    #[tokio::test]
+    async fn revoked_file_blocks_download_but_metadata_stays_visible() {
+        let _env_lock = crate::vault::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = TestVaultBase::set(temp.path());
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let owner_did = "did:guardian:owner";
+        let record = ingest_test_file(&temp, VaultNamespace::Personal, owner_did, "secret.txt").await;
+        let state = crate::api::state::AppState::for_tests(
+            temp.path(),
+            "nodeA",
+            temp.path().join("config").to_string_lossy().to_string(),
+        );
+
+        // Owner (Guardian device / admin session) revokes it.
+        let revoked = revoke(State(state.clone()), None, Path(record.vault_id.clone()))
+            .await
+            .expect("revoke succeeds");
+        assert!(revoked.revoked);
+
+        let download_error = download(State(state.clone()), None, Path(record.vault_id.clone()))
+            .await
+            .expect_err("revoked file must not download");
+        assert!(matches!(download_error, ApiError::Forbidden(_)));
+
+        // Metadata is still visible — only future access is blocked.
+        let detail_result = detail(State(state), None, Path(record.vault_id.clone())).await;
+        assert!(detail_result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn expired_file_download_returns_gone() {
+        let _env_lock = crate::vault::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = TestVaultBase::set(temp.path());
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let owner_did = "did:guardian:owner";
+        let mut record = ingest_test_file(&temp, VaultNamespace::Personal, owner_did, "expiring.txt").await;
+        let config = VaultConfig::from_env();
+        record.expires_at = Some((chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339());
+        persistence::save_record(&config, &record)
+            .await
+            .expect("save expired record");
+        let state = crate::api::state::AppState::for_tests(
+            temp.path(),
+            "nodeA",
+            temp.path().join("config").to_string_lossy().to_string(),
+        );
+
+        let error = download(State(state), None, Path(record.vault_id.clone()))
+            .await
+            .expect_err("expired file must not download");
+        assert!(matches!(error, ApiError::Gone(_)));
+    }
+
+    #[tokio::test]
+    async fn personal_namespace_is_private_per_member() {
+        let _env_lock = crate::vault::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = TestVaultBase::set(temp.path());
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let member_a_reg = "member-a-registration";
+        let member_b_reg = "member-b-registration";
+        let member_a_did = member_did(member_a_reg);
+        let record = ingest_test_file(&temp, VaultNamespace::Personal, &member_a_did, "diary.txt").await;
+        let state = crate::api::state::AppState::for_tests(
+            temp.path(),
+            "nodeA",
+            temp.path().join("config").to_string_lossy().to_string(),
+        );
+
+        let owner_session = member_session(vec![], member_a_reg);
+        let other_session = member_session(vec![], member_b_reg);
+
+        let owner_result = detail(State(state.clone()), owner_session, Path(record.vault_id.clone())).await;
+        assert!(owner_result.is_ok(), "owning member must see their own file");
+
+        let other_result = detail(State(state.clone()), other_session, Path(record.vault_id.clone())).await;
+        assert!(
+            matches!(other_result, Err(ApiError::Forbidden(_))),
+            "a different member must not see another member's personal file"
+        );
+
+        // Admin/owner (no session) is unrestricted.
+        let admin_result = detail(State(state), None, Path(record.vault_id.clone())).await;
+        assert!(admin_result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn circle_namespace_requires_membership() {
+        let _env_lock = crate::vault::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = TestVaultBase::set(temp.path());
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let record = ingest_test_file(
+            &temp,
+            VaultNamespace::Circle("circle-x".to_string()),
+            "did:guardian:uploader",
+            "shared.txt",
+        )
+        .await;
+        let state = crate::api::state::AppState::for_tests(
+            temp.path(),
+            "nodeA",
+            temp.path().join("config").to_string_lossy().to_string(),
+        );
+
+        let member_in_circle = member_session(vec!["circle-x".to_string()], "in-circle-member");
+        let member_outside_circle = member_session(vec!["circle-y".to_string()], "outside-circle-member");
+
+        let in_result = detail(State(state.clone()), member_in_circle, Path(record.vault_id.clone())).await;
+        assert!(in_result.is_ok(), "a Circle member must see the Circle's files");
+
+        let out_result = detail(State(state), member_outside_circle, Path(record.vault_id.clone())).await;
+        assert!(
+            matches!(out_result, Err(ApiError::Forbidden(_))),
+            "a non-member must not see the Circle's files"
+        );
+    }
+
+    #[tokio::test]
+    async fn history_is_owner_only_and_records_downloads() {
+        let _env_lock = crate::vault::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = TestVaultBase::set(temp.path());
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let owner_reg = "history-owner-registration";
+        let owner_did = member_did(owner_reg);
+        let record = ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "report.txt").await;
+        let state = crate::api::state::AppState::for_tests(
+            temp.path(),
+            "nodeA",
+            temp.path().join("config").to_string_lossy().to_string(),
+        );
+
+        let owner_session = member_session(vec![], owner_reg);
+        let _ = download(State(state.clone()), owner_session.clone(), Path(record.vault_id.clone()))
+            .await
+            .expect("owner can download their own file");
+
+        let history_result = history(State(state.clone()), owner_session, Path(record.vault_id.clone()))
+            .await
+            .expect("owner can view download history");
+        assert_eq!(history_result.0.count, 1);
+        assert_eq!(history_result.0.downloads[0].downloader_did, owner_did);
+
+        let other_session = member_session(vec![], "someone-else-registration");
+        let denied = history(State(state), other_session, Path(record.vault_id.clone())).await;
+        assert!(matches!(denied, Err(ApiError::Forbidden(_))));
     }
 }

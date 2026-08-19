@@ -71,18 +71,34 @@ pub struct SignupResponse {
 #[derive(Debug, serde::Serialize)]
 pub struct LoginUserResponse {
     pub id: String,
+    pub name: String,
     pub email: String,
     pub role: String,
     pub scopes: Vec<String>,
+    #[serde(rename = "hidePresence")]
+    pub hide_presence: bool,
+    #[serde(rename = "hideReadReceipts")]
+    pub hide_read_receipts: bool,
+    #[serde(rename = "hideTyping")]
+    pub hide_typing: bool,
     #[serde(rename = "circleIds")]
     pub circle_ids: Vec<String>,
-    #[serde(rename = "browserRegistrationId", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "browserRegistrationId",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub browser_registration_id: Option<String>,
     #[serde(rename = "browserMemberDid", skip_serializing_if = "Option::is_none")]
     pub browser_member_did: Option<String>,
-    #[serde(rename = "guardianFingerprint", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "guardianFingerprint",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub guardian_fingerprint: Option<String>,
-    #[serde(rename = "registrationExpiresAt", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "registrationExpiresAt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub registration_expires_at: Option<i64>,
 }
 
@@ -113,18 +129,34 @@ pub struct SessionResponse {
     pub valid: bool,
     #[serde(rename = "userId")]
     pub user_id: String,
+    pub name: String,
     pub email: String,
     pub role: String,
     pub scopes: Vec<String>,
+    #[serde(rename = "hidePresence")]
+    pub hide_presence: bool,
+    #[serde(rename = "hideReadReceipts")]
+    pub hide_read_receipts: bool,
+    #[serde(rename = "hideTyping")]
+    pub hide_typing: bool,
     #[serde(rename = "circleIds")]
     pub circle_ids: Vec<String>,
-    #[serde(rename = "browserRegistrationId", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "browserRegistrationId",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub browser_registration_id: Option<String>,
     #[serde(rename = "browserMemberDid", skip_serializing_if = "Option::is_none")]
     pub browser_member_did: Option<String>,
-    #[serde(rename = "guardianFingerprint", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "guardianFingerprint",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub guardian_fingerprint: Option<String>,
-    #[serde(rename = "registrationExpiresAt", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "registrationExpiresAt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub registration_expires_at: Option<i64>,
     #[serde(rename = "guardianDid")]
     pub guardian_did: String,
@@ -150,7 +182,11 @@ pub async fn signup(
                 "member accounts require the verified Guardian invitation workflow".into(),
             ))
         }
-        _ => return Err(ApiError::BadRequest("role must be admin or member".to_string())),
+        _ => {
+            return Err(ApiError::BadRequest(
+                "role must be admin or member".to_string(),
+            ))
+        }
     };
 
     let pw_hash = password::hash_password(body.password)
@@ -229,9 +265,13 @@ pub async fn login(
         token,
         user: LoginUserResponse {
             id: user.user_id,
+            name: user.name,
             email: user.email,
             role: claims.role,
             scopes: claims.scopes,
+            hide_presence: user.hide_presence,
+            hide_read_receipts: user.hide_read_receipts,
+            hide_typing: user.hide_typing,
             circle_ids: claims.circle_ids,
             browser_member_did: claims
                 .browser_registration_id
@@ -381,9 +421,13 @@ pub async fn cylenium_callback(
         token,
         user: LoginUserResponse {
             id: user.user_id,
+            name: user.name,
             email: user.email,
             role: claims.role,
             scopes: claims.scopes,
+            hide_presence: user.hide_presence,
+            hide_read_receipts: user.hide_read_receipts,
+            hide_typing: user.hide_typing,
             circle_ids: claims.circle_ids,
             browser_member_did: claims
                 .browser_registration_id
@@ -477,9 +521,13 @@ pub async fn refresh_session(
         token,
         user: LoginUserResponse {
             id: user.user_id,
+            name: user.name,
             email: user.email,
             role: claims.role,
             scopes: claims.scopes,
+            hide_presence: user.hide_presence,
+            hide_read_receipts: user.hide_read_receipts,
+            hide_typing: user.hide_typing,
             circle_ids: claims.circle_ids,
             browser_member_did: claims
                 .browser_registration_id
@@ -518,13 +566,16 @@ pub async fn session(
     Ok(Json(SessionResponse {
         valid: true,
         user_id: session.claims.sub,
+        name: user.name,
         email: user.email,
         role: user.role.as_str().to_string(),
-        scopes: if user.scopes.is_empty() {
-            crate::api::auth::authorization::default_scopes(user.role.as_str())
-        } else {
-            user.scopes
-        },
+        scopes: crate::api::auth::authorization::effective_scopes(
+            user.role.as_str(),
+            &user.scopes,
+        ),
+        hide_presence: user.hide_presence,
+        hide_read_receipts: user.hide_read_receipts,
+        hide_typing: user.hide_typing,
         circle_ids: user.circle_ids,
         browser_registration_id,
         browser_member_did,
@@ -532,6 +583,65 @@ pub async fn session(
         registration_expires_at: user.registration_expires_at,
         guardian_did: state.device_did.clone(),
         expires_at: session.claims.exp,
+    }))
+}
+
+#[derive(serde::Deserialize)]
+pub struct UpdateProfileRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub hide_presence: Option<bool>,
+    #[serde(default)]
+    pub hide_read_receipts: Option<bool>,
+    #[serde(default)]
+    pub hide_typing: Option<bool>,
+}
+
+#[derive(serde::Serialize)]
+pub struct ProfileResponse {
+    pub user_id: String,
+    pub name: String,
+    pub hide_presence: bool,
+    pub hide_read_receipts: bool,
+    pub hide_typing: bool,
+}
+
+/// Self-service profile update — display name and Guardian-enforced privacy
+/// toggles (hide presence / read receipts / typing). Always acts on the
+/// caller's own account (`claims.sub`); there is no target-user parameter.
+pub async fn update_profile(
+    State(state): State<Arc<AppState>>,
+    Extension(session): Extension<AuthenticatedSession>,
+    Json(req): Json<UpdateProfileRequest>,
+) -> Result<Json<ProfileResponse>, ApiError> {
+    let patch = crate::api::auth::store::ProfilePatch {
+        name: req.name,
+        hide_presence: req.hide_presence,
+        hide_read_receipts: req.hide_read_receipts,
+        hide_typing: req.hide_typing,
+    };
+    let user = state
+        .admin
+        .users
+        .update_profile(&session.claims.sub, patch)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+
+    log_audit(
+        &state.node_id,
+        AuditCategory::Identity,
+        AuditSeverity::Info,
+        AuditAction::Updated,
+        &format!("profile updated actor={}", session.claims.sub),
+    );
+
+    Ok(Json(ProfileResponse {
+        user_id: user.user_id,
+        name: user.name,
+        hide_presence: user.hide_presence,
+        hide_read_receipts: user.hide_read_receipts,
+        hide_typing: user.hide_typing,
     }))
 }
 

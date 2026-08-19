@@ -18,6 +18,7 @@ pub enum ApiError {
     Conflict(String),
     DeviceAlreadyPaired(String),
     PayloadTooLarge(String),
+    Gone(String),
     ServiceUnavailable { code: &'static str, message: String },
     Internal(String),
 }
@@ -61,6 +62,10 @@ impl IntoResponse for ApiError {
             ApiError::PayloadTooLarge(m) => {
                 let body = Json(json!({ "error": { "code": "PAYLOAD_TOO_LARGE", "message": m } }));
                 (StatusCode::PAYLOAD_TOO_LARGE, body).into_response()
+            }
+            ApiError::Gone(m) => {
+                let body = Json(json!({ "error": { "code": "GONE", "message": m } }));
+                (StatusCode::GONE, body).into_response()
             }
             ApiError::ServiceUnavailable { code, message } => {
                 let body = Json(json!({ "error": { "code": code, "message": message } }));

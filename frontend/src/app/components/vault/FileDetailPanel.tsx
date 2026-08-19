@@ -1,10 +1,11 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   Download,
   Eye,
   Star,
   Trash2,
   ShieldCheck,
+  ShieldOff,
   Folder,
   Users,
   Archive,
@@ -12,6 +13,9 @@ import {
   Pencil,
   FolderInput,
   Send,
+  Clock,
+  History,
+  WifiOff,
   X,
 } from "lucide-react";
 import { Card } from "../ui/card";
@@ -28,10 +32,11 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { useVault } from "../../contexts/VaultContext";
+import { useAuth } from "../../contexts/AuthContext";
 import { iconForKind } from "./FileTypeIcon";
 import { FilePreviewDialog, canPreview } from "./FilePreviewDialog";
 import { formatBytes, kindLabel, type VaultFile } from "./types";
-import { vaultService } from "../../services/vaultService";
+import { vaultService, type VaultDownloadRecord } from "../../services/vaultService";
 import { toast } from "sonner";
 import { useNavigate } from "react-router";
 
@@ -81,19 +86,40 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
 export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolder, onClose }: FileDetailPanelProps) {
   const navigate = useNavigate();
   const {
-    deviceName, encryption, removeFile, renameFile, moveFile, toggleStar, getFolder, folders,
+    deviceName, encryption, offline, removeFile, renameFile, moveFile, toggleStar,
+    revokeFile, setFileExpiry, getFileHistory, getFolder, folders,
   } = useVault();
+  const { session } = useAuth();
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [revokeConfirmOpen, setRevokeConfirmOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [name, setName] = useState(file.name);
   const [moving, setMoving] = useState(false);
+  const [settingExpiry, setSettingExpiry] = useState(false);
+  const [expiryInput, setExpiryInput] = useState("");
+  const [history, setHistory] = useState<VaultDownloadRecord[] | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const previewable = canPreview(file);
   const Icon = iconForKind(file.kind);
+
+  const isExpired = Boolean(file.expiresAt && new Date(file.expiresAt).getTime() <= Date.now());
+  const isUnavailable = Boolean(file.revoked) || isExpired;
+  // Nothing is cached on-device for offline use today, so being offline
+  // always means a download isn't available — the metadata still shows.
+  const downloadDisabled = isUnavailable || offline;
+  const isOwner = session?.user.role !== "member" || file.ownerDid === session?.browserMemberDid;
 
   const folder = getFolder(file.folderId);
   const FolderIcon =
     folder?.kind === "circle" ? Users : folder?.kind === "system" ? Archive : Folder;
+
+  useEffect(() => {
+    if (!historyOpen || !isOwner) return;
+    void getFileHistory(file.id)
+      .then(setHistory)
+      .catch(() => setHistory([]));
+  }, [historyOpen, isOwner, file.id, getFileHistory]);
 
   const handleRemove = async () => {
     try {
@@ -107,6 +133,7 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
   };
 
   const handleDownload = async () => {
+    if (downloadDisabled) return;
     try {
       const blob = await vaultService.download(file.id);
       const url = URL.createObjectURL(blob);
@@ -142,6 +169,27 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
       toast.success("File moved");
     } catch (cause) {
       toast.error("Move failed", { description: cause instanceof Error ? cause.message : "Try again." });
+    }
+  };
+
+  const handleRevoke = async () => {
+    try {
+      await revokeFile(file.id);
+      setRevokeConfirmOpen(false);
+      toast.success("Access revoked", { description: "New downloads of this file are now blocked." });
+    } catch (cause) {
+      toast.error("Revoke failed", { description: cause instanceof Error ? cause.message : "Try again." });
+    }
+  };
+
+  const handleSetExpiry = async () => {
+    const trimmed = expiryInput.trim();
+    try {
+      await setFileExpiry(file.id, trimmed ? new Date(trimmed).toISOString() : null);
+      setSettingExpiry(false);
+      toast.success(trimmed ? "Expiry set" : "Expiry cleared");
+    } catch (cause) {
+      toast.error("Expiry update failed", { description: cause instanceof Error ? cause.message : "Try again." });
     }
   };
 
@@ -286,6 +334,37 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
         </div>
       </Card>
 
+      {/* Unavailable banner — revoked, expired, or offline with nothing cached */}
+      {(isUnavailable || offline) && (
+        <Card
+          className="flex-row items-center gap-3 p-3.5"
+          style={{
+            backgroundColor: "color-mix(in srgb, var(--destructive) 10%, transparent)",
+            borderColor: "color-mix(in srgb, var(--destructive) 35%, transparent)",
+          }}
+        >
+          {offline && !isUnavailable ? (
+            <WifiOff size={20} style={{ color: "var(--destructive)", flexShrink: 0 }} />
+          ) : (
+            <ShieldOff size={20} style={{ color: "var(--destructive)", flexShrink: 0 }} />
+          )}
+          <p
+            style={{
+              fontFamily: "Inter, sans-serif",
+              fontSize: "var(--text-xs)",
+              fontWeight: "var(--font-weight-medium)",
+              color: "var(--foreground)",
+            }}
+          >
+            {file.revoked
+              ? "This file's access was revoked by its owner."
+              : isExpired
+                ? "This file has expired and is no longer available."
+                : "Unavailable offline — this file hasn't been downloaded to this device yet."}
+          </p>
+        </Card>
+      )}
+
       {/* Metadata */}
       <Card className="gap-0 px-4 py-1">
         <DetailRow label="Type">{file.mime}</DetailRow>
@@ -293,6 +372,20 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
         <DetailRow label="Added">{file.addedAt}</DetailRow>
         <div style={{ borderTop: "1px solid var(--border)" }} />
         <DetailRow label="Shared by">{file.sharedBy}</DetailRow>
+        {file.description && (
+          <>
+            <div style={{ borderTop: "1px solid var(--border)" }} />
+            <DetailRow label="Description">{file.description}</DetailRow>
+          </>
+        )}
+        <div style={{ borderTop: "1px solid var(--border)" }} />
+        <DetailRow label="Expiry">
+          {file.expiresAt ? new Date(file.expiresAt).toLocaleString() : "Never"}
+        </DetailRow>
+        <div style={{ borderTop: "1px solid var(--border)" }} />
+        <DetailRow label="Availability">
+          {file.revoked ? "Revoked" : isExpired ? "Expired" : "Available"}
+        </DetailRow>
         <div style={{ borderTop: "1px solid var(--border)" }} />
         <DetailRow label="Location">
           <button
@@ -327,7 +420,13 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
           </Button>
         )}
         {previewable && (
-          <Button onClick={() => setPreviewOpen(true)} variant={file.backendPath ? "outline" : "default"} className="h-11 w-full gap-2">
+          <Button
+            onClick={() => setPreviewOpen(true)}
+            variant={file.backendPath ? "outline" : "default"}
+            className="h-11 w-full gap-2"
+            disabled={downloadDisabled}
+            title={downloadDisabled ? (offline ? "Unavailable offline" : "Access to this file is unavailable") : undefined}
+          >
             <Eye size={16} /> Open preview
           </Button>
         )}
@@ -335,6 +434,8 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
           onClick={() => void handleDownload()}
           variant={previewable ? "outline" : "default"}
           className="h-11 w-full gap-2"
+          disabled={downloadDisabled}
+          title={downloadDisabled ? (offline ? "Unavailable offline" : "Access to this file is unavailable") : undefined}
         >
           <Download size={16} /> Download
         </Button>
@@ -398,7 +499,108 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
             <span style={{ color: "var(--destructive)" }}>Remove</span>
           </Button>
         </div>}
+
+        {/* Owner-only access controls — separate from canManage, since a
+            Circle member can own a file without being allowed to manage the
+            shared Vault metadata around it. */}
+        {isOwner && (
+          <div className="flex flex-col gap-2 pt-1" style={{ borderTop: "1px solid var(--border)" }}>
+            <div className="flex gap-2 pt-2">
+              <Button
+                variant="outline"
+                onClick={() => setSettingExpiry((value) => !value)}
+                className="h-11 flex-1 gap-2"
+              >
+                <Clock size={16} /> {file.expiresAt ? "Change expiry" : "Set expiry"}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setHistoryOpen(true)}
+                className="h-11 flex-1 gap-2"
+              >
+                <History size={16} /> History
+              </Button>
+            </div>
+            {settingExpiry && (
+              <Card className="gap-2 p-3">
+                <Input
+                  type="datetime-local"
+                  value={expiryInput}
+                  onChange={(event) => setExpiryInput(event.target.value)}
+                  aria-label="Expiry date and time"
+                />
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" onClick={() => { setExpiryInput(""); void handleSetExpiry(); }}>
+                    Clear
+                  </Button>
+                  <Button size="sm" onClick={() => void handleSetExpiry()} disabled={!expiryInput.trim()}>
+                    Save
+                  </Button>
+                </div>
+              </Card>
+            )}
+            {!file.revoked && (
+              <Button
+                variant="outline"
+                onClick={() => setRevokeConfirmOpen(true)}
+                className="h-11 w-full gap-2"
+              >
+                <ShieldOff size={16} style={{ color: "var(--destructive)" }} />
+                <span style={{ color: "var(--destructive)" }}>Revoke access</span>
+              </Button>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Download history — owner-only. */}
+      <AlertDialog open={historyOpen} onOpenChange={setHistoryOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Download history</AlertDialogTitle>
+            <AlertDialogDescription>Who has downloaded "{file.name}" and when.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="flex max-h-64 flex-col gap-2 overflow-y-auto">
+            {history === null ? (
+              <p className="text-xs text-muted-foreground">Loading…</p>
+            ) : history.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No downloads yet.</p>
+            ) : (
+              history.map((entry, index) => (
+                <div key={index} className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-xs">
+                  <span className="truncate">{entry.downloader_did}</span>
+                  <span className="flex-shrink-0 text-muted-foreground">{new Date(entry.downloaded_at).toLocaleString()}</span>
+                </div>
+              ))
+            )}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Close</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Revoke confirmation. */}
+      <AlertDialog open={revokeConfirmOpen} onOpenChange={setRevokeConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revoke access to this file?</AlertDialogTitle>
+            <AlertDialogDescription>
+              No one will be able to download "{file.name}" after this. The file itself and its
+              history are kept — this only blocks future access.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className={buttonVariants({ variant: "destructive" })}
+              onClick={handleRevoke}
+            >
+              Revoke access
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Remove confirmation — controlled, so no asChild Button trigger. */}
       <AlertDialog open={canManage && confirmOpen} onOpenChange={setConfirmOpen}>

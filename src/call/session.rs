@@ -3,6 +3,7 @@
 
 use crate::audit::logger::log_audit;
 use crate::call::error::{CallError, CallResult};
+use crate::call::history::CallHistoryStore;
 use crate::call::policy::{AllowAllEnforcer, SharedEnforcer};
 use crate::call::signaling::{CallOffer, MediaType};
 use crate::call::state::CallState;
@@ -20,6 +21,16 @@ pub struct CallParticipant {
     pub virtual_id: String,
     pub accepted: bool,
     pub requested_media: Vec<MediaType>,
+    /// SHA-256 DTLS certificate fingerprint this participant published in the
+    /// SDP they signaled (extracted from their SdpOffer/SdpAnswer at the
+    /// authenticated `submit_signal` boundary — not self-reported later).
+    pub dtls_fingerprint_signaled: Option<String>,
+    /// SHA-256 DTLS certificate fingerprint this participant's own browser
+    /// reports it is actually using once WebRTC media connects. Encryption is
+    /// only considered verified when this equals `dtls_fingerprint_signaled`:
+    /// the live connection must use exactly the certificate that was
+    /// cryptographically committed to at signaling time.
+    pub dtls_fingerprint_confirmed: Option<String>,
 }
 
 /// Active call session
@@ -73,6 +84,9 @@ pub struct CallSessionStatus {
     pub duration_seconds: u64,
     pub local_media_ready: bool,
     pub remote_media_ready: bool,
+    /// True only once both sides' live WebRTC media connection is confirmed
+    /// to be using exactly the DTLS certificate each signaled in their SDP.
+    pub encryption_verified: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -104,12 +118,16 @@ impl CallSession {
                 virtual_id: initiator_virtual_id,
                 accepted: false,
                 requested_media: requested_media.clone(),
+                dtls_fingerprint_signaled: None,
+                dtls_fingerprint_confirmed: None,
             },
             receiver: CallParticipant {
                 device_id: receiver_device_id,
                 virtual_id: receiver_virtual_id,
                 accepted: false,
                 requested_media: vec![],
+                dtls_fingerprint_signaled: None,
+                dtls_fingerprint_confirmed: None,
             },
             state: CallState::Idle,
             created_at: Utc::now(),
@@ -176,6 +194,19 @@ impl CallSession {
         Ok(())
     }
 
+    /// True once BOTH participants' live media connection is confirmed using
+    /// exactly the DTLS certificate they each committed to in their signaled
+    /// SDP — not merely that a fingerprint was reported, but that it matches.
+    pub fn encryption_verified(&self) -> bool {
+        [&self.initiator, &self.receiver]
+            .into_iter()
+            .all(|participant| {
+                participant.dtls_fingerprint_confirmed.is_some()
+                    && participant.dtls_fingerprint_confirmed
+                        == participant.dtls_fingerprint_signaled
+            })
+    }
+
     /// Get call duration in seconds (0 if not started)
     pub fn duration_seconds(&self) -> u64 {
         match (self.started_at, self.ended_at) {
@@ -221,6 +252,7 @@ impl CallSession {
             duration_seconds: self.duration_seconds(),
             local_media_ready: self.local_media_ready,
             remote_media_ready: self.remote_media_ready,
+            encryption_verified: self.encryption_verified(),
         }
     }
 }
@@ -230,6 +262,7 @@ pub struct SessionManager {
     sessions: Arc<RwLock<HashMap<String, CallSession>>>,
     enforcer: SharedEnforcer,
     events: broadcast::Sender<CallSessionEvent>,
+    history: Arc<CallHistoryStore>,
 }
 
 impl Default for SessionManager {
@@ -246,6 +279,7 @@ impl SessionManager {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             enforcer: Arc::new(AllowAllEnforcer),
             events,
+            history: Arc::new(CallHistoryStore::default()),
         }
     }
 
@@ -256,7 +290,22 @@ impl SessionManager {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             enforcer,
             events,
+            history: Arc::new(CallHistoryStore::default()),
         }
+    }
+
+    pub fn with_history_store(history: Arc<CallHistoryStore>) -> Self {
+        let (events, _) = broadcast::channel(256);
+        SessionManager {
+            sessions: Arc::new(RwLock::new(HashMap::new())),
+            enforcer: Arc::new(AllowAllEnforcer),
+            events,
+            history,
+        }
+    }
+
+    pub fn call_history(&self) -> Arc<CallHistoryStore> {
+        self.history.clone()
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<CallSessionEvent> {
@@ -319,6 +368,77 @@ impl SessionManager {
             &snapshot,
         );
         Ok(connected)
+    }
+
+    /// Record the DTLS certificate fingerprint a participant published in
+    /// their signaled SDP. Called at the authenticated `submit_signal`
+    /// boundary as SdpOffer/SdpAnswer pass through, so this reflects what the
+    /// participant cryptographically committed to, not a later self-report.
+    pub async fn record_signaled_fingerprint(
+        &self,
+        session_id: &str,
+        device_id: &str,
+        fingerprint: String,
+    ) -> CallResult<()> {
+        let mut sessions = self.sessions.write().await;
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or(CallError::SessionNotFound {
+                session_id: session_id.to_string(),
+            })?;
+        if session.initiator.device_id == device_id {
+            session.initiator.dtls_fingerprint_signaled = Some(fingerprint);
+        } else if session.receiver.device_id == device_id {
+            session.receiver.dtls_fingerprint_signaled = Some(fingerprint);
+        }
+        Ok(())
+    }
+
+    /// Record the DTLS certificate fingerprint a participant's own browser
+    /// reports it is actually using now that WebRTC media has connected.
+    /// Returns whether the session is now fully encryption-verified (both
+    /// sides confirmed, each matching what they themselves signaled).
+    pub async fn confirm_dtls_fingerprint(
+        &self,
+        session_id: &str,
+        device_id: &str,
+        fingerprint: String,
+    ) -> CallResult<bool> {
+        let snapshot = {
+            let mut sessions = self.sessions.write().await;
+            let session = sessions
+                .get_mut(session_id)
+                .ok_or(CallError::SessionNotFound {
+                    session_id: session_id.to_string(),
+                })?;
+            let participant = if session.initiator.device_id == device_id {
+                &mut session.initiator
+            } else if session.receiver.device_id == device_id {
+                &mut session.receiver
+            } else {
+                return Err(CallError::UnauthorizedDevice {
+                    reason: "Not a session participant".into(),
+                });
+            };
+            if participant.dtls_fingerprint_signaled.is_some()
+                && participant.dtls_fingerprint_signaled.as_deref() != Some(fingerprint.as_str())
+            {
+                tracing::warn!(
+                    session_id,
+                    device_id,
+                    signaled = ?participant.dtls_fingerprint_signaled,
+                    confirmed = %fingerprint,
+                    "DTLS fingerprint reported at media-ready does not match what this participant signaled in their SDP"
+                );
+            }
+            participant.dtls_fingerprint_confirmed = Some(fingerprint);
+            session.clone()
+        };
+        let verified = snapshot.encryption_verified();
+        if verified {
+            self.publish("call_encryption_verified", &snapshot);
+        }
+        Ok(verified)
     }
 
     /// Create and store new session
@@ -554,6 +674,9 @@ impl SessionManager {
             ),
         );
         self.publish("call_state_changed", &snapshot);
+        if snapshot.state.is_terminal() {
+            self.history.record_direct(&snapshot.status_snapshot());
+        }
 
         Ok(())
     }
@@ -613,6 +736,7 @@ mod tests {
     use crate::call::policy::PolicyEnforcer;
     use async_trait::async_trait;
     use std::sync::Arc;
+    use tempfile::tempdir;
 
     struct DenyAllEnforcer;
 
@@ -948,5 +1072,33 @@ mod tests {
         let history = session.get_state_history();
         assert!(history.contains("Idle -> LocalPolicyCheck"));
         assert!(history.contains("LocalPolicyCheck -> OfferSent"));
+    }
+
+    #[tokio::test]
+    async fn terminal_call_is_persisted_to_history() {
+        let dir = tempdir().unwrap();
+        let history = Arc::new(CallHistoryStore::new(dir.path().join("calls.json")));
+        let manager = SessionManager::with_history_store(history.clone());
+        let session_id = manager
+            .create_session(
+                "nodeA".into(),
+                "vidA".into(),
+                "nodeB".into(),
+                "vidB".into(),
+                vec![MediaType::Audio],
+                "nonce-history".into(),
+            )
+            .await
+            .unwrap();
+        manager
+            .update_session_state(&session_id, CallState::OfferSent, "offer".into())
+            .await
+            .unwrap();
+        manager.end_session(&session_id).await.unwrap();
+
+        let records = history.list();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id, session_id);
+        assert_eq!(records[0].participant_ids, vec!["nodeA", "nodeB"]);
     }
 }

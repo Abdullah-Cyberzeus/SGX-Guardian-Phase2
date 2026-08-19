@@ -30,6 +30,7 @@ export function useCurrentUser(): CurrentUser {
   const { user, session } = useAuth();
 
   const name: string =
+    user?.name ||
     user?.user_metadata?.name ||
     user?.user_metadata?.full_name ||
     user?.email?.split("@")[0] ||

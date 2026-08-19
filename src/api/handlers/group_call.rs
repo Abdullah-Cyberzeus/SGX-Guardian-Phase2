@@ -21,8 +21,9 @@ static COMPLETED_OPERATIONS: Lazy<dashmap::DashMap<String, GroupSession>> =
 static CREATED_OPERATIONS: Lazy<dashmap::DashMap<String, CreateGroupCallResponse>> =
     Lazy::new(dashmap::DashMap::new);
 
-use crate::api::state::AppState;
 use crate::api::auth::middleware::AuthenticatedSession;
+use crate::api::handlers::call::{browser_call_actor_id, local_virtual_id_for_actor};
+use crate::api::state::AppState;
 use crate::call::{
     GroupMemberState, GroupParticipant, GroupRole, GroupSession, GroupWireMessage, MediaType,
     ModerationAction, SignalKind, MAX_GROUP_PARTICIPANTS,
@@ -76,6 +77,7 @@ pub struct GroupSignalsResponse {
 pub struct GroupCallsResponse {
     pub groups: Vec<GroupSession>,
     pub total: usize,
+    pub local_device_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,6 +131,23 @@ fn local_virtual_id(state: &AppState) -> Result<String, Box<axum::response::Resp
             "Local attested VirtualID is unavailable",
         ))),
     }
+}
+
+/// The anchor group-session lookups reconcile a participant's map key
+/// against (see `reconcile_participant_key` in `call::group`) — needed even
+/// for this node's own self-action calls in case its own entry hasn't been
+/// corrected yet (e.g. acting on a group before any snapshot has propagated).
+async fn local_nebula_ip(state: &AppState) -> Result<String, Box<axum::response::Response>> {
+    state
+        .call_nebula_signaling
+        .get_local_nebula_ip()
+        .await
+        .map_err(|error_value| {
+            Box::new(error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                error_value.to_string(),
+            ))
+        })
 }
 
 async fn trusted_group_peers(state: &AppState) -> Result<Vec<TrustedGroupPeer>, String> {
@@ -209,12 +228,38 @@ pub async fn create(
     } else {
         None
     };
+    // Browser Circle members hosted on this same Guardian have no Nebula
+    // identity and never appear in `trusted_group_peers`; they're resolved
+    // the same way 1:1 local browser calls are, by DID against this node's
+    // own active-user/circle registry.
+    let local_circle_ids = match crate::api::auth::authorization::local_active_circle_ids(
+        &state.node_id,
+        &state.device_did,
+    ) {
+        Ok(ids) => ids,
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    };
+    let local_browser_dids =
+        match crate::api::handlers::browser_member::dids_for_circles(&state, &local_circle_ids)
+            .await
+        {
+            Ok(dids) => dids,
+            Err(error_value) => {
+                return error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("{:?}", error_value),
+                )
+            }
+        };
     if let Some(contacts) = member_contacts.as_ref() {
         let unauthorized_requested = !request.call_all
-            && trusted.iter().any(|peer| {
+            && (trusted.iter().any(|peer| {
                 request.member_ids.contains(&peer.peer_id)
                     && !peer.did.as_ref().is_some_and(|did| contacts.contains(did))
-            });
+            }) || request
+                .member_ids
+                .iter()
+                .any(|id| local_browser_dids.contains(id) && !contacts.contains(id)));
         if unauthorized_requested {
             if let Some(Extension(session)) = session.as_ref() {
                 crate::api::auth::authorization::audit_member_resource_denied(
@@ -238,13 +283,22 @@ pub async fn create(
                 })
         })
         .collect();
-    if selected.is_empty() {
+    let selected_browser: Vec<String> = local_browser_dids
+        .into_iter()
+        .filter(|did| {
+            (request.call_all || request.member_ids.contains(did))
+                && member_contacts
+                    .as_ref()
+                    .map_or(true, |contacts| contacts.contains(did))
+        })
+        .collect();
+    if selected.is_empty() && selected_browser.is_empty() {
         return error(
             StatusCode::BAD_REQUEST,
             "Select at least one trusted member",
         );
     }
-    if selected.len() + 1 > MAX_GROUP_PARTICIPANTS {
+    if selected.len() + selected_browser.len() + 1 > MAX_GROUP_PARTICIPANTS {
         return error(
             StatusCode::BAD_REQUEST,
             format!("Group limit is {MAX_GROUP_PARTICIPANTS} participants"),
@@ -266,8 +320,9 @@ pub async fn create(
         media_ready: false,
         joined_at: None,
         last_seen_at: Some(chrono::Utc::now()),
+        is_local_browser: false,
     };
-    let invitees: Vec<_> = selected
+    let mut invitees: Vec<_> = selected
         .iter()
         .map(|peer| GroupParticipant {
             device_id: peer.peer_id.clone(),
@@ -280,8 +335,28 @@ pub async fn create(
             media_ready: false,
             joined_at: None,
             last_seen_at: None,
+            is_local_browser: false,
         })
         .collect();
+    for did in &selected_browser {
+        let virtual_id = match local_virtual_id_for_actor(&state, did) {
+            Ok(value) => value,
+            Err(error_value) => return error(StatusCode::SERVICE_UNAVAILABLE, error_value.error),
+        };
+        invitees.push(GroupParticipant {
+            device_id: did.clone(),
+            virtual_id,
+            nebula_ip: String::new(),
+            role: GroupRole::Member,
+            state: GroupMemberState::Invited,
+            audio_allowed: request.media.contains(&MediaType::Audio),
+            video_allowed: request.media.contains(&MediaType::Video),
+            media_ready: false,
+            joined_at: None,
+            last_seen_at: None,
+            is_local_browser: true,
+        });
+    }
     let session = match state
         .group_session_manager
         .create(request.title, host, invitees, request.media)
@@ -296,7 +371,9 @@ pub async fn create(
     let host = &session.participants[&session.host_device_id];
     let mut failed_invites = vec![];
     for participant in session.participants.values() {
-        if participant.role == GroupRole::Host {
+        // A browser member's invite is already visible to them: they share
+        // this exact in-process session store, no delivery needed.
+        if participant.role == GroupRole::Host || participant.is_local_browser {
             continue;
         }
         if let Err(error_value) = state
@@ -330,11 +407,16 @@ pub async fn create(
     (StatusCode::CREATED, Json(response)).into_response()
 }
 
-pub async fn active(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let groups = state.group_session_manager.active_for(&state.node_id).await;
+pub async fn active(
+    State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
+) -> impl IntoResponse {
+    let actor_id = browser_call_actor_id(&state, &session);
+    let groups = state.group_session_manager.active_for(&actor_id).await;
     Json(GroupCallsResponse {
         total: groups.len(),
         groups,
+        local_device_id: actor_id,
     })
 }
 
@@ -342,8 +424,10 @@ pub async fn join(
     State(state): State<Arc<AppState>>,
     Path(group_id): Path<String>,
     headers: HeaderMap,
+    session: Option<Extension<AuthenticatedSession>>,
 ) -> impl IntoResponse {
-    let operation = operation_key(&headers, &state.node_id, "join", Some(&group_id));
+    let actor_id = browser_call_actor_id(&state, &session);
+    let operation = operation_key(&headers, &actor_id, "join", Some(&group_id));
     if let Some(cached) = operation
         .as_ref()
         .and_then(|key| COMPLETED_OPERATIONS.get(key).map(|value| value.clone()))
@@ -361,20 +445,31 @@ pub async fn join(
             "End the current one-to-one call before joining a group",
         );
     }
+    let nebula_ip = match local_nebula_ip(&state).await {
+        Ok(ip) => ip,
+        Err(response) => return *response,
+    };
     let session = match state
         .group_session_manager
-        .join(&group_id, &state.node_id)
+        .join(&group_id, &actor_id, &nebula_ip)
         .await
     {
         Ok(session) => session,
         Err(error_value) => return error(StatusCode::CONFLICT, error_value.to_string()),
     };
-    let local = &session.participants[&state.node_id];
+    let local = &session.participants[&actor_id];
     let host = &session.participants[&session.host_device_id];
     let message = GroupWireMessage::Join {
         group_id: group_id.clone(),
-        device_id: state.node_id.clone(),
+        device_id: actor_id.clone(),
     };
+    // This check is about which PROCESS hosts the group, not who the acting
+    // user is: a browser member here is always co-located with the host (its
+    // session can only exist if this same Guardian created it — see
+    // `create`), so the update above already happened in the shared,
+    // in-process session store. What's left is notifying any real remote
+    // participants, which is the host process's job regardless of which
+    // local identity (admin or browser member) triggered this request.
     let propagated = if session.host_device_id == state.node_id {
         state
             .call_nebula_signaling
@@ -386,7 +481,7 @@ pub async fn join(
             .send_group_control(
                 &message,
                 &group_id,
-                &state.node_id,
+                &actor_id,
                 &local.virtual_id,
                 &host.nebula_ip,
             )
@@ -406,8 +501,10 @@ pub async fn join(
 pub async fn heartbeat(
     State(state): State<Arc<AppState>>,
     Path(group_id): Path<String>,
+    session: Option<Extension<AuthenticatedSession>>,
 ) -> impl IntoResponse {
-    match record_heartbeat(&state, &group_id).await {
+    let actor_id = browser_call_actor_id(&state, &session);
+    match record_heartbeat(&state, &group_id, &actor_id).await {
         Ok(session) => Json(session).into_response(),
         Err(response) => response,
     }
@@ -416,25 +513,27 @@ pub async fn heartbeat(
 async fn record_heartbeat(
     state: &Arc<AppState>,
     group_id: &str,
+    actor_id: &str,
 ) -> Result<GroupSession, axum::response::Response> {
+    let nebula_ip = local_nebula_ip(state).await.map_err(|response| *response)?;
     let session = state
         .group_session_manager
-        .heartbeat(group_id, &state.node_id)
+        .heartbeat(group_id, actor_id, &nebula_ip)
         .await
         .map_err(|error_value| error(StatusCode::CONFLICT, error_value.to_string()))?;
     if session.host_device_id != state.node_id {
-        let local = &session.participants[&state.node_id];
+        let local = &session.participants[actor_id];
         let host = &session.participants[&session.host_device_id];
         let message = GroupWireMessage::Heartbeat {
             group_id: group_id.to_string(),
-            device_id: state.node_id.clone(),
+            device_id: actor_id.to_string(),
         };
         state
             .call_nebula_signaling
             .send_group_control(
                 &message,
                 group_id,
-                &state.node_id,
+                actor_id,
                 &local.virtual_id,
                 &host.nebula_ip,
             )
@@ -451,19 +550,27 @@ pub async fn socket(
     State(state): State<Arc<AppState>>,
     Path(group_id): Path<String>,
     Query(cursor): Query<SocketCursor>,
+    session: Option<Extension<AuthenticatedSession>>,
 ) -> impl IntoResponse {
-    let session = match state.group_session_manager.get(&group_id).await {
+    let actor_id = browser_call_actor_id(&state, &session);
+    let group_session = match state.group_session_manager.get(&group_id).await {
         Ok(session) => session,
         Err(error_value) => return error(StatusCode::NOT_FOUND, error_value.to_string()),
     };
-    if !session.participants.contains_key(&state.node_id) {
+    if !group_session.participants.contains_key(&actor_id) {
         return error(StatusCode::FORBIDDEN, "Local node is not a group member");
     }
-    ws.on_upgrade(move |socket| run_socket(socket, state, group_id, cursor.after))
+    ws.on_upgrade(move |socket| run_socket(socket, state, group_id, cursor.after, actor_id))
         .into_response()
 }
 
-async fn run_socket(socket: WebSocket, state: Arc<AppState>, group_id: String, after: u64) {
+async fn run_socket(
+    socket: WebSocket,
+    state: Arc<AppState>,
+    group_id: String,
+    after: u64,
+    actor_id: String,
+) {
     let (mut sender, mut receiver) = socket.split();
     for signal in state.call_signal_hub.list_after(&group_id, after).await {
         let payload = serde_json::json!({"type":"signal","signal":signal}).to_string();
@@ -483,7 +590,7 @@ async fn run_socket(socket: WebSocket, state: Arc<AppState>, group_id: String, a
                         .and_then(|value| value.get("type").and_then(Value::as_str).map(str::to_owned))
                         .as_deref() == Some("heartbeat")
                     {
-                        let _ = record_heartbeat(&state, &group_id).await;
+                        let _ = record_heartbeat(&state, &group_id, &actor_id).await;
                     }
                 }
                 Some(Ok(Message::Ping(bytes))) => {
@@ -511,38 +618,52 @@ pub async fn decline(
     State(state): State<Arc<AppState>>,
     Path(group_id): Path<String>,
     headers: HeaderMap,
+    session: Option<Extension<AuthenticatedSession>>,
 ) -> impl IntoResponse {
-    let operation = operation_key(&headers, &state.node_id, "decline", Some(&group_id));
+    let actor_id = browser_call_actor_id(&state, &session);
+    let operation = operation_key(&headers, &actor_id, "decline", Some(&group_id));
     if let Some(cached) = operation
         .as_ref()
         .and_then(|key| COMPLETED_OPERATIONS.get(key).map(|value| value.clone()))
     {
         return Json(cached).into_response();
     }
+    let nebula_ip = match local_nebula_ip(&state).await {
+        Ok(ip) => ip,
+        Err(response) => return *response,
+    };
     let session = match state
         .group_session_manager
-        .decline(&group_id, &state.node_id)
+        .decline(&group_id, &actor_id, &nebula_ip)
         .await
     {
         Ok(session) => session,
         Err(error_value) => return error(StatusCode::CONFLICT, error_value.to_string()),
     };
-    let local = &session.participants[&state.node_id];
+    let local = &session.participants[&actor_id];
     let host = &session.participants[&session.host_device_id];
     let message = GroupWireMessage::Decline {
         group_id: group_id.clone(),
-        device_id: state.node_id.clone(),
+        device_id: actor_id.clone(),
     };
-    let _ = state
-        .call_nebula_signaling
-        .send_group_control(
-            &message,
-            &group_id,
-            &state.node_id,
-            &local.virtual_id,
-            &host.nebula_ip,
-        )
-        .await;
+    // See `join`'s comment: this is about which process hosts the group.
+    if session.host_device_id == state.node_id {
+        let _ = state
+            .call_nebula_signaling
+            .broadcast_group_snapshot(&session, &state.node_id)
+            .await;
+    } else {
+        let _ = state
+            .call_nebula_signaling
+            .send_group_control(
+                &message,
+                &group_id,
+                &actor_id,
+                &local.virtual_id,
+                &host.nebula_ip,
+            )
+            .await;
+    }
     if let Some(operation) = operation {
         COMPLETED_OPERATIONS.insert(operation, session.clone());
     }
@@ -553,38 +674,52 @@ pub async fn leave(
     State(state): State<Arc<AppState>>,
     Path(group_id): Path<String>,
     headers: HeaderMap,
+    session: Option<Extension<AuthenticatedSession>>,
 ) -> impl IntoResponse {
-    let operation = operation_key(&headers, &state.node_id, "leave", Some(&group_id));
+    let actor_id = browser_call_actor_id(&state, &session);
+    let operation = operation_key(&headers, &actor_id, "leave", Some(&group_id));
     if let Some(cached) = operation
         .as_ref()
         .and_then(|key| COMPLETED_OPERATIONS.get(key).map(|value| value.clone()))
     {
         return Json(cached).into_response();
     }
+    let nebula_ip = match local_nebula_ip(&state).await {
+        Ok(ip) => ip,
+        Err(response) => return *response,
+    };
     let session = match state
         .group_session_manager
-        .leave(&group_id, &state.node_id)
+        .leave(&group_id, &actor_id, &nebula_ip)
         .await
     {
         Ok(session) => session,
         Err(error_value) => return error(StatusCode::CONFLICT, error_value.to_string()),
     };
-    let local = &session.participants[&state.node_id];
+    let local = &session.participants[&actor_id];
     let host = &session.participants[&session.host_device_id];
     let message = GroupWireMessage::Leave {
         group_id: group_id.clone(),
-        device_id: state.node_id.clone(),
+        device_id: actor_id.clone(),
     };
-    let _ = state
-        .call_nebula_signaling
-        .send_group_control(
-            &message,
-            &group_id,
-            &state.node_id,
-            &local.virtual_id,
-            &host.nebula_ip,
-        )
-        .await;
+    // See `join`'s comment: this is about which process hosts the group.
+    if session.host_device_id == state.node_id {
+        let _ = state
+            .call_nebula_signaling
+            .broadcast_group_snapshot(&session, &state.node_id)
+            .await;
+    } else {
+        let _ = state
+            .call_nebula_signaling
+            .send_group_control(
+                &message,
+                &group_id,
+                &actor_id,
+                &local.virtual_id,
+                &host.nebula_ip,
+            )
+            .await;
+    }
     state.call_signal_hub.clear(&group_id).await;
     if let Some(operation) = operation {
         COMPLETED_OPERATIONS.insert(operation, session.clone());
@@ -671,15 +806,16 @@ pub async fn submit_signal(
     State(state): State<Arc<AppState>>,
     Path(group_id): Path<String>,
     headers: HeaderMap,
+    session: Option<Extension<AuthenticatedSession>>,
     Json(request): Json<GroupSignalRequest>,
 ) -> impl IntoResponse {
-    let operation =
-        operation_key(&headers, &state.node_id, "signal", Some(&group_id)).or_else(|| {
-            request
-                .operation_id
-                .as_ref()
-                .map(|value| format!("{}:signal:{}:{}", state.node_id, group_id, value))
-        });
+    let actor_id = browser_call_actor_id(&state, &session);
+    let operation = operation_key(&headers, &actor_id, "signal", Some(&group_id)).or_else(|| {
+        request
+            .operation_id
+            .as_ref()
+            .map(|value| format!("{}:signal:{}:{}", actor_id, group_id, value))
+    });
     if operation
         .as_ref()
         .is_some_and(|key| COMPLETED_OPERATIONS.contains_key(key))
@@ -699,14 +835,14 @@ pub async fn submit_signal(
     ) {
         return error(StatusCode::BAD_REQUEST, "Unsupported group media signal");
     }
-    let session = match state.group_session_manager.get(&group_id).await {
+    let group_session = match state.group_session_manager.get(&group_id).await {
         Ok(session) => session,
         Err(error_value) => return error(StatusCode::NOT_FOUND, error_value.to_string()),
     };
-    let Some(local) = session.participants.get(&state.node_id) else {
+    let Some(local) = group_session.participants.get(&actor_id) else {
         return error(StatusCode::FORBIDDEN, "Local node is not a group member");
     };
-    let Some(target) = session.participants.get(&request.target_device_id) else {
+    let Some(target) = group_session.participants.get(&request.target_device_id) else {
         return error(StatusCode::BAD_REQUEST, "Target is not a group member");
     };
     if local.state != GroupMemberState::Joined || target.state != GroupMemberState::Joined {
@@ -715,26 +851,51 @@ pub async fn submit_signal(
             "Both members must join before signaling",
         );
     }
-    match state
-        .call_nebula_signaling
-        .send_browser_signal(
+    // Two participants local to this same Guardian (e.g. the host and one of
+    // its browser members, or two of its browser members) share this
+    // process's signal queue directly. That includes browser-member -> local
+    // Guardian replies/candidates: sending those over Nebula loops through the
+    // wrong transport boundary and can break mixed local group media setup.
+    let target_is_local_process = target.is_local_browser || target.device_id == state.node_id;
+    let delivery = if target_is_local_process {
+        let envelope = crate::call::SignalingEnvelope::new(
             request.kind,
             &group_id,
-            &state.node_id,
+            &actor_id,
             &local.virtual_id,
+            1,
+            uuid::Uuid::new_v4().to_string(),
             request.payload,
-            &target.nebula_ip,
-        )
-        .await
-    {
+        );
+        state
+            .call_signal_hub
+            .push_remote(&envelope)
+            .await
+            .map(|_| ())
+            .map_err(|error_value| error_value.to_string())
+    } else {
+        state
+            .call_nebula_signaling
+            .send_browser_signal(
+                request.kind,
+                &group_id,
+                &actor_id,
+                &local.virtual_id,
+                request.payload,
+                &target.nebula_ip,
+            )
+            .await
+            .map_err(|error_value| error_value.to_string())
+    };
+    match delivery {
         Ok(()) => {
             if let Some(operation) = operation {
-                COMPLETED_OPERATIONS.insert(operation, session);
+                COMPLETED_OPERATIONS.insert(operation, group_session);
             }
             state.group_session_manager.record_log(
                 "group_signal_sent",
                 &group_id,
-                &state.node_id,
+                &actor_id,
                 Some(&request.target_device_id),
                 &format!("{:?}", request.kind),
             );
@@ -748,11 +909,11 @@ pub async fn submit_signal(
             state.group_session_manager.record_log(
                 "group_signal_failed",
                 &group_id,
-                &state.node_id,
+                &actor_id,
                 Some(&request.target_device_id),
-                &error_value.to_string(),
+                &error_value,
             );
-            error(StatusCode::BAD_GATEWAY, error_value.to_string())
+            error(StatusCode::BAD_GATEWAY, error_value)
         }
     }
 }
@@ -777,25 +938,37 @@ pub async fn signals(
 pub async fn media_ready(
     State(state): State<Arc<AppState>>,
     Path(group_id): Path<String>,
+    session: Option<Extension<AuthenticatedSession>>,
 ) -> impl IntoResponse {
+    let actor_id = browser_call_actor_id(&state, &session);
+    let nebula_ip = match local_nebula_ip(&state).await {
+        Ok(ip) => ip,
+        Err(response) => return *response,
+    };
     let session = match state
         .group_session_manager
-        .mark_media_ready(&group_id, &state.node_id, true)
+        .mark_media_ready(&group_id, &actor_id, true, &nebula_ip)
         .await
     {
         Ok(session) => session,
         Err(error_value) => return error(StatusCode::CONFLICT, error_value.to_string()),
     };
-    let local = &session.participants[&state.node_id];
+    let local = &session.participants[&actor_id];
+    // Local participants (host or other browser members on this same
+    // Guardian) share this in-process session and its SSE broadcast, so they
+    // already saw this update — only genuinely remote peers need a signal.
     for target in session.participants.values().filter(|participant| {
-        participant.device_id != state.node_id && participant.state == GroupMemberState::Joined
+        participant.device_id != actor_id
+            && participant.device_id != state.node_id
+            && !participant.is_local_browser
+            && participant.state == GroupMemberState::Joined
     }) {
         if let Err(error_value) = state
             .call_nebula_signaling
             .send_browser_signal(
                 SignalKind::MediaReady,
                 &group_id,
-                &state.node_id,
+                &actor_id,
                 &local.virtual_id,
                 serde_json::json!({}),
                 &target.nebula_ip,

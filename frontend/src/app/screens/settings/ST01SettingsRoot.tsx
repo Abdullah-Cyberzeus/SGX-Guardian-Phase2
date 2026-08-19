@@ -18,6 +18,7 @@ import { ST05BackupRestore } from "./ST05BackupRestore";
 import { ST07Geofencing } from "./ST07Geofencing";
 import { ST08DevicePairing } from "./ST08DevicePairing";
 import { ST09ManageGuardians } from "./ST09ManageGuardians";
+import { ST10DeviceSettings } from "./ST10DeviceSettings";
 import { ST11Notifications } from "./ST11Notifications";
 import { ST12AlertRules } from "./ST12AlertRules";
 import { ST13DualWifi } from "./ST13DualWifi";
@@ -78,6 +79,7 @@ const groups = [
     items: [
       { icon: Link, label: "Device Pairing", path: "/settings/device-pairing", key: "device-pairing" },
       { icon: Shield, label: "Manage Guardians", path: "/settings/guardians", key: "guardians" },
+      { icon: Settings2, label: "Device Settings", path: "/settings/device-settings", key: "device-settings" },
       { icon: Shield, label: "Guardian Info", path: "/settings/guardian", key: "guardian" },
       { icon: Wifi, label: "Dual Wi-Fi Mode", path: "/settings/dual-wifi", key: "dual-wifi" },
     ],
@@ -108,6 +110,7 @@ function SettingContent({ settingKey }: { settingKey: string }) {
   if (settingKey === "geofencing") return <ST07Geofencing />;
   if (settingKey === "device-pairing") return <ST08DevicePairing />;
   if (settingKey === "guardians") return <ST09ManageGuardians />;
+  if (settingKey === "device-settings") return <ST10DeviceSettings />;
   if (settingKey === "notifications") return <ST11Notifications />;
   if (settingKey === "alert-rules") return <ST12AlertRules />;
   if (settingKey === "dual-wifi") return <ST13DualWifi />;
@@ -227,7 +230,7 @@ export function ST01SettingsRoot() {
       </button>
 
       <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", textAlign: "center" }}>
-        SG-X Guardian v2.4.1 · Build 2026.03.17
+        SG-X Guardian v{__APP_VERSION__}
       </p>
     </div>
   );

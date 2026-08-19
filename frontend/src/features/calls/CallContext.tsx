@@ -7,7 +7,7 @@ import callHistoryService from "../../app/services/callHistoryService";
 import { useAuth } from "../../app/contexts/AuthContext";
 import { isMemberRole } from "../../app/utils/authorization";
 
-interface CallContextValue { call?:CallSession;incoming?:CallSession;localStream?:MediaStream;remoteStream?:MediaStream;peerId?:string;peerOnline?:boolean;error?:string;muted:boolean;cameraEnabled:boolean;currentDevice?:string;
+interface CallContextValue { call?:CallSession;incoming?:CallSession;localStream?:MediaStream;remoteStream?:MediaStream;peerId?:string;peerOnline?:boolean;error?:string;muted:boolean;cameraEnabled:boolean;currentDevice?:string;qualityLabel?:string;
  startCall(peerId:string,media:MediaType[],peerOnline?:boolean):Promise<void>;accept(media?:MediaType[]):Promise<void>;decline():Promise<void>;end():Promise<void>;toggleMute():void;toggleCamera():void;sendTestTone():Promise<void>;shareScreen():Promise<void> }
 const offlineCallError=()=>Promise.reject(new Error("Calls require a live Guardian connection"));
 const offlineValue:CallContextValue={
@@ -22,13 +22,13 @@ const Context=createContext<CallContextValue>(offlineValue);
 export function CallProvider({children}:{children:ReactNode}){
  const{session}=useAuth();
  const[call,setCall]=useState<CallSession>();const[incoming,setIncoming]=useState<CallSession>();const[peerId,setPeerId]=useState<string>();const[peerOnline,setPeerOnline]=useState<boolean>();const[currentDevice,setCurrentDevice]=useState<string>();
- const[localStream,setLocalStream]=useState<MediaStream>();const[remoteStream,setRemoteStream]=useState<MediaStream>();const[error,setError]=useState<string>();const[muted,setMuted]=useState(false);const[cameraEnabled,setCameraEnabled]=useState(true);
+ const[localStream,setLocalStream]=useState<MediaStream>();const[remoteStream,setRemoteStream]=useState<MediaStream>();const[error,setError]=useState<string>();const[muted,setMuted]=useState(false);const[cameraEnabled,setCameraEnabled]=useState(true);const[qualityLabel,setQualityLabel]=useState<string>();
  const rtc=useRef(new WebRtcService());const localNode=useRef("");const caller=useRef(false);const startedOffer=useRef(false);const lastSignal=useRef(0);
  const signalSocketConnected=useRef(false);const signalApplyChain=useRef(Promise.resolve());
  const hydrate=useCallback(async()=>{const[{nodeId},active,ice]=await Promise.all([networkApi.node(),callsApi.active(),callsApi.iceServers()]);rtc.current.configureIceServers(ice.ice_servers);const identity=isMemberRole(session?.user.role)&&session?.browserMemberDid?session.browserMemberDid:nodeId;localNode.current=identity;setCurrentDevice(identity);const current=active.calls.find(item=>item.initiator_device_id===identity||item.receiver_device_id===identity);setCall(current);if(current)setPeerId(current.initiator_device_id===identity?current.receiver_device_id:current.initiator_device_id);setIncoming(current?.state==="offer_received"&&current.receiver_device_id===identity?current:undefined)},[session?.browserMemberDid,session?.user.role]);
  useEffect(()=>{hydrate().catch(e=>setError(e instanceof Error?e.message:"Backend unavailable"))},[hydrate]);
  useEffect(()=>{const abort=new AbortController();let retry:number|undefined;const connect=()=>streamCallEvents(abort.signal,message=>{if(!("session" in message)){hydrate().catch(()=>undefined);return}const next=message.session;if(next.initiator_device_id!==localNode.current&&next.receiver_device_id!==localNode.current)return;setCall(next.terminal?undefined:next);setPeerId(next.initiator_device_id===localNode.current?next.receiver_device_id:next.initiator_device_id);setIncoming(next.state==="offer_received"&&next.receiver_device_id===localNode.current?next:undefined);if(next.terminal){callHistoryService.recordDirect(next,localNode.current);rtc.current.close();setLocalStream(undefined);setRemoteStream(undefined)}}).catch(()=>{if(!abort.signal.aborted)retry=window.setTimeout(connect,3000)});connect();return()=>{abort.abort();if(retry)clearTimeout(retry)}},[hydrate]);
- const setup=useCallback((sessionId:string)=>rtc.current.setup({sendSignal:(type,payload,operationId)=>callsApi.signal(sessionId,type,payload,operationId).then(()=>undefined),onRemoteStream:setRemoteStream,onConnectionState:state=>{if(state==="connected")callsApi.mediaReady(sessionId).catch(e=>setError(e.message));if(state==="failed")rtc.current.recover(caller.current).catch(e=>setError(e.message))}}),[]);
+ const setup=useCallback((sessionId:string)=>rtc.current.setup({sendSignal:(type,payload,operationId)=>callsApi.signal(sessionId,type,payload,operationId).then(()=>undefined),onRemoteStream:setRemoteStream,onConnectionState:state=>{if(state==="connected")callsApi.mediaReady(sessionId,rtc.current.localDtlsFingerprint()).catch(e=>setError(e.message));if(state==="failed")rtc.current.recover(caller.current).catch(e=>setError(e.message))}}),[]);
  useEffect(()=>{
   if(!call||!["accepted","media_negotiation","connected"].includes(call.state))return;
   let cancelled=false;let offerRetry:number|undefined;let polling=false;
@@ -55,11 +55,37 @@ export function CallProvider({children}:{children:ReactNode}){
   void poll();
   const timer=window.setInterval(()=>void poll(),500);
   return()=>{cancelled=true;signalSocketConnected.current=false;closeSocket();window.clearInterval(timer);if(offerRetry)window.clearTimeout(offerRetry)}
+	 },[call?.session_id,call?.state]);
+ useEffect(()=>{
+  if(!call||call.state!=="connected"){setQualityLabel(undefined);return}
+  let stopped=false;
+  const classify=(report:Record<string,number|string>)=>{
+   const loss=typeof report.packet_loss_percent==="number"?report.packet_loss_percent:0;
+   const rtt=typeof report.rtt_ms==="number"?report.rtt_ms:0;
+   const jitter=typeof report.jitter_ms==="number"?report.jitter_ms:0;
+   if(loss>=8||rtt>=500||jitter>=80)return"Poor";
+   if(loss>=3||rtt>=250||jitter>=40)return"Fair";
+   if(loss>=1||rtt>=150||jitter>=20)return"Good";
+   return"Excellent";
+  };
+  const sample=async()=>{
+   try{
+    const report=await rtc.current.quality();
+    if(stopped)return;
+    const label=classify(report);
+    setQualityLabel(label);
+    await rtc.current.adaptBitrate(report).catch(()=>undefined);
+    await callsApi.quality(call.session_id,{...report,label:label.toLowerCase()}).catch(()=>undefined);
+   }catch{}
+  };
+  void sample();
+  const timer=window.setInterval(()=>void sample(),5000);
+  return()=>{stopped=true;window.clearInterval(timer)};
  },[call?.session_id,call?.state]);
- const startCall=async(target:string,media:MediaType[],online?:boolean)=>{setError(undefined);caller.current=true;startedOffer.current=false;lastSignal.current=0;setPeerId(target);setPeerOnline(online);const stream=await rtc.current.prepareMedia(media);setLocalStream(stream);try{const result=await callsApi.initiate(target,media);setup(result.session_id);await hydrate()}catch(e){rtc.current.close();setLocalStream(undefined);throw e}};
- const accept=async(media=incoming?.requested_media??["audio"] as MediaType[])=>{if(!incoming)return;setPeerId(incoming.initiator_device_id);setPeerOnline(true);setError(undefined);caller.current=false;lastSignal.current=0;const stream=await rtc.current.prepareMedia(media);setLocalStream(stream);setup(incoming.session_id);await callsApi.accept(incoming.session_id,media);setIncoming(undefined);await hydrate()};
+ const startCall=async(target:string,media:MediaType[],online?:boolean)=>{setError(undefined);caller.current=true;startedOffer.current=false;lastSignal.current=0;setPeerId(target);setPeerOnline(online);const{stream,actualMedia,warning}=await rtc.current.prepareMedia(media);setLocalStream(stream);if(warning)setError(warning);try{const result=await callsApi.initiate(target,actualMedia);setup(result.session_id);await hydrate()}catch(e){rtc.current.close();setLocalStream(undefined);throw e}};
+ const accept=async(media=incoming?.requested_media??["audio"] as MediaType[])=>{if(!incoming)return;setPeerId(incoming.initiator_device_id);setPeerOnline(true);setError(undefined);caller.current=false;lastSignal.current=0;const{stream,actualMedia,warning}=await rtc.current.prepareMedia(media);setLocalStream(stream);if(warning)setError(warning);setup(incoming.session_id);await callsApi.accept(incoming.session_id,actualMedia);setIncoming(undefined);await hydrate()};
  const decline=async()=>{if(incoming){await callsApi.reject(incoming.session_id);callHistoryService.recordDirect({...incoming,ended_at:new Date().toISOString(),terminal:true},localNode.current,"declined")}setIncoming(undefined)};const end=async()=>{if(call){await callsApi.end(call.session_id);callHistoryService.recordDirect({...call,ended_at:new Date().toISOString(),terminal:true},localNode.current)}rtc.current.close();setCall(undefined);setLocalStream(undefined);setRemoteStream(undefined);setPeerOnline(undefined)};
  const toggleMute=()=>{const next=!muted;setMuted(next);rtc.current.setMuted(next)};const toggleCamera=()=>{const next=!cameraEnabled;setCameraEnabled(next);rtc.current.setCameraEnabled(next)};
- const value=useMemo(()=>({call,incoming,peerId,peerOnline,localStream,remoteStream,error,muted,cameraEnabled,currentDevice,startCall,accept,decline,end,toggleMute,toggleCamera,sendTestTone:()=>rtc.current.sendTestTone(),shareScreen:()=>rtc.current.startScreenShare()}),[call,incoming,peerId,peerOnline,localStream,remoteStream,error,muted,cameraEnabled,currentDevice]);return <Context.Provider value={value}>{children}</Context.Provider>;
+ const value=useMemo(()=>({call,incoming,peerId,peerOnline,localStream,remoteStream,error,muted,cameraEnabled,currentDevice,qualityLabel,startCall,accept,decline,end,toggleMute,toggleCamera,sendTestTone:()=>rtc.current.sendTestTone(),shareScreen:()=>rtc.current.startScreenShare()}),[call,incoming,peerId,peerOnline,localStream,remoteStream,error,muted,cameraEnabled,currentDevice,qualityLabel]);return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 export function useCall(){return useContext(Context)}

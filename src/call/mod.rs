@@ -5,6 +5,7 @@
 
 pub mod error;
 pub mod group;
+pub mod history;
 pub mod identity;
 pub mod media_state;
 pub mod nebula_signaling;
@@ -22,6 +23,7 @@ pub use group::{
     GroupCallState, GroupEvent, GroupMemberState, GroupParticipant, GroupRole, GroupSession,
     GroupSessionManager, GroupWireMessage, ModerationAction, MAX_GROUP_PARTICIPANTS,
 };
+pub use history::{CallHistoryRecord, CallHistoryStore};
 pub use identity::{DidPeerIdentityResolver, PeerIdentityResolver, TrustedPeerIdentity};
 pub use media_state::{
     AudioStream, CallMediaState, MediaStreamState, ScreenShareStream, VideoStream,

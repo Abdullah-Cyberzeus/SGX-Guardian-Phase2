@@ -1,5 +1,6 @@
 import type { CallSession, GroupSession, MediaType } from "../../features/calls/call.types";
 import { callRepository } from "../../pwa/db/callRepository";
+import { callsApi } from "../../api/calls";
 
 export type CallDirection = "incoming" | "outgoing";
 export type CallOutcome = "completed" | "missed" | "declined" | "cancelled" | "failed";
@@ -54,6 +55,22 @@ function directOutcome(session: CallSession, localDevice: string, explicit?: Cal
 export const callHistoryService = {
   eventName: EVENT_NAME,
   list: read,
+  async syncFromGuardian() {
+    const response = await callsApi.history();
+    response.calls.forEach((item) => write({
+      id: item.id,
+      kind: item.kind === "group" ? "group" : "direct",
+      direction: "incoming",
+      outcome: ["completed", "missed", "declined", "cancelled", "failed"].includes(item.outcome) ? item.outcome as CallOutcome : "completed",
+      media: item.media,
+      participantIds: item.participant_ids,
+      title: item.kind === "group" ? "Group call" : item.participant_ids.join(" / "),
+      startedAt: item.started_at,
+      endedAt: item.ended_at,
+      durationSeconds: item.duration_seconds,
+    }));
+    return read();
+  },
   recordDirect(session: CallSession, localDevice: string, explicit?: CallOutcome) {
     const remote = session.initiator_device_id === localDevice ? session.receiver_device_id : session.initiator_device_id;
     const endedAt = session.ended_at || new Date().toISOString();
