@@ -151,6 +151,7 @@ mod tests {
             oidc_sub: None,
             hide_presence: false,
             hide_read_receipts: false,
+            hide_typing: false,
         };
 
         let (token, claims, _) = issue(

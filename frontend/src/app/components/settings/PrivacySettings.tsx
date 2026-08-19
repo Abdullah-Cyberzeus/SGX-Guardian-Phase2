@@ -63,7 +63,7 @@ interface PrivacySettingsProps {
 
 /**
  * Display name + Guardian-enforced privacy toggles (hide presence / read
- * receipts). Shared between the admin (`ST03Profile`) and member
+ * receipts / typing). Shared between the admin (`ST03Profile`) and member
  * (`MemberSettingsScreen`) settings surfaces — both PATCH the same
  * self-service `/auth/profile` endpoint.
  */
@@ -94,7 +94,7 @@ export function PrivacySettings({ showNameEditor = true }: PrivacySettingsProps)
     }
   };
 
-  const toggle = async (key: "hidePresence" | "hideReadReceipts", current: boolean) => {
+  const toggle = async (key: "hidePresence" | "hideReadReceipts" | "hideTyping", current: boolean) => {
     setSavingKey(key);
     try {
       const { error } = await updateProfile({ [key]: !current });
@@ -162,6 +162,13 @@ export function PrivacySettings({ showNameEditor = true }: PrivacySettingsProps)
             checked={Boolean(user?.hideReadReceipts)}
             disabled={savingKey === "hideReadReceipts"}
             onCheckedChange={() => void toggle("hideReadReceipts", Boolean(user?.hideReadReceipts))}
+          />
+          <ToggleRow
+            label="Hide typing indicator"
+            description="Others won't see a typing indicator while you're composing a message."
+            checked={Boolean(user?.hideTyping)}
+            disabled={savingKey === "hideTyping"}
+            onCheckedChange={() => void toggle("hideTyping", Boolean(user?.hideTyping))}
           />
         </div>
       </div>

@@ -56,9 +56,36 @@ pub struct ReadReceiptRecord {
 }
 
 #[derive(Debug, Serialize, Clone)]
+pub struct TypingEvent {
+    pub conversation_id: String,
+    pub sender_did: String,
+    pub is_typing: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
 #[serde(tag = "event_type")]
 pub enum ChatEvent {
     NewMessage(ChatMessageRecord),
     ReadReceipt(ReadReceiptRecord),
     MessageStatus(ChatMessageRecord),
+    Typing(TypingEvent),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typing_event_serializes_with_event_type_tag() {
+        let event = ChatEvent::Typing(TypingEvent {
+            conversation_id: "pair-a-b".to_string(),
+            sender_did: "did:guardian:alice".to_string(),
+            is_typing: true,
+        });
+        let json = serde_json::to_value(&event).expect("serialize typing event");
+        assert_eq!(json["event_type"], "Typing");
+        assert_eq!(json["conversation_id"], "pair-a-b");
+        assert_eq!(json["sender_did"], "did:guardian:alice");
+        assert_eq!(json["is_typing"], true);
+    }
 }
