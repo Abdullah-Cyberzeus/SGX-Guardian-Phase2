@@ -12,7 +12,7 @@ impl NebulaInstall {
         if output.status.success() {
             Ok(())
         } else {
-            Err("Nebula binary not found or not executable".into())
+            Err("Guardian Mesh binary not found or not executable".into())
         }
     }
     pub fn check_version() -> Result<String, String> {
@@ -25,7 +25,7 @@ impl NebulaInstall {
             let version = String::from_utf8_lossy(&output.stdout);
             Ok(version.to_string())
         } else {
-            Err("Failed to get Nebula version".into())
+            Err("Failed to get Guardian Mesh version".into())
         }
     }
 
@@ -38,7 +38,7 @@ impl NebulaInstall {
         if output.status.success() {
             Ok(())
         } else {
-            Err("Nebula daemon failed to respond".into())
+            Err("Guardian Mesh daemon failed to respond".into())
         }
     }
 }

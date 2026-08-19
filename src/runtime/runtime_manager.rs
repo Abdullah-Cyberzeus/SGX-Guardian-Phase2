@@ -127,7 +127,7 @@ impl RuntimeManager {
         }
 
         warn!(
-            "Suricata is configured to capture an NXP Wi-Fi interface; stopping it before DualWifi startup."
+            "Guardian is configured to capture an NXP Wi-Fi interface; stopping it before DualWifi startup."
         );
         match tokio::process::Command::new("systemctl")
             .args(["stop", "suricata"])
@@ -136,10 +136,10 @@ impl RuntimeManager {
         {
             Ok(output) if output.status.success() => {}
             Ok(output) => warn!(
-                "Failed to stop unsafe Suricata capture: {}",
+                "Failed to stop unsafe Guardian capture: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
             ),
-            Err(error) => warn!("Failed to invoke systemctl stop suricata: {}", error),
+            Err(error) => warn!("Failed to invoke systemctl to stop Guardian: {}", error),
         }
     }
 

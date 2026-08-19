@@ -10,7 +10,7 @@ import type { ThreatStatus } from "../../services/threatService";
 import { ApiError } from "../../services/api";
 import { advisoryService, type AdvisoryRules, type RemediationRecommendation } from "../../services/advisoryService";
 import { managedDeviceService, type ManagedDevice } from "../../services/managedDeviceService";
-import type { Alert } from "../../services/alertService";
+import { guardianAlertHeading, type Alert } from "../../services/alertService";
 import { ThreatProtectionPanel } from "./AL08ThreatProtection";
 import { AL09LiveAttackTopology } from "./AL09LiveAttackTopology";
 import { SeverityBadge, StatusBadge } from "../../components/SeverityBadge";
@@ -336,7 +336,7 @@ function AlertDetailPanel({ alert, onClose }: { alert: AlertView; onClose: () =>
             <StatusBadge status={alert.status} variant={statusVariant} />
           </div>
           <h2 style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-lg)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)", lineHeight: 1.3 }}>
-            {alert.title}
+            {guardianAlertHeading(alert.title)}
           </h2>
           <div className="flex items-center gap-1.5 mt-1.5 flex-wrap" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
             <Clock size={12} />
@@ -596,7 +596,7 @@ function AlertListPanel({
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-2">
                         <span className={`flex-1 ${isPanel ? "" : "truncate"}`} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
-                          {alert.title}
+                          {guardianAlertHeading(alert.title)}
                         </span>
                         <div className="flex items-center gap-2 flex-shrink-0">
                           <SeverityBadge severity={alert.severity} />

@@ -48,7 +48,7 @@ impl NebulaDaemon {
             Err(Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!(
-                    "Nebula config validation failed:\n{}",
+                    "Guardian Mesh config validation failed:\n{}",
                     String::from_utf8_lossy(&output.stderr)
                 ),
             ))
@@ -78,7 +78,7 @@ impl NebulaDaemon {
             }
             Err(e) => {
                 eprintln!(
-                    "❌ Nebula config INVALID — fix errors before starting:\n{}",
+                    "❌ Guardian Mesh config INVALID — fix errors before starting:\n{}",
                     e
                 );
                 return Err(e);
@@ -111,7 +111,7 @@ impl NebulaDaemon {
         // Interface didn't appear — check if daemon is still running
         if Self::is_running() {
             eprintln!(
-                "⚠️  Nebula daemon started but nebula0 did not appear within 20 s.\n\
+                "⚠️  Guardian Mesh daemon started but its interface did not appear within 20 s.\n\
                  Check syslog: journalctl -u nebula  or  grep nebula /var/log/syslog\n\
                  Also verify: nebula -config {} -test",
                 config_path
@@ -120,7 +120,7 @@ impl NebulaDaemon {
             Ok(())
         } else {
             Err(Error::other(format!(
-                "Nebula daemon exited immediately. \
+                "Guardian Mesh daemon exited immediately. \
                      Run: nebula -config {} -test  to see errors.",
                 config_path
             )))
@@ -167,7 +167,7 @@ impl NebulaDaemon {
             .args(["link", "delete", "nebula0"])
             .output();
 
-        println!("🛑 Nebula daemon stopped.");
+        println!("🛑 Guardian Mesh daemon stopped.");
         Ok(())
     }
 }

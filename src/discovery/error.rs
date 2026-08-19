@@ -2,10 +2,10 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum DiscoveryError {
-    #[error("nmap binary not found in PATH - install with `apt-get install nmap`")]
+    #[error("Guardian scanner binary not found in PATH - install the required scanner package")]
     BinaryMissing,
 
-    #[error("nmap exited with status {0}: {1}")]
+    #[error("Guardian scanner exited with status {0}: {1}")]
     NmapFailed(i32, String),
 
     #[error("XML parse error: {0}")]

@@ -6,6 +6,7 @@ import { Brain, Loader2, ShieldAlert } from "lucide-react";
 import { useAlerts } from "../../hooks/useApiData";
 import { advisoryService, type RemediationRecommendation } from "../../services/advisoryService";
 import { ApiError } from "../../services/api";
+import { guardianAlertHeading } from "../../services/alertService";
 
 type RecommendationState =
   | { status: "loading" }
@@ -73,7 +74,7 @@ export function AL07AIRecommendation() {
               </span>
             </div>
             <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
-              Analysis for: {alert.title}
+              Analysis for: {guardianAlertHeading(alert.title)}
             </span>
           </div>
 

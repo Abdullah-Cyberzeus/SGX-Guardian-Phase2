@@ -22,7 +22,7 @@ pub enum CallError {
     #[error("Device not authorized for call: {reason}")]
     UnauthorizedDevice { reason: String },
 
-    #[error("Nebula send failed: {reason}")]
+    #[error("Guardian Mesh send failed: {reason}")]
     NebulaError { reason: String },
 
     #[error("Session timeout after {seconds} seconds")]

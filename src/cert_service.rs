@@ -585,7 +585,7 @@ impl CertService for MyCertService {
             ),
             Err(e) => {
                 eprintln!(
-                    "⚠️ Member VC not issued for {} (continuing to sign Nebula cert): {}",
+                    "⚠️ Member VC not issued for {} (continuing to sign Guardian Mesh certificate): {}",
                     node_id, e
                 );
                 log_event(
@@ -622,7 +622,7 @@ impl CertService for MyCertService {
                 AuditAction::Failed,
                 &format!("Certificate signing failed for {}: {}", node_id, e),
             );
-            return Err(Status::internal(format!("NebulaCA signing failed: {}", e)));
+            return Err(Status::internal(format!("Guardian Mesh CA signing failed: {}", e)));
         }
 
         use crate::nebula::lighthouse::LighthouseRegistry;
@@ -727,7 +727,7 @@ impl CertService for MyCertService {
             AuditCategory::Network,
             AuditSeverity::Info,
             AuditAction::Succeeded,
-            &format!("Certificate signed for {} via NebulaCA", node_id),
+            &format!("Certificate signed for {} via Guardian Mesh CA", node_id),
         );
 
         Ok(Response::new(CertSignResponse {

@@ -67,6 +67,14 @@ export function notificationEnabled(prefs: NotificationPrefs | null, kind: strin
   }
 }
 
+/** Only communication events may interrupt the user with popup/native delivery.
+ * Security and device events remain available in notification history. */
+export function communicationPopupEnabled(kind: string): boolean {
+  return kind === "CircleNewMessage"
+    || kind === "CircleFileShared"
+    || kind === "CircleIncomingCall";
+}
+
 export function NotificationProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth();
   const [items, setItems] = useState<NotificationItem[]>([]);
@@ -152,7 +160,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   }, [session, refresh]);
 
   const pushToast = useCallback((item: NotificationItem) => {
-    if (!notificationEnabled(prefs, item.kind)) return;
+    if (!communicationPopupEnabled(item.kind) || !notificationEnabled(prefs, item.kind)) return;
 
     void loadLocalNotificationPrefs(ownDid).then((local) => {
       // The master toggle silences delivery entirely on this device — no
@@ -189,7 +197,9 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   // Immediately remove visible toasts when their preference is switched off.
   useEffect(() => {
     if (!prefs) return;
-    setToasts((prev) => prev.filter((item) => notificationEnabled(prefs, item.kind)));
+    setToasts((prev) => prev.filter(
+      (item) => communicationPopupEnabled(item.kind) && notificationEnabled(prefs, item.kind),
+    ));
   }, [prefs]);
 
   const dismissToast = useCallback((toastId: string) => {

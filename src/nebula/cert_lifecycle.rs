@@ -17,7 +17,7 @@ impl ExpiryMonitor {
                 if let Some(days) = report.cert_days_remaining {
                     if days <= 0 {
                         let msg =
-        "❌ CRITICAL: Nebula certificate has EXPIRED. Please restart Guardian immediately to obtain a new certificate."
+        "❌ CRITICAL: Guardian Mesh certificate has EXPIRED. Please restart Guardian immediately to obtain a new certificate."
             .to_string();
                         println!("{}", msg);
                         log_error(&node_name, &msg);
@@ -27,7 +27,7 @@ impl ExpiryMonitor {
                             crate::audit::event::AuditCategory::Tls,
                             crate::audit::event::AuditSeverity::Critical,
                             crate::audit::event::AuditAction::Failed,
-                            "Nebula certificate expired",
+                            "Guardian Mesh certificate expired",
                         );
 
                         // === Auto delete expired cert ===
@@ -43,18 +43,18 @@ impl ExpiryMonitor {
                         if cert_removed && key_removed {
                             log_event(
                                 &node_name,
-                                "Expired Nebula certificate deleted for regeneration",
+                                "Expired Guardian Mesh certificate deleted for regeneration",
                             );
                         } else {
                             log_error(
                                 &node_name,
-                                "Failed to delete expired Nebula cert/key for regeneration",
+                                "Failed to delete expired Guardian Mesh cert/key for regeneration",
                             );
                         }
                     } else if days <= 7 {
                         // Generic message for stdout (CodeQL: avoid logging precise day count)
-                        println!("🚨 CRITICAL: Nebula certificate is nearing expiration");
-                        let msg = format!("Nebula certificate expires in {} days", days);
+                        println!("🚨 CRITICAL: Guardian Mesh certificate is nearing expiration");
+                        let msg = format!("Guardian Mesh certificate expires in {} days", days);
                         log_error(&node_name, &msg);
                         crate::audit::logger::log_audit(
                             &node_name,
@@ -65,8 +65,8 @@ impl ExpiryMonitor {
                         );
                     } else if days <= 30 {
                         // Generic message for stdout (CodeQL: avoid logging precise day count)
-                        println!("⚠️ WARNING: Nebula certificate will expire soon");
-                        let msg = format!("Nebula certificate expires in {} days", days);
+                        println!("⚠️ WARNING: Guardian Mesh certificate will expire soon");
+                        let msg = format!("Guardian Mesh certificate expires in {} days", days);
                         log_event(&node_name, &msg);
                         crate::audit::logger::log_audit(
                             &node_name,
@@ -77,12 +77,12 @@ impl ExpiryMonitor {
                         );
                     } else {
                         // Generic message for stdout (CodeQL: avoid logging precise day count)
-                        println!("✅ Nebula certificate healthy");
-                        let msg = format!("Nebula certificate healthy ({} days remaining)", days);
+                        println!("✅ Guardian Mesh certificate healthy");
+                        let msg = format!("Guardian Mesh certificate healthy ({} days remaining)", days);
                         log_event(&node_name, &msg);
                     }
                 } else {
-                    let msg = "⚠️ Could not determine Nebula certificate expiry".to_string();
+                    let msg = "⚠️ Could not determine Guardian Mesh certificate expiry".to_string();
                     println!("{}", msg);
                     log_event(&node_name, &msg);
                     crate::audit::logger::log_audit(
@@ -90,7 +90,7 @@ impl ExpiryMonitor {
                         crate::audit::event::AuditCategory::Tls,
                         crate::audit::event::AuditSeverity::Warning,
                         crate::audit::event::AuditAction::Failed,
-                        "Nebula certificate expiry could not be determined",
+                        "Guardian Mesh certificate expiry could not be determined",
                     );
                 }
 

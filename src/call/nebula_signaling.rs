@@ -55,7 +55,7 @@ impl NebulaClient {
     pub async fn get_local_ip(&self) -> Result<String, String> {
         NebulaInterface::get_overlay_ip()
             .and_then(|cidr| cidr.split('/').next().map(str::to_owned))
-            .ok_or_else(|| "Nebula overlay interface unavailable".to_string())
+            .ok_or_else(|| "Guardian Mesh overlay interface unavailable".to_string())
     }
 
     pub async fn is_peer_reachable(&self, ip: &str) -> Result<bool, String> {
@@ -129,7 +129,7 @@ impl NebulaSignaling {
                 reason: format!("Failed to bind signaling listener on {}: {}", bind_addr, e),
             })?;
 
-        tracing::info!(%bind_addr, "Nebula call signaling listener started");
+        tracing::info!(%bind_addr, "Guardian Mesh call signaling listener started");
         loop {
             let (stream, peer) = listener
                 .accept()
@@ -139,7 +139,7 @@ impl NebulaSignaling {
                 })?;
 
             if !is_nebula_overlay_peer(peer.ip()) {
-                tracing::warn!(peer = %peer, "Rejected call signaling connection outside the Nebula overlay");
+                tracing::warn!(peer = %peer, "Rejected call signaling connection outside the Guardian Mesh overlay");
                 continue;
             }
 
@@ -161,10 +161,10 @@ impl NebulaSignaling {
                     .await
                 {
                     eprintln!(
-                        "❌ Rejected Nebula call signaling message from {}: {}",
+                        "❌ Rejected Guardian Mesh call signaling message from {}: {}",
                         peer, error
                     );
-                    tracing::warn!(peer = %peer, %error, "Rejected Nebula call signaling message");
+                    tracing::warn!(peer = %peer, %error, "Rejected Guardian Mesh call signaling message");
                 }
             });
         }

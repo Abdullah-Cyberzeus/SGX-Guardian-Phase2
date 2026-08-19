@@ -27,7 +27,7 @@ impl ThreatService {
                 Ok(cfg) if cfg.enabled => cfg,
                 Ok(_) => {
                     stop_suricata_when_disabled().await;
-                    tracing::info!("Suricata integration disabled in config");
+                    tracing::info!("Guardian integration disabled in config");
                     return;
                 }
                 Err(err) => {
@@ -103,7 +103,7 @@ impl ThreatService {
                     loop {
                         tick.tick().await;
                         if let Err(err) = RuleManager::update_rules(&node_id).await {
-                            tracing::warn!("suricata-update failed: {}", err);
+                            tracing::warn!("Guardian update failed: {}", err);
                         }
                     }
                 });
@@ -206,14 +206,14 @@ async fn stop_suricata_when_disabled() {
 
     if matches!(active, Ok(status) if status.success()) {
         tracing::warn!(
-            "Suricata service is running while Guardian threat config is disabled; stopping capture."
+            "Guardian service is running while Guardian threat config is disabled; stopping capture."
         );
         if let Err(error) = tokio::process::Command::new("systemctl")
             .args(["stop", "suricata"])
             .status()
             .await
         {
-            tracing::warn!("Failed to stop disabled Suricata service: {}", error);
+            tracing::warn!("Failed to stop disabled Guardian service: {}", error);
         }
     }
 }

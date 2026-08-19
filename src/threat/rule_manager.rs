@@ -37,7 +37,7 @@ impl RuleManager {
 
         let output = timeout(Duration::from_secs(300), fut)
             .await
-            .map_err(|_| ThreatError::ServiceStart("suricata-update timed out (300s)".into()))?
+            .map_err(|_| ThreatError::ServiceStart("Guardian update timed out (300s)".into()))?
             .map_err(map_spawn_error)?;
 
         if !output.status.success() {
@@ -45,7 +45,7 @@ impl RuleManager {
                 output.status.code(),
                 &output.stdout,
                 &output.stderr,
-                "suricata-update exited without any diagnostic output",
+                "Guardian update exited without any diagnostic output",
             )));
         }
 
@@ -66,7 +66,7 @@ impl RuleManager {
             AuditCategory::Network,
             AuditSeverity::Info,
             AuditAction::Updated,
-            &format!("suricata-update: {}", summary),
+            &format!("Guardian update: {}", summary),
         );
 
         Ok(summary)
@@ -84,7 +84,7 @@ impl RuleManager {
             .await
             .map_err(|_| {
                 ThreatError::BadConfig(format!(
-                    "suricata config-test timed out ({}s)",
+                    "Guardian config test timed out ({}s)",
                     CONFIG_TEST_TIMEOUT_SECS
                 ))
             })?
@@ -98,7 +98,7 @@ impl RuleManager {
             output.status.code(),
             &output.stdout,
             &output.stderr,
-            "suricata config validation failed without diagnostic output",
+            "Guardian config validation failed without diagnostic output",
         )))
     }
 }
@@ -172,12 +172,12 @@ async fn reload_or_restart_suricata() -> ThreatResult<()> {
             output.status.code(),
             &output.stdout,
             &output.stderr,
-            "systemctl reload/restart suricata failed without diagnostic output",
+            "Guardian service reload/restart failed without diagnostic output",
         ));
     }
 
     Err(ThreatError::ServiceStart(last_error.unwrap_or_else(|| {
-        "systemctl reload/restart suricata failed".to_string()
+        "Guardian service reload/restart failed".to_string()
     })))
 }
 

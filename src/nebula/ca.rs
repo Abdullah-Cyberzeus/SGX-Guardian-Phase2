@@ -32,7 +32,7 @@ impl NebulaCA {
 
         // ── Idempotent: CA already exists ─────────────────────────────
         if Path::new(&ca_key).exists() && Path::new(&ca_crt).exists() {
-            println!("ℹ️  Nebula CA already exists at {}", ca_dir);
+            println!("ℹ️  Guardian Mesh CA already exists at {}", ca_dir);
             return Ok(());
         }
 
@@ -69,7 +69,7 @@ impl NebulaCA {
             let _ = fs::set_permissions(&ca_key, fs::Permissions::from_mode(0o600));
         }
 
-        println!("✅ Nebula CA generated at {}", ca_dir);
+        println!("✅ Guardian Mesh CA generated at {}", ca_dir);
         Ok(())
     }
 
