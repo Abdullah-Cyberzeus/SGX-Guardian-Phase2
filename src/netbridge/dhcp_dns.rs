@@ -60,12 +60,6 @@ impl DnsmasqOrchestrator {
 
         let mut status_rx = runner.subscribe();
 
-        // Ensure any pre-existing dnsmasq instance is stopped before binding sockets
-        let _ = tokio::process::Command::new("killall")
-            .args(["-q", "-9", "dnsmasq"])
-            .output()
-            .await;
-
         info!("Starting dnsmasq process...");
         if let Err(e) = runner.start().await {
             error!("Failed to start dnsmasq process: {}", e);

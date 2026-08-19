@@ -146,7 +146,7 @@ impl RuntimeManager {
     /// Primary entry point for mode switching. Safely tears down the old mode and spins up the new mode.
     pub async fn handle_transition(&self, new_mode: RuntimeMode) -> Result<(), RuntimeError> {
         info!(
-            "Runtime transition requested: target_mode={} (this will stop active Wi-Fi daemons and reset wireless interfaces)",
+            "Runtime transition requested: target_mode={}",
             Self::mode_label(&new_mode)
         );
 
@@ -176,9 +176,12 @@ impl RuntimeManager {
             config.flags.restore_on_boot
         );
 
-        // Always run system cleanup to ensure stale daemons and interfaces
-        // are killed even when switching to Off mode.
-        self.perform_system_cleanup().await;
+        // Off means "stop networking owned by Guardian". It must never tear down
+        // host networking (for example the Wi-Fi interface carrying the SSH session).
+        // Active modes prepare only the interfaces explicitly assigned to Guardian.
+        if new_mode != RuntimeMode::Off {
+            self.perform_system_cleanup(&new_mode, &config).await;
+        }
 
         tracing::debug!("Initiating transition to {:?}", new_mode);
         match new_mode {
@@ -244,13 +247,16 @@ impl RuntimeManager {
             Self::mode_label(&config.mode),
             config.flags.restore_on_boot
         );
-        if config.flags.restore_on_boot {
+        if config.flags.restore_on_boot && config.mode != RuntimeMode::Off {
             // Reconstruct the stack so every daemon, health task, route, and NAT rule is
             // owned by this process. Merely observing AP + Wi-Fi state can report
             // DualActive while forwarding is absent and no recovery task exists.
             self.supervise_transition(config.mode).await;
         } else {
-            self.supervise_transition(RuntimeMode::Off).await;
+            // A disabled restore flag means "leave the host as it is", not "turn
+            // every wireless interface off". A newly created manager is already Idle.
+            info!("Wi-Fi restore disabled; preserving existing host networking");
+            self.state_machine.reset_to_idle().await;
         }
         Ok(())
     }
@@ -475,85 +481,55 @@ impl RuntimeManager {
         Ok(())
     }
 
-    pub async fn perform_system_cleanup(&self) {
-        tracing::info!("🧹 Performing pre-startup system process and interface cleanup...");
+    fn managed_interfaces(mode: &RuntimeMode, config: &GuardianConfig) -> Vec<String> {
+        let candidates: &[&str] = match mode {
+            RuntimeMode::Off => &[],
+            RuntimeMode::HotspotOnly => &[config.hotspot.interface.as_str()],
+            RuntimeMode::ClientOnly => &[config.uplink.interface.as_str()],
+            RuntimeMode::DualWifi => &[
+                config.hotspot.interface.as_str(),
+                config.uplink.interface.as_str(),
+            ],
+        };
 
-        // 1. Terminate conflicting processes globally and clean socket directories
-        // Do not globally kill udhcpc: the Ethernet management path may own a separate
-        // client. DhcpClientOrchestrator cleans only the configured Wi-Fi instance.
-        let processes = ["hostapd", "dnsmasq", "wpa_supplicant"];
-        for proc in &processes {
-            let _ = tokio::process::Command::new("killall")
-                .args(["-q", "-9", proc])
-                .output()
-                .await;
-        }
-
-        // Clean stale hostapd sockets to prevent hostapd from crashing on bind
-        let _ = std::fs::remove_dir_all("/var/run/hostapd");
-        let _ = std::fs::create_dir_all("/var/run/hostapd");
-
-        // 2. Clear wireless interfaces (flush IP and bring DOWN)
-        // Explicitly exclude Ethernet, loopback, and cellular to prevent network breakage.
-        // Collect unique PHY names while iterating so we can disable power saving PHY-wide.
-        let mut phy_names: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-        if let Ok(entries) = std::fs::read_dir("/sys/class/net") {
-            for entry in entries.flatten() {
-                if let Some(name) = entry.file_name().to_str() {
-                    let lower = name.to_lowercase();
-                    if lower == "lo"
-                        || lower.starts_with("lo")
-                        || lower.starts_with("eth")
-                        || lower.starts_with("en")
-                        || lower.starts_with("wwan")
-                        || lower.starts_with("rmnet")
-                        || lower.starts_with("usb")
-                        || lower.starts_with("nebula")
-                        || lower.starts_with("docker")
-                        || lower.starts_with("veth")
-                        || lower.starts_with("br-")
-                    {
-                        continue;
-                    }
-
-                    // Reset any wireless interface found on the system
-                    if lower.starts_with("wlan")
-                        || lower.starts_with("uap")
-                        || lower.starts_with("wfd")
-                        || lower.starts_with("ap")
-                        || lower.starts_with("wl")
-                    {
-                        tracing::info!("Resetting wireless interface: {}", name);
-                        let _ = tokio::process::Command::new("ip")
-                            .args(["link", "set", "dev", name, "down"])
-                            .output()
-                            .await;
-                        let _ = tokio::process::Command::new("ip")
-                            .args(["addr", "flush", "dev", name])
-                            .output()
-                            .await;
-
-                        // Discover the underlying PHY for this interface
-                        // e.g. /sys/class/net/wlan1/phy80211/name → "phy0"
-                        let phy_path = format!("/sys/class/net/{}/phy80211/name", name);
-                        if let Ok(phy) = std::fs::read_to_string(&phy_path) {
-                            let phy = phy.trim().to_string();
-                            if !phy.is_empty() {
-                                phy_names.insert(phy);
-                            }
-                        }
-                    }
-                }
+        let mut interfaces = Vec::new();
+        for interface in candidates {
+            if !interface.is_empty() && !interfaces.iter().any(|item| item == interface) {
+                interfaces.push((*interface).to_string());
             }
         }
+        interfaces
+    }
 
-        // 3. Disable Wi-Fi power saving at the PHY level for every discovered radio chip.
-        // PHY-level is stronger than interface-level and persists across reconnects.
-        for phy in &phy_names {
-            tracing::info!("Disabling power saving on radio chip: {}", phy);
+    async fn perform_system_cleanup(&self, mode: &RuntimeMode, config: &GuardianConfig) {
+        let interfaces = Self::managed_interfaces(mode, config);
+        tracing::info!(
+            "🧹 Preparing Guardian-managed wireless interfaces: {:?}",
+            interfaces
+        );
+
+        // ProcessRunner owns and stops Guardian's hostapd/wpa_supplicant/dnsmasq
+        // children. Never use global killall here: those daemons may carry the host's
+        // management connection or provide unrelated DNS/DHCP services.
+        for interface in &interfaces {
+            tracing::info!("Resetting Guardian-managed wireless interface: {}", interface);
+            let _ = tokio::process::Command::new("ip")
+                .args(["link", "set", "dev", interface, "down"])
+                .output()
+                .await;
+            let _ = tokio::process::Command::new("ip")
+                .args(["addr", "flush", "dev", interface])
+                .output()
+                .await;
+
+            // Remove only this interface's stale control sockets.
+            let _ = std::fs::remove_file(format!("/var/run/hostapd/{}", interface));
+            let _ = std::fs::remove_file(format!("/var/run/wpa_supplicant/{}", interface));
+
+            // Interface-scoped power saving avoids changing sibling interfaces that
+            // share a PHY with the board's management Wi-Fi connection.
             let _ = tokio::process::Command::new("iw")
-                .args(["phy", phy, "set", "power_save", "off"])
+                .args(["dev", interface, "set", "power_save", "off"])
                 .output()
                 .await;
         }
@@ -563,7 +539,7 @@ impl RuntimeManager {
         // after interface reset to initialize firmware and release the channel lock.
         tracing::info!("⏳ Waiting for radio hardware to settle...");
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        tracing::info!("✅ System cleanup complete. Ready to start orchestration.");
+        tracing::info!("✅ Managed-interface preparation complete.");
     }
 
     pub async fn stop_all(&self) {
@@ -597,7 +573,7 @@ impl RuntimeManager {
 mod tests {
     use super::RuntimeManager;
     use crate::network_selector::set_selected_interface;
-    use crate::runtime::models::GuardianConfig;
+    use crate::runtime::models::{GuardianConfig, RuntimeMode};
     use crate::test_support::blocking_env_lock;
 
     #[test]
@@ -638,5 +614,46 @@ mod tests {
         );
 
         set_selected_interface(None);
+    }
+
+    #[test]
+    fn off_mode_never_selects_interfaces_for_cleanup() {
+        let mut config = GuardianConfig::default();
+        config.hotspot.interface = "uap0".to_string();
+        config.uplink.interface = "wlan1".to_string();
+
+        assert!(RuntimeManager::managed_interfaces(&RuntimeMode::Off, &config).is_empty());
+    }
+
+    #[test]
+    fn cleanup_is_limited_to_interfaces_used_by_target_mode() {
+        let mut config = GuardianConfig::default();
+        config.hotspot.interface = "uap0".to_string();
+        config.uplink.interface = "wlan1".to_string();
+
+        assert_eq!(
+            RuntimeManager::managed_interfaces(&RuntimeMode::HotspotOnly, &config),
+            vec!["uap0"]
+        );
+        assert_eq!(
+            RuntimeManager::managed_interfaces(&RuntimeMode::ClientOnly, &config),
+            vec!["wlan1"]
+        );
+        assert_eq!(
+            RuntimeManager::managed_interfaces(&RuntimeMode::DualWifi, &config),
+            vec!["uap0", "wlan1"]
+        );
+    }
+
+    #[test]
+    fn cleanup_deduplicates_shared_interface_configuration() {
+        let mut config = GuardianConfig::default();
+        config.hotspot.interface = "wlan1".to_string();
+        config.uplink.interface = "wlan1".to_string();
+
+        assert_eq!(
+            RuntimeManager::managed_interfaces(&RuntimeMode::DualWifi, &config),
+            vec!["wlan1"]
+        );
     }
 }
