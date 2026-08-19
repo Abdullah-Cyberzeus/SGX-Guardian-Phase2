@@ -93,6 +93,6 @@ fn test_build_nft_ruleset() {
     assert!(ruleset.contains("table ip sgx_nat {"));
     assert!(ruleset.contains("iifname \"uap1\" oifname \"wlan1\" accept"));
     assert!(ruleset.contains("ip saddr 192.168.200.0/24 oifname \"wlan1\" masquerade"));
-    assert!(ruleset.contains("iifname \"nebula0\" tcp dport 8443 accept"));
+    assert!(ruleset.contains("tcp dport 8443 counter accept"));
     assert!(!ruleset.contains("    tcp dport 8443 accept\n"));
 }

@@ -46,9 +46,9 @@ pub async fn upload_attachment(
             attachment_id = Uuid::new_v4().to_string();
 
             let file_path = crate::chat::storage::attachment_path(&attachment_id);
-            let attachments_dir = file_path.parent().ok_or_else(|| {
-                ApiError::Internal("Invalid attachment storage path".to_string())
-            })?;
+            let attachments_dir = file_path
+                .parent()
+                .ok_or_else(|| ApiError::Internal("Invalid attachment storage path".to_string()))?;
             if let Err(e) = tokio::fs::create_dir_all(&attachments_dir).await {
                 return Err(ApiError::Internal(format!(
                     "Failed to create attachments dir: {}",
@@ -67,8 +67,7 @@ pub async fn upload_attachment(
             let mut hasher = Sha256::new();
             let mut total_size = 0;
 
-            const MAX_ATTACHMENT_BYTES: usize =
-                crate::chat::storage::MAX_ATTACHMENT_BYTES as usize;
+            const MAX_ATTACHMENT_BYTES: usize = crate::chat::storage::MAX_ATTACHMENT_BYTES as usize;
             // Stream chunks directly to disk and hash simultaneously.
             while let Some(chunk) = field
                 .chunk()

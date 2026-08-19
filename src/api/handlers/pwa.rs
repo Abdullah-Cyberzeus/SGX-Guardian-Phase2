@@ -5,7 +5,7 @@ use crate::api::{error::ApiError, handlers::peers, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::circle::{invite, store};
-use axum::{Extension, Json, extract::State};
+use axum::{extract::State, Extension, Json};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -328,7 +328,7 @@ pub fn guardian_fingerprint(public_key: &[u8]) -> String {
         bits += 8;
         while bits >= 5 && emitted < 16 {
             bits -= 5;
-            if emitted > 0 && emitted % 4 == 0 {
+            if emitted > 0 && emitted.is_multiple_of(4) {
                 value.push('-');
             }
             value.push(ALPHABET[((buffer >> bits) & 31) as usize] as char);
@@ -368,7 +368,8 @@ pub async fn onboarding(
         fingerprint_bits: 80,
         circles,
         internet_required: false,
-        multiple_guardian_note: "If more than one Guardian is reachable, verify this fingerprint before continuing.",
+        multiple_guardian_note:
+            "If more than one Guardian is reachable, verify this fingerprint before continuing.",
     }))
 }
 
@@ -658,6 +659,7 @@ fn audit_join_rejected(state: &AppState, actor: &str, reason: &str) {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 

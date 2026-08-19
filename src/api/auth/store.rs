@@ -807,7 +807,8 @@ impl UserStore for JsonUserStore {
                 }) {
                     return Err(anyhow!("member invitation has already been used"));
                 }
-                if let Some(existing) = users.iter_mut().find(|user| user.email == normalized_email) {
+                if let Some(existing) = users.iter_mut().find(|user| user.email == normalized_email)
+                {
                     let registration_still_valid = existing.status == "active"
                         && existing
                             .registration_expires_at
@@ -1308,19 +1309,42 @@ mod tests {
         let td = TempDir::new().expect("tempdir");
         let stores = AdminStores::new(td.path().join("admin"));
         for (jti, user_id) in [("one", "user-1"), ("two", "user-1"), ("other", "user-2")] {
-            stores.sessions.put(SessionRec {
-                jti: jti.into(),
-                user_id: user_id.into(),
-                issued_at: 1,
-                expires_at: 2,
-                revoked: false,
-            }).await.expect("save session");
+            stores
+                .sessions
+                .put(SessionRec {
+                    jti: jti.into(),
+                    user_id: user_id.into(),
+                    issued_at: 1,
+                    expires_at: 2,
+                    revoked: false,
+                })
+                .await
+                .expect("save session");
         }
 
-        assert_eq!(stores.sessions.revoke_all_for_user("user-1").await.expect("revoke all"), 2);
-        assert!(stores.sessions.is_revoked("one").await.expect("first state"));
-        assert!(stores.sessions.is_revoked("two").await.expect("second state"));
-        assert!(!stores.sessions.is_revoked("other").await.expect("other state"));
+        assert_eq!(
+            stores
+                .sessions
+                .revoke_all_for_user("user-1")
+                .await
+                .expect("revoke all"),
+            2
+        );
+        assert!(stores
+            .sessions
+            .is_revoked("one")
+            .await
+            .expect("first state"));
+        assert!(stores
+            .sessions
+            .is_revoked("two")
+            .await
+            .expect("second state"));
+        assert!(!stores
+            .sessions
+            .is_revoked("other")
+            .await
+            .expect("other state"));
     }
 
     #[tokio::test]

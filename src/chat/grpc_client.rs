@@ -66,8 +66,7 @@ pub async fn download_attachment_from_peer(
     addr: String,
     attachment_id: String,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    uuid::Uuid::parse_str(&attachment_id)
-        .map_err(|_| Error::msg("invalid attachment ID"))?;
+    uuid::Uuid::parse_str(&attachment_id).map_err(|_| Error::msg("invalid attachment ID"))?;
     let destination = crate::chat::storage::attachment_path(&attachment_id);
     if let (Ok(file), Ok(Some(metadata))) = (
         tokio::fs::metadata(&destination).await,
@@ -87,10 +86,12 @@ pub async fn download_attachment_from_peer(
         .map_err(|error| Error::msg(format!("gRPC connect to {addr} failed: {error}")))?;
     let mut client = ChatServiceClient::new(channel);
     let response = client
-        .get_attachment(tonic::Request::new(crate::proto::sgx::GetAttachmentRequest {
-            requester_did: local_did,
-            attachment_id: attachment_id.clone(),
-        }))
+        .get_attachment(tonic::Request::new(
+            crate::proto::sgx::GetAttachmentRequest {
+                requester_did: local_did,
+                attachment_id: attachment_id.clone(),
+            },
+        ))
         .await
         .map_err(|error| {
             Error::msg(format!(
@@ -143,8 +144,7 @@ pub async fn download_attachment_from_peer(
             received = received
                 .checked_add(chunk.data.len() as u64)
                 .ok_or_else(|| Error::msg("attachment size overflow"))?;
-            if received > crate::chat::storage::MAX_ATTACHMENT_BYTES
-                || received > chunk.total_size
+            if received > crate::chat::storage::MAX_ATTACHMENT_BYTES || received > chunk.total_size
             {
                 return Err(Error::msg("attachment stream exceeded declared size").into());
             }
@@ -153,7 +153,8 @@ pub async fn download_attachment_from_peer(
         }
 
         let expected_size = expected_size.ok_or_else(|| Error::msg("empty attachment stream"))?;
-        let expected_hash = expected_hash.ok_or_else(|| Error::msg("missing attachment checksum"))?;
+        let expected_hash =
+            expected_hash.ok_or_else(|| Error::msg("missing attachment checksum"))?;
         if received != expected_size {
             return Err(Error::msg(format!(
                 "attachment size mismatch: received {received}, expected {expected_size}"

@@ -15,19 +15,174 @@ use sgx_guardian_client::chat::storage::{
     append_attachment_metadata, append_p2p_message, attachment_path, read_group_history,
     read_p2p_history,
 };
+use sgx_guardian_client::circle::{persistence as circle_persistence, store};
+use sgx_guardian_client::did::{
+    doc_sign,
+    document::{DidDocument, DocBuildInput},
+    persistence::{DerivationProof, DidRecord},
+    Did,
+};
 use sgx_guardian_client::proto::sgx::chat_service_client::ChatServiceClient;
 use sgx_guardian_client::proto::sgx::chat_service_server::ChatServiceServer;
 use sgx_guardian_client::proto::sgx::PushMessageRequest;
+use sgx_guardian_client::vc::persistence::VC_BASE_ENV;
+use sgx_guardian_client::vc::{
+    credential::CredentialRole,
+    issue::{self, IssueRequest},
+};
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::sync::oneshot;
 use tonic::transport::{Channel, Server};
 use tonic::Code;
-use sha2::{Digest, Sha256};
 
 fn state(node_id: &str, root: &std::path::Path) -> std::sync::Arc<AppState> {
     AppState::for_tests(root, node_id, root.join("config").display().to_string())
+}
+
+fn seed_circle_state(
+    temp: &TempDir,
+    state_a: &Arc<AppState>,
+    state_b: &Arc<AppState>,
+    state_c: &Arc<AppState>,
+) {
+    let identity_dir = temp.path().join("identity");
+    let did_path = identity_dir.join("did.json");
+    let did_doc_path = identity_dir.join("did_doc.json");
+    let did_peers_dir = identity_dir.join("peers");
+    let ca_aggregate_path = identity_dir.join("circle_did_docs.json");
+    let version_counter_path = temp.path().join("did").join("self_version_counter");
+    let vc_base = identity_dir.join("vc");
+    let circle_base = identity_dir.join("circles");
+    let signer_dir = temp.path().join("node-a").join("sgx-agent");
+
+    std::fs::create_dir_all(&identity_dir).unwrap();
+    std::fs::create_dir_all(&did_peers_dir).unwrap();
+    std::fs::create_dir_all(version_counter_path.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(&vc_base).unwrap();
+    std::fs::create_dir_all(&circle_base).unwrap();
+
+    std::env::set_var(
+        sgx_guardian_client::did::doc_persistence::SELF_DOC_PATH_ENV,
+        &did_doc_path,
+    );
+    std::env::set_var(
+        sgx_guardian_client::did::doc_persistence::PEERS_DOC_DIR_ENV,
+        &did_peers_dir,
+    );
+    std::env::set_var(
+        sgx_guardian_client::did::doc_persistence::CA_AGGREGATE_PATH_ENV,
+        &ca_aggregate_path,
+    );
+    std::env::set_var(
+        sgx_guardian_client::did::doc_persistence::VERSION_COUNTER_PATH_ENV,
+        &version_counter_path,
+    );
+    std::env::set_var("SGX_GUARDIAN_DID_PATH", &did_path);
+    std::env::set_var(
+        sgx_guardian_client::vc::issue::DEVICE_KEY_DIR_ENV,
+        &signer_dir,
+    );
+    std::env::set_var(VC_BASE_ENV, &vc_base);
+    std::env::set_var(circle_persistence::CIRCLE_BASE_ENV, &circle_base);
+
+    let owner_did = Did::parse(&state_a.device_did).unwrap();
+    let owner_record = DidRecord {
+        did: state_a.device_did.clone(),
+        method: "guardian".into(),
+        method_version: "1.0".into(),
+        did_id_b58: owner_did.msi().to_string(),
+        did_id_hex: hex::encode(owner_did.id_bytes()),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        deactivated_at: None,
+        derivation: DerivationProof {
+            se050_uid: "test".into(),
+            se050_uid_source: "test".into(),
+            dkp_v1_pubkey_sha256_b16: String::new(),
+            dkp_v1_pubkey_path: String::new(),
+            dkp_v1_pubkey_der_b64: None,
+            dik_pubkey_sha256_b16: String::new(),
+            dik_pubkey_der_b64: None,
+        },
+        current_dkp_version: 1,
+        deriv_signature_b64: String::new(),
+    };
+    owner_record.save(did_path.to_str().unwrap()).unwrap();
+
+    let pubkey = state_a.signer.pubkey_der().unwrap();
+    let mut self_doc = DidDocument::build(DocBuildInput {
+        did: &state_a.device_did,
+        node_name: Some("nodeA"),
+        current_dkp_version: 1,
+        current_dkp_pubkey_der: &pubkey,
+        overlay_ip_cidr: None,
+        attestation_bind: None,
+        cert_bootstrap_bind: None,
+        revoked: vec![],
+        previous_version_id: 0,
+        created_at: None,
+        status: Some("active".into()),
+    })
+    .unwrap();
+    let vm_ref = self_doc.verification_method.first().unwrap().id.clone();
+    doc_sign::sign_in_place(&mut self_doc, state_a.signer.as_ref(), &vm_ref).unwrap();
+    sgx_guardian_client::did::doc_persistence::save_self(&self_doc).unwrap();
+
+    issue::ensure_owner_vc(&owner_record, state_a.signer.as_ref()).unwrap();
+
+    let circle_id = "group:host-test";
+    store::create_circle(
+        "nodeA",
+        circle_id.to_string(),
+        "Host Test Circle".to_string(),
+        "Chat host integration test circle".to_string(),
+        owner_record.did.clone(),
+    )
+    .unwrap();
+
+    issue::issue_membership_vc(
+        &owner_record,
+        state_a.signer.as_ref(),
+        IssueRequest {
+            subject_did: &owner_record.did,
+            role: CredentialRole::Owner,
+            permissions: issue::default_permissions_for_role(CredentialRole::Owner),
+            circle_id,
+            node_hint: Some("nodeA".into()),
+            duration_days: Some(365),
+        },
+    )
+    .unwrap();
+
+    issue::issue_membership_vc(
+        &owner_record,
+        state_a.signer.as_ref(),
+        IssueRequest {
+            subject_did: &state_b.device_did,
+            role: CredentialRole::Member,
+            permissions: issue::default_permissions_for_role(CredentialRole::Member),
+            circle_id,
+            node_hint: Some("nodeB".into()),
+            duration_days: Some(365),
+        },
+    )
+    .unwrap();
+
+    issue::issue_membership_vc(
+        &owner_record,
+        state_a.signer.as_ref(),
+        IssueRequest {
+            subject_did: &state_c.device_did,
+            role: CredentialRole::Member,
+            permissions: issue::default_permissions_for_role(CredentialRole::Member),
+            circle_id,
+            node_hint: Some("nodeC".into()),
+            duration_days: Some(365),
+        },
+    )
+    .unwrap();
 }
 
 async fn write_trusted_peer(state: &AppState, did: &str, peer_id: &str, port: u16) {
@@ -106,6 +261,7 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
     let state_a = state("nodeA", &temp.path().join("node-a"));
     let state_b = state("nodeB", &temp.path().join("node-b"));
     let state_c = state("nodeC", &temp.path().join("node-c"));
+    seed_circle_state(&temp, &state_a, &state_b, &state_c);
     let did_a = state_a.device_did.clone();
     let did_b = state_b.device_did.clone();
     let did_c = state_c.device_did.clone();
@@ -148,7 +304,7 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
     let received = wait_for_message(&did_a, &response.message_id).await;
     assert_eq!(
         received.encrypted_payload,
-        r#"{"attachment_id":null,"content":"hello from the host harness"}"#
+        r#"{"attachment_id":null,"attachment_mime":null,"attachment_name":null,"attachment_size":null,"content":"hello from the host harness"}"#
     );
 
     assert_eq!(received.status, MessageStatus::Delivered);
@@ -223,8 +379,8 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
     assert!(receipt_text.contains(&response.message_id));
     assert!(receipt_text.contains(&did_b));
 
-    // Group fan-out: the sender stores one group record and each trusted peer
-    // receives an individual gRPC push.
+    // Group fan-out: the sender stores one deduplicated group record and each
+    // trusted peer receives an individual gRPC push.
     let group_response = chat::send_message(
         State(state_a.clone()),
         None,
@@ -246,14 +402,12 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
             .into_iter()
             .filter(|m| m.message_id == group_response.message_id)
             .collect::<Vec<_>>();
-        if group_deliveries.len() == 3 {
+        if group_deliveries.len() == 1 {
             assert!(group_deliveries.iter().all(|m| m.encrypted_payload
-                == r#"{"attachment_id":null,"content":"host group message"}"#));
+                == r#"{"attachment_id":null,"attachment_mime":null,"attachment_name":null,"attachment_size":null,"content":"host group message"}"#));
             assert!(group_deliveries
                 .iter()
                 .any(|m| m.recipient_did == "group:host-test"));
-            assert!(group_deliveries.iter().any(|m| m.recipient_did == did_b));
-            assert!(group_deliveries.iter().any(|m| m.recipient_did == did_c));
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -265,8 +419,8 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
             .iter()
             .filter(|m| m.message_id == group_response.message_id)
             .count(),
-        3,
-        "group history must contain sender copy plus both trusted peer deliveries"
+        1,
+        "group history must retain a single deduplicated record for the message"
     );
 
     // A peer can return missed messages through SyncMessages. Seed B's side
@@ -313,7 +467,7 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
         .push_message(PushMessageRequest {
             message_id: "untrusted-message".to_string(),
             sender_did: "did:guardian:untrusted".to_string(),
-            recipient_did: did_b,
+            recipient_did: did_b.clone(),
             timestamp: 1,
             seq_no: 1,
             encrypted_payload: "must not persist".to_string(),

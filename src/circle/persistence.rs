@@ -13,8 +13,10 @@ pub fn base_dir() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from(CIRCLE_BASE))
 }
 
-pub fn registry_path() -> PathBuf {
-    base_dir().join("circles.json")
+pub fn registry_path(node_id: &str) -> PathBuf {
+    base_dir()
+        .join("registries")
+        .join(format!("{}.json", safe_id(node_id)))
 }
 
 pub fn invites_dir() -> PathBuf {

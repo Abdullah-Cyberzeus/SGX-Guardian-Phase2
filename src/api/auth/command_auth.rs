@@ -61,7 +61,7 @@ impl CommandAuthorizer {
                         .or_else(|| params_val.get("color_temp_kelvin"))
                     {
                         if let Some(ct) = color_temp.as_u64() {
-                            if ct < 1500 || ct > 6500 {
+                            if !(1500..=6500).contains(&ct) {
                                 return Err(CommandAuthError::InvalidSchema(format!(
                                     "Invalid color_temp {}: must be between 1500K and 6500K",
                                     ct
@@ -126,7 +126,7 @@ impl CommandAuthorizer {
                     if let Some(params_val) = params {
                         if let Some(temp) = params_val.get("temperature") {
                             if let Some(t) = temp.as_f64() {
-                                if t < 10.0 || t > 95.0 {
+                                if !(10.0..=95.0).contains(&t) {
                                     return Err(CommandAuthError::InvalidSchema(format!(
                                         "Target temperature {:.1} out of bounds (10.0 to 95.0)",
                                         t

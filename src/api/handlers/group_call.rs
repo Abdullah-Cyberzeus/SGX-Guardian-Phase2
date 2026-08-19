@@ -21,8 +21,8 @@ static COMPLETED_OPERATIONS: Lazy<dashmap::DashMap<String, GroupSession>> =
 static CREATED_OPERATIONS: Lazy<dashmap::DashMap<String, CreateGroupCallResponse>> =
     Lazy::new(dashmap::DashMap::new);
 
-use crate::api::state::AppState;
 use crate::api::auth::middleware::AuthenticatedSession;
+use crate::api::state::AppState;
 use crate::call::{
     GroupMemberState, GroupParticipant, GroupRole, GroupSession, GroupWireMessage, MediaType,
     ModerationAction, SignalKind, MAX_GROUP_PARTICIPANTS,
@@ -233,7 +233,7 @@ pub async fn create(
         .into_iter()
         .filter(|peer| {
             (request.call_all || request.member_ids.contains(&peer.peer_id))
-                && member_contacts.as_ref().map_or(true, |contacts| {
+                && member_contacts.as_ref().is_none_or(|contacts| {
                     peer.did.as_ref().is_some_and(|did| contacts.contains(did))
                 })
         })

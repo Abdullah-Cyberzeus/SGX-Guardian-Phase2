@@ -22,9 +22,7 @@ impl ConflictResolver {
             for action in &rule.actions {
                 match action {
                     RuleAction::Command { entity_id, .. } => {
-                        let list = entity_actions
-                            .entry(entity_id.clone())
-                            .or_insert_with(Vec::new);
+                        let list = entity_actions.entry(entity_id.clone()).or_default();
                         list.push((rule.priority, rule.clone(), action.clone()));
                     }
                     _ => {

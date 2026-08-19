@@ -191,9 +191,9 @@ impl ChatService for MyChatService {
                         .await
                         {
                             Ok(Some(updated)) => {
-                                let _ = sync_state.chat_events.send(
-                                    crate::chat::models::ChatEvent::MessageStatus(updated),
-                                );
+                                let _ = sync_state
+                                    .chat_events
+                                    .send(crate::chat::models::ChatEvent::MessageStatus(updated));
                             }
                             Ok(None) => {}
                             Err(e) => tracing::warn!(
@@ -251,7 +251,9 @@ impl ChatService for MyChatService {
             .await
             .map_err(|_| Status::not_found("attachment file not found"))?;
         if file_metadata.len() > crate::chat::storage::MAX_ATTACHMENT_BYTES {
-            return Err(Status::resource_exhausted("attachment exceeds 50 MiB limit"));
+            return Err(Status::resource_exhausted(
+                "attachment exceeds 50 MiB limit",
+            ));
         }
 
         let mut file = tokio::fs::File::open(path)

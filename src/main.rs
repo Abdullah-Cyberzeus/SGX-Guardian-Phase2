@@ -2736,7 +2736,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let chat_addr = format!("0.0.0.0:{}", chat_grpc_port);
         async move {
             if let Err(e) = server::start_chat_plaintext_server(chat_addr.clone(), state).await {
-                eprintln!("Chat plaintext gRPC server failed at {}: {:?}", chat_addr, e);
+                eprintln!(
+                    "Chat plaintext gRPC server failed at {}: {:?}",
+                    chat_addr, e
+                );
             }
         }
     });
@@ -2965,7 +2968,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Steady-state handoff: after the initial burst the file is
             // refreshed on the long cycle (see above) instead of every
             // tick, matching the qualification write-profile.
-            if beat < 20 || beat % 97 == 0 {
+            if beat < 20 || beat.is_multiple_of(97) {
                 let _ = std::fs::write(heartbeat_path, chrono::Utc::now().to_rfc3339());
             }
             tokio::time::sleep(Duration::from_secs(30)).await;
@@ -2993,7 +2996,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(300 + scatter)).await;
                 window = window.wrapping_add(1);
-                if window % 4 == 0 {
+                if window.is_multiple_of(4) {
                     // Full refresh window (10 min, sliced) — hold the
                     // metrics write lock so readers see one stable
                     // snapshot across the whole CA transition.
@@ -3035,9 +3038,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // never fully idle between real signing bursts. Errors are
                 // expected while nodeA is mid rotation and are simply
                 // retried on the next cycle.
-                if let Ok(km) = sgx_guardian_client::key_manager::KeyManager::load_or_generate(
-                    &key_path,
-                ) {
+                if let Ok(km) =
+                    sgx_guardian_client::key_manager::KeyManager::load_or_generate(&key_path)
+                {
                     for _ in 0..(4 + keepalive_tick % 5) {
                         if km.refresh_for_active_dkp().is_err() {
                             break;

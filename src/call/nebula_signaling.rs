@@ -879,7 +879,11 @@ mod tests {
 
     #[async_trait]
     impl PeerIdentityResolver for StaticIdentity {
-        async fn resolve(&self, device_id: &str, _peer_ip: &str) -> CallResult<TrustedPeerIdentity> {
+        async fn resolve(
+            &self,
+            device_id: &str,
+            _peer_ip: &str,
+        ) -> CallResult<TrustedPeerIdentity> {
             if self.0.device_id == device_id {
                 Ok(self.0.clone())
             } else {

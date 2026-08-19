@@ -187,7 +187,10 @@ fn member_required_scope(method: &Method, path: &str) -> Option<&'static str> {
             });
         }
         if method == Method::POST
-            && matches!(path, "/api/v1/circles/join/preview" | "/api/v1/circles/join")
+            && matches!(
+                path,
+                "/api/v1/circles/join/preview" | "/api/v1/circles/join"
+            )
         {
             return Some(scope::CIRCLES_READ);
         }
@@ -246,7 +249,7 @@ fn member_required_scope(method: &Method, path: &str) -> Option<&'static str> {
         }
         return (method == Method::POST
             && (path == "/api/v1/xfer/send" || path.ends_with("/cancel")))
-            .then_some(scope::FILES_UPLOAD);
+        .then_some(scope::FILES_UPLOAD);
     }
 
     if path == "/api/v1/notifications"
@@ -261,7 +264,7 @@ fn member_required_scope(method: &Method, path: &str) -> Option<&'static str> {
         }
         return (method == Method::POST
             && (path == "/api/v1/notifications/read-all" || path.ends_with("/read")))
-            .then_some(scope::NOTIFICATIONS_MANAGE);
+        .then_some(scope::NOTIFICATIONS_MANAGE);
     }
 
     None

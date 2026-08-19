@@ -160,13 +160,21 @@ pub async fn require_auth(
                 AuditCategory::Identity,
                 AuditSeverity::Warning,
                 AuditAction::Rejected,
-                &format!("Guardian fingerprint rotation requires member re-verification actor={}", claims.sub),
+                &format!(
+                    "Guardian fingerprint rotation requires member re-verification actor={}",
+                    claims.sub
+                ),
             );
             return unauthorized("Guardian fingerprint changed; verification is required");
         }
     }
 
-    match authorization::authorize(&claims.role, &current_scopes, req.method(), req.uri().path()) {
+    match authorization::authorize(
+        &claims.role,
+        &current_scopes,
+        req.method(),
+        req.uri().path(),
+    ) {
         AccessDecision::Allowed => {
             if claims.role == "member" {
                 audit_access_decision(
@@ -217,8 +225,9 @@ fn query_parameter(query: Option<&str>, name: &str) -> Option<String> {
 
 fn is_public_route(method: &Method, path: &str) -> bool {
     let public_frontend = method == Method::GET && !path.starts_with("/api/");
-    let circle_snapshot_pull =
-        method == Method::GET && path.starts_with("/api/v1/circles/") && path.ends_with("/members/snapshot");
+    let circle_snapshot_pull = method == Method::GET
+        && path.starts_with("/api/v1/circles/")
+        && path.ends_with("/members/snapshot");
 
     matches!(
         (method, path),

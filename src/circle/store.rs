@@ -211,7 +211,7 @@ pub fn upsert_circle(node_id: &str, circle: Circle) -> Result<Circle, CircleErro
 }
 
 fn load_or_seed_unlocked(node_id: &str) -> Result<CircleRegistry, CircleError> {
-    let path = persistence::registry_path();
+    let path = persistence::registry_path(node_id);
     if path.exists() {
         return load_registry(path);
     }
@@ -249,7 +249,7 @@ fn save_registry(node_id: &str, registry: &mut CircleRegistry) -> Result<(), Cir
     let vm_ref = format!("{}#dkp-v{}", record.did, record.current_dkp_version.max(1));
     registry.sign(&km, &vm_ref)?;
     persistence::write_atomic(
-        &persistence::registry_path(),
+        &persistence::registry_path(node_id),
         &serde_json::to_vec_pretty(registry)?,
     )?;
     Ok(())

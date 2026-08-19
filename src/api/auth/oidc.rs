@@ -366,16 +366,16 @@ mod tests {
         );
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let issuer = format!("http://{}", listener.local_addr().expect("addr"));
-        let id_token = signed_id_token(
-            signer.clone(),
-            "kid-1",
-            &issuer,
-            "sgx-client",
-            "cylenium-user-1",
-            "nonce-1",
-            Some("admin@example.com"),
-            Some("Admin User"),
-        )
+        let id_token = signed_id_token(SignedIdTokenSpec {
+            signer: signer.clone(),
+            kid: "kid-1",
+            issuer: &issuer,
+            audience: "sgx-client",
+            subject: "cylenium-user-1",
+            nonce: "nonce-1",
+            email: Some("admin@example.com"),
+            name: Some("Admin User"),
+        })
         .await;
         let jwks = jwks_for_signer(signer, "kid-1");
         let app = Router::new()
@@ -414,16 +414,16 @@ mod tests {
                 .expect("signer"),
         );
         let issuer = "https://issuer";
-        let id_token = signed_id_token(
-            signer.clone(),
-            "kid-1",
+        let id_token = signed_id_token(SignedIdTokenSpec {
+            signer: signer.clone(),
+            kid: "kid-1",
             issuer,
-            "sgx-client",
-            "cylenium-user-1",
-            "nonce-1",
-            Some("admin@example.com"),
-            Some("Admin User"),
-        )
+            audience: "sgx-client",
+            subject: "cylenium-user-1",
+            nonce: "nonce-1",
+            email: Some("admin@example.com"),
+            name: Some("Admin User"),
+        })
         .await;
         let jwks: Jwks = serde_json::from_value(jwks_for_signer(signer, "kid-1")).expect("jwks");
 
@@ -506,6 +506,18 @@ mod tests {
         jwks: serde_json::Value,
     }
 
+    #[derive(Clone)]
+    struct SignedIdTokenSpec<'a> {
+        signer: Arc<KeyManager>,
+        kid: &'a str,
+        issuer: &'a str,
+        audience: &'a str,
+        subject: &'a str,
+        nonce: &'a str,
+        email: Option<&'a str>,
+        name: Option<&'a str>,
+    }
+
     async fn token_handler(State(state): State<MockState>, body: String) -> impl IntoResponse {
         assert!(body.contains("grant_type=authorization_code"));
         assert!(body.contains("code=auth-code"));
@@ -523,16 +535,17 @@ mod tests {
         axum::Json(state.jwks)
     }
 
-    async fn signed_id_token(
-        signer: Arc<KeyManager>,
-        kid: &str,
-        issuer: &str,
-        audience: &str,
-        subject: &str,
-        nonce: &str,
-        email: Option<&str>,
-        name: Option<&str>,
-    ) -> String {
+    async fn signed_id_token(spec: SignedIdTokenSpec<'_>) -> String {
+        let SignedIdTokenSpec {
+            signer,
+            kid,
+            issuer,
+            audience,
+            subject,
+            nonce,
+            email,
+            name,
+        } = spec;
         let header = json!({ "alg": "ES256", "typ": "JWT", "kid": kid });
         let now = Utc::now().timestamp();
         let claims = json!({

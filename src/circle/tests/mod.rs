@@ -156,12 +156,16 @@ fn make_material(
 }
 
 fn save_local_owner(record: &DidRecord, doc: &DidDocument) {
+    save_local_identity(record, doc);
+    save_peer(doc).expect("save peer doc");
+    save_ca_aggregate(std::slice::from_ref(doc)).expect("save aggregate");
+}
+
+fn save_local_identity(record: &DidRecord, doc: &DidDocument) {
     record
         .save(&std::env::var(DID_PATH_ENV).expect("did path"))
         .expect("save did");
     save_self(doc).expect("save self doc");
-    save_peer(doc).expect("save peer doc");
-    save_ca_aggregate(std::slice::from_ref(doc)).expect("save aggregate");
 }
 
 fn save_peer_context(doc: &DidDocument) {
@@ -273,7 +277,7 @@ fn registry_roundtrip_and_tamper_detection() {
         .iter()
         .any(|circle| circle.circle_id == "circle-ops"));
 
-    let path = crate::circle::persistence::registry_path();
+    let path = crate::circle::persistence::registry_path("nodeA");
     let mut tampered: crate::circle::CircleRegistry =
         serde_json::from_slice(&std::fs::read(&path).expect("registry bytes"))
             .expect("registry json");
@@ -431,10 +435,12 @@ fn targeted_invite_acceptance_issues_vc_and_persists_circle_state() {
     invite::record_redemption(&token.id, &join_request.joiner_did).expect("record redemption");
     let vc = outcome.into_vc();
     crate::vc::persistence::save_own(&vc).expect("nodeB stores own vc");
+    save_local_identity(&member, &member_doc);
     invite::save_joined_circle("nodeB", &token).expect("nodeB saves circle");
     invite::set_received_invite_state(&token.id, invite::ReceivedInviteState::Accepted)
         .expect("accepted state");
 
+    save_local_owner(&owner, &owner_doc);
     let members_after = members::list_members("nodeA", "circle-ops").expect("nodeA members");
     assert!(members_after.iter().any(|entry| {
         entry.did == member.did
@@ -443,6 +449,7 @@ fn targeted_invite_acceptance_issues_vc_and_persists_circle_state() {
                 crate::circle::members::MemberLifecycleState::Active
             )
     }));
+    save_local_identity(&member, &member_doc);
     let node_b_circle = store::get_circle("nodeB", "circle-ops").expect("nodeB circle reload");
     assert_eq!(node_b_circle.owner_did, owner.did);
     let node_b_members = members::list_members("nodeB", "circle-ops").expect("nodeB members");

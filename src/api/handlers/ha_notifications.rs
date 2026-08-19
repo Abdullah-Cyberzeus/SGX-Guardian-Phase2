@@ -40,6 +40,12 @@ pub struct NotificationStore {
     notifications: RwLock<Vec<NotificationRecord>>,
 }
 
+impl Default for NotificationStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NotificationStore {
     pub fn new() -> Self {
         Self {

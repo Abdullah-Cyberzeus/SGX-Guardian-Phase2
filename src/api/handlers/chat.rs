@@ -1,5 +1,5 @@
-use crate::api::error::ApiError;
 use crate::api::auth::middleware::AuthenticatedSession;
+use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::chat::models::{ChatMessageRecord, MessageStatus};
 use axum::extract::{
@@ -28,7 +28,11 @@ pub(crate) fn get_grpc_addr(ip: &str, peer_id_str: &str) -> String {
             "nodeB" => 50252,
             "nodeC" => 50253,
             _ => {
-                if let Some(last_octet) = ip.split('.').last().and_then(|s| s.parse::<u16>().ok()) {
+                if let Some(last_octet) = ip
+                    .split('.')
+                    .next_back()
+                    .and_then(|s| s.parse::<u16>().ok())
+                {
                     if (1..=9).contains(&last_octet) {
                         50250 + last_octet
                     } else {
@@ -156,11 +160,9 @@ pub async fn send_message(
     }
     let sender_did = crate::api::handlers::browser_member::did_from_session(&session)
         .unwrap_or_else(|| state.device_did.clone());
-    let local_circle_ids = crate::api::auth::authorization::local_active_circle_ids(
-        &state.node_id,
-        &state.device_did,
-    )
-    .map_err(ApiError::Internal)?;
+    let local_circle_ids =
+        crate::api::auth::authorization::local_active_circle_ids(&state.node_id, &state.device_did)
+            .map_err(ApiError::Internal)?;
     let browser_recipient_state = if !req.is_group {
         crate::api::handlers::browser_member::state_for_did(
             &state,
@@ -359,7 +361,11 @@ pub async fn send_message(
             .unwrap_or_default()
     };
 
-    let requested_id = req.message_id.as_deref().map(str::trim).filter(|id| !id.is_empty());
+    let requested_id = req
+        .message_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
     if requested_id.is_some_and(|id| id.len() > 100) {
         return Err(ApiError::BadRequest(
             "message_id must be 100 characters or fewer".to_string(),
@@ -435,7 +441,7 @@ pub async fn send_message(
                 false,
                 &direct_conversation_id,
                 &message_id,
-                    crate::chat::models::MessageStatus::DeliveredToRemoteGuardian,
+                crate::chat::models::MessageStatus::DeliveredToRemoteGuardian,
             )
             .await
             {
@@ -452,7 +458,9 @@ pub async fn send_message(
             message_id,
             signature_base64: String::new(),
             status: if delivered {
-                MessageStatus::DeliveredToRemoteGuardian.as_str().to_string()
+                MessageStatus::DeliveredToRemoteGuardian
+                    .as_str()
+                    .to_string()
             } else {
                 MessageStatus::AcceptedByGuardian.as_str().to_string()
             },
@@ -783,8 +791,7 @@ pub async fn get_history(
     let mut messages = if let Some(peer_did) = query.peer_did {
         ensure_member_contact_access(&state, &session, &peer_did)?;
         let conversation_id = if peer_did == state.device_did {
-            crate::api::handlers::browser_member::did_from_session(&session)
-                .unwrap_or(peer_did)
+            crate::api::handlers::browser_member::did_from_session(&session).unwrap_or(peer_did)
         } else {
             peer_did
         };
@@ -811,7 +818,10 @@ pub async fn get_history(
     }
     let next_cursor = messages.last().map(|message| message.seq_no);
 
-    Ok(Json(ChatHistoryResponse { messages, next_cursor }))
+    Ok(Json(ChatHistoryResponse {
+        messages,
+        next_cursor,
+    }))
 }
 
 fn ensure_member_contact_access(
@@ -837,9 +847,9 @@ fn ensure_member_contact_access(
             .unwrap_or(&[]),
     )
     .map_err(ApiError::Internal)?;
-    let browser_allowed =
-        crate::api::handlers::browser_member::did_from_session(session).as_deref()
-            == Some(contact_did);
+    let browser_allowed = crate::api::handlers::browser_member::did_from_session(session)
+        .as_deref()
+        == Some(contact_did);
     if contacts.contains(contact_did) || browser_allowed {
         Ok(())
     } else {

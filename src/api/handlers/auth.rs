@@ -76,13 +76,22 @@ pub struct LoginUserResponse {
     pub scopes: Vec<String>,
     #[serde(rename = "circleIds")]
     pub circle_ids: Vec<String>,
-    #[serde(rename = "browserRegistrationId", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "browserRegistrationId",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub browser_registration_id: Option<String>,
     #[serde(rename = "browserMemberDid", skip_serializing_if = "Option::is_none")]
     pub browser_member_did: Option<String>,
-    #[serde(rename = "guardianFingerprint", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "guardianFingerprint",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub guardian_fingerprint: Option<String>,
-    #[serde(rename = "registrationExpiresAt", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "registrationExpiresAt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub registration_expires_at: Option<i64>,
 }
 
@@ -118,13 +127,22 @@ pub struct SessionResponse {
     pub scopes: Vec<String>,
     #[serde(rename = "circleIds")]
     pub circle_ids: Vec<String>,
-    #[serde(rename = "browserRegistrationId", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "browserRegistrationId",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub browser_registration_id: Option<String>,
     #[serde(rename = "browserMemberDid", skip_serializing_if = "Option::is_none")]
     pub browser_member_did: Option<String>,
-    #[serde(rename = "guardianFingerprint", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "guardianFingerprint",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub guardian_fingerprint: Option<String>,
-    #[serde(rename = "registrationExpiresAt", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "registrationExpiresAt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub registration_expires_at: Option<i64>,
     #[serde(rename = "guardianDid")]
     pub guardian_did: String,
@@ -150,7 +168,11 @@ pub async fn signup(
                 "member accounts require the verified Guardian invitation workflow".into(),
             ))
         }
-        _ => return Err(ApiError::BadRequest("role must be admin or member".to_string())),
+        _ => {
+            return Err(ApiError::BadRequest(
+                "role must be admin or member".to_string(),
+            ))
+        }
     };
 
     let pw_hash = password::hash_password(body.password)
