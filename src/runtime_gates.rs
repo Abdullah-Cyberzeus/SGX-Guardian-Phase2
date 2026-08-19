@@ -78,7 +78,7 @@ pub struct RuntimeGates {
     pub disable_login: bool,
 
     // Board-freeze fix (Apr 2026)
-    /// Attempt to read OCOTP fuses via /sys/bus/nvmem. Default ON.
+    /// Attempt raw OCOTP fuse reads. Default OFF; hardware access is explicit opt-in.
     pub read_ocotp: bool,
     /// Compute SHA-256 of the daemon binary (17 MB, ~1 s blocking). Default OFF.
     pub measure_binary_hash: bool,
@@ -118,17 +118,9 @@ impl RuntimeGates {
             ssscli_timeout_secs: env_u64("SGX_SSSCLI_TIMEOUT_SECS", 10),
             startup_cooldown_ms: env_u64("SGX_STARTUP_COOLDOWN_MS", 0),
             disable_login: env_true("SGX_DISABLE_LOGIN"),
-            // Default ON, with two disable options:
-            // 1) SGX_DISABLE_READ_OCOTP=1
-            // 2) explicit SGX_READ_OCOTP=0|false|no|off
-            read_ocotp: {
-                let disable = env_true("SGX_DISABLE_READ_OCOTP");
-                let explicit_off = std::env::var("SGX_READ_OCOTP")
-                    .ok()
-                    .map(|v| matches!(v.as_str(), "0" | "false" | "FALSE" | "no" | "off"))
-                    .unwrap_or(false);
-                !(disable || explicit_off)
-            },
+            // Raw /dev/mem access can hang the i.MX8MP interconnect. Require an
+            // explicit opt-in and retain the emergency disable switch.
+            read_ocotp: env_true("SGX_READ_OCOTP") && !env_true("SGX_DISABLE_READ_OCOTP"),
             measure_binary_hash: env_true("SGX_MEASURE_BINARY_HASH"),
             disable_read_ocotp: env_true("SGX_DISABLE_READ_OCOTP"),
         }

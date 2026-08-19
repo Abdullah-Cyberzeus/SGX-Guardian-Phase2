@@ -542,23 +542,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         use sgx_guardian_client::secure_element::secure_boot::BootChainStatus;
 
-        let boot_status = match tokio::time::timeout(
-            std::time::Duration::from_secs(15),
-            tokio::task::spawn_blocking(BootChainStatus::check),
-        )
-        .await
-        {
-            Ok(Ok(s)) => s,
-            Ok(Err(e)) => {
-                eprintln!(
-                    "  ⚠️ BootChain task panicked: {:?} — using unknown defaults",
-                    e
-                );
-                BootChainStatus::unknown()
-            }
-            Err(_) => {
-                eprintln!("  ⚠️ BootChain check TIMED OUT after 15s — using unknown defaults");
-                BootChainStatus::unknown()
+        let boot_status = if GATES.disable_secure_boot_check {
+            println!("  Secure boot check disabled by SGX_DISABLE_SECURE_BOOT_CHECK");
+            BootChainStatus::unknown()
+        } else {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(15),
+                tokio::task::spawn_blocking(BootChainStatus::check),
+            )
+            .await
+            {
+                Ok(Ok(s)) => s,
+                Ok(Err(e)) => {
+                    eprintln!(
+                        "  ⚠️ BootChain task panicked: {:?} — using unknown defaults",
+                        e
+                    );
+                    BootChainStatus::unknown()
+                }
+                Err(_) => {
+                    eprintln!(
+                        "  ⚠️ BootChain check TIMED OUT after 15s — using unknown defaults"
+                    );
+                    BootChainStatus::unknown()
+                }
             }
         };
         BootChainStatus::prime_cache(boot_status.clone());
