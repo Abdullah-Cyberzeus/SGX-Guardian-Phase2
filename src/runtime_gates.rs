@@ -128,7 +128,7 @@ impl RuntimeGates {
 
     pub fn log_summary(&self) {
         tracing::info!(
-            "Runtime gates: nebula={} relay_tc={} relay_stats={} tunnel={} cot={} bt={} cell={} sat={} refresh={} p2p={} att={} bcast={} cloud={} expiry={} lhhealth={} swkeys={} dkp_rot={} startup_attest={} sbcheck={} pcr={} audit={} grpc={} cert_bootstrap={} policy={} node_listener={} ssscli_timeout_secs={} cooldown_ms={}",
+            "Runtime gates: guardian_mesh={} relay_tc={} relay_stats={} tunnel={} cot={} bt={} cell={} sat={} refresh={} p2p={} att={} bcast={} cloud={} expiry={} lhhealth={} swkeys={} dkp_rot={} startup_attest={} sbcheck={} pcr={} audit={} grpc={} cert_bootstrap={} policy={} node_listener={} ssscli_timeout_secs={} cooldown_ms={}",
             self.disable_nebula,
             self.disable_relay_tc,
             self.disable_relay_stats,

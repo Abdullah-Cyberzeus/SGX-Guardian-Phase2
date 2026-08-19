@@ -124,7 +124,7 @@ pub async fn start_chat_plaintext_server(
     let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
 
     println!(
-        "💬 Chat plaintext gRPC server starting on {} (Nebula-secured)",
+        "💬 Chat plaintext gRPC server starting on {} (Guardian Mesh-secured)",
         addr
     );
 

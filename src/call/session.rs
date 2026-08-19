@@ -593,7 +593,7 @@ impl SessionManager {
         session.initiator_nebula_ip = Some(initiator_nebula_ip);
         session.transition(
             CallState::OfferReceived,
-            "Offer received over Nebula".to_string(),
+            "Offer received over Guardian Mesh".to_string(),
         )?;
         sessions.insert(session.session_id.clone(), session.clone());
         drop(sessions);

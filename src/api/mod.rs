@@ -551,7 +551,7 @@ pub async fn serve(
                 )
                 .await
             {
-                tracing::warn!(%error, "Nebula call signaling listener stopped; retrying");
+                tracing::warn!(%error, "Guardian Mesh call signaling listener stopped; retrying");
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
         }

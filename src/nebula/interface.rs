@@ -76,7 +76,7 @@ impl NebulaInterface {
         let stats = Self::get_stats()
             .map(|(rx, tx)| format!("rx={}B tx={}B", rx, tx))
             .unwrap_or_else(|| "no-stats".into());
-        format!("nebula0: up={}, ip={}, {}", up, ip, stats)
+        format!("Guardian Mesh interface: up={}, ip={}, {}", up, ip, stats)
     }
 
     /// Manually assign IP to nebula0 if not set by daemon.
@@ -106,7 +106,7 @@ impl NebulaInterface {
             return Err(format!("addr add failed: {}", stderr));
         }
 
-        println!("✅ nebula0 overlay IP assigned successfully");
+        println!("✅ Guardian Mesh overlay IP assigned successfully");
         Ok(())
     }
 
@@ -127,11 +127,11 @@ impl NebulaInterface {
     pub fn verify_and_fix_ip(expected_ip_cidr: &str) -> Result<(), String> {
         match Self::get_overlay_ip() {
             Some(actual) if actual == expected_ip_cidr => {
-                println!("✅ nebula0 IP verified");
+                println!("✅ Guardian Mesh interface IP verified");
                 Ok(())
             }
             Some(actual) => {
-                eprintln!("⚠️  nebula0 IP mismatch detected — removing old, assigning new");
+                eprintln!("⚠️  Guardian Mesh interface IP mismatch detected — removing old, assigning new");
                 // Remove old IP first to avoid duplicate addresses
                 let _ = Command::new("ip")
                     .args(["addr", "del", &actual, "dev", "nebula0"])
@@ -139,7 +139,7 @@ impl NebulaInterface {
                 Self::assign_overlay_ip(expected_ip_cidr)
             }
             None => {
-                println!("📋 nebula0 has no IP yet, assigning overlay address");
+                println!("📋 Guardian Mesh interface has no IP yet, assigning overlay address");
                 Self::assign_overlay_ip(expected_ip_cidr)
             }
         }
@@ -154,6 +154,6 @@ mod tests {
     fn test_status_report_does_not_panic() {
         // On dev machine nebula0 doesn't exist — should return gracefully
         let report = NebulaInterface::status_report();
-        assert!(report.contains("nebula0:"));
+        assert!(report.contains("Guardian Mesh interface:"));
     }
 }

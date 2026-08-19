@@ -55,6 +55,12 @@ export interface AlertSummary {
   timestamp: string;
 }
 
+/** Keep raw alert evidence intact while presenting the product name in UI headings. */
+export function guardianAlertHeading(value: string): string {
+  if (!/suricata/i.test(value)) return value;
+  return value.replace(/suricata/gi, 'Guardian');
+}
+
 interface ThreatAlertApi {
   alert_id: string;
   timestamp: string;

@@ -24,7 +24,7 @@ impl NebulaConfig {
         let config_path = format!("{}/nebula.yaml", config_dir);
 
         if Path::new(&config_path).exists() {
-            println!("ℹ️  Nebula config already exists at {}", config_path);
+            println!("ℹ️  Guardian Mesh config already exists at {}", config_path);
             return Ok(());
         }
 
@@ -73,7 +73,7 @@ firewall:
 
         let mut file = fs::File::create(config_path)?;
         file.write_all(config_content.as_bytes())?;
-        println!("✅ Nebula configuration generated (legacy).");
+        println!("✅ Guardian Mesh configuration generated (legacy).");
         Ok(())
     }
 
@@ -122,8 +122,8 @@ firewall:
             _ if node_name == pool.owner_node => "0.0.0.0:4242".to_string(),
             _ => {
                 eprintln!(
-                    "⚠️  [NebulaConfig] No valid lighthouse LAN IP provided for {}. \
-                     Nebula tunnel may not establish until nodeA IP is known.",
+                    "⚠️  [Guardian Mesh] No valid lighthouse LAN IP provided for {}. \
+                     Guardian Mesh tunnel may not establish until nodeA IP is known.",
                     node_name
                 );
                 "NEEDS_NODEA_LAN_IP:4242".to_string()

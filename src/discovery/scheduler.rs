@@ -87,7 +87,7 @@ impl DiscoveryScheduler {
                     AuditCategory::Discovery,
                     AuditSeverity::Warning,
                     AuditAction::Failed,
-                    &format!("{} nmap scan failed: {}", schedule_name(kind), err),
+                    &format!("{} Guardian network scan failed: {}", schedule_name(kind), err),
                 );
             }
         }
@@ -108,7 +108,7 @@ impl DiscoveryScheduler {
             AuditSeverity::Info,
             AuditAction::Started,
             &format!(
-                "{} nmap scan {} intensity={:?}",
+                "{} Guardian network scan {} intensity={:?}",
                 schedule_name(kind),
                 target,
                 intensity

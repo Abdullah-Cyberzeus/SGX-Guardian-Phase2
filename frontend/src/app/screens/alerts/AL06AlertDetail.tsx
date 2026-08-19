@@ -5,6 +5,7 @@ import { SeverityBadge } from "../../components/SeverityBadge";
 import { Monitor, Cpu, Brain, ChevronRight, Archive, Ban, Scan, X, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useAlerts } from "../../hooks/useApiData";
+import { guardianAlertHeading } from "../../services/alertService";
 
 const remediation = [
   { icon: Archive, label: "Archive Event", description: "Mark as reviewed and move to archive", variant: "secondary" },
@@ -87,7 +88,7 @@ export function AL06AlertDetail() {
                 marginBottom: "6px",
               }}
             >
-              {alert.title}
+              {guardianAlertHeading(alert.title)}
             </h2>
             <p
               style={{

@@ -2,13 +2,13 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ThreatError {
-    #[error("suricata binary not found in PATH")]
+    #[error("Guardian engine binary not found in PATH")]
     BinaryMissing,
 
-    #[error("suricata service failed to start: {0}")]
+    #[error("Guardian service failed to start: {0}")]
     ServiceStart(String),
 
-    #[error("eve.json not found at {0} - is Suricata running?")]
+    #[error("eve.json not found at {0} - is Guardian running?")]
     EveLogMissing(String),
 
     #[error("json parse error on line {line}: {msg}")]

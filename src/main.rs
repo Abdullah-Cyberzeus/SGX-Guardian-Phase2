@@ -1130,10 +1130,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    step(9, "nebula subsystem gate");
+    step(9, "Guardian Mesh subsystem gate");
     if !GATES.disable_nebula {
         // === Nebula Installation Verification ===
-        println!("\n🔎 Verifying Nebula Installation...");
+        println!("\n🔎 Verifying Guardian Mesh Installation...");
 
         use sgx_guardian_client::nebula::ca::NebulaCA;
         use sgx_guardian_client::nebula::config::NebulaConfig;
@@ -1163,24 +1163,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Nebula binary checks
         match NebulaInstall::check_binary() {
-            Ok(_) => println!("✅ Nebula binary found"),
+            Ok(_) => println!("✅ Guardian Mesh binary found"),
             Err(e) => {
-                eprintln!("❌ Nebula binary missing: {}", e);
-                log_error(&node_id, &format!("Nebula binary missing: {}", e));
+                eprintln!("❌ Guardian Mesh binary missing: {}", e);
+                log_error(&node_id, &format!("Guardian Mesh binary missing: {}", e));
                 std::process::exit(1);
             }
         }
         match NebulaInstall::check_version() {
-            Ok(v) => println!("✅ Nebula version: {}", v.trim()),
+            Ok(v) => println!("✅ Guardian Mesh version: {}", v.trim()),
             Err(e) => {
-                eprintln!("❌ Nebula version check failed: {}", e);
+                eprintln!("❌ Guardian Mesh version check failed: {}", e);
                 std::process::exit(1);
             }
         }
         match NebulaInstall::test_daemon_start() {
-            Ok(_) => println!("✅ Nebula daemon responding"),
+            Ok(_) => println!("✅ Guardian Mesh daemon responding"),
             Err(e) => {
-                eprintln!("❌ Nebula daemon test failed: {}", e);
+                eprintln!("❌ Guardian Mesh daemon test failed: {}", e);
                 std::process::exit(1);
             }
         }
@@ -1217,13 +1217,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 AuditCategory::Network,
                 AuditSeverity::Info,
                 AuditAction::Created,
-                "Nebula CA verified or generated",
+                "Guardian Mesh CA verified or generated",
             );
 
             // Log CA fingerprint so admins can verify all nodes use the same CA
             if let Some(fp) = NebulaCA::ca_fingerprint(&nebula_base_dir) {
                 println!("🔏 CA fingerprint: {}", fp);
-                log_event(&node_id, &format!("Nebula CA fingerprint: {}", fp));
+                log_event(&node_id, &format!("Guardian Mesh CA fingerprint: {}", fp));
             }
 
             // 2. Load/create the overlay IP registry
@@ -1295,7 +1295,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 AuditCategory::Network,
                 AuditSeverity::Info,
                 AuditAction::Created,
-                "Nebula CA certificate verified or issued for nodeA",
+                "Guardian Mesh CA certificate verified or issued for nodeA",
             );
 
             // 4. Start registry server (IP assignment for members)
@@ -1421,7 +1421,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             if cert_exists && key_exists && ca_exists && cert_ip_ok {
                 println!(
-                    "✅ Nebula certificate + CA cert already present for {}",
+                    "✅ Guardian Mesh certificate + CA cert already present for {}",
                     node_id
                 );
                 // Still log the CA fingerprint so mismatches surface in logs
@@ -1433,7 +1433,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     AuditCategory::Network,
                     AuditSeverity::Info,
                     AuditAction::Succeeded,
-                    &format!("Existing Nebula certificate found for {}", node_id),
+                    &format!("Existing Guardian Mesh certificate found for {}", node_id),
                 );
             } else {
                 if cert_exists && key_exists && !cert_ip_ok {
@@ -1449,7 +1449,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "🔐 Requesting cert + CA cert from nodeA at {}:50061...",
                     ca_lan_ip
                 );
-                log_event(&node_id, "Nebula certificate missing — requesting from CA");
+                log_event(&node_id, "Guardian Mesh certificate missing — requesting from CA");
 
                 let ca_address = format!("{}:50061", ca_lan_ip);
                 let wants_lh = std::env::var("SGX_WANTS_LIGHTHOUSE")
@@ -1698,7 +1698,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 &nebula_dir_for_registry_sync,
                             ) {
                                 eprintln!(
-                                "⚠️  Failed to regenerate Nebula config after registry sync: {:?}",
+                                "⚠️  Failed to regenerate Guardian Mesh config after registry sync: {:?}",
                                 e
                             );
                                 continue;
@@ -1708,18 +1708,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 format!("{}/nebula.yaml", nebula_dir_for_registry_sync);
                             if let Err(e) = NebulaDaemon::start(&config_path).await {
                                 eprintln!(
-                                "⚠️  Failed to restart Nebula after relay/lighthouse update: {}",
+                                "⚠️  Failed to restart Guardian Mesh after relay/lighthouse update: {}",
                                 e
                             );
                             } else {
                                 println!(
-                                    "🔄 Nebula reloaded after relay/lighthouse registry update"
+                                    "🔄 Guardian Mesh reloaded after relay/lighthouse registry update"
                                 );
                             }
                         }
                         Err(e) => {
                             eprintln!(
-                                "⚠️  Cannot reload Nebula; lighthouse registry not readable: {}",
+                                "⚠️  Cannot reload Guardian Mesh; lighthouse registry not readable: {}",
                                 e
                             );
                         }
@@ -1790,7 +1790,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 &nebula_dir_for_local_reload,
                             ) {
                                 eprintln!(
-                                "⚠️ nodeA failed to regenerate Nebula config on local registry update: {:?}",
+                                "⚠️ nodeA failed to regenerate Guardian Mesh config on local registry update: {:?}",
                                 e
                             );
                                 continue;
@@ -1799,7 +1799,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 format!("{}/nebula.yaml", nebula_dir_for_local_reload);
                             if let Err(e) = NebulaDaemon::start(&config_path).await {
                                 eprintln!(
-                                "⚠️ nodeA failed to reload Nebula after local registry update: {}",
+                                "⚠️ nodeA failed to reload Guardian Mesh after local registry update: {}",
                                 e
                             );
                             } else {
@@ -1808,7 +1808,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         Err(e) => {
                             eprintln!(
-                                "⚠️ nodeA cannot reload Nebula; lighthouse registry unreadable: {}",
+                                "⚠️ nodeA cannot reload Guardian Mesh; lighthouse registry unreadable: {}",
                                 e
                             );
                         }
@@ -1824,7 +1824,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &lighthouse_registry,
             &nebula_base_dir,
         ) {
-            eprintln!("❌ Failed to generate Nebula config: {:?}", e);
+            eprintln!("❌ Failed to generate Guardian Mesh config: {:?}", e);
             std::process::exit(1);
         }
 
@@ -1832,18 +1832,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // (handles the case where Nebula started but didn't assign the IP correctly)
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-        println!("🚀 Nebula Installation Verified Successfully\n");
+        println!("🚀 Guardian Mesh Installation Verified Successfully\n");
 
         // === Start Nebula ===
         let nebula_config_path = format!("{}/nebula.yaml", nebula_base_dir);
         if let Err(e) = NebulaDaemon::start(&nebula_config_path).await {
-            eprintln!("❌ Failed to start Nebula daemon: {:?}", e);
+            eprintln!("❌ Failed to start Guardian Mesh daemon: {:?}", e);
             std::process::exit(1);
         }
-        println!("🌐 Nebula mesh daemon started successfully.");
+        println!("🌐 Guardian Mesh daemon started successfully.");
 
         // Wait for nebula0 to come up, then verify its IP
-        println!("⏳ Waiting for nebula0 interface...");
+        println!("⏳ Waiting for Guardian Mesh interface...");
         if NebulaInterface::wait_for_interface(15).await {
             if let Some(cert_ip) = read_ip_from_nebula_cert(&nebula_base_dir, &node_id) {
                 if cert_ip != nebula_ip {
@@ -1855,12 +1855,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             match NebulaInterface::verify_and_fix_ip(&nebula_ip) {
-                Ok(_) => println!("✅ nebula0 IP verified: {}", nebula_ip),
-                Err(e) => eprintln!("⚠️  nebula0 IP fix failed: {} (continuing)", e),
+                Ok(_) => println!("✅ Guardian Mesh interface IP verified: {}", nebula_ip),
+                Err(e) => eprintln!("⚠️  Guardian Mesh interface IP fix failed: {} (continuing)", e),
             }
         } else {
             eprintln!(
-                "⚠️  nebula0 did not appear within 15 s. \
+                "⚠️  Guardian Mesh interface did not appear within 15 s. \
          Check: 'sudo journalctl -u nebula' or 'nebula -config {} -test'",
                 nebula_config_path
             );
@@ -1938,7 +1938,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             AuditCategory::Network,
             AuditSeverity::Info,
             AuditAction::Started,
-            "Nebula mesh daemon started successfully",
+            "Guardian Mesh daemon started successfully",
         );
 
         // Wait for Nebula to fully bind UDP 4242 before health checks.
@@ -1947,11 +1947,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // === Nebula Health Check ===
         use sgx_guardian_client::nebula::health::NebulaHealth;
 
-        println!("🩺 Performing Nebula health check...");
+        println!("🩺 Performing Guardian Mesh health check...");
 
         let health_report = NebulaHealth::check(&nebula_base_dir, &node_id);
 
-        println!("--- Nebula Health Report ---");
+        println!("--- Guardian Mesh Health Report ---");
         println!("{}", health_report.summary());
         println!("-----------------------------");
 
@@ -1965,7 +1965,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("-----------------------------");
 
         if !overlay_health.is_healthy() {
-            eprintln!("⚠️ Overlay health degraded — check nebula0 interface");
+            eprintln!("⚠️ Overlay health degraded — check Guardian Mesh interface");
         }
 
         log_audit(
@@ -2176,7 +2176,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         use sgx_guardian_client::nebula::cert_lifecycle::ExpiryMonitor;
         ExpiryMonitor::start(nebula_base_dir.clone(), node_id.clone());
     } else {
-        tracing::warn!("STEP_09–14 SKIPPED: Nebula disabled by SGX_DISABLE_NEBULA");
+        tracing::warn!("STEP_09–14 SKIPPED: Guardian Mesh disabled by SGX_DISABLE_NEBULA");
     }
 
     // === CoT Deliverable Integration Start ===
