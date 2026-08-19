@@ -48,6 +48,13 @@ pub struct NotificationEvent {
     pub ref_id: Option<String>,
     pub created_at: String,
     pub read: bool,
+    /// DID of whoever caused this event (the sender of a message, the
+    /// caller, the new member). This notify bus has no per-client delivery
+    /// targeting — every locally connected client (admin + every browser
+    /// member) receives every event — so the client that originated the
+    /// event uses this to skip showing itself its own notification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_did: Option<String>,
 }
 
 #[cfg(test)]

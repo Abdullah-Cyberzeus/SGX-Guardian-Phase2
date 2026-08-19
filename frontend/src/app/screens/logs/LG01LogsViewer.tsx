@@ -27,7 +27,7 @@ import {
   ShieldAlert,
   AlertOctagon,
 } from "lucide-react";
-import { mockLogEntries, mockNodes, type LogEntry, type LogLevel, type LogCategory } from "../../data/mockData";
+import type { LogEntry, LogLevel, LogCategory } from "../../data/mockData";
 import { useLogs, useAuditLogs } from "../../hooks/useApiData";
 import type { AuditLogEntry } from "../../services/auditLogService";
 import { toast } from "sonner";
@@ -1026,6 +1026,16 @@ export function LG01LogsViewer() {
     return Array.isArray(logs) ? logs : [];
   }, [logsData]);
 
+  // Node filter chips are derived from whatever nodes actually appear in the
+  // fetched logs, rather than a fabricated static list.
+  const availableNodes = useMemo(() => {
+    const nodes = new Set<string>();
+    for (const log of logEntries) {
+      if (log.node) nodes.add(log.node);
+    }
+    return [...nodes].sort();
+  }, [logEntries]);
+
   const levels: LogLevel[] = ["error", "warning", "info", "debug"];
   const categories: LogCategory[] = ["attestation", "peer", "security", "system", "dkp", "policy"];
 
@@ -1302,7 +1312,7 @@ export function LG01LogsViewer() {
                     active={selectedNode === "all"}
                     onClick={() => setSelectedNode("all")}
                   />
-                  {mockNodes.map((node) => (
+                  {availableNodes.map((node) => (
                     <FilterChip
                       key={node}
                       label={node}

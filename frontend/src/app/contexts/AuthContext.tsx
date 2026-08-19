@@ -20,7 +20,6 @@ export interface User {
   role?: string;
   hidePresence?: boolean;
   hideReadReceipts?: boolean;
-  hideTyping?: boolean;
   [key: string]: any;
 }
 
@@ -62,17 +61,17 @@ interface AuthContextValue {
 
 export interface ProfilePatch {
   name?: string;
+  email?: string;
   hidePresence?: boolean;
   hideReadReceipts?: boolean;
-  hideTyping?: boolean;
 }
 
 interface ProfileResponse {
   user_id: string;
   name: string;
+  email: string;
   hide_presence: boolean;
   hide_read_receipts: boolean;
-  hide_typing: boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -92,7 +91,6 @@ interface AuthPayload {
   scopes?: string[];
   hidePresence?: boolean;
   hideReadReceipts?: boolean;
-  hideTyping?: boolean;
   guardianDid?: string;
   guardianFingerprint?: string;
   circleIds?: string[];
@@ -116,7 +114,6 @@ function normalizeSession(payload: AuthPayload, fallbackToken = ""): Session {
     role: payload.role,
     hidePresence: payload.hidePresence,
     hideReadReceipts: payload.hideReadReceipts,
-    hideTyping: payload.hideTyping,
   };
   return {
     token: payload.token || fallbackToken,
@@ -439,18 +436,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const response = await api.patch<ProfileResponse>("/auth/profile", {
         name: patch.name,
+        email: patch.email,
         hide_presence: patch.hidePresence,
         hide_read_receipts: patch.hideReadReceipts,
-        hide_typing: patch.hideTyping,
       });
       setSession((current) => current && {
         ...current,
         user: {
           ...current.user,
           name: response.name,
+          email: response.email,
           hidePresence: response.hide_presence,
           hideReadReceipts: response.hide_read_receipts,
-          hideTyping: response.hide_typing,
         },
       });
       return { error: null };

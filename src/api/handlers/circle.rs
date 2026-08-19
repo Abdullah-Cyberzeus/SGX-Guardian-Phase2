@@ -1214,7 +1214,12 @@ pub async fn receive_member_snapshot(
             && !previously_known.contains(&member.did)
         {
             let member_label = member.name.clone().unwrap_or_else(|| member.did.clone());
-            crate::notify::publish_circle_member_joined(&member_label, &circle_label, &circle_id);
+            crate::notify::publish_circle_member_joined(
+                &member.did,
+                &member_label,
+                &circle_label,
+                &circle_id,
+            );
         }
     }
     log_audit(

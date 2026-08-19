@@ -1,5 +1,7 @@
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
+use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use crate::audit::logger::log_audit;
 use crate::backup::errors::BackupError;
 use crate::backup::import::BackupImportReport;
 use crate::backup::model::{BackupHistory, BackupRecord, RestoreReport, ValidateReport};
@@ -36,6 +38,7 @@ pub async fn create(
             "passphrase must not be empty".to_string(),
         ));
     }
+    let node_id = state.node_id.clone();
     let record = crate::backup::create::create_backup(
         state,
         BackupConfig::from_env(),
@@ -44,6 +47,13 @@ pub async fn create(
     )
     .await
     .map_err(map_backup_error)?;
+    log_audit(
+        &node_id,
+        AuditCategory::Vault,
+        AuditSeverity::Info,
+        AuditAction::Created,
+        &format!("Backup created: {}", record.id),
+    );
     Ok(Json(record))
 }
 
@@ -148,10 +158,20 @@ pub async fn import(
         return Err(ApiError::BadRequest("file field is required".to_string()));
     }
 
+    let node_id = state.node_id.clone();
     match crate::backup::import::import_staged_bundle(state, config, &staged_path, &passphrase)
         .await
     {
-        Ok(report) => Ok(Json(report)),
+        Ok(report) => {
+            log_audit(
+                &node_id,
+                AuditCategory::Vault,
+                AuditSeverity::Warning,
+                AuditAction::Created,
+                "Backup bundle imported",
+            );
+            Ok(Json(report))
+        }
         Err(error) => {
             cleanup_staged_upload(&staged_path).await;
             Err(map_backup_error(error))
@@ -195,7 +215,7 @@ pub async fn download(
 }
 
 pub async fn delete(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let id = crate::backup::safe_id(&id);
@@ -207,6 +227,13 @@ pub async fn delete(
     crate::backup::create::delete_backup(&BackupConfig::from_env(), &id)
         .await
         .map_err(map_backup_error)?;
+    log_audit(
+        &state.node_id,
+        AuditCategory::Vault,
+        AuditSeverity::Warning,
+        AuditAction::Succeeded,
+        &format!("Backup deleted: {}", id),
+    );
     Ok(Json(serde_json::json!({ "status": "deleted", "id": id })))
 }
 
@@ -232,13 +259,20 @@ pub async fn validate(
 }
 
 pub async fn restore(
-    State(_state): State<Arc<AppState>>,
-    Json(_body): Json<BackupIdSecretRequest>,
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<BackupIdSecretRequest>,
 ) -> Result<Json<RestoreReport>, ApiError> {
-    crate::backup::restore::restore_backup()
+    let report = crate::backup::restore::restore_backup()
         .await
-        .map(Json)
-        .map_err(map_backup_error)
+        .map_err(map_backup_error)?;
+    log_audit(
+        &state.node_id,
+        AuditCategory::Vault,
+        AuditSeverity::Critical,
+        AuditAction::Applied,
+        &format!("Backup restored: {}", body.id),
+    );
+    Ok(Json(report))
 }
 
 fn default_portable() -> bool {

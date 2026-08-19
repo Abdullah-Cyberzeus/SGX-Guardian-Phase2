@@ -3,6 +3,31 @@ import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
+// Phase 10 (Internet-Independent Admin Console Hardening): VITE_API_URL
+// should stay unset in production builds so the console calls same-origin
+// `/api/v1` — no public-Internet dependency. It's a legitimate escape hatch
+// for local dev tunneling (ngrok, etc.), so this only warns, never fails
+// the build.
+function warnOnNonLocalApiUrl(): Plugin {
+  return {
+    name: 'sgx-warn-non-local-api-url',
+    configResolved(config) {
+      const apiUrl = process.env.VITE_API_URL;
+      if (!apiUrl || config.command !== 'build') return;
+      const isLocal = apiUrl.startsWith('/')
+        || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|[^/]+\.local)(:\d+)?\/?/i.test(apiUrl);
+      if (!isLocal) {
+        console.warn(
+          `\n[sgx-warn-non-local-api-url] VITE_API_URL is set to "${apiUrl}" for this ` +
+          `production build — the Admin Console will call a remote host instead of ` +
+          `same-origin /api/v1, breaking Internet-independence. Leave VITE_API_URL ` +
+          `unset for production builds.\n`,
+        );
+      }
+    },
+  };
+}
+
 function pwaAssetManifest(): Plugin {
   return {
     name: 'sgx-pwa-asset-manifest',
@@ -30,6 +55,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     pwaAssetManifest(),
+    warnOnNonLocalApiUrl(),
   ],
   resolve: {
     alias: {

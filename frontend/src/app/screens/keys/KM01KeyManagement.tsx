@@ -20,12 +20,7 @@ import {
   AlertCircle,
   Loader2,
 } from "lucide-react";
-import {
-  mockDKPKeys,
-  mockDKPMetadata,
-  type DKPKeyVersion,
-  type DKPKeyStatus,
-} from "../../data/mockData";
+import type { DKPKeyVersion, DKPKeyStatus } from "../../data/mockData";
 import { useDKPStatus } from "../../hooks/useApiData";
 import { dkpService } from "../../services/dkpService";
 import { toast } from "sonner";

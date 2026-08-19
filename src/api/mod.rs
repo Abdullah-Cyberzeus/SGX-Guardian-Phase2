@@ -376,7 +376,6 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         )
         .route("/api/v1/chat/send", post(handlers::chat::send_message))
         .route("/api/v1/chat/read", post(handlers::chat::mark_as_read))
-        .route("/api/v1/chat/typing", post(handlers::chat::typing))
         .route("/api/v1/chat/sync", post(handlers::chat::trigger_sync))
         .route("/api/v1/chat/history", get(handlers::chat::get_history))
         .route("/api/v1/chat/ws", get(handlers::chat::ws_handler))
