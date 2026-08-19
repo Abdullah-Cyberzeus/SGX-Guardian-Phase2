@@ -159,7 +159,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Create default node configs if missing
-    for (nid, port) in &[("nodeA", 50051u16), ("nodeB", 50052), ("nodeC", 50053)] {
+    for (nid, port) in &[
+        ("nodeA", 50051u16),
+        ("nodeB", 50052),
+        ("nodeC", 50053),
+        ("nodeD", 50054),
+    ] {
         let path = format!("/etc/sgx-guardian/config/{}.yaml", nid);
         if !std::path::Path::new(&path).exists() {
             let letter = &nid[4..];
@@ -856,6 +861,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "/etc/sgx-guardian/config/nodeA.yaml",
         "/etc/sgx-guardian/config/nodeB.yaml",
         "/etc/sgx-guardian/config/nodeC.yaml",
+        "/etc/sgx-guardian/config/nodeD.yaml",
     ] {
         if let Err(e) = dynamic_config::sanitize_config_ip_if_invalid(yaml_file) {
             eprintln!("⚠️ Sanitize failed for {}: {:?}", yaml_file, e);
@@ -891,7 +897,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             port: match node {
                 "nodeA" => 50051,
                 "nodeB" => 50052,
-                _ => 50053,
+                "nodeC" => 50053,
+                _ => 50054,
             },
             public_key: format!("placeholder-key-{}", &node[4..]),
             metrics: None,
@@ -904,6 +911,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let node_a = load_config_safe("nodeA");
     let node_b = load_config_safe("nodeB");
     let node_c = load_config_safe("nodeC");
+    let node_d = load_config_safe("nodeD");
 
     println!(
         "✅ Loaded Node A: {} ({}) at {}:{} | key: {}",
@@ -917,11 +925,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "✅ Loaded Node C: {} ({}) at {}:{} | key: {}",
         node_c.node_id, node_c.hostname, node_c.ip, node_c.port, node_c.public_key
     );
+    println!(
+        "✅ Loaded Node D: {} ({}) at {}:{} | key: {}",
+        node_d.node_id, node_d.hostname, node_d.ip, node_d.port, node_d.public_key
+    );
 
     let current_relay_cfg: RelayLimitsConfig = match node_id.as_str() {
         "nodeA" => node_a.relay_or_default(),
         "nodeB" => node_b.relay_or_default(),
         "nodeC" => node_c.relay_or_default(),
+        "nodeD" => node_d.relay_or_default(),
         _ => RelayLimitsConfig::default(),
     };
 
@@ -1731,7 +1744,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if node_id == "nodeA" {
             let lh_path = format!("{}/lighthouse_registry.json", nebula_base_dir);
             let mut changed = false;
-            for (peer_id, cfg) in [("nodeB", &node_b), ("nodeC", &node_c)] {
+            for (peer_id, cfg) in [("nodeB", &node_b), ("nodeC", &node_c), ("nodeD", &node_d)] {
                 let Some(overlay_ip) = overlay_pool.get_ip(peer_id).cloned() else {
                     continue;
                 };
@@ -2434,9 +2447,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✅ P2P Discovery and Attestation background services started.");
 
     let (this_node, peers) = match node_id.as_str() {
-        "nodeA" => (node_a.clone(), vec![node_b, node_c]),
-        "nodeB" => (node_b.clone(), vec![node_a, node_c]),
-        "nodeC" => (node_c.clone(), vec![node_a, node_b]),
+        "nodeA" => (node_a.clone(), vec![node_b, node_c, node_d]),
+        "nodeB" => (node_b.clone(), vec![node_a, node_c, node_d]),
+        "nodeC" => (node_c.clone(), vec![node_a, node_b, node_d]),
+        "nodeD" => (node_d.clone(), vec![node_a, node_b, node_c]),
         _ => {
             eprintln!("❌ Unknown node ID: {}", node_id);
             log_error(&node_id, "Unknown node ID provided");
@@ -2736,6 +2750,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "nodeA" => 50251,
         "nodeB" => 50252,
         "nodeC" => 50253,
+        "nodeD" => 50254,
         _ => 50251,
     };
     tokio::spawn({
@@ -3526,6 +3541,16 @@ async fn resolve_ca_ip_from_config_inner() -> String {
             eprintln!("⏳ Waiting for nodeA LAN IP via discovery/config sync...");
         }
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    if let Ok(fallback_ip) = std::env::var("SGX_LIGHTHOUSE_FALLBACK_IP") {
+        if !fallback_ip.is_empty() && fallback_ip != "0.0.0.0" {
+            eprintln!(
+                "⚠️  Could not find nodeA LAN IP from config files. \
+                 Falling back to SGX_LIGHTHOUSE_FALLBACK_IP={}",
+                fallback_ip
+            );
+            return fallback_ip;
+        }
     }
     eprintln!(
         "⚠️  Could not find nodeA LAN IP from config files. \

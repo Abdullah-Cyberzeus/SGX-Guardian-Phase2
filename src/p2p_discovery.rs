@@ -26,11 +26,13 @@ fn load_known_node_configs(node_id: &str) -> Vec<NodeConfig> {
         "/etc/sgx-guardian/config/nodeA.yaml",
         "/etc/sgx-guardian/config/nodeB.yaml",
         "/etc/sgx-guardian/config/nodeC.yaml",
+        "/etc/sgx-guardian/config/nodeD.yaml",
     ];
     let config_paths_rel = [
         "config/nodeA.yaml",
         "config/nodeB.yaml",
         "config/nodeC.yaml",
+        "config/nodeD.yaml",
     ];
 
     let mut configs = Vec::new();

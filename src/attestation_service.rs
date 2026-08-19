@@ -294,6 +294,7 @@ pub fn attestation_listener_port_for_node(node_id: &str) -> u16 {
         "nodeA" => attestation_listener_port_for_base(50051),
         "nodeB" => attestation_listener_port_for_base(50052),
         "nodeC" => attestation_listener_port_for_base(50053),
+        "nodeD" => attestation_listener_port_for_base(50054),
         _ => attestation_listener_port_for_base(50051),
     }
 }
@@ -980,7 +981,7 @@ fn load_node_config_for_attestation(node_id: &str) -> Result<NodeConfig> {
 
 fn allowed_attestation_targets(local_node_id: &str) -> HashSet<String> {
     let mut targets = HashSet::new();
-    for node in ["nodeA", "nodeB", "nodeC"] {
+    for node in ["nodeA", "nodeB", "nodeC", "nodeD"] {
         if node == local_node_id {
             continue;
         }
@@ -1042,6 +1043,7 @@ fn infer_node_id_from_base_port(base_port: u16) -> Option<&'static str> {
         50051 => Some("nodeA"),
         50052 => Some("nodeB"),
         50053 => Some("nodeC"),
+        50054 => Some("nodeD"),
         _ => None,
     }
 }
@@ -1051,7 +1053,7 @@ fn infer_node_id_from_peer(peer_ip: &str, base_port: u16) -> Option<String> {
         return Some(node_id.to_string());
     }
 
-    for node in ["nodeA", "nodeB", "nodeC"] {
+    for node in ["nodeA", "nodeB", "nodeC", "nodeD"] {
         if let Ok(conf) = load_node_config_for_attestation(node) {
             if conf.port == base_port && conf.ip == peer_ip {
                 return Some(node.to_string());
@@ -3441,9 +3443,20 @@ mod tests {
         assert_eq!(attestation_listener_port_for_node("nodeA"), 50151);
         assert_eq!(attestation_listener_port_for_node("nodeB"), 50152);
         assert_eq!(attestation_listener_port_for_node("nodeC"), 50153);
+        assert_eq!(attestation_listener_port_for_node("nodeD"), 50154);
         assert_ne!(attestation_listener_port_for_node("nodeA"), 50051);
         assert_ne!(attestation_listener_port_for_node("nodeB"), 50052);
         assert_ne!(attestation_listener_port_for_node("nodeC"), 50053);
+        assert_ne!(attestation_listener_port_for_node("nodeD"), 50054);
+    }
+
+    #[test]
+    fn test_infer_node_id_from_base_port_covers_all_four_nodes() {
+        assert_eq!(infer_node_id_from_base_port(50051), Some("nodeA"));
+        assert_eq!(infer_node_id_from_base_port(50052), Some("nodeB"));
+        assert_eq!(infer_node_id_from_base_port(50053), Some("nodeC"));
+        assert_eq!(infer_node_id_from_base_port(50054), Some("nodeD"));
+        assert_eq!(infer_node_id_from_base_port(50055), None);
     }
 
     #[tokio::test]

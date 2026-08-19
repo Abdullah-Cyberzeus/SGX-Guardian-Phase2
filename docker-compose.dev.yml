@@ -134,6 +134,34 @@ services:
       nodeA:
         condition: service_healthy
 
+  nodeD:
+    <<: *guardian-common
+    container_name: sgx-nodeD
+    hostname: sgx-nodeD
+    environment:
+      <<: *guardian-env
+      NODE_ID: nodeD
+      SGX_LIGHTHOUSE_IP: 172.31.250.10
+      SGX_TPM_DKP_HANDLE_BASE: "0x81000040"
+      SGX_TPM_DIK_HANDLE: "0x81000130"
+      SGX_TPM_KEY_AUTH: "${NODED_TPM_KEY_AUTH:-}"
+      SGX_CALL_SIGNALING_PORT: "50065"
+      SGX_CYLENIUM_OIDC_REDIRECT_URI: "${NODED_CYLENIUM_REDIRECT_URI:-http://localhost:48443/auth/callback}"
+    networks:
+      sgxnet:
+        ipv4_address: 172.31.250.13
+        aliases:
+          - guardian4.com
+    ports:
+      - "48443:8443"
+    volumes:
+      - nodeD-etc:/etc/sgx-guardian
+      - nodeD-lib:/var/lib/sgx-guardian
+      - nodeD-log:/var/log/sgx-guardian
+    depends_on:
+      nodeA:
+        condition: service_healthy
+
 networks:
   sgxnet:
     driver: bridge
@@ -151,3 +179,6 @@ volumes:
   nodeC-etc: {}
   nodeC-lib: {}
   nodeC-log: {}
+  nodeD-etc: {}
+  nodeD-lib: {}
+  nodeD-log: {}
