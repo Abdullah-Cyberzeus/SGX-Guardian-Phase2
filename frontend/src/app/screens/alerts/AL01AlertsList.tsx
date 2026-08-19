@@ -693,8 +693,7 @@ export function AL01AlertsList() {
   const suricataActive = threatStatus?.suricata?.toLowerCase() === "active";
 
   const alerts = useMemo(() => {
-    if (!alertsData) return mockAlerts as AlertView[];
-    return (alertsData.alerts || mockAlerts) as AlertView[];
+    return (alertsData?.alerts ?? []) as AlertView[];
   }, [alertsData]);
 
   const baseAlerts = useMemo(() => {

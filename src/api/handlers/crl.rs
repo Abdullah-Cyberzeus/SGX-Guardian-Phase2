@@ -1,5 +1,7 @@
 use super::dkp::{run_cli, run_cli_with_env, ActionResponse};
 use crate::api::error::ApiError;
+use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use crate::audit::logger::log_audit;
 use crate::crl::entry::CrlEntry;
 use crate::crl::persistence;
 use axum::{
@@ -479,6 +481,19 @@ pub async fn revoke(
         severity: entry.severity.as_str().to_string(),
     });
 
+    log_audit(
+        &state.node_id,
+        AuditCategory::Crl,
+        AuditSeverity::Critical,
+        AuditAction::Revoked,
+        &format!(
+            "CRL entry issued: {} (reason: {}, severity: {})",
+            entry.revoked_did,
+            entry.reason.as_str(),
+            entry.severity.as_str()
+        ),
+    );
+
     Ok(Json(RevokeCrlResponse {
         status: "success".to_string(),
         message: "CRL entry issued".to_string(),
@@ -489,7 +504,7 @@ pub async fn revoke(
 }
 
 pub async fn unrevoke(
-    State(_state): State<Arc<crate::api::state::AppState>>,
+    State(state): State<Arc<crate::api::state::AppState>>,
     Json(body): Json<UnrevokeCrlRequest>,
 ) -> Result<Json<UnrevokeCrlResponse>, ApiError> {
     if body.did.trim().is_empty() {
@@ -508,6 +523,14 @@ pub async fn unrevoke(
     let crl = persistence::load_crl()
         .map_err(|error| ApiError::Internal(error.to_string()))?
         .ok_or_else(|| ApiError::NotFound("CRL not found after unrevoke".to_string()))?;
+
+    log_audit(
+        &state.node_id,
+        AuditCategory::Crl,
+        AuditSeverity::Warning,
+        AuditAction::Updated,
+        &format!("CRL entry unrevoked: {}", body.did),
+    );
 
     Ok(Json(UnrevokeCrlResponse {
         status: "success".to_string(),

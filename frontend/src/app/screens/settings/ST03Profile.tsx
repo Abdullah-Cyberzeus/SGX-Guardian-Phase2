@@ -2,13 +2,16 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "../../components/PageHeader";
 import { Pencil, Camera, Check, Lock } from "lucide-react";
-import { mockGuardian } from "../../data/mockData";
 import { useCurrentUser } from "../../hooks/useCurrentUser";
+import { useGuardianInfo } from "../../hooks/useApiData";
+import { useGuardianConnectivity } from "../../../pwa/connectivity/GuardianConnectivityContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { PrivacySettings } from "../../components/settings/PrivacySettings";
 
 export function ST03Profile() {
   const currentUser = useCurrentUser();
+  const { data: guardianData } = useGuardianInfo();
+  const { reachable } = useGuardianConnectivity();
   const { updateProfile } = useAuth();
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -17,10 +20,11 @@ export function ST03Profile() {
 
   const save = async () => {
     const trimmed = name.trim();
-    if (!trimmed) return;
+    const trimmedEmail = email.trim();
+    if (!trimmed || !trimmedEmail) return;
     setSaving(true);
     try {
-      const { error } = await updateProfile({ name: trimmed });
+      const { error } = await updateProfile({ name: trimmed, email: trimmedEmail });
       if (error) throw new Error(error);
       toast.success("Profile updated");
       setEditing(false);
@@ -29,6 +33,7 @@ export function ST03Profile() {
         description: cause instanceof Error ? cause.message : undefined,
       });
       setName(currentUser.name);
+      setEmail(currentUser.email);
     } finally {
       setSaving(false);
     }
@@ -42,7 +47,7 @@ export function ST03Profile() {
           editing ? (
             <button
               onClick={() => void save()}
-              disabled={saving || !name.trim()}
+              disabled={saving || !name.trim() || !email.trim()}
               className="flex items-center gap-1.5 px-3 rounded-md transition-opacity active:opacity-70"
               style={{ height: "36px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", border: "none", cursor: saving ? "wait" : "pointer", opacity: saving ? 0.7 : 1, fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", borderRadius: "var(--radius-sm)" }}
             >
@@ -65,12 +70,12 @@ export function ST03Profile() {
         className="flex items-center gap-3 px-4 md:px-6 py-3 border-b border-border"
         style={{ backgroundColor: "color-mix(in srgb, var(--primary) 4%, var(--card))" }}
       >
-        <div style={{ width: "7px", height: "7px", borderRadius: "50%", backgroundColor: "var(--chart-2)", flexShrink: 0 }} />
+        <div style={{ width: "7px", height: "7px", borderRadius: "50%", backgroundColor: reachable ? "var(--chart-2)" : "var(--destructive)", flexShrink: 0 }} />
         <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", flex: 1 }}>
-          {mockGuardian.name} · Online
+          {guardianData?.name || "Guardian"} · {reachable ? "Online" : "Offline"}
         </span>
-        <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--chart-2)", fontWeight: "var(--font-weight-medium)" }}>
-          Healthy
+        <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: reachable ? "var(--chart-2)" : "var(--destructive)", fontWeight: "var(--font-weight-medium)" }}>
+          {reachable ? "Healthy" : "Unreachable"}
         </span>
       </div>
 

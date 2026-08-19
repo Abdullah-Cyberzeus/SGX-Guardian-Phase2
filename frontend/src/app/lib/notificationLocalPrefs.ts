@@ -30,13 +30,22 @@ const DEFAULTS: LocalNotificationPrefs = {
   dndEnd: "",
 };
 
-export async function loadLocalNotificationPrefs(): Promise<LocalNotificationPrefs> {
+// Keys are namespaced by the calling account's own DID. The IndexedDB store
+// backing this is per-*browser*, not per-account — on a shared browser used
+// to test both an admin and a member login, unscoped keys would let one
+// role's settings (e.g. notifications switched off while poking around as
+// admin) silently apply to the other the next time it's tested.
+function scopedKey(base: string, scope?: string): string {
+  return scope ? `${base}::${scope}` : base;
+}
+
+export async function loadLocalNotificationPrefs(scope?: string): Promise<LocalNotificationPrefs> {
   const [masterEnabled, sound, vibration, dndStart, dndEnd] = await Promise.all([
-    settingsRepository.get<boolean>(KEYS.masterEnabled),
-    settingsRepository.get<boolean>(KEYS.sound),
-    settingsRepository.get<boolean>(KEYS.vibration),
-    settingsRepository.get<string>(KEYS.dndStart),
-    settingsRepository.get<string>(KEYS.dndEnd),
+    settingsRepository.get<boolean>(scopedKey(KEYS.masterEnabled, scope)),
+    settingsRepository.get<boolean>(scopedKey(KEYS.sound, scope)),
+    settingsRepository.get<boolean>(scopedKey(KEYS.vibration, scope)),
+    settingsRepository.get<string>(scopedKey(KEYS.dndStart, scope)),
+    settingsRepository.get<string>(scopedKey(KEYS.dndEnd, scope)),
   ]);
   return {
     masterEnabled: masterEnabled ?? DEFAULTS.masterEnabled,
@@ -48,10 +57,11 @@ export async function loadLocalNotificationPrefs(): Promise<LocalNotificationPre
 }
 
 export async function saveLocalNotificationPref<K extends keyof LocalNotificationPrefs>(
+  scope: string | undefined,
   key: K,
   value: LocalNotificationPrefs[K],
 ): Promise<void> {
-  await settingsRepository.set(KEYS[key], value);
+  await settingsRepository.set(scopedKey(KEYS[key], scope), value);
 }
 
 /** True when `now` (defaults to the current time) falls inside the DND

@@ -412,7 +412,11 @@ pub async fn request_sync_from_peer(
                     ))
                 })?;
         }
-        crate::notify::publish_circle_new_message(&record.sender_did, &record.message_id);
+        crate::notify::publish_circle_new_message(
+            &record.sender_did,
+            &record.sender_did,
+            &record.message_id,
+        );
         synced_count += 1;
     }
 

@@ -28,7 +28,7 @@ import {
   ChevronDown,
   LayoutList,
 } from "lucide-react";
-import { mockSignedPolicies, type SignedPolicy } from "../../data/mockData";
+import type { SignedPolicy } from "../../data/mockData";
 import { policyService } from "../../services/policyService";
 import { toast } from "sonner";
 
@@ -837,14 +837,14 @@ export function PL01PolicyManagement() {
         status: "backup",
       });
     }
-    return list.length > 0 ? list : mockSignedPolicies;
+    return list;
   }, [currentYaml, currentPath, currentDigest, currentUpdatedAt, backupYaml, backupPath, backupUpdatedAt]);
 
   const [policies, setPolicies] = useState<SignedPolicy[]>(realPolicies);
 
   // Keep policies in sync when real data loads
   useEffect(() => {
-    if (realPolicies !== mockSignedPolicies) setPolicies(realPolicies);
+    setPolicies(realPolicies);
   }, [realPolicies]);
 
   const activePolicies = useMemo(

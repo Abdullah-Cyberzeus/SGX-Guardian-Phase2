@@ -4,7 +4,6 @@ import {
   Battery, Signal, Users, AlertTriangle, ChevronRight,
   Shield, X, ShieldCheck,
 } from "lucide-react";
-import { mockAlerts, mockCircles, mockThreatIntel } from "../../data/mockData";
 import { SkeletonCard } from "../../components/SkeletonBlock";
 import { EmptyState } from "../../components/EmptyState";
 import { useCurrentUser } from "../../hooks/useCurrentUser";
@@ -117,7 +116,19 @@ function HealthRing({ score, size, stroke }: { score: number; size: number; stro
   );
 }
 
-function HealthHeroCard({ score, threats24h, blocked }: { score: number; threats24h: number; blocked: number }) {
+function HealthHeroCard({ score, threats24h, blocked }: { score: number | null; threats24h: number; blocked: number }) {
+  if (score === null) {
+    return (
+      <Card className="col-span-2 h-full gap-3">
+        <CardHeader className="px-5 pt-5">
+          <CardTitle className={sectionLabel}>Security Health Score</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-1 items-center px-5 [&:last-child]:pb-5">
+          <p className="text-sm text-muted-foreground">Threat intelligence isn't available in this build.</p>
+        </CardContent>
+      </Card>
+    );
+  }
   const color = scoreColor(score);
   const message =
     score <= 40 ? "Your network needs immediate attention."
@@ -284,7 +295,19 @@ function CirclesDeskGrid({ navigate, circles }: { navigate: (p: string) => void;
   );
 }
 
-function HealthScoreCard({ score, threats24h, blocked }: { score: number; threats24h: number; blocked: number }) {
+function HealthScoreCard({ score, threats24h, blocked }: { score: number | null; threats24h: number; blocked: number }) {
+  if (score === null) {
+    return (
+      <div className="rounded-lg border border-border p-4" style={{ backgroundColor: "var(--card)", borderRadius: "var(--radius-card)" }}>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.1em", marginBottom: "12px" }}>
+          Security Health Score
+        </p>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>
+          Threat intelligence isn't available in this build.
+        </p>
+      </div>
+    );
+  }
   const ringColor = scoreColor(score);
   const ringR = 36;
   const ringCirc = 2 * Math.PI * ringR;
@@ -435,11 +458,8 @@ export function HM01Dashboard() {
     };
   }, [guardianData]);
 
-  // Note: alerts, circles, and threatIntel don't have backend APIs yet
-  // Use mock data as placeholder until backend endpoints are built
   const alerts = useMemo(() => {
-    if (!alertsData) return mockAlerts;
-    const alertsList = Array.isArray(alertsData) ? alertsData : (alertsData.alerts || mockAlerts);
+    const alertsList = Array.isArray(alertsData) ? alertsData : (alertsData?.alerts ?? []);
     return alertsList.map((alert: any) => ({
       ...alert,
       severity: alert.severity?.toUpperCase() || alert.severity,
@@ -448,8 +468,7 @@ export function HM01Dashboard() {
   }, [alertsData]);
 
   const circles = useMemo(() => {
-    if (!circlesData) return mockCircles;
-    const circlesList = Array.isArray(circlesData) ? circlesData : mockCircles;
+    const circlesList = Array.isArray(circlesData) ? circlesData : [];
     return circlesList.map((circle: any) => ({
       ...circle,
       onlineCount: circle.onlineCount ?? Math.floor((circle.memberCount || 0) * 0.6),
@@ -457,18 +476,16 @@ export function HM01Dashboard() {
     }));
   }, [circlesData]);
 
-  const threatIntel = useMemo(() => {
-    if (!threatData) return mockThreatIntel;
-    return { ...mockThreatIntel, ...threatData };
-  }, [threatData]);
+  // No backend endpoint exists for /guardian/threat-intel yet — surface as
+  // genuinely unavailable (null score) rather than fabricating a number.
+  const threats24h = threatData?.threats24h ?? 0;
+  const blocked = threatData?.blocked ?? 0;
+  const score = threatData?.score ?? null;
 
   const isLoading = guardianLoading || alertsLoading || circlesLoading || threatLoading;
   const screenState: ScreenState = isLoading ? "loading" : "populated";
 
   const dismissBanner = () => { localStorage.setItem(BANNER_KEY, "1"); setBannerVisible(false); };
-
-  // Use threat intel from API
-  const score = threatIntel.score;
 
   if (screenState === "loading") {
     return <div className="flex flex-col gap-4 p-4 md:p-6 lg:p-8"><SkeletonCard lines={4} /><SkeletonCard lines={2} /><SkeletonCard lines={3} /></div>;
@@ -497,7 +514,7 @@ export function HM01Dashboard() {
       <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--foreground)", lineHeight: 1.6, flex: 1 }}>
         Guardian is active and monitoring your network.{" "}
         <button onClick={() => navigate("/alerts")} style={{ color: "var(--primary)", background: "none", border: "none", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", textDecoration: "underline", padding: 0 }}>
-          Review {threatIntel.threats24h} detected threats.
+          Review {threats24h} detected threats.
         </button>
       </p>
       <button onClick={dismissBanner} style={{ background: "none", border: "none", cursor: "pointer", padding: "2px", flexShrink: 0 }}>
@@ -538,7 +555,7 @@ export function HM01Dashboard() {
       <div className="md:hidden flex flex-col gap-4 p-4 pb-8">
         {bannerVisible && WelcomeBanner}
         <GuardianCard onClick={() => navigate("/home/guardian")} guardian={guardian} />
-        <HealthScoreCard score={score} threats24h={threatIntel.threats24h} blocked={threatIntel.blocked} />
+        <HealthScoreCard score={score} threats24h={threats24h} blocked={blocked} />
         <ActiveAlertsCard navigate={navigate} alerts={alerts} />
         <CirclesCard navigate={navigate} circles={circles} />
       </div>
@@ -549,7 +566,7 @@ export function HM01Dashboard() {
         {/* Left col */}
         <div className="flex flex-col gap-5">
           <GuardianCard onClick={() => navigate("/home/guardian")} guardian={guardian} />
-          <HealthScoreCard score={score} threats24h={threatIntel.threats24h} blocked={threatIntel.blocked} />
+          <HealthScoreCard score={score} threats24h={threats24h} blocked={blocked} />
         </div>
         {/* Right col */}
         <div className="flex flex-col gap-5">
@@ -566,7 +583,7 @@ export function HM01Dashboard() {
         <div className="flex min-h-full flex-col justify-start gap-4 p-6">
           {bannerVisible && WelcomeBanner}
           <div className="grid gap-4" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
-            <HealthHeroCard score={score} threats24h={threatIntel.threats24h} blocked={threatIntel.blocked} />
+            <HealthHeroCard score={score} threats24h={threats24h} blocked={blocked} />
             <GuardianDeskCard guardian={guardian} onClick={() => navigate("/home/guardian")} />
             <AlertsDeskCard alerts={alerts} navigate={navigate} />
             <CirclesDeskGrid navigate={navigate} circles={circles} />

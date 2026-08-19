@@ -1,5 +1,7 @@
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
+use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use crate::audit::logger::log_audit;
 use crate::geofence::actions::{GeofenceAction, ZoneAutomation};
 use crate::geofence::errors::GeofenceError;
 use crate::geofence::model::{
@@ -119,7 +121,7 @@ pub async fn list_zones(
 }
 
 pub async fn create_zone(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Json(request): Json<CreateZoneRequest>,
 ) -> Result<Json<ZoneResponse>, ApiError> {
     let zone = zones::new_zone(zones::NewZoneInput {
@@ -137,11 +139,18 @@ pub async fn create_zone(
         enabled: request.enabled,
     });
     let zone = zones::create_zone(zone).map_err(api_error)?;
+    log_audit(
+        &state.node_id,
+        AuditCategory::Geofence,
+        AuditSeverity::Info,
+        AuditAction::Created,
+        &format!("Geofence zone created: {} ({})", zone.zone_id, zone.name),
+    );
     Ok(Json(ZoneResponse { zone }))
 }
 
 pub async fn edit_zone(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Json(request): Json<EditZoneRequest>,
 ) -> Result<Json<ZoneResponse>, ApiError> {
@@ -160,14 +169,28 @@ pub async fn edit_zone(
         enabled: request.enabled,
     };
     let zone = zones::update_zone(&id, patch).map_err(api_error)?;
+    log_audit(
+        &state.node_id,
+        AuditCategory::Geofence,
+        AuditSeverity::Info,
+        AuditAction::Updated,
+        &format!("Geofence zone updated: {} ({})", zone.zone_id, zone.name),
+    );
     Ok(Json(ZoneResponse { zone }))
 }
 
 pub async fn delete_zone(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ZoneResponse>, ApiError> {
     let zone = zones::delete_zone(&id).map_err(api_error)?;
+    log_audit(
+        &state.node_id,
+        AuditCategory::Geofence,
+        AuditSeverity::Warning,
+        AuditAction::Succeeded,
+        &format!("Geofence zone deleted: {} ({})", zone.zone_id, zone.name),
+    );
     Ok(Json(ZoneResponse { zone }))
 }
 
@@ -310,7 +333,7 @@ pub async fn get_actions(
 }
 
 pub async fn put_actions(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Json(automation): Json<ZoneAutomation>,
 ) -> Result<Json<ActionsResponse>, ApiError> {
@@ -323,6 +346,13 @@ pub async fn put_actions(
         },
     )
     .map_err(api_error)?;
+    log_audit(
+        &state.node_id,
+        AuditCategory::Geofence,
+        AuditSeverity::Info,
+        AuditAction::Updated,
+        &format!("Geofence zone automation updated: {}", id),
+    );
     Ok(Json(ActionsResponse {
         zone_id: id,
         automation: zone.automation,

@@ -10,6 +10,25 @@ pub struct MyChatService {
     pub state: Arc<AppState>,
 }
 
+/// A friendly label for a notification body when the sender is a remote
+/// peer's own Guardian (their `User` record lives on their box, not ours,
+/// so `resolve_actor_label` can't see it) — falls back to the raw DID only
+/// if this peer isn't in the trusted registry.
+async fn resolve_remote_peer_label(state: &AppState, did: &str) -> String {
+    let peers_path = std::path::Path::new(&state.log_dir_primary).join("trusted_peers.json");
+    let peers_json = tokio::fs::read_to_string(&peers_path)
+        .await
+        .unwrap_or_else(|_| "[]".to_string());
+    let raw_peers: Vec<serde_json::Value> = serde_json::from_str(&peers_json).unwrap_or_default();
+    raw_peers
+        .iter()
+        .find(|peer| peer.get("did").and_then(|v| v.as_str()) == Some(did))
+        .and_then(|peer| peer.get("peer_id").and_then(|v| v.as_str()))
+        .filter(|label| !label.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| did.to_string())
+}
+
 #[tonic::async_trait]
 impl ChatService for MyChatService {
     async fn push_message(
@@ -74,7 +93,8 @@ impl ChatService for MyChatService {
             .state
             .chat_events
             .send(crate::chat::models::ChatEvent::NewMessage(record.clone()));
-        crate::notify::publish_circle_new_message(&req.sender_did, &record.message_id);
+        let sender_label = resolve_remote_peer_label(&self.state, &req.sender_did).await;
+        crate::notify::publish_circle_new_message(&req.sender_did, &sender_label, &record.message_id);
 
         println!(
             "💬 📥 Received message from {} → \"{}\"",

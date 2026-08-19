@@ -152,7 +152,25 @@ function radiusToPixels(radiusM: number | null | undefined, lat: number) {
 }
 
 function RealMapTiles() {
+  // Tracks reachability of the public CARTO tile CDN specifically — distinct
+  // from Guardian-LAN reachability (`staleWarning`/`fatalError` above). One
+  // failed tile is enough to assume the whole CDN is unreachable and stop
+  // requesting the rest, rather than let every tile fail individually.
+  const [tilesUnavailable, setTilesUnavailable] = useState(false);
   const tileSize = MAP_SIZE / TILE_COUNT;
+
+  if (tilesUnavailable) {
+    return (
+      <g className="clt-real-map clt-map-unavailable" pointerEvents="none">
+        <rect x={0} y={0} width={WIDTH} height={HEIGHT} />
+        <rect className="clt-map-contrast" x={0} y={MAP_Y} width={MAP_SIZE} height={MAP_SIZE} />
+        <text className="clt-map-unavailable-label" x={WIDTH / 2} y={HEIGHT / 2}>
+          Map tiles unavailable — requires Internet access
+        </text>
+      </g>
+    );
+  }
+
   const tiles: React.ReactNode[] = [];
   for (let x = 0; x < TILE_COUNT; x += 1) {
     for (let y = 0; y < TILE_COUNT; y += 1) {
@@ -166,6 +184,7 @@ function RealMapTiles() {
           width={tileSize}
           height={tileSize}
           preserveAspectRatio="none"
+          onError={() => setTilesUnavailable(true)}
         />,
       );
     }

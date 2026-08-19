@@ -79,8 +79,6 @@ pub struct LoginUserResponse {
     pub hide_presence: bool,
     #[serde(rename = "hideReadReceipts")]
     pub hide_read_receipts: bool,
-    #[serde(rename = "hideTyping")]
-    pub hide_typing: bool,
     #[serde(rename = "circleIds")]
     pub circle_ids: Vec<String>,
     #[serde(
@@ -137,8 +135,6 @@ pub struct SessionResponse {
     pub hide_presence: bool,
     #[serde(rename = "hideReadReceipts")]
     pub hide_read_receipts: bool,
-    #[serde(rename = "hideTyping")]
-    pub hide_typing: bool,
     #[serde(rename = "circleIds")]
     pub circle_ids: Vec<String>,
     #[serde(
@@ -271,7 +267,6 @@ pub async fn login(
             scopes: claims.scopes,
             hide_presence: user.hide_presence,
             hide_read_receipts: user.hide_read_receipts,
-            hide_typing: user.hide_typing,
             circle_ids: claims.circle_ids,
             browser_member_did: claims
                 .browser_registration_id
@@ -427,7 +422,6 @@ pub async fn cylenium_callback(
             scopes: claims.scopes,
             hide_presence: user.hide_presence,
             hide_read_receipts: user.hide_read_receipts,
-            hide_typing: user.hide_typing,
             circle_ids: claims.circle_ids,
             browser_member_did: claims
                 .browser_registration_id
@@ -527,7 +521,6 @@ pub async fn refresh_session(
             scopes: claims.scopes,
             hide_presence: user.hide_presence,
             hide_read_receipts: user.hide_read_receipts,
-            hide_typing: user.hide_typing,
             circle_ids: claims.circle_ids,
             browser_member_did: claims
                 .browser_registration_id
@@ -575,7 +568,6 @@ pub async fn session(
         ),
         hide_presence: user.hide_presence,
         hide_read_receipts: user.hide_read_receipts,
-        hide_typing: user.hide_typing,
         circle_ids: user.circle_ids,
         browser_registration_id,
         browser_member_did,
@@ -591,24 +583,24 @@ pub struct UpdateProfileRequest {
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
     pub hide_presence: Option<bool>,
     #[serde(default)]
     pub hide_read_receipts: Option<bool>,
-    #[serde(default)]
-    pub hide_typing: Option<bool>,
 }
 
 #[derive(serde::Serialize)]
 pub struct ProfileResponse {
     pub user_id: String,
     pub name: String,
+    pub email: String,
     pub hide_presence: bool,
     pub hide_read_receipts: bool,
-    pub hide_typing: bool,
 }
 
-/// Self-service profile update — display name and Guardian-enforced privacy
-/// toggles (hide presence / read receipts / typing). Always acts on the
+/// Self-service profile update — display name, email, and Guardian-enforced
+/// privacy toggles (hide presence / read receipts). Always acts on the
 /// caller's own account (`claims.sub`); there is no target-user parameter.
 pub async fn update_profile(
     State(state): State<Arc<AppState>>,
@@ -617,9 +609,9 @@ pub async fn update_profile(
 ) -> Result<Json<ProfileResponse>, ApiError> {
     let patch = crate::api::auth::store::ProfilePatch {
         name: req.name,
+        email: req.email,
         hide_presence: req.hide_presence,
         hide_read_receipts: req.hide_read_receipts,
-        hide_typing: req.hide_typing,
     };
     let user = state
         .admin
@@ -639,9 +631,9 @@ pub async fn update_profile(
     Ok(Json(ProfileResponse {
         user_id: user.user_id,
         name: user.name,
+        email: user.email,
         hide_presence: user.hide_presence,
         hide_read_receipts: user.hide_read_receipts,
-        hide_typing: user.hide_typing,
     }))
 }
 

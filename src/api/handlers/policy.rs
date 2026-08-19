@@ -1,5 +1,7 @@
 use super::dkp::{run_cli, ActionResponse};
 use crate::api::{error::ApiError, state::AppState};
+use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use crate::audit::logger::log_audit;
 use crate::policy;
 use axum::{
     extract::{Multipart, State},
@@ -186,7 +188,7 @@ pub struct SavePolicyResponse {
 /// PUT /api/v1/policy/current
 /// Validates YAML and atomically stages it to pending policy path.
 pub async fn save_current(
-    State(_): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Json(body): Json<SavePolicyRequest>,
 ) -> Result<Json<SavePolicyResponse>, ApiError> {
     let source_path = PENDING_POLICY_PATH.to_string();
@@ -198,6 +200,14 @@ pub async fn save_current(
 
     atomic_write_text(&source_path, &body.content)
         .map_err(|e| ApiError::Internal(format!("failed to stage pending policy: {}", e)))?;
+
+    log_audit(
+        &state.node_id,
+        AuditCategory::Policy,
+        AuditSeverity::Info,
+        AuditAction::Updated,
+        &format!("Pending policy saved: version {}", parsed.version),
+    );
 
     let updated_at = chrono::Utc::now().to_rfc3339();
     Ok(Json(SavePolicyResponse {
@@ -212,7 +222,7 @@ pub async fn save_current(
 /// POST /api/v1/policy/sign-deploy-current
 /// Signs and deploys the pending policy to required policy.sig path, then promotes it active.
 pub async fn sign_deploy_current(
-    State(_): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<ActionResponse>, ApiError> {
     let response = sign_deploy_current_with_paths(
         PENDING_POLICY_PATH,
@@ -221,6 +231,13 @@ pub async fn sign_deploy_current(
         || async { run_cli(&["policy-sign-and-deploy", PENDING_POLICY_PATH]).await },
     )
     .await?;
+    log_audit(
+        &state.node_id,
+        AuditCategory::Policy,
+        AuditSeverity::Warning,
+        AuditAction::Applied,
+        "Pending policy signed and deployed to active",
+    );
     Ok(Json(response))
 }
 

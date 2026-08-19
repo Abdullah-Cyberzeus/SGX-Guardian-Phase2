@@ -388,6 +388,10 @@
   stroke: rgba(0, 0, 0, .92);
   stroke-width: 4px;
 }
+.clt-real-map text.clt-map-unavailable-label {
+  text-anchor: middle;
+  font-size: 13px;
+}
 .clt-geo-zone { pointer-events: none; opacity: .92; }
 .clt-geo-zone.is-disabled { opacity: .3; }
 .clt-geo-zone.is-disabled ellipse { animation: none; stroke-dasharray: 3 7; }

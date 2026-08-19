@@ -298,7 +298,7 @@ async fn initiate_local_browser_call(
         )
             .into_response();
     }
-    crate::notify::publish_circle_incoming_call(&caller_label, &session_id);
+    crate::notify::publish_circle_incoming_call(&caller_label, &caller_label, &session_id);
     (
         StatusCode::OK,
         Json(InitiateCallResponse {
