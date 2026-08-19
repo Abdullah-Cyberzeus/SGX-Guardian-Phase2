@@ -84,6 +84,22 @@ pub struct User {
     /// key for SSO logins — email can change or be reassigned upstream.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oidc_sub: Option<String>,
+    /// Per-person privacy preferences, Guardian-enforced when this account's
+    /// data is served to other local actors (e.g. `/pwa/contacts`).
+    #[serde(default)]
+    pub hide_presence: bool,
+    #[serde(default)]
+    pub hide_read_receipts: bool,
+    #[serde(default)]
+    pub hide_typing: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ProfilePatch {
+    pub name: Option<String>,
+    pub hide_presence: Option<bool>,
+    pub hide_read_receipts: Option<bool>,
+    pub hide_typing: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -202,6 +218,8 @@ pub trait UserStore: Send + Sync {
         user_id: &str,
         registration_id: &str,
     ) -> Result<User>;
+    /// Self-service profile update (display name, privacy toggles).
+    async fn update_profile(&self, user_id: &str, patch: ProfilePatch) -> Result<User>;
 }
 
 #[async_trait]
@@ -632,6 +650,9 @@ impl JsonUserStore {
             locked_until: None,
             last_failed_at: None,
             oidc_sub: new_user.oidc_sub,
+            hide_presence: false,
+            hide_read_receipts: false,
+            hide_typing: false,
         }
     }
 
@@ -866,6 +887,35 @@ impl UserStore for JsonUserStore {
                     return Err(anyhow!("browser registration not found"));
                 }
                 user.status = "inactive".into();
+                Ok(user.clone())
+            })
+            .await
+    }
+
+    async fn update_profile(&self, user_id: &str, patch: ProfilePatch) -> Result<User> {
+        let user_id = user_id.to_string();
+        self.file
+            .mutate(move |users| {
+                let user = users
+                    .iter_mut()
+                    .find(|user| user.user_id == user_id)
+                    .ok_or_else(|| anyhow!("user not found"))?;
+                if let Some(name) = patch.name {
+                    let trimmed = name.trim().to_string();
+                    if trimmed.is_empty() {
+                        return Err(anyhow!("display name must not be empty"));
+                    }
+                    user.name = trimmed;
+                }
+                if let Some(hide_presence) = patch.hide_presence {
+                    user.hide_presence = hide_presence;
+                }
+                if let Some(hide_read_receipts) = patch.hide_read_receipts {
+                    user.hide_read_receipts = hide_read_receipts;
+                }
+                if let Some(hide_typing) = patch.hide_typing {
+                    user.hide_typing = hide_typing;
+                }
                 Ok(user.clone())
             })
             .await
@@ -1232,6 +1282,87 @@ mod tests {
         assert_eq!(device.device_id, "device-1");
         assert_eq!(device.node_id.as_deref(), Some("nodeB"));
         assert_eq!(device.paired_at, "");
+    }
+
+    #[tokio::test]
+    async fn update_profile_persists_name_and_privacy_flags() {
+        let td = TempDir::new().expect("tempdir");
+        let stores = AdminStores::new(td.path().join("admin"));
+        let created = stores
+            .users
+            .create(NewUser {
+                name: "Original Name".into(),
+                email: "profile@example.com".into(),
+                pw_hash: "hash".into(),
+                role: UserRole::Member,
+                oidc_sub: None,
+            })
+            .await
+            .expect("create user");
+        assert!(!created.hide_presence);
+        assert!(!created.hide_read_receipts);
+        assert!(!created.hide_typing);
+
+        let updated = stores
+            .users
+            .update_profile(
+                &created.user_id,
+                ProfilePatch {
+                    name: Some("New Name".to_string()),
+                    hide_presence: Some(true),
+                    hide_read_receipts: Some(true),
+                    hide_typing: None,
+                },
+            )
+            .await
+            .expect("update profile");
+        assert_eq!(updated.name, "New Name");
+        assert!(updated.hide_presence);
+        assert!(updated.hide_read_receipts);
+        assert!(!updated.hide_typing);
+
+        // Survives reload from disk.
+        let reloaded_stores = AdminStores::new(td.path().join("admin"));
+        let reloaded = reloaded_stores
+            .users
+            .find_by_id(&created.user_id)
+            .await
+            .expect("find by id")
+            .expect("user present");
+        assert_eq!(reloaded.name, "New Name");
+        assert!(reloaded.hide_presence);
+        assert!(reloaded.hide_read_receipts);
+        assert!(!reloaded.hide_typing);
+    }
+
+    #[tokio::test]
+    async fn update_profile_rejects_blank_name() {
+        let td = TempDir::new().expect("tempdir");
+        let stores = AdminStores::new(td.path().join("admin"));
+        let created = stores
+            .users
+            .create(NewUser {
+                name: "Someone".into(),
+                email: "blank@example.com".into(),
+                pw_hash: "hash".into(),
+                role: UserRole::Member,
+                oidc_sub: None,
+            })
+            .await
+            .expect("create user");
+
+        let error = stores
+            .users
+            .update_profile(
+                &created.user_id,
+                ProfilePatch {
+                    name: Some("   ".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("blank name must be rejected");
+        assert!(error.to_string().contains("must not be empty"));
     }
 
     #[tokio::test]

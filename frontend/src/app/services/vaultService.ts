@@ -4,7 +4,15 @@ export interface VaultRecord {
   vault_id?: string; id?: string; filename?: string; name?: string; mime?: string;
   size_plain?: number; size?: number; namespace?: string; folder_id?: string | null;
   circle_id?: string | null; starred?: boolean; created_at?: string; updated_at?: string;
-  sender_did?: string; path?: string; [key: string]: unknown;
+  sender_did?: string; path?: string; description?: string; owner_did?: string;
+  revoked?: boolean; revoked_at?: string | null; expires_at?: string | null;
+  [key: string]: unknown;
+}
+export interface VaultDownloadRecord {
+  vault_id: string; downloader_did: string; downloaded_at: string; source: string;
+}
+export interface VaultHistoryResponse {
+  vault_id: string; count: number; downloads: VaultDownloadRecord[];
 }
 export interface FolderNode {
   folder_id?: string; id?: string; name: string; namespace?: string;
@@ -41,16 +49,20 @@ export const vaultService = {
   upload: (
     file: File,
     options: {
-      ns?: string; folder_id?: string; signal?: AbortSignal;
+      ns?: string; folder_id?: string; description?: string; signal?: AbortSignal;
+      idempotencyKey?: string;
       onProgress?: (loaded: number, total: number) => void;
     } = {},
   ) => {
     const form = new FormData();
+    // The backend reads "description" before "file" in the multipart stream.
+    if (options.description) form.append("description", options.description);
     form.append("file", file, file.name);
     return api.upload<{ record: VaultRecord; download_path: string }>("/vault/upload", form, {
       params: { ...(options.ns ? { ns: options.ns } : {}), ...(options.folder_id ? { folder_id: options.folder_id } : {}) },
       signal: options.signal,
       onProgress: options.onProgress,
+      idempotencyKey: options.idempotencyKey,
     });
   },
   createFolder: (data: { namespace?: string; parent_id?: string; name: string }) =>
@@ -84,4 +96,8 @@ export const vaultService = {
   preview: (id: string) => api.raw(`${filePath(id)}/preview`),
   star: (id: string, starred?: boolean) =>
     api.post<VaultRecord>(`${filePath(id)}/star`, starred === undefined ? undefined : { starred }),
+  revoke: (id: string) => api.post<VaultRecord>(`${filePath(id)}/revoke`),
+  setExpiry: (id: string, expiresAt: string | null) =>
+    api.patch<VaultRecord>(`${filePath(id)}/expiry`, { expires_at: expiresAt }),
+  history: (id: string) => api.get<VaultHistoryResponse>(`${filePath(id)}/history`),
 };

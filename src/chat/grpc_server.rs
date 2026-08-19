@@ -2,7 +2,6 @@ use crate::api::state::AppState;
 use crate::chat::models::{ChatMessageRecord, MessageStatus};
 use crate::proto::sgx::chat_service_server::ChatService;
 use crate::proto::sgx::{PushMessageRequest, PushMessageResponse};
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tonic::{Request, Response, Status};
@@ -23,6 +22,12 @@ impl ChatService for MyChatService {
         // 1. Verify sender is a trusted attested peer
         verify_peer_is_trusted(&self.state, &req.sender_did).await?;
 
+        let group_id = if req.group_id.is_empty() {
+            None
+        } else {
+            Some(req.group_id.clone())
+        };
+
         // A chat envelope contains only attachment metadata. Pull the bytes
         // from the attested sender before acknowledging the message so the UI
         // never receives a download link for a file absent on this Guardian.
@@ -33,16 +38,13 @@ impl ChatService for MyChatService {
                 req.sender_did.clone(),
                 sender_addr,
                 attachment_id,
+                req.sender_did.clone(),
+                req.recipient_did.clone(),
+                group_id.clone(),
             )
             .await
             .map_err(|error| Status::unavailable(format!("attachment transfer failed: {error}")))?;
         }
-
-        let group_id = if req.group_id.is_empty() {
-            None
-        } else {
-            Some(req.group_id.clone())
-        };
 
         // 2. Save the message locally
         let record = ChatMessageRecord {
@@ -72,6 +74,7 @@ impl ChatService for MyChatService {
             .state
             .chat_events
             .send(crate::chat::models::ChatEvent::NewMessage(record.clone()));
+        crate::notify::publish_circle_new_message(&req.sender_did, &record.message_id);
 
         println!(
             "💬 📥 Received message from {} → \"{}\"",
@@ -113,11 +116,32 @@ impl ChatService for MyChatService {
         // Update read_by field in stored JSONL log file
         let is_group = group_id.is_some();
         let target_id = group_id.as_deref().unwrap_or(&req.reader_did);
+        let min_reader_count = if let Some(gid) = group_id.as_deref() {
+            let sender_did = crate::chat::storage::read_group_history(gid)
+                .await
+                .ok()
+                .and_then(|history| {
+                    history
+                        .into_iter()
+                        .find(|message| message.message_id == req.message_id)
+                        .map(|message| message.sender_did)
+                });
+            match sender_did {
+                Some(sender_did) => {
+                    crate::api::handlers::chat::group_min_reader_count(&self.state, gid, &sender_did)
+                        .await
+                }
+                None => 1,
+            }
+        } else {
+            1
+        };
         let _ = crate::chat::storage::update_message_read_by(
             is_group,
             target_id,
             &req.message_id,
             &req.reader_did,
+            min_reader_count,
         )
         .await;
 
@@ -239,28 +263,46 @@ impl ChatService for MyChatService {
     ) -> Result<tonic::Response<Self::GetAttachmentStream>, tonic::Status> {
         let req = request.into_inner();
         verify_peer_is_trusted(&self.state, &req.requester_did).await?;
-        uuid::Uuid::parse_str(&req.attachment_id)
+        let attachment_id = crate::vault::namespace::validate_vault_id(&req.attachment_id)
             .map_err(|_| Status::invalid_argument("invalid attachment ID"))?;
 
-        let metadata = crate::chat::storage::get_attachment_metadata(&req.attachment_id)
+        let vault_config = crate::vault::VaultConfig::from_env();
+        let record = crate::vault::persistence::find_record(&vault_config, &attachment_id)
             .await
             .map_err(|error| Status::internal(format!("attachment metadata read failed: {error}")))?
             .ok_or_else(|| Status::not_found("attachment metadata not found"))?;
-        let path = crate::chat::storage::attachment_path(&req.attachment_id);
-        let file_metadata = tokio::fs::metadata(&path)
-            .await
-            .map_err(|_| Status::not_found("attachment file not found"))?;
-        if file_metadata.len() > crate::chat::storage::MAX_ATTACHMENT_BYTES {
+        if record.revoked {
+            return Err(Status::permission_denied("attachment access revoked"));
+        }
+        if record.is_expired() {
+            return Err(Status::not_found("attachment expired"));
+        }
+        if record.size_plain > crate::chat::storage::MAX_ATTACHMENT_BYTES {
             return Err(Status::resource_exhausted("attachment exceeds 50 MiB limit"));
         }
 
-        let mut file = tokio::fs::File::open(path)
+        // Decrypting to a temp plaintext file both hands us bytes to stream
+        // and verifies the on-disk ciphertext against `sha256_plain` (see
+        // `vault::crypto::decrypt_file`) before anything is sent to the peer.
+        let temp_path = crate::vault::ingest::decrypt_record_to_temp(&record)
             .await
-            .map_err(|_| Status::not_found("attachment file not found"))?;
+            .map_err(|error| Status::internal(format!("attachment decrypt failed: {error}")))?;
+        let mut file = match tokio::fs::File::open(&temp_path).await {
+            Ok(file) => file,
+            Err(_) => {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                return Err(Status::not_found("attachment file not found"));
+            }
+        };
+
         let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let file_name = record.filename.clone();
+        let mime_type = record.mime.clone();
+        let total_size = record.size_plain;
+        let sha256_hash = record.sha256_plain.clone();
+        let attachment_id = record.vault_id.clone();
         tokio::spawn(async move {
             let mut buffer = vec![0u8; 64 * 1024];
-            let mut hasher = Sha256::new();
             loop {
                 let read = match file.read(&mut buffer).await {
                     Ok(0) => break,
@@ -271,45 +313,37 @@ impl ChatService for MyChatService {
                                 "attachment read failed: {error}"
                             ))))
                             .await;
+                        let _ = tokio::fs::remove_file(&temp_path).await;
                         return;
                     }
                 };
-                hasher.update(&buffer[..read]);
                 let chunk = crate::proto::sgx::AttachmentChunk {
-                    attachment_id: metadata.file_id.clone(),
-                    file_name: metadata.file_name.clone(),
-                    mime_type: metadata.mime_type.clone(),
-                    total_size: metadata.encrypted_size,
-                    sha256_hash: metadata.sha256_hash.clone(),
+                    attachment_id: attachment_id.clone(),
+                    file_name: file_name.clone(),
+                    mime_type: mime_type.clone(),
+                    total_size,
+                    sha256_hash: sha256_hash.clone(),
                     data: buffer[..read].to_vec(),
                 };
                 if tx.send(Ok(chunk)).await.is_err() {
+                    let _ = tokio::fs::remove_file(&temp_path).await;
                     return;
                 }
             }
 
             // Empty files still need one metadata-bearing chunk.
-            if metadata.encrypted_size == 0 {
+            if total_size == 0 {
                 let chunk = crate::proto::sgx::AttachmentChunk {
-                    attachment_id: metadata.file_id.clone(),
-                    file_name: metadata.file_name.clone(),
-                    mime_type: metadata.mime_type.clone(),
+                    attachment_id: attachment_id.clone(),
+                    file_name: file_name.clone(),
+                    mime_type: mime_type.clone(),
                     total_size: 0,
-                    sha256_hash: metadata.sha256_hash.clone(),
+                    sha256_hash: sha256_hash.clone(),
                     data: Vec::new(),
                 };
                 let _ = tx.send(Ok(chunk)).await;
-                return;
             }
-
-            let actual_hash = hex::encode(hasher.finalize());
-            if actual_hash != metadata.sha256_hash {
-                let _ = tx
-                    .send(Err(Status::data_loss(
-                        "stored attachment checksum does not match metadata",
-                    )))
-                    .await;
-            }
+            let _ = tokio::fs::remove_file(&temp_path).await;
         });
 
         Ok(tonic::Response::new(

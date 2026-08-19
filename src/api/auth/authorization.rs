@@ -11,6 +11,7 @@ pub mod scope {
     pub const MESSAGES_SEND: &str = "messages:send";
     pub const CALLS_USE: &str = "calls:use";
     pub const CONTACTS_READ: &str = "contacts:read";
+    pub const CONTACTS_MANAGE: &str = "contacts:manage";
     pub const FILES_READ: &str = "files:read";
     pub const FILES_UPLOAD: &str = "files:upload";
     pub const NOTIFICATIONS_READ: &str = "notifications:read";
@@ -114,6 +115,7 @@ pub fn default_scopes(role: &str) -> Vec<String> {
             scope::MESSAGES_SEND,
             scope::CALLS_USE,
             scope::CONTACTS_READ,
+            scope::CONTACTS_MANAGE,
             scope::FILES_READ,
             scope::FILES_UPLOAD,
             scope::NOTIFICATIONS_READ,
@@ -125,6 +127,26 @@ pub fn default_scopes(role: &str) -> Vec<String> {
         .collect(),
         _ => Vec::new(),
     }
+}
+
+/// A user's persisted `scopes` are set once at account creation from
+/// `default_scopes(role)` and never revisited — there is no admin feature to
+/// customize an individual member's scopes narrower than their role's
+/// baseline. So when the role's default scope set gains a new capability,
+/// an already-existing user's stored scopes silently fall behind and stay
+/// stuck forever otherwise. Healing them to the union with the current
+/// defaults keeps existing accounts in step with new baseline capabilities.
+pub fn effective_scopes(role: &str, stored_scopes: &[String]) -> Vec<String> {
+    if stored_scopes.is_empty() {
+        return default_scopes(role);
+    }
+    let mut merged = stored_scopes.to_vec();
+    for scope in default_scopes(role) {
+        if !merged.contains(&scope) {
+            merged.push(scope);
+        }
+    }
+    merged
 }
 
 pub fn authorize(role: &str, scopes: &[String], method: &Method, path: &str) -> AccessDecision {
@@ -159,6 +181,9 @@ fn member_required_scope(method: &Method, path: &str) -> Option<&'static str> {
     if method == Method::POST && path == "/api/v1/auth/session/refresh" {
         return Some(scope::SETTINGS_OWN);
     }
+    if method == Method::PATCH && path == "/api/v1/auth/profile" {
+        return Some(scope::SETTINGS_OWN);
+    }
     if method == Method::DELETE && path == "/api/v1/pwa/registration" {
         return Some(scope::SETTINGS_OWN);
     }
@@ -173,6 +198,20 @@ fn member_required_scope(method: &Method, path: &str) -> Option<&'static str> {
     }
     if method == Method::GET && path == "/api/v1/pwa/contacts" {
         return Some(scope::CONTACTS_READ);
+    }
+    if path == "/api/v1/contacts" {
+        return match *method {
+            Method::GET => Some(scope::CONTACTS_READ),
+            Method::POST => Some(scope::CONTACTS_MANAGE),
+            _ => None,
+        };
+    }
+    if path.starts_with("/api/v1/contacts/") {
+        return match *method {
+            Method::GET => Some(scope::CONTACTS_READ),
+            Method::PATCH | Method::DELETE => Some(scope::CONTACTS_MANAGE),
+            _ => None,
+        };
     }
 
     if path == "/api/v1/circles" && method == Method::GET {
@@ -202,7 +241,7 @@ fn member_required_scope(method: &Method, path: &str) -> Option<&'static str> {
             (&Method::GET, "/api/v1/chat/history" | "/api/v1/chat/ws") => {
                 Some(scope::MESSAGES_READ)
             }
-            (&Method::POST, "/api/v1/chat/send" | "/api/v1/chat/read") => {
+            (&Method::POST, "/api/v1/chat/send" | "/api/v1/chat/read" | "/api/v1/chat/typing") => {
                 Some(scope::MESSAGES_SEND)
             }
             (&Method::POST, "/api/v1/chat/upload") => Some(scope::FILES_UPLOAD),
@@ -239,6 +278,16 @@ fn member_required_scope(method: &Method, path: &str) -> Option<&'static str> {
     if path.starts_with("/api/v1/vault/") {
         if method == Method::GET {
             return Some(scope::FILES_READ);
+        }
+        // Owner-only actions on a specific file (revoke/expiry) are handler-
+        // enforced against `owner_did`, so members need the upload scope to
+        // reach them at all — unlike the broader "manage shared Vault
+        // metadata" mutations below, which stay admin/owner-only.
+        if path.starts_with("/api/v1/vault/files/")
+            && (method == Method::POST && path.ends_with("/revoke")
+                || method == Method::PATCH && path.ends_with("/expiry"))
+        {
+            return Some(scope::FILES_UPLOAD);
         }
         return (method == Method::POST && path == "/api/v1/vault/upload")
             .then_some(scope::FILES_UPLOAD);

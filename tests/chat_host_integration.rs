@@ -10,11 +10,8 @@ use axum::{extract::State, Json};
 use sgx_guardian_client::api::handlers::chat::{self, MarkReadRequest, SendMessageRequest};
 use sgx_guardian_client::api::state::AppState;
 use sgx_guardian_client::chat::grpc_server::MyChatService;
-use sgx_guardian_client::chat::models::{AttachmentRecord, ChatMessageRecord, MessageStatus};
-use sgx_guardian_client::chat::storage::{
-    append_attachment_metadata, append_p2p_message, attachment_path, read_group_history,
-    read_p2p_history,
-};
+use sgx_guardian_client::chat::models::{ChatMessageRecord, MessageStatus};
+use sgx_guardian_client::chat::storage::{append_p2p_message, read_group_history, read_p2p_history};
 use sgx_guardian_client::proto::sgx::chat_service_client::ChatServiceClient;
 use sgx_guardian_client::proto::sgx::chat_service_server::ChatServiceServer;
 use sgx_guardian_client::proto::sgx::PushMessageRequest;
@@ -102,6 +99,7 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
     // contains one test, ensuring its storage is private and deterministic.
     let temp = TempDir::new().unwrap();
     std::env::set_var("CHAT_STORAGE_DIR", temp.path().join("chat"));
+    std::env::set_var("SGX_GUARDIAN_VAULT_BASE", temp.path().join("vault"));
 
     let state_a = state("nodeA", &temp.path().join("node-a"));
     let state_b = state("nodeB", &temp.path().join("node-b"));
@@ -313,7 +311,7 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
         .push_message(PushMessageRequest {
             message_id: "untrusted-message".to_string(),
             sender_did: "did:guardian:untrusted".to_string(),
-            recipient_did: did_b,
+            recipient_did: did_b.clone(),
             timestamp: 1,
             seq_no: 1,
             encrypted_payload: "must not persist".to_string(),
@@ -325,29 +323,29 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
     assert_eq!(err.code(), Code::PermissionDenied);
 
     // Attachment streaming is a separate, chunked protocol: the chat message
-    // carries metadata while the receiver pulls verified bytes over the same
-    // attested Nebula gRPC channel.
-    let attachment_id = uuid::Uuid::new_v4().to_string();
+    // carries metadata while the receiver pulls verified, decrypted bytes
+    // over the same attested Nebula gRPC channel from the sender's Vault.
     let attachment_bytes = vec![0x5au8; 150_000];
-    let attachment_file = attachment_path(&attachment_id);
-    tokio::fs::create_dir_all(attachment_file.parent().unwrap())
+    let attachment_source = temp.path().join("attachment-source.bin");
+    tokio::fs::write(&attachment_source, &attachment_bytes)
         .await
         .unwrap();
-    tokio::fs::write(&attachment_file, &attachment_bytes)
-        .await
-        .unwrap();
-    append_attachment_metadata(&AttachmentRecord {
-        file_id: attachment_id.clone(),
-        message_id: "host-attachment-message".to_string(),
-        file_name: "host-proof.bin".to_string(),
-        mime_type: "application/octet-stream".to_string(),
-        encrypted_size: attachment_bytes.len() as u64,
-        sha256_hash: hex::encode(Sha256::digest(&attachment_bytes)),
-        local_path: attachment_file.to_string_lossy().to_string(),
-        encrypted_file_key: "nebula_transport".to_string(),
-    })
+    let attachment_record = sgx_guardian_client::vault::ingest::ingest_chat_attachment(
+        sgx_guardian_client::vault::VaultNamespace::Personal,
+        &did_a,
+        &attachment_source,
+        sgx_guardian_client::vault::ingest::IngestMeta {
+            filename: "host-proof.bin".to_string(),
+            mime: "application/octet-stream".to_string(),
+            sha256_plain: hex::encode(Sha256::digest(&attachment_bytes)),
+            size_plain: attachment_bytes.len() as u64,
+            chunk_bytes: sgx_guardian_client::vault::VaultConfig::DEFAULT_CHUNK_BYTES,
+        },
+        None,
+    )
     .await
     .unwrap();
+    let attachment_id = attachment_record.vault_id;
 
     let channel = Channel::from_shared(format!("http://{addr_a}"))
         .unwrap()

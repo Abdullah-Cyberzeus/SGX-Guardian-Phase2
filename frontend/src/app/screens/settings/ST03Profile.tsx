@@ -1,14 +1,38 @@
 import { useState } from "react";
+import { toast } from "sonner";
 import { PageHeader } from "../../components/PageHeader";
 import { Pencil, Camera, Check, Lock } from "lucide-react";
 import { mockGuardian } from "../../data/mockData";
 import { useCurrentUser } from "../../hooks/useCurrentUser";
+import { useAuth } from "../../contexts/AuthContext";
+import { PrivacySettings } from "../../components/settings/PrivacySettings";
 
 export function ST03Profile() {
   const currentUser = useCurrentUser();
+  const { updateProfile } = useAuth();
   const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [name, setName] = useState(currentUser.name);
   const [email, setEmail] = useState(currentUser.email);
+
+  const save = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setSaving(true);
+    try {
+      const { error } = await updateProfile({ name: trimmed });
+      if (error) throw new Error(error);
+      toast.success("Profile updated");
+      setEditing(false);
+    } catch (cause) {
+      toast.error("Could not update profile", {
+        description: cause instanceof Error ? cause.message : undefined,
+      });
+      setName(currentUser.name);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -17,11 +41,12 @@ export function ST03Profile() {
         right={
           editing ? (
             <button
-              onClick={() => setEditing(false)}
+              onClick={() => void save()}
+              disabled={saving || !name.trim()}
               className="flex items-center gap-1.5 px-3 rounded-md transition-opacity active:opacity-70"
-              style={{ height: "36px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", border: "none", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", borderRadius: "var(--radius-sm)" }}
+              style={{ height: "36px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", border: "none", cursor: saving ? "wait" : "pointer", opacity: saving ? 0.7 : 1, fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", borderRadius: "var(--radius-sm)" }}
             >
-              <Check size={13} /> Save
+              <Check size={13} /> {saving ? "Saving…" : "Save"}
             </button>
           ) : (
             <button
@@ -133,6 +158,8 @@ export function ST03Profile() {
             </div>
           </div>
         </div>
+
+        <PrivacySettings showNameEditor={false} />
         </div>
       </div>
     </div>

@@ -2,6 +2,7 @@ use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::proto::sgx::chat_service_client::ChatServiceClient;
 use crate::proto::sgx::{PushMessageRequest, PushReceiptRequest};
+use crate::vault::namespace::VaultNamespace;
 use anyhow::Error;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
@@ -60,22 +61,31 @@ pub async fn push_message_to_peer(
     Ok(())
 }
 
+/// Pulls a chat attachment from its owning peer and stores it locally as an
+/// encrypted `VaultRecord` (`source: ChatAttachment`), so the local copy
+/// gets the same AES-256-GCM-at-rest and Circle/DM access control as any
+/// other Vault file. `group_id` selects the Circle namespace for a group
+/// message; otherwise the attachment lives in the sender's Personal
+/// namespace with `recipient_did` recorded so both DM participants on this
+/// Guardian can reach it.
+#[allow(clippy::too_many_arguments)]
 pub async fn download_attachment_from_peer(
     local_did: String,
     peer_did: String,
     addr: String,
     attachment_id: String,
+    sender_did: String,
+    recipient_did: String,
+    group_id: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    uuid::Uuid::parse_str(&attachment_id)
+    let attachment_id = crate::vault::namespace::validate_vault_id(&attachment_id)
         .map_err(|_| Error::msg("invalid attachment ID"))?;
-    let destination = crate::chat::storage::attachment_path(&attachment_id);
-    if let (Ok(file), Ok(Some(metadata))) = (
-        tokio::fs::metadata(&destination).await,
-        crate::chat::storage::get_attachment_metadata(&attachment_id).await,
-    ) {
-        if file.len() == metadata.encrypted_size {
-            return Ok(());
-        }
+    let vault_config = crate::vault::VaultConfig::from_env();
+    if let Some(existing) = crate::vault::persistence::find_record(&vault_config, &attachment_id)
+        .await
+        .unwrap_or(None)
+    {
+        return Ok(existing).map(|_| ());
     }
 
     let channel = tonic::transport::Endpoint::from_shared(format!("http://{}", addr))
@@ -98,18 +108,19 @@ pub async fn download_attachment_from_peer(
             ))
         })?;
 
-    if let Some(parent) = destination.parent() {
+    let staging_path = crate::vault::persistence::staging_dir(&vault_config)
+        .join(format!("chat-recv-{}.part", uuid::Uuid::new_v4()));
+    if let Some(parent) = staging_path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    let temporary = destination.with_extension(format!("part-{}", uuid::Uuid::new_v4()));
     let result: Result<
-        crate::chat::models::AttachmentRecord,
+        (String, String, u64, String),
         Box<dyn std::error::Error + Send + Sync>,
     > = async {
         let mut file = tokio::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&temporary)
+            .open(&staging_path)
             .await?;
         let mut stream = response.into_inner();
         let mut expected_name: Option<String> = None;
@@ -166,33 +177,48 @@ pub async fn download_attachment_from_peer(
         }
         file.sync_all().await?;
         drop(file);
-        tokio::fs::rename(&temporary, &destination).await?;
 
-        Ok(crate::chat::models::AttachmentRecord {
-            file_id: attachment_id.clone(),
-            message_id: "received_attachment".to_string(),
-            file_name: expected_name.unwrap_or_else(|| attachment_id.clone()),
-            mime_type: expected_mime
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| "application/octet-stream".to_string()),
-            encrypted_size: received,
-            sha256_hash: expected_hash,
-            local_path: destination.to_string_lossy().to_string(),
-            encrypted_file_key: "nebula_transport".to_string(),
-        })
+        let file_name = expected_name.unwrap_or_else(|| attachment_id.clone());
+        let mime_type = expected_mime
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+        Ok((file_name, mime_type, received, expected_hash))
     }
     .await;
 
-    match result {
-        Ok(metadata) => {
-            crate::chat::storage::append_attachment_metadata_if_absent(&metadata).await?;
-            Ok(())
-        }
+    let (file_name, mime_type, size_plain, sha256_plain) = match result {
+        Ok(value) => value,
         Err(error) => {
-            let _ = tokio::fs::remove_file(&temporary).await;
-            Err(error)
+            let _ = tokio::fs::remove_file(&staging_path).await;
+            return Err(error);
         }
-    }
+    };
+
+    let namespace = match group_id.filter(|id| !id.is_empty()) {
+        Some(circle_id) => VaultNamespace::Circle(circle_id),
+        None => VaultNamespace::Personal,
+    };
+    let conversation_recipient_did = matches!(namespace, VaultNamespace::Personal)
+        .then_some(recipient_did)
+        .filter(|did| !did.is_empty());
+
+    crate::vault::ingest::ingest_replicated_chat_attachment(
+        attachment_id,
+        namespace,
+        &sender_did,
+        &staging_path,
+        crate::vault::ingest::IngestMeta {
+            filename: file_name,
+            mime: mime_type,
+            sha256_plain,
+            size_plain,
+            chunk_bytes: crate::vault::VaultConfig::DEFAULT_CHUNK_BYTES,
+        },
+        conversation_recipient_did,
+    )
+    .await?;
+
+    Ok(())
 }
 
 pub async fn push_receipt_to_peer(
@@ -347,6 +373,9 @@ pub async fn request_sync_from_peer(
                 peer_did.clone(),
                 addr.clone(),
                 attachment_id,
+                msg.sender_did.clone(),
+                msg.recipient_did.clone(),
+                group_id.clone(),
             )
             .await?;
         }
@@ -383,6 +412,7 @@ pub async fn request_sync_from_peer(
                     ))
                 })?;
         }
+        crate::notify::publish_circle_new_message(&record.sender_did, &record.message_id);
         synced_count += 1;
     }
 

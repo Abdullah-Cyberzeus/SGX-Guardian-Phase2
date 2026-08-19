@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub enum VaultSource {
     FileTransfer,
     Upload,
+    ChatAttachment,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -36,7 +37,39 @@ pub struct VaultRecord {
     pub folder_id: String,
     #[serde(default)]
     pub starred: bool,
+    /// Optional free-text note set at upload time (Files-tab uploads only).
+    #[serde(default)]
+    pub description: String,
+    /// Explicit owner DID. Drives per-member filtering in the Personal
+    /// namespace and owner-only controls (revoke/expiry/history). Distinct
+    /// from `sender_did`, which records P2P transfer provenance.
+    #[serde(default)]
+    pub owner_did: String,
+    #[serde(default)]
+    pub revoked: bool,
+    #[serde(default)]
+    pub revoked_at: Option<String>,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    /// Set only for 1:1 direct-message chat attachments, whose namespace is
+    /// the sender's Personal store rather than a Circle. Grants the
+    /// recipient access without adding a third namespace variant.
+    #[serde(default)]
+    pub conversation_recipient_did: Option<String>,
+    /// Links a `ChatAttachment` record back to the chat message that
+    /// references it, once that message has actually been created.
+    #[serde(default)]
+    pub message_id: Option<String>,
     pub enc: EncMeta,
+}
+
+impl VaultRecord {
+    pub fn is_expired(&self) -> bool {
+        self.expires_at
+            .as_deref()
+            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+            .is_some_and(|expires| expires <= chrono::Utc::now())
+    }
 }
 
 impl VaultRecord {

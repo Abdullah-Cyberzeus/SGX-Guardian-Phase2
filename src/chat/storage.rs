@@ -1,4 +1,4 @@
-use crate::chat::models::{AttachmentRecord, ChatMessageRecord, MessageStatus, ReadReceiptRecord};
+use crate::chat::models::{ChatMessageRecord, MessageStatus, ReadReceiptRecord};
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use std::collections::HashSet;
@@ -16,11 +16,9 @@ static BASE_DIR: Lazy<String> = Lazy::new(|| {
     std::env::var("CHAT_STORAGE_DIR").unwrap_or_else(|_| "/var/lib/sgx-guardian/chat".to_string())
 });
 
+/// Hard ceiling on chat attachment size, enforced during upload/receive
+/// streaming, on top of the Vault's per-namespace quota.
 pub const MAX_ATTACHMENT_BYTES: u64 = 50 * 1024 * 1024;
-
-pub fn attachment_path(file_id: &str) -> PathBuf {
-    PathBuf::from(&*BASE_DIR).join("attachments").join(file_id)
-}
 
 /// Appends a new chat message to a specific peer's P2P conversation log.
 /// This function is thread-safe and writes to the bottom of the `.jsonl` file.
@@ -90,60 +88,6 @@ async fn append_message_if_absent(
     file.flush().await?;
     file.sync_all().await?;
     Ok(())
-}
-
-pub async fn append_attachment_metadata(
-    record: &AttachmentRecord,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let path = PathBuf::from(&*BASE_DIR).join("attachments.jsonl");
-    let json_line = serde_json::to_string(record)?;
-
-    append_line(&path, &json_line).await
-}
-
-/// Stores attachment metadata once. Retries and offline sync may retrieve the
-/// same attachment repeatedly, but the metadata journal must stay idempotent.
-pub async fn append_attachment_metadata_if_absent(
-    record: &AttachmentRecord,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if get_attachment_metadata(&record.file_id).await?.is_some() {
-        return Ok(());
-    }
-    append_attachment_metadata(record).await
-}
-
-pub async fn get_attachment_metadata(
-    file_id: &str,
-) -> Result<Option<AttachmentRecord>, Box<dyn std::error::Error + Send + Sync>> {
-    let path = PathBuf::from(&*BASE_DIR).join("attachments.jsonl");
-    let lock = FILE_LOCKS
-        .entry(path.clone())
-        .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
-        .clone();
-    let _guard = lock.lock().await;
-
-    let file = match File::open(&path).await {
-        Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e.into()),
-    };
-
-    let mut reader = BufReader::new(file);
-    let mut line = String::new();
-
-    while reader.read_line(&mut line).await? > 0 {
-        let trimmed = line.trim();
-        if !trimmed.is_empty() {
-            if let Ok(record) = serde_json::from_str::<AttachmentRecord>(trimmed) {
-                if record.file_id == file_id {
-                    return Ok(Some(record));
-                }
-            }
-        }
-        line.clear();
-    }
-
-    Ok(None)
 }
 
 pub async fn append_read_receipt(
@@ -235,11 +179,17 @@ pub async fn read_group_history(
 }
 
 /// Appends a reader DID to a message's `read_by` list in the history file.
+/// `min_reader_count` is how many distinct readers are required before the
+/// message is considered fully `Read` — 1 for a 1:1 conversation (the only
+/// possible reader), or the circle's recipient count for a group message,
+/// so a group message isn't shown as "Read" the moment a single member
+/// (out of many) has seen it.
 pub async fn update_message_read_by(
     is_group: bool,
     target_id: &str,
     message_id: &str,
     reader_did: &str,
+    min_reader_count: usize,
 ) -> Result<Option<ChatMessageRecord>, Box<dyn std::error::Error + Send + Sync>> {
     let dir_name = if is_group { "group" } else { "p2p" };
     let path = PathBuf::from(&*BASE_DIR)
@@ -272,7 +222,9 @@ pub async fn update_message_read_by(
                     && !record.read_by.contains(&reader_did.to_string())
                 {
                     record.read_by.push(reader_did.to_string());
-                    record.status = MessageStatus::Read;
+                    if record.read_by.len() >= min_reader_count.max(1) {
+                        record.status = MessageStatus::Read;
+                    }
                     updated_record = Some(record.clone());
                     modified = true;
                 }

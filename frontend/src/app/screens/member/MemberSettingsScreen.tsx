@@ -4,6 +4,8 @@ import { PageHeader } from "../../components/PageHeader";
 import { useAuth } from "../../contexts/AuthContext";
 import { toast } from "sonner";
 import { PwaStorageControls } from "../../components/PwaStorageControls";
+import { PrivacySettings } from "../../components/settings/PrivacySettings";
+import { NotificationDeliverySettings } from "../../components/settings/NotificationDeliverySettings";
 
 export function MemberSettingsScreen() {
   const navigate = useNavigate();
@@ -47,6 +49,12 @@ export function MemberSettingsScreen() {
         <section className="rounded-xl border border-border bg-card p-5">
           <div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-full bg-primary/15 text-primary"><UserRound size={20} /></div><div><h2 className="font-semibold">{user?.name || user?.email || "Guardian member"}</h2><p className="text-xs text-muted-foreground">{user?.email}</p></div></div>
           <dl className="mt-5 grid grid-cols-[110px_1fr] gap-2 text-sm"><dt className="text-muted-foreground">Role</dt><dd className="capitalize">{user?.role || "member"}</dd><dt className="text-muted-foreground">Circle access</dt><dd>{session?.circleIds.length || 0} Circle</dd><dt className="text-muted-foreground">Registration</dt><dd className="truncate font-mono text-xs">{session?.browserRegistrationId || "Not registered"}</dd><dt className="text-muted-foreground">Fingerprint</dt><dd className="font-mono text-xs">{session?.guardianFingerprint || "Unavailable"}</dd></dl>
+        </section>
+        <section className="rounded-xl border border-border bg-card p-5">
+          <PrivacySettings />
+        </section>
+        <section className="rounded-xl border border-border bg-card p-5">
+          <NotificationDeliverySettings />
         </section>
         <PwaStorageControls />
         {offline && <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">Guardian is unreachable. Cached settings remain available; session and registration changes require a live LAN connection.</p>}

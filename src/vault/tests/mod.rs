@@ -378,6 +378,7 @@ async fn ingest_personal_upload(
             size_plain: payload.len() as u64,
             sha256_plain: hex::encode(sha2::Sha256::digest(payload)),
             chunk_bytes: crate::vault::VaultConfig::DEFAULT_CHUNK_BYTES,
+            description: String::new(),
         },
     )
     .await
@@ -404,6 +405,13 @@ async fn vault_record_round_trip_and_list() {
         source: VaultSource::FileTransfer,
         folder_id: String::new(),
         starred: false,
+        description: String::new(),
+        owner_did: String::new(),
+        revoked: false,
+        revoked_at: None,
+        expires_at: None,
+        conversation_recipient_did: None,
+        message_id: None,
         enc: EncMeta {
             algo: "AES-256-GCM/STREAM-BE32".into(),
             chunk_bytes: crate::vault::VaultConfig::DEFAULT_CHUNK_BYTES,
@@ -477,6 +485,13 @@ async fn vault_crypto_round_trip_and_tamper_fails() {
         source: VaultSource::FileTransfer,
         folder_id: String::new(),
         starred: false,
+        description: String::new(),
+        owner_did: String::new(),
+        revoked: false,
+        revoked_at: None,
+        expires_at: None,
+        conversation_recipient_did: None,
+        message_id: None,
         enc: outcome.enc.clone(),
     };
 
@@ -706,6 +721,13 @@ async fn quota_uses_persisted_record_sizes_and_reports_namespace_usage() {
         source: VaultSource::FileTransfer,
         folder_id: String::new(),
         starred: false,
+        description: String::new(),
+        owner_did: String::new(),
+        revoked: false,
+        revoked_at: None,
+        expires_at: None,
+        conversation_recipient_did: None,
+        message_id: None,
         enc: EncMeta {
             algo: "AES-256-GCM/STREAM-BE32".into(),
             chunk_bytes: crate::vault::VaultConfig::DEFAULT_CHUNK_BYTES,
@@ -729,6 +751,13 @@ async fn quota_uses_persisted_record_sizes_and_reports_namespace_usage() {
         source: VaultSource::Upload,
         folder_id: String::new(),
         starred: false,
+        description: String::new(),
+        owner_did: String::new(),
+        revoked: false,
+        revoked_at: None,
+        expires_at: None,
+        conversation_recipient_did: None,
+        message_id: None,
         enc: EncMeta {
             algo: "AES-256-GCM/STREAM-BE32".into(),
             chunk_bytes: crate::vault::VaultConfig::DEFAULT_CHUNK_BYTES,
@@ -797,6 +826,7 @@ async fn personal_upload_round_trip_uses_personal_namespace() {
             size_plain: payload.len() as u64,
             sha256_plain: hex::encode(sha2::Sha256::digest(&payload)),
             chunk_bytes: crate::vault::VaultConfig::DEFAULT_CHUNK_BYTES,
+            description: String::new(),
         },
     )
     .await
@@ -1386,6 +1416,13 @@ async fn production_mode_refuses_software_fallback() {
         source: VaultSource::FileTransfer,
         folder_id: String::new(),
         starred: false,
+        description: String::new(),
+        owner_did: String::new(),
+        revoked: false,
+        revoked_at: None,
+        expires_at: None,
+        conversation_recipient_did: None,
+        message_id: None,
         enc: outcome.enc,
     };
 

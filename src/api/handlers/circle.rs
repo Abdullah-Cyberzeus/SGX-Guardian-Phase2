@@ -1197,9 +1197,26 @@ pub async fn receive_member_snapshot(
     Json(body): Json<CircleMemberSnapshot>,
 ) -> Result<Json<MemberListResponse>, ApiError> {
     verify_guardian_snapshot_auth(&state, &headers, &body).await?;
+    let circle_id = body.circle_id.clone();
+    let previously_known: std::collections::HashSet<String> =
+        members::list_members(&state.node_id, &circle_id)
+            .map(|members| members.into_iter().map(|member| member.did).collect())
+            .unwrap_or_default();
+    let circle_label = store::get_circle(&state.node_id, &circle_id)
+        .map(|circle| circle.name)
+        .unwrap_or_else(|_| circle_id.clone());
     let snapshot = snapshot::accept_from_owner(body, &state.did_resolver)
         .await
         .map_err(map_circle_error)?;
+    for member in &snapshot.members {
+        if member.membership_status == crate::vc::credential::MembershipStatus::Active
+            && member.lifecycle_state == crate::circle::MemberLifecycleState::Active
+            && !previously_known.contains(&member.did)
+        {
+            let member_label = member.name.clone().unwrap_or_else(|| member.did.clone());
+            crate::notify::publish_circle_member_joined(&member_label, &circle_label, &circle_id);
+        }
+    }
     log_audit(
         &state.node_id,
         AuditCategory::Circle,

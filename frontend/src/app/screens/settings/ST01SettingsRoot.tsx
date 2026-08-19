@@ -230,7 +230,7 @@ export function ST01SettingsRoot() {
       </button>
 
       <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", textAlign: "center" }}>
-        SG-X Guardian v2.4.1 · Build 2026.03.17
+        SG-X Guardian v{__APP_VERSION__}
       </p>
     </div>
   );

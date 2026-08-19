@@ -4,7 +4,7 @@
 
 use axum::{
     http::{header, HeaderName},
-    routing::{get, post},
+    routing::{get, patch, post},
     Json, Router,
 };
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -326,6 +326,10 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             "/api/v1/auth/session/refresh",
             post(handlers::auth::refresh_session),
         )
+        .route(
+            "/api/v1/auth/profile",
+            patch(handlers::auth::update_profile),
+        )
         .route("/api/v1/devices", get(handlers::devices::index))
         .route(
             "/api/v1/devices/paired",
@@ -372,6 +376,7 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         )
         .route("/api/v1/chat/send", post(handlers::chat::send_message))
         .route("/api/v1/chat/read", post(handlers::chat::mark_as_read))
+        .route("/api/v1/chat/typing", post(handlers::chat::typing))
         .route("/api/v1/chat/sync", post(handlers::chat::trigger_sync))
         .route("/api/v1/chat/history", get(handlers::chat::get_history))
         .route("/api/v1/chat/ws", get(handlers::chat::ws_handler))
@@ -1930,6 +1935,7 @@ mod tests {
 
         let download = crate::api::handlers::vault::download(
             axum::extract::State(test_state()),
+            None,
             axum::extract::Path(record.vault_id.clone()),
         )
         .await
@@ -1946,6 +1952,7 @@ mod tests {
 
         let preview = crate::api::handlers::vault::preview(
             axum::extract::State(test_state()),
+            None,
             axum::extract::Path(record.vault_id.clone()),
         )
         .await
@@ -1958,6 +1965,7 @@ mod tests {
 
         let restart_download = crate::api::handlers::vault::download(
             axum::extract::State(test_state()),
+            None,
             axum::extract::Path(record.vault_id.clone()),
         )
         .await
@@ -2007,6 +2015,13 @@ mod tests {
                 source: crate::vault::VaultSource::Upload,
                 folder_id: String::new(),
                 starred: false,
+                description: String::new(),
+                owner_did: String::new(),
+                revoked: false,
+                revoked_at: None,
+                expires_at: None,
+                conversation_recipient_did: None,
+                message_id: None,
                 enc: crate::vault::EncMeta {
                     algo: "AES-256-GCM/STREAM-BE32".into(),
                     chunk_bytes: crate::vault::VaultConfig::DEFAULT_CHUNK_BYTES,
@@ -2076,6 +2091,69 @@ mod tests {
 
     #[allow(clippy::await_holding_lock)]
     #[tokio::test]
+    async fn vault_upload_with_idempotency_key_does_not_duplicate() {
+        let _env_lock = crate::test_support::async_env_lock().await;
+        let _vault_lock = crate::vault::lock_test_env().await;
+        let td = TempDir::new().expect("tempdir");
+        let vault_base = td.path().join("vault");
+        let vault_base_value = vault_base.to_string_lossy().to_string();
+        let _vault_base = ScopedEnvVar::set(crate::vault::VAULT_BASE_ENV, &vault_base_value);
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let (base_url, client, handle) = spawn_authed_api().await;
+        let idempotency_key = uuid::Uuid::new_v4().to_string();
+
+        let boundary = format!("sgx-boundary-{}", uuid::Uuid::new_v4());
+        let mut body = Vec::new();
+        body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+        body.extend_from_slice(
+            b"Content-Disposition: form-data; name=\"file\"; filename=\"idempotent.bin\"\r\n",
+        );
+        body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
+        body.extend_from_slice(&vec![0x11u8; 4096]);
+        body.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
+
+        let mut vault_ids = Vec::new();
+        for _ in 0..2 {
+            let response = client
+                .post(format!("{}/api/v1/vault/upload", base_url))
+                .header(
+                    reqwest::header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={}", boundary),
+                )
+                .header("Idempotency-Key", idempotency_key.clone())
+                .body(body.clone())
+                .send()
+                .await
+                .expect("idempotent vault upload request");
+            assert_eq!(response.status(), StatusCode::OK);
+            let parsed: Value = response.json().await.expect("idempotent upload body");
+            vault_ids.push(
+                parsed["record"]["vault_id"]
+                    .as_str()
+                    .expect("vault_id present")
+                    .to_string(),
+            );
+        }
+
+        assert_eq!(
+            vault_ids[0], vault_ids[1],
+            "retried upload with the same Idempotency-Key must not create a duplicate record"
+        );
+        let listed = client
+            .get(format!("{}/api/v1/vault/files", base_url))
+            .send()
+            .await
+            .expect("list vault files");
+        let listed_body: Value = listed.json().await.expect("list body");
+        assert_eq!(listed_body["count"], 1);
+
+        handle.abort();
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
     async fn xfer_send_endpoint_accepts_exact_limit_and_rejects_oversize_inputs() {
         let _env_lock = crate::test_support::async_env_lock().await;
         let _vault_lock = crate::vault::lock_test_env().await;
@@ -2120,6 +2198,13 @@ mod tests {
             source: crate::vault::VaultSource::Upload,
             folder_id: String::new(),
             starred: false,
+            description: String::new(),
+            owner_did: String::new(),
+            revoked: false,
+            revoked_at: None,
+            expires_at: None,
+            conversation_recipient_did: None,
+            message_id: None,
             enc: crate::vault::EncMeta {
                 algo: "AES-256-GCM/STREAM-BE32".into(),
                 chunk_bytes: crate::vault::VaultConfig::DEFAULT_CHUNK_BYTES,

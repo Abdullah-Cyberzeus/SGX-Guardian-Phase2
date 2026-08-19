@@ -119,7 +119,11 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
           // that DID are incoming, so no administrative local-DID lookup is
           // needed to calculate unread state.
           const unread = messages.filter((record) => record.sender_did === peer.did && record.status !== "read").length;
-          const latest = [...messages].sort((a, b) => b.timestamp - a.timestamp)[0];
+          // seq_no is the authoritative recency order: timestamps only have
+          // second resolution, so a burst of messages (e.g. an offline queue
+          // flushing several at once) can tie on timestamp and fall back to
+          // array order, silently picking a stale "latest" message.
+          const latest = [...messages].sort((a, b) => (b.seq_no - a.seq_no) || (b.timestamp - a.timestamp))[0];
           let preview: ChatPreview | undefined;
           if (latest) {
             const payload = parseChatPayload(latest);
@@ -137,7 +141,11 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
           const unread = localDid
             ? messages.filter((record) => record.sender_did !== localDid && !record.read_by.includes(localDid)).length
             : 0;
-          const latest = [...messages].sort((a, b) => b.timestamp - a.timestamp)[0];
+          // seq_no is the authoritative recency order: timestamps only have
+          // second resolution, so a burst of messages (e.g. an offline queue
+          // flushing several at once) can tie on timestamp and fall back to
+          // array order, silently picking a stale "latest" message.
+          const latest = [...messages].sort((a, b) => (b.seq_no - a.seq_no) || (b.timestamp - a.timestamp))[0];
           const payload = parseChatPayload(latest);
           const preview: ChatPreview = {
             text: payload.attachment_id ? `File: ${payload.content || "Attachment"}` : (payload.content || "Message"),

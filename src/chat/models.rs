@@ -45,24 +45,6 @@ impl MessageStatus {
     }
 }
 
-/// Metadata for a chat attachment stored on the local Guardian.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AttachmentRecord {
-    pub file_id: String,
-    pub message_id: String,
-    pub file_name: String,
-    #[serde(default = "default_attachment_mime")]
-    pub mime_type: String,
-    pub encrypted_size: u64,
-    pub sha256_hash: String,
-    pub local_path: String,
-    pub encrypted_file_key: String,
-}
-
-fn default_attachment_mime() -> String {
-    "application/octet-stream".to_string()
-}
-
 /// Represents a historical event when a specific message was read by a user.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ReadReceiptRecord {
@@ -74,9 +56,36 @@ pub struct ReadReceiptRecord {
 }
 
 #[derive(Debug, Serialize, Clone)]
+pub struct TypingEvent {
+    pub conversation_id: String,
+    pub sender_did: String,
+    pub is_typing: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
 #[serde(tag = "event_type")]
 pub enum ChatEvent {
     NewMessage(ChatMessageRecord),
     ReadReceipt(ReadReceiptRecord),
     MessageStatus(ChatMessageRecord),
+    Typing(TypingEvent),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typing_event_serializes_with_event_type_tag() {
+        let event = ChatEvent::Typing(TypingEvent {
+            conversation_id: "pair-a-b".to_string(),
+            sender_did: "did:guardian:alice".to_string(),
+            is_typing: true,
+        });
+        let json = serde_json::to_value(&event).expect("serialize typing event");
+        assert_eq!(json["event_type"], "Typing");
+        assert_eq!(json["conversation_id"], "pair-a-b");
+        assert_eq!(json["sender_did"], "did:guardian:alice");
+        assert_eq!(json["is_typing"], true);
+    }
 }

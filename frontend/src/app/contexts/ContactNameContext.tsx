@@ -1,7 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import contactService, { type Contact } from "../services/contactService";
-import { useAuth } from "./AuthContext";
-import { isMemberRole } from "../utils/authorization";
 
 interface ContactNameContextValue {
   contacts: Contact[];
@@ -32,24 +30,19 @@ function savedName(contact: Contact) {
 }
 
 export function ContactNameProvider({ children }: { children: ReactNode }) {
-  const { session } = useAuth();
-  const memberSession = isMemberRole(session?.user.role);
   const [contacts, setContacts] = useState<Contact[]>([]);
 
   const refreshContacts = useCallback(async () => {
-    // Saved DID aliases are an administrative address book. Member contact
-    // visibility remains derived from the scoped /pwa/contacts endpoint.
-    if (memberSession) {
-      setContacts([]);
-      return;
-    }
+    // The backend scopes /contacts to DIDs sharing a Circle with the caller,
+    // so this is safe for both admin and member sessions — a member only
+    // ever gets back the contacts they're allowed to see.
     try {
       const response = await contactService.list();
       setContacts(response.contacts);
     } catch {
       setContacts([]);
     }
-  }, [memberSession]);
+  }, []);
 
   useEffect(() => {
     void refreshContacts();
