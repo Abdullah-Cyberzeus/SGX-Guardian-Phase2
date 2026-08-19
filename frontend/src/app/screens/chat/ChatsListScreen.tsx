@@ -21,7 +21,20 @@ function dedupePeers(peers: Peer[]) {
   for (const peer of peers) {
     if (!peer.did) continue;
     const existing = byDid.get(peer.did);
-    byDid.set(peer.did, existing ? { ...existing, ...peer, online: existing.online || peer.online } : peer);
+    if (!existing) {
+      byDid.set(peer.did, peer);
+      continue;
+    }
+    // Either source reporting "hidden" (the contact opted to hide presence)
+    // must win outright — OR-ing raw `online` flags together would let an
+    // ungated duplicate resurrect an otherwise-hidden contact's status.
+    const hidden = existing.presenceStatus === "hidden" || peer.presenceStatus === "hidden";
+    byDid.set(peer.did, {
+      ...existing,
+      ...peer,
+      online: hidden ? false : existing.online || peer.online,
+      presenceStatus: hidden ? "hidden" : peer.presenceStatus,
+    });
   }
   return [...byDid.values()];
 }

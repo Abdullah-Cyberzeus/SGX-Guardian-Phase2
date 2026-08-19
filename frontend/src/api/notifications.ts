@@ -31,6 +31,11 @@ export interface NotificationItem {
   refId?: string;
   createdAt: string;
   read: boolean;
+  /** DID of whoever caused this event. The notify bus has no per-client
+   * delivery targeting — every connected client (admin + every browser
+   * member) gets every event — so the client that originated it uses this
+   * to skip showing itself its own notification. */
+  actorDid?: string;
 }
 
 export interface AlertPrefs {
@@ -77,6 +82,7 @@ export function normalizeNotification(raw: unknown): NotificationItem {
     refId: (pick(r, "ref_id", "refId") as string | undefined) ?? undefined,
     createdAt: String(pick(r, "created_at", "createdAt") ?? new Date().toISOString()),
     read: Boolean(pick(r, "read") ?? false),
+    actorDid: (pick(r, "actor_did", "actorDid") as string | undefined) ?? undefined,
   };
 }
 

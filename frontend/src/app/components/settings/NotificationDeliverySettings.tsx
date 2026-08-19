@@ -16,6 +16,7 @@ import {
   type LocalNotificationPrefs,
 } from "../../lib/notificationLocalPrefs";
 import { useNotifications } from "../../contexts/NotificationContext";
+import { useAuth } from "../../contexts/AuthContext";
 
 interface ToggleRowProps {
   label: string;
@@ -66,16 +67,18 @@ function ToggleRow({ label, description, checked, disabled, onCheckedChange }: T
  */
 export function NotificationDeliverySettings() {
   const { requestPermission, permission } = useNotifications();
+  const { session } = useAuth();
+  const scope = session?.browserMemberDid || session?.guardianDid;
   const [prefs, setPrefs] = useState<LocalNotificationPrefs | null>(null);
   const [permissionDialogOpen, setPermissionDialogOpen] = useState(false);
 
   useEffect(() => {
-    void loadLocalNotificationPrefs().then(setPrefs);
-  }, []);
+    void loadLocalNotificationPrefs(scope).then(setPrefs);
+  }, [scope]);
 
   const update = async <K extends keyof LocalNotificationPrefs>(key: K, value: LocalNotificationPrefs[K]) => {
     setPrefs((current) => (current ? { ...current, [key]: value } : current));
-    await saveLocalNotificationPref(key, value);
+    await saveLocalNotificationPref(scope, key, value);
   };
 
   const toggleMaster = async (next: boolean) => {

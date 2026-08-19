@@ -90,16 +90,14 @@ pub struct User {
     pub hide_presence: bool,
     #[serde(default)]
     pub hide_read_receipts: bool,
-    #[serde(default)]
-    pub hide_typing: bool,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct ProfilePatch {
     pub name: Option<String>,
+    pub email: Option<String>,
     pub hide_presence: Option<bool>,
     pub hide_read_receipts: Option<bool>,
-    pub hide_typing: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -652,7 +650,6 @@ impl JsonUserStore {
             oidc_sub: new_user.oidc_sub,
             hide_presence: false,
             hide_read_receipts: false,
-            hide_typing: false,
         }
     }
 
@@ -896,6 +893,25 @@ impl UserStore for JsonUserStore {
         let user_id = user_id.to_string();
         self.file
             .mutate(move |users| {
+                // Validated up front, against the whole list, before taking any
+                // mutable borrow of the target user below.
+                let normalized_email = match patch.email {
+                    Some(email) => {
+                        let normalized = normalize_email(&email);
+                        if normalized.is_empty() {
+                            return Err(anyhow!("email must not be empty"));
+                        }
+                        if users
+                            .iter()
+                            .any(|other| other.user_id != user_id && other.email == normalized)
+                        {
+                            return Err(anyhow!("email is already in use"));
+                        }
+                        Some(normalized)
+                    }
+                    None => None,
+                };
+
                 let user = users
                     .iter_mut()
                     .find(|user| user.user_id == user_id)
@@ -907,14 +923,14 @@ impl UserStore for JsonUserStore {
                     }
                     user.name = trimmed;
                 }
+                if let Some(email) = normalized_email {
+                    user.email = email;
+                }
                 if let Some(hide_presence) = patch.hide_presence {
                     user.hide_presence = hide_presence;
                 }
                 if let Some(hide_read_receipts) = patch.hide_read_receipts {
                     user.hide_read_receipts = hide_read_receipts;
-                }
-                if let Some(hide_typing) = patch.hide_typing {
-                    user.hide_typing = hide_typing;
                 }
                 Ok(user.clone())
             })
@@ -1301,7 +1317,6 @@ mod tests {
             .expect("create user");
         assert!(!created.hide_presence);
         assert!(!created.hide_read_receipts);
-        assert!(!created.hide_typing);
 
         let updated = stores
             .users
@@ -1309,9 +1324,9 @@ mod tests {
                 &created.user_id,
                 ProfilePatch {
                     name: Some("New Name".to_string()),
+                    email: None,
                     hide_presence: Some(true),
                     hide_read_receipts: Some(true),
-                    hide_typing: None,
                 },
             )
             .await
@@ -1319,7 +1334,6 @@ mod tests {
         assert_eq!(updated.name, "New Name");
         assert!(updated.hide_presence);
         assert!(updated.hide_read_receipts);
-        assert!(!updated.hide_typing);
 
         // Survives reload from disk.
         let reloaded_stores = AdminStores::new(td.path().join("admin"));
@@ -1332,7 +1346,71 @@ mod tests {
         assert_eq!(reloaded.name, "New Name");
         assert!(reloaded.hide_presence);
         assert!(reloaded.hide_read_receipts);
-        assert!(!reloaded.hide_typing);
+    }
+
+    #[tokio::test]
+    async fn update_profile_persists_email_and_rejects_duplicate() {
+        let td = TempDir::new().expect("tempdir");
+        let stores = AdminStores::new(td.path().join("admin"));
+        let created = stores
+            .users
+            .create(NewUser {
+                name: "Original Name".into(),
+                email: "original@example.com".into(),
+                pw_hash: "hash".into(),
+                role: UserRole::Member,
+                oidc_sub: None,
+            })
+            .await
+            .expect("create user");
+        let other = stores
+            .users
+            .create(NewUser {
+                name: "Someone Else".into(),
+                email: "taken@example.com".into(),
+                pw_hash: "hash".into(),
+                role: UserRole::Member,
+                oidc_sub: None,
+            })
+            .await
+            .expect("create other user");
+
+        let updated = stores
+            .users
+            .update_profile(
+                &created.user_id,
+                ProfilePatch {
+                    email: Some("New.Email@Example.com".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("update profile");
+        assert_eq!(updated.email, "new.email@example.com");
+
+        // Survives reload from disk.
+        let reloaded_stores = AdminStores::new(td.path().join("admin"));
+        let reloaded = reloaded_stores
+            .users
+            .find_by_id(&created.user_id)
+            .await
+            .expect("find by id")
+            .expect("user present");
+        assert_eq!(reloaded.email, "new.email@example.com");
+
+        // Rejects an email already used by another account.
+        let error = stores
+            .users
+            .update_profile(
+                &created.user_id,
+                ProfilePatch {
+                    email: Some(other.email.clone()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("duplicate email rejected");
+        assert!(error.to_string().contains("already in use"));
     }
 
     #[tokio::test]

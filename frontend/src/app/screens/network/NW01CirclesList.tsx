@@ -88,15 +88,13 @@ function CircleRow({
 // ── Circle detail panel (inline for tablet/desktop) ───────────────────────────
 function CircleDetailPanel({ circle }: { circle: typeof mockCircles[0] }) {
   const navigate = useNavigate();
-  // Mock seed for this circle — the API omits chat attachments & call history.
-  const seed = mockCircles.find((c) => c.id === circle.id) || mockCircles[0];
   const vault = useVault();
 
   const [activeTab, setActiveTab] =
     useState<"chat" | "calls" | "files" | "members">("members");
   const [message, setMessage] = useState("");
-  const [messages, setMessages] = useState<any[]>(seed.messages || circle.messages || []);
-  const [calls, setCalls] = useState<any[]>(seed.calls || circle.calls || []);
+  const [messages, setMessages] = useState<any[]>(circle.messages || []);
+  const [calls, setCalls] = useState<any[]>(circle.calls || []);
   const [activeCall, setActiveCall] = useState<
     { mode: CallMode; title: string; participants: { id: string; name: string }[]; group: boolean } | null
   >(null);

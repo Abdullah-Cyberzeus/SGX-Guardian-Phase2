@@ -3,7 +3,7 @@ import { PageHeader } from "../../components/PageHeader";
 import { Wifi, Battery, Signal, Cpu, Clock, Radio, Server, Globe, Key, Copy, Check, Loader2, Shield } from "lucide-react";
 import { toast } from "sonner";
 import { guardianService } from "../../services/guardianService";
-import { mockGuardian } from "../../data/mockData";
+import { wifiService, type WifiModeResponse } from "../../services/wifiService";
 
 interface GuardianData {
   id: string;
@@ -128,10 +128,12 @@ function PublicKeyRow({ publicKey }: { publicKey: string }) {
 
 export function HM02GuardianDetail() {
   const [guardian, setGuardian] = useState<GuardianData | null>(null);
+  const [wifiMode, setWifiMode] = useState<WifiModeResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [dataSource, setDataSource] = useState<'api' | 'error'>('api');
 
   useEffect(() => {
+    wifiService.getWifiMode().then(setWifiMode).catch(() => setWifiMode(null));
     async function fetchData() {
       setLoading(true);
       try {
@@ -264,18 +266,18 @@ export function HM02GuardianDetail() {
         <Section title="Wi-Fi Mode">
           <Row
             label="Operation Mode"
-            value={mockGuardian.wifi_operation_mode === 'dual' ? 'Dual' : mockGuardian.wifi_operation_mode === 'hotspot_only' ? 'Hotspot Only' : 'Client Only'}
+            value={wifiMode?.mode === 'dual' ? 'Dual' : wifiMode?.mode === 'hotspot_only' ? 'Hotspot Only' : wifiMode?.mode === 'client_only' ? 'Client Only' : 'Off'}
             icon={Wifi}
             accent="var(--primary)"
           />
           <Row
             label="Zero-Trust Active"
-            value={mockGuardian.zero_trust_active ? 'Yes' : 'No'}
+            value={wifiMode?.security.zero_trust_active ? 'Yes' : 'No'}
             icon={Shield}
-            accent={mockGuardian.zero_trust_active ? "var(--chart-2)" : undefined}
+            accent={wifiMode?.security.zero_trust_active ? "var(--chart-2)" : undefined}
           />
-          <Row label="Hotspot SSID" value={mockGuardian.wifi_ssid} />
-          <LastRow label="External Network" value={mockGuardian.wifi_client_ssid} />
+          <Row label="Hotspot SSID" value={wifiMode?.module1.ssid || "—"} />
+          <LastRow label="External Network" value={wifiMode?.module2.saved_networks.join(", ") || "None"} />
         </Section>
 
         {/* Battery */}

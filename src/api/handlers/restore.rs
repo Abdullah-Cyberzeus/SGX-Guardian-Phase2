@@ -1,6 +1,8 @@
 use crate::api::auth::middleware::AuthenticatedSession;
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
+use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use crate::audit::logger::log_audit;
 use crate::backup::errors::BackupError;
 use crate::backup::restore::{RestorePreflightOptions, RestorePreflightReport};
 use crate::backup::BackupConfig;
@@ -67,7 +69,9 @@ pub async fn apply(
             "passphrase must not be empty".to_string(),
         ));
     }
-    crate::backup::restore::apply_restore(
+    let node_id = state.node_id.clone();
+    let backup_id = body.id.trim().to_string();
+    let report = crate::backup::restore::apply_restore(
         state,
         BackupConfig::from_env(),
         body.id.trim(),
@@ -76,20 +80,34 @@ pub async fn apply(
         body.confirm,
     )
     .await
-    .map(Json)
-    .map_err(map_backup_error)
+    .map_err(map_backup_error)?;
+    log_audit(
+        &node_id,
+        AuditCategory::Vault,
+        AuditSeverity::Critical,
+        AuditAction::Applied,
+        &format!("Restore applied from backup: {}", backup_id),
+    );
+    Ok(Json(report))
 }
 
 pub async fn undo(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     session: Option<Extension<AuthenticatedSession>>,
     Json(body): Json<RestoreUndoRequest>,
 ) -> Result<Json<crate::backup::model::RestoreReport>, ApiError> {
     require_owner_or_admin(session.as_ref().map(|session| &session.0))?;
-    crate::backup::restore::undo_restore(BackupConfig::from_env(), body.confirm)
+    let report = crate::backup::restore::undo_restore(BackupConfig::from_env(), body.confirm)
         .await
-        .map(Json)
-        .map_err(map_backup_error)
+        .map_err(map_backup_error)?;
+    log_audit(
+        &state.node_id,
+        AuditCategory::Vault,
+        AuditSeverity::Critical,
+        AuditAction::Rollback,
+        "Restore undone",
+    );
+    Ok(Json(report))
 }
 
 pub async fn status(

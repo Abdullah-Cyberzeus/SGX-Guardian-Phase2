@@ -205,20 +205,27 @@ async fn recv_by_ref_id(
 async fn publish_circle_helpers_broadcast_the_right_kind() {
     let mut rx = bus::subscribe();
 
-    super::publish_circle_new_message("did:guardian:alice", "publish-helpers-msg-1");
+    super::publish_circle_new_message("did:guardian:alice", "did:guardian:alice", "publish-helpers-msg-1");
     let event = recv_by_ref_id(&mut rx, "publish-helpers-msg-1").await;
     assert_eq!(event.kind, NotificationKind::CircleNewMessage);
+    assert_eq!(event.actor_did.as_deref(), Some("did:guardian:alice"));
 
-    super::publish_circle_incoming_call("did:guardian:bob", "publish-helpers-call-1");
+    super::publish_circle_incoming_call("did:guardian:bob", "did:guardian:bob", "publish-helpers-call-1");
     let event = recv_by_ref_id(&mut rx, "publish-helpers-call-1").await;
     assert_eq!(event.kind, NotificationKind::CircleIncomingCall);
 
-    super::publish_circle_member_joined("Alice", "Family", "publish-helpers-circle-1");
+    super::publish_circle_member_joined(
+        "did:guardian:alice",
+        "Alice",
+        "Family",
+        "publish-helpers-circle-1",
+    );
     let event = recv_by_ref_id(&mut rx, "publish-helpers-circle-1").await;
     assert_eq!(event.kind, NotificationKind::CircleMemberJoined);
     assert!(event.body.contains("Alice") && event.body.contains("Family"));
 
     super::publish_circle_file_shared(
+        "did:guardian:carol",
         "did:guardian:carol",
         "report.pdf",
         "urn:uuid:publish-helpers-vault-1",
@@ -310,5 +317,6 @@ fn sample_event(id: &str, kind: NotificationKind) -> NotificationEvent {
         ref_id: None,
         created_at: Utc::now().to_rfc3339(),
         read: false,
+        actor_did: None,
     }
 }

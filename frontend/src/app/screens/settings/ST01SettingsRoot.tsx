@@ -4,10 +4,10 @@ import {
   User, Users, BarChart2, Database, Link, Shield, Settings2,
   Wifi, Bell, SlidersHorizontal, BookOpen, Info, LogOut, ChevronRight, Key, ShieldCheck, FileCheck, FileText, Radio, Fingerprint, Cable, Award, Radar, ShieldX, ClipboardCheck,
 } from "lucide-react";
-import { mockGuardian } from "../../data/mockData";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useAuth } from "../../contexts/AuthContext";
 import { useCurrentUser } from "../../hooks/useCurrentUser";
+import { useGuardianInfo } from "../../hooks/useApiData";
 import { ThemeToggle } from "../../components/ThemeToggle";
 
 // Import child screens for inline rendering on tablet/desktop
@@ -151,6 +151,7 @@ export function ST01SettingsRoot() {
   const navigate = useNavigate();
   const { signOut } = useAuth();
   const { name, email, initials, role } = useCurrentUser();
+  const { data: guardianData } = useGuardianInfo();
   const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
@@ -178,7 +179,7 @@ export function ST01SettingsRoot() {
         </p>
         <div className="flex items-center gap-1.5">
           <div style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: "var(--chart-2)" }} />
-          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{mockGuardian.name}</span>
+          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{guardianData?.name || "Guardian"}</span>
         </div>
         <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px", color: "var(--muted-foreground)" }}>
           {email}

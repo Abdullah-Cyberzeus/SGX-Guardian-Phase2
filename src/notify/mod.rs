@@ -147,44 +147,65 @@ pub fn publish_guardian_offline(device: &ConnectedDevice) {
     ));
 }
 
-pub fn publish_circle_new_message(sender_label: &str, message_id: &str) {
-    publish(build_event(
-        NotificationKind::CircleNewMessage,
-        "New message".to_string(),
-        format!("New message from {}", sender_label),
-        "info",
-        Some(message_id.to_string()),
-    ));
+/// `actor_did` is whoever *caused* this event (the sender/caller/joiner) —
+/// stamped on the event so the client that originated it can skip showing
+/// itself its own notification (this bus has no per-client delivery
+/// targeting; every connected client gets every event).
+pub fn publish_circle_new_message(actor_did: &str, sender_label: &str, message_id: &str) {
+    publish(NotificationEvent {
+        actor_did: Some(actor_did.to_string()),
+        ..build_event(
+            NotificationKind::CircleNewMessage,
+            "New message".to_string(),
+            format!("New message from {}", sender_label),
+            "info",
+            Some(message_id.to_string()),
+        )
+    });
 }
 
-pub fn publish_circle_incoming_call(caller_label: &str, call_id: &str) {
-    publish(build_event(
-        NotificationKind::CircleIncomingCall,
-        "Incoming call".to_string(),
-        format!("{} is calling", caller_label),
-        "medium",
-        Some(call_id.to_string()),
-    ));
+pub fn publish_circle_incoming_call(actor_did: &str, caller_label: &str, call_id: &str) {
+    publish(NotificationEvent {
+        actor_did: Some(actor_did.to_string()),
+        ..build_event(
+            NotificationKind::CircleIncomingCall,
+            "Incoming call".to_string(),
+            format!("{} is calling", caller_label),
+            "medium",
+            Some(call_id.to_string()),
+        )
+    });
 }
 
-pub fn publish_circle_member_joined(member_label: &str, circle_label: &str, circle_id: &str) {
-    publish(build_event(
-        NotificationKind::CircleMemberJoined,
-        "Member joined".to_string(),
-        format!("{} joined {}", member_label, circle_label),
-        "info",
-        Some(circle_id.to_string()),
-    ));
+pub fn publish_circle_member_joined(
+    actor_did: &str,
+    member_label: &str,
+    circle_label: &str,
+    circle_id: &str,
+) {
+    publish(NotificationEvent {
+        actor_did: Some(actor_did.to_string()),
+        ..build_event(
+            NotificationKind::CircleMemberJoined,
+            "Member joined".to_string(),
+            format!("{} joined {}", member_label, circle_label),
+            "info",
+            Some(circle_id.to_string()),
+        )
+    });
 }
 
-pub fn publish_circle_file_shared(sender_label: &str, file_name: &str, vault_id: &str) {
-    publish(build_event(
-        NotificationKind::CircleFileShared,
-        "File shared".to_string(),
-        format!("{} shared \"{}\"", sender_label, file_name),
-        "info",
-        Some(vault_id.to_string()),
-    ));
+pub fn publish_circle_file_shared(actor_did: &str, sender_label: &str, file_name: &str, vault_id: &str) {
+    publish(NotificationEvent {
+        actor_did: Some(actor_did.to_string()),
+        ..build_event(
+            NotificationKind::CircleFileShared,
+            "File shared".to_string(),
+            format!("{} shared \"{}\"", sender_label, file_name),
+            "info",
+            Some(vault_id.to_string()),
+        )
+    });
 }
 
 pub async fn history(limit: Option<usize>) -> NotifyResult<Vec<NotificationEvent>> {
@@ -317,6 +338,7 @@ fn build_event(
         ref_id,
         created_at: Utc::now().to_rfc3339(),
         read: false,
+        actor_did: None,
     }
 }
 

@@ -2,7 +2,6 @@ import { useState, useMemo } from "react";
 import { useParams, useNavigate } from "react-router";
 import { PageHeader } from "../../components/PageHeader";
 import { SeverityBadge } from "../../components/SeverityBadge";
-import { mockAlerts } from "../../data/mockData";
 import { Monitor, Cpu, Brain, ChevronRight, Archive, Ban, Scan, X, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useAlerts } from "../../hooks/useApiData";
@@ -23,8 +22,7 @@ export function AL06AlertDetail() {
   const { data: alertsData, loading } = useAlerts();
 
   const alerts = useMemo(() => {
-    if (!alertsData) return mockAlerts;
-    return alertsData.alerts || mockAlerts;
+    return alertsData?.alerts ?? [];
   }, [alertsData]);
 
   const alert = useMemo(() => {

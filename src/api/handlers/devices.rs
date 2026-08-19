@@ -4,6 +4,8 @@ use crate::api::auth::{
     store::{PairedDevice, PairingChallengeRecord},
 };
 use crate::api::{error::ApiError, state::AppState};
+use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
+use crate::audit::logger::log_audit;
 use axum::{
     extract::{Path, Query, State},
     Extension, Json,
@@ -551,6 +553,21 @@ pub async fn pair(
             .await?;
         device.status = "active".into();
     }
+
+    log_audit(
+        &state.node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        if reactivated {
+            AuditAction::Succeeded
+        } else {
+            AuditAction::Created
+        },
+        &format!(
+            "Device paired: {} (serial {}, status {})",
+            device.device_id, device.serial, device.status
+        ),
+    );
 
     Ok(Json(DeviceResponse {
         device_id: device.device_id,
@@ -1112,7 +1129,13 @@ pub async fn add_manual(
         .map_err(devices_error)?;
     let record = registry.insert_manual(body).map_err(devices_error)?;
     registry.save_atomic(&path).await.map_err(devices_error)?;
-    let _ = state;
+    log_audit(
+        &state.node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Created,
+        &format!("Device added manually: {}", record.device_id),
+    );
     Ok(Json(record))
 }
 
@@ -1129,6 +1152,13 @@ pub async fn edit(
     ensure_record_exists(&mut registry, &device_id, None)?;
     let record = registry.patch(&device_id, body).map_err(devices_error)?;
     registry.save_atomic(&path).await.map_err(devices_error)?;
+    log_audit(
+        &state.node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Updated,
+        &format!("Device updated: {}", record.device_id),
+    );
     Ok(Json(record))
 }
 
@@ -1144,6 +1174,15 @@ pub async fn remove(
     let removed = registry.remove(&device_id);
     registry.save_atomic(&path).await.map_err(devices_error)?;
     let _ = remove_from_whitelist(state.as_ref(), &device_id).await;
+    if removed {
+        log_audit(
+            &state.node_id,
+            AuditCategory::Network,
+            AuditSeverity::Warning,
+            AuditAction::Succeeded,
+            &format!("Device removed: {}", device_id),
+        );
+    }
     Ok(Json(DeviceActionResponse {
         device_id,
         success: removed,
@@ -1192,6 +1231,14 @@ pub async fn block(
         .map_err(devices_error)?;
     registry.save_atomic(&path).await.map_err(devices_error)?;
 
+    log_audit(
+        &state.node_id,
+        AuditCategory::Enforcement,
+        AuditSeverity::Warning,
+        AuditAction::Blocked,
+        &format!("Device blocked: {} ({})", device_id, ip),
+    );
+
     Ok(Json(DeviceActionResponse {
         device_id,
         success: true,
@@ -1204,12 +1251,19 @@ pub async fn reject(
     Path(device_id): Path<String>,
     body: Option<Json<crate::devices::registry::RejectDeviceRequest>>,
 ) -> Result<Json<DeviceActionResponse>, ApiError> {
-    reject_device(
-        state.as_ref(),
-        &device_id,
-        body.map(|Json(body)| body.reason).unwrap_or_default(),
-    )
-    .await?;
+    let reason = body.map(|Json(body)| body.reason).unwrap_or_default();
+    reject_device(state.as_ref(), &device_id, reason.clone()).await?;
+    log_audit(
+        &state.node_id,
+        AuditCategory::Enforcement,
+        AuditSeverity::Warning,
+        AuditAction::Rejected,
+        &format!(
+            "Device rejected: {} (reason: {})",
+            device_id,
+            reason.as_deref().unwrap_or("none given")
+        ),
+    );
     Ok(Json(DeviceActionResponse {
         device_id,
         success: true,
@@ -1247,6 +1301,13 @@ pub async fn unblock(
         .mark_blocked(&device_id, false)
         .map_err(devices_error)?;
     registry.save_atomic(&path).await.map_err(devices_error)?;
+    log_audit(
+        &state.node_id,
+        AuditCategory::Enforcement,
+        AuditSeverity::Warning,
+        AuditAction::Succeeded,
+        &format!("Device unblocked: {} ({})", device_id, ip),
+    );
     Ok(Json(DeviceActionResponse {
         device_id,
         success: true,
@@ -2176,6 +2237,13 @@ pub async fn unpair(
         .unbind(&owner_user_id, &device_id)
         .await
         .map_err(|e| ApiError::NotFound(e.to_string()))?;
+    log_audit(
+        &state.node_id,
+        AuditCategory::Network,
+        AuditSeverity::Warning,
+        AuditAction::Succeeded,
+        &format!("Device unpaired: {}", device_id),
+    );
     Ok(Json(UnpairResponse {
         device_id,
         status: "unpaired".into(),
