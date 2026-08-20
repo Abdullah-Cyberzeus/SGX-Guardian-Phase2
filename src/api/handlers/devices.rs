@@ -8,6 +8,7 @@ use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use axum::{
     extract::{Path, Query, State},
+    http::HeaderMap,
     Extension, Json,
 };
 use chrono::Utc;
@@ -1318,7 +1319,18 @@ pub async fn unblock(
 pub async fn start_scan(
     State(state): State<Arc<AppState>>,
     Path(device_id): Path<String>,
+    headers: HeaderMap,
 ) -> Result<Json<crate::devices::DeviceScanRun>, ApiError> {
+    let idempotency_scope = format!("devices:start_scan:{}", device_id);
+    let idempotency_key = crate::api::idempotency::header_key(&headers);
+    if let Some(key) = idempotency_key.as_deref() {
+        if let Some(cached) = crate::api::idempotency::lookup::<crate::devices::DeviceScanRun>(
+            &idempotency_scope,
+            key,
+        ) {
+            return Ok(Json(cached));
+        }
+    }
     let device = load_managed_devices(state.as_ref())
         .await?
         .into_iter()
@@ -1369,6 +1381,9 @@ pub async fn start_scan(
             .map_err(devices_error)?;
     }
 
+    if let Some(key) = idempotency_key.as_deref() {
+        crate::api::idempotency::store(&idempotency_scope, key, &response);
+    }
     Ok(Json(response))
 }
 

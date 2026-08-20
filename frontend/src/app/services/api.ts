@@ -126,6 +126,7 @@ class ApiClient {
 
     const isFormData = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData;
     const headers: Record<string, string> = {
+      'X-SGX-Client': 'guardian-pwa',
       ...(shouldSendNgrokSkipHeader(url) ? { 'ngrok-skip-browser-warning': 'true' } : {}),
       ...(fetchOptions.headers as Record<string, string> | undefined)
     };
@@ -196,6 +197,7 @@ class ApiClient {
       });
     }
     const headers: Record<string, string> = {
+      'X-SGX-Client': 'guardian-pwa',
       ...(shouldSendNgrokSkipHeader(url.toString()) ? { 'ngrok-skip-browser-warning': 'true' } : {}),
       ...(fetchOptions.headers as Record<string, string> | undefined),
     };
@@ -232,6 +234,7 @@ class ApiClient {
       const xhr = new XMLHttpRequest();
       xhr.open("POST", url);
       xhr.responseType = "json";
+      xhr.setRequestHeader("X-SGX-Client", "guardian-pwa");
       if (shouldSendNgrokSkipHeader(url)) xhr.setRequestHeader("ngrok-skip-browser-warning", "true");
       if (this.token) xhr.setRequestHeader("Authorization", `Bearer ${this.token}`);
       xhr.setRequestHeader("Idempotency-Key", options.idempotencyKey || operationId());

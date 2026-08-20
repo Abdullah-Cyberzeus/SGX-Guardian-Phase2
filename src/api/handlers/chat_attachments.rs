@@ -79,9 +79,9 @@ pub async fn upload_attachment(
             let staging_path = persistence::staging_dir(&config)
                 .join(format!("chat-upload-{}.part", Uuid::new_v4()));
             if let Some(parent) = staging_path.parent() {
-                tokio::fs::create_dir_all(parent)
-                    .await
-                    .map_err(|e| ApiError::Internal(format!("Failed to create staging dir: {}", e)))?;
+                tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                    ApiError::Internal(format!("Failed to create staging dir: {}", e))
+                })?;
             }
 
             let mut file = tokio::fs::OpenOptions::new()

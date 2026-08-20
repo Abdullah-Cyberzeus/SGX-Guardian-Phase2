@@ -47,10 +47,7 @@ pub async fn issue(
     let claims = Claims {
         sub: user.user_id.clone(),
         role: user.role.as_str().to_string(),
-        scopes: crate::api::auth::authorization::effective_scopes(
-            user.role.as_str(),
-            &user.scopes,
-        ),
+        scopes: crate::api::auth::authorization::effective_scopes(user.role.as_str(), &user.scopes),
         circle_ids: user.circle_ids.clone(),
         browser_registration_id: user.browser_registration_id.clone(),
         guardian_fingerprint: user.guardian_fingerprint.clone(),

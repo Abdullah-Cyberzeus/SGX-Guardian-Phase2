@@ -90,7 +90,13 @@ impl CallHistoryStore {
             outcome: outcome.into(),
             media: session.requested_media.clone(),
             participant_ids: {
-                let mut ids: Vec<String> = session.participants.keys().cloned().collect();
+                let mut ids: Vec<String> = session
+                    .participants
+                    .iter()
+                    .filter_map(|(id, participant)| {
+                        participant.joined_at.is_some().then(|| id.clone())
+                    })
+                    .collect();
                 ids.sort();
                 ids
             },

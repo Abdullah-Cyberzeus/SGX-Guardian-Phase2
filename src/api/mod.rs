@@ -3,7 +3,9 @@
 //! Port: 8443 (separate listener from the :50051 mTLS gRPC endpoint).
 
 use axum::{
-    http::{header, HeaderName},
+    http::{header, HeaderName, HeaderValue, Request},
+    middleware::Next,
+    response::Response,
     routing::{get, patch, post},
     Json, Router,
 };
@@ -20,6 +22,7 @@ pub mod auth;
 pub mod error;
 pub mod frontend;
 pub mod handlers;
+pub mod idempotency;
 pub mod routes;
 pub mod state;
 pub mod tls;
@@ -533,6 +536,52 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         // Added after API + auth layers so embedded frontend assets and
         // client-side routes resolve from the same backend listener.
         .fallback(frontend::serve)
+        .layer(axum::middleware::from_fn(security_headers))
+}
+
+async fn security_headers(req: Request<axum::body::Body>, next: Next) -> Response {
+    let mut response = next.run(req).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("same-origin"),
+    );
+    headers.insert(
+        HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static(
+            "camera=(self), microphone=(self), display-capture=(self), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), interest-cohort=()",
+        ),
+    );
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(
+            "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self' ws: wss:; media-src 'self' blob:; manifest-src 'self'",
+        ),
+    );
+    headers.insert(
+        HeaderName::from_static("cross-origin-opener-policy"),
+        HeaderValue::from_static("same-origin"),
+    );
+    headers.insert(
+        HeaderName::from_static("cross-origin-resource-policy"),
+        HeaderValue::from_static("same-origin"),
+    );
+
+    if std::env::var("SGX_ENABLE_HSTS")
+        .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+    {
+        headers.insert(
+            header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        );
+    }
+
+    response
 }
 
 /// Entry point. Spawned from main.rs as a tokio task.

@@ -42,6 +42,7 @@ pub mod notification;
 pub mod notify;
 pub mod p2p_discovery;
 pub mod policy;
+pub mod testkit;
 pub mod policy_authority;
 pub mod policy_manager;
 pub mod policy_state;

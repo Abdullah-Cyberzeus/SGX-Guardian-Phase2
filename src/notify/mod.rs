@@ -213,7 +213,12 @@ pub fn publish_circle_member_pending_approval(
     });
 }
 
-pub fn publish_circle_file_shared(actor_did: &str, sender_label: &str, file_name: &str, vault_id: &str) {
+pub fn publish_circle_file_shared(
+    actor_did: &str,
+    sender_label: &str,
+    file_name: &str,
+    vault_id: &str,
+) {
     publish(NotificationEvent {
         actor_did: Some(actor_did.to_string()),
         ..build_event(

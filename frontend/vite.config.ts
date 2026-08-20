@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from 'vite'
+import { defineConfig, type Plugin } from 'vitest/config'
 import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
@@ -78,6 +78,43 @@ export default defineConfig({
         target: process.env.VITE_API_TARGET || 'http://127.0.0.1:8443',
         changeOrigin: true,
         ws: true,
+      },
+    },
+  },
+
+  // Phase 12: unit tests (`npm run test:unit`) — separate from the
+  // Playwright E2E suite (`npm test`). jsdom + fake-indexeddb give the
+  // pwa/db and pwa/crypto modules a real IndexedDB/WebCrypto-shaped
+  // environment without a browser.
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./src/pwa/testSetup.ts'],
+    include: ['src/**/*.test.{ts,tsx}'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html', 'json-summary'],
+      // The 85% gate below tracks the plan's "crypto, validation,
+      // messaging, and file modules" line specifically — data/orchestration
+      // modules that mix in React rendering (NotificationContext's
+      // Provider) or wide external-service fan-out (syncCoordinator,
+      // vault/maintenance) aren't reasonably unit-testable to that bar
+      // without a component-rendering harness this suite doesn't have yet;
+      // their pure/exported logic is still tested (see
+      // NotificationContext.test.ts, notificationLocalPrefs.test.ts) but
+      // isn't held to the hard threshold below.
+      include: [
+        'src/pwa/db/database.ts',
+        'src/pwa/db/messageRepository.ts',
+        'src/pwa/db/pendingRepository.ts',
+        'src/pwa/crypto/vault.ts',
+        'src/pwa/sync/pendingReplay.ts',
+        'src/pwa/sync/conflict.ts',
+        'src/app/utils/authorization.ts',
+      ],
+      exclude: ['**/*.test.{ts,tsx}'],
+      thresholds: {
+        lines: 85,
+        functions: 85,
       },
     },
   },

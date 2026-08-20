@@ -11,17 +11,19 @@ use sgx_guardian_client::api::handlers::chat::{self, MarkReadRequest, SendMessag
 use sgx_guardian_client::api::state::AppState;
 use sgx_guardian_client::chat::grpc_server::MyChatService;
 use sgx_guardian_client::chat::models::{ChatMessageRecord, MessageStatus};
-use sgx_guardian_client::chat::storage::{append_p2p_message, read_group_history, read_p2p_history};
+use sgx_guardian_client::chat::storage::{
+    append_p2p_message, read_group_history, read_p2p_history,
+};
 use sgx_guardian_client::proto::sgx::chat_service_client::ChatServiceClient;
 use sgx_guardian_client::proto::sgx::chat_service_server::ChatServiceServer;
 use sgx_guardian_client::proto::sgx::PushMessageRequest;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::sync::oneshot;
 use tonic::transport::{Channel, Server};
 use tonic::Code;
-use sha2::{Digest, Sha256};
 
 fn state(node_id: &str, root: &std::path::Path) -> std::sync::Arc<AppState> {
     AppState::for_tests(root, node_id, root.join("config").display().to_string())

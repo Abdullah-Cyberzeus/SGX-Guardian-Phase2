@@ -272,7 +272,9 @@ export function NW04CircleDetail() {
     // Browser members have no Nebula reachability check; the closest
     // available signal is whether their account is active (the same
     // heuristic the backend uses to decide whether it'll even route the call).
-    const online = isBrowserMember ? String(member?.status || "").toLowerCase() === "active" : trustedPeer?.online;
+    const online = isBrowserMember
+      ? String(member?.presenceStatus || "").toLowerCase() === "online"
+      : trustedPeer?.online;
     try {
       await startCall(target, media, online);
     } catch (cause) {
@@ -700,9 +702,13 @@ export function NW04CircleDetail() {
                       </div>
                       <p className="truncate" title={member.did} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{memberSecondary}</p>
                       <div className="flex items-center gap-1.5 mt-0.5">
-                        <div style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: trustedPeer?.online ? "var(--chart-2)" : "var(--muted-foreground)" }} />
+                        <div style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: (isBrowserMember ? member.presenceStatus === "online" : trustedPeer?.online) ? "var(--chart-2)" : "var(--muted-foreground)" }} />
                         <span style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--muted-foreground)" }}>
-                          {trustedPeer ? `${trustedPeer.online ? "online" : "offline"} · ${displayForDid(trustedPeer.did, trustedPeer.peerId)}` : callUnavailableReason}
+                          {isBrowserMember
+                            ? `${member.presenceStatus === "hidden" ? "hidden" : member.presenceStatus === "online" ? "online" : "offline"} · Browser PWA`
+                            : trustedPeer
+                              ? `${trustedPeer.online ? "online" : "offline"} · ${displayForDid(trustedPeer.did, trustedPeer.peerId)}`
+                              : callUnavailableReason}
                         </span>
                       </div>
                     </button>

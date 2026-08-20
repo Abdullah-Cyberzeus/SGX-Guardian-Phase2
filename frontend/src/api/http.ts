@@ -36,6 +36,7 @@ export function operationId(): string {
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = (init.method ?? "GET").toUpperCase();
   const headers = new Headers(init.headers);
+  if (!headers.has("X-SGX-Client")) headers.set("X-SGX-Client", "guardian-pwa");
   if (init.body != null && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (authToken() && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${authToken()}`);
