@@ -1091,6 +1091,14 @@ mod tests {
             .await
             .unwrap();
         manager
+            .update_session_state(
+                &session_id,
+                CallState::LocalPolicyCheck,
+                "local policy check".into(),
+            )
+            .await
+            .unwrap();
+        manager
             .update_session_state(&session_id, CallState::OfferSent, "offer".into())
             .await
             .unwrap();

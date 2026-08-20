@@ -600,7 +600,9 @@ pub async fn remove_member(
     let did = required_did(Some(&did))?;
     let revoked_vc_ids = members::remove_member(&state.node_id, &id, &did, "circle member removed")
         .map_err(map_circle_error)?;
-    if let Err(err) = refresh_and_broadcast_member_snapshot(&state, &id).await {
+    if let Err(err) =
+        refresh_and_broadcast_member_snapshot_with_extra_targets(&state, &id, &[did.clone()]).await
+    {
         tracing::warn!(
             "Circle member snapshot broadcast failed after remove circle={} subject={} error={}",
             id,
@@ -919,32 +921,15 @@ pub(crate) async fn join_remote_circle(
         .timeout(Duration::from_secs(10))
         .build()
         .map_err(|err| ApiError::Internal(format!("join client: {}", err)))?;
-    let response = client
-        .post(format!(
-            "{}/api/v1/circles/redeem",
-            owner_url.trim_end_matches('/')
-        ))
-        .json(&join_request)
-        .send()
-        .await
-        .map_err(|err| ApiError::Internal(format!("circle join request failed: {}", err)))?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "owner redeem failed".to_string());
-        return Err(ApiError::BadRequest(format!(
-            "owner redeem failed ({}): {}",
-            status, body
-        )));
-    }
-
-    let redeemed: RedeemCircleResponse = response
-        .json()
-        .await
-        .map_err(|err| ApiError::Internal(format!("redeem response parse: {}", err)))?;
+    let redeemed = redeem_with_owner_fallbacks(
+        &client,
+        &owner_url,
+        &invite_token.issuer_did,
+        &joiner.did,
+        &state.did_resolver,
+        &join_request,
+    )
+    .await?;
     crate::vc::verify::verify_vc(
         &redeemed.vc,
         &state.did_resolver,
@@ -1205,7 +1190,15 @@ pub async fn receive_member_snapshot(
     let circle_label = store::get_circle(&state.node_id, &circle_id)
         .map(|circle| circle.name)
         .unwrap_or_else(|_| circle_id.clone());
-    let snapshot = snapshot::accept_from_owner(body, &state.did_resolver)
+    let local = store::load_runtime_signing_context(&state.node_id)
+        .map(|(record, _)| record.did)
+        .map_err(map_circle_error)?;
+    let snapshot = snapshot::accept_from_owner_for_node(
+        body,
+        &state.did_resolver,
+        Some(&local),
+        Some(&state.node_id),
+    )
         .await
         .map_err(map_circle_error)?;
     for member in &snapshot.members {
@@ -1248,10 +1241,27 @@ pub(crate) async fn refresh_and_broadcast_member_snapshot(
     refresh_and_broadcast_member_snapshot_skipping(state, circle_id, None).await
 }
 
+async fn refresh_and_broadcast_member_snapshot_with_extra_targets(
+    state: &Arc<AppState>,
+    circle_id: &str,
+    extra_targets: &[String],
+) -> Result<CircleMemberSnapshot, CircleError> {
+    refresh_and_broadcast_member_snapshot_inner(state, circle_id, None, extra_targets).await
+}
+
 async fn refresh_and_broadcast_member_snapshot_skipping(
     state: &Arc<AppState>,
     circle_id: &str,
     skip_did: Option<&str>,
+) -> Result<CircleMemberSnapshot, CircleError> {
+    refresh_and_broadcast_member_snapshot_inner(state, circle_id, skip_did, &[]).await
+}
+
+async fn refresh_and_broadcast_member_snapshot_inner(
+    state: &Arc<AppState>,
+    circle_id: &str,
+    skip_did: Option<&str>,
+    extra_targets: &[String],
 ) -> Result<CircleMemberSnapshot, CircleError> {
     let (owner, km) = store::load_runtime_signing_context(&state.node_id)?;
     let circle = store::get_circle(&state.node_id, circle_id)?;
@@ -1266,7 +1276,7 @@ async fn refresh_and_broadcast_member_snapshot_skipping(
         .await
         .map_err(|error| CircleError::Invalid(format!("{error:?}")))?;
     let snapshot = snapshot::build_authoritative(circle_id, &owner, &km, members)?;
-    broadcast_member_snapshot(state, &snapshot, skip_did).await;
+    broadcast_member_snapshot(state, &snapshot, skip_did, extra_targets).await;
     Ok(snapshot)
 }
 
@@ -1274,6 +1284,7 @@ async fn broadcast_member_snapshot(
     state: &Arc<AppState>,
     snapshot: &CircleMemberSnapshot,
     skip_did: Option<&str>,
+    extra_targets: &[String],
 ) {
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
@@ -1285,11 +1296,19 @@ async fn broadcast_member_snapshot(
             return;
         }
     };
-    for member in snapshot.members.iter() {
-        if member.did == snapshot.owner_did {
+    let mut target_dids = snapshot
+        .members
+        .iter()
+        .map(|member| member.did.clone())
+        .collect::<Vec<_>>();
+    target_dids.extend(extra_targets.iter().cloned());
+    target_dids.sort();
+    target_dids.dedup();
+    for member_did in target_dids {
+        if member_did == snapshot.owner_did {
             continue;
         }
-        if skip_did == Some(member.did.as_str()) {
+        if skip_did == Some(member_did.as_str()) {
             continue;
         }
         let (owner, km) = match store::load_runtime_signing_context(&state.node_id) {
@@ -1298,7 +1317,7 @@ async fn broadcast_member_snapshot(
                 tracing::warn!(
                     "Circle member snapshot auth context failed circle={} target={} error={}",
                     snapshot.circle_id,
-                    member.did,
+                    member_did,
                     err
                 );
                 continue;
@@ -1306,19 +1325,19 @@ async fn broadcast_member_snapshot(
         };
         let timestamp = Utc::now().to_rfc3339();
         let nonce = Uuid::new_v4().to_string();
-        let canonical = match guardian_snapshot_auth_bytes(&owner.did, &timestamp, &nonce, snapshot)
-        {
-            Ok(bytes) => bytes,
-            Err(err) => {
-                tracing::warn!(
-                    "Circle member snapshot auth canonical failed circle={} target={} error={}",
-                    snapshot.circle_id,
-                    member.did,
-                    err
-                );
-                continue;
-            }
-        };
+        let canonical =
+            match guardian_snapshot_auth_bytes(&owner.did, &timestamp, &nonce, snapshot) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    tracing::warn!(
+                        "Circle member snapshot auth canonical failed circle={} target={} error={}",
+                        snapshot.circle_id,
+                        member_did,
+                        err
+                    );
+                    continue;
+                }
+            };
         let digest = Sha256::digest(&canonical);
         let signature = match km.sign(&digest) {
             Ok(signature) => signature,
@@ -1326,19 +1345,20 @@ async fn broadcast_member_snapshot(
                 tracing::warn!(
                     "Circle member snapshot auth signing failed circle={} target={} error={}",
                     snapshot.circle_id,
-                    member.did,
+                    member_did,
                     err
                 );
                 continue;
             }
         };
         let signature_b64 = general_purpose::STANDARD.encode(signature);
-        let endpoints = circle_member_delivery_endpoints(&member.did, &owner.did, &state.did_resolver).await;
+        let endpoints =
+            circle_member_delivery_endpoints(&member_did, &owner.did, &state.did_resolver).await;
         if endpoints.is_empty() {
             tracing::warn!(
                 "Circle member snapshot endpoint resolve failed circle={} target={}",
                 snapshot.circle_id,
-                member.did
+                member_did
             );
             continue;
         }
@@ -1364,7 +1384,7 @@ async fn broadcast_member_snapshot(
                         "Circle member snapshot delivered circle={} version={} target={}",
                         snapshot.circle_id,
                         snapshot.version,
-                        member.did
+                        member_did
                     );
                     break;
                 }
@@ -1377,7 +1397,7 @@ async fn broadcast_member_snapshot(
                     tracing::warn!(
                         "Circle member snapshot delivery rejected circle={} target={} endpoint={} status={} body={}",
                         snapshot.circle_id,
-                        member.did,
+                        member_did,
                         endpoint,
                         status,
                         body
@@ -1387,7 +1407,7 @@ async fn broadcast_member_snapshot(
                     tracing::warn!(
                         "Circle member snapshot delivery failed circle={} target={} endpoint={} error={}",
                         snapshot.circle_id,
-                        member.did,
+                        member_did,
                         endpoint,
                         err
                     );
@@ -1418,13 +1438,20 @@ async fn circle_member_delivery_endpoints(
 }
 
 async fn deliver_invite(state: &Arc<AppState>, token: &InviteToken) -> Result<(), CircleError> {
-    let endpoint = invite::resolve_circle_endpoint(&token.target_did, &state.did_resolver).await?;
     let (issuer, km) = store::load_runtime_signing_context(&state.node_id)
         .map_err(|err| CircleError::Invalid(format!("service auth signing context: {}", err)))?;
     if issuer.did != token.issuer_did {
         return Err(CircleError::Invalid(format!(
             "service auth DID {} does not match invite issuer {}",
             issuer.did, token.issuer_did
+        )));
+    }
+    let endpoints =
+        invite_delivery_endpoints(&token.target_did, &issuer.did, &state.did_resolver).await;
+    if endpoints.is_empty() {
+        return Err(CircleError::Invalid(format!(
+            "no reachable invite endpoint candidates for {}",
+            token.target_did
         )));
     }
     let timestamp = Utc::now().to_rfc3339();
@@ -1440,51 +1467,221 @@ async fn deliver_invite(state: &Arc<AppState>, token: &InviteToken) -> Result<()
         .timeout(Duration::from_secs(10))
         .build()
         .map_err(|err| CircleError::Invalid(format!("invite delivery client: {}", err)))?;
-    let response = client
-        .post(format!(
-            "{}/api/v1/circles/invites/inbox",
-            endpoint.trim_end_matches('/')
-        ))
-        .header(
-            reqwest::header::AUTHORIZATION,
-            format!("{}{}", GUARDIAN_SERVICE_AUTH_SCHEME, signature_b64),
-        )
-        .header(HEADER_GUARDIAN_DID, issuer.did)
-        .header(HEADER_GUARDIAN_TIMESTAMP, timestamp)
-        .header(HEADER_GUARDIAN_NONCE, nonce)
-        .json(token)
-        .send()
-        .await
-        .map_err(|err| {
-            CircleError::Invalid(format!(
-                "unreachable endpoint for {} at {}: {}",
-                token.target_did, endpoint, err
+    let mut failures = Vec::new();
+    for endpoint in endpoints {
+        let response = client
+            .post(format!(
+                "{}/api/v1/circles/invites/inbox",
+                endpoint.trim_end_matches('/')
             ))
-        })?;
-    if response.status().is_success() {
-        tracing::info!(
-            "Circle invite delivered target_did={} endpoint={}",
-            token.target_did,
-            endpoint
-        );
-        Ok(())
-    } else {
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "delivery failed".to_string());
-        tracing::warn!(
-            "remote delivery failed target_did={} status={} body={}",
-            token.target_did,
-            status,
-            body
-        );
-        Err(CircleError::Invalid(format!(
-            "invite delivery failed for {} ({}): {}",
-            token.target_did, status, body
-        )))
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("{}{}", GUARDIAN_SERVICE_AUTH_SCHEME, signature_b64),
+            )
+            .header(HEADER_GUARDIAN_DID, issuer.did.clone())
+            .header(HEADER_GUARDIAN_TIMESTAMP, timestamp.clone())
+            .header(HEADER_GUARDIAN_NONCE, nonce.clone())
+            .json(token)
+            .send()
+            .await;
+        match response {
+            Ok(response) if response.status().is_success() => {
+                tracing::info!(
+                    "Circle invite delivered target_did={} endpoint={}",
+                    token.target_did,
+                    endpoint
+                );
+                return Ok(());
+            }
+            Ok(response) => {
+                let status = response.status();
+                let body = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "delivery failed".to_string());
+                tracing::warn!(
+                    "remote invite delivery failed target_did={} endpoint={} status={} body={}",
+                    token.target_did,
+                    endpoint,
+                    status,
+                    body
+                );
+                failures.push(format!("{} status={} body={}", endpoint, status, body));
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "invite delivery endpoint unreachable target_did={} endpoint={} error={}",
+                    token.target_did,
+                    endpoint,
+                    err
+                );
+                failures.push(format!("{} error={}", endpoint, err));
+            }
+        }
     }
+    Err(CircleError::Invalid(format!(
+        "invite delivery failed for {} after fallback attempts: {}",
+        token.target_did,
+        failures.join("; ")
+    )))
+}
+
+async fn invite_delivery_endpoints(
+    target_did: &str,
+    self_did: &str,
+    resolver: &crate::did::Resolver,
+) -> Vec<String> {
+    let mut endpoints = circle_member_delivery_endpoints(target_did, self_did, resolver).await;
+    for peer in crate::crl::gossip::engine::active_gossip_peers(self_did) {
+        if peer.did != target_did {
+            continue;
+        }
+        push_unique_endpoint(&mut endpoints, format!("http://sgx-{}:8443", peer.node_name));
+        push_container_host_port(&mut endpoints, &peer.node_name);
+    }
+    if let Ok(primary) = invite::resolve_circle_endpoint(target_did, resolver).await {
+        for endpoint in container_endpoint_fallbacks(&primary) {
+            push_unique_endpoint(&mut endpoints, endpoint);
+        }
+    }
+    endpoints
+}
+
+async fn redeem_with_owner_fallbacks(
+    client: &reqwest::Client,
+    owner_url: &str,
+    owner_did: &str,
+    self_did: &str,
+    resolver: &crate::did::Resolver,
+    join_request: &JoinRequest,
+) -> Result<RedeemCircleResponse, ApiError> {
+    let mut endpoints = Vec::new();
+    push_unique_endpoint(&mut endpoints, owner_url.trim_end_matches('/').to_string());
+    for endpoint in container_endpoint_fallbacks(owner_url) {
+        push_unique_endpoint(&mut endpoints, endpoint);
+    }
+    for endpoint in invite_delivery_endpoints(owner_did, self_did, resolver).await {
+        push_unique_endpoint(&mut endpoints, endpoint);
+    }
+
+    let mut failures = Vec::new();
+    for endpoint in endpoints {
+        let response = client
+            .post(format!(
+                "{}/api/v1/circles/redeem",
+                endpoint.trim_end_matches('/')
+            ))
+            .json(join_request)
+            .send()
+            .await;
+        match response {
+            Ok(response) if response.status().is_success() => {
+                return response
+                    .json()
+                    .await
+                    .map_err(|err| ApiError::Internal(format!("redeem response parse: {}", err)));
+            }
+            Ok(response) => {
+                let status = response.status();
+                let body = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "owner redeem failed".to_string());
+                failures.push(format!("{} status={} body={}", endpoint, status, body));
+            }
+            Err(err) => {
+                failures.push(format!("{} error={}", endpoint, err));
+            }
+        }
+    }
+
+    Err(ApiError::Internal(format!(
+        "circle join request failed after fallback attempts: {}",
+        failures.join("; ")
+    )))
+}
+
+fn push_unique_endpoint(endpoints: &mut Vec<String>, endpoint: String) {
+    if !endpoints.iter().any(|existing| existing == &endpoint) {
+        endpoints.push(endpoint);
+    }
+}
+
+fn push_container_host_port(endpoints: &mut Vec<String>, node_name: &str) {
+    let port = match node_name {
+        "nodeA" => std::env::var("NODEA_REST_PORT").unwrap_or_else(|_| "18443".to_string()),
+        "nodeB" => std::env::var("NODEB_REST_PORT").unwrap_or_else(|_| "28443".to_string()),
+        "nodeC" => std::env::var("NODEC_REST_PORT").unwrap_or_else(|_| "38443".to_string()),
+        _ => return,
+    };
+    match node_name {
+        "nodeA" => push_unique_endpoint(endpoints, "http://172.31.250.10:8443".to_string()),
+        "nodeB" => push_unique_endpoint(endpoints, "http://172.31.250.11:8443".to_string()),
+        "nodeC" => push_unique_endpoint(endpoints, "http://172.31.250.12:8443".to_string()),
+        _ => {}
+    }
+    for host in container_host_candidates() {
+        push_unique_endpoint(endpoints, format!("http://{}:{}", host, port));
+    }
+}
+
+fn container_endpoint_fallbacks(endpoint: &str) -> Vec<String> {
+    let Some(host) = endpoint
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .split('/')
+        .next()
+        .and_then(|authority| authority.split(':').next())
+    else {
+        return Vec::new();
+    };
+    let Some(last) = host
+        .strip_prefix("192.168.100.")
+        .and_then(|value| value.parse::<u8>().ok())
+    else {
+        return Vec::new();
+    };
+    let node_name = match last {
+        1 => "nodeA",
+        2 => "nodeB",
+        3 => "nodeC",
+        _ => return Vec::new(),
+    };
+    let mut endpoints = Vec::new();
+    push_unique_endpoint(&mut endpoints, format!("http://sgx-{}:8443", node_name));
+    push_container_host_port(&mut endpoints, node_name);
+    endpoints
+}
+
+fn container_host_candidates() -> Vec<String> {
+    let mut hosts = Vec::new();
+    for key in [
+        "SGX_CONTAINER_HOST",
+        "SGX_GUARDIAN_CONTAINER_HOST",
+        "SGX_PUBLIC_API_URL",
+    ] {
+        let Ok(raw) = std::env::var(key) else {
+            continue;
+        };
+        let host = raw
+            .trim()
+            .trim_start_matches("http://")
+            .trim_start_matches("https://")
+            .split('/')
+            .next()
+            .and_then(|authority| authority.split(':').next())
+            .unwrap_or("")
+            .trim();
+        if !host.is_empty() && !hosts.iter().any(|existing| existing == host) {
+            hosts.push(host.to_string());
+        }
+    }
+    for host in ["host.docker.internal", "127.0.0.1"] {
+        if !hosts.iter().any(|existing| existing == host) {
+            hosts.push(host.to_string());
+        }
+    }
+    hosts
 }
 
 async fn verify_guardian_service_auth(

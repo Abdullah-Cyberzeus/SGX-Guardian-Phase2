@@ -1,6 +1,7 @@
 import api from './api';
 
-// NMAP Network Discovery (Sprint 6, NMP-series) — /api/v1/discovery/*
+// Guardian Network Discovery (Sprint 6, NMP-series) — /api/v1/discovery/*
+const DISCOVERY_SCAN_TIMEOUT_MS = 10 * 60 * 1000;
 
 // ── Device inventory (GET /discovery/devices) ──────────────────────────────────
 
@@ -13,7 +14,7 @@ export interface OpenPort {
   scripts: unknown[];
 }
 
-/** A single discovered device record from the NMAP inventory. */
+/** A single discovered device record from the Guardian inventory. */
 export interface ConnectedDevice {
   device_id: string;
   ip: string;
@@ -255,7 +256,7 @@ function withTarget(path: string, target?: string): string {
 // ── Service ────────────────────────────────────────────────────────────────────
 
 export const discoveryService = {
-  // GET /api/v1/discovery/devices — full NMAP device inventory
+  // GET /api/v1/discovery/devices — full Guardian device inventory
   getDevices: () => api.get<ConnectedDevice[]>('/discovery/devices'),
 
   // GET /api/v1/discovery/devices/{device_id} — full device detail + risk data
@@ -278,16 +279,32 @@ export const discoveryService = {
   getUnauthorizedAlias: () => api.get<ConnectedDevice[]>('/discovery/unauthorized'),
 
   // POST /api/v1/discovery/scan — run scan using default ad-hoc intensity
-  scan: (target?: string) => api.post<DiscoveryScanResponse>(withTarget('/discovery/scan', target)),
+  scan: (target?: string) =>
+    api.request<DiscoveryScanResponse>(withTarget('/discovery/scan', target), {
+      method: 'POST',
+      timeoutMs: DISCOVERY_SCAN_TIMEOUT_MS,
+    }),
 
   // POST /api/v1/discovery/scan/stealth
-  scanStealth: (target?: string) => api.post<DiscoveryScanResponse>(withTarget('/discovery/scan/stealth', target)),
+  scanStealth: (target?: string) =>
+    api.request<DiscoveryScanResponse>(withTarget('/discovery/scan/stealth', target), {
+      method: 'POST',
+      timeoutMs: DISCOVERY_SCAN_TIMEOUT_MS,
+    }),
 
   // POST /api/v1/discovery/scan/standard
-  scanStandard: (target?: string) => api.post<DiscoveryScanResponse>(withTarget('/discovery/scan/standard', target)),
+  scanStandard: (target?: string) =>
+    api.request<DiscoveryScanResponse>(withTarget('/discovery/scan/standard', target), {
+      method: 'POST',
+      timeoutMs: DISCOVERY_SCAN_TIMEOUT_MS,
+    }),
 
   // POST /api/v1/discovery/scan/aggressive
-  scanAggressive: (target?: string) => api.post<DiscoveryScanResponse>(withTarget('/discovery/scan/aggressive', target)),
+  scanAggressive: (target?: string) =>
+    api.request<DiscoveryScanResponse>(withTarget('/discovery/scan/aggressive', target), {
+      method: 'POST',
+      timeoutMs: DISCOVERY_SCAN_TIMEOUT_MS,
+    }),
 
   /** Convenience dispatcher: run a scan at an explicit intensity (with an
    *  optional target IP/CIDR override), or the configured default. */
@@ -315,7 +332,7 @@ export const discoveryService = {
   putWhitelist: (doc: WhitelistDoc) =>
     api.put<WhitelistDoc>('/discovery/whitelist', doc),
 
-  // GET /api/v1/discovery/schedule — scheduled NMAP discovery configuration
+  // GET /api/v1/discovery/schedule — scheduled Guardian discovery configuration
   getSchedule: () => api.get<DiscoverySchedule>('/discovery/schedule'),
 
   // PUT /api/v1/discovery/schedule — update scheduled discovery configuration

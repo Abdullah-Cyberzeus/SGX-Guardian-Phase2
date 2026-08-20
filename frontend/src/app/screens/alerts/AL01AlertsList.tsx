@@ -11,6 +11,7 @@ import { ApiError } from "../../services/api";
 import { advisoryService, type AdvisoryRules, type RemediationRecommendation } from "../../services/advisoryService";
 import { managedDeviceService, type ManagedDevice } from "../../services/managedDeviceService";
 import { guardianAlertHeading, type Alert } from "../../services/alertService";
+import { guardianDisplayText } from "../../utils/displayText";
 import { ThreatProtectionPanel } from "./AL08ThreatProtection";
 import { AL09LiveAttackTopology } from "./AL09LiveAttackTopology";
 import { SeverityBadge, StatusBadge } from "../../components/SeverityBadge";
@@ -125,8 +126,8 @@ function RecommendationCard({ state }: { state: RecommendationState }) {
         </span>
       </div>
 
-      <h3 style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)", lineHeight: 1.35 }}>{rec.title}</h3>
-      <p className="mt-2" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", lineHeight: 1.65 }}>{rec.summary}</p>
+      <h3 style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)", lineHeight: 1.35 }}>{guardianDisplayText(rec.title)}</h3>
+      <p className="mt-2" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", lineHeight: 1.65 }}>{guardianDisplayText(rec.summary)}</p>
 
       <div className="mt-4">
         <div className="flex items-center justify-between mb-1.5">
@@ -152,12 +153,12 @@ function RecommendationCard({ state }: { state: RecommendationState }) {
                 <span className="rounded-md flex items-center justify-center flex-shrink-0" style={{ width: "24px", height: "24px", backgroundColor: "color-mix(in srgb, var(--primary) 16%, transparent)", color: "var(--primary)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)" }}>{step.order || index + 1}</span>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)", lineHeight: 1.5 }}>{step.action}</p>
+                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)", lineHeight: 1.5 }}>{guardianDisplayText(step.action)}</p>
                     <span className="rounded-full px-2 py-0.5" style={{ backgroundColor: step.automatable ? "color-mix(in srgb, var(--chart-2) 13%, transparent)" : "color-mix(in srgb, var(--chart-5) 13%, transparent)", border: `1px solid ${step.automatable ? "color-mix(in srgb, var(--chart-2) 25%, transparent)" : "color-mix(in srgb, var(--chart-5) 25%, transparent)"}`, color: step.automatable ? "var(--chart-2)" : "var(--chart-5)", fontFamily: "Inter, sans-serif", fontSize: "10px", fontWeight: "var(--font-weight-semibold)" }}>
                       {step.automatable ? "Automatable" : "Manual"}
                     </span>
                   </div>
-                  <p className="mt-1" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.55 }}>{step.rationale}</p>
+                  <p className="mt-1" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.55 }}>{guardianDisplayText(step.rationale)}</p>
                 </div>
               </li>
             ))}
@@ -170,7 +171,7 @@ function RecommendationCard({ state }: { state: RecommendationState }) {
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "8px" }}>CONTEXT / EVIDENCE</p>
           <div className="flex flex-col gap-1.5">
             {rec.context.map((line, index) => (
-              <p key={index} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>• {line}</p>
+              <p key={index} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>• {guardianDisplayText(line)}</p>
             ))}
           </div>
         </div>
@@ -179,7 +180,7 @@ function RecommendationCard({ state }: { state: RecommendationState }) {
       {rec.references.length > 0 && (
         <div className="mt-4 flex flex-wrap gap-1.5">
           {rec.references.map((ref) => (
-            <span key={ref} className="rounded-md px-2 py-1" style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)", color: "var(--foreground)", fontFamily: "JetBrains Mono, monospace", fontSize: "10px" }}>{ref}</span>
+            <span key={ref} className="rounded-md px-2 py-1" style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)", color: "var(--foreground)", fontFamily: "JetBrains Mono, monospace", fontSize: "10px" }}>{guardianDisplayText(ref)}</span>
           ))}
         </div>
       )}
@@ -209,7 +210,7 @@ function DeviceContextCard({ alert, recommendation, devices }: { alert: AlertVie
         {rows.map((row) => (
           <div key={row.label} className="rounded-md p-2.5" style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }}>
             <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{row.label}</p>
-            <p className="mt-1" style={{ fontFamily: row.mono ? "JetBrains Mono, monospace" : "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--foreground)", wordBreak: "break-word" }}>{compactValue(row.value)}</p>
+            <p className="mt-1" style={{ fontFamily: row.mono ? "JetBrains Mono, monospace" : "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--foreground)", wordBreak: "break-word" }}>{guardianDisplayText(compactValue(row.value))}</p>
           </div>
         ))}
       </div>
@@ -226,7 +227,7 @@ function DeviceContextCard({ alert, recommendation, devices }: { alert: AlertVie
         <div className="mt-3">
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", fontWeight: "var(--font-weight-semibold)", marginBottom: "6px" }}>Risk details</p>
           {riskReasons.slice(0, 5).map((reason, index) => (
-            <p key={index} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>• {reason}</p>
+            <p key={index} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>• {guardianDisplayText(reason)}</p>
           ))}
         </div>
       )}
@@ -683,14 +684,14 @@ export function AL01AlertsList() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
-  // Top-level view: alert list, live topology, and the Suricata Threat Protection panel.
+  // Top-level view: alert list, live topology, and the Guardian Threat Protection panel.
   const [mainView, setMainView] = useState<"list" | "topology" | "threat">("list");
 
   // Fetch alerts from API with fallback to mock data
   const { data: alertsData, loading } = useAlerts();
-  // Suricata IDS status feeds the intel card + the Threat Protection tab indicator.
+  // Guardian IDS status feeds the intel card + the Threat Protection tab indicator.
   const { data: threatStatus } = useThreatStatus();
-  const suricataActive = threatStatus?.suricata?.toLowerCase() === "active";
+  const guardianActive = threatStatus?.suricata?.toLowerCase() === "active";
 
   const alerts = useMemo(() => {
     return (alertsData?.alerts ?? []) as AlertView[];
@@ -775,7 +776,7 @@ export function AL01AlertsList() {
                 )}
                 {t.label}
                 {t.key === "threat" && threatStatus && (
-                  <span title={`Guardian ${threatStatus.suricata}`} style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: suricataActive ? "var(--chart-2)" : "var(--muted-foreground)", display: "inline-block" }} />
+                  <span title={`Guardian ${threatStatus.suricata}`} style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: guardianActive ? "var(--chart-2)" : "var(--muted-foreground)", display: "inline-block" }} />
                 )}
               </button>
             );

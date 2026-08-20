@@ -128,7 +128,7 @@ export interface ModbusScenario {
   targetSensorId: ModbusSensor["id"];
   registerAddress: string;
   attackVector: string;
-  suricataAlert: string;
+  guardianAlert: string;
   matcher: RegExp;
 }
 
@@ -201,7 +201,7 @@ export const MODBUS_SCENARIOS: ModbusScenario[] = [
     targetSensorId: "temperature",
     registerAddress: "Reg 0",
     attackVector: "Unauthorized write spoofs the temperature value.",
-    suricataAlert: "SGX-OT: MODBUS UNAUTHORIZED WRITE",
+    guardianAlert: "SGX-OT: MODBUS UNAUTHORIZED WRITE",
     matcher: /\bFC\s*6\b|\bFC6\b|unauthorized write|write single register|temperature/i,
   },
   {
@@ -212,7 +212,7 @@ export const MODBUS_SCENARIOS: ModbusScenario[] = [
     targetSensorId: "pressure",
     registerAddress: "Reg 10-19",
     attackVector: "Bulk coil/register write overwrites the pressure range.",
-    suricataAlert: "SGX-OT: MODBUS COIL WRITE BULK",
+    guardianAlert: "SGX-OT: MODBUS COIL WRITE BULK",
     matcher: /\bFC\s*15\b|\bFC15\b|bulk|write multiple coils|coil write|pressure/i,
   },
   {
@@ -223,7 +223,7 @@ export const MODBUS_SCENARIOS: ModbusScenario[] = [
     targetSensorId: "flow",
     registerAddress: "Slave ID 3",
     attackVector: "Firmware upload attempt targets the flow meter path.",
-    suricataAlert: "SGX-OT: MODBUS FIRMWARE UPLOAD",
+    guardianAlert: "SGX-OT: MODBUS FIRMWARE UPLOAD",
     matcher: /\bFC\s*65\b|\bFC65\b|firmware|upload|flow meter|flow/i,
   },
   {
@@ -234,7 +234,7 @@ export const MODBUS_SCENARIOS: ModbusScenario[] = [
     targetSensorId: "vibration",
     registerAddress: "Reg 30-39",
     attackVector: "Exception responses flood the vibration sensor path.",
-    suricataAlert: "SGX-OT: MODBUS EXCEPTION FLOOD",
+    guardianAlert: "SGX-OT: MODBUS EXCEPTION FLOOD",
     matcher: /\bFC\s*129\b|\bFC129\b|exception flood|exception response|100\/min|vibration/i,
   },
 ];

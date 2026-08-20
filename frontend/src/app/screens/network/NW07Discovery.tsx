@@ -278,7 +278,7 @@ function DeviceCard({
 
 // ── Device detail dialog ──────────────────────────────────────────────────────
 
-/** Best-effort renderer for an NMAP script result. Backend returns
+/** Best-effort renderer for a Guardian script result. Backend returns
  *  `unknown[]`, but real script entries usually look like `{id, output}`. */
 function ScriptBlock({ script }: { script: unknown }) {
   let id: string;

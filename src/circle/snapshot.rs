@@ -82,9 +82,29 @@ pub fn cache(snapshot: CircleMemberSnapshot) {
     }
 }
 
+pub fn clear(circle_id: &str) -> Result<(), CircleError> {
+    if let Ok(mut guard) = SNAPSHOT_CACHE.write() {
+        guard.remove(circle_id);
+    }
+    let path = persistence::snapshot_path(circle_id);
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
 pub async fn accept_from_owner(
     snapshot: CircleMemberSnapshot,
     resolver: &Resolver,
+) -> Result<CircleMemberSnapshot, CircleError> {
+    accept_from_owner_for_node(snapshot, resolver, None, None).await
+}
+
+pub async fn accept_from_owner_for_node(
+    snapshot: CircleMemberSnapshot,
+    resolver: &Resolver,
+    local_did: Option<&str>,
+    node_id: Option<&str>,
 ) -> Result<CircleMemberSnapshot, CircleError> {
     if snapshot.circle_id.trim().is_empty() {
         return Err(CircleError::Invalid(
@@ -121,6 +141,17 @@ pub async fn accept_from_owner(
                 "stale circle member snapshot version {} <= {}",
                 snapshot.version, existing.version
             )));
+        }
+    }
+    if let Some(local_did) = local_did {
+        if local_did != snapshot.owner_did
+            && !snapshot.members.iter().any(|member| member.did == local_did)
+        {
+            if let Some(node_id) = node_id {
+                let _ = crate::circle::store::delete_circle(node_id, &snapshot.circle_id);
+            }
+            clear(&snapshot.circle_id)?;
+            return Ok(snapshot);
         }
     }
     save(&snapshot)?;

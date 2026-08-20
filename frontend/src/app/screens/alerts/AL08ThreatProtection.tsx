@@ -28,6 +28,7 @@ import {
   useThreatConfig,
 } from "../../hooks/useApiData";
 import { threatService } from "../../services/threatService";
+import { guardianDisplayText } from "../../utils/displayText";
 import type {
   ThreatAlert,
   ThreatSeverity,
@@ -36,10 +37,6 @@ import type {
   ThreatActionResponse,
 } from "../../services/threatService";
 import { toast } from "sonner";
-
-function guardianDisplayText(value: string) {
-  return value.replace(/suricata|nmap/gi, "Guardian");
-}
 
 type Tab = "overview" | "alerts" | "blocks" | "config";
 
@@ -152,7 +149,7 @@ function SeverityBadge({ severity }: { severity: string }) {
   );
 }
 
-function suricataVisual(state: string) {
+function guardianVisual(state: string) {
   const s = (state || "").toLowerCase();
   if (s === "active") return { color: "var(--chart-2)", label: "Active", Icon: ShieldCheck };
   if (s === "inactive") return { color: "var(--destructive)", label: "Inactive", Icon: ShieldAlert };
@@ -166,7 +163,7 @@ function OverviewTab({ onManageConfig }: { onManageConfig: () => void }) {
   const [busy, setBusy] = useState<null | "start" | "validate" | "rules">(null);
 
   const s = status.data;
-  const sv = suricataVisual(s?.suricata ?? "");
+  const sv = guardianVisual(s?.suricata ?? "");
 
   const run = async (
     kind: "start" | "validate" | "rules",
@@ -385,7 +382,7 @@ function AlertsTab({ onBlocked }: { onBlocked: () => void }) {
       </div>
 
       {is404 ? (
-        <EmptyBox icon={ShieldCheck} title="No IDS alerts yet" subtitle="Guardian hasn't produced any events. Alerts appear here as the engine detects threats." />
+        <EmptyBox icon={ShieldCheck} title="No Guardian alerts yet" subtitle="Guardian hasn't produced any events. Alerts appear here as the engine detects threats." />
       ) : alertsQuery.error && !alertsQuery.data ? (
         <EmptyBox icon={ShieldQuestion} title="Couldn't load alerts" subtitle={guardianDisplayText(alertsQuery.error.message)} />
       ) : shown.length === 0 ? (
@@ -470,7 +467,7 @@ function ThreatAlertCard({ alert, blocked, blocking, onBlock, onOpen }: { alert:
   );
 }
 
-/** Full detail modal for a single Suricata IDS alert. */
+/** Full detail modal for a single Guardian IDS alert. */
 function ThreatAlertDetailDialog({ alert, blocked, blocking, onClose, onBlock }: { alert: ThreatAlert | null; blocked: boolean; blocking: boolean; onClose: () => void; onBlock: () => void }) {
   if (!alert) return null;
   const rows = [
@@ -765,12 +762,12 @@ function ConfigTab({ onSaved }: { onSaved: () => void }) {
       <div className="rounded-lg border overflow-hidden" style={{ borderColor: "var(--border)" }}>
         {[
           { label: "Interface", value: form.interface || "auto" },
-          { label: "EVE log", value: guardianDisplayText(form.eve_path) },
-          { label: "Guardian YAML", value: guardianDisplayText(form.suricata_yaml) },
+          { label: "EVE log", value: form.eve_path },
+          { label: "Guardian YAML", value: form.suricata_yaml },
         ].map((row, i, arr) => (
           <div key={row.label} className="flex items-center justify-between px-3 py-2.5" style={{ backgroundColor: "var(--card)", borderBottom: i < arr.length - 1 ? "1px solid var(--border)" : undefined }}>
             <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{row.label}</span>
-            <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--foreground)", wordBreak: "break-all", textAlign: "right", marginLeft: 12 }}>{row.value}</span>
+            <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--foreground)", wordBreak: "break-all", textAlign: "right", marginLeft: 12 }}>{guardianDisplayText(row.value)}</span>
           </div>
         ))}
       </div>
