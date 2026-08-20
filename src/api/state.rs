@@ -368,4 +368,57 @@ impl AppState {
             .build()
             .expect("authorized API test client")
     }
+
+    /// Seeds an active browser Member of `circle_id` and returns a
+    /// `reqwest::Client` carrying a valid bearer token for it, for
+    /// integration tests exercising member-scoped authorization (roster
+    /// privacy, Circle-restricted chat/call/file access) rather than the
+    /// full-access Owner client above.
+    pub async fn member_client_for_tests(state: &Arc<Self>, circle_id: &str) -> reqwest::Client {
+        use crate::api::auth::store::NewMemberRegistration;
+
+        let registration_id = uuid::Uuid::new_v4().to_string();
+        let fingerprint = crate::api::handlers::pwa::guardian_fingerprint(&state.device_pubkey_point);
+        let user = state
+            .admin
+            .users
+            .create_or_reactivate_member(NewMemberRegistration {
+                name: "API Test Member".into(),
+                email: format!("api-test-member-{}@example.com", uuid::Uuid::new_v4()),
+                pw_hash: "test-hash".into(),
+                circle_id: circle_id.to_string(),
+                browser_registration_id: registration_id,
+                guardian_fingerprint: fingerprint,
+                registration_expires_at: chrono::Utc::now().timestamp() + 3600,
+                invite_id: uuid::Uuid::new_v4().to_string(),
+                pending_approval: false,
+            })
+            .await
+            .expect("seed API test member");
+        let (token, _, session_rec) = crate::api::auth::session::issue(
+            state.signer.clone(),
+            &state.device_did,
+            &user,
+            std::time::Duration::from_secs(300),
+        )
+        .await
+        .expect("issue API test member token");
+        state
+            .admin
+            .sessions
+            .put(session_rec)
+            .await
+            .expect("store API test member session");
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))
+                .expect("authorization header"),
+        );
+        reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .expect("authorized API test member client")
+    }
 }

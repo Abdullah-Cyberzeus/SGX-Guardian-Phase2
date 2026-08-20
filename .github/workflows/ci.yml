@@ -60,6 +60,24 @@ jobs:
       - name: Run coverage
         run: cargo tarpaulin --out Xml -- --test-threads 1
 
+      # Step 7.1: Phase 12 — enforce 85% coverage on the modules the plan
+      # calls out by name (credential issuance/revocation, idempotency,
+      # Circle membership/invites): the full-repo number above is report-only
+      # and not gated, since much of this codebase (device drivers, network
+      # discovery, UI plumbing) isn't meaningfully unit-testable to that bar.
+      # Scope intentionally starts narrow, matching what's confirmed under
+      # real test coverage today — widen `--include-files` as more modules
+      # earn dedicated tests, rather than loosening the threshold.
+      - name: Enforce coverage threshold (crypto/validation/messaging modules)
+        run: |
+          cargo tarpaulin --out Stdout --fail-under 85 \
+            --include-files 'src/vc/issue.rs' \
+            --include-files 'src/vc/status_list.rs' \
+            --include-files 'src/api/idempotency.rs' \
+            --include-files 'src/circle/members.rs' \
+            --include-files 'src/circle/invite.rs' \
+            -- --test-threads 1
+
       # Step 7.5 – Semgrep Static Analysis (SAST)
       - name: Run Semgrep scan
         uses: returntocorp/semgrep-action@v1

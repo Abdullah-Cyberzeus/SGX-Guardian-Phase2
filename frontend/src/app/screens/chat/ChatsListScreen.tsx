@@ -126,7 +126,7 @@ export function ChatsListScreen() {
       <div className="mx-auto w-full max-w-3xl divide-y divide-border">
         {loading && <div className="flex items-center justify-center gap-2 p-12 text-sm text-muted-foreground"><Loader2 size={20} className="animate-spin" /> Loading chats…</div>}
         {!loading && error && cachedPeers.length === 0 && circleChats.length === 0 && <div className="p-8 text-center text-sm text-destructive">Chats could not be loaded.</div>}
-        {!loading && visible.length === 0 && <div className="flex flex-col items-center gap-3 p-12 text-center"><MessageSquare size={40} className="text-muted-foreground" /><p className="text-sm font-semibold">{query ? "No chats found" : tab === "individual" ? "No individual chats yet" : "No group chats yet"}</p><p className="max-w-xs text-xs text-muted-foreground">{tab === "individual" ? "Peer chats appear after attestation." : "Circle chats appear here after their first group message."}</p></div>}
+        {!loading && visible.length === 0 && <div className="flex flex-col items-center gap-3 p-12 text-center"><MessageSquare size={40} className="text-muted-foreground" /><p className="text-sm font-semibold">{query ? "No chats found" : tab === "individual" ? "No individual chats yet" : "No group chats yet"}</p><p className="max-w-xs text-xs text-muted-foreground">{tab === "individual" ? "Peer chats appear after attestation." : "Circle chats appear here once you join a group."}</p></div>}
         {visible.map((row) => {
           const { preview, unread, name } = row;
           const peer = row.kind === "peer" ? row.peer : null;

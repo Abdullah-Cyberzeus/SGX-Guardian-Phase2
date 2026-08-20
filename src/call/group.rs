@@ -1057,6 +1057,7 @@ mod tests {
         let records = history.list();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].outcome, "cancelled");
+        assert_eq!(records[0].participant_ids, vec!["nodeA"]);
     }
 
     #[tokio::test]

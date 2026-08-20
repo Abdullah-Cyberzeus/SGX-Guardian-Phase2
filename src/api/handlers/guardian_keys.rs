@@ -45,7 +45,7 @@ pub struct GenerateGuardianKeyRequest {
     pub force: bool,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct KeyBackup {
     #[serde(rename = "originalPath")]
     pub original_path: String,
@@ -53,7 +53,7 @@ pub struct KeyBackup {
     pub backup_path: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct GuardianKeyGenerateResponse {
     pub success: bool,
     #[serde(rename = "alreadyExists")]
@@ -103,8 +103,21 @@ pub async fn status(
 /// POST /api/v1/guardian/key/generate
 pub async fn generate(
     State(s): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<GenerateGuardianKeyRequest>,
 ) -> Result<Json<GuardianKeyGenerateResponse>, ApiError> {
+    // A retried `force:true` request must not rotate the key twice — the
+    // second rotation would invalidate the key the first call just issued,
+    // stranding anything (like this response) that already captured it.
+    let idempotency_key = crate::api::idempotency::header_key(&headers);
+    if let Some(key) = idempotency_key.as_deref() {
+        if let Some(cached) = crate::api::idempotency::lookup::<GuardianKeyGenerateResponse>(
+            "guardian_keys:generate",
+            key,
+        ) {
+            return Ok(Json(cached));
+        }
+    }
     let paths = guardian_key_paths();
     let private_exists = Path::new(&paths.private_key_path).exists();
     let public_exists = Path::new(&paths.public_key_path).exists();
@@ -119,7 +132,7 @@ pub async fn generate(
             AuditAction::Rejected,
             msg,
         );
-        return Ok(Json(GuardianKeyGenerateResponse {
+        let response = GuardianKeyGenerateResponse {
             success: false,
             already_exists: true,
             provider: GUARDIAN_PROVIDER.to_string(),
@@ -131,7 +144,11 @@ pub async fn generate(
             restart_required: false,
             fingerprint,
             backups: Vec::new(),
-        }));
+        };
+        if let Some(key) = idempotency_key.as_deref() {
+            crate::api::idempotency::store("guardian_keys:generate", key, &response);
+        }
+        return Ok(Json(response));
     }
 
     let mut backups = Vec::new();
@@ -215,6 +232,9 @@ pub async fn generate(
         );
     }
 
+    if let Some(key) = idempotency_key.as_deref() {
+        crate::api::idempotency::store("guardian_keys:generate", key, &response);
+    }
     Ok(Json(response))
 }
 
@@ -556,6 +576,7 @@ mod tests {
 
         let Json(resp) = generate(
             State(test_state()),
+            axum::http::HeaderMap::new(),
             Json(GenerateGuardianKeyRequest::default()),
         )
         .await
@@ -587,6 +608,7 @@ mod tests {
 
         let Json(resp) = generate(
             State(test_state()),
+            axum::http::HeaderMap::new(),
             Json(GenerateGuardianKeyRequest { force: false }),
         )
         .await
@@ -612,6 +634,7 @@ mod tests {
 
         let Json(resp) = generate(
             State(test_state()),
+            axum::http::HeaderMap::new(),
             Json(GenerateGuardianKeyRequest { force: true }),
         )
         .await
@@ -644,6 +667,7 @@ mod tests {
 
         let Json(resp) = generate(
             State(test_state()),
+            axum::http::HeaderMap::new(),
             Json(GenerateGuardianKeyRequest::default()),
         )
         .await
@@ -667,6 +691,7 @@ mod tests {
 
         let Json(resp) = generate(
             State(test_state()),
+            axum::http::HeaderMap::new(),
             Json(GenerateGuardianKeyRequest::default()),
         )
         .await
@@ -702,6 +727,7 @@ mod tests {
 
         let Json(resp) = generate(
             State(test_state()),
+            axum::http::HeaderMap::new(),
             Json(GenerateGuardianKeyRequest::default()),
         )
         .await

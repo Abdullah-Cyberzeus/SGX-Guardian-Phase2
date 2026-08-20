@@ -97,10 +97,12 @@ pub async fn download_attachment_from_peer(
         .map_err(|error| Error::msg(format!("gRPC connect to {addr} failed: {error}")))?;
     let mut client = ChatServiceClient::new(channel);
     let response = client
-        .get_attachment(tonic::Request::new(crate::proto::sgx::GetAttachmentRequest {
-            requester_did: local_did,
-            attachment_id: attachment_id.clone(),
-        }))
+        .get_attachment(tonic::Request::new(
+            crate::proto::sgx::GetAttachmentRequest {
+                requester_did: local_did,
+                attachment_id: attachment_id.clone(),
+            },
+        ))
         .await
         .map_err(|error| {
             Error::msg(format!(
@@ -113,78 +115,80 @@ pub async fn download_attachment_from_peer(
     if let Some(parent) = staging_path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    let result: Result<
-        (String, String, u64, String),
-        Box<dyn std::error::Error + Send + Sync>,
-    > = async {
-        let mut file = tokio::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&staging_path)
-            .await?;
-        let mut stream = response.into_inner();
-        let mut expected_name: Option<String> = None;
-        let mut expected_mime: Option<String> = None;
-        let mut expected_size: Option<u64> = None;
-        let mut expected_hash: Option<String> = None;
-        let mut received = 0u64;
-        let mut hasher = Sha256::new();
+    let result: Result<(String, String, u64, String), Box<dyn std::error::Error + Send + Sync>> =
+        async {
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&staging_path)
+                .await?;
+            let mut stream = response.into_inner();
+            let mut expected_name: Option<String> = None;
+            let mut expected_mime: Option<String> = None;
+            let mut expected_size: Option<u64> = None;
+            let mut expected_hash: Option<String> = None;
+            let mut received = 0u64;
+            let mut hasher = Sha256::new();
 
-        while let Some(chunk) = stream.message().await? {
-            if chunk.attachment_id != attachment_id {
-                return Err(Error::msg("attachment stream ID changed").into());
-            }
-            if chunk.total_size > crate::chat::storage::MAX_ATTACHMENT_BYTES {
-                return Err(Error::msg("attachment exceeds 50 MiB limit").into());
-            }
-            if let Some(size) = expected_size {
-                if size != chunk.total_size
-                    || expected_hash.as_deref() != Some(chunk.sha256_hash.as_str())
-                    || expected_name.as_deref() != Some(chunk.file_name.as_str())
-                    || expected_mime.as_deref() != Some(chunk.mime_type.as_str())
-                {
-                    return Err(Error::msg("attachment metadata changed during transfer").into());
+            while let Some(chunk) = stream.message().await? {
+                if chunk.attachment_id != attachment_id {
+                    return Err(Error::msg("attachment stream ID changed").into());
                 }
-            } else {
-                expected_size = Some(chunk.total_size);
-                expected_hash = Some(chunk.sha256_hash.clone());
-                expected_name = Some(chunk.file_name.clone());
-                expected_mime = Some(chunk.mime_type.clone());
+                if chunk.total_size > crate::chat::storage::MAX_ATTACHMENT_BYTES {
+                    return Err(Error::msg("attachment exceeds 50 MiB limit").into());
+                }
+                if let Some(size) = expected_size {
+                    if size != chunk.total_size
+                        || expected_hash.as_deref() != Some(chunk.sha256_hash.as_str())
+                        || expected_name.as_deref() != Some(chunk.file_name.as_str())
+                        || expected_mime.as_deref() != Some(chunk.mime_type.as_str())
+                    {
+                        return Err(
+                            Error::msg("attachment metadata changed during transfer").into()
+                        );
+                    }
+                } else {
+                    expected_size = Some(chunk.total_size);
+                    expected_hash = Some(chunk.sha256_hash.clone());
+                    expected_name = Some(chunk.file_name.clone());
+                    expected_mime = Some(chunk.mime_type.clone());
+                }
+                received = received
+                    .checked_add(chunk.data.len() as u64)
+                    .ok_or_else(|| Error::msg("attachment size overflow"))?;
+                if received > crate::chat::storage::MAX_ATTACHMENT_BYTES
+                    || received > chunk.total_size
+                {
+                    return Err(Error::msg("attachment stream exceeded declared size").into());
+                }
+                hasher.update(&chunk.data);
+                file.write_all(&chunk.data).await?;
             }
-            received = received
-                .checked_add(chunk.data.len() as u64)
-                .ok_or_else(|| Error::msg("attachment size overflow"))?;
-            if received > crate::chat::storage::MAX_ATTACHMENT_BYTES
-                || received > chunk.total_size
-            {
-                return Err(Error::msg("attachment stream exceeded declared size").into());
+
+            let expected_size =
+                expected_size.ok_or_else(|| Error::msg("empty attachment stream"))?;
+            let expected_hash =
+                expected_hash.ok_or_else(|| Error::msg("missing attachment checksum"))?;
+            if received != expected_size {
+                return Err(Error::msg(format!(
+                    "attachment size mismatch: received {received}, expected {expected_size}"
+                ))
+                .into());
             }
-            hasher.update(&chunk.data);
-            file.write_all(&chunk.data).await?;
-        }
+            let actual_hash = hex::encode(hasher.finalize());
+            if actual_hash != expected_hash {
+                return Err(Error::msg("attachment checksum mismatch").into());
+            }
+            file.sync_all().await?;
+            drop(file);
 
-        let expected_size = expected_size.ok_or_else(|| Error::msg("empty attachment stream"))?;
-        let expected_hash = expected_hash.ok_or_else(|| Error::msg("missing attachment checksum"))?;
-        if received != expected_size {
-            return Err(Error::msg(format!(
-                "attachment size mismatch: received {received}, expected {expected_size}"
-            ))
-            .into());
+            let file_name = expected_name.unwrap_or_else(|| attachment_id.clone());
+            let mime_type = expected_mime
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "application/octet-stream".to_string());
+            Ok((file_name, mime_type, received, expected_hash))
         }
-        let actual_hash = hex::encode(hasher.finalize());
-        if actual_hash != expected_hash {
-            return Err(Error::msg("attachment checksum mismatch").into());
-        }
-        file.sync_all().await?;
-        drop(file);
-
-        let file_name = expected_name.unwrap_or_else(|| attachment_id.clone());
-        let mime_type = expected_mime
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "application/octet-stream".to_string());
-        Ok((file_name, mime_type, received, expected_hash))
-    }
-    .await;
+        .await;
 
     let (file_name, mime_type, size_plain, sha256_plain) = match result {
         Ok(value) => value,

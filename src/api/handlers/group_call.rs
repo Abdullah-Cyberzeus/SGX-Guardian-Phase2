@@ -123,16 +123,6 @@ fn operation_key(
         .then(|| format!("{node_id}:{action}:{}:{value}", group_id.unwrap_or("new")))
 }
 
-fn local_virtual_id(state: &AppState) -> Result<String, Box<axum::response::Response>> {
-    match crate::virtual_id::read_runtime_virtual_id_status(&state.node_id, None) {
-        Ok(status) if !status.virtual_id.trim().is_empty() => Ok(status.virtual_id),
-        _ => Err(Box::new(error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Local attested VirtualID is unavailable",
-        ))),
-    }
-}
-
 /// The anchor group-session lookups reconcile a participant's map key
 /// against (see `reconcile_participant_key` in `call::group`) — needed even
 /// for this node's own self-action calls in case its own entry hasn't been
@@ -202,9 +192,10 @@ pub async fn create(
     {
         return error(StatusCode::CONFLICT, "Another call is already active");
     }
-    let virtual_id = match local_virtual_id(&state) {
+    let actor_id = browser_call_actor_id(&state, &session);
+    let virtual_id = match local_virtual_id_for_actor(&state, &actor_id) {
         Ok(value) => value,
-        Err(response) => return *response,
+        Err(error_value) => return error(StatusCode::SERVICE_UNAVAILABLE, error_value.error),
     };
     let trusted = match trusted_group_peers(&state).await {
         Ok(peers) => peers,
@@ -251,15 +242,52 @@ pub async fn create(
                 )
             }
         };
+    // A member caller can only reach browser members of Circles they
+    // themselves belong to — not every Circle this Guardian happens to
+    // host. This mirrors `member_contacts` above (the analogous VC-contact
+    // scope): `local_browser_dids` is every browser member this Guardian
+    // hosts across all Circles (used for a device/admin caller's full
+    // reach), while `member_browser_dids` narrows that to the caller's own
+    // Circles and is what a member session is actually authorized against.
+    let member_browser_dids = match session.as_ref() {
+        Some(Extension(session)) if session.claims.role == "member" => {
+            let member_circle_ids: std::collections::HashSet<String> =
+                session.claims.circle_ids.iter().cloned().collect();
+            let scoped_circle_ids: std::collections::HashSet<String> = local_circle_ids
+                .intersection(&member_circle_ids)
+                .cloned()
+                .collect();
+            match crate::api::handlers::browser_member::dids_for_circles(
+                &state,
+                &scoped_circle_ids,
+            )
+            .await
+            {
+                Ok(dids) => dids,
+                Err(error_value) => {
+                    return error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("{:?}", error_value),
+                    )
+                }
+            }
+        }
+        _ => local_browser_dids.clone(),
+    };
     if let Some(contacts) = member_contacts.as_ref() {
+        // Browser members never carry a VC, so they never appear in
+        // `contacts` — being in `member_browser_dids` (a Circle the caller
+        // themselves belongs to) is its own sufficient authorization, the
+        // same way chat's `sibling_browser_member` check treats a shared
+        // Circle as an alternative to a VC contact, not an additional
+        // requirement on top of it.
         let unauthorized_requested = !request.call_all
             && (trusted.iter().any(|peer| {
                 request.member_ids.contains(&peer.peer_id)
                     && !peer.did.as_ref().is_some_and(|did| contacts.contains(did))
-            }) || request
-                .member_ids
-                .iter()
-                .any(|id| local_browser_dids.contains(id) && !contacts.contains(id)));
+            }) || request.member_ids.iter().any(|id| {
+                local_browser_dids.contains(id) && !member_browser_dids.contains(id)
+            }));
         if unauthorized_requested {
             if let Some(Extension(session)) = session.as_ref() {
                 crate::api::auth::authorization::audit_member_resource_denied(
@@ -287,9 +315,7 @@ pub async fn create(
         .into_iter()
         .filter(|did| {
             (request.call_all || request.member_ids.contains(did))
-                && member_contacts
-                    .as_ref()
-                    .map_or(true, |contacts| contacts.contains(did))
+                && (member_contacts.is_none() || member_browser_dids.contains(did))
         })
         .collect();
     if selected.is_empty() && selected_browser.is_empty() {
@@ -298,14 +324,18 @@ pub async fn create(
             "Select at least one trusted member",
         );
     }
-    if selected.len() + selected_browser.len() + 1 > MAX_GROUP_PARTICIPANTS {
+    let host_is_browser = actor_id != state.node_id;
+    // +1 for the host, and when the host is a browser member, +1 more for
+    // the Guardian device seat added below so it gets rung too.
+    let extra_seats = if host_is_browser { 2 } else { 1 };
+    if selected.len() + selected_browser.len() + extra_seats > MAX_GROUP_PARTICIPANTS {
         return error(
             StatusCode::BAD_REQUEST,
             format!("Group limit is {MAX_GROUP_PARTICIPANTS} participants"),
         );
     }
     let host = GroupParticipant {
-        device_id: state.node_id.clone(),
+        device_id: actor_id.clone(),
         virtual_id,
         nebula_ip: match state.call_nebula_signaling.get_local_nebula_ip().await {
             Ok(ip) => ip,
@@ -320,7 +350,7 @@ pub async fn create(
         media_ready: false,
         joined_at: None,
         last_seen_at: Some(chrono::Utc::now()),
-        is_local_browser: false,
+        is_local_browser: host_is_browser,
     };
     let mut invitees: Vec<_> = selected
         .iter()
@@ -357,6 +387,36 @@ pub async fn create(
             is_local_browser: true,
         });
     }
+    // The Guardian device/admin console is itself a Circle participant and
+    // must be rung too, same as every other member — but when a browser
+    // member places the call, the device is neither the host nor a browser
+    // member, so it's otherwise never added to the session at all and the
+    // admin's `/group-call/active` poll (GroupCallContext) never sees it.
+    if host_is_browser {
+        let device_virtual_id = match local_virtual_id_for_actor(&state, &state.node_id) {
+            Ok(value) => value,
+            Err(error_value) => return error(StatusCode::SERVICE_UNAVAILABLE, error_value.error),
+        };
+        let device_nebula_ip = match state.call_nebula_signaling.get_local_nebula_ip().await {
+            Ok(ip) => ip,
+            Err(error_value) => {
+                return error(StatusCode::SERVICE_UNAVAILABLE, error_value.to_string())
+            }
+        };
+        invitees.push(GroupParticipant {
+            device_id: state.node_id.clone(),
+            virtual_id: device_virtual_id,
+            nebula_ip: device_nebula_ip,
+            role: GroupRole::Member,
+            state: GroupMemberState::Invited,
+            audio_allowed: request.media.contains(&MediaType::Audio),
+            video_allowed: request.media.contains(&MediaType::Video),
+            media_ready: false,
+            joined_at: None,
+            last_seen_at: None,
+            is_local_browser: false,
+        });
+    }
     let session = match state
         .group_session_manager
         .create(request.title, host, invitees, request.media)
@@ -371,9 +431,14 @@ pub async fn create(
     let host = &session.participants[&session.host_device_id];
     let mut failed_invites = vec![];
     for participant in session.participants.values() {
-        // A browser member's invite is already visible to them: they share
-        // this exact in-process session store, no delivery needed.
-        if participant.role == GroupRole::Host || participant.is_local_browser {
+        // A browser member's invite is already visible to them, and so is
+        // the Guardian device's own entry (added above when a member is the
+        // host): both share this exact in-process session store, no gRPC
+        // delivery needed — only remote trusted-peer Guardians need one.
+        if participant.role == GroupRole::Host
+            || participant.is_local_browser
+            || participant.device_id == state.node_id
+        {
             continue;
         }
         if let Err(error_value) = state
@@ -782,13 +847,14 @@ pub async fn end(
         Err(error_value) => return error(StatusCode::NOT_FOUND, error_value.to_string()),
     };
     let Some(actor) = current.participants.get(&actor_id) else {
-        return error(StatusCode::FORBIDDEN, "Local caller is not a group participant");
+        return error(
+            StatusCode::FORBIDDEN,
+            "Local caller is not a group participant",
+        );
     };
     if !matches!(
         actor.state,
-        GroupMemberState::Joined
-            | GroupMemberState::Reconnecting
-            | GroupMemberState::Disconnected
+        GroupMemberState::Joined | GroupMemberState::Reconnecting | GroupMemberState::Disconnected
     ) {
         return error(
             StatusCode::FORBIDDEN,

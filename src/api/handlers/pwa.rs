@@ -48,7 +48,7 @@ struct MemberEnrollmentRecord {
     decided_at: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemberEnrollmentView {
     pub approval_id: String,
@@ -73,7 +73,11 @@ impl From<&MemberEnrollmentRecord> for MemberEnrollmentView {
             circle_id: record.circle_id.clone(),
             circle_name: record.circle_name.clone(),
             member_did: record.member_did.clone(),
-            state: if expired { "expired".into() } else { record.state.clone() },
+            state: if expired {
+                "expired".into()
+            } else {
+                record.state.clone()
+            },
             created_at: record.created_at.clone(),
             expires_at: record.expires_at.clone(),
             name: record.name.clone(),
@@ -121,7 +125,10 @@ fn parse_enrollment_claim(claim: &str) -> Result<(&str, &str), ApiError> {
         .trim()
         .split_once('.')
         .ok_or_else(|| ApiError::BadRequest("invalid member invitation".into()))?;
-    if approval_id.is_empty() || secret.len() != 64 || !secret.chars().all(|c| c.is_ascii_hexdigit()) {
+    if approval_id.is_empty()
+        || secret.len() != 64
+        || !secret.chars().all(|c| c.is_ascii_hexdigit())
+    {
         return Err(ApiError::BadRequest("invalid member invitation".into()));
     }
     Ok((approval_id, secret))
@@ -167,11 +174,11 @@ struct ContactMetadata {
 
 const HIDDEN_PRESENCE_STATUS: &str = "hidden";
 
-struct PresenceFields {
-    online: bool,
-    presence_status: String,
-    last_seen: String,
-    presence_expires_at: Option<String>,
+pub(crate) struct PresenceFields {
+    pub online: bool,
+    pub presence_status: String,
+    pub last_seen: String,
+    pub presence_expires_at: Option<String>,
 }
 
 /// Guardian-enforced presence privacy: when `hide_presence` is set, every
@@ -192,6 +199,14 @@ fn presence_fields(hide_presence: bool, online: bool, last_seen: &str) -> Presen
         last_seen: last_seen.to_string(),
         presence_expires_at: presence_expiry_from(last_seen),
     }
+}
+
+pub(crate) fn presence_fields_for_privacy(
+    hide_presence: bool,
+    online: bool,
+    last_seen: &str,
+) -> PresenceFields {
+    presence_fields(hide_presence, online, last_seen)
 }
 
 fn role_label(role: &crate::vc::credential::CredentialRole) -> &'static str {
@@ -454,13 +469,13 @@ pub struct MemberJoinRequest {
     pub fingerprint_confirmed: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemberJoinResponse {
     pub token: String,
     pub user_id: String,
     pub email: String,
-    pub role: &'static str,
+    pub role: String,
     pub scopes: Vec<String>,
     pub guardian_did: String,
     pub guardian_fingerprint: String,
@@ -469,7 +484,7 @@ pub struct MemberJoinResponse {
     pub browser_member_did: String,
     pub expires_at: i64,
     pub registration_expires_at: i64,
-    pub status: &'static str,
+    pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -491,7 +506,7 @@ pub struct MintMemberEnrollmentRequest {
     pub expires_in_minutes: Option<i64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MintMemberEnrollmentResponse {
     pub link: String,
@@ -525,13 +540,25 @@ pub struct MemberApprovalStatusResponse {
 pub async fn mint_member_enrollment(
     State(state): State<Arc<AppState>>,
     Path(circle_id): Path<String>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<MintMemberEnrollmentRequest>,
 ) -> Result<Json<MintMemberEnrollmentResponse>, ApiError> {
+    let idempotency_scope = format!("pwa:mint_member_enrollment:{}", circle_id);
+    let idempotency_key = crate::api::idempotency::header_key(&headers);
+    if let Some(key) = idempotency_key.as_deref() {
+        if let Some(cached) =
+            crate::api::idempotency::lookup::<MintMemberEnrollmentResponse>(&idempotency_scope, key)
+        {
+            return Ok(Json(cached));
+        }
+    }
     let _guard = MEMBER_JOIN_LOCK.lock().await;
     let circle = store::get_circle(&state.node_id, &circle_id)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     if circle.is_archived() {
-        return Err(ApiError::Conflict("cannot invite members to an archived Circle".into()));
+        return Err(ApiError::Conflict(
+            "cannot invite members to an archived Circle".into(),
+        ));
     }
     if circle.owner_did != state.device_did {
         return Err(ApiError::Forbidden(
@@ -593,11 +620,15 @@ pub async fn mint_member_enrollment(
             record.circle_id, record.approval_id, record.member_did
         ),
     );
-    Ok(Json(MintMemberEnrollmentResponse {
+    let response = MintMemberEnrollmentResponse {
         link,
         expires_at: record.expires_at.clone(),
         enrollment: MemberEnrollmentView::from(&record),
-    }))
+    };
+    if let Some(key) = idempotency_key.as_deref() {
+        crate::api::idempotency::store(&idempotency_scope, key, &response);
+    }
+    Ok(Json(response))
 }
 
 pub async fn list_member_enrollments(
@@ -690,14 +721,22 @@ async fn decide_member_enrollment(
             .map_err(|error| ApiError::Conflict(error.to_string()))?;
         invite::record_redemption(&token.id, &records[index].member_did)
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        if let Err(error) = state.admin.users.set_member_status(&user_id, "active").await {
+        if let Err(error) = state
+            .admin
+            .users
+            .set_member_status(&user_id, "active")
+            .await
+        {
             let _ = invite::remove_redemption(&token.id, &records[index].member_did);
             return Err(ApiError::Internal(error.to_string()));
         }
         records[index].state = "approved".into();
         crate::notify::publish_circle_member_joined(
             &records[index].member_did,
-            records[index].name.as_deref().unwrap_or(&records[index].member_did),
+            records[index]
+                .name
+                .as_deref()
+                .unwrap_or(&records[index].member_did),
             &records[index].circle_name,
             &records[index].circle_id,
         );
@@ -821,7 +860,10 @@ pub async fn preview_member_invite(
         }
         (token, true)
     } else {
-        (validate_member_invite(&state, &body.invite_token).await?, false)
+        (
+            validate_member_invite(&state, &body.invite_token).await?,
+            false,
+        )
     };
     if token.issuer_did == state.device_did {
         let circle = local_invite_circle(&state, &token)?;
@@ -852,6 +894,7 @@ pub async fn preview_member_invite(
 
 pub async fn join_member(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<MemberJoinRequest>,
 ) -> Result<Json<MemberJoinResponse>, ApiError> {
     let email = body.email.trim().to_ascii_lowercase();
@@ -860,6 +903,22 @@ pub async fn join_member(
         return Err(ApiError::BadRequest(
             "valid name and email are required".into(),
         ));
+    }
+    // A registration retry (e.g. a client timeout) must replay the original
+    // account/session instead of redeeming the invite a second time: the
+    // second redemption would either fail outright once the invite's
+    // max_uses is exhausted, or — worse — silently rotate the existing
+    // account's browser DID and revoke the session the first call just
+    // issued. Scoped by invite+email since both are known before any side
+    // effect runs.
+    let idempotency_scope = format!("pwa:join_member:{}:{}", body.invite_token, email);
+    let idempotency_key = crate::api::idempotency::header_key(&headers);
+    if let Some(key) = idempotency_key.as_deref() {
+        if let Some(cached) =
+            crate::api::idempotency::lookup::<MemberJoinResponse>(&idempotency_scope, key)
+        {
+            return Ok(Json(cached));
+        }
     }
     rate_limit(&state, "member-credential-issue", &email)?;
     if !body.fingerprint_confirmed {
@@ -888,7 +947,10 @@ pub async fn join_member(
             email, current_fingerprint
         ),
     );
-    let approval_claim = body.invite_token.contains('.').then(|| body.invite_token.clone());
+    let approval_claim = body
+        .invite_token
+        .contains('.')
+        .then(|| body.invite_token.clone());
     let (token, reserved_registration_id, approval_id) = if approval_claim.is_some() {
         let records = load_member_enrollments()?;
         let index = enrollment_index_for_claim(&records, &body.invite_token)?;
@@ -1056,11 +1118,11 @@ pub async fn join_member(
             user.user_id, registration_id, token.circle_id, current_fingerprint
         ),
     );
-    Ok(Json(MemberJoinResponse {
+    let response = MemberJoinResponse {
         token: session_token,
         user_id: user.user_id,
         email: user.email,
-        role: "member",
+        role: "member".to_string(),
         scopes: claims.scopes,
         guardian_did: state.device_did.clone(),
         guardian_fingerprint: current_fingerprint,
@@ -1071,10 +1133,19 @@ pub async fn join_member(
         browser_registration_id: registration_id,
         expires_at: claims.exp,
         registration_expires_at,
-        status: if pending_approval { "pending" } else { "active" },
+        status: if pending_approval {
+            "pending"
+        } else {
+            "active"
+        }
+        .to_string(),
         approval_id,
         approval_claim,
-    }))
+    };
+    if let Some(key) = idempotency_key.as_deref() {
+        crate::api::idempotency::store(&idempotency_scope, key, &response);
+    }
+    Ok(Json(response))
 }
 
 pub async fn remove_registration(
@@ -1321,13 +1392,14 @@ pub async fn contacts(
         let users = state.admin.users.list().await?;
         users
             .iter()
-            .find(|user| user.role == crate::api::auth::store::UserRole::Owner)
-            .or_else(|| {
-                users
-                    .iter()
-                    .find(|user| user.role == crate::api::auth::store::UserRole::Admin)
+            .any(|user| {
+                matches!(
+                    user.role,
+                    crate::api::auth::store::UserRole::Owner
+                        | crate::api::auth::store::UserRole::Admin
+                ) && user.status == "active"
+                    && user.hide_presence
             })
-            .is_some_and(|user| user.hide_presence)
     };
     let self_presence = presence_fields(owner_hide_presence, true, &now);
     let mut contacts = vec![PwaContact {

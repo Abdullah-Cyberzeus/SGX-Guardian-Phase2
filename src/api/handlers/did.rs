@@ -98,7 +98,7 @@ pub struct PublishDocumentRequest {
     pub node_name: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct PublishDocumentResponse {
     pub success: bool,
     pub did: String,
@@ -306,8 +306,17 @@ pub async fn document_verify(
 
 pub async fn document_publish(
     _state: State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     body: Bytes,
 ) -> Result<Json<PublishDocumentResponse>, ApiError> {
+    let idempotency_key = crate::api::idempotency::header_key(&headers);
+    if let Some(key) = idempotency_key.as_deref() {
+        if let Some(cached) =
+            crate::api::idempotency::lookup::<PublishDocumentResponse>("did:document_publish", key)
+        {
+            return Ok(Json(cached));
+        }
+    }
     let req: PublishDocumentRequest = parse_required_json_body(&body)?;
     let ca_host = required_nonempty_field(&req.ca_host, "ca_host")?;
     let node_name = required_nonempty_field(&req.node_name, "node_name")?;
@@ -326,14 +335,18 @@ pub async fn document_publish(
         .await
         .map_err(did_document_publish_error)?;
 
-    Ok(Json(PublishDocumentResponse {
+    let response = PublishDocumentResponse {
         success: true,
         did: doc.id.clone(),
         version: doc.sgx_version_id,
         ca_host,
         node_name,
         message: "DID Document published to CA registry".to_string(),
-    }))
+    };
+    if let Some(key) = idempotency_key.as_deref() {
+        crate::api::idempotency::store("did:document_publish", key, &response);
+    }
+    Ok(Json(response))
 }
 
 pub async fn document_peers(

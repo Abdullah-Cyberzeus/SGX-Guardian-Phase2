@@ -98,7 +98,10 @@ fn certificate_contains_required_dns_names(der: &[u8], subject_alt_names: &[&str
     subject_alt_names
         .iter()
         .filter(|name| name.parse::<std::net::IpAddr>().is_err())
-        .all(|name| der.windows(name.len()).any(|window| window == name.as_bytes()))
+        .all(|name| {
+            der.windows(name.len())
+                .any(|window| window == name.as_bytes())
+        })
 }
 
 /// Ensures a DER certificate exists at `cert_path` and contains every requested
@@ -122,7 +125,10 @@ pub fn ensure_node_certificate_or_generate(
             let backup_path = format!("{}.pre-lan-name.bak", cert_path);
             if !std::path::Path::new(&backup_path).exists() {
                 fs::copy(cert_path, &backup_path).with_context(|| {
-                    format!("Failed to back up previous TLS certificate to {}", backup_path)
+                    format!(
+                        "Failed to back up previous TLS certificate to {}",
+                        backup_path
+                    )
                 })?;
             }
             log_audit(

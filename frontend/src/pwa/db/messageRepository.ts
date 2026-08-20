@@ -1,5 +1,6 @@
 import { deleteRecord, readAll, readRecord, runAtomic } from "./database";
 import { encryptValue, decryptValue } from "../crypto/vault";
+import { shouldApplyIncomingStatus } from "../sync/conflict";
 import { stores, type MessageRecord, type PendingRecord } from "./schema";
 
 const QUEUE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -41,6 +42,7 @@ export const messageRepository = {
   async updateStatus(id: string, status: string) {
     const existing = await readRecord(stores.messages, id);
     if (!existing) return;
+    if (!shouldApplyIncomingStatus(existing.status, status)) return;
     const value = await decryptValue<Record<string, unknown>>(existing.payload);
     const payload = await encryptValue({ ...value, status });
     return runAtomic([stores.messages], (tx) => { tx.objectStore(stores.messages).put({ ...existing, status, updatedAt: Date.now(), payload }); });

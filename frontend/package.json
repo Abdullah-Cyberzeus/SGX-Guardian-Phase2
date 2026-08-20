@@ -6,6 +6,10 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "check:bundle-size": "node scripts/check-bundle-size.mjs",
+    "check:precache": "node scripts/validate-precache.mjs",
     "test": "playwright test",
     "test:ui": "playwright test --ui",
     "test:headed": "playwright test --headed",
@@ -46,11 +50,15 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "4.7.0",
+    "@vitest/coverage-v8": "^4.1.11",
     "docx": "^9.7.1",
     "exceljs": "^4.4.0",
+    "fake-indexeddb": "^6.2.5",
+    "jsdom": "^30.0.1",
     "tailwindcss": "4.1.12",
     "typescript": "^5.9.3",
-    "vite": "6.3.5"
+    "vite": "6.3.5",
+    "vitest": "^4.1.11"
   },
   "peerDependencies": {
     "react": "18.3.1",

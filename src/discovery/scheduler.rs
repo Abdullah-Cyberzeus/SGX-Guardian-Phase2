@@ -87,7 +87,11 @@ impl DiscoveryScheduler {
                     AuditCategory::Discovery,
                     AuditSeverity::Warning,
                     AuditAction::Failed,
-                    &format!("{} Guardian network scan failed: {}", schedule_name(kind), err),
+                    &format!(
+                        "{} Guardian network scan failed: {}",
+                        schedule_name(kind),
+                        err
+                    ),
                 );
             }
         }

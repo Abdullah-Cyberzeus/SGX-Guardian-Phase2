@@ -53,6 +53,16 @@ impl NebulaClient {
     }
 
     pub async fn get_local_ip(&self) -> Result<String, String> {
+        // No `nebula0` TUN interface exists in a CI/sandbox test run (no
+        // hardware overlay network) — same class of gap as SE050 hardware
+        // signing, and given the same opt-in, off-by-default escape hatch
+        // (`SGX_FORCE_SOFTWARE_KEYS`'s sibling for the network layer).
+        if let Ok(value) = std::env::var("SGX_NEBULA_LOCAL_IP_OVERRIDE") {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Ok(value.to_string());
+            }
+        }
         NebulaInterface::get_overlay_ip()
             .and_then(|cidr| cidr.split('/').next().map(str::to_owned))
             .ok_or_else(|| "Guardian Mesh overlay interface unavailable".to_string())

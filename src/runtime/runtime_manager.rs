@@ -512,7 +512,10 @@ impl RuntimeManager {
         // children. Never use global killall here: those daemons may carry the host's
         // management connection or provide unrelated DNS/DHCP services.
         for interface in &interfaces {
-            tracing::info!("Resetting Guardian-managed wireless interface: {}", interface);
+            tracing::info!(
+                "Resetting Guardian-managed wireless interface: {}",
+                interface
+            );
             let _ = tokio::process::Command::new("ip")
                 .args(["link", "set", "dev", interface, "down"])
                 .output()

@@ -31,9 +31,7 @@ impl NotificationKind {
             Self::DeviceDiscovered
             | Self::DevicePendingApproval
             | Self::GuardianOffline
-            | Self::CircleMemberPendingApproval => {
-                NotificationCategory::Devices
-            }
+            | Self::CircleMemberPendingApproval => NotificationCategory::Devices,
             Self::CircleNewMessage
             | Self::CircleIncomingCall
             | Self::CircleMemberJoined
