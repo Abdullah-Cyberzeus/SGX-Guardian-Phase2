@@ -219,21 +219,23 @@ pub async fn pull_latest_for_joined_circles(
         if circle.is_mesh() || circle.owner_did == local_did {
             continue;
         }
-        let endpoint = match crate::circle::invite::resolve_circle_endpoint(&circle.owner_did, resolver).await {
-            Ok(endpoint) => Some(endpoint),
-            Err(err) => {
-                tracing::debug!(
-                    "Circle snapshot owner endpoint unavailable circle={} owner={} error={}",
-                    circle.circle_id,
-                    circle.owner_did,
-                    err
-                );
-                crate::crl::gossip::engine::active_gossip_peers(&local_did)
-                    .into_iter()
-                    .find(|peer| peer.did == circle.owner_did)
-                    .map(|peer| format!("http://{}:8443", peer.overlay_ip))
-            }
-        };
+        let endpoint =
+            match crate::circle::invite::resolve_circle_endpoint(&circle.owner_did, resolver).await
+            {
+                Ok(endpoint) => Some(endpoint),
+                Err(err) => {
+                    tracing::debug!(
+                        "Circle snapshot owner endpoint unavailable circle={} owner={} error={}",
+                        circle.circle_id,
+                        circle.owner_did,
+                        err
+                    );
+                    crate::crl::gossip::engine::active_gossip_peers(&local_did)
+                        .into_iter()
+                        .find(|peer| peer.did == circle.owner_did)
+                        .map(|peer| format!("http://{}:8443", peer.overlay_ip))
+                }
+            };
         let Some(endpoint) = endpoint else {
             continue;
         };

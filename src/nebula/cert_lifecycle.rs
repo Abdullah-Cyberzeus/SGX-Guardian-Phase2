@@ -78,7 +78,10 @@ impl ExpiryMonitor {
                     } else {
                         // Generic message for stdout (CodeQL: avoid logging precise day count)
                         println!("✅ Guardian Mesh certificate healthy");
-                        let msg = format!("Guardian Mesh certificate healthy ({} days remaining)", days);
+                        let msg = format!(
+                            "Guardian Mesh certificate healthy ({} days remaining)",
+                            days
+                        );
                         log_event(&node_name, &msg);
                     }
                 } else {

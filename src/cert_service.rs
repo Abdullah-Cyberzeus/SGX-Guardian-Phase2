@@ -622,7 +622,10 @@ impl CertService for MyCertService {
                 AuditAction::Failed,
                 &format!("Certificate signing failed for {}: {}", node_id, e),
             );
-            return Err(Status::internal(format!("Guardian Mesh CA signing failed: {}", e)));
+            return Err(Status::internal(format!(
+                "Guardian Mesh CA signing failed: {}",
+                e
+            )));
         }
 
         use crate::nebula::lighthouse::LighthouseRegistry;

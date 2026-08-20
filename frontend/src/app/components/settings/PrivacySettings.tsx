@@ -62,8 +62,7 @@ interface PrivacySettingsProps {
 }
 
 /**
- * Display name + Guardian-enforced privacy toggles (hide presence / read
- * receipts / typing). Shared between the admin (`ST03Profile`) and member
+ * Display name + Guardian-enforced privacy toggles. Shared between the admin (`ST03Profile`) and member
  * (`MemberSettingsScreen`) settings surfaces — both PATCH the same
  * self-service `/auth/profile` endpoint.
  */
@@ -94,7 +93,7 @@ export function PrivacySettings({ showNameEditor = true }: PrivacySettingsProps)
     }
   };
 
-  const toggle = async (key: "hidePresence" | "hideReadReceipts" | "hideTyping", current: boolean) => {
+  const toggle = async (key: "hideReadReceipts", current: boolean) => {
     setSavingKey(key);
     try {
       const { error } = await updateProfile({ [key]: !current });
@@ -150,25 +149,11 @@ export function PrivacySettings({ showNameEditor = true }: PrivacySettingsProps)
         </p>
         <div className="rounded-lg border border-border overflow-hidden divide-y divide-border" style={{ backgroundColor: "var(--card)" }}>
           <ToggleRow
-            label="Hide online status"
-            description="Other members and the administrator won't see when you're online or your last-seen time."
-            checked={Boolean(user?.hidePresence)}
-            disabled={savingKey === "hidePresence"}
-            onCheckedChange={() => void toggle("hidePresence", Boolean(user?.hidePresence))}
-          />
-          <ToggleRow
             label="Hide read receipts"
             description="Others won't see when you've read their messages — and you won't see theirs either."
             checked={Boolean(user?.hideReadReceipts)}
             disabled={savingKey === "hideReadReceipts"}
             onCheckedChange={() => void toggle("hideReadReceipts", Boolean(user?.hideReadReceipts))}
-          />
-          <ToggleRow
-            label="Hide typing indicator"
-            description="Others won't see a typing indicator while you're composing a message."
-            checked={Boolean(user?.hideTyping)}
-            disabled={savingKey === "hideTyping"}
-            onCheckedChange={() => void toggle("hideTyping", Boolean(user?.hideTyping))}
           />
         </div>
       </div>

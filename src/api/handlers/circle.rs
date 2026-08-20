@@ -1,5 +1,6 @@
 use crate::api::auth::middleware::AuthenticatedSession;
 use crate::api::auth::store::UserRole;
+use crate::api::idempotency;
 use crate::api::{error::ApiError, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
@@ -63,7 +64,7 @@ pub struct EditCircleRequest {
     pub description: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct CircleMutationResponse {
     pub status: String,
     pub message: String,
@@ -137,7 +138,7 @@ pub struct MintInviteRequest {
     pub deliver: Option<bool>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct InviteMintResponse {
     pub status: String,
     pub invite_id: String,
@@ -188,7 +189,7 @@ pub struct RedeemCircleResponse {
     pub member_snapshot: Option<CircleMemberSnapshot>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct JoinCircleResponse {
     pub status: String,
     pub message: String,
@@ -253,8 +254,15 @@ pub async fn detail(
 
 pub async fn create(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(body): Json<CreateCircleRequest>,
 ) -> Result<(StatusCode, Json<CircleMutationResponse>), ApiError> {
+    let idempotency_key = idempotency::header_key(&headers);
+    if let Some(key) = idempotency_key.as_deref() {
+        if let Some(cached) = idempotency::lookup::<CircleMutationResponse>("circle:create", key) {
+            return Ok((StatusCode::CREATED, Json(cached)));
+        }
+    }
     let name = required_name(body.name.as_deref())?;
     let description = normalized_description(body.description.as_deref());
     let duration_days = validate_optional_days(body.days)?;
@@ -326,14 +334,15 @@ pub async fn create(
         );
     }
 
-    Ok((
-        StatusCode::CREATED,
-        Json(CircleMutationResponse {
-            status: "success".to_string(),
-            message: "Circle created".to_string(),
-            circle,
-        }),
-    ))
+    let response = CircleMutationResponse {
+        status: "success".to_string(),
+        message: "Circle created".to_string(),
+        circle,
+    };
+    if let Some(key) = idempotency_key.as_deref() {
+        idempotency::store("circle:create", key, &response);
+    }
+    Ok((StatusCode::CREATED, Json(response)))
 }
 
 pub async fn edit(
@@ -438,13 +447,25 @@ pub async fn list_members(
     Path(id): Path<String>,
 ) -> Result<Json<MemberListResponse>, ApiError> {
     ensure_member_browser_circle_access(&state, &session, &id)?;
-    let mut members = members::list_members(&state.node_id, &id).map_err(map_circle_error)?;
-    append_browser_members(&state, &id, &mut members).await?;
+    let members = full_member_list(&state, &id).await?;
     Ok(Json(MemberListResponse {
         status: "success".to_string(),
         count: members.len(),
         members,
     }))
+}
+
+/// The complete Circle roster — VC-issued (device/Guardian) members plus
+/// locally registered browser members — each with a `join_date`. Shared with
+/// `chat::get_history`, which needs the same roster to work out when a
+/// requesting member joined so it can withhold messages sent before that.
+pub(crate) async fn full_member_list(
+    state: &AppState,
+    circle_id: &str,
+) -> Result<Vec<CircleMember>, ApiError> {
+    let mut members = members::list_members(&state.node_id, circle_id).map_err(map_circle_error)?;
+    append_browser_members(state, circle_id, &mut members).await?;
+    Ok(members)
 }
 
 pub async fn member_snapshot(
@@ -506,6 +527,7 @@ async fn append_browser_members(
             _ => continue,
         };
         let did = crate::api::handlers::browser_member::did_for_registration(&registration_id);
+        let presence = crate::api::handlers::pwa::presence_fields_for_privacy(user.hide_presence, true, "");
         if members.iter().any(|member| {
             member.browser_registration_id.as_deref() == Some(registration_id.as_str())
                 || member.did == did
@@ -535,6 +557,8 @@ async fn append_browser_members(
             email: Some(user.email),
             member_type: Some("browser".to_string()),
             browser_registration_id: Some(registration_id),
+            online: Some(presence.online),
+            presence_status: Some(presence.presence_status),
         });
     }
     members.sort_by(|left, right| {
@@ -677,9 +701,17 @@ pub async fn list_invites(
 pub async fn mint_invite(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     Json(body): Json<MintInviteRequest>,
 ) -> Result<(StatusCode, Json<InviteMintResponse>), ApiError> {
     ensure_circle_owner_access(&state, &id, VcAdminAction::Issue)?;
+    let idempotency_scope = format!("circle:mint_invite:{}", id);
+    let idempotency_key = idempotency::header_key(&headers);
+    if let Some(key) = idempotency_key.as_deref() {
+        if let Some(cached) = idempotency::lookup::<InviteMintResponse>(&idempotency_scope, key) {
+            return Ok((StatusCode::CREATED, Json(cached)));
+        }
+    }
     let circle = store::get_circle(&state.node_id, &id).map_err(map_circle_error)?;
     if circle.is_archived() {
         return Err(ApiError::Conflict(format!("circle {} is archived", id)));
@@ -725,20 +757,21 @@ pub async fn mint_invite(
             id, invite_token.id, role
         ),
     );
-    Ok((
-        StatusCode::CREATED,
-        Json(InviteMintResponse {
-            status: "success".to_string(),
-            invite_id: invite_token.id.clone(),
-            token_b64,
-            qr_payload: link.clone(),
-            link,
-            expires_at: invite_token.expires_at.clone(),
-            delivered,
-            delivery_error,
-            invite: invite_token,
-        }),
-    ))
+    let response = InviteMintResponse {
+        status: "success".to_string(),
+        invite_id: invite_token.id.clone(),
+        token_b64,
+        qr_payload: link.clone(),
+        link,
+        expires_at: invite_token.expires_at.clone(),
+        delivered,
+        delivery_error,
+        invite: invite_token,
+    };
+    if let Some(key) = idempotency_key.as_deref() {
+        idempotency::store(&idempotency_scope, key, &response);
+    }
+    Ok((StatusCode::CREATED, Json(response)))
 }
 
 pub async fn received_invites(
@@ -819,8 +852,16 @@ pub async fn revoke_invite(
 pub async fn deliver_existing_invite(
     State(state): State<Arc<AppState>>,
     Path((id, invite_id)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> Result<Json<InviteMintResponse>, ApiError> {
     ensure_circle_owner_access(&state, &id, VcAdminAction::Issue)?;
+    let idempotency_scope = format!("circle:deliver_invite:{}", invite_id);
+    let idempotency_key = idempotency::header_key(&headers);
+    if let Some(key) = idempotency_key.as_deref() {
+        if let Some(cached) = idempotency::lookup::<InviteMintResponse>(&idempotency_scope, key) {
+            return Ok(Json(cached));
+        }
+    }
     let invite_token = invite::load_invite(&invite_id).map_err(map_circle_error)?;
     if invite_token.circle_id != id {
         return Err(ApiError::BadRequest(format!(
@@ -835,7 +876,7 @@ pub async fn deliver_existing_invite(
         Ok(()) => (true, None),
         Err(err) => (false, Some(err.to_string())),
     };
-    Ok(Json(InviteMintResponse {
+    let response = InviteMintResponse {
         status: "success".to_string(),
         invite_id: invite_token.id.clone(),
         token_b64,
@@ -845,7 +886,11 @@ pub async fn deliver_existing_invite(
         delivered,
         delivery_error,
         invite: invite_token,
-    }))
+    };
+    if let Some(key) = idempotency_key.as_deref() {
+        idempotency::store(&idempotency_scope, key, &response);
+    }
+    Ok(Json(response))
 }
 
 pub async fn join_preview(
@@ -872,9 +917,21 @@ pub async fn join_preview(
 pub async fn join(
     State(state): State<Arc<AppState>>,
     session: Option<Extension<AuthenticatedSession>>,
+    headers: HeaderMap,
     Json(body): Json<JoinCircleRequest>,
 ) -> Result<(StatusCode, Json<JoinCircleResponse>), ApiError> {
     enforce_join_rate_limit(&state, &session, "join")?;
+    // Scoped by the invite token itself (not just the client's key) so a
+    // retry is recognized as the same join attempt even if the client
+    // regenerates its Idempotency-Key, and so two different invites never
+    // share a cache slot.
+    let idempotency_scope = format!("circle:join:{}", body.token_b64.trim());
+    let idempotency_key = idempotency::header_key(&headers);
+    if let Some(key) = idempotency_key.as_deref() {
+        if let Some(cached) = idempotency::lookup::<JoinCircleResponse>(&idempotency_scope, key) {
+            return Ok((StatusCode::CREATED, Json(cached)));
+        }
+    }
     let invite_token = invite::decode_compact(body.token_b64.trim()).map_err(map_circle_error)?;
     invite::verify_invite(&invite_token, &state.did_resolver)
         .await
@@ -886,16 +943,17 @@ pub async fn join(
             .map_err(map_circle_error)?,
     };
     let (redeemed, circle) = join_remote_circle(&state, invite_token, &owner_host).await?;
-    Ok((
-        StatusCode::CREATED,
-        Json(JoinCircleResponse {
-            status: redeemed.status,
-            message: redeemed.message,
-            vc: redeemed.vc,
-            circle,
-            member_snapshot: redeemed.member_snapshot,
-        }),
-    ))
+    let response = JoinCircleResponse {
+        status: redeemed.status,
+        message: redeemed.message,
+        vc: redeemed.vc,
+        circle,
+        member_snapshot: redeemed.member_snapshot,
+    };
+    if let Some(key) = idempotency_key.as_deref() {
+        idempotency::store(&idempotency_scope, key, &response);
+    }
+    Ok((StatusCode::CREATED, Json(response)))
 }
 
 /// Redeem a signed Circle invitation at its owner while keeping the browser
@@ -1036,6 +1094,7 @@ fn ensure_member_browser_circle_access(
 pub async fn accept_invite(
     State(state): State<Arc<AppState>>,
     Path(invite_id): Path<String>,
+    headers: HeaderMap,
 ) -> Result<(StatusCode, Json<JoinCircleResponse>), ApiError> {
     let received = invite::load_received_invite(&invite_id).map_err(map_circle_error)?;
     if matches!(received.state, ReceivedInviteState::Rejected) {
@@ -1048,6 +1107,7 @@ pub async fn accept_invite(
     let result = join(
         State(state),
         None,
+        headers,
         Json(JoinCircleRequest {
             token_b64,
             owner_host: None,
@@ -1074,8 +1134,20 @@ pub async fn reject_invite(
 
 pub async fn redeem(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(body): Json<JoinRequest>,
 ) -> Result<(StatusCode, Json<RedeemCircleResponse>), ApiError> {
+    // Scoped by invite + joiner: `assert_redeemable` below already rejects a
+    // same-joiner replay outright (`CircleError::InviteReplay`), so this
+    // mainly turns that hard error into a clean replay of the original
+    // success response for a client that merely timed out waiting for it.
+    let idempotency_scope = format!("circle:redeem:{}:{}", body.invite_token.id, body.joiner_did);
+    let idempotency_key = idempotency::header_key(&headers);
+    if let Some(key) = idempotency_key.as_deref() {
+        if let Some(cached) = idempotency::lookup::<RedeemCircleResponse>(&idempotency_scope, key) {
+            return Ok((StatusCode::CREATED, Json(cached)));
+        }
+    }
     invite::verify_invite(&body.invite_token, &state.did_resolver)
         .await
         .map_err(map_circle_error)?;
@@ -1165,15 +1237,16 @@ pub async fn redeem(
             circle.circle_id, body.invite_token.id, body.joiner_did
         ),
     );
-    Ok((
-        StatusCode::CREATED,
-        Json(RedeemCircleResponse {
-            status: "success".to_string(),
-            message: "Circle membership issued".to_string(),
-            vc,
-            member_snapshot,
-        }),
-    ))
+    let response = RedeemCircleResponse {
+        status: "success".to_string(),
+        message: "Circle membership issued".to_string(),
+        vc,
+        member_snapshot,
+    };
+    if let Some(key) = idempotency_key.as_deref() {
+        idempotency::store(&idempotency_scope, key, &response);
+    }
+    Ok((StatusCode::CREATED, Json(response)))
 }
 
 pub async fn receive_member_snapshot(

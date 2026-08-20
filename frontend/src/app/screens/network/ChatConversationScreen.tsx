@@ -84,14 +84,15 @@ export function ChatConversationScreen() {
   const memberPeer = member?.did ? {
     peerId: member.did,
     did: member.did,
-    online: member.status === "active",
+    online: member.presenceStatus ? member.presenceStatus === "online" : member.status === "active",
     callAvailable: member.status === "active",
     callUnavailableReason: member.status === "active" ? undefined : "The member browser is inactive.",
   } : undefined;
   const peer = (Array.isArray(peersData) ? peersData : []).find((item: any) => item.did === peerDid) || cachedPeer || memberPeer;
   const isGroup = Boolean(circleId && !peerDid);
   const { startCall, call, currentDevice } = useCall();
-  const { group } = useGroupCall();
+  const groupCalling = useGroupCall();
+  const { group } = groupCalling;
   const { clearPeerUnread, clearCircleUnread, refresh: refreshUnread } = useChatUnread();
   const { contactNameForDid } = useContactNames();
   const [records, setRecords] = useState<ChatMessageRecord[]>([]);
@@ -115,6 +116,49 @@ export function ChatConversationScreen() {
   const isTypingSentRef = useRef(false);
   const view: View = searchParams.get("view") === "files" ? "files" : "chat";
   const openedFromChats = isGroup && searchParams.get("from") === "chats";
+
+  const circleMembers = useMemo(() => Array.isArray(circle?.members) ? circle.members : [], [circle?.members]);
+  const nodeIdsForMember = useCallback((circleMember: any) => {
+    const explicit = [
+      circleMember?.nodeHint, circleMember?.node_hint, circleMember?.device_id,
+      circleMember?.deviceId, circleMember?.peerId, circleMember?.peer_id,
+    ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean);
+    if (explicit.length) return explicit;
+    const memberDid = String(circleMember?.did || "").trim().toLowerCase();
+    if (!memberDid) return [];
+    return (Array.isArray(circlesData) ? circlesData : [])
+      .flatMap((candidateCircle: any) => Array.isArray(candidateCircle?.members) ? candidateCircle.members : [])
+      .filter((candidateMember: any) => String(candidateMember?.did || "").trim().toLowerCase() === memberDid)
+      .flatMap((candidateMember: any) => [candidateMember?.nodeHint, candidateMember?.node_hint])
+      .map((value: unknown) => String(value || "").trim().toLowerCase())
+      .filter(Boolean);
+  }, [circlesData]);
+
+  const peerForMember = useCallback((circleMember: any) => {
+    if (String(circleMember?.memberType || circleMember?.member_type || "").toLowerCase() === "browser") return undefined;
+    const candidates = nodeIdsForMember(circleMember);
+    const explicitNodeMatch = candidates.length
+      ? (Array.isArray(peersData) ? peersData : []).find((candidate: any) => candidates.includes(String(candidate.peerId || "").trim().toLowerCase()))
+      : undefined;
+    if (explicitNodeMatch) return explicitNodeMatch;
+    const memberDid = String(circleMember?.did || "").trim().toLowerCase();
+    return memberDid
+      ? (Array.isArray(peersData) ? peersData : []).find((candidate: any) => String(candidate.did || "").trim().toLowerCase() === memberDid)
+      : undefined;
+  }, [nodeIdsForMember, peersData]);
+
+  const callableGroupMemberIds = useMemo(() => Array.from(new Set(
+    circleMembers
+      .map((circleMember: any) => {
+        const memberDid = String(circleMember?.did || "").trim();
+        const isBrowserMember = String(circleMember?.memberType || circleMember?.member_type || "").toLowerCase() === "browser";
+        if (isBrowserMember) return memberDid || undefined;
+        const memberPeer = peerForMember(circleMember);
+        return memberPeer?.callAvailable ? memberPeer.peerId : undefined;
+      })
+      .filter((id): id is string => Boolean(id))
+      .filter((id) => id !== currentDevice && id !== session?.browserMemberDid),
+  )), [circleMembers, currentDevice, peerForMember, session?.browserMemberDid]);
 
   const setView = (nextView: View) => {
     const next = new URLSearchParams(searchParams);
@@ -466,6 +510,28 @@ export function ChatConversationScreen() {
     }
   };
 
+  const callGroup = async (media: MediaType[]) => {
+    if (!isGroup || !circleId) return;
+    if (call || group) {
+      toast.error("Guardian is busy", { description: "End or leave the current call before starting another." });
+      return;
+    }
+    if (!callableGroupMemberIds.length) {
+      toast.error("No callable Circle members were found.");
+      return;
+    }
+    const mode = media.includes("video") ? "video" : "audio";
+    setStartingCall(mode);
+    try {
+      await groupCalling.createGroup(callableGroupMemberIds, false, media, `${circle?.name || "Circle"} Circle call`);
+      toast.success(`Calling ${callableGroupMemberIds.length} Circle member${callableGroupMemberIds.length === 1 ? "" : "s"}`);
+    } catch (cause) {
+      toast.error("Circle call could not start", { description: cause instanceof Error ? cause.message : "One or more members may be unavailable." });
+    } finally {
+      setStartingCall(null);
+    }
+  };
+
   const messages = useMemo(() => records.map((record) => {
     const payload = parseChatPayload(record);
     const isMe = record.sender_did === "local" || (localDid ? record.sender_did === localDid : (isGroup ? false : record.sender_did !== peerDid));
@@ -518,7 +584,10 @@ export function ChatConversationScreen() {
     <div className="flex h-full flex-col">
       <PageHeader title={title} subtitle={subtitle} onBack={() => navigate(isGroup ? (openedFromChats ? "/chats" : `/network/${circleId}?tab=members`) : "/chats")} right={
         <div className="flex items-center gap-1">
-          {!isGroup && <>
+          {isGroup ? <>
+            <button aria-label={`Voice call ${title}`} title={callableGroupMemberIds.length ? "Voice call Circle" : "No callable Circle members"} disabled={startingCall !== null || callableGroupMemberIds.length === 0} onClick={() => void callGroup(["audio"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "audio" ? <Loader2 size={18} className="animate-spin" /> : <Phone size={18} />}</button>
+            <button aria-label={`Video call ${title}`} title={callableGroupMemberIds.length ? "Video call Circle" : "No callable Circle members"} disabled={startingCall !== null || callableGroupMemberIds.length === 0} onClick={() => void callGroup(["audio", "video"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "video" ? <Loader2 size={18} className="animate-spin" /> : <Video size={18} />}</button>
+          </> : <>
             <button aria-label={`Voice call ${title}`} title="Voice call" disabled={startingCall !== null || !peer} onClick={() => void callPeer(["audio"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "audio" ? <Loader2 size={18} className="animate-spin" /> : <Phone size={18} />}</button>
             <button aria-label={`Video call ${title}`} title="Video call" disabled={startingCall !== null || !peer} onClick={() => void callPeer(["audio", "video"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "video" ? <Loader2 size={18} className="animate-spin" /> : <Video size={18} />}</button>
           </>}

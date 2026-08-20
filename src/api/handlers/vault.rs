@@ -493,7 +493,9 @@ pub async fn upload(
     if let VaultNamespace::Circle(circle_id) = &namespace {
         if !is_admin_caller(&session) {
             let Some(Extension(authed)) = session.as_ref() else {
-                return Err(ApiError::Forbidden("not a member of this Circle".to_string()));
+                return Err(ApiError::Forbidden(
+                    "not a member of this Circle".to_string(),
+                ));
             };
             if !authed.claims.circle_ids.contains(circle_id) {
                 return Err(ApiError::Forbidden(
@@ -1131,7 +1133,12 @@ pub(crate) fn ensure_downloadable(record: &VaultRecord) -> Result<(), ApiError> 
     Ok(())
 }
 
-pub(crate) async fn record_download_audit(config: &VaultConfig, vault_id: &str, caller_did: &str, source: &str) {
+pub(crate) async fn record_download_audit(
+    config: &VaultConfig,
+    vault_id: &str,
+    caller_did: &str,
+    source: &str,
+) {
     if let Err(error) = downloads::record_download(config, vault_id, caller_did, source).await {
         tracing::warn!(%vault_id, %error, "failed to record vault download audit entry");
     }
@@ -1159,7 +1166,10 @@ pub(crate) fn idempotency_store(namespace_key: &str, key: &str, vault_id: &str) 
     idempotency_cache()
         .lock()
         .unwrap_or_else(|error| error.into_inner())
-        .insert((namespace_key.to_string(), key.to_string()), vault_id.to_string());
+        .insert(
+            (namespace_key.to_string(), key.to_string()),
+            vault_id.to_string(),
+        );
 }
 
 /// The Guardian device itself (admin/owner session, or no session when login
@@ -1171,7 +1181,10 @@ fn is_admin_caller(session: &Option<Extension<AuthenticatedSession>>) -> bool {
         .unwrap_or(true)
 }
 
-pub(crate) fn resolve_caller_did(state: &AppState, session: &Option<Extension<AuthenticatedSession>>) -> String {
+pub(crate) fn resolve_caller_did(
+    state: &AppState,
+    session: &Option<Extension<AuthenticatedSession>>,
+) -> String {
     crate::api::handlers::browser_member::did_from_session(session)
         .unwrap_or_else(|| resolve_sender_did(state))
 }
@@ -1329,7 +1342,10 @@ async fn ensure_folder_exists(
     Ok(())
 }
 
-pub(crate) async fn load_record_by_id(config: &VaultConfig, id: &str) -> Result<VaultRecord, ApiError> {
+pub(crate) async fn load_record_by_id(
+    config: &VaultConfig,
+    id: &str,
+) -> Result<VaultRecord, ApiError> {
     let id = validate_vault_id(id).map_err(map_vault_error)?;
     persistence::find_record(config, &id)
         .await
@@ -1479,7 +1495,10 @@ mod tests {
         }
     }
 
-    fn member_session(circle_ids: Vec<String>, registration_id: &str) -> Option<Extension<AuthenticatedSession>> {
+    fn member_session(
+        circle_ids: Vec<String>,
+        registration_id: &str,
+    ) -> Option<Extension<AuthenticatedSession>> {
         Some(Extension(AuthenticatedSession {
             claims: Claims {
                 sub: format!("user-{registration_id}"),
@@ -1509,7 +1528,9 @@ mod tests {
     ) -> VaultRecord {
         let payload = b"vault authorization test payload".to_vec();
         let source = temp.path().join(format!("{}-source", uuid::Uuid::new_v4()));
-        tokio::fs::write(&source, &payload).await.expect("write source");
+        tokio::fs::write(&source, &payload)
+            .await
+            .expect("write source");
         ingest::ingest_upload_file(
             namespace,
             owner_did,
@@ -1537,9 +1558,27 @@ mod tests {
             crate::vault::wrapper::RuntimeProfile::Docker,
         );
 
-        let first = ingest_test_file(&temp, VaultNamespace::Personal, "did:guardian:owner", "notes.txt").await;
-        let second = ingest_test_file(&temp, VaultNamespace::Personal, "did:guardian:owner", "notes.txt").await;
-        let third = ingest_test_file(&temp, VaultNamespace::Personal, "did:guardian:owner", "notes.txt").await;
+        let first = ingest_test_file(
+            &temp,
+            VaultNamespace::Personal,
+            "did:guardian:owner",
+            "notes.txt",
+        )
+        .await;
+        let second = ingest_test_file(
+            &temp,
+            VaultNamespace::Personal,
+            "did:guardian:owner",
+            "notes.txt",
+        )
+        .await;
+        let third = ingest_test_file(
+            &temp,
+            VaultNamespace::Personal,
+            "did:guardian:owner",
+            "notes.txt",
+        )
+        .await;
 
         assert_eq!(first.filename, "notes.txt");
         assert_eq!(second.filename, "notes (1).txt");
@@ -1555,7 +1594,9 @@ mod tests {
             crate::vault::wrapper::RuntimeProfile::Docker,
         );
         let source = temp.path().join("payload.bin");
-        tokio::fs::write(&source, b"binary").await.expect("write source");
+        tokio::fs::write(&source, b"binary")
+            .await
+            .expect("write source");
 
         let error = ingest::ingest_upload_file(
             VaultNamespace::Personal,
@@ -1584,13 +1625,14 @@ mod tests {
         let _profile = crate::vault::wrapper::test_force_runtime_profile(
             crate::vault::wrapper::RuntimeProfile::Docker,
         );
-        let owner_did = "did:guardian:owner";
-        let record = ingest_test_file(&temp, VaultNamespace::Personal, owner_did, "secret.txt").await;
         let state = crate::api::state::AppState::for_tests(
             temp.path(),
             "nodeA",
             temp.path().join("config").to_string_lossy().to_string(),
         );
+        let owner_did = resolve_caller_did(&state, &None);
+        let record =
+            ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "secret.txt").await;
 
         // Owner (Guardian device / admin session) revokes it.
         let revoked = revoke(State(state.clone()), None, Path(record.vault_id.clone()))
@@ -1616,19 +1658,19 @@ mod tests {
         let _profile = crate::vault::wrapper::test_force_runtime_profile(
             crate::vault::wrapper::RuntimeProfile::Docker,
         );
-        let owner_did = "did:guardian:owner";
-        let mut record = ingest_test_file(&temp, VaultNamespace::Personal, owner_did, "expiring.txt").await;
-        let config = VaultConfig::from_env();
-        record.expires_at = Some((chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339());
-        persistence::save_record(&config, &record)
-            .await
-            .expect("save expired record");
         let state = crate::api::state::AppState::for_tests(
             temp.path(),
             "nodeA",
             temp.path().join("config").to_string_lossy().to_string(),
         );
-
+        let owner_did = resolve_caller_did(&state, &None);
+        let mut record =
+            ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "expiring.txt").await;
+        let config = VaultConfig::from_env();
+        record.expires_at = Some((chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339());
+        persistence::save_record(&config, &record)
+            .await
+            .expect("save expired record");
         let error = download(State(state), None, Path(record.vault_id.clone()))
             .await
             .expect_err("expired file must not download");
@@ -1646,7 +1688,8 @@ mod tests {
         let member_a_reg = "member-a-registration";
         let member_b_reg = "member-b-registration";
         let member_a_did = member_did(member_a_reg);
-        let record = ingest_test_file(&temp, VaultNamespace::Personal, &member_a_did, "diary.txt").await;
+        let record =
+            ingest_test_file(&temp, VaultNamespace::Personal, &member_a_did, "diary.txt").await;
         let state = crate::api::state::AppState::for_tests(
             temp.path(),
             "nodeA",
@@ -1656,10 +1699,23 @@ mod tests {
         let owner_session = member_session(vec![], member_a_reg);
         let other_session = member_session(vec![], member_b_reg);
 
-        let owner_result = detail(State(state.clone()), owner_session, Path(record.vault_id.clone())).await;
-        assert!(owner_result.is_ok(), "owning member must see their own file");
+        let owner_result = detail(
+            State(state.clone()),
+            owner_session,
+            Path(record.vault_id.clone()),
+        )
+        .await;
+        assert!(
+            owner_result.is_ok(),
+            "owning member must see their own file"
+        );
 
-        let other_result = detail(State(state.clone()), other_session, Path(record.vault_id.clone())).await;
+        let other_result = detail(
+            State(state.clone()),
+            other_session,
+            Path(record.vault_id.clone()),
+        )
+        .await;
         assert!(
             matches!(other_result, Err(ApiError::Forbidden(_))),
             "a different member must not see another member's personal file"
@@ -1693,12 +1749,26 @@ mod tests {
         );
 
         let member_in_circle = member_session(vec!["circle-x".to_string()], "in-circle-member");
-        let member_outside_circle = member_session(vec!["circle-y".to_string()], "outside-circle-member");
+        let member_outside_circle =
+            member_session(vec!["circle-y".to_string()], "outside-circle-member");
 
-        let in_result = detail(State(state.clone()), member_in_circle, Path(record.vault_id.clone())).await;
-        assert!(in_result.is_ok(), "a Circle member must see the Circle's files");
+        let in_result = detail(
+            State(state.clone()),
+            member_in_circle,
+            Path(record.vault_id.clone()),
+        )
+        .await;
+        assert!(
+            in_result.is_ok(),
+            "a Circle member must see the Circle's files"
+        );
 
-        let out_result = detail(State(state), member_outside_circle, Path(record.vault_id.clone())).await;
+        let out_result = detail(
+            State(state),
+            member_outside_circle,
+            Path(record.vault_id.clone()),
+        )
+        .await;
         assert!(
             matches!(out_result, Err(ApiError::Forbidden(_))),
             "a non-member must not see the Circle's files"
@@ -1715,7 +1785,8 @@ mod tests {
         );
         let owner_reg = "history-owner-registration";
         let owner_did = member_did(owner_reg);
-        let record = ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "report.txt").await;
+        let record =
+            ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "report.txt").await;
         let state = crate::api::state::AppState::for_tests(
             temp.path(),
             "nodeA",
@@ -1723,13 +1794,21 @@ mod tests {
         );
 
         let owner_session = member_session(vec![], owner_reg);
-        let _ = download(State(state.clone()), owner_session.clone(), Path(record.vault_id.clone()))
-            .await
-            .expect("owner can download their own file");
+        let _ = download(
+            State(state.clone()),
+            owner_session.clone(),
+            Path(record.vault_id.clone()),
+        )
+        .await
+        .expect("owner can download their own file");
 
-        let history_result = history(State(state.clone()), owner_session, Path(record.vault_id.clone()))
-            .await
-            .expect("owner can view download history");
+        let history_result = history(
+            State(state.clone()),
+            owner_session,
+            Path(record.vault_id.clone()),
+        )
+        .await
+        .expect("owner can view download history");
         assert_eq!(history_result.0.count, 1);
         assert_eq!(history_result.0.downloads[0].downloader_did, owner_did);
 

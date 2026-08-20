@@ -113,8 +113,13 @@ impl ChatService for MyChatService {
             .state
             .chat_events
             .send(crate::chat::models::ChatEvent::NewMessage(record.clone()));
-        let sender_label = resolve_remote_peer_label(&self.state, &req.sender_did, group_id.as_deref()).await;
-        crate::notify::publish_circle_new_message(&req.sender_did, &sender_label, &record.message_id);
+        let sender_label =
+            resolve_remote_peer_label(&self.state, &req.sender_did, group_id.as_deref()).await;
+        crate::notify::publish_circle_new_message(
+            &req.sender_did,
+            &sender_label,
+            &record.message_id,
+        );
 
         println!(
             "💬 📥 Received message from {} → \"{}\"",
@@ -168,8 +173,12 @@ impl ChatService for MyChatService {
                 });
             match sender_did {
                 Some(sender_did) => {
-                    crate::api::handlers::chat::group_min_reader_count(&self.state, gid, &sender_did)
-                        .await
+                    crate::api::handlers::chat::group_min_reader_count(
+                        &self.state,
+                        gid,
+                        &sender_did,
+                    )
+                    .await
                 }
                 None => 1,
             }
@@ -319,7 +328,9 @@ impl ChatService for MyChatService {
             return Err(Status::not_found("attachment expired"));
         }
         if record.size_plain > crate::chat::storage::MAX_ATTACHMENT_BYTES {
-            return Err(Status::resource_exhausted("attachment exceeds 50 MiB limit"));
+            return Err(Status::resource_exhausted(
+                "attachment exceeds 50 MiB limit",
+            ));
         }
 
         // Decrypting to a temp plaintext file both hands us bytes to stream

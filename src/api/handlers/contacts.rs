@@ -148,7 +148,8 @@ async fn ensure_saveable_contact_did(
         scope_ids,
     )
     .map_err(ApiError::Internal)?;
-    let is_browser_member = is_active_browser_member_contact(state, &did, member_circle_scope).await?;
+    let is_browser_member =
+        is_active_browser_member_contact(state, &did, member_circle_scope).await?;
     let denied_message = if member_circle_scope.is_some() {
         format!("DID {} is not an active peer in any Circle you share", did)
     } else {

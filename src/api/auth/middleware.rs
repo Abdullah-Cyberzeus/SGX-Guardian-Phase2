@@ -165,6 +165,22 @@ pub async fn require_auth(
         }
     }
 
+    if let Some(response) = reject_cross_site_unsafe_request(req.method(), req.headers()) {
+        log_audit(
+            &state.node_id,
+            AuditCategory::Identity,
+            AuditSeverity::Warning,
+            AuditAction::Rejected,
+            &format!(
+                "CSRF/fetch-metadata guard rejected actor={} method={} path={}",
+                claims.sub,
+                req.method(),
+                req.uri().path()
+            ),
+        );
+        return response;
+    }
+
     match authorization::authorize(
         &claims.role,
         &current_scopes,
@@ -221,8 +237,9 @@ fn query_parameter(query: Option<&str>, name: &str) -> Option<String> {
 
 fn is_public_route(method: &Method, path: &str) -> bool {
     let public_frontend = method == Method::GET && !path.starts_with("/api/");
-    let circle_snapshot_pull =
-        method == Method::GET && path.starts_with("/api/v1/circles/") && path.ends_with("/members/snapshot");
+    let circle_snapshot_pull = method == Method::GET
+        && path.starts_with("/api/v1/circles/")
+        && path.ends_with("/members/snapshot");
 
     matches!(
         (method, path),
@@ -241,8 +258,7 @@ fn is_public_route(method: &Method, path: &str) -> bool {
             | (&Method::POST, "/api/v1/restore/validate")
             | (&Method::GET, "/api/v1/restore/status")
             | (&Method::GET, "/api/v1/health")
-    ) || (method == Method::GET
-        && path.starts_with("/api/v1/pwa/onboarding/approval/"))
+    ) || (method == Method::GET && path.starts_with("/api/v1/pwa/onboarding/approval/"))
         || circle_snapshot_pull
         || public_frontend
 }
@@ -251,6 +267,65 @@ fn is_cors_preflight(method: &Method, headers: &HeaderMap) -> bool {
     method == Method::OPTIONS
         && headers.contains_key(header::ORIGIN)
         && headers.contains_key(header::ACCESS_CONTROL_REQUEST_METHOD)
+}
+
+fn reject_cross_site_unsafe_request(method: &Method, headers: &HeaderMap) -> Option<Response> {
+    if matches!(method, &Method::GET | &Method::HEAD | &Method::OPTIONS) {
+        return None;
+    }
+
+    if headers
+        .get("sec-fetch-site")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("cross-site"))
+    {
+        return Some(forbidden(
+            "cross-site state-changing requests are not allowed",
+        ));
+    }
+
+    if headers
+        .get("sec-fetch-mode")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("navigate"))
+    {
+        return Some(forbidden(
+            "browser navigation cannot perform this operation",
+        ));
+    }
+
+    let Some(origin) = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return None;
+    };
+    let Some(host) = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return Some(forbidden("request origin could not be verified"));
+    };
+    let origin_host = origin
+        .strip_prefix("https://")
+        .or_else(|| origin.strip_prefix("http://"))
+        .and_then(|rest| rest.split('/').next())
+        .unwrap_or(origin);
+    if origin_host.eq_ignore_ascii_case(host) || is_local_development_origin(origin_host) {
+        return None;
+    }
+    Some(forbidden("request origin is not allowed"))
+}
+
+fn is_local_development_origin(origin_host: &str) -> bool {
+    let host_without_port = origin_host
+        .strip_prefix('[')
+        .and_then(|rest| rest.split_once(']').map(|(host, _)| host))
+        .or_else(|| origin_host.split_once(':').map(|(host, _)| host))
+        .unwrap_or(origin_host);
+    matches!(host_without_port, "localhost" | "127.0.0.1" | "::1")
+        || host_without_port.ends_with(".ngrok-free.app")
+        || host_without_port.ends_with(".ngrok.app")
 }
 
 fn unauthorized(message: &str) -> Response {
@@ -570,5 +645,26 @@ mod tests {
     #[test]
     fn circle_redeem_route_is_public() {
         assert!(is_public_route(&Method::POST, "/api/v1/circles/redeem"));
+    }
+
+    #[test]
+    fn cross_site_unsafe_requests_are_rejected() {
+        let mut headers = HeaderMap::new();
+        headers.insert("sec-fetch-site", "cross-site".parse().unwrap());
+
+        let response = reject_cross_site_unsafe_request(&Method::POST, &headers);
+
+        assert!(response.is_some());
+    }
+
+    #[test]
+    fn same_origin_unsafe_requests_are_allowed() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::ORIGIN, "https://guardian.local".parse().unwrap());
+        headers.insert(header::HOST, "guardian.local".parse().unwrap());
+
+        let response = reject_cross_site_unsafe_request(&Method::PATCH, &headers);
+
+        assert!(response.is_none());
     }
 }

@@ -524,7 +524,11 @@ mod tests {
             alert_at(Severity::Critical, false, now - chrono::Duration::hours(1)),
             alert_at(Severity::High, true, now - chrono::Duration::hours(2)),
             alert_at(Severity::Critical, false, now - chrono::Duration::hours(25)),
-            alert_at(Severity::Critical, false, now + chrono::Duration::minutes(1)),
+            alert_at(
+                Severity::Critical,
+                false,
+                now + chrono::Duration::minutes(1),
+            ),
         ];
 
         let summary = summarize_threat_intel(&alerts, 4, now);

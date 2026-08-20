@@ -1,5 +1,6 @@
 use crate::api::auth::middleware::AuthenticatedSession;
 use crate::api::error::ApiError;
+use crate::api::idempotency;
 use crate::api::state::AppState;
 use crate::vault::namespace::validate_vault_id;
 use crate::vault::VaultConfig;
@@ -7,6 +8,7 @@ use crate::xfer::errors::XferError;
 use crate::xfer::store::{self, LocalTransferRecord, ReceiverState, SenderProgress};
 use axum::{
     extract::{Path, State},
+    http::HeaderMap,
     Extension, Json,
 };
 use serde::{Deserialize, Serialize};
@@ -20,7 +22,7 @@ pub struct SendRequest {
     pub vault_id: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SendResponse {
     pub status: String,
     pub transfer_id: String,
@@ -75,8 +77,15 @@ pub struct InboxResponse {
 pub async fn send(
     State(state): State<Arc<AppState>>,
     session: Option<Extension<AuthenticatedSession>>,
+    headers: HeaderMap,
     Json(body): Json<SendRequest>,
 ) -> Result<Json<SendResponse>, ApiError> {
+    let idempotency_key = idempotency::header_key(&headers);
+    if let Some(key) = idempotency_key.as_deref() {
+        if let Some(cached) = idempotency::lookup::<SendResponse>("xfer:send", key) {
+            return Ok(Json(cached));
+        }
+    }
     let config = crate::xfer::XferConfig::from_env();
     let caller_did = crate::api::handlers::vault::resolve_caller_did(&state, &session);
     let peer_did = body.peer_did.trim();
@@ -230,11 +239,15 @@ pub async fn send(
             ))
         }
     };
-    Ok(Json(SendResponse {
+    let response = SendResponse {
         status: "accepted".to_string(),
         transfer_id,
         message: "transfer queued".to_string(),
-    }))
+    };
+    if let Some(key) = idempotency_key.as_deref() {
+        idempotency::store("xfer:send", key, &response);
+    }
+    Ok(Json(response))
 }
 
 pub async fn list(
