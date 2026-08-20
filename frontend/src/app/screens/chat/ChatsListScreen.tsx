@@ -48,7 +48,7 @@ function previewTime(timestamp?: number) {
     : date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-export function ChatsListScreen() {
+export function ChatsListScreen({ compact = false }: { compact?: boolean } = {}) {
   const navigate = useNavigate();
   const { data, loading, error, refetch } = useCommunicationPeers();
   const { counts: unreadCounts, previews, circleCounts, circlePreviews, circleChats, refresh: refreshChat } = useChatUnread();
@@ -97,15 +97,18 @@ export function ChatsListScreen() {
   };
 
   return <div className="flex h-full flex-col">
-    <PageHeader title="Chats" subtitle={`${visible.length} ${tab === "individual" ? "individual chat" : "group chat"}${visible.length === 1 ? "" : "s"}`} right={
+    <PageHeader showBack={!compact} title="Chats" subtitle={`${visible.length} ${tab === "individual" ? "individual chat" : "group chat"}${visible.length === 1 ? "" : "s"}`} right={
       <button aria-label="Refresh peers" onClick={() => void refresh()} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted"><RefreshCw size={18} className={refreshing ? "animate-spin" : ""} /></button>
     } />
-    <div className="shrink-0 border-b border-border bg-card p-3 md:px-6">
-      <div className="mx-auto flex max-w-3xl gap-2"><button onClick={() => navigate("/calls")} className="rounded-full border border-border px-4 text-sm font-medium">Calls</button><label className="flex h-11 flex-1 items-center gap-2 rounded-full border border-border bg-input-background px-4">
-        <Search size={17} className="text-muted-foreground" />
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search chats" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
-      </label></div>
-      <div className="mx-auto mt-3 flex max-w-3xl gap-2">
+    <div className={`shrink-0 border-b border-border bg-card p-3 ${compact ? "" : "md:px-6"}`}>
+      <div className={`flex gap-2 ${compact ? "" : "mx-auto max-w-3xl"}`}>
+        {!compact && <button onClick={() => navigate("/calls")} className="rounded-full border border-border px-4 text-sm font-medium">Calls</button>}
+        <label className="flex h-11 flex-1 items-center gap-2 rounded-full border border-border bg-input-background px-4">
+          <Search size={17} className="text-muted-foreground" />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search chats" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+        </label>
+      </div>
+      <div className={`mt-3 flex gap-2 ${compact ? "" : "mx-auto max-w-3xl"}`}>
         <button
           onClick={() => setTab("individual")}
           className={`flex h-9 flex-1 items-center justify-center gap-2 rounded-full text-sm font-medium ${tab === "individual" ? "bg-primary text-primary-foreground" : "border border-border text-muted-foreground hover:bg-muted"}`}
@@ -123,7 +126,7 @@ export function ChatsListScreen() {
       </div>
     </div>
     <div className="flex-1 overflow-y-auto">
-      <div className="mx-auto w-full max-w-3xl divide-y divide-border">
+      <div className={`w-full divide-y divide-border ${compact ? "" : "mx-auto max-w-3xl"}`}>
         {loading && <div className="flex items-center justify-center gap-2 p-12 text-sm text-muted-foreground"><Loader2 size={20} className="animate-spin" /> Loading chats…</div>}
         {!loading && error && cachedPeers.length === 0 && circleChats.length === 0 && <div className="p-8 text-center text-sm text-destructive">Chats could not be loaded.</div>}
         {!loading && visible.length === 0 && <div className="flex flex-col items-center gap-3 p-12 text-center"><MessageSquare size={40} className="text-muted-foreground" /><p className="text-sm font-semibold">{query ? "No chats found" : tab === "individual" ? "No individual chats yet" : "No group chats yet"}</p><p className="max-w-xs text-xs text-muted-foreground">{tab === "individual" ? "Peer chats appear after attestation." : "Circle chats appear here once you join a group."}</p></div>}
@@ -131,7 +134,10 @@ export function ChatsListScreen() {
           const { preview, unread, name } = row;
           const peer = row.kind === "peer" ? row.peer : null;
           const fallback = peer ? `${presenceHidden(peer) ? "Presence hidden" : peer.online ? "Online" : peer.lastSeenAgo} · Tap to start chatting` : `${row.circle.memberCount} member${row.circle.memberCount === 1 ? "" : "s"} · Circle group chat`;
-          return <button key={`${row.kind}:${row.id}`} onClick={() => navigate(row.kind === "circle" ? `/network/${encodeURIComponent(row.id)}/chat?from=chats` : `/chats/${encodeURIComponent(row.id)}`)} className="flex w-full items-center gap-3 bg-transparent px-4 py-3.5 text-left hover:bg-muted/50 md:px-6">
+          const target = row.kind === "circle"
+            ? (compact ? `/chats/circle/${encodeURIComponent(row.id)}` : `/network/${encodeURIComponent(row.id)}/chat?from=chats`)
+            : `/chats/${encodeURIComponent(row.id)}`;
+          return <button key={`${row.kind}:${row.id}`} onClick={() => navigate(target)} className={`flex w-full items-center gap-3 bg-transparent px-4 py-3.5 text-left hover:bg-muted/50 ${compact ? "" : "md:px-6"}`}>
             <div className="relative grid h-12 w-12 shrink-0 place-items-center rounded-full bg-primary/15 font-semibold text-primary">{row.kind === "circle" ? <UsersRound size={21} /> : (name.split(/[-_:\s]/).filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || initials(peer!))}{peer && !presenceHidden(peer) && <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-background" style={{ background: peer.online ? "var(--chart-2)" : "var(--muted-foreground)" }} />}</div>
             <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="truncate text-sm font-semibold">{name}</p>{row.kind === "peer" ? <ShieldCheck size={14} className="shrink-0 text-primary" /> : <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-primary">Circle</span>}</div><p className={`truncate text-xs ${unread > 0 ? "font-semibold text-foreground" : "text-muted-foreground"}`}>{preview?.text || fallback}</p></div>
             <div className="flex shrink-0 flex-col items-end gap-1.5 self-start pt-1">

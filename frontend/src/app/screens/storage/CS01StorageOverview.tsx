@@ -199,7 +199,7 @@ export function CS01StorageOverview() {
           vault.usedBytes,
         )} of ${formatBytes(vault.capacityBytes)}`}
         showBack={false}
-        large
+        large={canManageVault}
         right={
           <div className="flex items-center gap-2">
             <Button
@@ -327,14 +327,14 @@ export function CS01StorageOverview() {
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search all files on this device"
-                  className="h-10 pl-9"
+                  className={canManageVault ? "h-10 pl-9" : "h-11 rounded-full pl-9"}
                   aria-label="Search files"
                 />
               </div>
               <Button
                 type="button"
                 variant={activeFilterCount > 0 ? "default" : "outline"}
-                className="h-10 shrink-0 gap-1.5"
+                className={canManageVault ? "h-10 shrink-0 gap-1.5" : "h-11 shrink-0 gap-1.5 rounded-full"}
                 aria-expanded={filtersOpen}
                 onClick={() => setFiltersOpen((open) => !open)}
               >
