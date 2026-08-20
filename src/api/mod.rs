@@ -1999,6 +1999,8 @@ mod tests {
         let vault_base_value = vault_base.to_string_lossy().to_string();
         let _vault_base = ScopedEnvVar::set(crate::vault::VAULT_BASE_ENV, &vault_base_value);
         let config = crate::vault::VaultConfig::from_env();
+        let state = test_state();
+        let owner_did = crate::api::handlers::vault::resolve_caller_did(&state, &None);
         crate::vault::quota::save_settings(
             &config,
             &crate::vault::quota::VaultQuotaSettings {
@@ -2025,7 +2027,7 @@ mod tests {
                 folder_id: String::new(),
                 starred: false,
                 description: String::new(),
-                owner_did: String::new(),
+                owner_did,
                 revoked: false,
                 revoked_at: None,
                 expires_at: None,
@@ -2045,7 +2047,8 @@ mod tests {
         .expect("save quota record");
 
         let response = crate::api::handlers::vault::quota_status(
-            axum::extract::State(test_state()),
+            axum::extract::State(state),
+            None,
             axum::extract::Query(crate::api::handlers::vault::VaultQuotaQuery {
                 ns: Some("personal".into()),
                 circle_id: None,

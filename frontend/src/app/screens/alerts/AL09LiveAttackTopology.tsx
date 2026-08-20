@@ -132,7 +132,7 @@ function makeDemoAlert(scenario: ModbusScenario, index: number): ThreatAlert {
     dst_port: 502,
     protocol: "TCP",
     signature_id: 920_100 + index,
-    signature: `${scenario.suricataAlert} ${scenario.fcLabel}`,
+    signature: `${scenario.guardianAlert} ${scenario.fcLabel}`,
     category: "exploit",
     severity: scenario.id === "S4" ? "critical" : scenario.id === "S3" ? "high" : "medium",
     rev: 1,
@@ -377,7 +377,7 @@ export function AL09LiveAttackTopology() {
   const alertsQuery = useThreatAlerts({ limit: 1000 });
   const statusQuery = useThreatStatus();
   const liveAlerts = alertsQuery.data ?? [];
-  const suricataActive = statusQuery.data?.suricata?.toLowerCase() === "active";
+  const guardianActive = statusQuery.data?.suricata?.toLowerCase() === "active";
 
   const addAttack = useCallback((alert: ThreatAlert, isDemo = false) => {
     const context = getModbusAlertContext(alert);
@@ -534,7 +534,7 @@ export function AL09LiveAttackTopology() {
           </div>
         </div>
         <div className="modbus-hud-stats">
-          <span className={suricataActive || mode === "demo" ? "is-good" : "is-warn"}>{mode === "demo" ? "DEMO STREAM" : suricataActive ? "GUARDIAN LIVE" : "GUARDIAN WAITING"}</span>
+          <span className={guardianActive || mode === "demo" ? "is-good" : "is-warn"}>{mode === "demo" ? "DEMO STREAM" : guardianActive ? "GUARDIAN LIVE" : "GUARDIAN WAITING"}</span>
           <span>{activeAttacks.length} active attacks</span>
           <span>{activeSensorCount}/4 sensors hit</span>
           <span>source {latestSourceIp}</span>

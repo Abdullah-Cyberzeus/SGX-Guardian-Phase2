@@ -1,4 +1,5 @@
 import api from './api';
+import { guardianDisplayText } from '../utils/displayText';
 
 export interface Alert {
   id: string;
@@ -89,31 +90,31 @@ function normalizeThreatAlert(alert: ThreatAlertApi): Alert {
     id: alert.alert_id,
     severity,
     status: alert.blocked ? 'Blocked' : 'Active',
-    title: alert.signature || 'Network threat detected',
-    description: `${alert.category || 'Network'} event from ${alert.src_ip || 'unknown source'} to ${alert.dst_ip || 'unknown destination'}`,
-    eventType: alert.event_type || alert.category || 'Threat alert',
+    title: guardianDisplayText(alert.signature || 'Network threat detected'),
+    description: guardianDisplayText(`${alert.category || 'Network'} event from ${alert.src_ip || 'unknown source'} to ${alert.dst_ip || 'unknown destination'}`),
+    eventType: guardianDisplayText(alert.event_type || alert.category || 'Threat alert'),
     timestamp: validTimestamp ? parsedTimestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Unknown',
     date: validTimestamp ? parsedTimestamp.toLocaleDateString() : '',
     device: alert.src_ip || 'Unknown source',
     deviceIp: alert.src_ip || '',
-    os: alert.protocol || 'Unknown protocol',
-    aiSummary: `Guardian detected ${alert.signature || 'suspicious traffic'} targeting ${alert.dst_ip || 'an unknown destination'}.`,
+    os: guardianDisplayText(alert.protocol || 'Unknown protocol'),
+    aiSummary: guardianDisplayText(`Guardian detected ${alert.signature || 'suspicious traffic'} targeting ${alert.dst_ip || 'an unknown destination'}.`),
     archived: false,
     rawTimestamp: alert.timestamp,
     srcIp: alert.src_ip,
     srcPort: alert.src_port,
     dstIp: alert.dst_ip,
     dstPort: alert.dst_port,
-    protocol: alert.protocol,
+    protocol: guardianDisplayText(alert.protocol),
     signatureId: alert.signature_id,
-    signature: alert.signature,
-    category: alert.category,
+    signature: guardianDisplayText(alert.signature),
+    category: guardianDisplayText(alert.category),
     blocked: !!alert.blocked,
     originalEvidence: [
-      alert.event_type ? `Event type: ${alert.event_type}` : '',
-      alert.signature ? `Signature: ${alert.signature}` : '',
+      alert.event_type ? `Event type: ${guardianDisplayText(alert.event_type)}` : '',
+      alert.signature ? `Signature: ${guardianDisplayText(alert.signature)}` : '',
       alert.signature_id ? `Signature ID: ${alert.signature_id}` : '',
-      alert.src_ip || alert.dst_ip ? `Flow: ${alert.src_ip || 'unknown'}:${alert.src_port ?? 'any'} → ${alert.dst_ip || 'unknown'}:${alert.dst_port ?? 'any'} ${alert.protocol || ''}` : '',
+      alert.src_ip || alert.dst_ip ? guardianDisplayText(`Flow: ${alert.src_ip || 'unknown'}:${alert.src_port ?? 'any'} → ${alert.dst_ip || 'unknown'}:${alert.dst_port ?? 'any'} ${alert.protocol || ''}`) : '',
       alert.gid ? `GID: ${alert.gid}` : '',
       alert.rev ? `Revision: ${alert.rev}` : '',
     ].filter(Boolean).join(' · '),
@@ -121,7 +122,7 @@ function normalizeThreatAlert(alert: ThreatAlertApi): Alert {
 }
 
 export const alertService = {
-  // The backend's implemented alert source is Suricata threat alerts.
+  // The backend's implemented alert source is Guardian threat alerts.
   async getAll(filters?: AlertFilters): Promise<AlertsResponse> {
     const raw = await api.get<ThreatAlertApi[]>('/threat/alerts', {
       ...(filters?.severity ? { severity: filters.severity.toLowerCase() } : {}),

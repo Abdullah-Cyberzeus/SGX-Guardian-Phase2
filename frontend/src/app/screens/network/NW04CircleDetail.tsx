@@ -4,8 +4,8 @@ import { PageHeader } from "../../components/PageHeader";
 import { useCircles, usePeers } from "../../hooks/useApiData";
 import {
   Send, Phone, Video, UserPlus, Copy, Check, X, ChevronRight,
-  Link, QrCode, Search, MessageSquare, Users, PhoneCall,
-  Trash2, AlertTriangle, FolderOpen, Settings, Loader2, ArrowLeft
+  Link, QrCode, Search, MessageSquare, Users, PhoneCall, Mail, MessageCircle,
+  Trash2, AlertTriangle, FolderOpen, Settings, Loader2, ArrowLeft, Download
 } from "lucide-react";
 import { StatusBadge } from "../../components/SeverityBadge";
 import { QRCodeSVG } from "qrcode.react";
@@ -20,7 +20,7 @@ import { useGroupCall } from "../../../features/calls/GroupCallContext";
 import type { MediaType } from "../../../features/calls/call.types";
 import { useContactNames } from "../../contexts/ContactNameContext";
 import chatService from "../../services/chatService";
-import circleService, { type CircleInvite } from "../../services/circleService";
+import circleService, { type CircleInvite, type CircleMember } from "../../services/circleService";
 import { toast } from "sonner";
 import { useCallHistory } from "../../hooks/useCallHistory";
 
@@ -58,8 +58,11 @@ export function NW04CircleDetail() {
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteSending, setInviteSending] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
+  const [shareOptionsOpen, setShareOptionsOpen] = useState(false);
   const [memberDetailOpen, setMemberDetailOpen] = useState<string | null>(null);
   const [removeDialogOpen, setRemoveDialogOpen] = useState<string | null>(null);
+  const [removeBusy, setRemoveBusy] = useState(false);
+  const [localMembers, setLocalMembers] = useState<CircleMember[] | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const { startCall, call, currentDevice } = useCall();
   const groupCalling = useGroupCall();
@@ -69,7 +72,7 @@ export function NW04CircleDetail() {
   const [directLoading, setDirectLoading] = useState(false);
   const [sendingDirect, setSendingDirect] = useState(false);
 
-  const baseMembers = circle?.members || [];
+  const baseMembers = localMembers || circle?.members || [];
   const members = useMemo(() => {
     const existing = new Set(baseMembers.map((member: any) => String(member.did || "").toLowerCase()));
     const pending = pendingInvites
@@ -89,6 +92,11 @@ export function NW04CircleDetail() {
   const callHistory = useCallHistory();
   const selectedMember = members.find((m: any) => String(m.did || m.id) === memberDetailOpen);
   const memberToRemove = members.find((m: any) => String(m.did || m.id) === removeDialogOpen);
+  const sameDid = (left?: string, right?: string) => String(left || "").trim().toLowerCase() === String(right || "").trim().toLowerCase();
+
+  useEffect(() => {
+    setLocalMembers(null);
+  }, [circleId]);
 
   const setTab = (tab: Tab) => {
     if (tab === "chat" && circleId) {
@@ -105,6 +113,42 @@ export function NW04CircleDetail() {
     navigator.clipboard.writeText(text).catch(() => {});
     setCopiedField(field);
     setTimeout(() => setCopiedField(null), 2000);
+  };
+
+  const removeSelectedMember = async () => {
+    if (!circleId || !memberToRemove) return;
+    const did = String(memberToRemove.did || "").trim();
+    if (!did) {
+      toast.error("Member DID is missing");
+      return;
+    }
+    if (sameDid(did, circle?.ownerDid) || String(memberToRemove.role || "").toLowerCase() === "owner") {
+      toast.error("Circle owner cannot be removed");
+      setRemoveDialogOpen(null);
+      return;
+    }
+    setRemoveBusy(true);
+    try {
+      await circleService.removeMember(circleId, did);
+      const updatedMembers = (await circleService.getMembers(circleId)).filter((member) => !sameDid(member.did, did));
+      setLocalMembers(updatedMembers);
+      setPendingInvites((prev) => prev.filter((invite) => !sameDid(invite.targetDid || String(invite.target_did || ""), did)));
+      setInviteCache((prev) => {
+        const next = { ...prev };
+        Object.keys(next).forEach((key) => {
+          if (sameDid(key, did) || sameDid(next[key]?.targetDid, did)) delete next[key];
+        });
+        return next;
+      });
+      setRemoveDialogOpen(null);
+      setMemberDetailOpen(null);
+      toast.success("Member removed from Circle");
+      void refetchCircles();
+    } catch (cause) {
+      toast.error("Remove member failed", { description: cause instanceof Error ? cause.message : "Backend rejected the request." });
+    } finally {
+      setRemoveBusy(false);
+    }
   };
 
   const openInviteSheet = () => {
@@ -373,18 +417,59 @@ export function NW04CircleDetail() {
   const inviteShareValue = activeInvite?.url || activeInvite?.qrPayload || (activeInvite?.token
     ? `sgx-guardian://circle/join?token=${encodeURIComponent(activeInvite.token)}`
     : "");
-  const inviteDisplayCode = String(activeInvite?.id || "")
-    .replace(/^urn:uuid:/, "")
-    .split("-")
-    .filter(Boolean)
-    .slice(0, 3);
 
-  const shareInvite = async () => {
+  const ensureInviteShareValue = async () => {
     const invite = activeInvite || await ensureInviteForSelectedDid();
-    if (!invite) return;
+    if (!invite) return "";
     const value = invite?.url || invite?.qrPayload || (invite?.token
       ? `sgx-guardian://circle/join?token=${encodeURIComponent(invite.token)}`
       : "");
+    if (!value) toast.error("Invite link unavailable");
+    return value;
+  };
+
+  const copyInviteLink = async () => {
+    const value = await ensureInviteShareValue();
+    if (!value) return;
+    await navigator.clipboard.writeText(value);
+    toast.success("Invite link copied");
+    setShareOptionsOpen(false);
+  };
+
+  const openWhatsAppInvite = async () => {
+    const value = await ensureInviteShareValue();
+    if (!value) return;
+    window.open(`https://wa.me/?text=${encodeURIComponent(value)}`, "_blank", "noopener,noreferrer");
+    setShareOptionsOpen(false);
+  };
+
+  const openEmailInvite = async () => {
+    const value = await ensureInviteShareValue();
+    if (!value) return;
+    window.location.href = `mailto:?subject=${encodeURIComponent(`Join ${circle?.name || "my Circle"}`)}&body=${encodeURIComponent(value)}`;
+    setShareOptionsOpen(false);
+  };
+
+  const downloadInviteQr = async () => {
+    const value = await ensureInviteShareValue();
+    if (!value) return;
+    const svg = document.querySelector("#circle-invite-qr svg");
+    if (!svg) {
+      toast.error("QR code is not ready");
+      return;
+    }
+    const blob = new Blob([new XMLSerializer().serializeToString(svg)], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${String(activeInvite?.id || "circle-invite").replace(/[^a-z0-9-]+/gi, "_")}.svg`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setShareOptionsOpen(false);
+  };
+
+  const shareInvite = async () => {
+    const value = await ensureInviteShareValue();
     if (!value) return;
     try {
       if (navigator.share) {
@@ -781,53 +866,25 @@ export function NW04CircleDetail() {
                     <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>Anyone with this link can request to join your Circle.</p>
                   </div>
 
-                  {/* UX-03: Bank-style 2FA invite code display */}
-                  <div>
-                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginBottom: "12px" }}>Invite Code</p>
-                    <div className="flex items-center justify-center gap-2 flex-wrap mb-3">
-                      {inviteDisplayCode.map((segment, i) => (
-                        <div
-                          key={i}
-                          className="flex items-center justify-center rounded-lg"
-                          style={{
-                            minWidth: "64px",
-                            height: "52px",
-                            backgroundColor: "var(--muted)",
-                            border: "1px solid var(--border)",
-                            padding: "0 10px",
-                          }}
-                        >
-                          <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)", letterSpacing: "0.15em" }}>
-                            {segment}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                    <button
-                      onClick={() => handleCopy(inviteShareValue, "code")}
-                      className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80"
-                      style={{ height: "44px", backgroundColor: copiedField === "code" ? "color-mix(in srgb, var(--chart-2) 15%, var(--secondary))" : "var(--secondary)", color: copiedField === "code" ? "var(--chart-2)" : "var(--secondary-foreground)", border: "1px solid var(--border)", cursor: "pointer", borderRadius: "var(--radius)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)" }}
-                    >
-                      {copiedField === "code" ? <Check size={15} style={{ color: "var(--chart-2)" }} /> : <Copy size={15} />}
-                      {copiedField === "code" ? "Copied!" : "Copy Code"}
-                    </button>
-                  </div>
-
                   <div>
                     <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginBottom: "6px" }}>Shareable Link</p>
                     <div className="flex items-center gap-2 rounded-lg border border-border px-4 py-3" style={{ backgroundColor: "var(--card)" }}>
                       <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px", color: "var(--muted-foreground)", flex: 1, wordBreak: "break-all" }}>{inviteShareValue}</span>
-                      <button onClick={() => handleCopy(inviteShareValue, "link")} style={{ background: "none", border: "none", cursor: "pointer", flexShrink: 0 }}>
-                        {copiedField === "link" ? <Check size={16} style={{ color: "var(--chart-2)" }} /> : <Copy size={16} style={{ color: "var(--muted-foreground)" }} />}
-                      </button>
                     </div>
                   </div>
                   <button onClick={() => void sendDirectInvite()} disabled={inviteSending} className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80 disabled:opacity-50" style={{ height: "48px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", border: "none", cursor: inviteSending ? "not-allowed" : "pointer", borderRadius: "var(--radius)" }}>
                     {inviteSending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />} {inviteSending ? "Sending..." : "Send Direct Invite"}
                   </button>
-                  <button onClick={() => void shareInvite()} className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80" style={{ height: "44px", backgroundColor: "var(--secondary)", color: "var(--secondary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", border: "1px solid var(--border)", cursor: "pointer", borderRadius: "var(--radius)" }}>
-                    <Link size={16} /> Copy / Share Link
+                  <button onClick={() => setShareOptionsOpen((open) => !open)} className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80" style={{ height: "44px", backgroundColor: "var(--secondary)", color: "var(--secondary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", border: "1px solid var(--border)", cursor: "pointer", borderRadius: "var(--radius)" }}>
+                    <Link size={16} /> Share Link
                   </button>
+                  {shareOptionsOpen && (
+                    <div className="rounded-lg border border-border p-2" style={{ backgroundColor: "var(--background)" }}>
+                      <button onClick={() => void openWhatsAppInvite()} className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left transition-opacity active:opacity-80 hover:bg-muted" style={{ background: "transparent", border: "none", color: "var(--foreground)", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)" }}><MessageCircle size={16} style={{ color: "var(--primary)" }} /> WhatsApp</button>
+                      <button onClick={() => void openEmailInvite()} className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left transition-opacity active:opacity-80 hover:bg-muted" style={{ background: "transparent", border: "none", color: "var(--foreground)", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)" }}><Mail size={16} style={{ color: "var(--primary)" }} /> Email</button>
+                      <button onClick={() => void copyInviteLink()} className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left transition-opacity active:opacity-80 hover:bg-muted" style={{ background: "transparent", border: "none", color: "var(--foreground)", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)" }}><Copy size={16} style={{ color: "var(--primary)" }} /> Copy Link</button>
+                    </div>
+                  )}
                   <div className="h-px" style={{ backgroundColor: "var(--border)" }} />
                   <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>Or record an invitation</p>
                   <div className="flex gap-2">
@@ -846,14 +903,20 @@ export function NW04CircleDetail() {
                     </div>
                   )}
                   {/* QA-14: Larger, clearer QR code */}
-                  <div className="rounded-lg border border-border p-5" style={{ backgroundColor: "var(--card)" }}>
+                  <div id="circle-invite-qr" className="rounded-lg border border-border p-5" style={{ backgroundColor: "var(--card)" }}>
                     <QRCodeSVG value={inviteShareValue || "sgx-guardian://circle/invite/pending"} size={240} bgColor="transparent" fgColor="var(--foreground)" level="M" />
                   </div>
                   <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", textAlign: "center" }}>Share this QR code for quick access</p>
-                  <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-sm)", color: "var(--foreground)", letterSpacing: "0.12em" }}>{inviteDisplayCode.join("-")}</p>
-                  <button onClick={() => void shareInvite()} className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80" style={{ height: "48px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", border: "none", cursor: "pointer", borderRadius: "var(--radius)" }}>
+                  <button onClick={() => setShareOptionsOpen((open) => !open)} className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80" style={{ height: "48px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", border: "none", cursor: "pointer", borderRadius: "var(--radius)" }}>
                     <QrCode size={16} /> Share QR Code
                   </button>
+                  {shareOptionsOpen && (
+                    <div className="w-full rounded-lg border border-border p-2" style={{ backgroundColor: "var(--background)" }}>
+                      <button onClick={() => void openWhatsAppInvite()} className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left transition-opacity active:opacity-80 hover:bg-muted" style={{ background: "transparent", border: "none", color: "var(--foreground)", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)" }}><MessageCircle size={16} style={{ color: "var(--primary)" }} /> WhatsApp</button>
+                      <button onClick={() => void openEmailInvite()} className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left transition-opacity active:opacity-80 hover:bg-muted" style={{ background: "transparent", border: "none", color: "var(--foreground)", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)" }}><Mail size={16} style={{ color: "var(--primary)" }} /> Email</button>
+                      <button onClick={() => void downloadInviteQr()} className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left transition-opacity active:opacity-80 hover:bg-muted" style={{ background: "transparent", border: "none", color: "var(--foreground)", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)" }}><Download size={16} style={{ color: "var(--primary)" }} /> Download QR</button>
+                    </div>
+                  )}
                 </div>
               )}
               {sheetTab === "search" && (
@@ -913,7 +976,7 @@ export function NW04CircleDetail() {
                     if (invite) setSheetTab("link");
                   }} className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80 disabled:opacity-50" style={{ height: "48px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", border: "none", cursor: selectedDid ? "pointer" : "not-allowed", borderRadius: "var(--radius)" }}>
                     {inviteLoading ? <Loader2 size={16} className="animate-spin" /> : <UserPlus size={16} />}
-                    {inviteLoading ? "Creating Invite..." : "Invite Selected DID"}
+                    {inviteLoading ? "Generating Link..." : "Generate Link"}
                   </button>
                 </div>
               )}
@@ -976,7 +1039,7 @@ export function NW04CircleDetail() {
                   <Video size={16} /> Video
                 </button>
               </div>
-              {selectedMember.role.toLowerCase() !== "owner" && (
+              {String(selectedMember.role || "").toLowerCase() !== "owner" && !sameDid(selectedMember.did, circle?.ownerDid) && (
                 <button
                   onClick={() => { setMemberDetailOpen(null); setRemoveDialogOpen(String(selectedMember.did || selectedMember.id)); }}
                   className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80 mt-2"
@@ -1009,16 +1072,17 @@ export function NW04CircleDetail() {
             </Dialog.Description>
             <div className="flex gap-3">
               <Dialog.Close asChild>
-                <button className="flex-1 flex items-center justify-center rounded-md transition-opacity active:opacity-80" style={{ height: "44px", backgroundColor: "var(--secondary)", color: "var(--secondary-foreground)", border: "1px solid var(--border)", cursor: "pointer", borderRadius: "var(--radius)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)" }}>
+                <button disabled={removeBusy} className="flex-1 flex items-center justify-center rounded-md transition-opacity active:opacity-80 disabled:opacity-50" style={{ height: "44px", backgroundColor: "var(--secondary)", color: "var(--secondary-foreground)", border: "1px solid var(--border)", cursor: removeBusy ? "not-allowed" : "pointer", borderRadius: "var(--radius)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)" }}>
                   Cancel
                 </button>
               </Dialog.Close>
               <button
-                onClick={() => setRemoveDialogOpen(null)}
-                className="flex-1 flex items-center justify-center rounded-md transition-opacity active:opacity-80"
-                style={{ height: "44px", backgroundColor: "var(--destructive)", color: "var(--destructive-foreground)", border: "none", cursor: "pointer", borderRadius: "var(--radius)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)" }}
+                onClick={() => void removeSelectedMember()}
+                disabled={removeBusy || !memberToRemove}
+                className="flex-1 flex items-center justify-center gap-2 rounded-md transition-opacity active:opacity-80 disabled:opacity-50"
+                style={{ height: "44px", backgroundColor: "var(--destructive)", color: "var(--destructive-foreground)", border: "none", cursor: removeBusy ? "not-allowed" : "pointer", borderRadius: "var(--radius)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)" }}
               >
-                Remove
+                {removeBusy && <Loader2 size={15} className="animate-spin" />}Remove
               </button>
             </div>
           </Dialog.Content>

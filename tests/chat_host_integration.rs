@@ -317,6 +317,7 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
             encrypted_payload: "must not persist".to_string(),
             signature: String::new(),
             group_id: String::new(),
+            relay_did: String::new(),
         })
         .await
         .unwrap_err();

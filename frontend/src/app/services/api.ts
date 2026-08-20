@@ -17,6 +17,7 @@ interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean>;
   suppressUnauthorizedEvent?: boolean;
   idempotencyKey?: string;
+  timeoutMs?: number;
 }
 
 export class ApiError extends Error {
@@ -119,7 +120,7 @@ class ApiClient {
   }
 
   async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-    const { params, suppressUnauthorizedEvent, idempotencyKey, ...fetchOptions } = options;
+    const { params, suppressUnauthorizedEvent, idempotencyKey, timeoutMs, ...fetchOptions } = options;
     const url = this.buildUrl(endpoint, params);
     const method = (fetchOptions.method || 'GET').toUpperCase();
     const t0 = performance.now();
@@ -143,7 +144,8 @@ class ApiClient {
 
     let response: Response;
     const timeout = new AbortController();
-    const timeoutId = window.setTimeout(() => timeout.abort(), 20_000);
+    const requestTimeoutMs = timeoutMs ?? 20_000;
+    const timeoutId = window.setTimeout(() => timeout.abort(), requestTimeoutMs);
     const suppliedSignal = fetchOptions.signal;
     const abortFromCaller = () => timeout.abort();
     suppliedSignal?.addEventListener('abort', abortFromCaller, { once: true });
@@ -152,7 +154,7 @@ class ApiClient {
     } catch (netErr) {
       const duration = Math.round(performance.now() - t0);
       const message = timeout.signal.aborted && !suppliedSignal?.aborted
-        ? 'Request timed out after 20 seconds'
+        ? `Request timed out after ${Math.round(requestTimeoutMs / 1000)} seconds`
         : netErr instanceof Error ? netErr.message : 'Network error';
       monitoring.trackApiCall(method, endpoint, null, duration, message);
       emitApiEvent('sgx:api-failure', { endpoint, method, status: null, kind: classifyFailure(null, message), message });
@@ -180,7 +182,7 @@ class ApiClient {
   }
 
   async raw(endpoint: string, options: RequestOptions = {}): Promise<Response> {
-    const { params, suppressUnauthorizedEvent, idempotencyKey, ...fetchOptions } = options;
+    const { params, suppressUnauthorizedEvent, idempotencyKey, timeoutMs: _timeoutMs, ...fetchOptions } = options;
     const baseOrigin = new URL(
       this.baseUrl,
       typeof window === 'undefined' ? 'http://localhost' : window.location.origin,

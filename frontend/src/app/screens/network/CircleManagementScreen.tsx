@@ -14,6 +14,7 @@ const fieldClass = "w-full rounded-md border border-border bg-input-background p
 const secondaryButton = "inline-flex items-center justify-center gap-2 rounded-md border border-border bg-secondary px-3 py-2 text-sm font-medium text-secondary-foreground transition-opacity active:opacity-70 disabled:opacity-50";
 const primaryButton = "inline-flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-opacity active:opacity-80 disabled:opacity-50";
 const normalizeGuardianDid = (did: string) => did.trim().startsWith("did:guardian:") ? did.trim() : `did:guardian:${did.trim()}`;
+const sameDid = (left?: string, right?: string) => String(left || "").toLowerCase() === String(right || "").toLowerCase();
 const inviteShareValue = (invite: CircleInvite | null) => invite?.url || invite?.qrPayload || (invite?.token ? `sgx-guardian://circle/join?token=${encodeURIComponent(invite.token)}` : "");
 const stateLabel = (invite: CircleInvite) => {
   const raw = String(invite.state || invite.status || "").toLowerCase();
@@ -97,6 +98,10 @@ export function CircleManagementScreen() {
   }, [circleId]);
 
   useEffect(() => { void reload(); }, [reload]);
+
+  const refetchMembers = useCallback(async () => {
+    setMembers(await circleService.getMembers(circleId));
+  }, [circleId]);
 
   useEffect(() => {
     if (tab !== "invites" || inviteMode !== "member") return;
@@ -336,9 +341,14 @@ export function CircleManagementScreen() {
         toast.success("Circle deleted");
         navigate("/network", { replace: true });
       } else if (confirm.kind === "member") {
+        if (sameDid(confirm.did, circle?.ownerDid)) {
+          toast.error("Circle owner cannot be removed");
+          setConfirm(null);
+          return;
+        }
         await circleService.removeMember(circleId, confirm.did);
         toast.success("Member removed");
-        await reload();
+        await refetchMembers();
       } else {
         await circleService.revokeInvite(circleId, confirm.id);
         toast.success("Invite revoked");
@@ -356,10 +366,10 @@ export function CircleManagementScreen() {
     if (!needle) return true;
     return `${peer.did} ${peer.node_name}`.toLowerCase().includes(needle);
   });
-  const selectedPeer = didPeers.find((peer) => peer.did === targetDid);
+  const selectedPeer = didPeers.find((peer) => sameDid(peer.did, targetDid));
 
   const memberRow = (member: CircleMember, revoked = false) => {
-    const primaryOwner = member.did === circle?.ownerDid;
+    const primaryOwner = sameDid(member.did, circle?.ownerDid);
     const memberDisplayName = displayForDid(member.did, member.name || member.email || member.did);
     const memberSecondary = displayForDid(member.did, member.did);
     return (
