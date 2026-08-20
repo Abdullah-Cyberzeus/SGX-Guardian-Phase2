@@ -14,7 +14,18 @@ pub struct MyChatService {
 /// peer's own Guardian (their `User` record lives on their box, not ours,
 /// so `resolve_actor_label` can't see it) — falls back to the raw DID only
 /// if this peer isn't in the trusted registry.
-async fn resolve_remote_peer_label(state: &AppState, did: &str) -> String {
+async fn resolve_remote_peer_label(state: &AppState, did: &str, group_id: Option<&str>) -> String {
+    if let Some(group_id) = group_id {
+        if let Ok(members) = crate::circle::members::list_members(&state.node_id, group_id) {
+            if let Some(member) = members.into_iter().find(|member| member.did == did) {
+                if let Some(label) = member.name.or(member.email).or(member.node_hint) {
+                    if !label.trim().is_empty() {
+                        return label;
+                    }
+                }
+            }
+        }
+    }
     let peers_path = std::path::Path::new(&state.log_dir_primary).join("trusted_peers.json");
     let peers_json = tokio::fs::read_to_string(&peers_path)
         .await
@@ -38,23 +49,32 @@ impl ChatService for MyChatService {
         let req = request.into_inner();
         let message_id = req.message_id.clone();
 
-        // 1. Verify sender is a trusted attested peer
-        verify_peer_is_trusted(&self.state, &req.sender_did).await?;
-
         let group_id = if req.group_id.is_empty() {
             None
         } else {
             Some(req.group_id.clone())
         };
+        let relay_did = if req.relay_did.trim().is_empty() {
+            req.sender_did.clone()
+        } else {
+            req.relay_did.clone()
+        };
+
+        // The overlay authenticates Guardian devices. A browser member has a
+        // distinct application DID but no overlay endpoint, so authenticate
+        // the relaying Guardian and separately authorize the actor in the
+        // message's Circle.
+        verify_peer_is_trusted(&self.state, &relay_did).await?;
+        verify_relayed_actor(&self.state, &relay_did, &req.sender_did, group_id.as_deref())?;
 
         // A chat envelope contains only attachment metadata. Pull the bytes
         // from the attested sender before acknowledging the message so the UI
         // never receives a download link for a file absent on this Guardian.
         if let Some(attachment_id) = attachment_id_from_payload(&req.encrypted_payload) {
-            let sender_addr = trusted_peer_grpc_addr(&self.state, &req.sender_did).await?;
+            let sender_addr = trusted_peer_grpc_addr(&self.state, &relay_did).await?;
             crate::chat::grpc_client::download_attachment_from_peer(
                 self.state.device_did.clone(),
-                req.sender_did.clone(),
+                relay_did.clone(),
                 sender_addr,
                 attachment_id,
                 req.sender_did.clone(),
@@ -93,7 +113,7 @@ impl ChatService for MyChatService {
             .state
             .chat_events
             .send(crate::chat::models::ChatEvent::NewMessage(record.clone()));
-        let sender_label = resolve_remote_peer_label(&self.state, &req.sender_did).await;
+        let sender_label = resolve_remote_peer_label(&self.state, &req.sender_did, group_id.as_deref()).await;
         crate::notify::publish_circle_new_message(&req.sender_did, &sender_label, &record.message_id);
 
         println!(
@@ -257,6 +277,7 @@ impl ChatService for MyChatService {
                         encrypted_payload: record.encrypted_payload,
                         signature: record.signature,
                         group_id: record.group_id.unwrap_or_default(),
+                        relay_did: sync_state.device_did.clone(),
                     };
 
                     if tx.send(Ok(msg)).await.is_err() {
@@ -379,6 +400,60 @@ fn attachment_id_from_payload(payload: &str) -> Option<String> {
         .as_str()
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
+}
+
+fn verify_relayed_actor(
+    state: &AppState,
+    relay_did: &str,
+    actor_did: &str,
+    group_id: Option<&str>,
+) -> Result<(), Status> {
+    if actor_did == relay_did {
+        return Ok(());
+    }
+
+    let registry = crate::circle::store::load_or_seed(&state.node_id)
+        .map_err(|error| Status::internal(format!("load Circle registry: {error:?}")))?;
+    let actor_is_authorized = registry
+        .circles
+        .into_iter()
+        .filter(|circle| {
+            !circle.is_archived()
+                && group_id.is_none_or(|expected| circle.circle_id == expected)
+        })
+        .any(|circle| {
+            crate::circle::members::list_members(&state.node_id, &circle.circle_id)
+                .map(|members| {
+                    let active = members
+                        .into_iter()
+                        .filter(|member| {
+                            matches!(
+                                member.lifecycle_state,
+                                crate::circle::members::MemberLifecycleState::Active
+                            )
+                        })
+                        .map(|member| member.did)
+                        .collect::<std::collections::HashSet<_>>();
+                    active.contains(actor_did)
+                        && active.contains(relay_did)
+                        && active.contains(&state.device_did)
+                })
+                .unwrap_or(false)
+        });
+
+    if actor_is_authorized {
+        Ok(())
+    } else {
+        tracing::warn!(
+            actor = actor_did,
+            relay = relay_did,
+            circle = group_id.unwrap_or("direct"),
+            "blocked relayed browser actor outside shared Circle"
+        );
+        Err(Status::permission_denied(
+            "Relayed message actor is not an active member of the shared Circle",
+        ))
+    }
 }
 
 async fn trusted_peer_grpc_addr(state: &Arc<AppState>, did: &str) -> Result<String, Status> {

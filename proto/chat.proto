@@ -27,6 +27,9 @@ message PushMessageRequest {
   string encrypted_payload = 6;
   string signature = 7;
   string group_id = 8;
+  // Guardian DID that authenticated and relayed this envelope. This differs
+  // from sender_did when a browser PWA member authored the message.
+  string relay_did = 9;
 }
 
 message PushMessageResponse {

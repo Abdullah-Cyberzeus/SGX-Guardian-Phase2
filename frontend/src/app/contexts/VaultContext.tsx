@@ -103,6 +103,10 @@ function toBrowserFolderId(value: unknown): string {
  */
 export function VaultProvider({ children }: { children: ReactNode }) {
   const { session, loading: authLoading } = useAuth();
+  const cacheScopeId = session?.browserMemberDid
+    || session?.guardianDid
+    || session?.user.id
+    || "unauthenticated";
   const [folders, setFolders] = useState<VaultFolder[]>(seedFolders);
   const [files, setFiles] = useState<VaultFile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -184,15 +188,16 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       );
       const nextFiles = [...records.values()].map(mapRecord);
       setFiles(nextFiles);
-      nextFiles.forEach((file) => void fileRepository.save({
+      void fileRepository.replaceForScope(cacheScopeId, nextFiles.map((file) => ({
         id: file.id,
+        scopeId: cacheScopeId,
         name: file.name,
         mime: file.mime,
         size: file.sizeBytes,
         updatedAt: file.addedAt && file.addedAt !== "—" ? Date.parse(file.addedAt) || Date.now() : Date.now(),
         revoked: file.revoked,
         expiresAt: file.expiresAt,
-      }));
+      }))).catch(() => undefined);
       setFolders(() => {
         const root = seedFolders()[0];
         const apiFolders = [...(folderList?.folders ?? []), ...(tree?.folders ?? [])];
@@ -233,7 +238,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         ? `Some Vault metadata could not be loaded (${optionalFailures.join(", ")}). Files that are available are still shown.`
         : null);
     } catch (cause) {
-      const cached = await fileRepository.list().catch(() => []);
+      const cached = await fileRepository.list(cacheScopeId).catch(() => []);
       if (cached.length) {
         setFiles(cached.map((file) => ({
           id: file.id,
@@ -245,6 +250,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           sharedBy: "Guardian cache",
           addedAt: new Date(file.updatedAt).toISOString(),
           encrypted: true,
+          starred: false,
           revoked: file.revoked,
           expiresAt: file.expiresAt,
         })));
@@ -259,7 +265,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, [mapFolder, mapRecord]);
+  }, [cacheScopeId, mapFolder, mapRecord]);
 
   useEffect(() => {
     if (authLoading) return;

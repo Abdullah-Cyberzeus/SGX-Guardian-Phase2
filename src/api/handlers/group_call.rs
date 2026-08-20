@@ -720,7 +720,8 @@ pub async fn leave(
             )
             .await;
     }
-    state.call_signal_hub.clear(&group_id).await;
+    // This queue belongs to the whole group, not to the departing browser.
+    // Keeping it allows the remaining participants to renegotiate/recover.
     if let Some(operation) = operation {
         COMPLETED_OPERATIONS.insert(operation, session.clone());
     }
@@ -784,6 +785,12 @@ pub async fn end(
     let Some(actor) = current.participants.get(&actor_id) else {
         return error(StatusCode::FORBIDDEN, "Local caller is not a group participant");
     };
+    if actor_id != current.host_device_id {
+        return error(
+            StatusCode::FORBIDDEN,
+            "Only the group host can end the call for everyone; other participants must leave",
+        );
+    }
     if !matches!(
         actor.state,
         GroupMemberState::Joined

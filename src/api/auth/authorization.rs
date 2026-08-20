@@ -50,14 +50,37 @@ pub fn scoped_circle_contact_dids(
         .map_err(|error| format!("load issued memberships: {}", error))?;
     let peers = crate::vc::persistence::list_peers()
         .map_err(|error| format!("load peer memberships: {}", error))?;
-    Ok(issued
+    let mut contacts = issued
         .into_iter()
         .chain(peers)
         .filter(active_membership_credential)
         .filter(|vc| circle_ids.contains(&vc.credential_subject.circle_id))
         .map(|vc| vc.subject_did().to_string())
         .filter(|did| did != guardian_did)
-        .collect())
+        .collect::<HashSet<_>>();
+
+    // Authoritative Circle snapshots also contain browser-member DIDs. They
+    // do not have overlay peer VCs of their own, so a VC-only roster silently
+    // drops them from messaging, calls, and file-transfer recipient lists.
+    for circle_id in &circle_ids {
+        let Ok(members) = crate::circle::members::list_members(node_id, circle_id) else {
+            continue;
+        };
+        contacts.extend(
+            members
+                .into_iter()
+                .filter(|member| {
+                    matches!(
+                        member.lifecycle_state,
+                        crate::circle::members::MemberLifecycleState::Active
+                    )
+                })
+                .map(|member| member.did)
+                .filter(|did| did != guardian_did),
+        );
+    }
+
+    Ok(contacts)
 }
 
 pub fn local_active_circle_ids(

@@ -712,6 +712,21 @@ async fn decide_member_enrollment(
     records[index].decided_at = Some(chrono::Utc::now().to_rfc3339());
     save_member_enrollments(&records)?;
     let view = MemberEnrollmentView::from(&records[index]);
+    drop(_guard);
+    if approve {
+        if let Err(error) = crate::api::handlers::circle::refresh_and_broadcast_member_snapshot(
+            state,
+            circle_id,
+        )
+        .await
+        {
+            tracing::warn!(
+                circle = circle_id,
+                member = %view.member_did,
+                "PWA member approved but Circle snapshot broadcast failed: {error:?}"
+            );
+        }
+    }
     log_audit(
         &state.node_id,
         AuditCategory::Identity,

@@ -103,24 +103,41 @@ fn load_identity(node_id: &str) -> Result<(DidRecord, Arc<KeyManager>, String), 
 pub async fn send_file(
     node_id: String,
     config: XferConfig,
+    actor_did: String,
     peer_did: String,
     path: PathBuf,
 ) -> Result<String, XferError> {
-    send_source(node_id, config, peer_did, SendSource::Path(path)).await
+    send_source(
+        node_id,
+        config,
+        actor_did,
+        peer_did,
+        SendSource::Path(path),
+    )
+    .await
 }
 
 pub async fn send_vault_record(
     node_id: String,
     config: XferConfig,
+    actor_did: String,
     peer_did: String,
     vault_id: String,
 ) -> Result<String, XferError> {
-    send_source(node_id, config, peer_did, SendSource::VaultId(vault_id)).await
+    send_source(
+        node_id,
+        config,
+        actor_did,
+        peer_did,
+        SendSource::VaultId(vault_id),
+    )
+    .await
 }
 
 pub async fn send_source(
     node_id: String,
     config: XferConfig,
+    actor_did: String,
     peer_did: String,
     source: SendSource,
 ) -> Result<String, XferError> {
@@ -129,7 +146,8 @@ pub async fn send_source(
             "file transfer is disabled via SGX_XFER_ENABLED".to_string(),
         ));
     }
-    let prepared = prepare_outbound_from_source(&node_id, &peer_did, source, &config).await?;
+    let prepared =
+        prepare_outbound_from_source(&node_id, &actor_did, &peer_did, source, &config).await?;
     let transfer_id = prepared.manifest.transfer_id.clone();
     if ACTIVE_SENDS.contains_key(&transfer_id) {
         return Err(XferError::Conflict(format!(
@@ -197,6 +215,7 @@ pub async fn cancel_transfer(transfer_id: &str) -> Result<bool, XferError> {
 
 async fn prepare_outbound_from_source(
     node_id: &str,
+    actor_did: &str,
     peer_did: &str,
     source: SendSource,
     config: &XferConfig,
@@ -213,7 +232,8 @@ async fn prepare_outbound_from_source(
     let vm_ref = format!("{}#dkp-v{}", record.did, record.current_dkp_version.max(1));
     let manifest =
         FileManifest::build_signed(&circle_id, &record.did, material, chunk_bytes, &km, &vm_ref)?;
-    let create_result = store::create_outbox(peer_did, &file_path_display, &manifest).await;
+    let create_result =
+        store::create_outbox(actor_did, peer_did, &file_path_display, &manifest).await;
     if let Err(error) = create_result {
         if let Some(staged_plaintext) = &staged_plaintext {
             let _ = cleanup_outbound_staging(staged_plaintext).await;
@@ -1575,9 +1595,14 @@ mod tests {
             &format!("{}#dkp-v1", sender.did),
         )
         .expect("build manifest");
-        store::create_outbox(&receiver.did, &file_path.display().to_string(), &manifest)
-            .await
-            .expect("create outbox");
+        store::create_outbox(
+            &sender.did,
+            &receiver.did,
+            &file_path.display().to_string(),
+            &manifest,
+        )
+        .await
+        .expect("create outbox");
         PreparedTransfer {
             node_id: "nodeA".into(),
             peer: GossipPeer {
@@ -2029,6 +2054,7 @@ mod tests {
         )
         .expect("build manifest");
         store::create_outbox(
+            &sender.did,
             &receiver.did,
             &format!("vault:{}", sender_record.vault_id),
             &manifest,
@@ -2141,6 +2167,7 @@ mod tests {
         )
         .expect("build manifest");
         store::create_outbox(
+            &sender.did,
             &receiver.did,
             &format!("vault:{}", sender_record.vault_id),
             &manifest,

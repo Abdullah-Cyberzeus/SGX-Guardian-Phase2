@@ -22,6 +22,14 @@ pub fn outbox_dir() -> PathBuf {
     base_dir().join("outbox")
 }
 
+pub fn local_dir() -> PathBuf {
+    base_dir().join("local")
+}
+
+pub fn local_transfer_path(transfer_id: &str) -> PathBuf {
+    local_dir().join(format!("{}.json", safe_file_name(transfer_id)))
+}
+
 pub fn staging_dir() -> PathBuf {
     base_dir().join("staging")
 }

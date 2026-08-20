@@ -36,6 +36,7 @@ export async function replayPendingOperations() {
   const records = await pendingRepository.list();
   let replayed = 0;
   let skipped = 0;
+  const replayedChatMessageIds: string[] = [];
 
   for (const record of records) {
     if (record.state === "cancelled" || record.state === "failed_permanent") {
@@ -54,6 +55,7 @@ export async function replayPendingOperations() {
       const payload = await decryptValue(record.payload);
       await handler(attempted, payload);
       await pendingRepository.remove(record.id);
+      if (record.kind === "chat.send") replayedChatMessageIds.push(record.id);
       replayed += 1;
     } catch (error) {
       if (isRevoked(error)) {
@@ -78,5 +80,14 @@ export async function replayPendingOperations() {
     }
   }
 
+  if (replayedChatMessageIds.length > 0) {
+    // IndexedDB and the pending queue are now both canonical. Notify mounted
+    // chat views and unread counters immediately instead of waiting for a
+    // route change, polling interval, or reload.
+    window.dispatchEvent(new CustomEvent("sgx:chat-replayed", {
+      detail: { messageIds: replayedChatMessageIds },
+    }));
+    window.dispatchEvent(new CustomEvent("sgx:pending-operation"));
+  }
   return { replayed, skipped, remaining: await pendingOperationCount() };
 }
