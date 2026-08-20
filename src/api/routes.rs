@@ -353,6 +353,22 @@ pub fn circle_router() -> Router<Arc<AppState>> {
             post(handlers::circle::deliver_existing_invite),
         )
         .route(
+            "/api/v1/circles/{id}/member-invites",
+            post(handlers::pwa::mint_member_enrollment),
+        )
+        .route(
+            "/api/v1/circles/{id}/member-enrollments",
+            get(handlers::pwa::list_member_enrollments),
+        )
+        .route(
+            "/api/v1/circles/{id}/member-enrollments/{approval_id}/approve",
+            post(handlers::pwa::approve_member_enrollment),
+        )
+        .route(
+            "/api/v1/circles/{id}/member-enrollments/{approval_id}/reject",
+            post(handlers::pwa::reject_member_enrollment),
+        )
+        .route(
             "/api/v1/circles/invites/inbox",
             get(handlers::circle::received_invites).post(handlers::circle::receive_invite),
         )

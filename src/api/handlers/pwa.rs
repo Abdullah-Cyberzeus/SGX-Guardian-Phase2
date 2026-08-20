@@ -5,11 +5,15 @@ use crate::api::{error::ApiError, handlers::peers, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::circle::{invite, store};
-use axum::{extract::State, Extension, Json};
+use axum::extract::{Path, Query, State};
+use axum::{Extension, Json};
 use once_cell::sync::Lazy;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -19,6 +23,130 @@ static MEMBER_JOIN_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 const DEFAULT_REGISTRATION_DAYS: i64 = 30;
 const CONTACT_PRESENCE_HEARTBEAT_SECONDS: u64 = 30;
 const CONTACT_PRESENCE_EXPIRY_SECONDS: u64 = 90;
+const MEMBER_ENROLLMENT_FILE: &str = "member_enrollments.json";
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MemberEnrollmentRecord {
+    approval_id: String,
+    invite_id: String,
+    circle_id: String,
+    circle_name: String,
+    registration_id: String,
+    member_did: String,
+    claim_hash: String,
+    state: String,
+    created_at: String,
+    expires_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    user_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    decided_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberEnrollmentView {
+    pub approval_id: String,
+    pub circle_id: String,
+    pub circle_name: String,
+    pub member_did: String,
+    pub state: String,
+    pub created_at: String,
+    pub expires_at: String,
+    pub name: Option<String>,
+    pub email: Option<String>,
+    pub decided_at: Option<String>,
+}
+
+impl From<&MemberEnrollmentRecord> for MemberEnrollmentView {
+    fn from(record: &MemberEnrollmentRecord) -> Self {
+        let expired = matches!(record.state.as_str(), "issued" | "pending")
+            && chrono::DateTime::parse_from_rfc3339(&record.expires_at)
+                .is_ok_and(|expires| expires <= chrono::Utc::now());
+        Self {
+            approval_id: record.approval_id.clone(),
+            circle_id: record.circle_id.clone(),
+            circle_name: record.circle_name.clone(),
+            member_did: record.member_did.clone(),
+            state: if expired { "expired".into() } else { record.state.clone() },
+            created_at: record.created_at.clone(),
+            expires_at: record.expires_at.clone(),
+            name: record.name.clone(),
+            email: record.email.clone(),
+            decided_at: record.decided_at.clone(),
+        }
+    }
+}
+
+fn member_enrollment_path() -> PathBuf {
+    crate::circle::persistence::base_dir().join(MEMBER_ENROLLMENT_FILE)
+}
+
+fn load_member_enrollments() -> Result<Vec<MemberEnrollmentRecord>, ApiError> {
+    match fs::read(member_enrollment_path()) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map_err(|error| ApiError::Internal(format!("load member enrollments: {}", error))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(ApiError::Internal(format!(
+            "load member enrollments: {}",
+            error
+        ))),
+    }
+}
+
+fn save_member_enrollments(records: &[MemberEnrollmentRecord]) -> Result<(), ApiError> {
+    let bytes = serde_json::to_vec_pretty(records)
+        .map_err(|error| ApiError::Internal(format!("encode member enrollments: {}", error)))?;
+    crate::circle::persistence::write_atomic(&member_enrollment_path(), &bytes)
+        .map_err(|error| ApiError::Internal(format!("save member enrollments: {}", error)))
+}
+
+fn enrollment_claim_hash(secret: &str) -> String {
+    hex::encode(Sha256::digest(secret.as_bytes()))
+}
+
+fn new_enrollment_secret() -> String {
+    let mut bytes = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    hex::encode(bytes)
+}
+
+fn parse_enrollment_claim(claim: &str) -> Result<(&str, &str), ApiError> {
+    let (approval_id, secret) = claim
+        .trim()
+        .split_once('.')
+        .ok_or_else(|| ApiError::BadRequest("invalid member invitation".into()))?;
+    if approval_id.is_empty() || secret.len() != 64 || !secret.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ApiError::BadRequest("invalid member invitation".into()));
+    }
+    Ok((approval_id, secret))
+}
+
+fn enrollment_index_for_claim(
+    records: &[MemberEnrollmentRecord],
+    claim: &str,
+) -> Result<usize, ApiError> {
+    let (approval_id, secret) = parse_enrollment_claim(claim)?;
+    let claim_hash = enrollment_claim_hash(secret);
+    records
+        .iter()
+        .position(|record| record.approval_id == approval_id && record.claim_hash == claim_hash)
+        .ok_or_else(|| ApiError::NotFound("member invitation not found".into()))
+}
+
+fn enrollment_not_expired(record: &MemberEnrollmentRecord) -> Result<(), ApiError> {
+    let expires = chrono::DateTime::parse_from_rfc3339(&record.expires_at)
+        .map_err(|_| ApiError::BadRequest("member invitation has invalid expiry".into()))?;
+    if expires <= chrono::Utc::now() {
+        return Err(ApiError::BadRequest("member invitation has expired".into()));
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Default)]
 struct ContactMetadata {
@@ -310,6 +438,7 @@ pub struct MemberInvitePreviewResponse {
     pub issuer_did: String,
     pub expires_at: String,
     pub role: &'static str,
+    pub approval_required: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -340,6 +469,11 @@ pub struct MemberJoinResponse {
     pub browser_member_did: String,
     pub expires_at: i64,
     pub registration_expires_at: i64,
+    pub status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_claim: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -347,6 +481,256 @@ pub struct MemberJoinResponse {
 pub struct RegistrationRemovalResponse {
     pub status: &'static str,
     pub revoked_sessions: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MintMemberEnrollmentRequest {
+    pub base_url: String,
+    #[serde(default)]
+    pub expires_in_minutes: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MintMemberEnrollmentResponse {
+    pub link: String,
+    pub expires_at: String,
+    pub enrollment: MemberEnrollmentView,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberEnrollmentListResponse {
+    pub enrollments: Vec<MemberEnrollmentView>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MemberApprovalStatusQuery {
+    pub claim: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberApprovalStatusResponse {
+    pub approval_id: String,
+    pub state: String,
+    pub circle_name: String,
+    pub member_did: String,
+}
+
+/// Reserve a browser-member DID and mint a signed, one-use Circle invitation.
+/// The LAN URL exposes only an opaque 256-bit claim secret; Circle metadata and
+/// the signed target DID remain on the Guardian.
+pub async fn mint_member_enrollment(
+    State(state): State<Arc<AppState>>,
+    Path(circle_id): Path<String>,
+    Json(body): Json<MintMemberEnrollmentRequest>,
+) -> Result<Json<MintMemberEnrollmentResponse>, ApiError> {
+    let _guard = MEMBER_JOIN_LOCK.lock().await;
+    let circle = store::get_circle(&state.node_id, &circle_id)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    if circle.is_archived() {
+        return Err(ApiError::Conflict("cannot invite members to an archived Circle".into()));
+    }
+    if circle.owner_did != state.device_did {
+        return Err(ApiError::Forbidden(
+            "only the Circle owner can invite browser members".into(),
+        ));
+    }
+
+    let base_url = crate::api::handlers::circle::normalize_owner_url(&body.base_url)?;
+    let registration_id = Uuid::new_v4().to_string();
+    let member_did = crate::api::handlers::browser_member::did_for_registration(&registration_id);
+    let (issuer, km) = store::load_runtime_signing_context(&state.node_id)
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let token = invite::mint_invite(
+        &circle,
+        &issuer,
+        &km,
+        &member_did,
+        crate::vc::credential::CredentialRole::Member,
+        Some(body.expires_in_minutes.unwrap_or(60).clamp(5, 7 * 24 * 60)),
+        Some(1),
+    )
+    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+
+    let approval_id = Uuid::new_v4().to_string();
+    let secret = new_enrollment_secret();
+    let claim = format!("{}.{}", approval_id, secret);
+    let record = MemberEnrollmentRecord {
+        approval_id,
+        invite_id: token.id.clone(),
+        circle_id: circle.circle_id,
+        circle_name: circle.name,
+        registration_id,
+        member_did,
+        claim_hash: enrollment_claim_hash(&secret),
+        state: "issued".into(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        expires_at: token.expires_at.clone(),
+        user_id: None,
+        name: None,
+        email: None,
+        decided_at: None,
+    };
+    let mut records = load_member_enrollments()?;
+    records.push(record.clone());
+    save_member_enrollments(&records)?;
+
+    let link = format!(
+        "{}/join?member_invite={}",
+        base_url.trim_end_matches('/'),
+        claim
+    );
+    log_audit(
+        &state.node_id,
+        AuditCategory::Circle,
+        AuditSeverity::Info,
+        AuditAction::Created,
+        &format!(
+            "PWA member invitation created circle={} approval={} reserved_did={}",
+            record.circle_id, record.approval_id, record.member_did
+        ),
+    );
+    Ok(Json(MintMemberEnrollmentResponse {
+        link,
+        expires_at: record.expires_at.clone(),
+        enrollment: MemberEnrollmentView::from(&record),
+    }))
+}
+
+pub async fn list_member_enrollments(
+    State(state): State<Arc<AppState>>,
+    Path(circle_id): Path<String>,
+) -> Result<Json<MemberEnrollmentListResponse>, ApiError> {
+    let circle = store::get_circle(&state.node_id, &circle_id)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    if circle.owner_did != state.device_did {
+        return Err(ApiError::Forbidden(
+            "only the Circle owner can view member approvals".into(),
+        ));
+    }
+    let enrollments = load_member_enrollments()?
+        .iter()
+        .filter(|record| record.circle_id == circle_id)
+        .map(MemberEnrollmentView::from)
+        .collect();
+    Ok(Json(MemberEnrollmentListResponse { enrollments }))
+}
+
+pub async fn member_approval_status(
+    Path(approval_id): Path<String>,
+    Query(query): Query<MemberApprovalStatusQuery>,
+) -> Result<Json<MemberApprovalStatusResponse>, ApiError> {
+    let records = load_member_enrollments()?;
+    let index = enrollment_index_for_claim(&records, &query.claim)?;
+    let record = &records[index];
+    if record.approval_id != approval_id {
+        return Err(ApiError::NotFound("member approval not found".into()));
+    }
+    let view = MemberEnrollmentView::from(record);
+    Ok(Json(MemberApprovalStatusResponse {
+        approval_id: record.approval_id.clone(),
+        state: view.state,
+        circle_name: record.circle_name.clone(),
+        member_did: record.member_did.clone(),
+    }))
+}
+
+pub async fn approve_member_enrollment(
+    State(state): State<Arc<AppState>>,
+    Path((circle_id, approval_id)): Path<(String, String)>,
+) -> Result<Json<MemberEnrollmentView>, ApiError> {
+    decide_member_enrollment(&state, &circle_id, &approval_id, true).await
+}
+
+pub async fn reject_member_enrollment(
+    State(state): State<Arc<AppState>>,
+    Path((circle_id, approval_id)): Path<(String, String)>,
+) -> Result<Json<MemberEnrollmentView>, ApiError> {
+    decide_member_enrollment(&state, &circle_id, &approval_id, false).await
+}
+
+async fn decide_member_enrollment(
+    state: &Arc<AppState>,
+    circle_id: &str,
+    approval_id: &str,
+    approve: bool,
+) -> Result<Json<MemberEnrollmentView>, ApiError> {
+    let _guard = MEMBER_JOIN_LOCK.lock().await;
+    let circle = store::get_circle(&state.node_id, circle_id)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    if circle.owner_did != state.device_did {
+        return Err(ApiError::Forbidden(
+            "only the Circle owner can decide member approvals".into(),
+        ));
+    }
+    let mut records = load_member_enrollments()?;
+    let index = records
+        .iter()
+        .position(|record| record.approval_id == approval_id && record.circle_id == circle_id)
+        .ok_or_else(|| ApiError::NotFound("member approval not found".into()))?;
+    if records[index].state != "pending" {
+        return Err(ApiError::Conflict(format!(
+            "member approval is already {}",
+            records[index].state
+        )));
+    }
+    let user_id = records[index]
+        .user_id
+        .clone()
+        .ok_or_else(|| ApiError::Conflict("pending member account is missing".into()))?;
+
+    if approve {
+        enrollment_not_expired(&records[index])?;
+        let token = invite::load_invite(&records[index].invite_id)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        invite::assert_redeemable(&circle, &token, &records[index].member_did)
+            .map_err(|error| ApiError::Conflict(error.to_string()))?;
+        invite::record_redemption(&token.id, &records[index].member_did)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        if let Err(error) = state.admin.users.set_member_status(&user_id, "active").await {
+            let _ = invite::remove_redemption(&token.id, &records[index].member_did);
+            return Err(ApiError::Internal(error.to_string()));
+        }
+        records[index].state = "approved".into();
+        crate::notify::publish_circle_member_joined(
+            &records[index].member_did,
+            records[index].name.as_deref().unwrap_or(&records[index].member_did),
+            &records[index].circle_name,
+            &records[index].circle_id,
+        );
+    } else {
+        state
+            .admin
+            .users
+            .set_member_status(&user_id, "inactive")
+            .await?;
+        records[index].state = "rejected".into();
+    }
+    records[index].decided_at = Some(chrono::Utc::now().to_rfc3339());
+    save_member_enrollments(&records)?;
+    let view = MemberEnrollmentView::from(&records[index]);
+    log_audit(
+        &state.node_id,
+        AuditCategory::Identity,
+        if approve {
+            AuditSeverity::Info
+        } else {
+            AuditSeverity::Warning
+        },
+        if approve {
+            AuditAction::Succeeded
+        } else {
+            AuditAction::Rejected
+        },
+        &format!(
+            "PWA member enrollment {} circle={} approval={} member={}",
+            view.state, view.circle_id, view.approval_id, view.member_did
+        ),
+    );
+    Ok(Json(view))
 }
 
 /// Human-verifiable 80-bit prefix of SHA-256(device signing public key),
@@ -414,11 +798,38 @@ pub async fn preview_member_invite(
     Json(body): Json<MemberInvitePreviewRequest>,
 ) -> Result<Json<MemberInvitePreviewResponse>, ApiError> {
     rate_limit(&state, "member-invite-preview", &body.invite_token)?;
-    let token = validate_member_invite(&state, &body.invite_token).await?;
+    let (token, approval_required) = if body.invite_token.contains('.') {
+        let records = load_member_enrollments()?;
+        let index = enrollment_index_for_claim(&records, &body.invite_token)?;
+        let enrollment = &records[index];
+        enrollment_not_expired(enrollment)?;
+        if enrollment.state != "issued" {
+            return Err(ApiError::Conflict(format!(
+                "member invitation is already {}",
+                enrollment.state
+            )));
+        }
+        let token = invite::load_invite(&enrollment.invite_id)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        invite::verify_invite(&token, &state.did_resolver)
+            .await
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        if token.target_did != enrollment.member_did {
+            return Err(ApiError::Conflict(
+                "member invitation identity binding is invalid".into(),
+            ));
+        }
+        (token, true)
+    } else {
+        (validate_member_invite(&state, &body.invite_token).await?, false)
+    };
     if token.issuer_did == state.device_did {
-        // A synthetic, non-persisted redeemer checks max-uses without consuming it.
         let circle = local_invite_circle(&state, &token)?;
-        let preview_did = crate::api::handlers::browser_member::did_for_registration("preview");
+        let preview_did = if approval_required {
+            token.target_did.clone()
+        } else {
+            crate::api::handlers::browser_member::did_for_registration("preview")
+        };
         invite::assert_redeemable(&circle, &token, &preview_did)
             .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     } else {
@@ -435,6 +846,7 @@ pub async fn preview_member_invite(
         issuer_did: token.issuer_did,
         expires_at: token.expires_at,
         role: "member",
+        approval_required,
     }))
 }
 
@@ -476,12 +888,41 @@ pub async fn join_member(
             email, current_fingerprint
         ),
     );
-    let token = match validate_member_invite(&state, &body.invite_token).await {
-        Ok(token) => token,
-        Err(error) => {
-            let audit_reason = format!("{:?}", error);
-            audit_join_rejected(&state, &email, &audit_reason);
-            return Err(error);
+    let approval_claim = body.invite_token.contains('.').then(|| body.invite_token.clone());
+    let (token, reserved_registration_id, approval_id) = if approval_claim.is_some() {
+        let records = load_member_enrollments()?;
+        let index = enrollment_index_for_claim(&records, &body.invite_token)?;
+        let enrollment = &records[index];
+        enrollment_not_expired(enrollment)?;
+        if enrollment.state != "issued" {
+            return Err(ApiError::Conflict(format!(
+                "member invitation is already {}",
+                enrollment.state
+            )));
+        }
+        let token = invite::load_invite(&enrollment.invite_id)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        invite::verify_invite(&token, &state.did_resolver)
+            .await
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        if token.issuer_did != state.device_did || token.target_did != enrollment.member_did {
+            return Err(ApiError::Conflict(
+                "member invitation identity binding is invalid".into(),
+            ));
+        }
+        (
+            token,
+            Some(enrollment.registration_id.clone()),
+            Some(enrollment.approval_id.clone()),
+        )
+    } else {
+        match validate_member_invite(&state, &body.invite_token).await {
+            Ok(token) => (token, None, None),
+            Err(error) => {
+                let audit_reason = format!("{:?}", error);
+                audit_join_rejected(&state, &email, &audit_reason);
+                return Err(error);
+            }
         }
     };
     let pw_hash = match password::hash_password(body.password).await {
@@ -492,15 +933,31 @@ pub async fn join_member(
         }
     };
     let _join_guard = MEMBER_JOIN_LOCK.lock().await;
-    let registration_id = Uuid::new_v4().to_string();
+    if approval_claim.is_some() {
+        let records = load_member_enrollments()?;
+        let index = enrollment_index_for_claim(&records, &body.invite_token)?;
+        if records[index].state != "issued" {
+            return Err(ApiError::Conflict(format!(
+                "member invitation is already {}",
+                records[index].state
+            )));
+        }
+        enrollment_not_expired(&records[index])?;
+    }
+    let registration_id = reserved_registration_id.unwrap_or_else(|| Uuid::new_v4().to_string());
     let redeemer = crate::api::handlers::browser_member::did_for_registration(&registration_id);
     let locally_issued = token.issuer_did == state.device_did;
+    let pending_approval = approval_id.is_some();
+    let mut redemption_recorded = false;
     if locally_issued {
         let circle = local_invite_circle(&state, &token)?;
         invite::assert_redeemable(&circle, &token, &redeemer)
             .map_err(|error| ApiError::Conflict(error.to_string()))?;
-        invite::record_redemption(&token.id, &redeemer)
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        if !pending_approval {
+            invite::record_redemption(&token.id, &redeemer)
+                .map_err(|error| ApiError::Internal(error.to_string()))?;
+            redemption_recorded = true;
+        }
     } else {
         let owner_host = body.owner_host.as_deref().unwrap_or_default();
         crate::api::handlers::circle::join_remote_circle(&state, token.clone(), owner_host).await?;
@@ -512,7 +969,7 @@ pub async fn join_member(
         .admin
         .users
         .create_or_reactivate_member(NewMemberRegistration {
-            name,
+            name: name.clone(),
             email: email.clone(),
             pw_hash,
             circle_id: token.circle_id.clone(),
@@ -520,17 +977,54 @@ pub async fn join_member(
             guardian_fingerprint: current_fingerprint.clone(),
             registration_expires_at,
             invite_id: token.id.clone(),
+            pending_approval,
         })
         .await
     {
         Ok(user) => user,
         Err(error) => {
-            if locally_issued {
+            if redemption_recorded {
                 let _ = invite::remove_redemption(&token.id, &redeemer);
             }
             return Err(ApiError::Conflict(error.to_string()));
         }
     };
+
+    if let Some(ref pending_id) = approval_id {
+        let mut records = load_member_enrollments()?;
+        let index = records
+            .iter()
+            .position(|record| record.approval_id == *pending_id && record.state == "issued")
+            .ok_or_else(|| ApiError::Conflict("member invitation is no longer available".into()))?;
+        records[index].state = "pending".into();
+        records[index].user_id = Some(user.user_id.clone());
+        records[index].name = Some(name.clone());
+        records[index].email = Some(email.clone());
+        if let Err(error) = save_member_enrollments(&records) {
+            let _ = state
+                .admin
+                .users
+                .set_member_status(&user.user_id, "inactive")
+                .await;
+            return Err(error);
+        }
+        log_audit(
+            &state.node_id,
+            AuditCategory::Identity,
+            AuditSeverity::Info,
+            AuditAction::Created,
+            &format!(
+                "PWA member pending approval circle={} approval={} member={}",
+                token.circle_id, pending_id, redeemer
+            ),
+        );
+        crate::notify::publish_circle_member_pending_approval(
+            &redeemer,
+            &name,
+            &token.circle_name,
+            &token.circle_id,
+        );
+    }
 
     // Rejoin/rotation invalidates every credential issued under the previous
     // browser registration before the replacement session is stored.
@@ -577,6 +1071,9 @@ pub async fn join_member(
         browser_registration_id: registration_id,
         expires_at: claims.exp,
         registration_expires_at,
+        status: if pending_approval { "pending" } else { "active" },
+        approval_id,
+        approval_claim,
     }))
 }
 

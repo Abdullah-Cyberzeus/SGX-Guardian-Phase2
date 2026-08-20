@@ -596,6 +596,22 @@ impl NebulaSignaling {
                 self.broadcast_group_snapshot(&snapshot, &local_device_id)
                     .await
             }
+            GroupWireMessage::End {
+                group_id,
+                device_id,
+            } => {
+                if device_id != envelope.sender_device_id || group_id != envelope.session_id {
+                    return Err(CallError::UnauthorizedDevice {
+                        reason: "Group end sender mismatch".into(),
+                    });
+                }
+                let snapshot = group_sessions.end(&group_id, &device_id).await?;
+                let result = self
+                    .broadcast_group_snapshot(&snapshot, &local_device_id)
+                    .await;
+                group_sessions.remove_ended(&group_id).await;
+                result
+            }
             GroupWireMessage::Heartbeat {
                 group_id,
                 device_id,

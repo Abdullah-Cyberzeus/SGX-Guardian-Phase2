@@ -241,7 +241,9 @@ fn is_public_route(method: &Method, path: &str) -> bool {
             | (&Method::POST, "/api/v1/restore/validate")
             | (&Method::GET, "/api/v1/restore/status")
             | (&Method::GET, "/api/v1/health")
-    ) || circle_snapshot_pull
+    ) || (method == Method::GET
+        && path.starts_with("/api/v1/pwa/onboarding/approval/"))
+        || circle_snapshot_pull
         || public_frontend
 }
 
@@ -352,6 +354,7 @@ mod tests {
                     ),
                     registration_expires_at: Utc::now().timestamp() + 300,
                     invite_id: "test-invite".into(),
+                    pending_approval: false,
                 })
                 .await
                 .expect("seed member")

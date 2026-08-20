@@ -13,19 +13,18 @@ function StreamTile({ peerId, stream }: { peerId: string; stream?: MediaStream }
 export function GroupCallingScreen({ localDevice: fallbackLocalDevice }: { localDevice?: string }) {
   const {
     group, incoming, localStream, remoteStreams, error, muted, cameraEnabled, localDevice: resolvedLocalDevice,
-    toggleMute, toggleCamera, shareScreen, leaveGroup, endGroup, moderate, rejoinGroup,
+    toggleMute, toggleCamera, shareScreen, endGroup, moderate, rejoinGroup,
   } = useGroupCall();
   const localDevice = resolvedLocalDevice || fallbackLocalDevice;
   if (!group || incoming || !localDevice) return null;
   const local = group.participants[localDevice];
   if (!local || local.state === "kicked" || local.state === "declined") return null;
   if (local.state !== "joined" || !localStream) {
-    const host = group.host_device_id === localDevice;
     return <div className="call-overlay group-call-overlay" role="dialog" aria-modal="true">
       <main className="group-stage reconnect-panel">
-        <h2>{local.state === "left" ? "You left the group call" : "Call connection interrupted"}</h2>
+        <h2>Call connection interrupted</h2>
         <p>
-          Rejoin only if the call is still active. Otherwise, dismiss this old session so you can start a new call.
+          Reconnect if the call is still active, or end it for every participant.
         </p>
         {error && <div className="call-error" role="alert">{error}</div>}
         <div className="flex flex-wrap justify-center gap-2">
@@ -34,9 +33,9 @@ export function GroupCallingScreen({ localDevice: fallbackLocalDevice }: { local
           </button>
           <button
             className="end-call"
-            onClick={() => (host ? endGroup() : leaveGroup()).catch(() => undefined)}
+            onClick={() => endGroup().catch(() => undefined)}
           >
-            {host ? "End old session" : "Dismiss old session"}
+            End call for everyone
           </button>
         </div>
       </main>
@@ -63,7 +62,7 @@ export function GroupCallingScreen({ localDevice: fallbackLocalDevice }: { local
       <button title={!local.audio_allowed ? "The host disabled your microphone" : undefined} disabled={!local.audio_allowed} onClick={toggleMute}>{muted || !local.audio_allowed ? "Mic off" : "Mic"}</button>
       <button title={!local.video_allowed ? "The host disabled your camera" : undefined} disabled={!local.video_allowed || !group.requested_media.includes("video")} onClick={toggleCamera}>{cameraEnabled && local.video_allowed ? "Camera" : "Camera off"}</button>
       <button disabled={!local.video_allowed || !group.requested_media.includes("video")} onClick={() => shareScreen()}>Share screen</button>
-      <button className="end-call" onClick={() => host ? endGroup() : leaveGroup()}>{host ? "End group" : "Leave"}</button>
+      <button className="end-call" onClick={() => endGroup()}>End group</button>
     </footer>
   </div>;
 }

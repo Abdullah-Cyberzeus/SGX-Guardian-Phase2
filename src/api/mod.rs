@@ -70,6 +70,10 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             post(handlers::pwa::join_member),
         )
         .route(
+            "/api/v1/pwa/onboarding/approval/{approval_id}",
+            get(handlers::pwa::member_approval_status),
+        )
+        .route(
             "/api/v1/pwa/registration",
             axum::routing::delete(handlers::pwa::remove_registration),
         )
@@ -276,6 +280,10 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         .route("/api/v1/vc/status", get(handlers::vc::status))
         .route("/api/v1/vc/pull-status", post(handlers::vc::pull_status))
         .route("/api/v1/threat/status", get(handlers::threat::status))
+        .route(
+            "/api/v1/guardian/threat-intel",
+            get(handlers::threat::threat_intel),
+        )
         .route("/api/v1/threat/alerts", get(handlers::threat::list_alerts))
         .route(
             "/api/v1/threat/modbus",
@@ -1044,6 +1052,7 @@ mod tests {
                     ),
                     registration_expires_at: Utc::now().timestamp() + 300,
                     invite_id: "test-invite".into(),
+                    pending_approval: false,
                 })
                 .await
                 .expect("seed API test member")

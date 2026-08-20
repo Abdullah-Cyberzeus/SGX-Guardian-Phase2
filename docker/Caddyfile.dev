@@ -1,0 +1,16 @@
+{
+    # LAN-only development PKI. Install the generated root CA on PWA clients.
+    local_certs
+}
+
+nodea.guardian {
+    reverse_proxy nodeA:8443
+}
+
+nodeb.guardian {
+    reverse_proxy nodeB:8443
+}
+
+nodec.guardian {
+    reverse_proxy nodeC:8443
+}

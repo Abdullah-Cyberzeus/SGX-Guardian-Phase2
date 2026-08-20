@@ -17,6 +17,7 @@ export type NotificationKind =
   | "GuardianOffline"
   | "CircleNewMessage"
   | "CircleIncomingCall"
+  | "CircleMemberPendingApproval"
   | "CircleMemberJoined"
   | "CircleFileShared";
 
@@ -73,9 +74,12 @@ function pick(raw: Record<string, unknown>, ...keys: string[]): unknown {
 
 export function normalizeNotification(raw: unknown): NotificationItem {
   const r = (raw ?? {}) as Record<string, unknown>;
+  const rawKind = String(pick(r, "kind") ?? "AlertLow");
+  const kind = rawKind.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase())
+    .replace(/^[a-z]/, (letter) => letter.toUpperCase());
   return {
     id: String(pick(r, "id") ?? crypto.randomUUID()),
-    kind: String(pick(r, "kind") ?? "AlertLow"),
+    kind,
     title: String(pick(r, "title") ?? "Notification"),
     body: String(pick(r, "body", "message") ?? ""),
     severity: String(pick(r, "severity") ?? "info"),

@@ -46,9 +46,14 @@ impl DhcpClientOrchestrator {
             args.push(format!("0x3d:{}", id)); // Option 61 (Client ID) requires 0x3d: in busybox udhcpc
         }
 
-        // Add a stable hostname so the device appears consistently in the router's DHCP table
+        // Advertise the node-specific label so a router whose local DNS
+        // domain is `guardian` automatically publishes nodea.guardian, etc.
+        let lan_hostname = std::env::var("SGX_LAN_HOSTNAME")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "sgx-guardian".to_string());
         args.push("-x".to_string());
-        args.push("hostname:sgx-guardian".to_string());
+        args.push(format!("hostname:{}", lan_hostname));
 
         // Specify BusyBox default script if available
         if std::path::Path::new("/usr/share/udhcpc/default.script").exists() {

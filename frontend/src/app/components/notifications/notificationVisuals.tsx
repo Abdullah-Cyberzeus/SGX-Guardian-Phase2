@@ -8,7 +8,7 @@ export function notificationIcon(kind: string): ComponentType<{ size?: number }>
   if (kind === "GuardianOffline") return WifiOff;
   if (kind === "CircleNewMessage") return MessageCircle;
   if (kind === "CircleIncomingCall") return PhoneIncoming;
-  if (kind === "CircleMemberJoined") return UserPlus;
+  if (kind === "CircleMemberPendingApproval" || kind === "CircleMemberJoined") return UserPlus;
   if (kind === "CircleFileShared") return FileText;
   return Bell;
 }
@@ -33,6 +33,7 @@ export function notificationRoute(kind: string, refId?: string): string | null {
   if (!refId) return null;
   if (kind.startsWith("Alert")) return `/alerts/${refId}`;
   if (kind === "DeviceDiscovered" || kind === "DevicePendingApproval") return `/devices/${refId}`;
+  if (kind === "CircleMemberPendingApproval") return `/network/${refId}/manage`;
   if (kind.startsWith("Circle")) return `/network/${refId}`;
   return null;
 }

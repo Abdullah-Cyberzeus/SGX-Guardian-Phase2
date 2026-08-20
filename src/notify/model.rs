@@ -19,6 +19,7 @@ pub enum NotificationKind {
     GuardianOffline,
     CircleNewMessage,
     CircleIncomingCall,
+    CircleMemberPendingApproval,
     CircleMemberJoined,
     CircleFileShared,
 }
@@ -27,7 +28,10 @@ impl NotificationKind {
     pub fn category(self) -> NotificationCategory {
         match self {
             Self::AlertHigh | Self::AlertMedium | Self::AlertLow => NotificationCategory::Alerts,
-            Self::DeviceDiscovered | Self::DevicePendingApproval | Self::GuardianOffline => {
+            Self::DeviceDiscovered
+            | Self::DevicePendingApproval
+            | Self::GuardianOffline
+            | Self::CircleMemberPendingApproval => {
                 NotificationCategory::Devices
             }
             Self::CircleNewMessage
@@ -76,6 +80,7 @@ mod unit_tests {
             NotificationKind::DeviceDiscovered,
             NotificationKind::DevicePendingApproval,
             NotificationKind::GuardianOffline,
+            NotificationKind::CircleMemberPendingApproval,
         ];
         for kind in devices {
             assert_eq!(kind.category(), NotificationCategory::Devices);

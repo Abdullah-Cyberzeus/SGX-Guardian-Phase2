@@ -1,6 +1,6 @@
 ---
 node_id: "nodeB"
-hostname: "guardian-node-B"
+hostname: "nodeb.guardian"
 ip: "127.0.0.1"
 port: 50052
 public_key: "placeholder-key-B"

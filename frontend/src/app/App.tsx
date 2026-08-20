@@ -68,7 +68,7 @@ function usePWA() {
 
     if (!window.isSecureContext) {
       setRegistrationError(
-        `The origin ${window.location.origin} is not browser-trusted. Use HTTP localhost for Docker or trusted HTTPS guardian.local on a board`,
+        `The origin ${window.location.origin} is not browser-trusted. Use trusted HTTPS nodea.guardian, nodeb.guardian, or nodec.guardian`,
       );
       return;
     }

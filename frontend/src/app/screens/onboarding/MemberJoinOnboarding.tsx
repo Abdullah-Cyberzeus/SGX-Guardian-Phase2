@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import { AlertTriangle, CheckCircle2, Fingerprint, Loader2, ShieldCheck, WifiOff } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock3, Fingerprint, Loader2, ShieldCheck, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "../../contexts/AuthContext";
 import { parseInviteMaterial } from "../../services/circleService";
-import pwaOnboardingService, { type GuardianOnboardingInfo, type MemberInvitePreview } from "../../services/pwaOnboardingService";
+import pwaOnboardingService, { type GuardianOnboardingInfo, type MemberInvitePreview, type MemberJoinResult } from "../../services/pwaOnboardingService";
 
 const normalizeFingerprint = (value: string) => value.replace(/[^a-z0-9]/gi, "").toUpperCase();
 const passwordValid = (value: string) => value.length >= 12
@@ -13,27 +13,89 @@ const passwordValid = (value: string) => value.length >= 12
   && /[0-9]/.test(value)
   && /[^a-zA-Z0-9]/.test(value);
 
+const PENDING_ENROLLMENT_KEY = "sgx_pending_member_enrollment";
+
+interface StoredPendingEnrollment {
+  enrollment: MemberJoinResult;
+  circleName?: string;
+  sourceInvite?: string;
+}
+
+function restorePendingEnrollment(currentInvite: string): StoredPendingEnrollment | null {
+  try {
+    const raw = sessionStorage.getItem(PENDING_ENROLLMENT_KEY);
+    if (!raw) return null;
+    const stored = JSON.parse(raw) as StoredPendingEnrollment;
+    if (!stored.enrollment?.approvalId || !stored.enrollment.approvalClaim || !stored.enrollment.token) return null;
+    if (currentInvite && stored.sourceInvite && currentInvite !== stored.sourceInvite) return null;
+    return stored;
+  } catch {
+    sessionStorage.removeItem(PENDING_ENROLLMENT_KEY);
+    return null;
+  }
+}
+
 export function MemberJoinOnboarding() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { joinMember } = useAuth();
+  const { joinMember, activatePendingMember } = useAuth();
+  const currentInvite = searchParams.get("member_invite") || searchParams.get("invite") || searchParams.get("token") || "";
+  const [restoredPending] = useState(() => restorePendingEnrollment(currentInvite));
   const [info, setInfo] = useState<GuardianOnboardingInfo | null>(null);
   const [loadError, setLoadError] = useState("");
   const [typedFingerprint, setTypedFingerprint] = useState("");
   const [confirmed, setConfirmed] = useState(false);
-  const [inviteMaterial, setInviteMaterial] = useState(() => searchParams.get("invite") || searchParams.get("token") || "");
+  const [inviteMaterial, setInviteMaterial] = useState(() => currentInvite || restoredPending?.sourceInvite || "");
   const [preview, setPreview] = useState<MemberInvitePreview | null>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState<"preview" | "join" | null>(null);
   const [joined, setJoined] = useState(false);
+  const [pendingEnrollment, setPendingEnrollment] = useState<MemberJoinResult | null>(() => restoredPending?.enrollment || null);
+  const [approvalState, setApprovalState] = useState<"pending" | "approved" | "rejected" | "expired">("pending");
 
   useEffect(() => {
     void pwaOnboardingService.info()
       .then(setInfo)
       .catch((cause) => setLoadError(cause instanceof Error ? cause.message : "Guardian could not be reached"));
   }, []);
+
+  useEffect(() => {
+    if (!pendingEnrollment?.approvalId || !pendingEnrollment.approvalClaim || approvalState !== "pending") return;
+    let stopped = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const status = await pwaOnboardingService.approvalStatus(
+          pendingEnrollment.approvalId!,
+          pendingEnrollment.approvalClaim!,
+        );
+        if (stopped) return;
+        if (status.state === "approved") {
+          setApprovalState("approved");
+          const result = await activatePendingMember(pendingEnrollment);
+          if (!result.error) {
+            sessionStorage.removeItem(PENDING_ENROLLMENT_KEY);
+            navigate("/chats", { replace: true });
+            return;
+          }
+          toast.error("Approved, but automatic sign-in failed", { description: result.error });
+        } else if (status.state === "rejected" || status.state === "expired") {
+          setApprovalState(status.state);
+          return;
+        }
+      } catch {
+        // LAN connectivity can briefly disappear; keep polling this Guardian.
+      }
+      if (!stopped) timer = window.setTimeout(() => void poll(), 3_000);
+    };
+    void poll();
+    return () => {
+      stopped = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [pendingEnrollment, approvalState, activatePendingMember, navigate]);
 
   const fingerprintMatches = useMemo(
     () => Boolean(info && normalizeFingerprint(typedFingerprint) === normalizeFingerprint(info.fingerprint)),
@@ -82,6 +144,16 @@ export function MemberJoinOnboarding() {
       toast.error(result.error);
       return;
     }
+    if (result.enrollment?.status === "pending") {
+      sessionStorage.setItem(PENDING_ENROLLMENT_KEY, JSON.stringify({
+        enrollment: result.enrollment,
+        circleName: preview?.circleName,
+        sourceInvite: inviteMaterial,
+      } satisfies StoredPendingEnrollment));
+      setPendingEnrollment(result.enrollment);
+      setApprovalState("pending");
+      return;
+    }
     setJoined(true);
   };
 
@@ -91,6 +163,18 @@ export function MemberJoinOnboarding() {
 
   if (!info) {
     return <main className="grid min-h-[100dvh] place-items-center bg-background"><Loader2 className="animate-spin text-primary" /></main>;
+  }
+
+  if (pendingEnrollment) {
+    const rejected = approvalState === "rejected" || approvalState === "expired";
+    return <main className="grid min-h-[100dvh] place-items-center bg-background p-6"><section className={`w-full max-w-md rounded-xl border bg-card p-6 text-center ${rejected ? "border-destructive/40" : "border-primary/30"}`}>
+      {rejected ? <AlertTriangle size={48} className="mx-auto text-destructive" /> : approvalState === "approved" ? <CheckCircle2 size={48} className="mx-auto text-primary" /> : <Clock3 size={48} className="mx-auto text-primary" />}
+      <h1 className="mt-4 text-2xl font-semibold">{approvalState === "expired" ? "Membership request expired" : rejected ? "Membership request declined" : approvalState === "approved" ? "Membership approved" : "Waiting for administrator approval"}</h1>
+      <p className="mt-2 text-sm leading-6 text-muted-foreground">{approvalState === "expired" ? "This enrollment link expired before approval. Ask the administrator to generate a new member invitation." : rejected ? "The Guardian administrator declined this request. Ask them for a new member invitation if this was unexpected." : approvalState === "approved" ? "Your account is approved. Completing secure sign-in…" : `Your account and DID have been created for ${preview?.circleName || restoredPending?.circleName || "this Circle"}. This screen updates automatically after an administrator approves you.`}</p>
+      <div className="mt-5 rounded-lg border border-border bg-muted/30 p-3 text-left"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Reserved member DID</p><p className="mt-1 break-all font-mono text-xs">{pendingEnrollment.browserMemberDid}</p></div>
+      {!rejected && approvalState === "pending" && <div className="mt-5 flex items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 size={16} className="animate-spin" />Checking this Guardian every few seconds</div>}
+      {approvalState === "approved" && <button className="mt-5 w-full rounded-md bg-primary px-4 py-3 font-semibold text-primary-foreground" onClick={() => navigate("/login", { replace: true })}>Continue to login</button>}
+    </section></main>;
   }
 
   if (joined) {

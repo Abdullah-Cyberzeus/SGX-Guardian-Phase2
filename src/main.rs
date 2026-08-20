@@ -49,6 +49,26 @@ const DID_DOC_REFRESH_INTERVAL_SECS: u64 = 300;
 const DID_DOC_PULL_INTERVAL_SECS: u64 = 30;
 const VC_STATUS_LIST_PULL_INTERVAL_SECS: u64 = 300;
 const DID_DOC_ROTATION_FLAG: &str = "/var/lib/sgx-guardian/identity/.dkp_rotated.flag";
+
+async fn serve_admin_tls_alias(
+    bind: std::net::SocketAddr,
+    upstream: std::net::SocketAddr,
+) -> std::io::Result<()> {
+    let listener = tokio::net::TcpListener::bind(bind).await?;
+    println!("✅ Guardian HTTPS name endpoint listening on https://{}", bind);
+    loop {
+        let (mut client, _) = listener.accept().await?;
+        tokio::spawn(async move {
+            match tokio::net::TcpStream::connect(upstream).await {
+                Ok(mut server) => {
+                    let _ = tokio::io::copy_bidirectional(&mut client, &mut server).await;
+                }
+                Err(error) => tracing::warn!(%error, "Guardian HTTPS alias could not reach admin API"),
+            }
+        });
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(" SGX Guardian Client Starting...");
@@ -73,6 +93,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }
     };
+    let lan_hostname = sgx_guardian_client::lan_name::host_label(&node_id);
+    let lan_fqdn = sgx_guardian_client::lan_name::fqdn(&node_id);
+    // Networking components are initialized through several independent
+    // managers. Export one canonical identity so DHCP and hotspot DNS always
+    // advertise the same name as the HTTPS certificate.
+    std::env::set_var("SGX_LAN_HOSTNAME", &lan_hostname);
+    std::env::set_var("SGX_LAN_FQDN", &lan_fqdn);
 
     // === FIRST: Ensure all required directories exist ===
     for dir in &[
@@ -163,9 +190,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let path = format!("/etc/sgx-guardian/config/{}.yaml", nid);
         if !std::path::Path::new(&path).exists() {
             let letter = &nid[4..];
+            let lan_fqdn = sgx_guardian_client::lan_name::fqdn(nid);
             let content = format!(
-                "---\nnode_id: \"{}\"\nhostname: \"guardian-node-{}\"\nip: \"0.0.0.0\"\nport: {}\npublic_key: \"placeholder-key-{}\"\n\napi:\n  tls:\n    enabled: true\n    require_https: true\n\nrelay:\n  enabled: false\n  max_peers: 5\n  max_bandwidth_mbps: 10\n  alert_threshold_pct: 80\n\nsecure_element:\n  enabled: true\n  scp_key_path: \"/home/root/se05x_mw_v04.05.01/simw-top/scripts/se050F_scp_keys.txt\"\n  interface: \"t1oi2c\"\n  auth_type: \"PlatformSCP\"\n  connection_type: \"se05x\"\n",
-                nid, letter, port, letter
+                "---\nnode_id: \"{}\"\nhostname: \"{}\"\nip: \"0.0.0.0\"\nport: {}\npublic_key: \"placeholder-key-{}\"\n\napi:\n  tls:\n    enabled: true\n    require_https: true\n\nrelay:\n  enabled: false\n  max_peers: 5\n  max_bandwidth_mbps: 10\n  alert_threshold_pct: 80\n\nsecure_element:\n  enabled: true\n  scp_key_path: \"/home/root/se05x_mw_v04.05.01/simw-top/scripts/se050F_scp_keys.txt\"\n  interface: \"t1oi2c\"\n  auth_type: \"PlatformSCP\"\n  connection_type: \"se05x\"\n",
+                nid, lan_fqdn, port, letter
             );
             let _ = std::fs::write(&path, &content);
         }
@@ -2633,6 +2661,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .and_then(|r| r.get_ip(&node_id).map(|s| s.to_string()))
     .unwrap_or_else(|| "192.168.100.1".to_string());
     let san: Vec<&str> = vec![
+        lan_fqdn.as_str(),
         this_node.hostname.as_str(),
         node_id.as_str(),
         overlay_ip_only.as_str(),
@@ -2792,6 +2821,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         });
+        if tls_cfg.enabled {
+            let alias_port = std::env::var("SGX_ADMIN_TLS_ALIAS_PORT")
+                .ok()
+                .and_then(|value| value.parse::<u16>().ok())
+                .unwrap_or(443);
+            if alias_port != api_bind.port() {
+                let alias_bind = std::net::SocketAddr::from(([0, 0, 0, 0], alias_port));
+                let alias_upstream = std::net::SocketAddr::from(([127, 0, 0, 1], api_bind.port()));
+                tokio::spawn(async move {
+                    if let Err(error) = serve_admin_tls_alias(alias_bind, alias_upstream).await {
+                        tracing::warn!(%error, %alias_bind, "Guardian HTTPS name endpoint unavailable");
+                    }
+                });
+            }
+        }
         let scheme = if tls_cfg.enabled { "https" } else { "http" };
         println!(
             "✅ REST API ({}) starting on {}://{}/api/v1",

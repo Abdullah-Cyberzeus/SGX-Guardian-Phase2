@@ -29,9 +29,8 @@ x-guardian-common: &guardian-common
     SGX_DISABLE_COT_SATELLITE: "1"
     SGX_SIM_MODE: "true"
     SGX_DISABLE_POLICY_ENFORCEMENT: "1"
-    # Docker development uses published localhost ports. HTTP localhost is a
-    # browser-trusted service-worker origin without a developer-installed CA.
-    # Physical board profiles remain HTTPS.
+    # Guardian stays HTTP only inside the private Compose network. Caddy is the
+    # LAN TLS boundary for nodea.guardian/nodeb.guardian/nodec.guardian.
     SGX_ADMIN_TLS_ENABLED: "0"
     SGX_ADMIN_REQUIRE_HTTPS: "0"
     SGX_SSO_CYLENIUM_ENABLED: "1"
@@ -47,7 +46,7 @@ services:
   nodeA:
     <<: *guardian-common
     container_name: sgx-nodeA
-    hostname: sgx-nodeA
+    hostname: nodea.guardian
     environment:
       <<: *guardian-env
       NODE_ID: nodeA
@@ -59,14 +58,14 @@ services:
       SGX_DUSAGE_SAMPLE_SECS: "15"
       SGX_DUSAGE_CATEGORIES_ENABLED: "1"
       SGX_CALL_SIGNALING_PORT: "50065"
-      SGX_CYLENIUM_OIDC_REDIRECT_URI: "${NODEA_CYLENIUM_REDIRECT_URI:-http://localhost:18443/auth/callback}"
+      SGX_CYLENIUM_OIDC_REDIRECT_URI: "${NODEA_CYLENIUM_REDIRECT_URI:-https://nodea.guardian/auth/callback}"
     networks:
       sgxnet:
         ipv4_address: 172.31.250.10
         aliases:
           - guardian1.com
     ports:
-      - "18443:8443"
+      - "127.0.0.1:18443:8443"
     volumes:
       - nodeA-etc:/etc/sgx-guardian
       - nodeA-lib:/var/lib/sgx-guardian
@@ -81,7 +80,7 @@ services:
   nodeB:
     <<: *guardian-common
     container_name: sgx-nodeB
-    hostname: sgx-nodeB
+    hostname: nodeb.guardian
     environment:
       <<: *guardian-env
       NODE_ID: nodeB
@@ -90,14 +89,14 @@ services:
       SGX_TPM_DIK_HANDLE: "0x81000110"
       SGX_TPM_KEY_AUTH: "${NODEB_TPM_KEY_AUTH:-}"
       SGX_CALL_SIGNALING_PORT: "50065"
-      SGX_CYLENIUM_OIDC_REDIRECT_URI: "${NODEB_CYLENIUM_REDIRECT_URI:-http://localhost:28443/auth/callback}"
+      SGX_CYLENIUM_OIDC_REDIRECT_URI: "${NODEB_CYLENIUM_REDIRECT_URI:-https://nodeb.guardian/auth/callback}"
     networks:
       sgxnet:
         ipv4_address: 172.31.250.11
         aliases:
           - guardian2.com
     ports:
-      - "28443:8443"
+      - "127.0.0.1:28443:8443"
     volumes:
       - nodeB-etc:/etc/sgx-guardian
       - nodeB-lib:/var/lib/sgx-guardian
@@ -109,7 +108,7 @@ services:
   nodeC:
     <<: *guardian-common
     container_name: sgx-nodeC
-    hostname: sgx-nodeC
+    hostname: nodec.guardian
     environment:
       <<: *guardian-env
       NODE_ID: nodeC
@@ -118,14 +117,14 @@ services:
       SGX_TPM_DIK_HANDLE: "0x81000120"
       SGX_TPM_KEY_AUTH: "${NODEC_TPM_KEY_AUTH:-}"
       SGX_CALL_SIGNALING_PORT: "50065"
-      SGX_CYLENIUM_OIDC_REDIRECT_URI: "${NODEC_CYLENIUM_REDIRECT_URI:-http://localhost:38443/auth/callback}"
+      SGX_CYLENIUM_OIDC_REDIRECT_URI: "${NODEC_CYLENIUM_REDIRECT_URI:-https://nodec.guardian/auth/callback}"
     networks:
       sgxnet:
         ipv4_address: 172.31.250.12
         aliases:
           - guardian3.com
     ports:
-      - "38443:8443"
+      - "127.0.0.1:38443:8443"
     volumes:
       - nodeC-etc:/etc/sgx-guardian
       - nodeC-lib:/var/lib/sgx-guardian
@@ -133,6 +132,27 @@ services:
     depends_on:
       nodeA:
         condition: service_healthy
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: sgx-guardian-lan-tls
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./docker/Caddyfile.dev:/etc/caddy/Caddyfile:ro
+      - guardian-caddy-data:/data
+      - guardian-caddy-config:/config
+    networks:
+      - sgxnet
+    depends_on:
+      nodeA:
+        condition: service_healthy
+      nodeB:
+        condition: service_started
+      nodeC:
+        condition: service_started
 
 networks:
   sgxnet:
@@ -151,3 +171,5 @@ volumes:
   nodeC-etc: {}
   nodeC-lib: {}
   nodeC-log: {}
+  guardian-caddy-data: {}
+  guardian-caddy-config: {}

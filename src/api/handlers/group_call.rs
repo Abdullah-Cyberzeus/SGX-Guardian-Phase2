@@ -25,8 +25,8 @@ use crate::api::auth::middleware::AuthenticatedSession;
 use crate::api::handlers::call::{browser_call_actor_id, local_virtual_id_for_actor};
 use crate::api::state::AppState;
 use crate::call::{
-    GroupMemberState, GroupParticipant, GroupRole, GroupSession, GroupWireMessage, MediaType,
-    ModerationAction, SignalKind, MAX_GROUP_PARTICIPANTS,
+    GroupCallState, GroupMemberState, GroupParticipant, GroupRole, GroupSession, GroupWireMessage,
+    MediaType, ModerationAction, SignalKind, MAX_GROUP_PARTICIPANTS,
 };
 
 #[derive(Debug, Deserialize)]
@@ -767,26 +767,82 @@ pub async fn end(
     State(state): State<Arc<AppState>>,
     Path(group_id): Path<String>,
     headers: HeaderMap,
+    session_auth: Option<Extension<AuthenticatedSession>>,
 ) -> impl IntoResponse {
-    let operation = operation_key(&headers, &state.node_id, "end", Some(&group_id));
+    let actor_id = browser_call_actor_id(&state, &session_auth);
+    let operation = operation_key(&headers, &actor_id, "end", Some(&group_id));
     if let Some(cached) = operation
         .as_ref()
         .and_then(|key| COMPLETED_OPERATIONS.get(key).map(|value| value.clone()))
     {
         return Json(cached).into_response();
     }
-    let session = match state
-        .group_session_manager
-        .end(&group_id, &state.node_id)
-        .await
-    {
+    let current = match state.group_session_manager.get(&group_id).await {
         Ok(session) => session,
+        Err(error_value) => return error(StatusCode::NOT_FOUND, error_value.to_string()),
+    };
+    let Some(actor) = current.participants.get(&actor_id) else {
+        return error(StatusCode::FORBIDDEN, "Local caller is not a group participant");
+    };
+    if !matches!(
+        actor.state,
+        GroupMemberState::Joined
+            | GroupMemberState::Reconnecting
+            | GroupMemberState::Disconnected
+    ) {
+        return error(
+            StatusCode::FORBIDDEN,
+            "Only active group participants can end this call",
+        );
+    }
+    let remotely_hosted = current.host_device_id != state.node_id;
+    let result = if current.host_device_id == state.node_id {
+        Ok(())
+    } else {
+        let Some(host) = current.participants.get(&current.host_device_id) else {
+            return error(StatusCode::CONFLICT, "Group host participant is missing");
+        };
+        let message = GroupWireMessage::End {
+            group_id: group_id.clone(),
+            device_id: actor_id.clone(),
+        };
+        state
+            .call_nebula_signaling
+            .send_group_control(
+                &message,
+                &group_id,
+                &actor_id,
+                &actor.virtual_id,
+                &host.nebula_ip,
+            )
+            .await
+    };
+    if let Err(error_value) = result {
+        return error(StatusCode::BAD_GATEWAY, error_value.to_string());
+    }
+    let session = match state.group_session_manager.end(&group_id, &actor_id).await {
+        Ok(session) => session,
+        // The host can deliver its terminal snapshot before the outbound
+        // control send completes. In that race the local manager has already
+        // removed the call, so return the equivalent terminal snapshot.
+        Err(_) if remotely_hosted => {
+            let mut ended = current.clone();
+            let now = chrono::Utc::now();
+            ended.state = GroupCallState::Ended;
+            ended.updated_at = now;
+            ended.ended_at = Some(now);
+            ended
+        }
         Err(error_value) => return error(StatusCode::FORBIDDEN, error_value.to_string()),
     };
-    let result = state
-        .call_nebula_signaling
-        .broadcast_group_snapshot(&session, &state.node_id)
-        .await;
+    let result = if current.host_device_id == state.node_id {
+        state
+            .call_nebula_signaling
+            .broadcast_group_snapshot(&session, &state.node_id)
+            .await
+    } else {
+        Ok(())
+    };
     state.call_signal_hub.clear(&group_id).await;
     if let Err(error_value) = result {
         tracing::warn!(

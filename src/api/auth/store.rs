@@ -122,6 +122,9 @@ pub struct NewMemberRegistration {
     pub guardian_fingerprint: String,
     pub registration_expires_at: i64,
     pub invite_id: String,
+    /// Pending browser members cannot use their issued session until an
+    /// administrator explicitly approves the enrollment.
+    pub pending_approval: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -214,6 +217,7 @@ pub trait UserStore: Send + Sync {
     /// Atomically creates a member or reactivates the same inactive member
     /// during a verified rejoin. Active accounts cannot be overwritten.
     async fn create_or_reactivate_member(&self, member: NewMemberRegistration) -> Result<User>;
+    async fn set_member_status(&self, user_id: &str, status: &str) -> Result<User>;
     async fn revoke_browser_registration(
         &self,
         user_id: &str,
@@ -848,7 +852,12 @@ impl UserStore for JsonUserStore {
                     existing.guardian_fingerprint = Some(member.guardian_fingerprint);
                     existing.registration_expires_at = Some(member.registration_expires_at);
                     existing.invite_id = Some(member.invite_id);
-                    existing.status = "active".into();
+                    existing.status = if member.pending_approval {
+                        "pending"
+                    } else {
+                        "active"
+                    }
+                    .into();
                     Self::clear_login_failures(existing);
                     return Ok(existing.clone());
                 }
@@ -865,8 +874,35 @@ impl UserStore for JsonUserStore {
                 user.guardian_fingerprint = Some(member.guardian_fingerprint);
                 user.registration_expires_at = Some(member.registration_expires_at);
                 user.invite_id = Some(member.invite_id);
+                user.status = if member.pending_approval {
+                    "pending"
+                } else {
+                    "active"
+                }
+                .into();
                 users.push(user.clone());
                 Ok(user)
+            })
+            .await
+    }
+
+    async fn set_member_status(&self, user_id: &str, status: &str) -> Result<User> {
+        if !matches!(status, "active" | "inactive" | "pending") {
+            return Err(anyhow!("invalid member status"));
+        }
+        let user_id = user_id.to_string();
+        let status = status.to_string();
+        self.file
+            .mutate(move |users| {
+                let user = users
+                    .iter_mut()
+                    .find(|user| user.user_id == user_id)
+                    .ok_or_else(|| anyhow!("user not found"))?;
+                if user.role != UserRole::Member {
+                    return Err(anyhow!("user is not a member"));
+                }
+                user.status = status;
+                Ok(user.clone())
             })
             .await
     }

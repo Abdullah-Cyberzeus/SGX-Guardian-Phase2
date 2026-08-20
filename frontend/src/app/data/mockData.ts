@@ -364,13 +364,6 @@ export const mockDevices = [
   },
 ];
 
-export const mockThreatIntel = {
-  score: 34,
-  threats24h: 12,
-  blocked: 47,
-  quarantined: 3,
-};
-
 export const mockGeofenceZones = [
   { id: "zone_001", name: "Facility Perimeter", radius: 500, lat: 30.2672, lng: -97.7431, active: true },
   { id: "zone_002", name: "Control Room", radius: 50, lat: 30.2675, lng: -97.7428, active: true },

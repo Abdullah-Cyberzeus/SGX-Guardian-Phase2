@@ -104,6 +104,7 @@ pub enum GroupWireMessage {
     Join { group_id: String, device_id: String },
     Decline { group_id: String, device_id: String },
     Leave { group_id: String, device_id: String },
+    End { group_id: String, device_id: String },
     Heartbeat { group_id: String, device_id: String },
     Snapshot { session: GroupSession },
 }
@@ -580,9 +581,19 @@ impl GroupSessionManager {
     pub async fn end(&self, group_id: &str, actor: &str) -> CallResult<GroupSession> {
         let session = self
             .update(group_id, "group_ended", |session| {
-                if session.host_device_id != actor {
+                let participant = session.participants.get(actor).ok_or_else(|| {
+                    CallError::UnauthorizedDevice {
+                        reason: "Only a group participant can end this call".into(),
+                    }
+                })?;
+                if !matches!(
+                    participant.state,
+                    GroupMemberState::Joined
+                        | GroupMemberState::Reconnecting
+                        | GroupMemberState::Disconnected
+                ) {
                     return Err(CallError::UnauthorizedDevice {
-                        reason: "Only the group host can end this call".into(),
+                        reason: "Only active group participants can end this call".into(),
                     });
                 }
                 session.state = GroupCallState::Ended;
@@ -595,7 +606,7 @@ impl GroupSessionManager {
             group_id,
             actor,
             None,
-            "host ended group call",
+            "participant ended group call for everyone",
         );
         self.history.record_group(&session);
         Ok(session)
@@ -997,6 +1008,31 @@ mod tests {
         assert_eq!(records[0].kind, "group");
         assert_eq!(records[0].outcome, "completed");
         assert_eq!(records[0].participant_ids, vec!["nodeA", "nodeB"]);
+    }
+
+    #[tokio::test]
+    async fn joined_member_can_end_group_call_for_everyone() {
+        let dir = tempdir().unwrap();
+        let manager = GroupSessionManager::new(dir.path().join("member-end.log"));
+        let created = manager
+            .create(
+                "Member-ended room".into(),
+                participant("nodeA", GroupRole::Host),
+                vec![participant("nodeB", GroupRole::Member)],
+                vec![MediaType::Audio],
+            )
+            .await
+            .unwrap();
+        manager
+            .join(&created.group_id, "nodeB", "192.168.100.2")
+            .await
+            .unwrap();
+
+        let ended = manager.end(&created.group_id, "nodeB").await.unwrap();
+
+        assert_eq!(ended.state, GroupCallState::Ended);
+        assert!(manager.active_for("nodeA").await.is_empty());
+        assert!(manager.active_for("nodeB").await.is_empty());
     }
 
     #[tokio::test]
