@@ -1067,6 +1067,17 @@ Harden the combined member/admin application for production use.
 - Pending data survives defined crash/restart scenarios without duplication or silent loss.
 - Performance thresholds are documented and met.
 
+### Implementation notes (this pass)
+
+- Added a Phase 11 verification artifact: `docs/Guardian_PWA_Phase_11_Verification_Log.md`.
+- Added global HTTP security headers for the embedded frontend and API: strict CSP, `X-Content-Type-Options`, frame denial, referrer policy, permissions policy, COOP, and CORP. HSTS is opt-in with `SGX_ENABLE_HSTS=1` because forced HSTS can strand browsers on local self-signed Guardian deployments.
+- Added fetch-metadata/origin checks for unsafe authenticated API requests and added the `X-SGX-Client: guardian-pwa` header to frontend fetch/XHR mutation paths.
+- Removed the inline first-paint theme script from `frontend/index.html`; theme bootstrapping now runs from bundled TypeScript so CSP can disallow inline scripts.
+- Restricted browser camera/microphone/screen-capture calls with a runtime guard that allows call routes and camera-only onboarding routes only when the tab is visible and the request follows a recent user action.
+- Removed the remaining `dangerouslySetInnerHTML` usage in the topology event log so log text cannot inject DOM.
+- Confirmed the local PWA path does not reference Supabase client libraries.
+- Heavy crash, quota, and full browser-matrix tests were not run in this pass per the system-stability constraint; the verification log records targeted Phase 12 release-gate checks instead.
+
 ---
 
 ## Phase 12 — Automated Testing, Device QA, Packaging, and Release

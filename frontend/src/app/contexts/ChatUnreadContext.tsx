@@ -144,7 +144,10 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
       const groupEntries = await Promise.all(circles.map(async (circle) => {
         try {
           const { messages } = await chatService.groupHistory(circle.id);
-          if (!messages.length) return [circle.id, circle.name, circle.members?.length ?? circle.memberCount ?? 0, 0, undefined, false] as const;
+          // An empty Circle is still a valid chat target — a newly added
+          // member needs to see it and be able to send the first message,
+          // not wait for someone else to message first.
+          if (!messages.length) return [circle.id, circle.name, circle.members?.length ?? circle.memberCount ?? 0, 0, undefined, true] as const;
           const unread = localDid
             ? messages.filter((record) => record.sender_did !== localDid && !record.read_by.includes(localDid)).length
             : 0;

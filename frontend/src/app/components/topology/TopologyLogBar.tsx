@@ -35,7 +35,7 @@ function LogRows({ rows, onDeviceClick }: { rows: LogRow[]; onDeviceClick: (n: s
               {r.device}
             </span>
           </span>
-          <span className="topo-log-msg" dangerouslySetInnerHTML={{ __html: r.msg }} />
+          <span className="topo-log-msg">{r.msg}</span>
           <span className="topo-event-framework">{r.lvl === "ERR" ? "MITRE TA0001 · NIST SI-4" : r.lvl === "WARN" ? "MITRE TA0006 · NIST AC-7" : "NIST CA-7"}</span>
           <span className="topo-log-src">{r.src}</span>
         </div>

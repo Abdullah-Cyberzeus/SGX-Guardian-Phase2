@@ -14,14 +14,16 @@ export const fileRepository = {
     const cursor = store.openCursor();
     cursor.onsuccess = () => {
       const current = cursor.result;
-      if (!current) return;
+      if (!current) {
+        records.forEach((record) => store.put({
+          ...record,
+          vaultId: record.vaultId || record.id,
+          id: `${scopeId}:${record.vaultId || record.id}`,
+        }));
+        return;
+      }
       if ((current.value as FileRecord).scopeId === scopeId) current.delete();
       current.continue();
     };
-    records.forEach((record) => store.put({
-      ...record,
-      vaultId: record.vaultId || record.id,
-      id: `${scopeId}:${record.vaultId || record.id}`,
-    }));
   }),
 };

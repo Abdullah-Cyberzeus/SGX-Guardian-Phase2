@@ -10,6 +10,7 @@ use axum::{
     response::{sse::Event, sse::KeepAlive, IntoResponse, Sse},
     Extension, Router,
 };
+use chrono::{DateTime, Utc};
 use futures_util::{stream, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1176,12 +1177,56 @@ pub struct CallHistoryResponse {
     pub total: usize,
 }
 
-pub async fn call_history(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let calls = state.call_session_manager.call_history().list();
+pub async fn call_history(
+    State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
+) -> impl IntoResponse {
+    let mut calls = state.call_session_manager.call_history().list();
+    // A member only sees calls they were actually part of, and only calls
+    // created after that browser member account existed. Never fall back to
+    // the Guardian node id here; doing so leaks the Guardian's older call log.
+    if let Some(Extension(auth)) = session
+        .as_ref()
+        .filter(|Extension(auth)| auth.claims.role == "member")
+    {
+        let own_did = crate::api::handlers::browser_member::did_from_session(&session);
+        let member_created_at = member_account_created_at(&state, &auth.claims.sub).await;
+        calls = match (own_did, member_created_at) {
+            (Some(own_did), Some(member_created_at)) => {
+                visible_member_call_history(calls, &own_did, member_created_at)
+            }
+            _ => Vec::new(),
+        };
+    }
     Json(CallHistoryResponse {
         total: calls.len(),
         calls,
     })
+}
+
+async fn member_account_created_at(state: &AppState, actor_id: &str) -> Option<DateTime<Utc>> {
+    let user = state
+        .admin
+        .users
+        .find_by_id(actor_id)
+        .await
+        .ok()
+        .flatten()?;
+    DateTime::parse_from_rfc3339(&user.created_at)
+        .ok()
+        .map(|value| value.with_timezone(&Utc))
+}
+
+fn visible_member_call_history(
+    calls: Vec<crate::call::CallHistoryRecord>,
+    own_did: &str,
+    member_created_at: DateTime<Utc>,
+) -> Vec<crate::call::CallHistoryRecord> {
+    calls
+        .into_iter()
+        .filter(|call| call.started_at >= member_created_at)
+        .filter(|call| call.participant_ids.iter().any(|id| id == own_did))
+        .collect()
 }
 
 pub async fn active_calls(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -1929,5 +1974,50 @@ mod tests {
         let deserialized: InitiateCallRequest = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized.initiator_device_id, "device-1");
+    }
+
+    #[test]
+    fn member_call_history_excludes_old_and_unrelated_records() {
+        let member_did = "did:guardian:browser-member";
+        let created_at = Utc::now();
+        let old_call = crate::call::CallHistoryRecord {
+            id: "old".into(),
+            kind: "direct".into(),
+            outcome: "completed".into(),
+            media: vec![MediaType::Audio],
+            participant_ids: vec![member_did.into(), "nodeA".into()],
+            started_at: created_at - chrono::Duration::minutes(5),
+            ended_at: created_at - chrono::Duration::minutes(4),
+            duration_seconds: 60,
+        };
+        let unrelated_call = crate::call::CallHistoryRecord {
+            id: "unrelated".into(),
+            kind: "direct".into(),
+            outcome: "completed".into(),
+            media: vec![MediaType::Video],
+            participant_ids: vec!["nodeA".into(), "nodeB".into()],
+            started_at: created_at + chrono::Duration::minutes(1),
+            ended_at: created_at + chrono::Duration::minutes(2),
+            duration_seconds: 60,
+        };
+        let visible_call = crate::call::CallHistoryRecord {
+            id: "visible".into(),
+            kind: "group".into(),
+            outcome: "completed".into(),
+            media: vec![MediaType::Audio, MediaType::Video],
+            participant_ids: vec![member_did.into(), "nodeA".into()],
+            started_at: created_at + chrono::Duration::minutes(3),
+            ended_at: created_at + chrono::Duration::minutes(4),
+            duration_seconds: 60,
+        };
+
+        let visible = visible_member_call_history(
+            vec![old_call, unrelated_call, visible_call],
+            member_did,
+            created_at,
+        );
+
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].id, "visible");
     }
 }

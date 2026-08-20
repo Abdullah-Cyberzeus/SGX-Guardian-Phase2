@@ -20,6 +20,8 @@ export interface CircleMember {
   memberType?: 'guardian' | 'browser' | string;
   browserRegistrationId?: string;
   status?: 'online' | 'offline' | string;
+  online?: boolean;
+  presenceStatus?: 'online' | 'offline' | 'hidden' | 'stale' | 'unknown' | string;
   joinedAt?: string;
 }
 
@@ -149,6 +151,8 @@ function normalizeMember(value: any): CircleMember {
     nodeHint: nodeHint ? String(nodeHint) : undefined,
     memberType: value?.memberType || value?.member_type,
     browserRegistrationId: value?.browserRegistrationId || value?.browser_registration_id,
+    online: typeof value?.online === 'boolean' ? value.online : undefined,
+    presenceStatus: value?.presenceStatus || value?.presence_status,
     status: lifecycle,
     joinedAt: value?.joinDate || value?.join_date || value?.joinedAt,
   };

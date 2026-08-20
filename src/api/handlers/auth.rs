@@ -569,10 +569,7 @@ pub async fn session(
         name: user.name,
         email: user.email,
         role: user.role.as_str().to_string(),
-        scopes: crate::api::auth::authorization::effective_scopes(
-            user.role.as_str(),
-            &user.scopes,
-        ),
+        scopes: crate::api::auth::authorization::effective_scopes(user.role.as_str(), &user.scopes),
         hide_presence: user.hide_presence,
         hide_read_receipts: user.hide_read_receipts,
         hide_typing: user.hide_typing,

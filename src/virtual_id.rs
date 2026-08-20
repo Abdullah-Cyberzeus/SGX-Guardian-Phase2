@@ -22,6 +22,7 @@ use std::sync::{Mutex, OnceLock};
 pub const VID_NONCE_REFRESH_SECS: i64 = 60;
 
 const DEFAULT_VID_STATE_DIR: &str = "/var/lib/sgx-guardian/identity";
+pub const RUNTIME_VID_STATE_DIR_ENV: &str = "SGX_GUARDIAN_VID_STATE_DIR";
 const DKP_P256_SPKI_PREFIX: &[u8] = &[
     0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01, 0x06, 0x08, 0x2A,
     0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
@@ -452,7 +453,12 @@ fn default_runtime_change_reason() -> String {
 fn runtime_vid_state_path(node: &str, explicit: Option<&str>) -> PathBuf {
     explicit
         .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(DEFAULT_VID_STATE_DIR).join(runtime_vid_state_file_name(node)))
+        .unwrap_or_else(|| {
+            std::env::var_os(RUNTIME_VID_STATE_DIR_ENV)
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(DEFAULT_VID_STATE_DIR))
+                .join(runtime_vid_state_file_name(node))
+        })
 }
 
 fn runtime_vid_state_file_name(node: &str) -> String {

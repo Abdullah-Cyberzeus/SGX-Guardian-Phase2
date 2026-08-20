@@ -61,8 +61,12 @@ function CircleRow({
           </p>
         </div>
         <div className="flex items-center gap-1.5 ml-2 flex-shrink-0">
-          <div style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: archived ? "var(--muted-foreground)" : "var(--chart-2)" }} />
-          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: archived ? "var(--muted-foreground)" : "var(--chart-2)" }}>{archived ? "Archived" : `${circle.onlineCount} online`}</span>
+          {archived && (
+            <>
+              <div style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: "var(--muted-foreground)" }} />
+              <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>Archived</span>
+            </>
+          )}
           <ChevronRight size={13} style={{ color: "var(--muted-foreground)" }} />
         </div>
       </div>
@@ -180,12 +184,9 @@ function CircleDetailPanel({ circle }: { circle: typeof mockCircles[0] }) {
           <h3 style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
             {circle.name}
           </h3>
-          <div className="flex items-center gap-1.5 mt-0.5">
-            <div style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: "var(--chart-2)" }} />
-            <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
-              {circle.onlineCount} of {circle.memberCount} online
-            </span>
-          </div>
+          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginTop: "2px" }}>
+            {circle.memberCount} members
+          </p>
         </div>
         <div className="flex items-center gap-1.5">
           <button
@@ -358,7 +359,7 @@ function CircleDetailPanel({ circle }: { circle: typeof mockCircles[0] }) {
                   <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--primary)" }}>
                     {member.initials || member.name.split(" ").map((n: string) => n[0]).join("")}
                   </span>
-                  <div style={{ position: "absolute", bottom: "1px", right: "1px", width: "8px", height: "8px", borderRadius: "50%", backgroundColor: member.status === "online" ? "var(--chart-2)" : "var(--muted-foreground)", border: "1.5px solid var(--card)" }} />
+                  <div style={{ position: "absolute", bottom: "1px", right: "1px", width: "8px", height: "8px", borderRadius: "50%", backgroundColor: member.presenceStatus === "online" ? "var(--chart-2)" : "var(--muted-foreground)", border: "1.5px solid var(--card)" }} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", color: "var(--foreground)" }}>{member.name}</p>
@@ -652,10 +653,12 @@ export function NW01CirclesList() {
                     <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)", marginBottom: "2px" }}>{circle.name}</p>
                     <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{circle.memberCount} members</p>
                   </div>
-                  <div className="flex items-center gap-1.5 ml-2 flex-shrink-0">
-                    <div style={{ width: "7px", height: "7px", borderRadius: "50%", backgroundColor: "var(--chart-2)" }} />
-                    <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--chart-2)" }}>{circle.onlineCount} online</span>
-                  </div>
+                  {circle.status === "archived" && (
+                    <div className="flex items-center gap-1.5 ml-2 flex-shrink-0">
+                      <div style={{ width: "7px", height: "7px", borderRadius: "50%", backgroundColor: "var(--muted-foreground)" }} />
+                      <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>Archived</span>
+                    </div>
+                  )}
                 </div>
                 {circle.description && <p className="mb-4" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>{circle.description}</p>}
                 {circle.status === "archived" ? <button onClick={() => navigate(`/network/${circle.id}/manage`)} className="mt-3 w-full flex items-center justify-center gap-2 rounded-md" style={{ height: "40px", backgroundColor: "var(--secondary)", color: "var(--secondary-foreground)", border: "1px solid var(--border)", cursor: "pointer" }}><Archive size={15} />View archived Circle</button> : <><div className="flex items-center gap-2 mt-3">

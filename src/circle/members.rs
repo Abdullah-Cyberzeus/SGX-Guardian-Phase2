@@ -50,6 +50,10 @@ pub struct CircleMember {
     pub member_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser_registration_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub online: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presence_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,6 +117,8 @@ pub(crate) fn list_members_from_local_vcs(
                 email: None,
                 member_type: Some("guardian".to_string()),
                 browser_registration_id: None,
+                online: None,
+                presence_status: None,
             })
         })
         .collect::<Result<Vec<_>, CircleError>>()?;
@@ -132,6 +138,8 @@ pub(crate) fn list_members_from_local_vcs(
             email: None,
             member_type: Some("guardian".to_string()),
             browser_registration_id: None,
+            online: None,
+            presence_status: None,
         });
     }
     if include_invites {
@@ -154,6 +162,8 @@ pub(crate) fn list_members_from_local_vcs(
                 email: None,
                 member_type: Some("guardian".to_string()),
                 browser_registration_id: None,
+                online: None,
+                presence_status: None,
             });
         }
     }
