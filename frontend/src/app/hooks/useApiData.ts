@@ -400,7 +400,7 @@ export function useVidPeers() {
 }
 
 /**
- * Hook for the full NMAP discovery device inventory
+ * Hook for the full Guardian discovery device inventory
  */
 export function useDiscoveryDevices() {
   return useApiData(() => discoveryService.getDevices(), { pollingInterval: 30000 });
@@ -414,14 +414,14 @@ export function useDiscoverySummary() {
   return useApiData(() => discoveryService.getSummary(), { pollingInterval: 30000 });
 }
 
-// ── Threat / Suricata IDS ──────────────────────────────────────────────────────
+// ── Threat / Guardian IDS ──────────────────────────────────────────────────────
 
-/** Hook for Suricata service state, block mode, and alert/block counts. */
+/** Hook for Guardian service state, block mode, and alert/block counts. */
 export function useThreatStatus() {
   return useApiData(() => threatService.getStatus(), { pollingInterval: 15000 });
 }
 
-/** Hook for parsed Suricata alerts (404s until Suricata produces events). */
+/** Hook for parsed Guardian alerts (404s until Guardian produces events). */
 export function useThreatAlerts(filters?: ThreatAlertsFilters) {
   return useApiData(() => threatService.getAlerts(filters), { pollingInterval: 15000 });
 }
@@ -451,7 +451,7 @@ export function useDiscoveryWhitelist() {
 }
 
 /**
- * Hook for the scheduled NMAP discovery configuration
+ * Hook for the scheduled Guardian discovery configuration
  */
 export function useDiscoverySchedule() {
   return useApiData(() => discoveryService.getSchedule());
@@ -485,7 +485,7 @@ export function useSmartHomeNotifications() {
 }
 
 /**
- * Hook for the history of scheduled NMAP discovery runs.
+ * Hook for the history of scheduled Guardian discovery runs.
  * The backend endpoint may not yet be implemented — callers should treat an
  * error as "no data available" and fall back to derived signals.
  */

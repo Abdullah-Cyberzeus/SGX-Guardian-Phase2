@@ -22,7 +22,7 @@ import {
 const VIEW_BOX = { w: 1160, h: 720 };
 const ACTIVE_WINDOW_MS = 12_000;
 
-const NODE_A = { id: "node-a", label: "Node A", role: "SERVER + IDS", ip: "192.168.50.115", sub: "Suricata + Modbus TCP :502", x: 570, y: 360, r: 48, color: "#38bdf8" };
+const NODE_A = { id: "node-a", label: "Node A", role: "SERVER + IDS", ip: "192.168.50.115", sub: "Guardian + Modbus TCP :502", x: 570, y: 360, r: 48, color: "#38bdf8" };
 const NODE_B = { id: "node-b", label: "Node B", role: "ATTACKER", ip: "192.168.50.248", sub: "Modbus TCP client", x: 175, y: 360, r: 42, color: "#f97316" };
 
 type SceneNodeKind = "attacker" | "server" | "sensor";
@@ -132,7 +132,7 @@ function makeDemoAlert(scenario: ModbusScenario, index: number): ThreatAlert {
     dst_port: 502,
     protocol: "TCP",
     signature_id: 920_100 + index,
-    signature: `${scenario.suricataAlert} ${scenario.fcLabel}`,
+    signature: `${scenario.guardianAlert} ${scenario.fcLabel}`,
     category: "exploit",
     severity: scenario.id === "S4" ? "critical" : scenario.id === "S3" ? "high" : "medium",
     rev: 1,
@@ -377,7 +377,7 @@ export function AL09LiveAttackTopology() {
   const alertsQuery = useThreatAlerts({ limit: 1000 });
   const statusQuery = useThreatStatus();
   const liveAlerts = alertsQuery.data ?? [];
-  const suricataActive = statusQuery.data?.suricata?.toLowerCase() === "active";
+  const guardianActive = statusQuery.data?.suricata?.toLowerCase() === "active";
 
   const addAttack = useCallback((alert: ThreatAlert, isDemo = false) => {
     const context = getModbusAlertContext(alert);
@@ -534,7 +534,7 @@ export function AL09LiveAttackTopology() {
           </div>
         </div>
         <div className="modbus-hud-stats">
-          <span className={suricataActive || mode === "demo" ? "is-good" : "is-warn"}>{mode === "demo" ? "DEMO STREAM" : suricataActive ? "SURICATA LIVE" : "SURICATA WAITING"}</span>
+          <span className={guardianActive || mode === "demo" ? "is-good" : "is-warn"}>{mode === "demo" ? "DEMO STREAM" : guardianActive ? "GUARDIAN LIVE" : "GUARDIAN WAITING"}</span>
           <span>{activeAttacks.length} active attacks</span>
           <span>{activeSensorCount}/4 sensors hit</span>
           <span>source {latestSourceIp}</span>

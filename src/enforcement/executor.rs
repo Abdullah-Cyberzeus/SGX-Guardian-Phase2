@@ -160,6 +160,12 @@ pub fn build_nft_ruleset(rules: &TranslatedRules) -> Result<String> {
     // HTTPS and API authentication remain enforced by the server.
     out.push_str("    tcp dport 8443 counter accept\n");
 
+    // Allow web ingress and the SGX service endpoint used by external clients.
+    out.push_str("    tcp dport { 80, 443, 6568 } accept\n");
+
+    // Allow UDP media/control port range.
+    out.push_str("    udp dport 50001-50003 accept\n");
+
     // Allow ICMP ping
     out.push_str("    ip protocol icmp accept\n");
     // Allow Nebula overlay mesh traffic (VERY IMPORTANT)

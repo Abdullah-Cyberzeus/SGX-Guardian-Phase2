@@ -13,6 +13,7 @@ import {
   type DeviceScanRun,
 } from "../../services/managedDeviceService";
 import { StatusBadge } from "../../components/SeverityBadge";
+import { guardianDisplayText } from "../../utils/displayText";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Switch from "@radix-ui/react-switch";
 
@@ -61,7 +62,7 @@ function GuardianStatusSection({ title, rows }: { title: string; rows: Array<{ l
         {rows.map(({ label, value, mono }, index) => (
           <div key={label} className="flex items-center justify-between gap-3 px-4 py-3" style={{ borderBottom: index < rows.length - 1 ? "1px solid var(--border)" : undefined }}>
             <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{label}</span>
-            <span style={{ fontFamily: mono ? "JetBrains Mono, monospace" : "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--foreground)", wordBreak: "break-all", maxWidth: "58%", textAlign: "right" }}>{value === undefined || value === "" ? "Unavailable" : value}</span>
+            <span style={{ fontFamily: mono ? "JetBrains Mono, monospace" : "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--foreground)", wordBreak: "break-all", maxWidth: "58%", textAlign: "right" }}>{value === undefined || value === "" ? "Unavailable" : guardianDisplayText(value)}</span>
           </div>
         ))}
       </div>
@@ -205,7 +206,7 @@ function DeviceDetailPanel({
               { label: "Interface", value: guardianStatus.network.interfaceName },
               { label: "Transport", value: guardianStatus.network.transport },
             ]} />
-            <GuardianStatusSection title="NEBULA" rows={[
+            <GuardianStatusSection title="GUARDIAN MESH" rows={[
               { label: "Status", value: guardianStatus.nebula.status },
               { label: "Overlay IP", value: guardianStatus.nebula.overlayIp, mono: true },
               { label: "Role", value: guardianStatus.nebula.role },

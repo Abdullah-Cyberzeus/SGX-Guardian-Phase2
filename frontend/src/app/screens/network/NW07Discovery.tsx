@@ -274,7 +274,7 @@ function DeviceCard({
 
 // ── Device detail dialog ──────────────────────────────────────────────────────
 
-/** Best-effort renderer for an NMAP script result. Backend returns
+/** Best-effort renderer for a Guardian script result. Backend returns
  *  `unknown[]`, but real script entries usually look like `{id, output}`. */
 function ScriptBlock({ script }: { script: unknown }) {
   let id: string;
@@ -2650,7 +2650,7 @@ export function NW07Discovery() {
 
   return (
     <div className="flex flex-col h-full">
-      <PageHeader title="Network Discovery" subtitle="NMAP Inventory" onBack={() => navigate("/network")} />
+      <PageHeader title="Network Discovery" subtitle="Guardian Inventory" onBack={() => navigate("/network")} />
 
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-4xl p-4 md:p-6 flex flex-col gap-4">

@@ -7,6 +7,7 @@ import {
 import { PageHeader } from "../../components/PageHeader";
 import { useDusageCurrent, useDusageHistory, useDusageQuota } from "../../hooks/useApiData";
 import { dusageService } from "../../services/dusageService";
+import { guardianDisplayText } from "../../utils/displayText";
 
 function formatBytes(bytes: number): string {
   if (!bytes || bytes < 0) return "0 B";
@@ -251,13 +252,13 @@ export function ST04DataUsage() {
 
           {/* Main column — every other API's data stays on the left, where it already was */}
           <div className="flex-1 min-w-0 flex flex-col gap-4 lg:order-1">
-            {/* API 1's interfaces[] — one card per actual interface (eth0 / lo / nebula0 / …) with its rx/tx detail */}
+            {/* API 1's interfaces[] — one card per actual interface with its rx/tx detail */}
             <SectionCard title="Network Interfaces" titleColor="var(--primary)" icon={Network}>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {current.interfaces.map((iface) => (
                   <div key={iface.iface} className="rounded-lg border p-3 flex flex-col items-center" style={{ backgroundColor: "var(--background)", borderColor: "var(--border)" }}>
                     <Network size={18} style={{ color: "var(--primary)", marginBottom: "8px" }} />
-                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{iface.iface}</p>
+                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{guardianDisplayText(iface.iface)}</p>
                     <div className="flex items-center gap-1.5" style={{ marginTop: "6px" }}>
                       <span style={{ color: "var(--chart-4)", fontSize: "var(--text-xs)" }}>↓</span>
                       <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--chart-2)", minWidth: "48px", textAlign: "left" }}>{formatBytes(iface.rx_bytes)}</span>
