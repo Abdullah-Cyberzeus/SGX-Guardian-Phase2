@@ -14,6 +14,7 @@ import { useCall } from "../../../features/calls/CallContext";
 import { useGroupCall } from "../../../features/calls/GroupCallContext";
 import type { MediaType } from "../../../features/calls/call.types";
 import { useChatUnread } from "../../contexts/ChatUnreadContext";
+import { useChatPaneMode } from "../../contexts/ChatPaneModeContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { isMemberRole } from "../../utils/authorization";
 import { peerService } from "../../services/peerService";
@@ -75,6 +76,7 @@ export function ChatConversationScreen() {
   const { circleId, peerDid } = useParams<{ circleId: string; peerDid?: string }>();
   const navigate = useNavigate();
   const { session } = useAuth();
+  const paneMode = useChatPaneMode();
   const [searchParams, setSearchParams] = useSearchParams();
   const { data: circlesData, loading: circlesLoading } = useCircles();
   const { data: peersData, loading: peersLoading, error: peersError } = useCommunicationPeers();
@@ -582,7 +584,7 @@ export function ChatConversationScreen() {
   const peerComposerName = peerContactName || member?.name || peer?.peerId || "peer";
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title={title} subtitle={subtitle} onBack={() => navigate(isGroup ? (openedFromChats ? "/chats" : `/network/${circleId}?tab=members`) : "/chats")} right={
+      <PageHeader showBack={paneMode === "standalone"} title={title} subtitle={subtitle} onBack={() => navigate(isGroup ? (openedFromChats ? "/chats" : `/network/${circleId}?tab=members`) : "/chats")} right={
         <div className="flex items-center gap-1">
           {isGroup ? <>
             <button aria-label={`Voice call ${title}`} title={callableGroupMemberIds.length ? "Voice call Circle" : "No callable Circle members"} disabled={startingCall !== null || callableGroupMemberIds.length === 0} onClick={() => void callGroup(["audio"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "audio" ? <Loader2 size={18} className="animate-spin" /> : <Phone size={18} />}</button>

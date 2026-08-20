@@ -5,6 +5,8 @@ import { Root } from "./Root";
 // Layouts + first-paint screens are eager â€” everything else is code-split.
 import { OnboardingLayout } from "./layouts/OnboardingLayout";
 import { MainLayout } from "./layouts/MainLayout";
+import { MemberChatsLayout } from "./layouts/MemberChatsLayout";
+import { MemberNarrowPane } from "./layouts/MemberNarrowPane";
 import { SYS01NotFound } from "./screens/system/SYS01NotFound";
 import { SYS02SplashScreen } from "./screens/system/SYS02SplashScreen";
 import { LoginScreen } from "./screens/auth/LoginScreen";
@@ -183,11 +185,30 @@ export const router = createBrowserRouter([
             { path: "notifications", Component: NT01Notifications },
 
             // Standalone messaging; member access is restricted to shared-Circle contacts.
-            { path: "chats", Component: ChatsListScreen },
-            { path: "chats/:peerDid", Component: ChatConversationScreen },
-            { path: "contacts", Component: ContactsRouteScreen },
-            { path: "calls", Component: CallsHistoryScreen },
-            { path: "member-settings", Component: MemberSettingsScreen },
+            {
+              path: "chats",
+              Component: MemberChatsLayout,
+              children: [
+                { index: true, Component: ChatsListScreen },
+                { path: ":peerDid", Component: ChatConversationScreen },
+                { path: "circle/:circleId", Component: ChatConversationScreen },
+              ],
+            },
+            {
+              path: "contacts",
+              Component: MemberNarrowPane,
+              children: [{ index: true, Component: ContactsRouteScreen }],
+            },
+            {
+              path: "calls",
+              Component: MemberNarrowPane,
+              children: [{ index: true, Component: CallsHistoryScreen }],
+            },
+            {
+              path: "member-settings",
+              Component: MemberNarrowPane,
+              children: [{ index: true, Component: MemberSettingsScreen }],
+            },
 
             // Network / Circles tab
             {
@@ -221,6 +242,7 @@ export const router = createBrowserRouter([
             // Cloud Storage tab
             {
               path: "storage",
+              Component: MemberNarrowPane,
               children: [
                 { index: true, Component: CS01StorageOverview },
                 { path: "transfers", Component: CS03SecureTransfers },
