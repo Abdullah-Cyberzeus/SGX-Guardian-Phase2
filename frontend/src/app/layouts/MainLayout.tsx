@@ -5,6 +5,8 @@ import { AppSidebar } from "../components/AppSidebar";
 import { Suspense } from "react";
 import { Loader2 } from "lucide-react";
 import { useGuardianConnectivity } from "../../pwa/connectivity/GuardianConnectivityContext";
+import { useAuth } from "../contexts/AuthContext";
+import { isMemberRole } from "../utils/authorization";
 
 /** Shown in the content area while a route's code chunk loads. */
 const routeFallback = (
@@ -14,6 +16,8 @@ const routeFallback = (
 );
 
 export function MainLayout() {
+  const { session } = useAuth();
+  const memberSession = isMemberRole(session?.user.role);
   const { reachable, status, lastSeen, pendingCount, syncRunning, retryNow } = useGuardianConnectivity();
   const showConnectivityBanner = !reachable || status === "credential_revoked";
   const banner = showConnectivityBanner ? (
@@ -74,11 +78,11 @@ export function MainLayout() {
         style={{ height: "100dvh", backgroundColor: "var(--background)" }}
       >
         {showConnectivityBanner && (
-          <div className="fixed top-0 z-50" style={{ left: "240px", right: 0 }}>
+          <div className="fixed top-0 z-50" style={{ left: memberSession ? "64px" : "240px", right: 0 }}>
             {banner}
           </div>
         )}
-        <AppSidebar variant="expanded" />
+        <AppSidebar variant={memberSession ? "collapsed" : "expanded"} />
         <main
           className="flex-1 flex flex-col"
           style={{ minWidth: 0, height: "100dvh", overflow: "hidden" }}
