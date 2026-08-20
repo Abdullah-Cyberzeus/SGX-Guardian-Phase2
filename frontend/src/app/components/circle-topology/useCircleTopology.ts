@@ -118,7 +118,7 @@ export function buildTopologyLinks(nodes: CircleTopologyNode[]): CircleTopologyL
       target: node.id,
       kind: node.roles.includes("relay") ? "relay" : "mesh",
       active: node.presence === "online",
-      label: node.roles.includes("relay") ? "Relay route" : "Nebula mesh",
+      label: node.roles.includes("relay") ? "Relay route" : "Guardian Mesh",
     });
     if (node.attestation === "verified") {
       links.push({

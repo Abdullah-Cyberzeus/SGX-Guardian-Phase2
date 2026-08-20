@@ -167,7 +167,7 @@ export const deviceService = {
 
   /**
    * GET /discovery/devices
-   * Returns full NMAP device inventory.
+   * Returns full Guardian device inventory.
    */
   getDiscoveredDevices: (): Promise<DiscoveredDevice[]> =>
     api.get<DiscoveredDevice[]>('/discovery/devices'),

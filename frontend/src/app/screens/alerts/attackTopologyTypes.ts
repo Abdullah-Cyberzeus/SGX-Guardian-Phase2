@@ -128,7 +128,7 @@ export interface ModbusScenario {
   targetSensorId: ModbusSensor["id"];
   registerAddress: string;
   attackVector: string;
-  suricataAlert: string;
+  guardianAlert: string;
   matcher: RegExp;
 }
 
@@ -201,7 +201,7 @@ export const MODBUS_SCENARIOS: ModbusScenario[] = [
     targetSensorId: "temperature",
     registerAddress: "Reg 0",
     attackVector: "Unauthorized write spoofs the temperature value.",
-    suricataAlert: "SGX-OT: MODBUS UNAUTHORIZED WRITE",
+    guardianAlert: "SGX-OT: MODBUS UNAUTHORIZED WRITE",
     matcher: /\bFC\s*6\b|\bFC6\b|unauthorized write|write single register|temperature/i,
   },
   {
@@ -212,7 +212,7 @@ export const MODBUS_SCENARIOS: ModbusScenario[] = [
     targetSensorId: "pressure",
     registerAddress: "Reg 10-19",
     attackVector: "Bulk coil/register write overwrites the pressure range.",
-    suricataAlert: "SGX-OT: MODBUS COIL WRITE BULK",
+    guardianAlert: "SGX-OT: MODBUS COIL WRITE BULK",
     matcher: /\bFC\s*15\b|\bFC15\b|bulk|write multiple coils|coil write|pressure/i,
   },
   {
@@ -223,7 +223,7 @@ export const MODBUS_SCENARIOS: ModbusScenario[] = [
     targetSensorId: "flow",
     registerAddress: "Slave ID 3",
     attackVector: "Firmware upload attempt targets the flow meter path.",
-    suricataAlert: "SGX-OT: MODBUS FIRMWARE UPLOAD",
+    guardianAlert: "SGX-OT: MODBUS FIRMWARE UPLOAD",
     matcher: /\bFC\s*65\b|\bFC65\b|firmware|upload|flow meter|flow/i,
   },
   {
@@ -234,13 +234,13 @@ export const MODBUS_SCENARIOS: ModbusScenario[] = [
     targetSensorId: "vibration",
     registerAddress: "Reg 30-39",
     attackVector: "Exception responses flood the vibration sensor path.",
-    suricataAlert: "SGX-OT: MODBUS EXCEPTION FLOOD",
+    guardianAlert: "SGX-OT: MODBUS EXCEPTION FLOOD",
     matcher: /\bFC\s*129\b|\bFC129\b|exception flood|exception response|100\/min|vibration/i,
   },
 ];
 export const TOPOLOGY_NODES: TopologyNode[] = [
   { id: "internet", name: "Internet", kind: "internet", x: 560, y: 42, ip: "0.0.0.0/0", mac: "external", protocol: "TCP/IP", health: 100, packetsPerSec: 418, connections: 128, lastSeen: "live", site: "WAN Edge", description: "External ingress and egress observation point." },
-  { id: "attacker-a", name: "Hacker A", kind: "attacker", x: 365, y: 118, ip: "185.231.72.42", mac: "unknown", protocol: "TCP", health: 0, packetsPerSec: 22, connections: 8, lastSeen: "seconds ago", site: "External", description: "Untrusted source cluster inferred from Suricata alerts." },
+  { id: "attacker-a", name: "Hacker A", kind: "attacker", x: 365, y: 118, ip: "185.231.72.42", mac: "unknown", protocol: "TCP", health: 0, packetsPerSec: 22, connections: 8, lastSeen: "seconds ago", site: "External", description: "Untrusted source cluster inferred from Guardian alerts." },
   { id: "attacker-b", name: "Hacker B", kind: "attacker", x: 755, y: 118, ip: "91.214.124.8", mac: "unknown", protocol: "UDP/TCP", health: 0, packetsPerSec: 18, connections: 6, lastSeen: "seconds ago", site: "External", description: "Secondary untrusted source cluster." },
   { id: "firewall", name: "Firewall Gateway", kind: "firewall", x: 560, y: 205, ip: "10.0.0.1", mac: "00:16:3e:aa:10:01", protocol: "L3/L4", health: 96, packetsPerSec: 690, connections: 214, lastSeen: "live", site: "Plant DMZ", description: "Ingress gateway protecting the Guardian segment." },
   { id: "guardian", name: "Guardian Node", kind: "guardian", x: 560, y: 330, ip: "10.0.10.10", mac: "00:16:3e:aa:42:10", protocol: "SGX Mesh", health: 98, cpu: 34, packetsPerSec: 1240, connections: 42, lastSeen: "live", site: "Cell 01", description: "Guardian enforcement point and trusted identity anchor." },
