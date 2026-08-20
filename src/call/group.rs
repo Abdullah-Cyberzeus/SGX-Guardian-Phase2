@@ -581,9 +581,14 @@ impl GroupSessionManager {
     pub async fn end(&self, group_id: &str, actor: &str) -> CallResult<GroupSession> {
         let session = self
             .update(group_id, "group_ended", |session| {
+                if actor != session.host_device_id {
+                    return Err(CallError::UnauthorizedDevice {
+                        reason: "Only the group host can end the call for everyone".into(),
+                    });
+                }
                 let participant = session.participants.get(actor).ok_or_else(|| {
                     CallError::UnauthorizedDevice {
-                        reason: "Only a group participant can end this call".into(),
+                        reason: "Group host participant is missing".into(),
                     }
                 })?;
                 if !matches!(
@@ -606,7 +611,7 @@ impl GroupSessionManager {
             group_id,
             actor,
             None,
-            "participant ended group call for everyone",
+            "host ended group call for everyone",
         );
         self.history.record_group(&session);
         Ok(session)
@@ -1011,7 +1016,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn joined_member_can_end_group_call_for_everyone() {
+    async fn joined_member_cannot_end_group_call_for_everyone() {
         let dir = tempdir().unwrap();
         let manager = GroupSessionManager::new(dir.path().join("member-end.log"));
         let created = manager
@@ -1028,11 +1033,10 @@ mod tests {
             .await
             .unwrap();
 
-        let ended = manager.end(&created.group_id, "nodeB").await.unwrap();
+        let error = manager.end(&created.group_id, "nodeB").await.unwrap_err();
 
-        assert_eq!(ended.state, GroupCallState::Ended);
-        assert!(manager.active_for("nodeA").await.is_empty());
-        assert!(manager.active_for("nodeB").await.is_empty());
+        assert!(error.to_string().contains("Only the group host"));
+        assert_eq!(manager.get(&created.group_id).await.unwrap().state, GroupCallState::Active);
     }
 
     #[tokio::test]

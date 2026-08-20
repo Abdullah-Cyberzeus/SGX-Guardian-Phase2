@@ -341,10 +341,15 @@ pub async fn request_sync_from_peer(
         // CRITICAL SECURITY FIX: Prevent cross-conversation message injection
         // A compromised or misbehaving peer could relay validly signed messages from other conversations.
         // We must enforce that the message truly belongs to the conversation between us and peer_did.
-        if msg.sender_did != peer_did && msg.sender_did != local_did {
+        let relay_did = if msg.relay_did.trim().is_empty() {
+            msg.sender_did.as_str()
+        } else {
+            msg.relay_did.as_str()
+        };
+        if relay_did != peer_did && relay_did != local_did {
             return Err(Error::msg(format!(
-                "Security Violation: Peer {} attempted to inject a message from sender {}",
-                peer_did, msg.sender_did
+                "Security Violation: Peer {} claimed relay {}",
+                peer_did, relay_did
             ))
             .into());
         }

@@ -42,7 +42,7 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
   const pollingSignals = useRef(false);
   const connectedPeers = useRef(new Set<string>());
   const mediaReadySent = useRef(false);
-  const lastGroup = useRef<GroupSession>();
+  const lastGroup = useRef<GroupSession | undefined>(undefined);
   const locallyEndedGroups = useRef(new Set<string>());
   const socketConnected = useRef(false);
   const signalApplyChain = useRef(Promise.resolve());
@@ -209,7 +209,16 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
     if (!group) return; const ended = await groupCallsApi.decline(group.group_id); if (effectiveLocalDevice) callHistoryService.recordGroup(ended, effectiveLocalDevice, "declined"); lastGroup.current = undefined; setGroup(undefined);
   };
   const leaveGroup = async () => {
-    if (!group) return; const ended = await groupCallsApi.leave(group.group_id); if (effectiveLocalDevice) callHistoryService.recordGroup(ended, effectiveLocalDevice); lastGroup.current = undefined; rtc.current.close(); setGroup(undefined);
+    if (!group) return;
+    const left = await groupCallsApi.leave(group.group_id);
+    if (effectiveLocalDevice) callHistoryService.recordGroup(left, effectiveLocalDevice);
+    lastGroup.current = undefined;
+    rtc.current.close();
+    connectedPeers.current.clear();
+    mediaReadySent.current = false;
+    setLocalStream(undefined);
+    setRemoteStreams({});
+    setGroup(undefined);
   };
   const endGroup = async () => {
     if (!group) return;

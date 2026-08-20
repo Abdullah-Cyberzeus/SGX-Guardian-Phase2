@@ -96,7 +96,7 @@ export function CS03SecureTransfers() {
   const peers = useMemo(() => {
     const byDid = new Map<string, Peer>();
     for (const peer of peerData ?? []) {
-      if (!peer.did || peer.status !== "verified" || peer.memberType === "browser") continue;
+      if (!peer.did || peer.status !== "verified") continue;
       const current = byDid.get(peer.did);
       if (!current || (!current.online && peer.online)) byDid.set(peer.did, peer);
     }
@@ -294,7 +294,7 @@ export function CS03SecureTransfers() {
     <div className="flex h-full flex-col bg-background">
       <PageHeader
         title="Secure Transfer"
-        subtitle="Send and receive files between trusted Guardian peers"
+        subtitle="Send and receive files with authorized Circle contacts"
         onBack={() => navigate("/storage")}
         right={
           <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={loading}>
@@ -349,7 +349,7 @@ export function CS03SecureTransfers() {
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between gap-3">
                   <label htmlFor="secure-transfer-peer" className="text-xs font-medium">
-                    Destination peer
+                    Destination contact
                   </label>
                   <Button
                     type="button"

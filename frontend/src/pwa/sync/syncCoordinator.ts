@@ -110,14 +110,16 @@ async function pullContacts() {
   return { cursor: newest ? String(newest) : undefined, value: { count: peers.length } };
 }
 
-async function pullFiles() {
+async function pullFiles(scopeId: string) {
   const { files } = await vaultService.list();
-  await fileRepository.replaceAll(
+  await fileRepository.replaceForScope(
+    scopeId,
     files.flatMap((file) => {
       const id = file.vault_id || file.id;
       if (!id) return [];
       return [{
         id,
+        scopeId,
         name: file.filename || file.name || "file",
         mime: file.mime || "application/octet-stream",
         size: file.size_plain ?? file.size ?? 0,
@@ -157,8 +159,9 @@ async function run(trigger: SyncTrigger): Promise<SyncResult> {
   window.dispatchEvent(new CustomEvent("sgx:sync-state", { detail: { running: true, trigger } }));
 
   try {
+    let authSession: any;
     try {
-      await api.request("/auth/session", { method: "GET", suppressUnauthorizedEvent: true });
+      authSession = await api.request("/auth/session", { method: "GET", suppressUnauthorizedEvent: true });
     } catch (error) {
       await stopIfRevoked(error);
       throw error;
@@ -176,7 +179,16 @@ async function run(trigger: SyncTrigger): Promise<SyncResult> {
       return { value: result };
     });
     await optionalStep("contacts", pullContacts);
-    await optionalStep("files", pullFiles);
+    const fileScopeId = String(
+      authSession?.browserMemberDid
+      || authSession?.browser_member_did
+      || authSession?.guardianDid
+      || authSession?.guardian_did
+      || authSession?.user?.id
+      || authSession?.userId
+      || "authenticated",
+    );
+    await optionalStep("files", () => pullFiles(fileScopeId));
     await optionalStep("calls", async () => {
       const calls = await callHistoryService.syncFromGuardian().catch(() => callHistoryService.list());
       const newest = calls

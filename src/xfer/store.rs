@@ -44,6 +44,10 @@ pub struct ReceiverState {
 pub struct SenderProgress {
     pub transfer_id: String,
     pub circle_id: String,
+    /// UI/application actor that initiated the transfer. For legacy records
+    /// this is empty and the owning Guardian DID is used by the API.
+    #[serde(default)]
+    pub actor_did: String,
     pub peer_did: String,
     pub filename: String,
     pub file_path: String,
@@ -74,6 +78,23 @@ pub struct InboxItem {
     pub vault_id: Option<String>,
     pub download_path: Option<String>,
     pub vault_available: bool,
+}
+
+/// Audit/UI receipt for a transfer between two identities hosted by the same
+/// Guardian. The network XFER engine is intentionally bypassed for this case,
+/// but the sender and recipient must still see separate Outbox/Inbox entries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalTransferRecord {
+    pub transfer_id: String,
+    pub circle_id: String,
+    pub sender_did: String,
+    pub recipient_did: String,
+    pub filename: String,
+    pub size: u64,
+    pub file_sha256: String,
+    pub vault_id: String,
+    pub updated_at: String,
+    pub completed_at: String,
 }
 
 impl ReceiverState {
@@ -260,6 +281,7 @@ pub async fn mark_receiver_failed(
 }
 
 pub async fn create_outbox(
+    actor_did: &str,
     peer_did: &str,
     file_path: &str,
     manifest: &FileManifest,
@@ -268,6 +290,7 @@ pub async fn create_outbox(
     let progress = SenderProgress {
         transfer_id: manifest.transfer_id.clone(),
         circle_id: manifest.circle_id.clone(),
+        actor_did: actor_did.to_string(),
         peer_did: peer_did.to_string(),
         filename: manifest.filename.clone(),
         file_path: file_path.to_string(),
@@ -320,6 +343,41 @@ pub async fn list_outbox() -> Result<Vec<SenderProgress>, XferError> {
             continue;
         };
         out.push(progress);
+    }
+    out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(out)
+}
+
+pub async fn save_local_transfer(record: &LocalTransferRecord) -> Result<(), XferError> {
+    let _guard = XFER_WRITE_LOCK.lock().await;
+    persistence::save_json_pretty(
+        &persistence::local_transfer_path(&record.transfer_id),
+        record,
+    )
+    .await
+}
+
+pub async fn load_local_transfer(
+    transfer_id: &str,
+) -> Result<Option<LocalTransferRecord>, XferError> {
+    persistence::read_json_if_exists(&persistence::local_transfer_path(transfer_id)).await
+}
+
+pub async fn list_local_transfers() -> Result<Vec<LocalTransferRecord>, XferError> {
+    let mut dir = match tokio::fs::read_dir(persistence::local_dir()).await {
+        Ok(dir) => dir,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    let mut out = Vec::new();
+    while let Some(entry) = dir.next_entry().await? {
+        if !entry.file_type().await?.is_file() {
+            continue;
+        }
+        let Ok(record) = persistence::read_json::<LocalTransferRecord>(&entry.path()).await else {
+            continue;
+        };
+        out.push(record);
     }
     out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     Ok(out)

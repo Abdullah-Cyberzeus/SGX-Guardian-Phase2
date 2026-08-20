@@ -349,6 +349,30 @@ pub async fn send_message(
             .map_err(|e| ApiError::BadRequest(format!("Failed to load circle members: {:?}", e)))?;
         ensure_local_guardian_circle_access(&state, &session, &circle_id)?;
 
+        // Older approved PWA members may predate browser identities in the
+        // signed Circle snapshot. Repair and broadcast once before relaying
+        // their first group message so remote Guardians can authenticate the
+        // actor DID separately from this Guardian's transport DID.
+        if sender_did != state.device_did {
+            let snapshot_has_sender = crate::circle::snapshot::load(&circle_id)
+                .map_err(|error| ApiError::Internal(format!("load Circle snapshot: {error:?}")))?
+                .is_some_and(|snapshot| {
+                    snapshot.members.iter().any(|member| member.did == sender_did)
+                });
+            if !snapshot_has_sender {
+                crate::api::handlers::circle::refresh_and_broadcast_member_snapshot(
+                    &state,
+                    &circle_id,
+                )
+                .await
+                .map_err(|error| {
+                    ApiError::Internal(format!(
+                        "refresh Circle member identity snapshot: {error:?}"
+                    ))
+                })?;
+            }
+        }
+
         // Extract DIDs of circle members
         let member_dids: std::collections::HashSet<String> =
             circle_members.into_iter().map(|m| m.did).collect();
@@ -622,6 +646,7 @@ pub async fn send_message(
     let status_target_id = req.recipient_did.clone();
     tokio::spawn(async move {
         let mut delivery_tasks = Vec::new();
+        let relay_did = status_state.device_did.clone();
         for (recipient_did, target_addr) in target_peers_info {
             let msg_id = message_id_clone.clone();
             let snd_did = sender_did_clone.clone();
@@ -629,6 +654,7 @@ pub async fn send_message(
             let content = content_str.clone();
             let addr = target_addr.clone();
             let g_id = group_id_str.clone();
+            let relay = relay_did.clone();
 
             delivery_tasks.push(tokio::spawn(async move {
                 let grpc_req = crate::proto::sgx::PushMessageRequest {
@@ -640,6 +666,7 @@ pub async fn send_message(
                     encrypted_payload: content, // plain text over Nebula-secured channel
                     signature: String::new(),
                     group_id: g_id,
+                    relay_did: relay,
                 };
 
                 match crate::chat::grpc_client::push_message_to_peer(addr.clone(), grpc_req).await {

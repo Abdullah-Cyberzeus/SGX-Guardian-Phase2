@@ -158,6 +158,69 @@ pub async fn ingest_replicated_chat_attachment(
     .await
 }
 
+/// Copy an already-encrypted local record into another local actor's Personal
+/// Vault. This is used when Secure XFER targets a browser member hosted by the
+/// same Guardian (or when that member sends to the hosting Guardian). Keeping
+/// the ciphertext encrypted avoids an unnecessary plaintext round-trip.
+pub async fn clone_for_local_recipient(
+    source: &VaultRecord,
+    recipient_did: &str,
+) -> Result<VaultRecord, VaultError> {
+    let config = VaultConfig::from_env();
+    let namespace = VaultNamespace::Personal;
+    let reservation = quota::reserve_namespace_capacity_for_plaintext(
+        &config,
+        &namespace,
+        source.size_plain,
+        source.enc.chunk_bytes,
+    )
+    .await?;
+    let vault_id = format!("urn:uuid:{}", Uuid::new_v4());
+    let source_blob = persistence::record_blob_path(&config, source);
+    let destination_blob = persistence::blob_path_for_namespace(&config, &namespace, &vault_id);
+    if let Some(parent) = destination_blob.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    if let Err(error) = tokio::fs::copy(&source_blob, &destination_blob).await {
+        quota::release_reservation(&reservation);
+        return Err(error.into());
+    }
+
+    let mut record = source.clone();
+    record.vault_id = vault_id;
+    record.namespace = VaultNamespace::PERSONAL_STORAGE_KEY.to_string();
+    record.circle_id.clear();
+    record.folder_id.clear();
+    record.starred = false;
+    record.description.clear();
+    record.sender_did = source.owner_did.clone();
+    record.owner_did = recipient_did.to_string();
+    record.received_at = chrono::Utc::now().to_rfc3339();
+    record.source = VaultSource::FileTransfer;
+    record.revoked = false;
+    record.revoked_at = None;
+    record.expires_at = None;
+    record.conversation_recipient_did = None;
+    record.message_id = None;
+
+    let save_result = {
+        let _guard = crate::vault::write_lock().lock().await;
+        match resolve_unique_filename(&config, &namespace, "", &record.filename).await {
+            Ok(filename) => {
+                record.filename = filename;
+                persistence::save_record(&config, &record).await
+            }
+            Err(error) => Err(error),
+        }
+    };
+    quota::release_reservation(&reservation);
+    if let Err(error) = save_result {
+        let _ = tokio::fs::remove_file(&destination_blob).await;
+        return Err(error);
+    }
+    Ok(record)
+}
+
 async fn ingest_file_with_namespace(
     namespace: VaultNamespace,
     sender_did: &str,

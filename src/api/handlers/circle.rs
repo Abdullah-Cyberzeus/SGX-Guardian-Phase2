@@ -1241,7 +1241,7 @@ pub async fn receive_member_snapshot(
     }))
 }
 
-async fn refresh_and_broadcast_member_snapshot(
+pub(crate) async fn refresh_and_broadcast_member_snapshot(
     state: &Arc<AppState>,
     circle_id: &str,
 ) -> Result<CircleMemberSnapshot, CircleError> {
@@ -1261,7 +1261,10 @@ async fn refresh_and_broadcast_member_snapshot_skipping(
             owner.did, circle.owner_did, circle_id
         )));
     }
-    let members = members::list_members_from_local_vcs(&state.node_id, circle_id, false)?;
+    let mut members = members::list_members_from_local_vcs(&state.node_id, circle_id, false)?;
+    append_browser_members(state, circle_id, &mut members)
+        .await
+        .map_err(|error| CircleError::Invalid(format!("{error:?}")))?;
     let snapshot = snapshot::build_authoritative(circle_id, &owner, &km, members)?;
     broadcast_member_snapshot(state, &snapshot, skip_did).await;
     Ok(snapshot)

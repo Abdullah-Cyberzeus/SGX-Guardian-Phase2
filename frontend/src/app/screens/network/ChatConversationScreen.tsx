@@ -137,7 +137,7 @@ export function ChatConversationScreen() {
     setLoading(true);
     try {
       const response = isGroup
-        ? await chatService.groupHistory(circleId)
+        ? await chatService.groupHistory(circleId!)
         : await chatService.directHistory(peerDid!);
       const sorted = [...response.messages].sort((a, b) => a.seq_no - b.seq_no || a.timestamp - b.timestamp);
       setRecords(sorted);
@@ -165,7 +165,7 @@ export function ChatConversationScreen() {
   }, [circleId, isGroup, peerDid, session?.browserMemberDid, session?.guardianDid]);
 
   useEffect(() => {
-    if (isMemberRole(session?.user.role) && session.browserMemberDid) {
+    if (isMemberRole(session?.user.role) && session?.browserMemberDid) {
       setLocalDid(session.browserMemberDid);
       return;
     }
@@ -202,6 +202,22 @@ export function ChatConversationScreen() {
       window.removeEventListener("sgx:sync-state", refreshQueuedMessages);
     };
   }, [refreshQueuedMessages]);
+  useEffect(() => {
+    let timer: number | undefined;
+    const reconcileReplayedMessages = () => {
+      refreshQueuedMessages();
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        void loadHistory();
+        refreshUnread();
+      }, 50);
+    };
+    window.addEventListener("sgx:chat-replayed", reconcileReplayedMessages);
+    return () => {
+      if (timer) window.clearTimeout(timer);
+      window.removeEventListener("sgx:chat-replayed", reconcileReplayedMessages);
+    };
+  }, [loadHistory, refreshQueuedMessages, refreshUnread]);
   useEffect(() => {
     let refreshTimer: number | undefined;
     const close = openChatSocket((event) => {
@@ -495,8 +511,8 @@ export function ChatConversationScreen() {
   if ((isGroup && !circle) || (!isGroup && !peer && !member)) return <div className="grid h-full place-items-center p-6 text-sm text-muted-foreground">Conversation not found.</div>;
 
   const peerContactName = !isGroup ? (contactNameForDid(peerDid) || contactNameForDid(peer?.did)) : undefined;
-  const title = isGroup ? circle.name : (peerContactName || member?.name || peer?.peerId || peerDid);
-  const subtitle = `${isGroup ? `Secure group chat · ${circle.members?.length || 0} members` : "Private peer-to-peer chat"} · ${liveConnected ? "Live" : "Reconnecting…"}`;
+  const title = isGroup ? circle!.name : (peerContactName || member?.name || peer?.peerId || peerDid);
+  const subtitle = `${isGroup ? `Secure group chat · ${circle!.members?.length || 0} members` : "Private peer-to-peer chat"} · ${liveConnected ? "Live" : "Reconnecting…"}`;
   const peerComposerName = peerContactName || member?.name || peer?.peerId || "peer";
   return (
     <div className="flex h-full flex-col">

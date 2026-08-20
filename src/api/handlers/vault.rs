@@ -252,9 +252,7 @@ pub async fn overview(
         .await
         .map_err(map_vault_error)?;
     records.retain(|record| authorize_record_access(&session, &caller_did, record).is_ok());
-    let quota = vault_quota::compute(&config)
-        .await
-        .map_err(map_vault_error)?;
+    let visible_used_bytes = records.iter().map(|record| record.size_cipher).sum();
 
     let mut usage_by_namespace = BTreeMap::<String, (usize, u64)>::new();
     for record in &records {
@@ -268,11 +266,18 @@ pub async fn overview(
     let mut namespaces = BTreeSet::new();
     namespaces.insert(VaultNamespace::PERSONAL_STORAGE_KEY.to_string());
     namespaces.extend(usage_by_namespace.keys().cloned());
-    for namespace in folders::list_namespaces(&config)
-        .await
-        .map_err(map_vault_error)?
-    {
-        namespaces.insert(namespace.storage_key());
+    let member_circle_ids = session.as_ref().and_then(|Extension(auth)| {
+        (auth.claims.role == "member").then_some(&auth.claims.circle_ids)
+    });
+    if member_circle_ids.is_none() {
+        for namespace in folders::list_namespaces(&config)
+            .await
+            .map_err(map_vault_error)?
+        {
+            namespaces.insert(namespace.storage_key());
+        }
+    } else if let Some(circle_ids) = member_circle_ids {
+        namespaces.extend(circle_ids.iter().cloned());
     }
 
     let mut items = Vec::new();
@@ -286,11 +291,16 @@ pub async fn overview(
             .get(&namespace_key)
             .copied()
             .unwrap_or((0, 0));
-        folder_count += index.folders.len();
+        let visible_folder_count = if member_circle_ids.is_some() && namespace.is_personal() {
+            0
+        } else {
+            index.folders.len()
+        };
+        folder_count += visible_folder_count;
         items.push(VaultNamespaceOverview {
             namespace: namespace_key,
             file_count,
-            folder_count: index.folders.len(),
+            folder_count: visible_folder_count,
             used_bytes,
         });
     }
@@ -302,29 +312,50 @@ pub async fn overview(
     Ok(Json(VaultOverviewResponse {
         file_count: records.len(),
         folder_count,
-        used_bytes: quota.used_bytes,
-        capacity_bytes: quota.capacity_bytes,
+        used_bytes: visible_used_bytes,
+        capacity_bytes: vault_quota::capacity_bytes(),
         namespaces: items,
         timestamp: chrono::Utc::now().to_rfc3339(),
     }))
 }
 
 pub async fn quota_status(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Query(query): Query<VaultQuotaQuery>,
 ) -> Result<Json<VaultQuotaResponse>, ApiError> {
     let config = VaultConfig::from_env();
     let namespace = optional_namespace(query.ns.as_deref(), query.circle_id.as_deref())?
         .unwrap_or(VaultNamespace::Personal);
-    let quota = vault_quota::compute_namespace(&config, &namespace)
-        .await
-        .map_err(map_vault_error)?;
+    let (used_bytes, quota_bytes) = if namespace.is_personal() {
+        let caller_did = resolve_caller_did(&state, &session);
+        let used = persistence::list_records(&config, Some(&namespace.storage_key()))
+            .await
+            .map_err(map_vault_error)?
+            .into_iter()
+            .filter(|record| authorize_record_access(&session, &caller_did, record).is_ok())
+            .map(|record| record.size_cipher)
+            .sum();
+        let limit = vault_quota::configured_quota_bytes(&config, &namespace)
+            .await
+            .map_err(map_vault_error)?;
+        (used, limit)
+    } else {
+        let quota = vault_quota::compute_namespace(&config, &namespace)
+            .await
+            .map_err(map_vault_error)?;
+        (quota.used_bytes, quota.quota_bytes)
+    };
 
     Ok(Json(VaultQuotaResponse {
-        used_bytes: quota.used_bytes,
-        quota_bytes: quota.quota_bytes,
-        remaining_bytes: quota.remaining_bytes(),
-        usage_percent: quota.usage_percent(),
+        used_bytes,
+        quota_bytes,
+        remaining_bytes: quota_bytes.saturating_sub(used_bytes),
+        usage_percent: if quota_bytes == 0 {
+            0.0
+        } else {
+            (used_bytes as f64 / quota_bytes as f64) * 100.0
+        },
     }))
 }
 
@@ -370,7 +401,14 @@ pub async fn tree(
             name: folder.name,
         })
         .collect::<Vec<_>>();
-    let folders = index.children_of(&folder_id);
+    let folders = if session
+        .as_ref()
+        .is_some_and(|Extension(auth)| auth.claims.role == "member" && namespace.is_personal())
+    {
+        Vec::new()
+    } else {
+        index.children_of(&folder_id)
+    };
 
     Ok(Json(VaultTreeResponse {
         namespace: namespace_key,
@@ -623,6 +661,7 @@ pub async fn create_folder(
 
 pub async fn list_folders(
     State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
     Query(query): Query<VaultFolderListQuery>,
 ) -> Result<Json<VaultFolderListResponse>, ApiError> {
     let config = VaultConfig::from_env();
@@ -650,6 +689,14 @@ pub async fn list_folders(
     let mut entries = Vec::new();
 
     for namespace in namespaces {
+        if let Some(Extension(auth)) = session.as_ref() {
+            if auth.claims.role == "member"
+                && (namespace.is_personal()
+                    || matches!(&namespace, VaultNamespace::Circle(circle_id) if !auth.claims.circle_ids.contains(circle_id)))
+            {
+                continue;
+            }
+        }
         let namespace_key = namespace.storage_key();
         let index = folders::load_index(&config, &namespace, &state.node_id)
             .await
@@ -1129,23 +1176,24 @@ pub(crate) fn resolve_caller_did(state: &AppState, session: &Option<Extension<Au
         .unwrap_or_else(|| resolve_sender_did(state))
 }
 
-/// A member may access a Circle-namespace file iff they belong to that
-/// Circle, a Personal-namespace file iff they own it, and a 1:1 DM chat
-/// attachment iff they are the sender or the named recipient. The Guardian
-/// device itself (admin/owner) is always allowed.
+/// A caller may access a Circle-namespace file when their Guardian/member
+/// session belongs to that Circle. Personal records never inherit the admin
+/// device-wide bypass: they belong only to their owner (or the other party of
+/// a direct-message attachment). This keeps Guardian-admin and browser-member
+/// Personal Vaults separate on the same hardware.
 pub(crate) fn authorize_record_access(
     session: &Option<Extension<AuthenticatedSession>>,
     caller_did: &str,
     record: &VaultRecord,
 ) -> Result<(), ApiError> {
-    if is_admin_caller(session) {
-        return Ok(());
-    }
-    let Some(Extension(authed)) = session.as_ref() else {
-        return Ok(());
-    };
     match record.namespace_ref() {
         VaultNamespace::Circle(circle_id) => {
+            if is_admin_caller(session) {
+                return Ok(());
+            }
+            let Some(Extension(authed)) = session.as_ref() else {
+                return Err(ApiError::Forbidden("Circle session is required".to_string()));
+            };
             if authed.claims.circle_ids.contains(&circle_id) {
                 Ok(())
             } else {
@@ -1181,7 +1229,9 @@ fn authorize_owner_only(
     caller_did: &str,
     record: &VaultRecord,
 ) -> Result<(), ApiError> {
-    if is_admin_caller(session) || caller_did == record.owner_did {
+    let circle_admin = is_admin_caller(session)
+        && matches!(record.namespace_ref(), VaultNamespace::Circle(_));
+    if circle_admin || caller_did == record.owner_did {
         Ok(())
     } else {
         Err(ApiError::Forbidden(
@@ -1615,9 +1665,10 @@ mod tests {
             "a different member must not see another member's personal file"
         );
 
-        // Admin/owner (no session) is unrestricted.
+        // The Guardian admin has its own Personal Vault and must not inherit
+        // a browser member's private records.
         let admin_result = detail(State(state), None, Path(record.vault_id.clone())).await;
-        assert!(admin_result.is_ok());
+        assert!(matches!(admin_result, Err(ApiError::Forbidden(_))));
     }
 
     #[tokio::test]

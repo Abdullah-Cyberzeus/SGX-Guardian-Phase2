@@ -108,7 +108,7 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
       fetchCommunicationPeers(isMemberRole(session?.user.role), session?.guardianDid),
       circleService.getAll().catch(() => []),
     ]).then(async ([peers, circles]) => {
-      const verified = peers.filter((peer) => peer.status === "verified" && peer.did);
+      const verified = peers.filter((peer) => peer.status === "verified" && peer.did && peer.did !== localDid);
       peerNamesRef.current = Object.fromEntries([
         ...circles.flatMap((circle) => (circle.members ?? []).filter((member) => member.did).map((member) => [member.did!, member.name || member.did!] as const)),
         ...verified.map((peer) => [peer.did!, peer.peerId || peer.did!] as const),
@@ -117,10 +117,15 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
       const peerEntries = await Promise.all(verified.map(async (peer) => {
         try {
           const { messages } = await chatService.directHistory(peer.did!);
-          // This history is for exactly one remote contact. Messages carrying
-          // that DID are incoming, so no administrative local-DID lookup is
-          // needed to calculate unread state.
-          const unread = messages.filter((record) => record.sender_did === peer.did && record.status !== "read").length;
+          // Never infer direction from the selected row. In shared Guardian
+          // storage a replayed browser-member message can be visible from
+          // multiple identities; only messages not authored by this session
+          // may become unread for it.
+          const unread = localDid
+            ? messages.filter((record) => record.sender_did !== localDid
+              && record.status !== "read"
+              && !record.read_by.includes(localDid)).length
+            : 0;
           // seq_no is the authoritative recency order: timestamps only have
           // second resolution, so a burst of messages (e.g. an offline queue
           // flushing several at once) can tie on timestamp and fall back to
@@ -171,6 +176,12 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
   useEffect(() => { refresh(); }, [refresh]);
 
   useEffect(() => {
+    const refreshAfterReplay = () => refresh();
+    window.addEventListener("sgx:chat-replayed", refreshAfterReplay);
+    return () => window.removeEventListener("sgx:chat-replayed", refreshAfterReplay);
+  }, [refresh]);
+
+  useEffect(() => {
     let refreshTimer: number | undefined;
     const close = openChatSocket((event) => {
       if (event) announceMessage(event);
@@ -218,7 +229,7 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
       setMessageToasts((current) => [{
         toastId: `${event.message_id}-${Date.now()}`,
         messageId: event.message_id!,
-        mode: groupId ? "group" : "direct",
+        mode: groupId ? "group" as const : "direct" as const,
         conversationId,
         title,
         sender,
