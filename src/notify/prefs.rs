@@ -96,7 +96,8 @@ impl NotificationPrefs {
                 self.circles.new_message
             }
             NotificationKind::CircleIncomingCall => self.circles.incoming_call,
-            NotificationKind::CircleMemberJoined => self.circles.member_joined,
+            NotificationKind::CircleMemberPendingApproval
+            | NotificationKind::CircleMemberJoined => self.circles.member_joined,
         }
     }
 

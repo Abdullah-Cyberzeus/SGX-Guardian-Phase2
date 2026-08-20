@@ -62,6 +62,7 @@ export function notificationEnabled(prefs: NotificationPrefs | null, kind: strin
     case "CircleNewMessage":
     case "CircleFileShared": return prefs.circles.new_message;
     case "CircleIncomingCall": return prefs.circles.incoming_call;
+    case "CircleMemberPendingApproval":
     case "CircleMemberJoined": return prefs.circles.member_joined;
     default: return true;
   }

@@ -18,6 +18,7 @@ export interface MemberInvitePreview {
   issuerDid: string;
   expiresAt: string;
   role: "member";
+  approvalRequired: boolean;
 }
 
 export interface MemberJoinPayload {
@@ -43,6 +44,16 @@ export interface MemberJoinResult {
   browserMemberDid: string;
   expiresAt: number;
   registrationExpiresAt: number;
+  status: "pending" | "active";
+  approvalId?: string;
+  approvalClaim?: string;
+}
+
+export interface MemberApprovalStatus {
+  approvalId: string;
+  state: "issued" | "pending" | "approved" | "rejected" | "expired" | string;
+  circleName: string;
+  memberDid: string;
 }
 
 export const pwaOnboardingService = {
@@ -51,6 +62,8 @@ export const pwaOnboardingService = {
     api.post<MemberInvitePreview>("/pwa/onboarding/invite-preview", { inviteToken, ownerHost }),
   join: (payload: MemberJoinPayload) =>
     api.post<MemberJoinResult>("/pwa/onboarding/join", payload),
+  approvalStatus: (approvalId: string, claim: string) =>
+    api.get<MemberApprovalStatus>(`/pwa/onboarding/approval/${encodeURIComponent(approvalId)}`, { claim }),
 };
 
 export default pwaOnboardingService;

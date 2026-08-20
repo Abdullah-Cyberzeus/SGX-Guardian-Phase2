@@ -58,6 +58,25 @@ export interface CircleInvite {
   [key: string]: unknown;
 }
 
+export interface MemberEnrollment {
+  approvalId: string;
+  circleId: string;
+  circleName: string;
+  memberDid: string;
+  state: 'issued' | 'pending' | 'approved' | 'rejected' | string;
+  createdAt: string;
+  expiresAt: string;
+  name?: string;
+  email?: string;
+  decidedAt?: string;
+}
+
+export interface MemberEnrollmentInvite {
+  link: string;
+  expiresAt: string;
+  enrollment: MemberEnrollment;
+}
+
 export interface JoinPreview {
   valid: boolean;
   circle?: Partial<Circle>;
@@ -172,7 +191,7 @@ export function parseInviteMaterial(value: string): ParsedInviteMaterial {
   try {
     const url = new URL(trimmed);
     const isWebLink = url.protocol === 'http:' || url.protocol === 'https:';
-    const token = url.searchParams.get('token') || url.searchParams.get('invite') || '';
+    const token = url.searchParams.get('member_invite') || url.searchParams.get('token') || url.searchParams.get('invite') || '';
     if (!token) return { token: trimmed, ownerHost: '' };
     return {
       token,
@@ -264,6 +283,25 @@ export const circleService = {
     const payload = await api.post<any>(`/circles/${encode(id)}/invites`, body);
     return normalizeInvite({ ...payload?.invite, ...payload });
   },
+
+  createMemberEnrollmentInvite: (id: string, expiresInMinutes = 60, baseUrl = window.location.origin) =>
+    api.post<MemberEnrollmentInvite>(`/circles/${encode(id)}/member-invites`, {
+      baseUrl,
+      expiresInMinutes,
+    }),
+
+  async getMemberEnrollments(id: string): Promise<MemberEnrollment[]> {
+    return listFrom<MemberEnrollment>(
+      await api.get<unknown>(`/circles/${encode(id)}/member-enrollments`),
+      'enrollments',
+    );
+  },
+
+  approveMemberEnrollment: (id: string, approvalId: string) =>
+    api.post<MemberEnrollment>(`/circles/${encode(id)}/member-enrollments/${encode(approvalId)}/approve`),
+
+  rejectMemberEnrollment: (id: string, approvalId: string) =>
+    api.post<MemberEnrollment>(`/circles/${encode(id)}/member-enrollments/${encode(approvalId)}/reject`),
 
   async deliverInvite(id: string, inviteId: string): Promise<CircleInvite> {
     const payload = await api.post<any>(`/circles/${encode(id)}/invites/${encode(inviteId)}/deliver`);

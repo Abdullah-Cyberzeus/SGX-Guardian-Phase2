@@ -1,10 +1,10 @@
 import { ChangeEvent, useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { Archive, ArchiveRestore, Check, ChevronLeft, Clipboard, Copy, Download, Edit3, Link2, Loader2, Mail, MessageCircle, Plus, QrCode, RefreshCw, Search, Send, Share2, Trash2, Upload, UserPlus, Users, X } from "lucide-react";
+import { Archive, ArchiveRestore, Check, ChevronLeft, Clipboard, Copy, Download, Edit3, Link2, Loader2, Mail, MessageCircle, Plus, QrCode, RefreshCw, Search, Send, Share2, ShieldCheck, Trash2, Upload, UserPlus, Users, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
 import { useContactNames } from "../../contexts/ContactNameContext";
-import circleService, { Circle, CircleInvite, CircleMember, CircleRole, parseInviteMaterial } from "../../services/circleService";
+import circleService, { Circle, CircleInvite, CircleMember, CircleRole, MemberEnrollment, MemberEnrollmentInvite } from "../../services/circleService";
 import didService, { DIDDocumentPeerSummary } from "../../services/didService";
 
 type Tab = "details" | "members" | "invites";
@@ -64,13 +64,18 @@ export function CircleManagementScreen() {
   const [didPeers, setDidPeers] = useState<DIDDocumentPeerSummary[]>([]);
   const [inviteQrOpen, setInviteQrOpen] = useState(false);
   const [newInvite, setNewInvite] = useState<CircleInvite | null>(null);
+  const [inviteMode, setInviteMode] = useState<"guardian" | "member">("guardian");
+  const [memberInviteHours, setMemberInviteHours] = useState(1);
+  const [memberBaseUrl, setMemberBaseUrl] = useState(() => window.location.origin);
+  const [memberInvite, setMemberInvite] = useState<MemberEnrollmentInvite | null>(null);
+  const [memberEnrollments, setMemberEnrollments] = useState<MemberEnrollment[]>([]);
   const [confirm, setConfirm] = useState<{ kind: "archive" } | { kind: "unarchive" } | { kind: "delete" } | { kind: "member"; did: string } | { kind: "invite"; id: string } | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [detailResult, memberResult, inviteResult] = await Promise.allSettled([
-        circleService.getById(circleId), circleService.getMembers(circleId), circleService.getInvites(circleId),
+      const [detailResult, memberResult, inviteResult, enrollmentResult] = await Promise.allSettled([
+        circleService.getById(circleId), circleService.getMembers(circleId), circleService.getInvites(circleId), circleService.getMemberEnrollments(circleId),
       ]);
       if (detailResult.status === "rejected") throw detailResult.reason;
       const detail = detailResult.value;
@@ -81,6 +86,7 @@ export function CircleManagementScreen() {
       setDescription(detail.description || "");
       setMembers(memberList);
       setInvites(inviteList);
+      setMemberEnrollments(enrollmentResult.status === "fulfilled" ? enrollmentResult.value : []);
       if (memberResult.status === "rejected") toast.error("Circle loaded, but members could not be retrieved");
       if (inviteResult.status === "rejected") toast.error("Circle loaded, but invites could not be retrieved");
     } catch (error) {
@@ -91,6 +97,14 @@ export function CircleManagementScreen() {
   }, [circleId]);
 
   useEffect(() => { void reload(); }, [reload]);
+
+  useEffect(() => {
+    if (tab !== "invites" || inviteMode !== "member") return;
+    const timer = window.setInterval(() => {
+      void circleService.getMemberEnrollments(circleId).then(setMemberEnrollments).catch(() => undefined);
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [tab, inviteMode, circleId]);
 
   useEffect(() => {
     if (tab !== "invites") return;
@@ -192,25 +206,39 @@ export function CircleManagementScreen() {
     finally { setBusy(false); }
   };
 
+  const createMemberInvite = async () => {
+    setBusy(true);
+    try {
+      const result = await circleService.createMemberEnrollmentInvite(circleId, memberInviteHours * 60, memberBaseUrl.trim());
+      setMemberInvite(result);
+      setInviteQrOpen(false);
+      toast.success("Secure member enrollment link generated");
+      await reload();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Member invitation failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const decideMemberEnrollment = async (enrollment: MemberEnrollment, approve: boolean) => {
+    setBusy(true);
+    try {
+      if (approve) await circleService.approveMemberEnrollment(circleId, enrollment.approvalId);
+      else await circleService.rejectMemberEnrollment(circleId, enrollment.approvalId);
+      toast.success(approve ? "Member approved" : "Member request declined");
+      await reload();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Approval could not be updated");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const copyInvite = async (invite: CircleInvite) => {
     const value = inviteShareValue(invite) || invite.id;
     await navigator.clipboard.writeText(value);
     toast.success("Invite copied");
-  };
-
-  const copyPwaInvite = async (invite: CircleInvite) => {
-    if (!invite.token || invite.role !== "member") {
-      toast.error("PWA onboarding requires a member invitation token");
-      return;
-    }
-    const deviceLink = invite.url || invite.qrPayload || "";
-    const issuingGuardian = parseInviteMaterial(deviceLink).ownerHost || window.location.origin;
-    const params = new URLSearchParams({ owner_host: issuingGuardian, token: invite.token });
-    // A portable payload deliberately has no HTTP origin. The recipient pastes
-    // it into the /join page of the Guardian that will host their account.
-    const value = `sgx-guardian://pwa/join?${params.toString()}`;
-    await navigator.clipboard.writeText(value);
-    toast.success("Portable PWA member invite copied");
   };
 
   const shareInvite = async (invite: CircleInvite) => {
@@ -382,8 +410,41 @@ export function CircleManagementScreen() {
           </div>}
 
           {tab === "invites" && <div className="space-y-5">
-            <section className="rounded-xl border border-border bg-card p-5">
-              <div className="mb-4 flex items-center gap-2"><Link2 size={18} className="text-primary" /><h2 className="font-semibold">Create invite link</h2></div>
+            <section className="rounded-xl border border-border bg-card p-2">
+              <div className="grid grid-cols-2 gap-2">
+                <button className={inviteMode === "guardian" ? primaryButton : secondaryButton} onClick={() => setInviteMode("guardian")}><ShieldCheck size={15} />Invite Guardian</button>
+                <button className={inviteMode === "member" ? primaryButton : secondaryButton} onClick={() => setInviteMode("member")}><UserPlus size={15} />Invite Member</button>
+              </div>
+            </section>
+
+            {inviteMode === "member" && <section className="rounded-xl border border-border bg-card p-5">
+              <div className="flex items-center gap-2"><UserPlus size={18} className="text-primary" /><h2 className="font-semibold">Invite a PWA member</h2></div>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">Creates an opaque, one-use LAN link. The member receives a reserved DID but remains pending until you approve the request.</p>
+              <label className="mb-1.5 mt-4 block text-xs font-medium text-muted-foreground">Member-accessible Guardian URL</label>
+              <input className={fieldClass} value={memberBaseUrl} onChange={(event) => setMemberBaseUrl(event.target.value)} placeholder="https://192.168.50.115:8443" />
+              <p className="mt-1 text-xs text-muted-foreground">On hardware, use this Guardian's LAN address. For Docker, use the Docker host's LAN IP and the node's published port (for example, nodeB uses port 28443).</p>
+              <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                <select className={fieldClass} value={memberInviteHours} onChange={(event) => setMemberInviteHours(Number(event.target.value))}><option value={1}>Expires in 1 hour</option><option value={24}>Expires in 24 hours</option><option value={168}>Expires in 7 days</option></select>
+                <button className={`${primaryButton} shrink-0`} onClick={() => void createMemberInvite()} disabled={busy || !memberBaseUrl.trim()}>{busy ? <Loader2 size={15} className="animate-spin" /> : <Link2 size={15} />}Generate member link</button>
+              </div>
+              {memberInvite && <div className="mt-4 rounded-lg border border-primary/30 bg-primary/5 p-4">
+                <p className="text-sm font-semibold">LAN enrollment link</p>
+                <p className="mt-2 break-all font-mono text-xs">{memberInvite.link}</p>
+                <p className="mt-2 break-all text-xs text-muted-foreground">Reserved DID: <span className="font-mono">{memberInvite.enrollment.memberDid}</span></p>
+                <div className="mt-3 flex flex-wrap gap-2"><button className={primaryButton} onClick={() => void navigator.clipboard.writeText(memberInvite.link).then(() => toast.success("Member link copied"))}><Copy size={14} />Copy link</button><button className={secondaryButton} onClick={() => setInviteQrOpen((open) => !open)}><QrCode size={14} />QR code</button></div>
+                {inviteQrOpen && <div className="mt-4 inline-flex rounded-md border border-border bg-background p-4"><QRCodeSVG value={memberInvite.link} size={220} bgColor="transparent" fgColor="var(--foreground)" level="M" /></div>}
+              </div>}
+            </section>}
+
+            {inviteMode === "member" && <section className="overflow-hidden rounded-xl border border-border bg-card">
+              <div className="flex items-center justify-between border-b border-border p-4"><h2 className="font-semibold">Member approval requests</h2><span className="text-xs text-muted-foreground">{memberEnrollments.filter((item) => item.state === "pending").length} pending</span></div>
+              {memberEnrollments.length === 0 ? <p className="p-8 text-center text-sm text-muted-foreground">No member enrollment links or approval requests.</p> : memberEnrollments.map((enrollment) => <div key={enrollment.approvalId} className="border-b border-border p-4 last:border-0">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{enrollment.name || (enrollment.state === "issued" ? "Unused member link" : "PWA member")}</p><p className="text-xs text-muted-foreground">{enrollment.email || `Expires ${new Date(enrollment.expiresAt).toLocaleString()}`}</p><p className="mt-1 truncate font-mono text-[10px] text-muted-foreground" title={enrollment.memberDid}>{enrollment.memberDid}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${enrollment.state === "approved" ? "bg-primary/10 text-primary" : enrollment.state === "rejected" ? "bg-destructive/10 text-destructive" : "bg-muted text-muted-foreground"}`}>{enrollment.state}</span>{enrollment.state === "pending" && <div className="flex gap-2"><button className={primaryButton} disabled={busy} onClick={() => void decideMemberEnrollment(enrollment, true)}><Check size={14} />Approve</button><button className={secondaryButton} disabled={busy} onClick={() => void decideMemberEnrollment(enrollment, false)}><X size={14} />Decline</button></div>}</div>
+              </div>)}
+            </section>}
+
+            {inviteMode === "guardian" && <section className="rounded-xl border border-border bg-card p-5">
+              <div className="mb-4 flex items-center gap-2"><Link2 size={18} className="text-primary" /><h2 className="font-semibold">Invite Guardian by DID</h2></div>
               <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Target Guardian DID</label>
               <input
                 className={fieldClass}
@@ -429,11 +490,11 @@ export function CircleManagementScreen() {
               {newInvite && <div className="mt-4 rounded-lg border border-primary/30 bg-primary/5 p-4">
                 <div className="flex items-center gap-2"><Check size={16} className="text-primary" /><h3 className="text-sm font-semibold">Invite generated</h3></div>
                 <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-[110px_1fr]"><dt className="text-muted-foreground">Target</dt><dd className="break-all font-mono text-xs">{newInvite.targetDid || targetDid}</dd><dt className="text-muted-foreground">Guardian</dt><dd>{selectedPeer?.node_name || "Unknown Guardian"}</dd><dt className="text-muted-foreground">Role</dt><dd>{roleLabel(newInvite.role)}</dd><dt className="text-muted-foreground">Expiry</dt><dd>{newInvite.expiresAt ? new Date(newInvite.expiresAt).toLocaleString() : `${inviteHours} hours`}</dd><dt className="text-muted-foreground">Link</dt><dd className="break-all font-mono text-xs">{inviteShareValue(newInvite) || newInvite.id}</dd></dl>
-                <div className="mt-4 flex flex-wrap gap-2"><button className={primaryButton} onClick={() => void sendDirectInvite()} disabled={busy}><Send size={14} />Send Direct Invite</button><button className={secondaryButton} onClick={() => void copyInvite(newInvite)}><Copy size={14} />Copy Link</button>{newInvite.role === "member" && <button className={secondaryButton} onClick={() => void copyPwaInvite(newInvite)}><Copy size={14} />Copy PWA Link</button>}<button className={secondaryButton} onClick={() => openWhatsApp(newInvite)}><MessageCircle size={14} />WhatsApp</button><button className={secondaryButton} onClick={() => openEmail(newInvite)}><Mail size={14} />Email</button><button className={secondaryButton} onClick={() => void shareInvite(newInvite)}><Share2 size={14} />Share</button><button className={secondaryButton} onClick={() => setInviteQrOpen((open) => !open)}><QrCode size={14} />View / Download QR</button></div>
+                <div className="mt-4 flex flex-wrap gap-2"><button className={primaryButton} onClick={() => void sendDirectInvite()} disabled={busy}><Send size={14} />Send Direct Invite</button><button className={secondaryButton} onClick={() => void copyInvite(newInvite)}><Copy size={14} />Copy Link</button><button className={secondaryButton} onClick={() => openWhatsApp(newInvite)}><MessageCircle size={14} />WhatsApp</button><button className={secondaryButton} onClick={() => openEmail(newInvite)}><Mail size={14} />Email</button><button className={secondaryButton} onClick={() => void shareInvite(newInvite)}><Share2 size={14} />Share</button><button className={secondaryButton} onClick={() => setInviteQrOpen((open) => !open)}><QrCode size={14} />View / Download QR</button></div>
                 {inviteQrOpen && <div id="admin-circle-invite-qr" className="mt-4 inline-flex flex-col items-center gap-3 rounded-md border border-border bg-background p-4"><QRCodeSVG value={inviteShareValue(newInvite) || newInvite.id} size={220} bgColor="transparent" fgColor="var(--foreground)" level="M" /><button className={secondaryButton} onClick={downloadQr}><Download size={14} />Download QR</button></div>}
               </div>}
-            </section>
-            <section className="overflow-hidden rounded-xl border border-border bg-card"><div className="flex items-center justify-between border-b border-border p-4"><h2 className="font-semibold">Active invites</h2><span className="text-xs text-muted-foreground">{invites.length} total</span></div>{invites.length === 0 ? <p className="p-8 text-center text-sm text-muted-foreground">No active invites.</p> : invites.map((invite) => { const peer = didPeers.find((item) => item.did === invite.targetDid); return <div key={invite.id} className="flex items-center gap-3 border-b border-border p-4 last:border-0"><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{peer?.node_name || invite.circleName || "Guardian invite"}</p><p className="truncate font-mono text-xs text-muted-foreground">{invite.targetDid || invite.id}</p><p className="mt-1 text-xs text-muted-foreground">{roleLabel(invite.role)} · {invite.expiresAt ? `Expires ${new Date(invite.expiresAt).toLocaleString()}` : "No expiry"} · {stateLabel(invite)}</p></div><button className={secondaryButton} onClick={() => void sendDirectInvite(invite)} aria-label="Send direct invite"><Send size={14} /></button><button className={secondaryButton} onClick={() => void copyInvite(invite)} aria-label="Copy invite"><Copy size={14} /></button><button className={secondaryButton} onClick={() => setConfirm({ kind: "invite", id: invite.id })} aria-label="Revoke invite"><X size={15} className="text-destructive" /></button></div>; })}</section>
+            </section>}
+            {inviteMode === "guardian" && <section className="overflow-hidden rounded-xl border border-border bg-card"><div className="flex items-center justify-between border-b border-border p-4"><h2 className="font-semibold">Active Guardian invites</h2><span className="text-xs text-muted-foreground">{invites.length} total</span></div>{invites.length === 0 ? <p className="p-8 text-center text-sm text-muted-foreground">No active invites.</p> : invites.map((invite) => { const peer = didPeers.find((item) => item.did === invite.targetDid); return <div key={invite.id} className="flex items-center gap-3 border-b border-border p-4 last:border-0"><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{peer?.node_name || invite.circleName || "Guardian invite"}</p><p className="truncate font-mono text-xs text-muted-foreground">{invite.targetDid || invite.id}</p><p className="mt-1 text-xs text-muted-foreground">{roleLabel(invite.role)} · {invite.expiresAt ? `Expires ${new Date(invite.expiresAt).toLocaleString()}` : "No expiry"} · {stateLabel(invite)}</p></div><button className={secondaryButton} onClick={() => void sendDirectInvite(invite)} aria-label="Send direct invite"><Send size={14} /></button><button className={secondaryButton} onClick={() => void copyInvite(invite)} aria-label="Copy invite"><Copy size={14} /></button><button className={secondaryButton} onClick={() => setConfirm({ kind: "invite", id: invite.id })} aria-label="Revoke invite"><X size={15} className="text-destructive" /></button></div>; })}</section>}
             <button className={secondaryButton} onClick={() => navigate("/network/join")}><Clipboard size={15} />Open invite preview and join</button>
           </div>}
         </div>

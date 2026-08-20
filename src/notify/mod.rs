@@ -195,6 +195,24 @@ pub fn publish_circle_member_joined(
     });
 }
 
+pub fn publish_circle_member_pending_approval(
+    actor_did: &str,
+    member_label: &str,
+    circle_label: &str,
+    circle_id: &str,
+) {
+    publish(NotificationEvent {
+        actor_did: Some(actor_did.to_string()),
+        ..build_event(
+            NotificationKind::CircleMemberPendingApproval,
+            "Member approval requested".to_string(),
+            format!("{} requested access to {}", member_label, circle_label),
+            "medium",
+            Some(circle_id.to_string()),
+        )
+    });
+}
+
 pub fn publish_circle_file_shared(actor_did: &str, sender_label: &str, file_name: &str, vault_id: &str) {
     publish(NotificationEvent {
         actor_did: Some(actor_did.to_string()),

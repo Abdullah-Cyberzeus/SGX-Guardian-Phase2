@@ -43,7 +43,10 @@ impl Default for DnsmasqSettings {
             gateway_ip: "192.168.200.1".to_string(),
             dhcp_range_start: "192.168.200.100".to_string(),
             dhcp_range_end: "192.168.200.254".to_string(),
-            local_domain: "guardian.local".to_string(),
+            local_domain: std::env::var("SGX_LAN_FQDN")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "guardian.local".to_string()),
         }
     }
 }

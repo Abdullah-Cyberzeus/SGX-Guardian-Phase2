@@ -153,7 +153,7 @@ function HealthHeroCard({ score, threats24h, blocked }: { score: number | null; 
           <div className="grid grid-cols-2 gap-2.5">
             {[
               { value: threats24h, label: "Threats · 24h" },
-              { value: blocked, label: "Blocked automatically" },
+              { value: blocked, label: "Active blocks" },
             ].map(({ value, label }) => (
               <div key={label} className="rounded-lg bg-muted px-3.5 py-2.5">
                 <p className="text-xl font-bold leading-none text-foreground tabular-nums">{value}</p>
@@ -350,7 +350,7 @@ function HealthScoreCard({ score, threats24h, blocked }: { score: number | null;
             {threats24h} threats detected in last 24h.
           </p>
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.6 }}>
-            {blocked} blocked automatically.
+            {blocked} active network blocks.
           </p>
         </div>
       </div>
@@ -436,7 +436,7 @@ export function HM01Dashboard() {
   const { name: userName } = useCurrentUser();
   const [bannerVisible, setBannerVisible] = useState(() => !localStorage.getItem(BANNER_KEY));
 
-  // Fetch data from API with fallback to mock data
+  // Fetch live data from the Guardian API. API failures remain explicit.
   const { data: guardianData, loading: guardianLoading, source: guardianSource } = useGuardianInfo();
   const { data: alertsData, loading: alertsLoading, source: alertsSource } = useAlerts();
   const { data: circlesData, loading: circlesLoading, source: circlesSource } = useCircles();
@@ -476,8 +476,7 @@ export function HM01Dashboard() {
     }));
   }, [circlesData]);
 
-  // No backend endpoint exists for /guardian/threat-intel yet — surface as
-  // genuinely unavailable (null score) rather than fabricating a number.
+  // Live values come from Guardian's persisted alert and active-block stores.
   const threats24h = threatData?.threats24h ?? 0;
   const blocked = threatData?.blocked ?? 0;
   const score = threatData?.score ?? null;

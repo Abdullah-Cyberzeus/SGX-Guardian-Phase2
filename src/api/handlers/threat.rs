@@ -159,6 +159,31 @@ pub struct ThreatStatusResponse {
     pub block_count: usize,
 }
 
+/// Live threat summary consumed by the dashboard.
+///
+/// The score is deliberately derived only from persisted alerts rather than
+/// synthetic/demo values. Recent unblocked alerts carry their full severity
+/// weight; an alert that Guardian blocked still carries a smaller residual
+/// weight so a mitigated incident remains visible in the health score.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreatIntelResponse {
+    pub score: u8,
+    pub threats_24h: usize,
+    pub blocked: usize,
+    pub last_updated: String,
+}
+
+pub async fn threat_intel(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ThreatIntelResponse>, ApiError> {
+    let now = Utc::now();
+    let alerts = load_alerts(&state).await?;
+    let blocked = active_block_count(&state).await;
+
+    Ok(Json(summarize_threat_intel(&alerts, blocked, now)))
+}
+
 pub async fn status(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<ThreatStatusResponse>, ApiError> {
@@ -306,6 +331,58 @@ async fn load_alerts(state: &AppState) -> Result<Vec<ThreatAlert>, ApiError> {
         .collect())
 }
 
+async fn active_block_count(state: &AppState) -> usize {
+    let mut blocked = nft_blocked_ips().await.unwrap_or_default();
+    if blocked.is_empty() {
+        let now = Utc::now().timestamp();
+        let path = PathBuf::from(&state.threat_state_dir).join("blocked_ips.json");
+        blocked = load_block_records(&path)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|record| record.expires_at > now)
+            .map(|record| record.ip)
+            .collect();
+    }
+    blocked.sort();
+    blocked.dedup();
+    blocked.len()
+}
+
+fn summarize_threat_intel(
+    alerts: &[ThreatAlert],
+    blocked: usize,
+    now: chrono::DateTime<Utc>,
+) -> ThreatIntelResponse {
+    let cutoff = now - chrono::Duration::hours(24);
+    let recent = alerts
+        .iter()
+        .filter(|alert| alert.timestamp >= cutoff && alert.timestamp <= now)
+        .collect::<Vec<_>>();
+
+    let penalty = recent.iter().fold(0u32, |total, alert| {
+        let weight = match (alert.severity, alert.blocked) {
+            (Severity::Critical, false) => 25,
+            (Severity::High, false) => 15,
+            (Severity::Medium, false) => 8,
+            (Severity::Low, false) => 3,
+            (Severity::Info, false) => 1,
+            (Severity::Critical, true) => 5,
+            (Severity::High, true) => 3,
+            (Severity::Medium, true) => 2,
+            (Severity::Low, true) => 1,
+            (Severity::Info, true) => 0,
+        };
+        total.saturating_add(weight)
+    });
+
+    ThreatIntelResponse {
+        score: 100u8.saturating_sub(penalty.min(100) as u8),
+        threats_24h: recent.len(),
+        blocked,
+        last_updated: now.to_rfc3339(),
+    }
+}
+
 struct ModbusRuleSpec {
     rule_id: u8,
     name: &'static str,
@@ -407,4 +484,75 @@ fn parse_nft_block_ip(line: &str) -> Option<String> {
         .windows(3)
         .find(|window| (window[0] == "ip" || window[0] == "ip6") && window[1] == "saddr")
         .map(|window| window[2].trim_end_matches(',').to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::threat::threat_alert::ThreatCategory;
+
+    fn alert_at(
+        severity: Severity,
+        blocked: bool,
+        timestamp: chrono::DateTime<Utc>,
+    ) -> ThreatAlert {
+        ThreatAlert {
+            alert_id: format!("{:?}-{}", severity, timestamp.timestamp()),
+            timestamp,
+            src_ip: "198.51.100.10".into(),
+            src_port: 1234,
+            dst_ip: "192.0.2.10".into(),
+            dst_port: 443,
+            protocol: "TCP".into(),
+            signature_id: 1,
+            signature: "test threat".into(),
+            category: ThreatCategory::Other,
+            severity,
+            rev: 1,
+            gid: 1,
+            event_type: "alert".into(),
+            blocked,
+        }
+    }
+
+    #[test]
+    fn threat_intel_uses_only_last_24_hours_and_real_block_count() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-08-19T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let alerts = vec![
+            alert_at(Severity::Critical, false, now - chrono::Duration::hours(1)),
+            alert_at(Severity::High, true, now - chrono::Duration::hours(2)),
+            alert_at(Severity::Critical, false, now - chrono::Duration::hours(25)),
+            alert_at(Severity::Critical, false, now + chrono::Duration::minutes(1)),
+        ];
+
+        let summary = summarize_threat_intel(&alerts, 4, now);
+
+        assert_eq!(summary.score, 72);
+        assert_eq!(summary.threats_24h, 2);
+        assert_eq!(summary.blocked, 4);
+        assert_eq!(summary.last_updated, "2026-08-19T12:00:00+00:00");
+    }
+
+    #[test]
+    fn threat_intel_score_is_bounded_at_zero() {
+        let now = Utc::now();
+        let alerts = (0..5)
+            .map(|_| alert_at(Severity::Critical, false, now))
+            .collect::<Vec<_>>();
+
+        assert_eq!(summarize_threat_intel(&alerts, 0, now).score, 0);
+    }
+
+    #[test]
+    fn threat_intel_serializes_frontend_field_names() {
+        let now = Utc::now();
+        let value = serde_json::to_value(summarize_threat_intel(&[], 0, now)).unwrap();
+
+        assert_eq!(value["score"], 100);
+        assert_eq!(value["threats24h"], 0);
+        assert_eq!(value["blocked"], 0);
+        assert!(value.get("lastUpdated").is_some());
+    }
 }

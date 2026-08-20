@@ -1271,6 +1271,7 @@ mod tests {
                 guardian_fingerprint: "fp".into(),
                 registration_expires_at: chrono::Utc::now().timestamp() + 3600,
                 invite_id: "invite-1".into(),
+                pending_approval: false,
             })
             .await
             .expect("create member");

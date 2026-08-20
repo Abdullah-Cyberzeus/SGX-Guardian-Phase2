@@ -22,10 +22,10 @@ dhcp-option=3,{GATEWAY_IP}
 dhcp-option=6,{GATEWAY_IP}
 
 # --- DNS Resolver Settings ---
-# Local domain for devices on the network (e.g. guardian.local)
+# Canonical Guardian FQDN (for example nodea.guardian)
 domain={LOCAL_DOMAIN}
 local=/{LOCAL_DOMAIN}/
-# Resolve guardian.local directly to the hotspot gateway. `domain=` alone
+# Resolve the canonical node name directly to the hotspot gateway. `domain=` alone
 # assigns a DHCP search domain but does not create this host record.
 address=/{LOCAL_DOMAIN}/{GATEWAY_IP}
 

@@ -94,29 +94,55 @@ pub fn build_client_config(
 }
 // Certificate-generation helper
 use rcgen::{Certificate as RcgenCert, CertificateParams, DistinguishedName, DnType, KeyPair};
-/// Ensures a DER certificate exists at `cert_path`.
-/// If missing, it generates a self-signed cert using the existing private key (`key_path`).
+fn certificate_contains_required_dns_names(der: &[u8], subject_alt_names: &[&str]) -> bool {
+    subject_alt_names
+        .iter()
+        .filter(|name| name.parse::<std::net::IpAddr>().is_err())
+        .all(|name| der.windows(name.len()).any(|window| window == name.as_bytes()))
+}
+
+/// Ensures a DER certificate exists at `cert_path` and contains every requested
+/// DNS SAN. A certificate from an older release is backed up and reissued with
+/// the same private key when a required LAN name is missing.
 pub fn ensure_node_certificate_or_generate(
     key_path: &str,
     cert_path: &str,
     subject_alt_names: &[&str],
 ) -> Result<Vec<u8>> {
-    // If certificate already exists → load & return raw DER
+    // Reuse an existing certificate only when it covers the current canonical
+    // LAN name. DNS SAN values are IA5 strings in DER, so this check does not
+    // require an additional X.509 parser on constrained board builds.
     if std::path::Path::new(cert_path).exists() {
         let der = fs::read(cert_path)
             .with_context(|| format!("Failed to read existing certificate: {}", cert_path))?;
 
         let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
 
-        log_audit(
-            &node_id,
-            AuditCategory::Tls,
-            AuditSeverity::Info,
-            AuditAction::Succeeded,
-            "TLS certificate loaded from disk",
-        );
+        if !certificate_contains_required_dns_names(&der, subject_alt_names) {
+            let backup_path = format!("{}.pre-lan-name.bak", cert_path);
+            if !std::path::Path::new(&backup_path).exists() {
+                fs::copy(cert_path, &backup_path).with_context(|| {
+                    format!("Failed to back up previous TLS certificate to {}", backup_path)
+                })?;
+            }
+            log_audit(
+                &node_id,
+                AuditCategory::Tls,
+                AuditSeverity::Warning,
+                AuditAction::Applied,
+                "TLS certificate missing canonical LAN DNS name; reissuing with existing key",
+            );
+        } else {
+            log_audit(
+                &node_id,
+                AuditCategory::Tls,
+                AuditSeverity::Info,
+                AuditAction::Succeeded,
+                "TLS certificate loaded from disk",
+            );
 
-        return Ok(der);
+            return Ok(der);
+        }
     }
     // Load private key as raw DER
     let pkcs8_der = fs::read(key_path)

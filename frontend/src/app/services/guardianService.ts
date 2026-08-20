@@ -40,7 +40,6 @@ export interface ThreatIntel {
   score: number;
   threats24h: number;
   blocked: number;
-  quarantined: number;
   lastUpdated: string;
 }
 
@@ -97,7 +96,7 @@ export const guardianService = {
     '/guardian/restart'
   ),
 
-  // GET /api/guardian/threat-intel - Security health score and threat data
+  // GET /api/guardian/threat-intel - live security score, 24h alerts, active blocks
   getThreatIntel: () => api.get<ThreatIntel>('/guardian/threat-intel'),
 };
 

@@ -43,6 +43,7 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
   const connectedPeers = useRef(new Set<string>());
   const mediaReadySent = useRef(false);
   const lastGroup = useRef<GroupSession>();
+  const locallyEndedGroups = useRef(new Set<string>());
   const socketConnected = useRef(false);
   const signalApplyChain = useRef(Promise.resolve());
   const effectiveLocalDevice = groupLocalDevice || localDevice;
@@ -58,7 +59,8 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
     const response = await groupCallsApi.active();
     const localId = response.local_device_id || localDevice;
     setGroupLocalDevice(localId);
-    const next = response.groups[0];
+    const candidate = response.groups[0];
+    const next = candidate && !locallyEndedGroups.current.has(candidate.group_id) ? candidate : undefined;
     if (next) lastGroup.current = next;
     if (!next && lastGroup.current && localId) {
       callHistoryService.recordGroup(lastGroup.current, localId);
@@ -210,7 +212,18 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
     if (!group) return; const ended = await groupCallsApi.leave(group.group_id); if (effectiveLocalDevice) callHistoryService.recordGroup(ended, effectiveLocalDevice); lastGroup.current = undefined; rtc.current.close(); setGroup(undefined);
   };
   const endGroup = async () => {
-    if (!group) return; const ended = await groupCallsApi.end(group.group_id); if (effectiveLocalDevice) callHistoryService.recordGroup(ended, effectiveLocalDevice); lastGroup.current = undefined; rtc.current.close(); setGroup(undefined);
+    if (!group) return;
+    const groupId = group.group_id;
+    locallyEndedGroups.current.add(groupId);
+    try {
+      const ended = await groupCallsApi.end(groupId);
+      if (effectiveLocalDevice) callHistoryService.recordGroup(ended, effectiveLocalDevice);
+      lastGroup.current = undefined;
+      rtc.current.close(); setLocalStream(undefined); setRemoteStreams({}); setGroup(undefined);
+    } catch (reason) {
+      locallyEndedGroups.current.delete(groupId);
+      throw reason;
+    }
   };
   const moderate = async (action: GroupModerationAction) => {
     if (group) setGroup(await groupCallsApi.moderate(group.group_id, action));

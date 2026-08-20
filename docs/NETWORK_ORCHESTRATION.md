@@ -8,6 +8,71 @@ It dynamically switches between the following modes:
 - **ClientOnly**: Connects to an upstream Wi-Fi network for internet access.
 - **DualWifi**: Operates both a local Hotspot (on `uap1`) and connects to an upstream Wi-Fi network (on `wlan0`), applying NAT, policy routing, and Zero Trust enforcement rules between them.
 
+## Canonical LAN Names and HTTPS
+
+Every Guardian derives one stable LAN name from its node ID:
+
+| Node ID | LAN URL |
+|---|---|
+| `nodeA` | `https://nodea.guardian` |
+| `nodeB` | `https://nodeb.guardian` |
+| `nodeC` | `https://nodec.guardian` |
+
+The same name is used by DHCP, hotspot DNS, the HTTPS certificate and Docker's
+TLS proxy.
+
+### Physical board
+
+- A client connected directly to a Guardian hotspot receives that board as its
+  DNS server. The board's `dnsmasq` resolves its own canonical name to the
+  hotspot gateway automatically; no IP needs to be entered in the browser.
+- On a shared upstream LAN, each board advertises `nodea`, `nodeb` or `nodec`
+  through DHCP. Configure the router's local DNS domain as `guardian` and enable
+  DNS registration for DHCP leases. The router then publishes
+  `nodea.guardian`, etc., even when a board's lease address changes.
+- A custom suffix such as `.guardian` is unicast DNS, not mDNS. The existing
+  Guardian mDNS discovery service cannot make arbitrary `.guardian` browser
+  names resolvable; the LAN's DHCP-provided DNS resolver must be authoritative
+  for this suffix.
+- On the first boot after this change, an older node certificate that lacks the
+  canonical DNS SAN is backed up as `device_<node>_cert.der.pre-lan-name.bak`
+  and reissued with the existing private key. Install/trust the new certificate
+  on member devices before installing the PWA.
+
+### Docker
+
+`docker-compose.dev.yml` includes Caddy as the HTTPS boundary. Caddy routes all
+three names over the private Compose network while Guardian itself remains HTTP
+inside Docker. The old ports `18443`, `28443` and `38443` remain available for
+localhost diagnostics only; member/PWA access should use the HTTPS names.
+
+The Docker host's LAN DNS/router needs three records pointing to the Docker
+host. For a router with DHCP host overrides, create these once:
+
+```text
+nodea.guardian -> Docker host
+nodeb.guardian -> Docker host
+nodec.guardian -> Docker host
+```
+
+For testing on the Docker host only, equivalent `/etc/hosts` entries are also
+sufficient. LAN phones and laptops still need the router/DNS records.
+
+Start the cohort and export Caddy's local root CA:
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+mkdir -p build/certs
+docker compose -f docker-compose.dev.yml cp \
+  caddy:/data/caddy/pki/authorities/local/root.crt \
+  build/certs/guardian-docker-root-ca.crt
+```
+
+Install `guardian-docker-root-ca.crt` as a trusted root CA on each LAN client.
+Then use `https://nodea.guardian`, `https://nodeb.guardian` or
+`https://nodec.guardian`. Trusting the CA is required for service workers,
+PWA installation, camera, microphone and WebRTC.
+
 ---
 
 ## Wi-Fi Security & Password Constraints

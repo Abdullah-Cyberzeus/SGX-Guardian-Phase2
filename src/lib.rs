@@ -30,6 +30,7 @@ pub mod homeassistant;
 pub mod integration;
 pub mod kasa;
 pub mod key_manager;
+pub mod lan_name;
 pub mod logging;
 pub mod media;
 pub mod metrics;

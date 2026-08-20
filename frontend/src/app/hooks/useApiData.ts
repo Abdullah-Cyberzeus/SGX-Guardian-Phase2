@@ -252,7 +252,6 @@ export function useGuardianInfo() {
 
 /**
  * Hook for threat intelligence (security health score)
- * Note: No backend endpoint exists yet - returns empty/default data
  */
 export function useThreatIntel() {
   return useApiData(() => guardianService.getThreatIntel(), { pollingInterval: 30000 });
