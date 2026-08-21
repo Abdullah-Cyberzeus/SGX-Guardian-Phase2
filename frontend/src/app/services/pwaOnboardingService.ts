@@ -56,12 +56,29 @@ export interface MemberApprovalStatus {
   memberDid: string;
 }
 
+export interface AdditionalCircleEnrollment {
+  approvalId: string;
+  circleId: string;
+  circleName: string;
+  memberDid: string;
+  state: "pending" | "approved" | "rejected" | "expired" | string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface AdditionalCircleJoinResult {
+  enrollment: AdditionalCircleEnrollment;
+  approvalClaim: string;
+}
+
 export const pwaOnboardingService = {
   info: () => api.get<GuardianOnboardingInfo>("/pwa/onboarding"),
   previewInvite: (inviteToken: string, ownerHost?: string) =>
     api.post<MemberInvitePreview>("/pwa/onboarding/invite-preview", { inviteToken, ownerHost }),
   join: (payload: MemberJoinPayload) =>
     api.post<MemberJoinResult>("/pwa/onboarding/join", payload),
+  joinAdditionalCircle: (inviteToken: string) =>
+    api.post<AdditionalCircleJoinResult>("/pwa/circles/join", { inviteToken }),
   approvalStatus: (approvalId: string, claim: string) =>
     api.get<MemberApprovalStatus>(`/pwa/onboarding/approval/${encodeURIComponent(approvalId)}`, { claim }),
 };

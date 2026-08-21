@@ -210,6 +210,9 @@ fn member_required_scope(method: &Method, path: &str) -> Option<&'static str> {
     if method == Method::DELETE && path == "/api/v1/pwa/registration" {
         return Some(scope::SETTINGS_OWN);
     }
+    if method == Method::POST && path == "/api/v1/pwa/circles/join" {
+        return Some(scope::CIRCLES_READ);
+    }
     if method == Method::GET && path == "/api/v1/node/status" {
         return Some(scope::GUARDIAN_READ);
     }
@@ -383,6 +386,7 @@ mod tests {
             (Method::POST, "/api/v1/vault/upload"),
             (Method::POST, "/api/v1/notifications/read-all"),
             (Method::POST, "/api/v1/auth/session/refresh"),
+            (Method::POST, "/api/v1/pwa/circles/join"),
             (Method::DELETE, "/api/v1/pwa/registration"),
         ] {
             assert_eq!(

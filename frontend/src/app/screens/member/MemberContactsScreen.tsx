@@ -3,7 +3,7 @@ import { CalendarDays, Check, Loader2, MessageSquare, Pencil, Phone, Plus, Searc
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import { PageHeader } from "../../components/PageHeader";
-import { useCommunicationPeers } from "../../hooks/useApiData";
+import { memberCanDirectChatWithPeer, useCommunicationPeers } from "../../hooks/useApiData";
 import { presenceHidden, type Peer } from "../../services/peerService";
 import { contactRepository } from "../../../pwa/db/contactRepository";
 import { useGuardianConnectivity } from "../../../pwa/connectivity/GuardianConnectivityContext";
@@ -12,6 +12,7 @@ import { useGroupCall } from "../../../features/calls/GroupCallContext";
 import type { MediaType } from "../../../features/calls/call.types";
 import { useContactNames } from "../../contexts/ContactNameContext";
 import contactService, { type Contact } from "../../services/contactService";
+import { useAuth } from "../../contexts/AuthContext";
 
 interface SavedContactFormState {
   did: string;
@@ -214,6 +215,7 @@ function profileTarget(peer: Peer) {
 
 export function MemberContactsScreen() {
   const navigate = useNavigate();
+  const { session } = useAuth();
   const { data, loading, error, refetch } = useCommunicationPeers();
   const { reachable } = useGuardianConnectivity();
   const { startCall, call } = useCall();
@@ -318,7 +320,7 @@ export function MemberContactsScreen() {
           <p className="truncate text-[11px] text-muted-foreground">{peer.deviceName} · {peer.role}</p>
         </button>
         <div className="flex items-center gap-1">
-          <button aria-label={`Message ${peer.peerId}`} onClick={() => navigate(`/chats/${encodeURIComponent(peer.did!)}`)} className="grid h-9 w-9 place-items-center rounded-full hover:bg-muted"><MessageSquare size={17} /></button>
+          <button aria-label={`Message ${peer.peerId}`} title={memberCanDirectChatWithPeer(peer, session?.guardianDid) ? "Private message" : "Use Circle group chat for this Guardian"} disabled={!memberCanDirectChatWithPeer(peer, session?.guardianDid)} onClick={() => navigate(`/chats/${encodeURIComponent(peer.did!)}`)} className="grid h-9 w-9 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35"><MessageSquare size={17} /></button>
           <button aria-label={`Voice call ${peer.peerId}`} onClick={() => void startContactCall(peer, ["audio"])} disabled={!peer.callAvailable || startingCall !== null} className="grid h-9 w-9 place-items-center rounded-full hover:bg-muted disabled:opacity-35">{startingCall === "audio" ? <Loader2 size={17} className="animate-spin" /> : <Phone size={17} />}</button>
           <button aria-label={`Video call ${peer.peerId}`} onClick={() => void startContactCall(peer, ["audio", "video"])} disabled={!peer.callAvailable || startingCall !== null} className="grid h-9 w-9 place-items-center rounded-full hover:bg-muted disabled:opacity-35">{startingCall === "video" ? <Loader2 size={17} className="animate-spin" /> : <Video size={17} />}</button>
         </div>
@@ -343,7 +345,7 @@ export function MemberContactsScreen() {
           </dl>
         </div>
         <div className="grid grid-cols-3 gap-2 border-t border-border p-4">
-          <button onClick={() => navigate(`/chats/${encodeURIComponent(selected.did!)}`)} className="flex h-11 items-center justify-center gap-2 rounded-md border border-border text-sm font-medium"><MessageSquare size={16} />Message</button>
+          <button onClick={() => navigate(`/chats/${encodeURIComponent(selected.did!)}`)} disabled={!memberCanDirectChatWithPeer(selected, session?.guardianDid)} title={memberCanDirectChatWithPeer(selected, session?.guardianDid) ? "Private message" : "Use Circle group chat for this Guardian"} className="flex h-11 items-center justify-center gap-2 rounded-md border border-border text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40"><MessageSquare size={16} />Message</button>
           <button onClick={() => void startContactCall(selected, ["audio"])} disabled={!selected.callAvailable || startingCall !== null} className="flex h-11 items-center justify-center gap-2 rounded-md border border-border text-sm font-medium disabled:opacity-40"><Phone size={16} />Voice</button>
           <button onClick={() => void startContactCall(selected, ["audio", "video"])} disabled={!selected.callAvailable || startingCall !== null} className="flex h-11 items-center justify-center gap-2 rounded-md border border-border text-sm font-medium disabled:opacity-40"><Video size={16} />Video</button>
         </div>

@@ -198,12 +198,39 @@ export async function fetchCommunicationPeers(isMember: boolean, guardianDid?: s
   return [...byDid.values()];
 }
 
+/**
+ * Browser members are hosted by one Guardian. A remote Guardian that shares
+ * a Circle cannot resolve that browser identity as a 1:1 recipient, so it is
+ * deliberately exposed through Circle group chat only.
+ */
+export function memberCanDirectChatWithPeer(peer: Peer, guardianDid?: string): boolean {
+  return Boolean(peer.did)
+    && (peer.did === guardianDid || peer.memberType.toLowerCase() === "browser");
+}
+
+export async function fetchChatPeers(isMember: boolean, guardianDid?: string): Promise<Peer[]> {
+  const peers = await fetchCommunicationPeers(isMember, guardianDid);
+  return isMember
+    ? peers.filter((peer) => memberCanDirectChatWithPeer(peer, guardianDid))
+    : peers;
+}
+
 /** Member-safe peers for chat, calls, and Contacts. */
 export function useCommunicationPeers() {
   const { session } = useAuth();
   const member = isMemberRole(session?.user.role);
   return useApiData(
     () => fetchCommunicationPeers(member, session?.guardianDid),
+    { pollingInterval: 15000 },
+  );
+}
+
+/** Direct-message targets, excluding remote Guardians for member sessions. */
+export function useChatPeers() {
+  const { session } = useAuth();
+  const member = isMemberRole(session?.user.role);
+  return useApiData(
+    () => fetchChatPeers(member, session?.guardianDid),
     { pollingInterval: 15000 },
   );
 }

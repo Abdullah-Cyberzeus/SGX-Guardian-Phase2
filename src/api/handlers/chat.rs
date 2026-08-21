@@ -1127,27 +1127,17 @@ async fn ensure_member_contact_access(
         .as_ref()
         .map(|Extension(session)| session.claims.circle_ids.iter().cloned().collect())
         .unwrap_or_default();
-    let contacts = crate::api::auth::authorization::scoped_circle_contact_dids(
-        &state.node_id,
-        &state.device_did,
-        session
-            .as_ref()
-            .map(|Extension(session)| session.claims.circle_ids.as_slice())
-            .unwrap_or(&[]),
-    )
-    .map_err(ApiError::Internal)?;
     let browser_allowed = crate::api::handlers::browser_member::did_from_session(session)
         .as_deref()
         == Some(contact_did);
-    // A fellow browser member of a shared Circle is a valid contact too — the
-    // Nebula-derived `contacts` set above only covers device (VC-issued)
-    // peers, so a sibling member with no device credential is checked here.
-    let sibling_browser_member = !browser_allowed
-        && !contacts.contains(contact_did)
-        && crate::api::handlers::browser_member::dids_for_circles(state, &circle_ids)
-            .await?
-            .contains(contact_did);
-    if contacts.contains(contact_did) || browser_allowed || sibling_browser_member {
+    // Browser identities only exist on their hosting Guardian. A member may
+    // therefore direct-message its own Guardian or another browser member
+    // hosted here, but never a remote Guardian/device from the Circle roster.
+    // Remote Guardians remain reachable through the replicated group chat.
+    let browser_contact = crate::api::handlers::browser_member::dids_for_circles(state, &circle_ids)
+        .await?
+        .contains(contact_did);
+    if browser_allowed || browser_contact {
         Ok(())
     } else {
         if let Some(Extension(session)) = session.as_ref() {
@@ -1158,7 +1148,7 @@ async fn ensure_member_contact_access(
             );
         }
         Err(ApiError::Forbidden(
-            "contact does not share a Circle with this Guardian".into(),
+            "members cannot directly message another Guardian; use the Circle group chat".into(),
         ))
     }
 }

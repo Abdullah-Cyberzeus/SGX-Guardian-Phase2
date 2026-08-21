@@ -23,6 +23,8 @@ import chatService from "../../services/chatService";
 import circleService, { type CircleInvite, type CircleMember } from "../../services/circleService";
 import { toast } from "sonner";
 import { useCallHistory } from "../../hooks/useCallHistory";
+import { useAuth } from "../../contexts/AuthContext";
+import { isMemberRole } from "../../utils/authorization";
 
 type Tab = "chat" | "calls" | "files" | "members";
 
@@ -32,6 +34,7 @@ export function NW04CircleDetail() {
   const { circleId } = useParams<{ circleId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { session } = useAuth();
   const vault = useVault();
   const { displayForDid } = useContactNames();
   const requestedTab = searchParams.get("tab") as Tab | null;
@@ -345,6 +348,11 @@ export function NW04CircleDetail() {
 
   const openDirectChat = (member: any) => {
     if (!member.did) { toast.error("This member has no DID for secure messaging."); return; }
+    const memberType = String(member.memberType || member.member_type || "guardian").toLowerCase();
+    if (isMemberRole(session?.user.role) && member.did !== session?.guardianDid && memberType !== "browser") {
+      toast.info("Use the Circle group chat", { description: "Members cannot directly message another Guardian." });
+      return;
+    }
     navigate(`/chats/${encodeURIComponent(member.did)}`);
   };
 
@@ -798,7 +806,7 @@ export function NW04CircleDetail() {
                       </div>
                     </button>
                     <div className="flex shrink-0 items-center gap-1">
-                      <button aria-label={`Message ${memberName}`} title="Private message" disabled={!member.did} onClick={() => openDirectChat(member)} className="grid h-9 w-9 place-items-center rounded-full border hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35"><MessageSquare size={15} /></button>
+                      <button aria-label={`Message ${memberName}`} title={isMemberRole(session?.user.role) && member.did !== session?.guardianDid && !isBrowserMember ? "Use Circle group chat to message this Guardian" : "Private message"} disabled={!member.did || (isMemberRole(session?.user.role) && member.did !== session?.guardianDid && !isBrowserMember)} onClick={() => openDirectChat(member)} className="grid h-9 w-9 place-items-center rounded-full border hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35"><MessageSquare size={15} /></button>
                       <button aria-label={`Voice call ${memberName}`} title={callsDisabled ? callUnavailableReason || "Call unavailable" : `Voice call ${target}`} disabled={callsDisabled} onClick={() => void startMemberCall(["audio"], member)} className="grid h-9 w-9 place-items-center rounded-full border hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === `${target}:audio` ? <Loader2 size={15} className="animate-spin" /> : <Phone size={15} />}</button>
                       <button aria-label={`Video call ${memberName}`} title={callsDisabled ? callUnavailableReason || "Call unavailable" : `Video call ${target}`} disabled={callsDisabled} onClick={() => void startMemberCall(["audio", "video"], member)} className="grid h-9 w-9 place-items-center rounded-full border hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === `${target}:video` ? <Loader2 size={15} className="animate-spin" /> : <Video size={15} />}</button>
                       <button aria-label={`View ${memberName}`} onClick={() => setMemberDetailOpen(memberKey)} className="grid h-9 w-8 place-items-center rounded-full hover:bg-muted"><ChevronRight size={16} style={{ color: "var(--muted-foreground)" }} /></button>
@@ -1027,6 +1035,7 @@ export function NW04CircleDetail() {
               <div className="flex gap-2 mt-1">
                 <button
                   onClick={() => { openDirectChat(selectedMember); setMemberDetailOpen(null); }}
+                  disabled={isMemberRole(session?.user.role) && selectedMember.did !== session?.guardianDid && String(selectedMember.memberType || selectedMember.member_type || "guardian").toLowerCase() !== "browser"}
                   className="flex-1 flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80"
                   style={{ height: "48px", backgroundColor: "var(--secondary)", color: "var(--foreground)", border: "1px solid var(--border)", cursor: "pointer", borderRadius: "var(--radius)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)" }}
                 ><MessageSquare size={16} /> Chat</button>
