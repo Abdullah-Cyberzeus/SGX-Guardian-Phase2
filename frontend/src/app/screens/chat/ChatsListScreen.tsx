@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, MessageSquare, RefreshCw, Search, ShieldCheck, UsersRound } from "lucide-react";
+import { Loader2, MessageSquare, RefreshCw, Search, ShieldCheck, UsersRound, X } from "lucide-react";
 import { useNavigate } from "react-router";
 import { PageHeader } from "../../components/PageHeader";
 import { useCommunicationPeers } from "../../hooks/useApiData";
@@ -106,6 +106,7 @@ export function ChatsListScreen({ compact = false }: { compact?: boolean } = {})
         <label className="flex h-11 flex-1 items-center gap-2 rounded-full border border-border bg-input-background px-4">
           <Search size={17} className="text-muted-foreground" />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search chats" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+          {query && <button type="button" aria-label="Clear search" onClick={() => setQuery("")} className="grid h-5 w-5 shrink-0 place-items-center rounded-full hover:bg-muted"><X size={14} className="text-muted-foreground" /></button>}
         </label>
       </div>
       <div className={`mt-3 flex gap-2 ${compact ? "" : "mx-auto max-w-3xl"}`}>
