@@ -50,6 +50,87 @@ const DID_DOC_PULL_INTERVAL_SECS: u64 = 30;
 const VC_STATUS_LIST_PULL_INTERVAL_SECS: u64 = 300;
 const DID_DOC_ROTATION_FLAG: &str = "/var/lib/sgx-guardian/identity/.dkp_rotated.flag";
 
+fn env_true(key: &str) -> bool {
+    matches!(
+        std::env::var(key).ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("on")
+    )
+}
+
+#[cfg(feature = "secure-element")]
+fn should_attempt_se050() -> bool {
+    env_true("SGX_SE050_REQUIRED")
+        || env_true("SGX_SE050_PROBE")
+        || (0..=8).any(|index| std::path::Path::new(&format!("/dev/i2c-{index}")).exists())
+}
+
+fn audit_key_backend(node_id: &str, message: &str) {
+    log_audit(
+        node_id,
+        AuditCategory::Identity,
+        AuditSeverity::Info,
+        AuditAction::Loaded,
+        message,
+    );
+}
+
+fn initialize_key_manager(node_id: &str, node_key_path: &str) -> anyhow::Result<KeyManager> {
+    if GATES.force_software_keys {
+        let km = KeyManager::load_or_generate(node_key_path)?;
+        println!("Key backend: software keys (forced by SGX_FORCE_SOFTWARE_KEYS)");
+        audit_key_backend(node_id, "Key backend selected: software forced");
+        return Ok(km);
+    }
+
+    #[cfg(feature = "tpm")]
+    {
+        let tpm_config = sgx_guardian_client::tpm::TpmConfig::default();
+        if sgx_guardian_client::tpm::should_attempt(&tpm_config) {
+            match KeyManager::init_with_tpm(
+                &tpm_config,
+                sgx_guardian_client::tpm::TPM_BASE_PATH,
+                node_key_path,
+            ) {
+                Ok(km) => {
+                    println!("TPM detected and initialized; key backend: TPM 2.0");
+                    audit_key_backend(node_id, "Key backend selected: TPM 2.0 hardware");
+                    return Ok(km);
+                }
+                Err(error) => {
+                    eprintln!("TPM probe failed: {}", error);
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "secure-element")]
+    {
+        if should_attempt_se050() {
+            let se_config = secure_element::SeConfig::default();
+            match KeyManager::init_with_se050(&se_config, "/var/lib/sgx-guardian", node_key_path) {
+                Ok(km) if km.backend_name() == "SE050" => {
+                    println!("Secure Element detected and initialized; key backend: SE050");
+                    audit_key_backend(node_id, "Key backend selected: SE050 hardware");
+                    return Ok(km);
+                }
+                Ok(km) => {
+                    println!("SE050 not active; key backend: software");
+                    audit_key_backend(node_id, "Key backend selected: software fallback");
+                    return Ok(km);
+                }
+                Err(error) => {
+                    eprintln!("SE050 probe failed: {}", error);
+                }
+            }
+        }
+    }
+
+    let km = KeyManager::load_or_generate(node_key_path)?;
+    println!("No hardware key backend detected; key backend: software");
+    audit_key_backend(node_id, "Key backend selected: software fallback");
+    Ok(km)
+}
+
 async fn serve_admin_tls_alias(
     bind: std::net::SocketAddr,
     upstream: std::net::SocketAddr,
@@ -268,32 +349,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Generate node-specific identity key path
     let node_key_path = format!("/var/lib/sgx-guardian/sgx-agent/device_{}.key", node_id);
     // === Hardware Key Manager Initialization (Phase 2 — HKM) ===
-    #[cfg(feature = "secure-element")]
-    let km = {
-        let se_base_path = "/var/lib/sgx-guardian";
-        let se_config = secure_element::SeConfig::default();
-
-        match KeyManager::init_with_se050(&se_config, se_base_path, &node_key_path) {
-            Ok(hw_km) => {
-                println!("DKP initialized via SE050 hardware");
-                log_audit(
-                    &node_id,
-                    AuditCategory::Identity,
-                    AuditSeverity::Info,
-                    AuditAction::Loaded,
-                    "Hardware Key Manager: DKP active via SE050",
-                );
-                hw_km
-            }
-            Err(e) => {
-                eprintln!("SE050 HKM failed: {} — using software keys", e);
-                KeyManager::load_or_generate(&node_key_path)?
-            }
-        }
-    };
-
-    #[cfg(not(feature = "secure-element"))]
-    let km = KeyManager::load_or_generate(&node_key_path)?;
+    let km = initialize_key_manager(&node_id, &node_key_path)?;
 
     // === DKP Auto-Rotation Check ===
     // Only probe the SE050 a SECOND time if the primary KeyManager init above
@@ -557,8 +613,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  Signing provider: SE050 hardware (ECDSA-P256)");
             println!("  RNG source: SE050 TRNG");
         }
+        "TPM2" => {
+            println!("  TPM detected: TPM 2.0");
+            println!("  Signing provider: TPM 2.0 hardware (ECDSA-P256)");
+            println!("  RNG source: TPM-backed key operations");
+        }
         _ => {
-            println!("  Secure Element not available");
+            println!("  Hardware key backend not available");
             println!("  Signing provider: software (ring crate, ECDSA-P256)");
             println!("  RNG source: software RNG (SystemRandom)");
         }
@@ -925,7 +986,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ => 50053,
             },
             public_key: format!("placeholder-key-{}", &node[4..]),
-            offline_mode: 1,
             metrics: None,
             relay: None,
             api: None,
