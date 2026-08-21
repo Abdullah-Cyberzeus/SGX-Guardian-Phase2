@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileText, Loader2, MessageSquare, Phone, RefreshCw, RotateCcw, Search, Send, Video, XCircle } from "lucide-react";
+import { Loader2, MessageSquare, Phone, RefreshCw, RotateCcw, Search, Send, Video, X, XCircle } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { PageHeader } from "../../components/PageHeader";
 import { AttachmentMenu } from "../../components/circle/AttachmentMenu";
-import { FilesTab } from "../../components/circle/FilesTab";
 import { MessageAttachment } from "../../components/circle/MessageAttachment";
-import type { SharedFile } from "../../components/circle/types";
 import { useCircles, useCommunicationPeers } from "../../hooks/useApiData";
 import { didService } from "../../services/didService";
 import chatService, { openChatSocket, parseChatPayload, type ChatMessageRecord } from "../../services/chatService";
@@ -24,8 +22,6 @@ import { pendingRepository } from "../../../pwa/db/pendingRepository";
 import { decryptValue } from "../../../pwa/crypto/vault";
 import { contactRepository } from "../../../pwa/db/contactRepository";
 import { ApiError } from "../../services/api";
-
-type View = "chat" | "files";
 
 function timeLabel(timestamp: number) {
   const date = new Date(timestamp > 10_000_000_000 ? timestamp : timestamp * 1000);
@@ -77,7 +73,7 @@ export function ChatConversationScreen() {
   const navigate = useNavigate();
   const { session } = useAuth();
   const paneMode = useChatPaneMode();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const { data: circlesData, loading: circlesLoading } = useCircles();
   const { data: peersData, loading: peersLoading, error: peersError } = useCommunicationPeers();
   const circle = (Array.isArray(circlesData) ? circlesData : []).find((item: any) => item.id === circleId);
@@ -116,7 +112,6 @@ export function ChatConversationScreen() {
   const peerTypingTimeoutRef = useRef<number | undefined>(undefined);
   const typingSendTimeoutRef = useRef<number | undefined>(undefined);
   const isTypingSentRef = useRef(false);
-  const view: View = searchParams.get("view") === "files" ? "files" : "chat";
   const openedFromChats = isGroup && searchParams.get("from") === "chats";
 
   const circleMembers = useMemo(() => Array.isArray(circle?.members) ? circle.members : [], [circle?.members]);
@@ -161,13 +156,6 @@ export function ChatConversationScreen() {
       .filter((id): id is string => Boolean(id))
       .filter((id) => id !== currentDevice && id !== session?.browserMemberDid),
   )), [circleMembers, currentDevice, peerForMember, session?.browserMemberDid]);
-
-  const setView = (nextView: View) => {
-    const next = new URLSearchParams(searchParams);
-    if (nextView === "files") next.set("view", "files");
-    else next.delete("view");
-    setSearchParams(next);
-  };
 
   useEffect(() => {
     if (!peerDid || !peersError) return;
@@ -290,7 +278,7 @@ export function ChatConversationScreen() {
       close();
     };
   }, [loadHistory, isGroup, circleId, peerDid, localDid]);
-  useEffect(() => { if (view === "chat") bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [records, view]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [records]);
 
   useEffect(() => { recordsRef.current = records; }, [records]);
 
@@ -331,7 +319,7 @@ export function ChatConversationScreen() {
   // IntersectionObserver can miss it during the history-load/auto-scroll transition,
   // leaving a message visibly opened but still counted as unread on the list screen.
   useEffect(() => {
-    if (view !== "chat" || !localDid) return;
+    if (!localDid) return;
     const isForeground = () => document.visibilityState === "visible" && document.hasFocus();
     const recheck = () => {
       if (!isForeground()) return;
@@ -347,7 +335,7 @@ export function ChatConversationScreen() {
       document.removeEventListener("visibilitychange", recheck);
       window.removeEventListener("focus", recheck);
     };
-  }, [view, localDid, records, isGroup, circleId, peerDid, clearPeerUnread, clearCircleUnread, markConversationRead]);
+  }, [localDid, records, isGroup, circleId, peerDid, clearPeerUnread, clearCircleUnread, markConversationRead]);
 
   const sendTypingSignal = useCallback((isTyping: boolean) => {
     if ((isGroup && !circleId) || (!isGroup && !peerDid)) return;
@@ -568,13 +556,6 @@ export function ChatConversationScreen() {
     return [item.sender, item.content, item.status, item.queueError].join(" ").toLowerCase().includes(query);
   }), [records, localDid, isGroup, peerDid, circle, member, contactNameForDid, queuedMessageIds, queuedMessages, search]);
 
-  const files = useMemo<SharedFile[]>(() => messages.filter((item) => item.attachment).map((item) => ({
-    id: item.id,
-    ...item.attachment!,
-    sharedBy: item.sender,
-    sharedAt: item.timestamp,
-  })).reverse(), [messages]);
-
   if ((isGroup && circlesLoading) || (!isGroup && peersLoading)) return <div className="grid h-full place-items-center"><Loader2 className="animate-spin" /></div>;
   if ((isGroup && !circle) || (!isGroup && !peer && !member)) return <div className="grid h-full place-items-center p-6 text-sm text-muted-foreground">Conversation not found.</div>;
 
@@ -596,56 +577,48 @@ export function ChatConversationScreen() {
           <button aria-label="Refresh messages" onClick={() => void loadHistory()} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted"><RefreshCw size={18} /></button>
         </div>
       } />
-      <div className="flex shrink-0 border-b border-border bg-card">
-        {(["chat", "files"] as View[]).map((item) => (
-          <button key={item} onClick={() => setView(item)} className="flex flex-1 items-center justify-center gap-2 py-3 text-sm font-medium capitalize" style={{ color: view === item ? "var(--primary)" : "var(--muted-foreground)", borderBottom: view === item ? "2px solid var(--primary)" : "2px solid transparent" }}>
-            {item === "chat" ? <MessageSquare size={16} /> : <FileText size={16} />}{item}
-          </button>
-        ))}
+      <div className="shrink-0 border-b border-border bg-card px-3 py-2 md:px-6">
+        <div className="mx-auto flex max-w-2xl items-center gap-2 rounded-full border border-border bg-input-background px-3">
+          <Search size={16} className="shrink-0 text-muted-foreground" />
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search messages" className="h-10 flex-1 bg-transparent text-sm outline-none" />
+          {search && <button type="button" aria-label="Clear search" onClick={() => setSearch("")} className="grid h-5 w-5 shrink-0 place-items-center rounded-full hover:bg-muted"><X size={14} className="text-muted-foreground" /></button>}
+        </div>
       </div>
-      {view === "files" ? <FilesTab files={files} /> : <>
-        <div className="shrink-0 border-b border-border bg-card px-3 py-2 md:px-6">
-          <div className="mx-auto flex max-w-2xl items-center gap-2 rounded-full border border-border bg-input-background px-3">
-            <Search size={16} className="shrink-0 text-muted-foreground" />
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search messages" className="h-10 flex-1 bg-transparent text-sm outline-none" />
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col gap-3 p-4 md:p-6">
-            {loading && <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 size={18} className="animate-spin" /> Loading secure conversation…</div>}
-            {!loading && messages.length === 0 && <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center text-muted-foreground"><MessageSquare size={36} /><p className="text-sm font-medium text-foreground">No messages yet</p><p className="max-w-xs text-xs">Start this secure {isGroup ? "Circle conversation" : "peer-to-peer conversation"}.</p></div>}
-            {messages.map((item) => <div key={item.id} className={`flex flex-col ${item.isMe ? "items-end" : "items-start"}`}>
-              {!item.isMe && <span className="mb-1 ml-1 max-w-[78%] truncate text-xs text-muted-foreground">{item.sender}</span>}
-              <div className="max-w-[78%] overflow-hidden rounded-2xl border border-border px-4 py-2.5" style={{ background: item.isMe ? "var(--primary)" : "var(--card)", borderColor: item.isMe ? "transparent" : undefined }}>
-                {item.attachment ? <MessageAttachment attachment={item.attachment} isMe={item.isMe} /> : <p className="text-sm leading-6" style={{ color: item.isMe ? "var(--primary-foreground)" : "var(--foreground)" }}>{item.content}</p>}
-              </div>
-              <div className="mx-1 mt-1 flex max-w-[78%] items-center gap-1 text-[10px] text-muted-foreground">
-                <span className="truncate">{item.timestamp}{item.isMe ? ` · ${statusLabel(item.status, item.read)}` : ""}</span>
-                {item.isMe && (item.queueState === "queued" || item.queueState === "sending" || item.queueState === "failed_permanent" || item.status === "failed_permanent") && (
-                  <>
-                    {(item.queueState === "failed_permanent" || item.status === "failed_permanent") && <button type="button" aria-label="Retry message" title={item.queueError || "Retry message"} onClick={() => void retryQueuedMessage(item.id)} className="grid h-6 w-6 place-items-center rounded-full hover:bg-muted"><RotateCcw size={12} /></button>}
-                    {(item.queueState === "queued" || item.queueState === "sending") && <button type="button" aria-label="Cancel queued message" title={item.queueError || "Cancel queued message"} onClick={() => void cancelQueuedMessage(item.id)} className="grid h-6 w-6 place-items-center rounded-full hover:bg-muted"><XCircle size={12} /></button>}
-                  </>
-                )}
-              </div>
-            </div>)}
-            <div ref={bottomRef} />
-          </div>
-        </div>
-        <div className="shrink-0 border-t border-border bg-card px-3 py-3 md:px-6">
-          {typingSenderDid && (
-            <div className="mx-auto mb-2 max-w-2xl text-xs italic text-muted-foreground">
-              {isGroup ? contactNameForDid(typingSenderDid) : peerComposerName} is typing…
+      <div className="flex-1 overflow-y-auto">
+        <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col gap-3 p-4 md:p-6">
+          {loading && <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 size={18} className="animate-spin" /> Loading secure conversation…</div>}
+          {!loading && messages.length === 0 && <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center text-muted-foreground"><MessageSquare size={36} /><p className="text-sm font-medium text-foreground">No messages yet</p><p className="max-w-xs text-xs">Start this secure {isGroup ? "Circle conversation" : "peer-to-peer conversation"}.</p></div>}
+          {messages.map((item) => <div key={item.id} className={`flex flex-col ${item.isMe ? "items-end" : "items-start"}`}>
+            {!item.isMe && <span className="mb-1 ml-1 max-w-[78%] truncate text-xs text-muted-foreground">{item.sender}</span>}
+            <div className="max-w-[78%] overflow-hidden rounded-2xl border border-border px-4 py-2.5" style={{ background: item.isMe ? "var(--primary)" : "var(--card)", borderColor: item.isMe ? "transparent" : undefined }}>
+              {item.attachment ? <MessageAttachment attachment={item.attachment} isMe={item.isMe} /> : <p className="text-sm leading-6" style={{ color: item.isMe ? "var(--primary-foreground)" : "var(--foreground)" }}>{item.content}</p>}
             </div>
-          )}
-          {uploadProgress !== null && <div className="mx-auto mb-2 max-w-2xl text-xs text-muted-foreground">Uploading file… {uploadProgress}%</div>}
-          <div className="mx-auto flex max-w-2xl items-center gap-2">
-            <AttachmentMenu onPick={(file) => void attach(file)} disabled={sending} />
-            <input value={message} onChange={(event) => handleComposerChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void send(message); }} disabled={sending} placeholder={isGroup ? "Secure Circle message…" : `Message ${peerComposerName}…`} className="h-11 flex-1 rounded-full border border-border bg-input-background px-4 text-sm outline-none" />
-            <button type="button" aria-label="Send message" onClick={() => void send(message)} disabled={sending || !message.trim()} className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground disabled:opacity-40">{sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}</button>
-          </div>
+            <div className="mx-1 mt-1 flex max-w-[78%] items-center gap-1 text-[10px] text-muted-foreground">
+              <span className="truncate">{item.timestamp}{item.isMe ? ` · ${statusLabel(item.status, item.read)}` : ""}</span>
+              {item.isMe && (item.queueState === "queued" || item.queueState === "sending" || item.queueState === "failed_permanent" || item.status === "failed_permanent") && (
+                <>
+                  {(item.queueState === "failed_permanent" || item.status === "failed_permanent") && <button type="button" aria-label="Retry message" title={item.queueError || "Retry message"} onClick={() => void retryQueuedMessage(item.id)} className="grid h-6 w-6 place-items-center rounded-full hover:bg-muted"><RotateCcw size={12} /></button>}
+                  {(item.queueState === "queued" || item.queueState === "sending") && <button type="button" aria-label="Cancel queued message" title={item.queueError || "Cancel queued message"} onClick={() => void cancelQueuedMessage(item.id)} className="grid h-6 w-6 place-items-center rounded-full hover:bg-muted"><XCircle size={12} /></button>}
+                </>
+              )}
+            </div>
+          </div>)}
+          <div ref={bottomRef} />
         </div>
-      </>}
+      </div>
+      <div className="shrink-0 border-t border-border bg-card px-3 py-3 md:px-6">
+        {typingSenderDid && (
+          <div className="mx-auto mb-2 max-w-2xl text-xs italic text-muted-foreground">
+            {isGroup ? contactNameForDid(typingSenderDid) : peerComposerName} is typing…
+          </div>
+        )}
+        {uploadProgress !== null && <div className="mx-auto mb-2 max-w-2xl text-xs text-muted-foreground">Uploading file… {uploadProgress}%</div>}
+        <div className="mx-auto flex max-w-2xl items-center gap-2">
+          <AttachmentMenu onPick={(file) => void attach(file)} disabled={sending} />
+          <input value={message} onChange={(event) => handleComposerChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void send(message); }} disabled={sending} placeholder={isGroup ? "Secure Circle message…" : `Message ${peerComposerName}…`} className="h-11 flex-1 rounded-full border border-border bg-input-background px-4 text-sm outline-none" />
+          <button type="button" aria-label="Send message" onClick={() => void send(message)} disabled={sending || !message.trim()} className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground disabled:opacity-40">{sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}</button>
+        </div>
+      </div>
     </div>
   );
 }
