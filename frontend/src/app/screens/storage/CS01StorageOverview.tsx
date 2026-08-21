@@ -327,9 +327,19 @@ export function CS01StorageOverview() {
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search all files on this device"
-                  className={canManageVault ? "h-10 pl-9" : "h-11 rounded-full pl-9"}
+                  className={`${canManageVault ? "h-10 pl-9" : "h-11 rounded-full pl-9"} ${query ? "pr-8" : ""}`}
                   aria-label="Search files"
                 />
+                {query && (
+                  <button
+                    type="button"
+                    aria-label="Clear search"
+                    onClick={() => setQuery("")}
+                    className="absolute right-2 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full hover:bg-muted"
+                  >
+                    <X size={14} style={{ color: "var(--muted-foreground)" }} />
+                  </button>
+                )}
               </div>
               <Button
                 type="button"

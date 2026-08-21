@@ -303,6 +303,7 @@ export function MemberContactsScreen() {
       <label className="mx-auto flex h-11 max-w-3xl items-center gap-2 rounded-full border border-border bg-input-background px-4">
         <Search size={17} className="text-muted-foreground" />
         <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search contacts" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+        {query && <button type="button" aria-label="Clear search" onClick={() => setQuery("")} className="grid h-5 w-5 shrink-0 place-items-center rounded-full hover:bg-muted"><X size={14} className="text-muted-foreground" /></button>}
       </label>
     </div>
     <div className="flex-1 overflow-y-auto"><div className="mx-auto max-w-3xl divide-y divide-border">
