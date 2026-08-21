@@ -55,6 +55,7 @@ const CallsHistoryScreen = screen(() => import("./screens/calls/CallsHistoryScre
 const CircleManagementScreen = screen(() => import("./screens/network/CircleManagementScreen"), "CircleManagementScreen");
 const CircleJoinScreen = screen(() => import("./screens/network/CircleJoinScreen"), "CircleJoinScreen");
 const MemberSettingsScreen = screen(() => import("./screens/member/MemberSettingsScreen"), "MemberSettingsScreen");
+const JoinCircleScreen = screen(() => import("./screens/member/JoinCircleScreen"), "JoinCircleScreen");
 const MemberJoinOnboarding = screen(() => import("./screens/onboarding/MemberJoinOnboarding"), "MemberJoinOnboarding");
 
 // Devices
@@ -208,6 +209,11 @@ export const router = createBrowserRouter([
               path: "member-settings",
               Component: MemberNarrowPane,
               children: [{ index: true, Component: MemberSettingsScreen }],
+            },
+            {
+              path: "join-circle",
+              Component: MemberNarrowPane,
+              children: [{ index: true, Component: JoinCircleScreen }],
             },
 
             // Network / Circles tab

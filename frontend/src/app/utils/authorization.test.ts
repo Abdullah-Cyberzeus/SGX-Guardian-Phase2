@@ -48,7 +48,7 @@ describe("homePathForRole", () => {
 
 describe("memberCanOpenPath", () => {
   it("allows the member-safe top-level routes", () => {
-    for (const path of ["/chats", "/calls", "/contacts", "/storage", "/member-settings", "/notifications"]) {
+    for (const path of ["/chats", "/calls", "/contacts", "/storage", "/member-settings", "/join-circle", "/notifications"]) {
       expect(memberCanOpenPath(path)).toBe(true);
     }
   });

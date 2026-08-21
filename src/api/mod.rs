@@ -73,6 +73,10 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             post(handlers::pwa::join_member),
         )
         .route(
+            "/api/v1/pwa/circles/join",
+            post(handlers::pwa::join_additional_circle),
+        )
+        .route(
             "/api/v1/pwa/onboarding/approval/{approval_id}",
             get(handlers::pwa::member_approval_status),
         )

@@ -46,6 +46,10 @@ struct MemberEnrollmentRecord {
     email: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     decided_at: Option<String>,
+    /// True when an already-active browser member is requesting access to an
+    /// additional Circle. Legacy/initial enrollment records default false.
+    #[serde(default)]
+    additional_membership: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -469,6 +473,19 @@ pub struct MemberJoinRequest {
     pub fingerprint_confirmed: bool,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdditionalCircleJoinRequest {
+    pub invite_token: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdditionalCircleJoinResponse {
+    pub enrollment: MemberEnrollmentView,
+    pub approval_claim: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemberJoinResponse {
@@ -600,6 +617,7 @@ pub async fn mint_member_enrollment(
         name: None,
         email: None,
         decided_at: None,
+        additional_membership: false,
     };
     let mut records = load_member_enrollments()?;
     records.push(record.clone());
@@ -669,6 +687,147 @@ pub async fn member_approval_status(
     }))
 }
 
+/// Bind an administrator-generated member invite to the currently signed-in
+/// browser member. The existing account, browser registration, and DID are
+/// retained; Circle access is appended only after the Circle owner approves.
+pub async fn join_additional_circle(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthenticatedSession>,
+    Json(body): Json<AdditionalCircleJoinRequest>,
+) -> Result<Json<AdditionalCircleJoinResponse>, ApiError> {
+    if auth.claims.role != "member" {
+        return Err(ApiError::Forbidden(
+            "only an active PWA member can join an additional Circle".into(),
+        ));
+    }
+    let registration_id = auth
+        .claims
+        .browser_registration_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| ApiError::Unauthorized("member browser registration is missing".into()))?
+        .to_string();
+    let member_did = crate::api::handlers::browser_member::did_for_registration(&registration_id);
+    let user = state
+        .admin
+        .users
+        .find_by_id(&auth.claims.sub)
+        .await?
+        .ok_or_else(|| ApiError::Unauthorized("member account not found".into()))?;
+    if user.status != "active" || user.browser_registration_id.as_deref() != Some(&registration_id)
+    {
+        return Err(ApiError::Unauthorized(
+            "member browser registration is inactive or changed".into(),
+        ));
+    }
+
+    let _guard = MEMBER_JOIN_LOCK.lock().await;
+    let mut records = load_member_enrollments()?;
+    let index = enrollment_index_for_claim(&records, &body.invite_token)?;
+    let existing = records[index].clone();
+    if existing.state == "pending"
+        && existing.additional_membership
+        && existing.user_id.as_deref() == Some(user.user_id.as_str())
+    {
+        return Ok(Json(AdditionalCircleJoinResponse {
+            enrollment: MemberEnrollmentView::from(&existing),
+            approval_claim: body.invite_token,
+        }));
+    }
+    if existing.state != "issued" {
+        return Err(ApiError::Conflict(format!(
+            "member invitation is already {}",
+            existing.state
+        )));
+    }
+    enrollment_not_expired(&existing)?;
+    if user.circle_ids.iter().any(|circle_id| circle_id == &existing.circle_id) {
+        return Err(ApiError::Conflict(
+            "you are already a member of this Circle".into(),
+        ));
+    }
+    if records.iter().enumerate().any(|(record_index, record)| {
+        record_index != index
+            && record.user_id.as_deref() == Some(user.user_id.as_str())
+            && record.circle_id == existing.circle_id
+            && matches!(record.state.as_str(), "issued" | "pending")
+    }) {
+        return Err(ApiError::Conflict(
+            "a membership request for this Circle is already pending".into(),
+        ));
+    }
+
+    let circle = store::get_circle(&state.node_id, &existing.circle_id)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    if circle.is_archived() {
+        return Err(ApiError::Conflict("cannot join an archived Circle".into()));
+    }
+    if circle.owner_did != state.device_did {
+        return Err(ApiError::Forbidden(
+            "additional PWA membership must be approved by a Circle owned by this Guardian"
+                .into(),
+        ));
+    }
+    let original = invite::load_invite(&existing.invite_id)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    invite::verify_invite(&original, &state.did_resolver)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    invite::assert_redeemable(&circle, &original, &existing.member_did)
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+
+    // The link initially reserves a fresh DID for first-time signup. Re-sign
+    // it for this authenticated member's stable browser DID before approval.
+    let (issuer, km) = store::load_runtime_signing_context(&state.node_id)
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let expires = chrono::DateTime::parse_from_rfc3339(&existing.expires_at)
+        .map_err(|_| ApiError::BadRequest("member invitation has invalid expiry".into()))?;
+    let remaining_minutes = (expires.with_timezone(&chrono::Utc) - chrono::Utc::now())
+        .num_minutes()
+        .max(1);
+    let rebound = invite::mint_invite(
+        &circle,
+        &issuer,
+        &km,
+        &member_did,
+        crate::vc::credential::CredentialRole::Member,
+        Some(remaining_minutes),
+        Some(1),
+    )
+    .map_err(|error| ApiError::Internal(error.to_string()))?;
+
+    records[index].invite_id = rebound.id;
+    records[index].registration_id = registration_id;
+    records[index].member_did = member_did.clone();
+    records[index].state = "pending".into();
+    records[index].user_id = Some(user.user_id.clone());
+    records[index].name = Some(user.name.clone());
+    records[index].email = Some(user.email.clone());
+    records[index].additional_membership = true;
+    save_member_enrollments(&records)?;
+
+    crate::notify::publish_circle_member_pending_approval(
+        &member_did,
+        &user.name,
+        &existing.circle_name,
+        &existing.circle_id,
+    );
+    log_audit(
+        &state.node_id,
+        AuditCategory::Identity,
+        AuditSeverity::Info,
+        AuditAction::Created,
+        &format!(
+            "additional PWA Circle membership pending actor={} circle={} approval={} member={}",
+            user.user_id, existing.circle_id, existing.approval_id, member_did
+        ),
+    );
+    Ok(Json(AdditionalCircleJoinResponse {
+        enrollment: MemberEnrollmentView::from(&records[index]),
+        approval_claim: body.invite_token,
+    }))
+}
+
 pub async fn approve_member_enrollment(
     State(state): State<Arc<AppState>>,
     Path((circle_id, approval_id)): Path<(String, String)>,
@@ -721,12 +880,20 @@ async fn decide_member_enrollment(
             .map_err(|error| ApiError::Conflict(error.to_string()))?;
         invite::record_redemption(&token.id, &records[index].member_did)
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        if let Err(error) = state
-            .admin
-            .users
-            .set_member_status(&user_id, "active")
-            .await
-        {
+        let account_result = if records[index].additional_membership {
+            state
+                .admin
+                .users
+                .add_member_circle(
+                    &user_id,
+                    &records[index].registration_id,
+                    &records[index].circle_id,
+                )
+                .await
+        } else {
+            state.admin.users.set_member_status(&user_id, "active").await
+        };
+        if let Err(error) = account_result {
             let _ = invite::remove_redemption(&token.id, &records[index].member_did);
             return Err(ApiError::Internal(error.to_string()));
         }
@@ -740,7 +907,7 @@ async fn decide_member_enrollment(
             &records[index].circle_name,
             &records[index].circle_id,
         );
-    } else {
+    } else if !records[index].additional_membership {
         state
             .admin
             .users

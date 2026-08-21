@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, MessageSquare, RefreshCw, Search, ShieldCheck, UsersRound, X } from "lucide-react";
-import { useNavigate } from "react-router";
+import { Loader2, MessageSquare, Plus, RefreshCw, Search, ShieldCheck, UsersRound, X } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router";
 import { PageHeader } from "../../components/PageHeader";
-import { useCommunicationPeers } from "../../hooks/useApiData";
+import { memberCanDirectChatWithPeer, useChatPeers } from "../../hooks/useApiData";
 import { useChatUnread } from "../../contexts/ChatUnreadContext";
 import { useContactNames } from "../../contexts/ContactNameContext";
 import { presenceHidden, type Peer } from "../../services/peerService";
 import { contactRepository } from "../../../pwa/db/contactRepository";
+import { useAuth } from "../../contexts/AuthContext";
+import { isMemberRole } from "../../utils/authorization";
 
 function initials(peer: Peer) {
   return peer.peerId.split(/[-_:]/).filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "P";
@@ -50,7 +52,10 @@ function previewTime(timestamp?: number) {
 
 export function ChatsListScreen({ compact = false }: { compact?: boolean } = {}) {
   const navigate = useNavigate();
-  const { data, loading, error, refetch } = useCommunicationPeers();
+  const [searchParams] = useSearchParams();
+  const { session } = useAuth();
+  const memberSession = isMemberRole(session?.user.role);
+  const { data, loading, error, refetch } = useChatPeers();
   const { counts: unreadCounts, previews, circleCounts, circlePreviews, circleChats, refresh: refreshChat } = useChatUnread();
   const { contactNameForDid } = useContactNames();
   const [query, setQuery] = useState("");
@@ -62,12 +67,16 @@ export function ChatsListScreen({ compact = false }: { compact?: boolean } = {})
       setCachedPeers(current);
       current.filter((peer) => peer.did).forEach((peer) => void contactRepository.save({ did: peer.did!, displayName: peer.peerId, online: peer.online, lastSeen: peer.lastSeenAgo, updatedAt: Date.now() }));
     } else if (error) {
-      void contactRepository.list().then((items) => setCachedPeers(dedupePeers(items.map((item) => ({ peerId: item.displayName, did: item.did, online: false, lastSeenAgo: item.lastSeen || "Cached", status: "verified", callAvailable: false } as Peer)))));
+      void contactRepository.list().then((items) => setCachedPeers(dedupePeers(items
+        .map((item) => ({ peerId: item.displayName, did: item.did, online: false, lastSeenAgo: item.lastSeen || "Cached", status: "verified", callAvailable: false, memberType: "guardian" } as Peer))
+        .filter((peer) => !memberSession || memberCanDirectChatWithPeer(peer, session?.guardianDid)))));
     }
-  }, [data, error]);
-  const peers = useMemo(() => dedupePeers((Array.isArray(data) ? data : cachedPeers).filter((peer: Peer) => peer.status === "verified" && Boolean(peer.did))), [data, cachedPeers]);
+  }, [data, error, memberSession, session?.guardianDid]);
+  const peers = useMemo(() => dedupePeers((Array.isArray(data) ? data : cachedPeers)
+    .filter((peer: Peer) => peer.status === "verified" && Boolean(peer.did))
+    .filter((peer: Peer) => !memberSession || memberCanDirectChatWithPeer(peer, session?.guardianDid))), [data, cachedPeers, memberSession, session?.guardianDid]);
 
-  const [tab, setTab] = useState<"individual" | "groups">("individual");
+  const [tab, setTab] = useState<"individual" | "groups">(() => searchParams.get("tab") === "groups" ? "groups" : "individual");
 
   const { peerRows, circleRows } = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -98,7 +107,10 @@ export function ChatsListScreen({ compact = false }: { compact?: boolean } = {})
 
   return <div className="flex h-full flex-col">
     <PageHeader showBack={!compact} title="Chats" subtitle={`${visible.length} ${tab === "individual" ? "individual chat" : "group chat"}${visible.length === 1 ? "" : "s"}`} right={
-      <button aria-label="Refresh peers" onClick={() => void refresh()} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted"><RefreshCw size={18} className={refreshing ? "animate-spin" : ""} /></button>
+      <div className="flex items-center gap-1">
+        {memberSession && tab === "groups" && <button aria-label="Join another Circle" title="Join another Circle" onClick={() => navigate("/join-circle")} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted"><Plus size={19} /></button>}
+        <button aria-label="Refresh peers" onClick={() => void refresh()} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted"><RefreshCw size={18} className={refreshing ? "animate-spin" : ""} /></button>
+      </div>
     } />
     <div className={`shrink-0 border-b border-border bg-card p-3 ${compact ? "" : "md:px-6"}`}>
       <div className={`flex gap-2 ${compact ? "" : "mx-auto max-w-3xl"}`}>

@@ -27,6 +27,7 @@ export function memberCanOpenPath(pathname: string): boolean {
     pathname === "/contacts" ||
     pathname === "/storage" || pathname.startsWith("/storage/") ||
     pathname === "/member-settings" ||
+    pathname === "/join-circle" ||
     pathname === "/notifications"
   ) return true;
 

@@ -38,7 +38,7 @@ function restorePendingEnrollment(currentInvite: string): StoredPendingEnrollmen
 export function MemberJoinOnboarding() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { joinMember, activatePendingMember } = useAuth();
+  const { session, joinMember, activatePendingMember } = useAuth();
   const currentInvite = searchParams.get("member_invite") || searchParams.get("invite") || searchParams.get("token") || "";
   const [restoredPending] = useState(() => restorePendingEnrollment(currentInvite));
   const [info, setInfo] = useState<GuardianOnboardingInfo | null>(null);
@@ -54,6 +54,11 @@ export function MemberJoinOnboarding() {
   const [joined, setJoined] = useState(false);
   const [pendingEnrollment, setPendingEnrollment] = useState<MemberJoinResult | null>(() => restoredPending?.enrollment || null);
   const [approvalState, setApprovalState] = useState<"pending" | "approved" | "rejected" | "expired">("pending");
+
+  useEffect(() => {
+    if (session?.user.role?.toLowerCase() !== "member" || !currentInvite) return;
+    navigate(`/join-circle?member_invite=${encodeURIComponent(currentInvite)}`, { replace: true });
+  }, [currentInvite, navigate, session?.user.role]);
 
   useEffect(() => {
     void pwaOnboardingService.info()

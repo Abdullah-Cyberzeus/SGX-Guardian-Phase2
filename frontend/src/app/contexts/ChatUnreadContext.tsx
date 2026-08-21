@@ -6,7 +6,7 @@ import { didService } from "../services/didService";
 import { useAuth } from "./AuthContext";
 import { useNotifications } from "./NotificationContext";
 import { isMemberRole } from "../utils/authorization";
-import { fetchCommunicationPeers } from "../hooks/useApiData";
+import { fetchChatPeers } from "../hooks/useApiData";
 import { isWithinDnd, loadLocalNotificationPrefs, playNotificationSound, vibrateForNotification } from "../lib/notificationLocalPrefs";
 
 export interface ChatPreview {
@@ -81,6 +81,7 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
   const [messageToasts, setMessageToasts] = useState<MessageToast[]>([]);
   const [localDid, setLocalDid] = useState(session?.browserMemberDid ?? "");
   const ownDid = session?.browserMemberDid || session?.guardianDid;
+  const circleScope = session?.circleIds.join("\u0000") ?? "";
   const requestId = useRef(0);
   const localDidRef = useRef(localDid);
   const circleNamesRef = useRef<Record<string, string>>({});
@@ -105,7 +106,7 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
     // so a member->guardian message would otherwise never move the unread
     // badge/preview until the conversation was opened directly.
     void Promise.all([
-      fetchCommunicationPeers(isMemberRole(session?.user.role), session?.guardianDid),
+      fetchChatPeers(isMemberRole(session?.user.role), session?.guardianDid),
       circleService.getAll().catch(() => []),
     ]).then(async ([peers, circles]) => {
       const verified = peers.filter((peer) => peer.status === "verified" && peer.did && peer.did !== localDid);
@@ -174,7 +175,7 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
         setCircleChats(groupEntries.filter((entry) => entry[5]).map(([circleId, name, memberCount]) => ({ circleId, name, memberCount })));
       }
     }).catch(() => {});
-  }, [localDid, session?.guardianDid, session?.user.role]);
+  }, [circleScope, localDid, session?.guardianDid, session?.user.role]);
 
   useEffect(() => { refresh(); }, [refresh]);
 

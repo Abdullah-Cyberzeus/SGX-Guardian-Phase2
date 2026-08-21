@@ -217,6 +217,14 @@ pub trait UserStore: Send + Sync {
     /// Atomically creates a member or reactivates the same inactive member
     /// during a verified rejoin. Active accounts cannot be overwritten.
     async fn create_or_reactivate_member(&self, member: NewMemberRegistration) -> Result<User>;
+    /// Atomically grants an existing active browser member access to one
+    /// additional Circle without rotating their browser DID or registration.
+    async fn add_member_circle(
+        &self,
+        user_id: &str,
+        registration_id: &str,
+        circle_id: &str,
+    ) -> Result<User>;
     async fn set_member_status(&self, user_id: &str, status: &str) -> Result<User>;
     async fn revoke_browser_registration(
         &self,
@@ -886,6 +894,40 @@ impl UserStore for JsonUserStore {
             .await
     }
 
+    async fn add_member_circle(
+        &self,
+        user_id: &str,
+        registration_id: &str,
+        circle_id: &str,
+    ) -> Result<User> {
+        let user_id = user_id.to_string();
+        let registration_id = registration_id.to_string();
+        let circle_id = circle_id.trim().to_string();
+        if circle_id.is_empty() {
+            return Err(anyhow!("circle id is required"));
+        }
+        self.file
+            .mutate(move |users| {
+                let user = users
+                    .iter_mut()
+                    .find(|user| user.user_id == user_id)
+                    .ok_or_else(|| anyhow!("user not found"))?;
+                if user.role != UserRole::Member || user.status != "active" {
+                    return Err(anyhow!("active member account required"));
+                }
+                if user.browser_registration_id.as_deref() != Some(registration_id.as_str()) {
+                    return Err(anyhow!("browser registration changed"));
+                }
+                if !user.circle_ids.iter().any(|existing| existing == &circle_id) {
+                    user.circle_ids.push(circle_id);
+                    user.circle_ids.sort();
+                    user.circle_ids.dedup();
+                }
+                Ok(user.clone())
+            })
+            .await
+    }
+
     async fn set_member_status(&self, user_id: &str, status: &str) -> Result<User> {
         if !matches!(status, "active" | "inactive" | "pending") {
             return Err(anyhow!("invalid member status"));
@@ -1393,6 +1435,52 @@ mod tests {
         assert!(reloaded.hide_presence);
         assert!(reloaded.hide_read_receipts);
         assert!(!reloaded.hide_typing);
+    }
+
+    #[tokio::test]
+    async fn active_member_can_append_multiple_circles_without_rotating_registration() {
+        let td = TempDir::new().expect("tempdir");
+        let stores = AdminStores::new(td.path().join("admin"));
+        let created = stores
+            .users
+            .create_or_reactivate_member(NewMemberRegistration {
+                name: "Circle Member".into(),
+                email: "member@example.com".into(),
+                pw_hash: "hash".into(),
+                circle_id: "circle-a".into(),
+                browser_registration_id: "browser-stable".into(),
+                guardian_fingerprint: "FINGERPRINT".into(),
+                registration_expires_at: chrono::Utc::now().timestamp() + 300,
+                invite_id: "invite-a".into(),
+                pending_approval: false,
+            })
+            .await
+            .expect("create member");
+
+        let updated = stores
+            .users
+            .add_member_circle(&created.user_id, "browser-stable", "circle-b")
+            .await
+            .expect("append second circle");
+        assert_eq!(updated.circle_ids, vec!["circle-a", "circle-b"]);
+        assert_eq!(
+            updated.browser_registration_id.as_deref(),
+            Some("browser-stable")
+        );
+
+        let idempotent = stores
+            .users
+            .add_member_circle(&created.user_id, "browser-stable", "circle-b")
+            .await
+            .expect("repeat append");
+        assert_eq!(idempotent.circle_ids, vec!["circle-a", "circle-b"]);
+
+        let error = stores
+            .users
+            .add_member_circle(&created.user_id, "different-browser", "circle-c")
+            .await
+            .expect_err("registration rotation must reject stale approval");
+        assert!(error.to_string().contains("registration changed"));
     }
 
     #[tokio::test]
