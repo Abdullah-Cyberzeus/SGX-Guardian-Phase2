@@ -1330,6 +1330,13 @@ async fn refresh_and_broadcast_member_snapshot_skipping(
     refresh_and_broadcast_member_snapshot_inner(state, circle_id, skip_did, &[]).await
 }
 
+// Builds the snapshot synchronously (fast, local-only), then hands the
+// network fan-out to every circle member's device off to a background task.
+// Delivery is best-effort and was already fire-and-forget from the caller's
+// perspective (failures only produced a warn log, never an HTTP error), so
+// callers no longer wait on it - the endpoint responds as soon as the local
+// membership state is updated instead of blocking on every member's device
+// being reachable within a request timeout.
 async fn refresh_and_broadcast_member_snapshot_inner(
     state: &Arc<AppState>,
     circle_id: &str,
@@ -1349,7 +1356,21 @@ async fn refresh_and_broadcast_member_snapshot_inner(
         .await
         .map_err(|error| CircleError::Invalid(format!("{error:?}")))?;
     let snapshot = snapshot::build_authoritative(circle_id, &owner, &km, members)?;
-    broadcast_member_snapshot(state, &snapshot, skip_did, extra_targets).await;
+
+    let broadcast_state = Arc::clone(state);
+    let broadcast_snapshot = snapshot.clone();
+    let skip_did = skip_did.map(|value| value.to_string());
+    let extra_targets = extra_targets.to_vec();
+    tokio::spawn(async move {
+        broadcast_member_snapshot(
+            &broadcast_state,
+            &broadcast_snapshot,
+            skip_did.as_deref(),
+            &extra_targets,
+        )
+        .await;
+    });
+
     Ok(snapshot)
 }
 

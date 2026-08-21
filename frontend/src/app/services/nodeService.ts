@@ -4,6 +4,7 @@ export interface NodeStatus {
   hostname: string;
   port: number;
   publicKey: string;
+  offlineMode: number;
   version: string;
   uptime: number;
   enclaveStatus: string;
@@ -38,6 +39,7 @@ interface BackendNodeStatus {
   ip: string;
   port: number;
   publicKey: string;
+  offlineMode: number;
   timestamp: string;
 }
 
@@ -61,6 +63,7 @@ export const nodeService = {
       hostname: res.hostname,
       port: res.port,
       publicKey: res.publicKey,
+      offlineMode: res.offlineMode,
       version: '1.0.0',
       uptime: 0,
       enclaveStatus: 'active',

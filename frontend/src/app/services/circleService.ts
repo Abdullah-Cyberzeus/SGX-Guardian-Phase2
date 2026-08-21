@@ -1,4 +1,5 @@
 import api from './api';
+import { peerService, type Peer } from './peerService';
 
 export type CircleStatus = 'active' | 'inactive' | 'archived';
 export type CircleRole = 'owner' | 'member';
@@ -189,6 +190,36 @@ function normalizeInvite(value: any): CircleInvite {
   };
 }
 
+function onlinePresence(value?: string): boolean {
+  return String(value || '').toLowerCase() === 'online';
+}
+
+function buildPeerPresenceIndex(peers: Peer[]): Map<string, Peer> {
+  const index = new Map<string, Peer>();
+  peers.forEach((peer) => {
+    [peer.did, peer.peerId, peer.deviceName].forEach((key) => {
+      if (key) index.set(String(key), peer);
+    });
+  });
+  return index;
+}
+
+function peerIsOnline(peer?: Peer): boolean {
+  if (!peer || peer.presenceStatus === 'hidden' || peer.presenceStatus === 'stale') return false;
+  return onlinePresence(peer.presenceStatus) || peer.online === true;
+}
+
+export function circleMemberIsOnline(member: CircleMember, peersByPresenceKey = new Map<string, Peer>()): boolean {
+  if (member.presenceStatus === 'hidden' || member.presenceStatus === 'stale') return false;
+  if (onlinePresence(member.presenceStatus) || member.online === true) return true;
+  const matchedPeer = peersByPresenceKey.get(member.did) || (member.nodeHint ? peersByPresenceKey.get(member.nodeHint) : undefined);
+  return peerIsOnline(matchedPeer);
+}
+
+export function countOnlineCircleMembers(members: CircleMember[], peersByPresenceKey = new Map<string, Peer>()): number {
+  return members.filter((member) => circleMemberIsOnline(member, peersByPresenceKey)).length;
+}
+
 export function parseInviteMaterial(value: string): ParsedInviteMaterial {
   const trimmed = value.trim();
   if (!trimmed) return { token: '', ownerHost: '' };
@@ -209,12 +240,22 @@ export function parseInviteMaterial(value: string): ParsedInviteMaterial {
 export const circleService = {
   // 1. GET /circles
   async getAll(): Promise<Circle[]> {
-    const circles = listFrom<any>(await api.get<unknown>('/circles'), 'circles').map(normalizeCircle);
+    const [circlesPayload, peers] = await Promise.all([
+      api.get<unknown>('/circles'),
+      peerService.getAll().catch(() => [] as Peer[]),
+    ]);
+    const circles = listFrom<any>(circlesPayload, 'circles').map(normalizeCircle);
+    const peersByPresenceKey = buildPeerPresenceIndex(peers);
     return Promise.all(circles.map(async (circle) => {
       try {
         const members = listFrom<any>(await api.get<unknown>(`/circles/${encode(circle.id)}/members`), 'members').map(normalizeMember);
         const activeMembers = members.filter((member) => member.status !== 'revoked' && member.status !== 'expired');
-        return { ...circle, members: activeMembers, memberCount: activeMembers.length, onlineCount: 0 };
+        return {
+          ...circle,
+          members: activeMembers,
+          memberCount: activeMembers.length,
+          onlineCount: countOnlineCircleMembers(activeMembers, peersByPresenceKey),
+        };
       } catch {
         return { ...circle, members: [], memberCount: 0, onlineCount: 0 };
       }

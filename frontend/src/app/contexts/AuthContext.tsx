@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import {
   CYLENIUM_OIDC_CONFIG,
   cyleniumConfigErrorMessage,
@@ -12,6 +12,7 @@ import {
 import type { GuardianRole } from "../utils/authorization";
 import pwaOnboardingService, { type MemberJoinPayload, type MemberJoinResult } from "../services/pwaOnboardingService";
 import { membershipRepository } from "../../pwa/db/membershipRepository";
+import { purgeAndShowBrowserOffline } from "../../pwa/offlineCleanup";
 
 export interface User {
   id: string;
@@ -53,6 +54,7 @@ interface AuthContextValue {
     codeVerifier?: string | null,
   ) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
+  forceSignOut: (notice?: string) => Promise<void>;
   signOutEverywhere: () => Promise<{ error: string | null }>;
   joinMember: (payload: MemberJoinPayload) => Promise<{ error: string | null; role?: string; enrollment?: MemberJoinResult }>;
   activatePendingMember: (enrollment: MemberJoinResult) => Promise<{ error: string | null }>;
@@ -83,6 +85,9 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 const TOKEN_KEY = "sgx_auth_token";
 const CYLENIUM_RETURN_TO_KEY = "sgx_cylenium_return_to";
 export const AUTH_NOTICE_KEY = "sgx_auth_notice";
+const LEGACY_OFFLINE_MODE_CACHE_KEY = "sgx_offline_mode_enabled";
+const PREVIOUS_OFFLINE_MODE_CACHE_KEY = "sgx_offline_mode_enabled_v2";
+const OFFLINE_MODE_CACHE_KEY = "sgx_offline_mode_enabled_v3";
 
 interface AuthPayload {
   token?: string;
@@ -109,6 +114,7 @@ interface AuthPayload {
 interface LoginBypassProbe {
   nodeId?: string;
   hostname?: string;
+  offlineMode?: number | boolean;
 }
 
 function normalizeSession(payload: AuthPayload, fallbackToken = ""): Session {
@@ -147,8 +153,38 @@ function injectToken(token: string | null, storage: "local" | "session" = "local
 const tokenStorageForRole = (role?: string): "local" | "session" =>
   role?.toLowerCase() === "member" ? "session" : "local";
 
+const offlineModeEnabled = (value: unknown) => value === true || value === 1 || value === "1";
+
+function rememberOfflineMode(value: unknown) {
+  const enabled = offlineModeEnabled(value);
+  localStorage.removeItem(LEGACY_OFFLINE_MODE_CACHE_KEY);
+  localStorage.removeItem(PREVIOUS_OFFLINE_MODE_CACHE_KEY);
+  localStorage.setItem(OFFLINE_MODE_CACHE_KEY, enabled ? "1" : "0");
+  if (!enabled) void membershipRepository.remove().catch(() => undefined);
+}
+
+export function cachedOfflineModeEnabled() {
+  localStorage.removeItem(LEGACY_OFFLINE_MODE_CACHE_KEY);
+  localStorage.removeItem(PREVIOUS_OFFLINE_MODE_CACHE_KEY);
+  return localStorage.getItem(OFFLINE_MODE_CACHE_KEY) === "1";
+}
+
+async function refreshOfflineMode() {
+  try {
+    const probe = await api.request<LoginBypassProbe>("/node/status", {
+      method: "GET",
+      cache: "no-store",
+      timeoutMs: 1500,
+    });
+    rememberOfflineMode(probe.offlineMode);
+  } catch {
+    rememberOfflineMode(0);
+  }
+}
+
 async function persistOfflineMembership(session: Session) {
   if (session.user.role?.toLowerCase() !== "member" || session.offline) return;
+  if (!cachedOfflineModeEnabled()) return;
   await membershipRepository.save({
     guardianDid: session.guardianDid || "",
     guardianFingerprint: session.guardianFingerprint,
@@ -210,8 +246,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const probeLoginBypass = async () => {
       try {
-        const probe = await api.get<LoginBypassProbe>("/node/status");
+        const probe = await api.request<LoginBypassProbe>("/node/status", {
+          method: "GET",
+          cache: "no-store",
+          timeoutMs: 1500,
+        });
         if (cancelled) return;
+        rememberOfflineMode(probe.offlineMode);
         const bypassSession = makeLoginBypassSession(probe);
         injectToken(null);
         setSession(bypassSession);
@@ -219,13 +260,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!cancelled) {
           injectToken(null);
           try {
-            const health = await fetch("/api/v1/health", { cache: "no-store", signal: AbortSignal.timeout(1500) });
+            const health = await fetch(api.publicUrl("/health"), { cache: "no-store", signal: AbortSignal.timeout(1500) });
             if (health.ok) {
               setSession(null);
             } else {
               throw new Error("Guardian unreachable");
             }
           } catch {
+            if (!cachedOfflineModeEnabled()) {
+              setSession(null);
+              void purgeAndShowBrowserOffline();
+              return;
+            }
             const cached = await membershipRepository.get().catch(() => undefined);
             const registrationValid = cached?.registrationExpiresAt == null
               || cached.registrationExpiresAt > Math.floor(Date.now() / 1000);
@@ -263,9 +309,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     api.get<AuthPayload>("/auth/session")
-      .then((data) => {
+      .then(async (data) => {
         if (cancelled) return;
         const next = normalizeSession(data, initialToken);
+        await refreshOfflineMode();
+        if (cancelled) return;
         injectToken(next.token, tokenStorageForRole(next.user.role));
         setSession(next);
         setLoading(false);
@@ -287,6 +335,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await api.post<AuthPayload>("/auth/login", { email, password });
       const next = normalizeSession(data);
       if (!next.token) throw new Error("Login response did not include a bearer token");
+      await refreshOfflineMode();
       await persistOfflineMembership(next);
       injectToken(next.token, tokenStorageForRole(next.user.role));
       setSession(next);
@@ -380,6 +429,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("sgx_onboarded");
   };
 
+  const forceSignOut = useCallback(async (notice?: string) => {
+    if (notice) sessionStorage.setItem(AUTH_NOTICE_KEY, notice);
+    injectToken(null);
+    setSession(null);
+    await membershipRepository.remove().catch(() => {});
+    localStorage.removeItem("sgx_onboarded");
+  }, []);
+
   const signOutEverywhere = async (): Promise<{ error: string | null }> => {
     try {
       await api.post("/auth/sessions/revoke-all");
@@ -404,6 +461,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!next.token || next.user.role !== "member") {
         throw new Error("Guardian did not issue a valid member session");
       }
+      await refreshOfflineMode();
       await persistOfflineMembership(next);
       injectToken(next.token, "session");
       setSession(next);
@@ -427,6 +485,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!next.token || next.user.role !== "member") {
         throw new Error("Guardian did not activate a valid member session");
       }
+      await refreshOfflineMode();
       await persistOfflineMembership(next);
       injectToken(next.token, "session");
       setSession(next);
@@ -443,6 +502,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await api.post<AuthPayload>("/auth/session/refresh");
       const next = normalizeSession(data);
       if (!next.token) throw new Error("Refresh response did not include a session token");
+      await refreshOfflineMode();
       await persistOfflineMembership(next);
       injectToken(next.token, tokenStorageForRole(next.user.role));
       setSession(next);
@@ -503,6 +563,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         completeCyleniumSignIn,
         completeCyleniumLogin,
         signOut,
+        forceSignOut,
         signOutEverywhere,
         joinMember,
         activatePendingMember,

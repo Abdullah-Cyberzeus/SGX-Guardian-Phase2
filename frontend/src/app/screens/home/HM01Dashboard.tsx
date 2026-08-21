@@ -11,6 +11,7 @@ import { useGuardianInfo, useAlerts, useCircles, useThreatIntel } from "../../ho
 import { Card, CardHeader, CardTitle, CardDescription, CardAction, CardContent } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Progress } from "../../components/ui/progress";
+import { useAuth } from "../../contexts/AuthContext";
 
 type ScreenState = "loading" | "populated" | "empty" | "error";
 
@@ -48,6 +49,40 @@ interface CircleData {
   name: string;
   memberCount: number;
   onlineCount: number;
+}
+
+function normalizedIdentity(value: unknown) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function currentGuardianIsCircleMember(circle: any, identities: Set<string>) {
+  const members = Array.isArray(circle?.members) ? circle.members : [];
+  return members.some((member: any) => [
+    member?.did,
+    member?.nodeHint,
+    member?.node_hint,
+    member?.deviceId,
+    member?.device_id,
+    member?.peerId,
+    member?.peer_id,
+  ].some((value) => identities.has(normalizedIdentity(value))));
+}
+
+function currentGuardianAlreadyCounted(circle: any, identities: Set<string>) {
+  const members = Array.isArray(circle?.members) ? circle.members : [];
+  return members.some((member: any) => {
+    const isSelf = [
+      member?.did,
+      member?.nodeHint,
+      member?.node_hint,
+      member?.deviceId,
+      member?.device_id,
+      member?.peerId,
+      member?.peer_id,
+    ].some((value) => identities.has(normalizedIdentity(value)));
+    if (!isSelf) return false;
+    return member?.online === true || normalizedIdentity(member?.presenceStatus) === "online";
+  });
 }
 
 // ── Shared sub-components ────────────────────────────────────────────────────
@@ -434,6 +469,7 @@ function CirclesCard({ navigate, circles }: { navigate: (p: string) => void; cir
 export function HM01Dashboard() {
   const navigate = useNavigate();
   const { name: userName } = useCurrentUser();
+  const { session } = useAuth();
   const [bannerVisible, setBannerVisible] = useState(() => !localStorage.getItem(BANNER_KEY));
 
   // Fetch live data from the Guardian API. API failures remain explicit.
@@ -469,12 +505,30 @@ export function HM01Dashboard() {
 
   const circles = useMemo(() => {
     const circlesList = Array.isArray(circlesData) ? circlesData : [];
+    const currentGuardianIds = new Set([
+      session?.guardianDid,
+      session?.guardianFingerprint,
+      guardianData?.guardianDid,
+      guardianData?.did,
+      guardianData?.fingerprint,
+      guardianData?.nodeId,
+      guardianData?.id,
+      guardianData?.name,
+    ].map(normalizedIdentity).filter(Boolean));
     return circlesList.map((circle: any) => ({
       ...circle,
-      onlineCount: circle.onlineCount ?? Math.floor((circle.memberCount || 0) * 0.6),
       memberCount: circle.memberCount || 0,
+      onlineCount: Math.min(
+        circle.memberCount || 0,
+        (circle.onlineCount ?? 0)
+          + (currentGuardianIds.size > 0
+            && currentGuardianIsCircleMember(circle, currentGuardianIds)
+            && !currentGuardianAlreadyCounted(circle, currentGuardianIds)
+            ? 1
+            : 0),
+      ),
     }));
-  }, [circlesData]);
+  }, [circlesData, guardianData, session?.guardianDid, session?.guardianFingerprint]);
 
   // Live values come from Guardian's persisted alert and active-block stores.
   const threats24h = threatData?.threats24h ?? 0;

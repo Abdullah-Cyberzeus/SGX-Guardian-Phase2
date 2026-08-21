@@ -59,6 +59,15 @@ describe("callRepository", () => {
     const calls = await callRepository.list();
     expect(calls.map((c) => c.id)).toEqual(["c2", "c1"]);
   });
+
+  it("replaceAll removes stale call history entries", async () => {
+    await callRepository.save({ id: "old", kind: "direct", direction: "incoming", outcome: "completed", media: ["audio"], participantIds: ["did:guardian:old"], title: "Old", startedAt: 100, endedAt: "", durationSeconds: 10 });
+    await callRepository.replaceAll([
+      { id: "new", kind: "direct", direction: "incoming", outcome: "completed", media: ["audio"], participantIds: ["did:guardian:new"], title: "New", startedAt: 200, endedAt: "", durationSeconds: 20 },
+    ]);
+    const calls = await callRepository.list();
+    expect(calls.map((call) => call.id)).toEqual(["new"]);
+  });
 });
 
 describe("notificationRepository", () => {

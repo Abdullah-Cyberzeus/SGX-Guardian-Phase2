@@ -4,6 +4,7 @@ hostname: "nodea.guardian"
 ip: "127.0.0.1"
 port: 50051
 public_key: "placeholder-key-A"
+offline_mode: 1
 
 relay:
   enabled: false

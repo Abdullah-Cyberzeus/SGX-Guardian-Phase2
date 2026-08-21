@@ -20,6 +20,8 @@ pub struct NodeStatus {
     pub port: u16,
     #[serde(rename = "publicKey")]
     pub public_key: String,
+    #[serde(rename = "offlineMode")]
+    pub offline_mode: u8,
     pub timestamp: String,
 }
 
@@ -55,6 +57,7 @@ pub async fn status(
         ip: cfg.ip,
         port: cfg.port,
         public_key: cfg.public_key,
+        offline_mode: cfg.offline_mode,
         timestamp: chrono::Utc::now().to_rfc3339(),
     }))
 }

@@ -131,12 +131,22 @@ export function parseChatPayload(record: ChatMessageRecord): ChatPayload {
   }
 }
 
+const HEARTBEAT_INTERVAL_MS = 20_000;
+// A stopped/frozen Guardian node often leaves the underlying TCP connection
+// looking "open" from the browser's perspective (no RST is ever delivered),
+// so a heartbeat with no reply for this long is treated as dead and the
+// socket is force-closed - which fires onclose and reports the disconnect
+// immediately instead of leaving the app believing it's still connected.
+const WATCHDOG_TIMEOUT_MS = HEARTBEAT_INTERVAL_MS * 2 + 5_000;
+
 export function openChatSocket(onChange: (event?: ChatSocketEvent) => void, onState?: (connected: boolean) => void): () => void {
   let socket: WebSocket | null = null;
   let retryTimer: number | undefined;
   let heartbeatTimer: number | undefined;
+  let watchdogTimer: number | undefined;
   let stopped = false;
   let retryCount = 0;
+  let lastActivity = 0;
 
   const connect = () => {
     if (stopped) return;
@@ -152,13 +162,18 @@ export function openChatSocket(onChange: (event?: ChatSocketEvent) => void, onSt
     socket = new WebSocket(endpoint);
     socket.onopen = () => {
       retryCount = 0;
+      lastActivity = Date.now();
       onState?.(true);
       window.dispatchEvent(new CustomEvent("sgx:socket-state", { detail: { source: "chat", connected: true } }));
       heartbeatTimer = window.setInterval(() => {
         if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "heartbeat" }));
-      }, 20_000);
+      }, HEARTBEAT_INTERVAL_MS);
+      watchdogTimer = window.setInterval(() => {
+        if (Date.now() - lastActivity > WATCHDOG_TIMEOUT_MS) socket?.close();
+      }, HEARTBEAT_INTERVAL_MS);
     };
     socket.onmessage = (event) => {
+      lastActivity = Date.now();
       try {
         const payload = JSON.parse(String(event.data)) as ChatSocketEvent;
         if (payload.type === "heartbeat_ack") return;
@@ -174,6 +189,7 @@ export function openChatSocket(onChange: (event?: ChatSocketEvent) => void, onSt
       onState?.(false);
       window.dispatchEvent(new CustomEvent("sgx:socket-state", { detail: { source: "chat", connected: false } }));
       if (heartbeatTimer) window.clearInterval(heartbeatTimer);
+      if (watchdogTimer) window.clearInterval(watchdogTimer);
       if (!stopped) {
         const delay = Math.min(10_000, 500 * 2 ** retryCount++);
         retryTimer = window.setTimeout(connect, delay);
@@ -186,6 +202,7 @@ export function openChatSocket(onChange: (event?: ChatSocketEvent) => void, onSt
     stopped = true;
     if (retryTimer) window.clearTimeout(retryTimer);
     if (heartbeatTimer) window.clearInterval(heartbeatTimer);
+    if (watchdogTimer) window.clearInterval(watchdogTimer);
     socket?.close();
   };
 }

@@ -3,13 +3,57 @@ import { RouterProvider } from "react-router";
 import { router } from "./routes";
 import { Toaster } from "sonner";
 import { PwaUpdatePrompt } from "./components/PwaUpdatePrompt";
+import api from "./services/api";
+import { purgeAndShowBrowserOffline, purgeOfflineShell } from "../pwa/offlineCleanup";
 
 const APP_VERSION = __APP_VERSION__;
+const SERVICE_WORKER_READY_TIMEOUT_MS = 8_000;
+const LEGACY_OFFLINE_MODE_CACHE_KEY = "sgx_offline_mode_enabled";
+const PREVIOUS_OFFLINE_MODE_CACHE_KEY = "sgx_offline_mode_enabled_v2";
+const OFFLINE_MODE_CACHE_KEY = "sgx_offline_mode_enabled_v3";
+
+function offlineModeEnabled(value: unknown) {
+  return value === true || value === 1 || value === "1";
+}
+
+function rememberOfflineMode(value: unknown) {
+  localStorage.removeItem(LEGACY_OFFLINE_MODE_CACHE_KEY);
+  localStorage.removeItem(PREVIOUS_OFFLINE_MODE_CACHE_KEY);
+  localStorage.setItem(OFFLINE_MODE_CACHE_KEY, offlineModeEnabled(value) ? "1" : "0");
+}
+
+function cachedOfflineModeEnabled() {
+  localStorage.removeItem(LEGACY_OFFLINE_MODE_CACHE_KEY);
+  localStorage.removeItem(PREVIOUS_OFFLINE_MODE_CACHE_KEY);
+  return localStorage.getItem(OFFLINE_MODE_CACHE_KEY) === "1";
+}
+
+async function guardianOfflineModeState(): Promise<"enabled" | "disabled" | "unreachable"> {
+  try {
+    const response = await fetch(api.publicUrl("/node/status"), {
+      cache: "no-store",
+      signal: AbortSignal.timeout(1500),
+    });
+    if (!response.ok) return "disabled";
+    const status = await response.json();
+    rememberOfflineMode(status?.offlineMode);
+    return offlineModeEnabled(status?.offlineMode) ? "enabled" : "disabled";
+  } catch {
+    return "unreachable";
+  }
+}
+
+async function waitForServiceWorkerReady() {
+  return Promise.race<ServiceWorkerRegistration | null>([
+    navigator.serviceWorker.ready,
+    new Promise((resolve) => window.setTimeout(() => resolve(null), SERVICE_WORKER_READY_TIMEOUT_MS)),
+  ]);
+}
 
 function usePWA() {
   const [waiting, setWaiting] = useState<ServiceWorker | null>(null);
   const [registrationError, setRegistrationError] = useState<string | null>(null);
-  const [offlineReady, setOfflineReady] = useState(false);
+  const [offlineReady, setOfflineReady] = useState(true);
   useEffect(() => {
     const isIframe = window.self !== window.top;
     const isFigmaPreview =
@@ -73,14 +117,35 @@ function usePWA() {
       return;
     }
 
-    // Register the offline worker only from a browser-trusted origin.
+    // Register the offline worker only when the Guardian explicitly enables
+    // offline mode. When disabled, remove the worker so a stopped node produces
+    // the browser's normal "site can't be reached" page instead of cached UI.
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker
-        .register(`/sw.js?v=${encodeURIComponent(APP_VERSION)}`, {
-          scope: "/",
-          updateViaCache: "none",
+      setOfflineReady(false);
+      guardianOfflineModeState()
+        .then(async (state) => {
+          if (state === "unreachable") {
+            if (cachedOfflineModeEnabled()) {
+              setOfflineReady(true);
+              return waitForServiceWorkerReady().catch(() => null);
+            }
+            await purgeAndShowBrowserOffline();
+            return null;
+          }
+          if (state === "disabled") {
+            rememberOfflineMode(0);
+            await purgeOfflineShell();
+            setOfflineReady(true);
+            if (navigator.serviceWorker.controller) window.location.reload();
+            return null;
+          }
+          return navigator.serviceWorker.register(`/sw.js?v=${encodeURIComponent(APP_VERSION)}`, {
+            scope: "/",
+            updateViaCache: "none",
+          });
         })
         .then((reg) => {
+          if (!reg) return null;
           console.log("[SW] Registered, scope:", reg.scope);
           setRegistrationError(null);
           if (reg.waiting) {
@@ -97,9 +162,13 @@ function usePWA() {
               else worker.postMessage({ type: "SKIP_WAITING" });
             });
           });
-          return navigator.serviceWorker.ready;
+          return waitForServiceWorkerReady();
         })
-        .then(() => {
+        .then((ready) => {
+          if (!ready) {
+            setOfflineReady(true);
+            return;
+          }
           console.log("[SW] Offline shell installed and ready");
           setOfflineReady(true);
           // Best-effort protection from storage-pressure eviction. Browsers

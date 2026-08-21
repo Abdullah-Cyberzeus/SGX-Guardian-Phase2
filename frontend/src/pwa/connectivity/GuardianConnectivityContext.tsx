@@ -1,8 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import api, { type ApiFailureKind } from "../../app/services/api";
+import { cachedOfflineModeEnabled, useAuth } from "../../app/contexts/AuthContext";
 import { pendingOperationCount } from "../sync/pendingReplay";
 import { syncCoordinator } from "../sync/syncCoordinator";
 import { syncStateRepository } from "../db/syncStateRepository";
+import { purgeAndShowBrowserOffline } from "../offlineCleanup";
 
 type ConnectivityStatus = "guardian_connected" | "reconnecting" | "guardian_offline" | "credential_revoked";
 
@@ -20,7 +22,7 @@ interface ConnectivityState {
 }
 
 const LAST_SEEN_KEY = "last_guardian_seen_at";
-const BASE_DELAY_MS = 5_000;
+const BASE_DELAY_MS = 3_000;
 const MAX_DELAY_MS = 60_000;
 
 const Context = createContext<ConnectivityState>({
@@ -60,6 +62,7 @@ async function guardianHealthProbe() {
 }
 
 export function GuardianConnectivityProvider({ children }: { children: ReactNode }) {
+  const { session, forceSignOut } = useAuth();
   const [reachable, setReachable] = useState(true);
   const [checking, setChecking] = useState(true);
   const [revoked, setRevoked] = useState(false);
@@ -67,9 +70,10 @@ export function GuardianConnectivityProvider({ children }: { children: ReactNode
   const [pendingCount, setPendingCount] = useState(0);
   const [syncRunning, setSyncRunning] = useState(false);
   const failures = useRef(0);
-  const timer = useRef<number | undefined>();
   const wasReachable = useRef(true);
   const startupSyncQueued = useRef(false);
+  const reachableRef = useRef(reachable);
+  reachableRef.current = reachable;
 
   const refreshPendingCount = useCallback(async () => {
     setPendingCount(await pendingOperationCount().catch(() => 0));
@@ -91,10 +95,16 @@ export function GuardianConnectivityProvider({ children }: { children: ReactNode
     }
   }, [refreshPendingCount]);
 
-  const markOffline = useCallback(() => {
+  const markOffline = useCallback((options: { forceSignOut?: boolean; purgeBrowserState?: boolean } = {}) => {
     failures.current += 1;
     setReachable(false);
-  }, []);
+    if (options.forceSignOut && session && !cachedOfflineModeEnabled()) {
+      void forceSignOut("Guardian node is offline. Please sign in again when it is reachable.");
+    }
+    if (options.purgeBrowserState && !cachedOfflineModeEnabled()) {
+      void purgeAndShowBrowserOffline();
+    }
+  }, [forceSignOut, session]);
 
   const checkNow = useCallback(async () => {
     if (revoked) return;
@@ -111,18 +121,12 @@ export function GuardianConnectivityProvider({ children }: { children: ReactNode
         window.dispatchEvent(new CustomEvent("sgx:unauthorized"));
       } else {
         wasReachable.current = false;
-        markOffline();
+        markOffline({ forceSignOut: true, purgeBrowserState: true });
       }
     } finally {
       setChecking(false);
     }
   }, [markConnected, markOffline, revoked]);
-
-  const scheduleNext = useCallback(() => {
-    if (timer.current) window.clearTimeout(timer.current);
-    const delay = reachable ? BASE_DELAY_MS : delayWithJitter(failures.current);
-    timer.current = window.setTimeout(() => void checkNow().finally(scheduleNext), delay);
-  }, [checkNow, reachable]);
 
   const retryNow = useCallback(async () => {
     failures.current = 0;
@@ -132,6 +136,18 @@ export function GuardianConnectivityProvider({ children }: { children: ReactNode
       await refreshPendingCount();
     }
   }, [checkNow, refreshPendingCount]);
+
+  // checkNow/retryNow are read through refs so the polling loop below can be
+  // armed exactly once at mount and keep ticking on its own schedule,
+  // instead of being torn down and rebuilt (losing its pending timer) every
+  // time an unrelated re-render hands it a new callback identity. That
+  // used to make the periodic offline check unreliable while the tab sat
+  // idle - only an explicit visibilitychange/focus/refresh reliably
+  // detected a stopped Guardian node.
+  const checkNowRef = useRef(checkNow);
+  checkNowRef.current = checkNow;
+  const retryNowRef = useRef(retryNow);
+  retryNowRef.current = retryNow;
 
   useEffect(() => {
     syncStateRepository.get(LAST_SEEN_KEY)
@@ -144,18 +160,35 @@ export function GuardianConnectivityProvider({ children }: { children: ReactNode
   }, [refreshPendingCount]);
 
   useEffect(() => {
-    void checkNow().finally(scheduleNext);
-    const foreground = () => {
-      if (document.visibilityState === "visible") void retryNow();
+    let cancelled = false;
+    let timeoutId: number | undefined;
+
+    const runCheck = () => {
+      if (cancelled) return;
+      void checkNowRef.current().finally(() => {
+        if (cancelled) return;
+        const delay = reachableRef.current ? BASE_DELAY_MS : delayWithJitter(failures.current);
+        timeoutId = window.setTimeout(runCheck, delay);
+      });
     };
+
+    runCheck();
+
+    const foreground = () => {
+      if (document.visibilityState === "visible") void retryNowRef.current();
+    };
+    const backOnline = () => void retryNowRef.current();
     document.addEventListener("visibilitychange", foreground);
     window.addEventListener("focus", foreground);
+    window.addEventListener("online", backOnline);
     return () => {
-      if (timer.current) window.clearTimeout(timer.current);
+      cancelled = true;
+      if (timeoutId) window.clearTimeout(timeoutId);
       document.removeEventListener("visibilitychange", foreground);
       window.removeEventListener("focus", foreground);
+      window.removeEventListener("online", backOnline);
     };
-  }, [checkNow, retryNow, scheduleNext]);
+  }, []);
 
   useEffect(() => {
     const success = () => void markConnected(false);

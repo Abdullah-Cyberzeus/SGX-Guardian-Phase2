@@ -860,6 +860,7 @@ impl UserStore for JsonUserStore {
                     existing.guardian_fingerprint = Some(member.guardian_fingerprint);
                     existing.registration_expires_at = Some(member.registration_expires_at);
                     existing.invite_id = Some(member.invite_id);
+                    existing.created_at = chrono::Utc::now().to_rfc3339();
                     existing.status = if member.pending_approval {
                         "pending"
                     } else {
@@ -1721,6 +1722,59 @@ mod tests {
         assert!(err
             .to_string()
             .contains("signup is only allowed before the first user is created"));
+    }
+
+    #[tokio::test]
+    async fn reactivated_member_gets_fresh_created_at_for_history_cutoff() {
+        let td = TempDir::new().expect("tempdir");
+        let stores = AdminStores::new(td.path().join("admin"));
+        let first = stores
+            .users
+            .create_or_reactivate_member(NewMemberRegistration {
+                name: "Member".into(),
+                email: "member@example.com".into(),
+                pw_hash: "hash-1".into(),
+                circle_id: "circle-old".into(),
+                browser_registration_id: "browser-old".into(),
+                guardian_fingerprint: "guardian-1".into(),
+                registration_expires_at: chrono::Utc::now().timestamp() + 60,
+                invite_id: "invite-old".into(),
+                pending_approval: false,
+            })
+            .await
+            .expect("create member");
+        stores
+            .users
+            .set_member_status(&first.user_id, "inactive")
+            .await
+            .expect("deactivate member");
+
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+        let reactivated = stores
+            .users
+            .create_or_reactivate_member(NewMemberRegistration {
+                name: "Member".into(),
+                email: "member@example.com".into(),
+                pw_hash: "hash-2".into(),
+                circle_id: "circle-new".into(),
+                browser_registration_id: "browser-new".into(),
+                guardian_fingerprint: "guardian-1".into(),
+                registration_expires_at: chrono::Utc::now().timestamp() + 120,
+                invite_id: "invite-new".into(),
+                pending_approval: false,
+            })
+            .await
+            .expect("reactivate member");
+
+        let first_created = chrono::DateTime::parse_from_rfc3339(&first.created_at)
+            .expect("first created_at")
+            .with_timezone(&chrono::Utc);
+        let reactivated_created = chrono::DateTime::parse_from_rfc3339(&reactivated.created_at)
+            .expect("reactivated created_at")
+            .with_timezone(&chrono::Utc);
+        assert!(reactivated_created > first_created);
+        assert_eq!(reactivated.circle_ids, vec!["circle-new"]);
     }
 
     #[tokio::test]

@@ -60,6 +60,10 @@ function statusLabel(status: string, read: boolean) {
   return "Sent";
 }
 
+function readBy(record: Pick<ChatMessageRecord, "read_by">) {
+  return Array.isArray(record.read_by) ? record.read_by : [];
+}
+
 function conversationIdForRoute(isGroup: boolean, circleId?: string, peerDid?: string, guardianDid?: string, browserMemberDid?: string) {
   if (isGroup) return `circle:${circleId}`;
   const canonicalPeerDid = peerDid && guardianDid && browserMemberDid && peerDid === guardianDid
@@ -173,7 +177,9 @@ export function ChatConversationScreen() {
       const response = isGroup
         ? await chatService.groupHistory(circleId!)
         : await chatService.directHistory(peerDid!);
-      const sorted = [...response.messages].sort((a, b) => a.seq_no - b.seq_no || a.timestamp - b.timestamp);
+      const sorted = [...response.messages]
+        .map((record) => ({ ...record, read_by: readBy(record) }))
+        .sort((a, b) => a.seq_no - b.seq_no || a.timestamp - b.timestamp);
       setRecords(sorted);
       await Promise.all(sorted.map((record) => messageRepository.save({
         id: record.message_id,
@@ -291,29 +297,31 @@ export function ChatConversationScreen() {
     if (unreadRefreshTimerRef.current) window.clearTimeout(unreadRefreshTimerRef.current);
   }, []);
 
-  // A message is marked read while its conversation is the active, foreground view.
-  // The backend persists the receipt before this promise resolves, so refreshing the
-  // conversation list afterwards returns the canonical unread count.
-  const markMessageRead = useCallback((messageId: string) => {
-    if (markedReadRef.current.has(messageId)) return;
-    const record = recordsRef.current.find((entry) => entry.message_id === messageId);
-    if (!record || !localDid || record.sender_did === localDid || (!isGroup && record.status === "read") || record.read_by.includes(localDid)) return;
-    markedReadRef.current.add(messageId);
-    void chatService.markRead(record.message_id, record.sender_did, isGroup ? circleId : undefined)
-      .then(() => {
-        setRecords((current) => current.map((entry) => (entry.message_id === messageId
-          ? { ...entry, status: "read", read_by: entry.read_by.includes(localDid) ? entry.read_by : [...entry.read_by, localDid] }
-          : entry)));
-        scheduleUnreadRefresh();
-      })
-      .catch(() => { markedReadRef.current.delete(messageId); });
-  }, [localDid, isGroup, circleId, scheduleUnreadRefresh]);
-
   const markConversationRead = useCallback(() => {
-    recordsRef.current
-      .filter((record) => record.sender_did !== localDid && (isGroup || record.status !== "read") && !record.read_by.includes(localDid))
-      .forEach((record) => markMessageRead(record.message_id));
-  }, [localDid, isGroup, markMessageRead]);
+    if (!localDid) return;
+    const conversationId = conversationIdForRoute(isGroup, circleId, peerDid, session?.guardianDid, session?.browserMemberDid);
+    const unread = recordsRef.current.filter((record) => (
+      record.sender_did !== localDid
+      && !readBy(record).includes(localDid)
+      && (!markedReadRef.current.has(record.message_id))
+    ));
+    if (!unread.length) return;
+    unread.forEach((record) => markedReadRef.current.add(record.message_id));
+    setRecords((current) => current.map((entry) => {
+      if (!unread.some((record) => record.message_id === entry.message_id)) return entry;
+      return {
+        ...entry,
+        status: isGroup ? entry.status : "read",
+        read_by: readBy(entry).includes(localDid) ? readBy(entry) : [...readBy(entry), localDid],
+      };
+    }));
+    void messageRepository.markConversationRead(conversationId, localDid, isGroup)
+      .finally(scheduleUnreadRefresh);
+    void Promise.all(unread.map((record) =>
+      chatService.markRead(record.message_id, record.sender_did, isGroup ? circleId : undefined)
+        .catch(() => { markedReadRef.current.delete(record.message_id); }),
+    )).finally(scheduleUnreadRefresh);
+  }, [circleId, isGroup, localDid, peerDid, scheduleUnreadRefresh, session?.browserMemberDid, session?.guardianDid]);
 
   // Do not depend on the bottom sentinel for read receipts. It has zero height and
   // IntersectionObserver can miss it during the history-load/auto-scroll transition,

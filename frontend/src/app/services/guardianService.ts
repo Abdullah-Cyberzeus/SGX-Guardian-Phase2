@@ -50,6 +50,7 @@ interface BackendNodeStatus {
   ip: string;
   port: number;
   publicKey: string;
+  offlineMode: number;
   timestamp: string;
 }
 
@@ -77,6 +78,7 @@ export const guardianService = {
       hostname: res.hostname,
       port: res.port,
       publicKey: res.publicKey,
+      offlineMode: res.offlineMode,
     };
   },
 
