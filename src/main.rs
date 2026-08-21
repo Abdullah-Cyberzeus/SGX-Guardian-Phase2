@@ -986,6 +986,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ => 50053,
             },
             public_key: format!("placeholder-key-{}", &node[4..]),
+            offline_mode: 1,
             metrics: None,
             relay: None,
             api: None,
