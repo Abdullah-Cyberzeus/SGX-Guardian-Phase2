@@ -69,6 +69,29 @@ const offlineValue: ChatUnreadContextValue = {
 // live polling/socket provider, while member screens still need to render their
 // encrypted cached content and sidebar.
 const Context = createContext<ChatUnreadContextValue>(offlineValue);
+const SEEN_PEERS_KEY = "sgx_seen_chat_peers_v1";
+const SEEN_CIRCLES_KEY = "sgx_seen_chat_circles_v1";
+
+function readBy(record: Pick<ChatMessageRecord, "read_by">) {
+  return Array.isArray(record.read_by) ? record.read_by : [];
+}
+
+function readSeenMap(key: string): Record<string, number> {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "{}");
+    return parsed && typeof parsed === "object" ? parsed as Record<string, number> : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeSeenMap(key: string, value: Record<string, number>) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function seenKey(ownerDid: string | undefined, conversationId: string) {
+  return `${ownerDid || "unknown"}::${conversationId}`;
+}
 
 export function ChatUnreadProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth();
@@ -86,8 +109,13 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
   const circleNamesRef = useRef<Record<string, string>>({});
   const peerNamesRef = useRef<Record<string, string>>({});
   const shownToastIdsRef = useRef<Set<string>>(new Set());
+  const seenPeerRef = useRef<Record<string, number>>(readSeenMap(SEEN_PEERS_KEY));
+  const seenCircleRef = useRef<Record<string, number>>(readSeenMap(SEEN_CIRCLES_KEY));
 
   useEffect(() => { localDidRef.current = localDid; }, [localDid]);
+
+  const peerIsLocallySeen = useCallback((peerDid: string) => Boolean(seenPeerRef.current[seenKey(ownDid, peerDid)]), [ownDid]);
+  const circleIsLocallySeen = useCallback((circleId: string) => Boolean(seenCircleRef.current[seenKey(ownDid, circleId)]), [ownDid]);
 
   useEffect(() => {
     if (isMemberRole(session?.user.role) && session?.browserMemberDid) {
@@ -122,9 +150,10 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
           // multiple identities; only messages not authored by this session
           // may become unread for it.
           const unread = localDid
-            ? messages.filter((record) => record.sender_did !== localDid
+            ? messages.filter((record) => !peerIsLocallySeen(peer.did!)
+              && record.sender_did !== localDid
               && record.status !== "read"
-              && !record.read_by.includes(localDid)).length
+              && !readBy(record).includes(localDid)).length
             : 0;
           // seq_no is the authoritative recency order: timestamps only have
           // second resolution, so a burst of messages (e.g. an offline queue
@@ -149,7 +178,7 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
           // not wait for someone else to message first.
           if (!messages.length) return [circle.id, circle.name, circle.members?.length ?? circle.memberCount ?? 0, 0, undefined, true] as const;
           const unread = localDid
-            ? messages.filter((record) => record.sender_did !== localDid && !record.read_by.includes(localDid)).length
+            ? messages.filter((record) => !circleIsLocallySeen(circle.id) && record.sender_did !== localDid && !readBy(record).includes(localDid)).length
             : 0;
           // seq_no is the authoritative recency order: timestamps only have
           // second resolution, so a burst of messages (e.g. an offline queue
@@ -174,7 +203,7 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
         setCircleChats(groupEntries.filter((entry) => entry[5]).map(([circleId, name, memberCount]) => ({ circleId, name, memberCount })));
       }
     }).catch(() => {});
-  }, [localDid, session?.guardianDid, session?.user.role]);
+  }, [circleIsLocallySeen, localDid, peerIsLocallySeen, session?.guardianDid, session?.user.role]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -197,12 +226,16 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
   }, [refresh, prefs?.circles.new_message]);
 
   const clearPeerUnread = useCallback((peerDid: string) => {
+    seenPeerRef.current = { ...seenPeerRef.current, [seenKey(ownDid, peerDid)]: Date.now() };
+    writeSeenMap(SEEN_PEERS_KEY, seenPeerRef.current);
     setCounts((current) => current[peerDid] > 0 ? { ...current, [peerDid]: 0 } : current);
-  }, []);
+  }, [ownDid]);
 
   const clearCircleUnread = useCallback((circleId: string) => {
+    seenCircleRef.current = { ...seenCircleRef.current, [seenKey(ownDid, circleId)]: Date.now() };
+    writeSeenMap(SEEN_CIRCLES_KEY, seenCircleRef.current);
     setCircleCounts((current) => current[circleId] > 0 ? { ...current, [circleId]: 0 } : current);
-  }, []);
+  }, [ownDid]);
 
   const dismissMessageToast = useCallback((toastId: string) => {
     setMessageToasts((current) => current.filter((toast) => toast.toastId !== toastId));
@@ -214,6 +247,13 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
     if (event.sender_did === localDidRef.current || prefs?.circles.new_message === false || shownToastIdsRef.current.has(event.message_id)) return;
     const groupId = event.group_id || undefined;
     const conversationId = groupId || event.sender_did;
+    if (groupId) {
+      delete seenCircleRef.current[seenKey(ownDid, groupId)];
+      writeSeenMap(SEEN_CIRCLES_KEY, seenCircleRef.current);
+    } else {
+      delete seenPeerRef.current[seenKey(ownDid, event.sender_did)];
+      writeSeenMap(SEEN_PEERS_KEY, seenPeerRef.current);
+    }
     const activePath = decodeURIComponent(window.location.pathname);
     const active = groupId
       ? activePath === `/network/${groupId}/chat`

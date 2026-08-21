@@ -21,12 +21,14 @@ export interface CallHistoryRecord {
 
 const EVENT_NAME = "sgx:call-history-changed";
 let records: CallHistoryRecord[] = [];
+let revision = 0;
 
 function read(): CallHistoryRecord[] {
   return [...records];
 }
 
 function write(record: CallHistoryRecord) {
+  revision += 1;
   const existing = records.findIndex((item) => item.id === record.id);
   if (existing >= 0) {
     const previous = records[existing];
@@ -41,7 +43,24 @@ function write(record: CallHistoryRecord) {
   window.dispatchEvent(new CustomEvent(EVENT_NAME));
 }
 
+async function replaceFromGuardian(nextRecords: CallHistoryRecord[]) {
+  revision += 1;
+  records = [...nextRecords].sort((a, b) => new Date(b.endedAt).getTime() - new Date(a.endedAt).getTime()).slice(0, 500);
+  await callRepository.replaceAll(records.map((record) => ({
+    ...record,
+    media: record.media,
+    startedAt: new Date(record.startedAt).getTime(),
+  })));
+  window.dispatchEvent(new CustomEvent(EVENT_NAME));
+}
+
+async function resetLocal() {
+  await replaceFromGuardian([]);
+}
+
+const initialRevision = revision;
 void callRepository.list().then((cached) => {
+  if (revision !== initialRevision) return;
   records = cached.map((record) => ({ ...record, media: record.media as MediaType[], startedAt: new Date(record.startedAt).toISOString() })) as CallHistoryRecord[];
   window.dispatchEvent(new CustomEvent(EVENT_NAME));
 }).catch(() => {});
@@ -55,9 +74,10 @@ function directOutcome(session: CallSession, localDevice: string, explicit?: Cal
 export const callHistoryService = {
   eventName: EVENT_NAME,
   list: read,
+  resetLocal,
   async syncFromGuardian() {
     const response = await callsApi.history();
-    response.calls.forEach((item) => write({
+    await replaceFromGuardian(response.calls.map((item) => ({
       id: item.id,
       kind: item.kind === "group" ? "group" : "direct",
       direction: "incoming",
@@ -68,7 +88,7 @@ export const callHistoryService = {
       startedAt: item.started_at,
       endedAt: item.ended_at,
       durationSeconds: item.duration_seconds,
-    }));
+    })));
     return read();
   },
   recordDirect(session: CallSession, localDevice: string, explicit?: CallOutcome) {

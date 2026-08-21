@@ -61,6 +61,39 @@ describe("messageRepository.updateStatus / markCancelled / markPermanentFailure"
     expect((await messageRepository.get("m1"))?.status).toBe("read");
   });
 
+  it("does not regress a locally read message when history sync saves delivered again", async () => {
+    await messageRepository.save({
+      id: "m1",
+      conversationId: "c1",
+      timestamp: 1,
+      sequence: 1,
+      status: "read",
+      value: chatValue({ status: "read", read_by: ["did:guardian:bob"] }),
+    });
+    await messageRepository.save({
+      id: "m1",
+      conversationId: "c1",
+      timestamp: 1,
+      sequence: 1,
+      status: "delivered",
+      value: chatValue({ status: "delivered", read_by: [] }),
+    });
+    expect((await messageRepository.get("m1"))?.status).toBe("read");
+  });
+
+  it("marks every incoming message in a conversation as read locally", async () => {
+    await messageRepository.save({ id: "m1", conversationId: "c1", timestamp: 1, sequence: 1, status: "delivered", value: chatValue({ message_id: "m1" }) });
+    await messageRepository.save({ id: "m2", conversationId: "c1", timestamp: 2, sequence: 2, status: "delivered", value: chatValue({ message_id: "m2" }) });
+    await messageRepository.save({ id: "own", conversationId: "c1", timestamp: 3, sequence: 3, status: "delivered", value: chatValue({ message_id: "own", sender_did: "did:guardian:bob" }) });
+
+    const changed = await messageRepository.markConversationRead("c1", "did:guardian:bob", false);
+
+    expect(changed.sort()).toEqual(["m1", "m2"]);
+    expect((await messageRepository.get("m1"))?.status).toBe("read");
+    expect((await messageRepository.get("m2"))?.status).toBe("read");
+    expect((await messageRepository.get("own"))?.status).toBe("delivered");
+  });
+
   it("markCancelled sets status to cancelled", async () => {
     await messageRepository.save({ id: "m1", conversationId: "c1", timestamp: 1, sequence: 1, status: "pending_local", value: chatValue() });
     await messageRepository.markCancelled("m1");

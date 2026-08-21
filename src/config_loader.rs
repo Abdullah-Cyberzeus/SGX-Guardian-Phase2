@@ -36,6 +36,10 @@ fn default_relay_alert_threshold_pct() -> u8 {
     80
 }
 
+fn default_offline_mode() -> u8 {
+    1
+}
+
 impl Default for RelayLimitsConfig {
     fn default() -> Self {
         Self {
@@ -89,6 +93,8 @@ pub struct NodeConfig {
     pub ip: String,
     pub port: u16,
     pub public_key: String,
+    #[serde(default = "default_offline_mode")]
+    pub offline_mode: u8,
     pub metrics: Option<MetricsConfig>,
     pub relay: Option<RelayLimitsConfig>,
     #[serde(default)]
@@ -124,6 +130,12 @@ impl NodeConfig {
         if self.public_key.trim().is_empty() {
             return Err("public_key cannot be empty".into());
         }
+        if self.offline_mode > 1 {
+            return Err(format!(
+                "offline_mode must be 0 or 1, got {}",
+                self.offline_mode
+            ));
+        }
         if let Some(metrics) = &self.metrics {
             if metrics.bind.parse::<std::net::IpAddr>().is_err() {
                 return Err(format!("Invalid metrics.bind IP: {}", metrics.bind));
@@ -153,6 +165,10 @@ impl NodeConfig {
 
     pub fn api_or_default(&self) -> ApiConfig {
         self.api.clone().unwrap_or_default()
+    }
+
+    pub fn offline_cache_enabled(&self) -> bool {
+        self.offline_mode == 1
     }
 
     pub fn load(path: &str) -> Result<Self, Box<dyn Error>> {

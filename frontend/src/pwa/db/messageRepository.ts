@@ -31,6 +31,16 @@ function textFromPayload(value: unknown) {
   ].join(" ");
 }
 
+function readByList(value: unknown): string[] {
+  if (!value || typeof value !== "object") return [];
+  const readBy = (value as Record<string, unknown>).read_by;
+  return Array.isArray(readBy) ? readBy.map(String) : [];
+}
+
+function mergeReadBy(current: unknown, incoming: unknown) {
+  return Array.from(new Set([...readByList(current), ...readByList(incoming)]));
+}
+
 export const messageRepository = {
   async list(conversationId: string) {
     return (await readAll(stores.messages)).filter((item) => item.conversationId === conversationId).sort((a, b) => a.sequence - b.sequence || a.timestamp - b.timestamp);
@@ -48,9 +58,40 @@ export const messageRepository = {
     return runAtomic([stores.messages], (tx) => { tx.objectStore(stores.messages).put({ ...existing, status, updatedAt: Date.now(), payload }); });
   },
   async save(record: Omit<MessageRecord, "payload"> & { value: unknown }) {
-    const payload = await encryptValue(record.value);
+    const existing = await readRecord(stores.messages, record.id);
+    let value = record.value;
+    let status = record.status;
+    if (existing && !shouldApplyIncomingStatus(existing.status, record.status)) {
+      const existingValue = await decryptValue<Record<string, unknown>>(existing.payload);
+      status = existing.status;
+      value = {
+        ...(record.value && typeof record.value === "object" ? record.value as Record<string, unknown> : {}),
+        status,
+        read_by: mergeReadBy(existingValue, record.value),
+      };
+    }
+    const payload = await encryptValue(value);
     const { value: _plaintext, ...metadata } = record;
-    return runAtomic([stores.messages], (tx) => { tx.objectStore(stores.messages).put({ ...metadata, updatedAt: Date.now(), searchText: normalizeSearchText(textFromPayload(record.value)), payload }); });
+    return runAtomic([stores.messages], (tx) => { tx.objectStore(stores.messages).put({ ...metadata, status, updatedAt: Date.now(), searchText: normalizeSearchText(textFromPayload(value)), payload }); });
+  },
+  async markConversationRead(conversationId: string, localDid: string, isGroup: boolean) {
+    if (!localDid) return [];
+    const records = await this.list(conversationId);
+    const changedIds: string[] = [];
+    await Promise.all(records.map(async (record) => {
+      const value = await decryptValue<Record<string, unknown>>(record.payload);
+      if (String(value.sender_did || "") === localDid) return;
+      const readBy = readByList(value);
+      if (readBy.includes(localDid) && (isGroup || record.status === "read")) return;
+      const nextReadBy = readBy.includes(localDid) ? readBy : [...readBy, localDid];
+      const nextStatus = isGroup ? record.status : "read";
+      const payload = await encryptValue({ ...value, read_by: nextReadBy, status: nextStatus });
+      changedIds.push(record.id);
+      await runAtomic([stores.messages], (tx) => {
+        tx.objectStore(stores.messages).put({ ...record, status: nextStatus, updatedAt: Date.now(), payload });
+      });
+    }));
+    return changedIds;
   },
   async saveAndQueue(record: Omit<MessageRecord, "payload"> & { value: unknown }, operation: { id: string; kind: string; value: unknown }) {
     const [payload, pendingPayload] = await Promise.all([encryptValue(record.value), encryptValue(operation.value)]);

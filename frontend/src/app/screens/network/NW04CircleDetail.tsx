@@ -201,6 +201,16 @@ export function NW04CircleDetail() {
       .filter(Boolean);
   };
 
+  const isCurrentGuardianMember = (member: any) => {
+    const current = String(currentDevice || "").trim().toLowerCase();
+    if (!current) return false;
+    const isBrowserMember = String(member?.memberType || member?.member_type || "").toLowerCase() === "browser";
+    if (isBrowserMember) return false;
+    const ids = nodeIdsForMember(member);
+    if (!ids.length) return false;
+    return ids.includes(current);
+  };
+
   const peerForMember = (member: any) => {
     if (String(member?.memberType || member?.member_type || "").toLowerCase() === "browser") return undefined;
     const candidates = nodeIdsForMember(member);
@@ -303,7 +313,7 @@ export function NW04CircleDetail() {
     // A browser member's nodeHint is the Guardian device that hosts their
     // session, not their own identity, so it must never be compared against
     // currentDevice — a browser member can never BE the current Guardian.
-    if (!isBrowserMember && nodeIdsForMember(member).includes(String(currentDevice || "").trim().toLowerCase())) {
+    if (isCurrentGuardianMember(member)) {
       toast.info("This member is the current Guardian", { description: "Choose another Circle member to start a call." });
       return;
     }
@@ -742,10 +752,7 @@ export function NW04CircleDetail() {
                   const trustedPeer = peerForMember(member);
                   const busy = !!startingCall;
                   const isBrowserMember = String(member?.memberType || member?.member_type || "").toLowerCase() === "browser";
-                  // A browser member's nodeHint is the Guardian device that hosts their
-                  // session, not their own identity, so it must never be compared against
-                  // currentDevice — a browser member can never BE the current Guardian.
-                  const isCurrentMember = !isBrowserMember && nodeIdsForMember(member).includes(String(currentDevice || "").trim().toLowerCase());
+                  const isCurrentMember = isCurrentGuardianMember(member);
                   const browserCallAvailable = isBrowserMember && !!member.did;
                   const target = trustedPeer?.peerId || (browserCallAvailable ? member.did : "");
                   const callUnavailableReason = isCurrentMember
