@@ -4,6 +4,7 @@
 pub mod advisory;
 pub mod api;
 pub mod chat;
+pub mod contacts;
 
 pub mod attestation_service;
 pub mod audit;
@@ -54,6 +55,7 @@ pub mod telemetry;
 pub mod threat;
 pub mod tls;
 pub mod tpm;
+pub mod task1_ai;
 pub mod vault;
 pub mod vc;
 pub mod virtual_id;

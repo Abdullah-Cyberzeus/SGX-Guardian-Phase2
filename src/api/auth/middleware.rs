@@ -221,8 +221,9 @@ fn query_parameter(query: Option<&str>, name: &str) -> Option<String> {
 
 fn is_public_route(method: &Method, path: &str) -> bool {
     let public_frontend = method == Method::GET && !path.starts_with("/api/");
-    let circle_snapshot_pull =
-        method == Method::GET && path.starts_with("/api/v1/circles/") && path.ends_with("/members/snapshot");
+    let circle_snapshot_pull = method == Method::GET
+        && path.starts_with("/api/v1/circles/")
+        && path.ends_with("/members/snapshot");
 
     matches!(
         (method, path),
@@ -241,8 +242,7 @@ fn is_public_route(method: &Method, path: &str) -> bool {
             | (&Method::POST, "/api/v1/restore/validate")
             | (&Method::GET, "/api/v1/restore/status")
             | (&Method::GET, "/api/v1/health")
-    ) || (method == Method::GET
-        && path.starts_with("/api/v1/pwa/onboarding/approval/"))
+    ) || (method == Method::GET && path.starts_with("/api/v1/pwa/onboarding/approval/"))
         || circle_snapshot_pull
         || public_frontend
 }

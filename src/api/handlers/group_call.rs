@@ -278,7 +278,7 @@ pub async fn create(
         .into_iter()
         .filter(|peer| {
             (request.call_all || request.member_ids.contains(&peer.peer_id))
-                && member_contacts.as_ref().map_or(true, |contacts| {
+                && member_contacts.as_ref().is_none_or(|contacts| {
                     peer.did.as_ref().is_some_and(|did| contacts.contains(did))
                 })
         })
@@ -289,7 +289,7 @@ pub async fn create(
             (request.call_all || request.member_ids.contains(did))
                 && member_contacts
                     .as_ref()
-                    .map_or(true, |contacts| contacts.contains(did))
+                    .is_none_or(|contacts| contacts.contains(did))
         })
         .collect();
     if selected.is_empty() && selected_browser.is_empty() {
@@ -782,13 +782,14 @@ pub async fn end(
         Err(error_value) => return error(StatusCode::NOT_FOUND, error_value.to_string()),
     };
     let Some(actor) = current.participants.get(&actor_id) else {
-        return error(StatusCode::FORBIDDEN, "Local caller is not a group participant");
+        return error(
+            StatusCode::FORBIDDEN,
+            "Local caller is not a group participant",
+        );
     };
     if !matches!(
         actor.state,
-        GroupMemberState::Joined
-            | GroupMemberState::Reconnecting
-            | GroupMemberState::Disconnected
+        GroupMemberState::Joined | GroupMemberState::Reconnecting | GroupMemberState::Disconnected
     ) {
         return error(
             StatusCode::FORBIDDEN,

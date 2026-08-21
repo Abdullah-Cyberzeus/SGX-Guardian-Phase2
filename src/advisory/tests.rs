@@ -114,3 +114,21 @@ fn anomaly_topk_and_device_cves_enrich_context() {
         .any(|reference| reference.ends_with("CVE-2023-38408")));
     assert!(rec.confidence > 0.8);
 }
+
+#[test]
+fn missing_rules_file_is_seeded_with_defaults() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("advisory/recommendation_rules.json");
+
+    assert!(!path.exists());
+
+    let seeded = RecommendationRules::seed_default_if_missing(&path).expect("seed rules");
+    assert!(seeded);
+    assert!(path.exists());
+
+    let loaded = RecommendationRules::load_verified(&path).expect("load seeded rules");
+    assert_eq!(loaded, RecommendationRules::default_rules());
+
+    let seeded_again = RecommendationRules::seed_default_if_missing(&path).expect("seed rules");
+    assert!(!seeded_again);
+}

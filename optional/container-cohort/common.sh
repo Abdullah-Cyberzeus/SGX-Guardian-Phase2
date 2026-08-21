@@ -4,6 +4,18 @@ cc_script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 cc_repo_root=$(CDPATH= cd -- "$cc_script_dir/../.." && pwd)
 cc_compose_file="$cc_script_dir/docker-compose.dev.yml"
 cc_env_file="$cc_script_dir/dev.env"
+cc_docker_config_dir="$(mktemp -d "${TMPDIR:-/tmp}/sgx-cohort-docker-config.XXXXXX")"
+
+# Some Linux shells inherit a Windows/Docker Desktop credential helper entry
+# (for example `docker-credential-desktop.exe`) that cannot execute here.
+# Keep the cohort helpers isolated from that host-side config so public image
+# pulls and compose builds work without touching the user's global Docker setup.
+printf '%s\n' '{"auths":{}}' > "$cc_docker_config_dir/config.json"
+trap 'rm -rf "$cc_docker_config_dir"' EXIT
+
+cc_docker() {
+  DOCKER_CONFIG="$cc_docker_config_dir" docker "$@"
+}
 
 cc_is_wsl() {
   [[ -n "${WSL_DISTRO_NAME:-}" ]] || grep -qi microsoft /proc/version 2>/dev/null
@@ -54,7 +66,7 @@ EOF
   fi
 
   local probe_output
-  if ! probe_output=$(docker info 2>&1); then
+  if ! probe_output=$(cc_docker info 2>&1); then
     cc_print_docker_help "$probe_output"
     exit 1
   fi
@@ -69,8 +81,8 @@ cc_run_compose() {
   cd "$cc_repo_root"
 
   if [[ -f "$cc_env_file" ]]; then
-    docker compose --env-file "$cc_env_file" -f "$cc_compose_file" "$subcommand" "$@"
+    cc_docker compose --env-file "$cc_env_file" -f "$cc_compose_file" "$subcommand" "$@"
   else
-    docker compose -f "$cc_compose_file" "$subcommand" "$@"
+    cc_docker compose -f "$cc_compose_file" "$subcommand" "$@"
   fi
 }

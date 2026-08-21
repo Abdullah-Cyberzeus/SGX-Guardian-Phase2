@@ -172,10 +172,9 @@ mod tests {
         fs::write(&file_path, "corrupted { json ...").unwrap();
         fs::write(&lock_path, r#"{"devices":{}}"#).unwrap();
 
-        assert!(!BackupManager::validate_and_heal(&file_path));
-
-        // After healing, devices.json should match devices.lock
         let healed = BackupManager::validate_and_heal(&file_path);
         assert!(healed);
+        assert!(BackupManager::validate_json_file(&file_path));
+        assert_eq!(fs::read_to_string(&file_path).unwrap(), r#"{"devices":{}}"#);
     }
 }

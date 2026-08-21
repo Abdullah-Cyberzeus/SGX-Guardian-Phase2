@@ -1330,7 +1330,8 @@ async fn broadcast_member_snapshot(
             }
         };
         let signature_b64 = general_purpose::STANDARD.encode(signature);
-        let endpoints = circle_member_delivery_endpoints(&member.did, &owner.did, &state.did_resolver).await;
+        let endpoints =
+            circle_member_delivery_endpoints(&member.did, &owner.did, &state.did_resolver).await;
         if endpoints.is_empty() {
             tracing::warn!(
                 "Circle member snapshot endpoint resolve failed circle={} target={}",

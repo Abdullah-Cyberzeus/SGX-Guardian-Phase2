@@ -73,7 +73,11 @@ impl From<&MemberEnrollmentRecord> for MemberEnrollmentView {
             circle_id: record.circle_id.clone(),
             circle_name: record.circle_name.clone(),
             member_did: record.member_did.clone(),
-            state: if expired { "expired".into() } else { record.state.clone() },
+            state: if expired {
+                "expired".into()
+            } else {
+                record.state.clone()
+            },
             created_at: record.created_at.clone(),
             expires_at: record.expires_at.clone(),
             name: record.name.clone(),
@@ -121,7 +125,10 @@ fn parse_enrollment_claim(claim: &str) -> Result<(&str, &str), ApiError> {
         .trim()
         .split_once('.')
         .ok_or_else(|| ApiError::BadRequest("invalid member invitation".into()))?;
-    if approval_id.is_empty() || secret.len() != 64 || !secret.chars().all(|c| c.is_ascii_hexdigit()) {
+    if approval_id.is_empty()
+        || secret.len() != 64
+        || !secret.chars().all(|c| c.is_ascii_hexdigit())
+    {
         return Err(ApiError::BadRequest("invalid member invitation".into()));
     }
     Ok((approval_id, secret))
@@ -531,7 +538,9 @@ pub async fn mint_member_enrollment(
     let circle = store::get_circle(&state.node_id, &circle_id)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     if circle.is_archived() {
-        return Err(ApiError::Conflict("cannot invite members to an archived Circle".into()));
+        return Err(ApiError::Conflict(
+            "cannot invite members to an archived Circle".into(),
+        ));
     }
     if circle.owner_did != state.device_did {
         return Err(ApiError::Forbidden(
@@ -690,14 +699,22 @@ async fn decide_member_enrollment(
             .map_err(|error| ApiError::Conflict(error.to_string()))?;
         invite::record_redemption(&token.id, &records[index].member_did)
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        if let Err(error) = state.admin.users.set_member_status(&user_id, "active").await {
+        if let Err(error) = state
+            .admin
+            .users
+            .set_member_status(&user_id, "active")
+            .await
+        {
             let _ = invite::remove_redemption(&token.id, &records[index].member_did);
             return Err(ApiError::Internal(error.to_string()));
         }
         records[index].state = "approved".into();
         crate::notify::publish_circle_member_joined(
             &records[index].member_did,
-            records[index].name.as_deref().unwrap_or(&records[index].member_did),
+            records[index]
+                .name
+                .as_deref()
+                .unwrap_or(&records[index].member_did),
             &records[index].circle_name,
             &records[index].circle_id,
         );
@@ -748,7 +765,7 @@ pub fn guardian_fingerprint(public_key: &[u8]) -> String {
         bits += 8;
         while bits >= 5 && emitted < 16 {
             bits -= 5;
-            if emitted > 0 && emitted % 4 == 0 {
+            if emitted > 0 && emitted.is_multiple_of(4) {
                 value.push('-');
             }
             value.push(ALPHABET[((buffer >> bits) & 31) as usize] as char);
@@ -821,7 +838,10 @@ pub async fn preview_member_invite(
         }
         (token, true)
     } else {
-        (validate_member_invite(&state, &body.invite_token).await?, false)
+        (
+            validate_member_invite(&state, &body.invite_token).await?,
+            false,
+        )
     };
     if token.issuer_did == state.device_did {
         let circle = local_invite_circle(&state, &token)?;
@@ -888,7 +908,10 @@ pub async fn join_member(
             email, current_fingerprint
         ),
     );
-    let approval_claim = body.invite_token.contains('.').then(|| body.invite_token.clone());
+    let approval_claim = body
+        .invite_token
+        .contains('.')
+        .then(|| body.invite_token.clone());
     let (token, reserved_registration_id, approval_id) = if approval_claim.is_some() {
         let records = load_member_enrollments()?;
         let index = enrollment_index_for_claim(&records, &body.invite_token)?;
@@ -1071,7 +1094,11 @@ pub async fn join_member(
         browser_registration_id: registration_id,
         expires_at: claims.exp,
         registration_expires_at,
-        status: if pending_approval { "pending" } else { "active" },
+        status: if pending_approval {
+            "pending"
+        } else {
+            "active"
+        },
         approval_id,
         approval_claim,
     }))
@@ -1189,74 +1216,6 @@ fn audit_join_rejected(state: &AppState, actor: &str, reason: &str) {
             actor, reason
         ),
     );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fingerprint_is_stable_human_readable_and_eighty_bits() {
-        let fingerprint = guardian_fingerprint(b"guardian-public-key");
-        assert_eq!(fingerprint.len(), 19);
-        assert_eq!(fingerprint.chars().filter(|value| *value == '-').count(), 3);
-        assert_eq!(normalized_fingerprint(&fingerprint).len(), 16);
-        assert_eq!(fingerprint, guardian_fingerprint(b"guardian-public-key"));
-        assert_ne!(fingerprint, guardian_fingerprint(b"rotated-public-key"));
-    }
-
-    #[test]
-    fn pwa_contact_contract_omits_network_address_and_includes_profile_presence() {
-        let contact = PwaContact {
-            peer_id: "nodeB".into(),
-            display_name: "Node B".into(),
-            full_name: Some("Node B Guardian".into()),
-            device_name: "nodeB".into(),
-            did: Some("did:guardian:b".into()),
-            status: "verified".into(),
-            role: "member".into(),
-            member_type: "guardian".into(),
-            join_date: Some("2026-08-17T00:00:00Z".into()),
-            last_seen: "2026-08-17T12:00:00Z".into(),
-            online: true,
-            presence_status: presence_status(true, false),
-            presence_stale: false,
-            presence_expires_at: presence_expiry_from("2026-08-17T12:00:00Z"),
-            heartbeat_interval_seconds: CONTACT_PRESENCE_HEARTBEAT_SECONDS,
-            call_available: true,
-            call_unavailable_reason: None,
-        };
-        let json = serde_json::to_value(contact).expect("serialize contact");
-        assert_eq!(json["displayName"], "Node B");
-        assert_eq!(json["deviceName"], "nodeB");
-        assert_eq!(json["presenceStatus"], "online");
-        assert!(json.get("ip").is_none());
-        assert!(json.get("port").is_none());
-    }
-
-    #[test]
-    fn stale_presence_takes_precedence_over_online() {
-        assert_eq!(presence_status(true, true), "stale");
-        assert_eq!(presence_status(false, false), "offline");
-    }
-
-    #[test]
-    fn hidden_presence_scrubs_online_status_and_last_seen() {
-        let hidden = presence_fields(true, true, "2026-08-17T12:00:00Z");
-        assert!(!hidden.online);
-        assert_eq!(hidden.presence_status, "hidden");
-        assert_eq!(hidden.last_seen, "");
-        assert!(hidden.presence_expires_at.is_none());
-    }
-
-    #[test]
-    fn visible_presence_reports_real_status_when_not_hidden() {
-        let visible = presence_fields(false, true, "2026-08-17T12:00:00Z");
-        assert!(visible.online);
-        assert_eq!(visible.presence_status, "online");
-        assert_eq!(visible.last_seen, "2026-08-17T12:00:00Z");
-        assert!(visible.presence_expires_at.is_some());
-    }
 }
 
 pub async fn identity(State(state): State<Arc<AppState>>) -> Json<PwaIdentityResponse> {
@@ -1440,4 +1399,72 @@ pub async fn contacts(
         presence_heartbeat_seconds: CONTACT_PRESENCE_HEARTBEAT_SECONDS,
         presence_expiry_seconds: CONTACT_PRESENCE_EXPIRY_SECONDS,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fingerprint_is_stable_human_readable_and_eighty_bits() {
+        let fingerprint = guardian_fingerprint(b"guardian-public-key");
+        assert_eq!(fingerprint.len(), 19);
+        assert_eq!(fingerprint.chars().filter(|value| *value == '-').count(), 3);
+        assert_eq!(normalized_fingerprint(&fingerprint).len(), 16);
+        assert_eq!(fingerprint, guardian_fingerprint(b"guardian-public-key"));
+        assert_ne!(fingerprint, guardian_fingerprint(b"rotated-public-key"));
+    }
+
+    #[test]
+    fn pwa_contact_contract_omits_network_address_and_includes_profile_presence() {
+        let contact = PwaContact {
+            peer_id: "nodeB".into(),
+            display_name: "Node B".into(),
+            full_name: Some("Node B Guardian".into()),
+            device_name: "nodeB".into(),
+            did: Some("did:guardian:b".into()),
+            status: "verified".into(),
+            role: "member".into(),
+            member_type: "guardian".into(),
+            join_date: Some("2026-08-17T00:00:00Z".into()),
+            last_seen: "2026-08-17T12:00:00Z".into(),
+            online: true,
+            presence_status: presence_status(true, false),
+            presence_stale: false,
+            presence_expires_at: presence_expiry_from("2026-08-17T12:00:00Z"),
+            heartbeat_interval_seconds: CONTACT_PRESENCE_HEARTBEAT_SECONDS,
+            call_available: true,
+            call_unavailable_reason: None,
+        };
+        let json = serde_json::to_value(contact).expect("serialize contact");
+        assert_eq!(json["displayName"], "Node B");
+        assert_eq!(json["deviceName"], "nodeB");
+        assert_eq!(json["presenceStatus"], "online");
+        assert!(json.get("ip").is_none());
+        assert!(json.get("port").is_none());
+    }
+
+    #[test]
+    fn stale_presence_takes_precedence_over_online() {
+        assert_eq!(presence_status(true, true), "stale");
+        assert_eq!(presence_status(false, false), "offline");
+    }
+
+    #[test]
+    fn hidden_presence_scrubs_online_status_and_last_seen() {
+        let hidden = presence_fields(true, true, "2026-08-17T12:00:00Z");
+        assert!(!hidden.online);
+        assert_eq!(hidden.presence_status, "hidden");
+        assert_eq!(hidden.last_seen, "");
+        assert!(hidden.presence_expires_at.is_none());
+    }
+
+    #[test]
+    fn visible_presence_reports_real_status_when_not_hidden() {
+        let visible = presence_fields(false, true, "2026-08-17T12:00:00Z");
+        assert!(visible.online);
+        assert_eq!(visible.presence_status, "online");
+        assert_eq!(visible.last_seen, "2026-08-17T12:00:00Z");
+        assert!(visible.presence_expires_at.is_some());
+    }
 }

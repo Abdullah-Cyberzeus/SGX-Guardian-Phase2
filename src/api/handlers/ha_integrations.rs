@@ -74,7 +74,7 @@ pub async fn get_integration_status(
         }
     };
 
-    let provider = VendorProvider::from_str(&provider_str).ok_or_else(|| {
+    let provider = provider_str.parse::<VendorProvider>().map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": format!("Unknown vendor provider '{}'", provider_str) })),
@@ -133,7 +133,7 @@ pub async fn connect_integration(
         }
     };
 
-    let provider = VendorProvider::from_str(&provider_str).ok_or_else(|| {
+    let provider = provider_str.parse::<VendorProvider>().map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": format!("Unknown vendor provider '{}'", provider_str) })),
@@ -298,7 +298,7 @@ pub async fn disconnect_integration(
         }
     };
 
-    let provider = VendorProvider::from_str(&provider_str).ok_or_else(|| {
+    let provider = provider_str.parse::<VendorProvider>().map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": format!("Unknown vendor provider '{}'", provider_str) })),

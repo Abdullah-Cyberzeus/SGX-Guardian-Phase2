@@ -133,11 +133,9 @@ impl NotificationManager {
         let mut updated = 0;
         if let Ok(mut list) = self.notifications.write() {
             for n in list.iter_mut() {
-                if ids.contains(&n.id) {
-                    if !n.read {
-                        n.read = true;
-                        updated += 1;
-                    }
+                if ids.contains(&n.id) && !n.read {
+                    n.read = true;
+                    updated += 1;
                 }
             }
         }
@@ -219,7 +217,7 @@ mod tests {
         let unread = manager.list_notifications(true, None).await;
         assert!(unread.iter().any(|n| n.id == notif.id));
 
-        let updated = manager.mark_as_read(&[notif.id.clone()]).await;
+        let updated = manager.mark_as_read(std::slice::from_ref(&notif.id)).await;
         assert_eq!(updated, 1);
 
         let unread_after = manager.list_notifications(true, None).await;

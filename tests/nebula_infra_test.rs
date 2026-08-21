@@ -66,8 +66,8 @@ fn test_interface_verify_ip_without_interface() {
 fn test_interface_status_report_format() {
     let report = NebulaInterface::status_report();
     assert!(
-        report.contains("nebula0:"),
-        "report should mention nebula0: got {}",
+        report.contains("Guardian Mesh interface:"),
+        "report should mention the Guardian Mesh label: got {}",
         report
     );
     assert!(report.contains("up="), "report should contain up= field");

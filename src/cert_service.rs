@@ -33,7 +33,7 @@ const APPROVAL_TIMEOUT_SECS: u64 = 3600;
 /// YAML structure written to nebula/requests/<node>.yaml
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum ApprovalDecision {
+pub enum ApprovalDecision {
     #[serde(alias = "false", alias = "reject", alias = "no")]
     False,
     #[serde(alias = "member")]
@@ -47,13 +47,13 @@ pub(crate) enum ApprovalDecision {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct CertRequestYaml {
-    pub(crate) node_id: String,
-    pub(crate) requested_at: String,
-    pub(crate) overlay_ip: String,
-    pub(crate) public_key_fingerprint: String,
-    pub(crate) requested_role: String,
-    pub(crate) approve: ApprovalDecision,
+pub struct CertRequestYaml {
+    pub node_id: String,
+    pub requested_at: String,
+    pub overlay_ip: String,
+    pub public_key_fingerprint: String,
+    pub requested_role: String,
+    pub approve: ApprovalDecision,
 }
 
 /// gRPC CertService implementation — registered on nodeA only.
@@ -622,7 +622,10 @@ impl CertService for MyCertService {
                 AuditAction::Failed,
                 &format!("Certificate signing failed for {}: {}", node_id, e),
             );
-            return Err(Status::internal(format!("Guardian Mesh CA signing failed: {}", e)));
+            return Err(Status::internal(format!(
+                "Guardian Mesh CA signing failed: {}",
+                e
+            )));
         }
 
         use crate::nebula::lighthouse::LighthouseRegistry;

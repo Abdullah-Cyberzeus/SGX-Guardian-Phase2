@@ -8,7 +8,7 @@ use crate::did::doc_persistence::{
 };
 use crate::did::doc_sign;
 use crate::did::document::{DidDocument, DocBuildInput};
-use crate::did::persistence::{DerivationProof, DidRecord};
+use crate::did::persistence::{derivation_signing_bytes, DerivationProof, DidRecord};
 use crate::did::{derive, Resolver};
 use crate::key_manager::KeyManager;
 use crate::vc::credential::CredentialRole;
@@ -16,6 +16,7 @@ use crate::vc::issue::{self, IssueRequest};
 use base64::Engine as _;
 use chrono::{Duration, Utc};
 use std::ffi::OsString;
+use std::path::Path;
 use tempfile::TempDir;
 
 const DID_PATH_ENV: &str = "SGX_GUARDIAN_DID_PATH";
@@ -100,6 +101,28 @@ fn restore_env(key: &str, value: Option<OsString>) {
     }
 }
 
+fn set_node_context(root: &Path) {
+    let self_doc = root.join("did_doc.json");
+    let peers_dir = root.join("peers");
+    let aggregate = root.join("aggregate.json");
+    let counter = root.join("version_counter");
+    let vc_base = root.join("vc");
+    let circle_base = root.join("circles");
+    let did_path = root.join("did.json");
+    let key_dir = root.join("keys");
+
+    std::fs::create_dir_all(&peers_dir).expect("create peers dir");
+    std::fs::create_dir_all(&key_dir).expect("create key dir");
+    std::env::set_var(SELF_DOC_PATH_ENV, &self_doc);
+    std::env::set_var(PEERS_DOC_DIR_ENV, &peers_dir);
+    std::env::set_var(CA_AGGREGATE_PATH_ENV, &aggregate);
+    std::env::set_var(VERSION_COUNTER_PATH_ENV, &counter);
+    std::env::set_var(crate::vc::persistence::VC_BASE_ENV, &vc_base);
+    std::env::set_var(CIRCLE_BASE_ENV, &circle_base);
+    std::env::set_var(DID_PATH_ENV, &did_path);
+    std::env::set_var(issue::DEVICE_KEY_DIR_ENV, &key_dir);
+}
+
 fn make_material(
     node_name: &str,
     seed: u8,
@@ -113,7 +136,7 @@ fn make_material(
     let did = derive(&[seed; 16], &pubkey);
     let did_str = did.as_str().to_string();
     let now = Utc::now().to_rfc3339();
-    let record = DidRecord {
+    let mut record = DidRecord {
         did: did_str.clone(),
         method: "guardian".into(),
         method_version: "1.0".into(),
@@ -152,6 +175,9 @@ fn make_material(
     .expect("doc build");
     let vm_ref = doc.verification_method.first().expect("vm").id.clone();
     doc_sign::sign_in_place(&mut doc, &km, &vm_ref).expect("sign doc");
+    let signing_bytes = derivation_signing_bytes(&record.derivation);
+    let signature = km.sign(&signing_bytes).expect("sign derivation");
+    record.deriv_signature_b64 = base64::engine::general_purpose::STANDARD.encode(signature);
     (km, record, doc)
 }
 
@@ -431,10 +457,58 @@ fn targeted_invite_acceptance_issues_vc_and_persists_circle_state() {
     invite::record_redemption(&token.id, &join_request.joiner_did).expect("record redemption");
     let vc = outcome.into_vc();
     crate::vc::persistence::save_own(&vc).expect("nodeB stores own vc");
-    invite::save_joined_circle("nodeB", &token).expect("nodeB saves circle");
     invite::set_received_invite_state(&token.id, invite::ReceivedInviteState::Accepted)
         .expect("accepted state");
 
+    let node_a_root = Path::new(&std::env::var(SELF_DOC_PATH_ENV).expect("nodeA self doc path"))
+        .parent()
+        .expect("nodeA root")
+        .to_path_buf();
+    let node_b_root = node_a_root.join("nodeB");
+    let node_a_key_dir_binding = std::env::var(issue::DEVICE_KEY_DIR_ENV).expect("nodeA key dir");
+    let node_a_key_dir = Path::new(&node_a_key_dir_binding);
+    let node_a_node_b_key = node_a_key_dir.join("device_nodeB.key");
+    let node_b_key_dir = node_b_root.join("keys");
+    std::fs::create_dir_all(&node_b_key_dir).expect("create nodeB key dir");
+    std::fs::copy(&node_a_node_b_key, node_b_key_dir.join("device_nodeB.key"))
+        .expect("copy nodeB key");
+    set_node_context(&node_b_root);
+    member
+        .save(
+            node_b_root
+                .join("did.json")
+                .to_str()
+                .expect("nodeB did path"),
+        )
+        .expect("save nodeB did");
+    save_self(&member_doc).expect("save nodeB self doc");
+    save_peer(&owner_doc).expect("save nodeB owner peer doc");
+    save_peer(&member_doc).expect("save nodeB member peer doc");
+    save_ca_aggregate(&[owner_doc.clone(), member_doc.clone()]).expect("save nodeB aggregate");
+    let node_b_mesh_vc = issue::issue_membership_vc(
+        &owner,
+        &owner_km,
+        IssueRequest {
+            subject_did: &member.did,
+            role: CredentialRole::Member,
+            permissions: issue::default_permissions_for_role(CredentialRole::Member),
+            circle_id: issue::DEFAULT_CIRCLE_ID,
+            node_hint: Some("nodeB".into()),
+            duration_days: Some(issue::DEFAULT_VC_DURATION_DAYS),
+        },
+    )
+    .expect("issue nodeB mesh vc");
+    crate::vc::persistence::save_own(&node_b_mesh_vc).expect("nodeB stores mesh vc");
+    crate::vc::persistence::save_own(&vc).expect("nodeB stores own vc");
+    invite::save_joined_circle("nodeB", &token).expect("nodeB saves circle");
+
+    let node_b_circle = store::get_circle("nodeB", "circle-ops").expect("nodeB circle reload");
+    assert_eq!(node_b_circle.owner_did, owner.did);
+    let node_b_members = members::list_members("nodeB", "circle-ops").expect("nodeB members");
+    assert!(node_b_members.iter().any(|entry| entry.did == owner.did));
+    assert!(node_b_members.iter().any(|entry| entry.did == member.did));
+
+    set_node_context(&node_a_root);
     let members_after = members::list_members("nodeA", "circle-ops").expect("nodeA members");
     assert!(members_after.iter().any(|entry| {
         entry.did == member.did
@@ -443,11 +517,6 @@ fn targeted_invite_acceptance_issues_vc_and_persists_circle_state() {
                 crate::circle::members::MemberLifecycleState::Active
             )
     }));
-    let node_b_circle = store::get_circle("nodeB", "circle-ops").expect("nodeB circle reload");
-    assert_eq!(node_b_circle.owner_did, owner.did);
-    let node_b_members = members::list_members("nodeB", "circle-ops").expect("nodeB members");
-    assert!(node_b_members.iter().any(|entry| entry.did == owner.did));
-    assert!(node_b_members.iter().any(|entry| entry.did == member.did));
 
     let replay = invite::assert_redeemable(&circle, &token, &join_request.joiner_did)
         .expect_err("replay rejected after restart/reload");

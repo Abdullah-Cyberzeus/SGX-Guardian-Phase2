@@ -28,7 +28,11 @@ pub(crate) fn get_grpc_addr(ip: &str, peer_id_str: &str) -> String {
             "nodeB" => 50252,
             "nodeC" => 50253,
             _ => {
-                if let Some(last_octet) = ip.split('.').last().and_then(|s| s.parse::<u16>().ok()) {
+                if let Some(last_octet) = ip
+                    .split('.')
+                    .next_back()
+                    .and_then(|s| s.parse::<u16>().ok())
+                {
                     if (1..=9).contains(&last_octet) {
                         50250 + last_octet
                     } else {
@@ -151,7 +155,11 @@ fn local_pair_conversation_id(state: &AppState, a: &str, b: &str) -> String {
 /// membership is the union of VC-attested device members and this node's
 /// own registered browser members, since browser members are only known
 /// to the Guardian that hosts them.
-pub(crate) async fn group_min_reader_count(state: &AppState, circle_id: &str, sender_did: &str) -> usize {
+pub(crate) async fn group_min_reader_count(
+    state: &AppState,
+    circle_id: &str,
+    sender_did: &str,
+) -> usize {
     let mut roster: std::collections::HashSet<String> =
         crate::circle::members::list_members(&state.node_id, circle_id)
             .map(|members| members.into_iter().map(|m| m.did).collect())
@@ -236,9 +244,13 @@ pub async fn send_message(
         let record = {
             let _guard = crate::vault::write_lock().lock().await;
             let mut record = if record.namespace_ref() != target_namespace {
-                crate::vault::persistence::move_to_namespace(&vault_config, record, &target_namespace)
-                    .await
-                    .map_err(|error| ApiError::Internal(error.to_string()))?
+                crate::vault::persistence::move_to_namespace(
+                    &vault_config,
+                    record,
+                    &target_namespace,
+                )
+                .await
+                .map_err(|error| ApiError::Internal(error.to_string()))?
             } else {
                 record
             };
@@ -735,13 +747,15 @@ pub async fn typing(
         } else {
             local_pair_conversation_id(&state, &sender_did, &req.recipient_did)
         };
-        let _ = state.chat_events.send(crate::chat::models::ChatEvent::Typing(
-            crate::chat::models::TypingEvent {
-                conversation_id,
-                sender_did,
-                is_typing: req.is_typing,
-            },
-        ));
+        let _ = state
+            .chat_events
+            .send(crate::chat::models::ChatEvent::Typing(
+                crate::chat::models::TypingEvent {
+                    conversation_id,
+                    sender_did,
+                    is_typing: req.is_typing,
+                },
+            ));
     }
 
     Ok(Json(TypingResponse {
@@ -782,7 +796,8 @@ pub async fn mark_as_read(
         None => false,
     };
     let timestamp = chrono::Utc::now().timestamp();
-    let p2p_conversation_id = local_pair_conversation_id(&state, &reader_did, &req.original_sender_did);
+    let p2p_conversation_id =
+        local_pair_conversation_id(&state, &reader_did, &req.original_sender_did);
     let mut min_reader_count: usize = 1;
 
     // 1. Verify the message exists
@@ -1275,8 +1290,7 @@ mod tests {
             })
             .await
             .expect("create member");
-        let member_did =
-            crate::api::handlers::browser_member::did_for_registration("reg-reader");
+        let member_did = crate::api::handlers::browser_member::did_for_registration("reg-reader");
         let member_session = Some(Extension(AuthenticatedSession {
             claims: crate::api::auth::session::Claims {
                 sub: member.user_id.clone(),
@@ -1342,7 +1356,10 @@ mod tests {
             .iter()
             .find(|m| m.message_id == "msg-2")
             .expect("msg-2 present");
-        assert!(msg2.read_by.contains(&member_did), "read while visible should be recorded");
+        assert!(
+            msg2.read_by.contains(&member_did),
+            "read while visible should be recorded"
+        );
         assert_eq!(msg2.status, MessageStatus::Read);
 
         // Now hide read receipts, then read a second message while hidden.
@@ -1387,8 +1404,16 @@ mod tests {
         .await
         .expect("sender reads history while reader is hidden")
         .0;
-        let msg2 = while_hidden.messages.iter().find(|m| m.message_id == "msg-2").expect("msg-2 present");
-        let msg3 = while_hidden.messages.iter().find(|m| m.message_id == "msg-3").expect("msg-3 present");
+        let msg2 = while_hidden
+            .messages
+            .iter()
+            .find(|m| m.message_id == "msg-2")
+            .expect("msg-2 present");
+        let msg3 = while_hidden
+            .messages
+            .iter()
+            .find(|m| m.message_id == "msg-3")
+            .expect("msg-3 present");
         assert!(
             msg2.read_by.contains(&member_did),
             "a read recorded before the toggle must be unaffected by it"
@@ -1428,9 +1453,20 @@ mod tests {
         .await
         .expect("sender reads history after un-hiding")
         .0;
-        let msg2 = after_unhide.messages.iter().find(|m| m.message_id == "msg-2").expect("msg-2 present");
-        let msg3 = after_unhide.messages.iter().find(|m| m.message_id == "msg-3").expect("msg-3 present");
-        assert!(msg2.read_by.contains(&member_did), "the earlier visible read must still be recorded");
+        let msg2 = after_unhide
+            .messages
+            .iter()
+            .find(|m| m.message_id == "msg-2")
+            .expect("msg-2 present");
+        let msg3 = after_unhide
+            .messages
+            .iter()
+            .find(|m| m.message_id == "msg-3")
+            .expect("msg-3 present");
+        assert!(
+            msg2.read_by.contains(&member_did),
+            "the earlier visible read must still be recorded"
+        );
         assert!(
             !msg3.read_by.contains(&member_did),
             "un-hiding must not retroactively reveal a read that happened while hidden"

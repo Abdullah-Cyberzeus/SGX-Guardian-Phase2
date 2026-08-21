@@ -1,5 +1,6 @@
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
+use crate::task1_ai;
 use crate::threat::{
     ai_bridge,
     blocker::Blocker,
@@ -10,6 +11,7 @@ use crate::threat::{
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{interval, Duration};
 
@@ -39,6 +41,29 @@ impl ThreatService {
             let _ = tokio::fs::create_dir_all(&self.state_dir).await;
             if let Some(log_dir) = Path::new(&cfg.eve_path).parent() {
                 let _ = tokio::fs::create_dir_all(log_dir).await;
+            }
+            let advisory_config = crate::advisory::AdvisoryConfig::from_state_dirs(&self.state_dir);
+            match crate::advisory::AdvisoryRules::seed_default_if_missing(
+                &advisory_config.rules_path(),
+            ) {
+                Ok(true) => tracing::info!(
+                    node_id = %self.node_id,
+                    path = %advisory_config.rules_path().display(),
+                    "seeded default advisory rules"
+                ),
+                Ok(false) => {}
+                Err(err) => tracing::warn!(
+                    node_id = %self.node_id,
+                    %err,
+                    "failed to seed default advisory rules"
+                ),
+            }
+            if let Err(err) = seed_demo_eve_if_requested(&cfg.eve_path, &self.node_id).await {
+                tracing::warn!(
+                    node_id = %self.node_id,
+                    %err,
+                    "failed to seed demo EVE burst"
+                );
             }
             let inv_path = self.state_dir.join("alerts.jsonl");
             if let Ok(existing) = AlertInventory::load_from_path(&inv_path) {
@@ -70,6 +95,8 @@ impl ThreatService {
             if let Err(err) = blocker.restore_state().await {
                 tracing::warn!("failed to restore threat blocks: {}", err);
             }
+
+            let mut ai_state = task1_ai::AlertScorerState::default();
 
             let (tx, mut rx) = mpsc::channel(1024);
             let tailer = EveTailer {
@@ -142,6 +169,23 @@ impl ThreatService {
                         match inventory.ingest(alert.clone()) {
                             IngestOutcome::Inserted => {
                                 dirty = true;
+                                let anomaly = {
+                                    let feature = task1_ai::feature_from_alert(&alert);
+                                    match task1_ai::process_feature(&feature, &mut ai_state) {
+                                        Some(score) => {
+                                            if let Some(plan) = task1_ai::generate_plan(score.clone()) {
+                                                tracing::info!(
+                                                    node_id = %self.node_id,
+                                                    target = %plan.target_ip,
+                                                    score = score.score,
+                                                    "task1 remediation plan generated"
+                                                );
+                                            }
+                                            Some(task1_ai::anomaly_context_from_score(&score))
+                                        }
+                                        None => None,
+                                    }
+                                };
                                 ai_bridge::forward_to_ai(&self.node_id, &alert);
                                 crate::advisory::generate_for_alert(
                                     self.node_id.clone(),
@@ -159,6 +203,7 @@ impl ThreatService {
                                                     )
                                                 })
                                         }),
+                                    anomaly,
                                 );
                                 crate::notify::publish_alert(&self.node_id, &alert);
                                 crate::rules::publish(crate::rules::RuleEvent::from_threat_alert(
@@ -253,4 +298,125 @@ async fn refresh_runtime_config(
     );
 
     Ok(())
+}
+
+fn demo_eve_seed_enabled() -> bool {
+    std::env::var("SGX_SEED_DEMO_EVE")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn demo_eve_seed_lines(timestamp: &str) -> Vec<String> {
+    let src_ip = "203.0.113.77";
+    let src_port = 4444;
+    let dst_port = 443;
+    let protocol = "TCP";
+    let signature_id = 9_100_001;
+    let signature = "SGX AI anomaly burst";
+    let destinations = [
+        "192.168.100.10",
+        "192.168.100.11",
+        "192.168.100.12",
+        "192.168.100.13",
+        "192.168.100.14",
+    ];
+
+    destinations
+        .iter()
+        .map(|dst_ip| {
+            serde_json::json!({
+                "timestamp": timestamp,
+                "event_type": "alert",
+                "src_ip": src_ip,
+                "src_port": src_port,
+                "dest_ip": dst_ip,
+                "dest_port": dst_port,
+                "proto": protocol,
+                "alert": {
+                    "severity": 1,
+                    "signature": signature,
+                    "category": "Anomaly",
+                    "signature_id": signature_id,
+                    "rev": 1,
+                    "gid": 1,
+                },
+            })
+            .to_string()
+        })
+        .collect()
+}
+
+async fn seed_demo_eve_if_requested(
+    eve_path: &str,
+    node_id: &str,
+) -> crate::threat::ThreatResult<()> {
+    if !demo_eve_seed_enabled() {
+        return Ok(());
+    }
+
+    match tokio::fs::metadata(eve_path).await {
+        Ok(meta) if meta.len() > 0 => return Ok(()),
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+
+    if let Some(parent) = Path::new(eve_path).parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    let timestamp = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+    let lines = demo_eve_seed_lines(&timestamp);
+    let mut file = tokio::fs::File::create(eve_path).await?;
+    for line in lines {
+        file.write_all(line.as_bytes()).await?;
+        file.write_all(b"\n").await?;
+    }
+    file.flush().await?;
+
+    tracing::info!(
+        node_id = %node_id,
+        path = %eve_path,
+        "seeded demo EVE burst for Task 1 AI"
+    );
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::task1_ai;
+    use crate::threat::eve_parser;
+    use std::collections::HashSet;
+
+    #[test]
+    fn demo_seed_burst_triggers_task1_anomaly_and_unique_alert_ids() {
+        let lines = demo_eve_seed_lines("2026-08-20T00:00:00.000000+00:00");
+        assert_eq!(lines.len(), 5);
+
+        let mut seen_ids = HashSet::new();
+        let mut scorer = task1_ai::AlertScorerState::default();
+        let mut anomaly = None;
+
+        for (idx, line) in lines.iter().enumerate() {
+            let alert = eve_parser::parse_line(line, (idx + 1) as u64)
+                .expect("seed line should parse")
+                .expect("seed line should be an alert");
+            assert_eq!(alert.src_ip, "203.0.113.77");
+            assert_eq!(alert.signature_id, 9_100_001);
+            assert_eq!(alert.signature, "SGX AI anomaly burst");
+            assert!(seen_ids.insert(alert.alert_id.clone()));
+
+            let feature = task1_ai::feature_from_alert(&alert);
+            anomaly = task1_ai::process_feature(&feature, &mut scorer);
+        }
+
+        assert!(anomaly.is_some(), "burst should cross the Task 1 threshold");
+    }
 }

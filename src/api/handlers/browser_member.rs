@@ -57,7 +57,7 @@ pub async fn state_for_did(
         let active = user.status == "active"
             && user
                 .registration_expires_at
-                .map_or(true, |expiry| expiry > now);
+                .is_none_or(|expiry| expiry > now);
         return Ok(Some(if active {
             BrowserMemberState::Active
         } else {
@@ -80,7 +80,7 @@ pub async fn dids_for_circles(
                 && user.status == "active"
                 && user
                     .registration_expires_at
-                    .map_or(true, |expiry| expiry > now)
+                    .is_none_or(|expiry| expiry > now)
                 && user
                     .circle_ids
                     .iter()

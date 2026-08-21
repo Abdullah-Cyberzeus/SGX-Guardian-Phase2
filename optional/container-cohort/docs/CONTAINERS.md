@@ -213,6 +213,10 @@ Normal day-to-day flow:
 6. `docker exec -e SGX_FORCE_SOFTWARE_KEYS=1 sgx-nodeA sgx-pa-cli ...`
 7. `curl -s http://localhost:18443/api/v1/...`
 
+## Verification Logs
+
+- [Task 1 AI - Docker Verification Log](/home/asad/SGX/optional/container-cohort/docs/Task1_AI_Docker_Verification_Log.md:1)
+
 ## Troubleshooting
 - Agar `nodeA` healthy na ho, pehle `docker logs --tail=200 sgx-nodeA` dekho.
 - Agar `nodeB` ya `nodeC` bootstrap par ruk jayein, confirm karo `nodeA` healthy hai.

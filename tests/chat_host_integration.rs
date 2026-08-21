@@ -7,24 +7,116 @@
 //! transport, JSONL persistence, group fan-out, and missed-message sync.
 
 use axum::{extract::State, Json};
+use base64::Engine as _;
+use chrono::Utc;
 use sgx_guardian_client::api::handlers::chat::{self, MarkReadRequest, SendMessageRequest};
 use sgx_guardian_client::api::state::AppState;
 use sgx_guardian_client::chat::grpc_server::MyChatService;
 use sgx_guardian_client::chat::models::{ChatMessageRecord, MessageStatus};
-use sgx_guardian_client::chat::storage::{append_p2p_message, read_group_history, read_p2p_history};
+use sgx_guardian_client::chat::storage::{
+    append_p2p_message, read_group_history, read_p2p_history,
+};
 use sgx_guardian_client::proto::sgx::chat_service_client::ChatServiceClient;
 use sgx_guardian_client::proto::sgx::chat_service_server::ChatServiceServer;
 use sgx_guardian_client::proto::sgx::PushMessageRequest;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::sync::oneshot;
 use tonic::transport::{Channel, Server};
 use tonic::Code;
-use sha2::{Digest, Sha256};
 
 fn state(node_id: &str, root: &std::path::Path) -> std::sync::Arc<AppState> {
     AppState::for_tests(root, node_id, root.join("config").display().to_string())
+}
+
+fn seed_circle_runtime(state: &Arc<AppState>, root: &std::path::Path) {
+    use sgx_guardian_client::did::doc_persistence::{
+        self, CA_AGGREGATE_PATH_ENV, PEERS_DOC_DIR_ENV, SELF_DOC_PATH_ENV, VERSION_COUNTER_PATH_ENV,
+    };
+    use sgx_guardian_client::did::doc_sign;
+    use sgx_guardian_client::did::document::{DidDocument, DocBuildInput};
+    use sgx_guardian_client::did::persistence::{derivation_signing_bytes, DerivationProof};
+    use sgx_guardian_client::did::{Did, DidRecord};
+
+    let self_doc_path = root.join("did_doc.json");
+    let peers_dir = root.join("peers");
+    let aggregate_path = root.join("circle_did_docs.json");
+    let counter_path = root.join("version_counter");
+    let did_path = root.join("did.json");
+    let circle_base = root.join("circles");
+    let vc_base = root.join("vc");
+    let key_dir = root.join("sgx-agent");
+
+    std::fs::create_dir_all(&peers_dir).unwrap();
+    std::fs::create_dir_all(&circle_base).unwrap();
+    std::fs::create_dir_all(&vc_base).unwrap();
+    std::fs::create_dir_all(&key_dir).unwrap();
+
+    std::env::set_var(SELF_DOC_PATH_ENV, &self_doc_path);
+    std::env::set_var(PEERS_DOC_DIR_ENV, &peers_dir);
+    std::env::set_var(CA_AGGREGATE_PATH_ENV, &aggregate_path);
+    std::env::set_var(VERSION_COUNTER_PATH_ENV, &counter_path);
+    std::env::set_var(
+        sgx_guardian_client::circle::persistence::CIRCLE_BASE_ENV,
+        &circle_base,
+    );
+    std::env::set_var(sgx_guardian_client::vc::persistence::VC_BASE_ENV, &vc_base);
+    std::env::set_var(sgx_guardian_client::vc::issue::DEVICE_KEY_DIR_ENV, &key_dir);
+    std::env::set_var("SGX_GUARDIAN_DID_PATH", &did_path);
+    std::env::set_var("SGX_FORCE_SOFTWARE_KEYS", "1");
+
+    let did = Did::parse(&state.device_did).expect("parse device did");
+    let pubkey = state.signer.pubkey_der().expect("pubkey");
+    let now = Utc::now().to_rfc3339();
+    let mut record = DidRecord {
+        did: state.device_did.clone(),
+        method: "guardian".into(),
+        method_version: "1.0".into(),
+        did_id_b58: did.msi().to_string(),
+        did_id_hex: hex::encode(did.id_bytes()),
+        created_at: now.clone(),
+        deactivated_at: None,
+        derivation: DerivationProof {
+            se050_uid: "01".into(),
+            se050_uid_source: "test".into(),
+            dkp_v1_pubkey_sha256_b16: "01".into(),
+            dkp_v1_pubkey_path: "test".into(),
+            dkp_v1_pubkey_der_b64: None,
+            dik_pubkey_sha256_b16: "01".into(),
+            dik_pubkey_der_b64: None,
+        },
+        current_dkp_version: 1,
+        deriv_signature_b64: String::new(),
+    };
+    let mut doc = DidDocument::build(DocBuildInput {
+        did: &state.device_did,
+        node_name: Some(&state.node_id),
+        current_dkp_version: 1,
+        current_dkp_pubkey_der: &pubkey,
+        overlay_ip_cidr: Some("192.168.100.1/24"),
+        attestation_bind: None,
+        cert_bootstrap_bind: Some(("192.168.100.1", 50061)),
+        revoked: vec![],
+        previous_version_id: 0,
+        created_at: Some(now),
+        status: Some("active".into()),
+    })
+    .expect("build did doc");
+    let vm_ref = doc.verification_method.first().expect("vm").id.clone();
+    doc_sign::sign_in_place(&mut doc, &state.signer, &vm_ref).expect("sign did doc");
+    let signing_bytes = derivation_signing_bytes(&record.derivation);
+    let signature = state.signer.sign(&signing_bytes).expect("sign derivation");
+    record.deriv_signature_b64 = base64::engine::general_purpose::STANDARD.encode(signature);
+    record
+        .save(did_path.to_str().expect("did path"))
+        .expect("save did");
+    doc_persistence::save_self(&doc).expect("save self doc");
+    doc_persistence::save_peer(&doc).expect("save peer doc");
+    doc_persistence::save_ca_aggregate(std::slice::from_ref(&doc)).expect("save aggregate");
+
+    sgx_guardian_client::vc::issue::ensure_owner_vc(&record, &state.signer).expect("seed owner vc");
 }
 
 async fn write_trusted_peer(state: &AppState, did: &str, peer_id: &str, port: u16) {
@@ -101,12 +193,41 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
     std::env::set_var("CHAT_STORAGE_DIR", temp.path().join("chat"));
     std::env::set_var("SGX_GUARDIAN_VAULT_BASE", temp.path().join("vault"));
 
-    let state_a = state("nodeA", &temp.path().join("node-a"));
-    let state_b = state("nodeB", &temp.path().join("node-b"));
-    let state_c = state("nodeC", &temp.path().join("node-c"));
+    let node_a_root = temp.path().join("node-a");
+    let node_b_root = temp.path().join("node-b");
+    let node_c_root = temp.path().join("node-c");
+    let state_a = state("nodeA", &node_a_root);
+    let state_b = state("nodeB", &node_b_root);
+    let state_c = state("nodeC", &node_c_root);
     let did_a = state_a.device_did.clone();
     let did_b = state_b.device_did.clone();
     let did_c = state_c.device_did.clone();
+    seed_circle_runtime(&state_a, &node_a_root);
+    let group_circle = sgx_guardian_client::circle::store::create_circle(
+        "nodeA",
+        "group:host-test".to_string(),
+        "Host Test Group".to_string(),
+        "Host chat integration circle".to_string(),
+        did_a.clone(),
+    )
+    .unwrap();
+    assert_eq!(group_circle.circle_id, "group:host-test");
+    let _member_b = sgx_guardian_client::circle::members::add_member(
+        "nodeA",
+        "group:host-test",
+        &did_b,
+        sgx_guardian_client::vc::credential::CredentialRole::Member,
+        30,
+    )
+    .unwrap();
+    let _member_c = sgx_guardian_client::circle::members::add_member(
+        "nodeA",
+        "group:host-test",
+        &did_c,
+        sgx_guardian_client::vc::credential::CredentialRole::Member,
+        30,
+    )
+    .unwrap();
     let (addr_a, shutdown_a) = start_peer(state_a.clone()).await;
     let (addr_b, shutdown_b) = start_peer(state_b.clone()).await;
     let (addr_c, shutdown_c) = start_peer(state_c.clone()).await;
@@ -146,7 +267,7 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
     let received = wait_for_message(&did_a, &response.message_id).await;
     assert_eq!(
         received.encrypted_payload,
-        r#"{"attachment_id":null,"content":"hello from the host harness"}"#
+        r#"{"attachment_id":null,"attachment_mime":null,"attachment_name":null,"attachment_size":null,"content":"hello from the host harness"}"#
     );
 
     assert_eq!(received.status, MessageStatus::Delivered);
@@ -244,14 +365,14 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
             .into_iter()
             .filter(|m| m.message_id == group_response.message_id)
             .collect::<Vec<_>>();
-        if group_deliveries.len() == 3 {
-            assert!(group_deliveries.iter().all(|m| m.encrypted_payload
-                == r#"{"attachment_id":null,"content":"host group message"}"#));
-            assert!(group_deliveries
-                .iter()
-                .any(|m| m.recipient_did == "group:host-test"));
-            assert!(group_deliveries.iter().any(|m| m.recipient_did == did_b));
-            assert!(group_deliveries.iter().any(|m| m.recipient_did == did_c));
+        if group_deliveries.len() == 1 {
+            let record = &group_deliveries[0];
+            assert_eq!(record.recipient_did, "group:host-test");
+            assert_eq!(record.sender_did, did_a);
+            assert_eq!(
+                record.encrypted_payload,
+                r#"{"attachment_id":null,"attachment_mime":null,"attachment_name":null,"attachment_size":null,"content":"host group message"}"#
+            );
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -263,8 +384,8 @@ async fn host_chat_round_trip_group_sync_and_trust_gate() {
             .iter()
             .filter(|m| m.message_id == group_response.message_id)
             .count(),
-        3,
-        "group history must contain sender copy plus both trusted peer deliveries"
+        1,
+        "group history keeps one canonical entry per message_id"
     );
 
     // A peer can return missed messages through SyncMessages. Seed B's side

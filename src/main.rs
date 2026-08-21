@@ -55,7 +55,10 @@ async fn serve_admin_tls_alias(
     upstream: std::net::SocketAddr,
 ) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind(bind).await?;
-    println!("✅ Guardian HTTPS name endpoint listening on https://{}", bind);
+    println!(
+        "✅ Guardian HTTPS name endpoint listening on https://{}",
+        bind
+    );
     loop {
         let (mut client, _) = listener.accept().await?;
         tokio::spawn(async move {
@@ -63,7 +66,9 @@ async fn serve_admin_tls_alias(
                 Ok(mut server) => {
                     let _ = tokio::io::copy_bidirectional(&mut client, &mut server).await;
                 }
-                Err(error) => tracing::warn!(%error, "Guardian HTTPS alias could not reach admin API"),
+                Err(error) => {
+                    tracing::warn!(%error, "Guardian HTTPS alias could not reach admin API")
+                }
             }
         });
     }
@@ -589,9 +594,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     BootChainStatus::unknown()
                 }
                 Err(_) => {
-                    eprintln!(
-                        "  ⚠️ BootChain check TIMED OUT after 15s — using unknown defaults"
-                    );
+                    eprintln!("  ⚠️ BootChain check TIMED OUT after 15s — using unknown defaults");
                     BootChainStatus::unknown()
                 }
             }
@@ -1477,7 +1480,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "🔐 Requesting cert + CA cert from nodeA at {}:50061...",
                     ca_lan_ip
                 );
-                log_event(&node_id, "Guardian Mesh certificate missing — requesting from CA");
+                log_event(
+                    &node_id,
+                    "Guardian Mesh certificate missing — requesting from CA",
+                );
 
                 let ca_address = format!("{}:50061", ca_lan_ip);
                 let wants_lh = std::env::var("SGX_WANTS_LIGHTHOUSE")
@@ -1884,7 +1890,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             match NebulaInterface::verify_and_fix_ip(&nebula_ip) {
                 Ok(_) => println!("✅ Guardian Mesh interface IP verified: {}", nebula_ip),
-                Err(e) => eprintln!("⚠️  Guardian Mesh interface IP fix failed: {} (continuing)", e),
+                Err(e) => eprintln!(
+                    "⚠️  Guardian Mesh interface IP fix failed: {} (continuing)",
+                    e
+                ),
             }
         } else {
             eprintln!(
@@ -3074,7 +3083,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(300 + scatter)).await;
                 window = window.wrapping_add(1);
-                if window % 4 == 0 {
+                if window.is_multiple_of(4) {
                     // Full refresh window (10 min, sliced) — hold the
                     // metrics write lock so readers see one stable
                     // snapshot across the whole CA transition.

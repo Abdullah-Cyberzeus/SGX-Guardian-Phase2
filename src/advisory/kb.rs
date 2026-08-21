@@ -54,6 +54,16 @@ pub struct RuleStep {
 }
 
 impl RecommendationRules {
+    pub fn seed_default_if_missing(path: &Path) -> AdvisoryResult<bool> {
+        if path.exists() {
+            return Ok(false);
+        }
+
+        let rules = Self::default_rules();
+        rules.save_atomic(path)?;
+        Ok(true)
+    }
+
     pub fn load_or_default(path: &Path) -> Self {
         match Self::load_verified(path) {
             Ok(rules) => rules,

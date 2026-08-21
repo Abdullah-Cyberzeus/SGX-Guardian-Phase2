@@ -65,6 +65,7 @@ pub fn generate_for_alert(
     alert: ThreatAlert,
     threat_state_dir: PathBuf,
     discovery_state_dir: PathBuf,
+    anomaly: Option<AnomalyContext>,
 ) {
     tokio::spawn(async move {
         let config = AdvisoryConfig::from_state_dirs(threat_state_dir);
@@ -78,7 +79,7 @@ pub fn generate_for_alert(
                     None
                 }
             };
-        let recommendation = generate(&alert, None, device.as_ref(), &rules);
+        let recommendation = generate(&alert, anomaly.as_ref(), device.as_ref(), &rules);
         if let Err(err) = append_capped(
             &config.recommendations_path(),
             recommendation,

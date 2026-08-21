@@ -23,12 +23,16 @@ impl VendorProvider {
             VendorProvider::TpLinkKasa => "TP-Link Kasa Smart Home",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Option<Self> {
+impl std::str::FromStr for VendorProvider {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "google_nest" | "nest" => Some(VendorProvider::GoogleNest),
-            "tp_link_kasa" | "kasa" | "tplink" => Some(VendorProvider::TpLinkKasa),
-            _ => None,
+            "google_nest" | "nest" => Ok(VendorProvider::GoogleNest),
+            "tp_link_kasa" | "kasa" | "tplink" => Ok(VendorProvider::TpLinkKasa),
+            _ => Err(()),
         }
     }
 }
@@ -86,13 +90,13 @@ mod tests {
     #[test]
     fn test_vendor_provider_conversion() {
         assert_eq!(
-            VendorProvider::from_str("google_nest"),
+            "google_nest".parse::<VendorProvider>().ok(),
             Some(VendorProvider::GoogleNest)
         );
         assert_eq!(
-            VendorProvider::from_str("kasa"),
+            "kasa".parse::<VendorProvider>().ok(),
             Some(VendorProvider::TpLinkKasa)
         );
-        assert_eq!(VendorProvider::from_str("unknown"), None);
+        assert_eq!("unknown".parse::<VendorProvider>().ok(), None);
     }
 }

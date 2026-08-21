@@ -104,6 +104,12 @@ impl NotificationStore {
     }
 }
 
+impl Default for NotificationStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub static GLOBAL_NOTIFICATIONS: once_cell::sync::Lazy<Arc<NotificationStore>> =
     once_cell::sync::Lazy::new(|| Arc::new(NotificationStore::new()));
 

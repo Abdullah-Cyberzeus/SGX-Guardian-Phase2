@@ -357,6 +357,11 @@ mod tests {
     use tempfile::TempDir;
     use tokio::net::TcpListener;
 
+    struct SignedIdTokenClaims<'a> {
+        email: Option<&'a str>,
+        name: Option<&'a str>,
+    }
+
     #[tokio::test]
     async fn exchanges_code_and_verifies_es256_id_token() {
         let td = TempDir::new().expect("tempdir");
@@ -373,8 +378,10 @@ mod tests {
             "sgx-client",
             "cylenium-user-1",
             "nonce-1",
-            Some("admin@example.com"),
-            Some("Admin User"),
+            SignedIdTokenClaims {
+                email: Some("admin@example.com"),
+                name: Some("Admin User"),
+            },
         )
         .await;
         let jwks = jwks_for_signer(signer, "kid-1");
@@ -421,8 +428,10 @@ mod tests {
             "sgx-client",
             "cylenium-user-1",
             "nonce-1",
-            Some("admin@example.com"),
-            Some("Admin User"),
+            SignedIdTokenClaims {
+                email: Some("admin@example.com"),
+                name: Some("Admin User"),
+            },
         )
         .await;
         let jwks: Jwks = serde_json::from_value(jwks_for_signer(signer, "kid-1")).expect("jwks");
@@ -530,8 +539,7 @@ mod tests {
         audience: &str,
         subject: &str,
         nonce: &str,
-        email: Option<&str>,
-        name: Option<&str>,
+        claims: SignedIdTokenClaims<'_>,
     ) -> String {
         let header = json!({ "alg": "ES256", "typ": "JWT", "kid": kid });
         let now = Utc::now().timestamp();
@@ -542,8 +550,8 @@ mod tests {
             "iat": now,
             "exp": now + 300,
             "nonce": nonce,
-            "email": email,
-            "name": name
+            "email": claims.email,
+            "name": claims.name
         });
         let encoded_header = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header).expect("header"));
         let encoded_claims = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).expect("claims"));
