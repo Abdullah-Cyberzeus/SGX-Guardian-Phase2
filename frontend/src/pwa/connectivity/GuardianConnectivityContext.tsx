@@ -24,6 +24,8 @@ interface ConnectivityState {
 const LAST_SEEN_KEY = "last_guardian_seen_at";
 const BASE_DELAY_MS = 3_000;
 const MAX_DELAY_MS = 60_000;
+const HEALTH_PROBE_TIMEOUT_MS = 8_000;
+const OFFLINE_FAILURE_THRESHOLD = 2;
 
 const Context = createContext<ConnectivityState>({
   reachable: true,
@@ -50,14 +52,13 @@ function timeoutSignal(ms: number) {
 }
 
 async function guardianHealthProbe() {
-  const token = api.getToken();
-  const endpoint = token ? "/pwa/health" : "/health";
-  const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-  const response = await fetch(api.publicUrl(endpoint), { cache: "no-store", headers, signal: timeoutSignal(2_500) });
-  if (response.status === 401) {
-    throw new Error("credential_revoked");
-  }
-  if (response.status === 403) return;
+  // Reachability must answer only one question: is this Guardian's HTTP API alive?
+  // Using the authenticated PWA endpoint made an expired/refreshing token, a slow
+  // authorization lookup, or a CORS preflight look exactly like a dead node.
+  const response = await fetch(api.publicUrl("/health"), {
+    cache: "no-store",
+    signal: timeoutSignal(HEALTH_PROBE_TIMEOUT_MS),
+  });
   if (!response.ok) throw new Error("guardian health check failed");
 }
 
@@ -97,6 +98,9 @@ export function GuardianConnectivityProvider({ children }: { children: ReactNode
 
   const markOffline = useCallback((options: { forceSignOut?: boolean; purgeBrowserState?: boolean } = {}) => {
     failures.current += 1;
+    // A single request or radio/network transition is not enough evidence to
+    // declare the whole Guardian offline. The next scheduled probe confirms it.
+    if (failures.current < OFFLINE_FAILURE_THRESHOLD) return;
     setReachable(false);
     if (options.forceSignOut && session && !cachedOfflineModeEnabled()) {
       void forceSignOut("Guardian node is offline. Please sign in again when it is reachable.");
@@ -194,7 +198,9 @@ export function GuardianConnectivityProvider({ children }: { children: ReactNode
     const success = () => void markConnected(false);
     const failure = (event: Event) => {
       const kind = (event as CustomEvent<{ kind?: ApiFailureKind }>).detail?.kind;
-      if (kind === "guardian_unreachable" || kind === "timeout") markOffline();
+      // Endpoint-specific failures (for example a slow cloud-device command)
+      // must not directly mark the Guardian offline. Confirm with /health.
+      if (kind === "guardian_unreachable" || kind === "timeout") void checkNowRef.current();
       if (kind === "unauthorized") {
         setRevoked(true);
         setReachable(false);
@@ -203,7 +209,10 @@ export function GuardianConnectivityProvider({ children }: { children: ReactNode
     const socket = (event: Event) => {
       const connected = Boolean((event as CustomEvent<{ connected?: boolean }>).detail?.connected);
       if (connected) void markConnected(true);
-      else markOffline();
+      // A feature socket can reconnect while the Guardian HTTP API remains
+      // healthy, so verify node reachability instead of taking the socket as
+      // proof that the entire Guardian is down.
+      else void checkNowRef.current();
     };
     const syncState = (event: Event) => {
       setSyncRunning(Boolean((event as CustomEvent<{ running?: boolean }>).detail?.running));
@@ -230,7 +239,7 @@ export function GuardianConnectivityProvider({ children }: { children: ReactNode
       window.removeEventListener("sgx:sync-revoked", revokedEvent);
       window.removeEventListener("sgx:unauthorized", revokedEvent);
     };
-  }, [markConnected, markOffline, refreshPendingCount]);
+  }, [markConnected, refreshPendingCount]);
 
   const status: ConnectivityStatus = revoked
     ? "credential_revoked"

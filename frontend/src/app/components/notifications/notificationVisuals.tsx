@@ -30,11 +30,19 @@ export function severityColor(severity: string): string {
 /** Best-effort deep-link for a notification's ref_id; null means "open the panel only". */
 export function notificationRoute(kind: string, refId?: string): string | null {
   if (kind === "GuardianOffline") return "/home";
+  // Communication notification refIds are object IDs, not universally Circle
+  // IDs: messages carry message IDs, calls carry session IDs, and files carry
+  // vault IDs. Route those kinds to their owning screens instead of attempting
+  // to load a Circle whose ID can never match.
+  if (kind === "CircleNewMessage") return "/chats";
+  if (kind === "CircleIncomingCall") return "/calls";
+  if (kind === "CircleFileShared") return "/storage";
   if (!refId) return null;
-  if (kind.startsWith("Alert")) return `/alerts/${refId}`;
-  if (kind === "DeviceDiscovered" || kind === "DevicePendingApproval") return `/devices/${refId}`;
-  if (kind === "CircleMemberPendingApproval") return `/network/${refId}/manage`;
-  if (kind.startsWith("Circle")) return `/network/${refId}`;
+  const encodedRef = encodeURIComponent(refId);
+  if (kind.startsWith("Alert")) return `/alerts/${encodedRef}`;
+  if (kind === "DeviceDiscovered" || kind === "DevicePendingApproval") return `/devices/${encodedRef}`;
+  if (kind === "CircleMemberPendingApproval") return `/network/${encodedRef}/manage`;
+  if (kind === "CircleMemberJoined") return `/network/${encodedRef}?tab=members`;
   return null;
 }
 

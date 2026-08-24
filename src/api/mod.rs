@@ -51,7 +51,9 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             header::AUTHORIZATION,
             header::CONTENT_TYPE,
             HeaderName::from_static("idempotency-key"),
+            HeaderName::from_static("last-event-id"),
             HeaderName::from_static("ngrok-skip-browser-warning"),
+            HeaderName::from_static("x-sgx-client"),
         ]);
 
     Router::new()
@@ -1013,7 +1015,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cors_preflight_allows_idempotency_key_header() {
+    async fn cors_preflight_allows_pwa_and_stream_headers() {
         let (base_url, handle) = spawn_api_with_state(test_state()).await;
         let response = reqwest::Client::new()
             .request(
@@ -1024,7 +1026,7 @@ mod tests {
             .header(reqwest::header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
             .header(
                 reqwest::header::ACCESS_CONTROL_REQUEST_HEADERS,
-                "content-type,idempotency-key",
+                "content-type,idempotency-key,last-event-id,x-sgx-client",
             )
             .send()
             .await
@@ -1040,6 +1042,8 @@ mod tests {
             .expect("allow headers utf8")
             .to_ascii_lowercase();
         assert!(allow_headers.contains("idempotency-key"));
+        assert!(allow_headers.contains("last-event-id"));
+        assert!(allow_headers.contains("x-sgx-client"));
     }
 
     async fn authed_client_for_state(state: &Arc<AppState>) -> reqwest::Client {
