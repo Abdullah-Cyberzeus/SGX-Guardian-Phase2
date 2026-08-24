@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import { AlertTriangle, CheckCircle2, Clock3, Fingerprint, Loader2, ShieldCheck, WifiOff } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock3, Eye, EyeOff, Fingerprint, Loader2, ShieldCheck, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "../../contexts/AuthContext";
 import { parseInviteMaterial } from "../../services/circleService";
@@ -50,6 +50,7 @@ export function MemberJoinOnboarding() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState<"preview" | "join" | null>(null);
   const [joined, setJoined] = useState(false);
   const [pendingEnrollment, setPendingEnrollment] = useState<MemberJoinResult | null>(() => restoredPending?.enrollment || null);
@@ -207,7 +208,7 @@ export function MemberJoinOnboarding() {
         {preview && <div className="mt-4 rounded-lg border border-primary/30 bg-primary/5 p-4"><div className="flex items-center gap-2 font-semibold text-primary"><CheckCircle2 size={17} />Invitation verified</div><dl className="mt-3 grid grid-cols-[90px_1fr] gap-2 text-sm"><dt className="text-muted-foreground">Circle</dt><dd>{preview.circleName}</dd><dt className="text-muted-foreground">Role</dt><dd className="capitalize">{preview.role}</dd><dt className="text-muted-foreground">Expires</dt><dd>{new Date(preview.expiresAt).toLocaleString()}</dd></dl></div>}
       </section>
 
-      {preview && <section className="rounded-xl border border-border bg-card p-5"><h2 className="font-semibold">Create member login</h2><div className="mt-4 grid gap-3"><input className="h-12 rounded-md border border-border bg-input-background px-4 outline-none" value={name} onChange={(event) => setName(event.target.value)} placeholder="Full name" /><input type="email" className="h-12 rounded-md border border-border bg-input-background px-4 outline-none" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email address" /><input type="password" className="h-12 rounded-md border border-border bg-input-background px-4 outline-none" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="12+ chars, upper/lower, number, symbol" /></div><button className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-3 font-semibold text-primary-foreground disabled:opacity-40" disabled={!canJoin} onClick={() => void join()}>{busy === "join" && <Loader2 size={17} className="animate-spin" />}Create member access</button></section>}
+      {preview && <section className="rounded-xl border border-border bg-card p-5"><h2 className="font-semibold">Create member login</h2><div className="mt-4 grid gap-3"><input className="h-12 rounded-md border border-border bg-input-background px-4 outline-none" value={name} onChange={(event) => setName(event.target.value)} placeholder="Full name" /><input type="email" className="h-12 rounded-md border border-border bg-input-background px-4 outline-none" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email address" /><div className="relative"><input type={showPassword ? "text" : "password"} className="h-12 w-full rounded-md border border-border bg-input-background px-4 pr-12 outline-none" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="12+ chars, upper/lower, number, symbol" /><button type="button" className="absolute right-3 top-1/2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md hover:bg-muted/50" style={{ color: "var(--muted-foreground)" }} aria-label={showPassword ? "Hide password" : "Show password"} onClick={() => setShowPassword((value) => !value)}>{showPassword ? <EyeOff size={16} /> : <Eye size={16} />}</button></div></div><button className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-3 font-semibold text-primary-foreground disabled:opacity-40" disabled={!canJoin} onClick={() => void join()}>{busy === "join" && <Loader2 size={17} className="animate-spin" />}Create member access</button></section>}
     </div>
   </main>;
 }

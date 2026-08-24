@@ -11,7 +11,6 @@ import { useGuardianInfo, useAlerts, useCircles, useThreatIntel } from "../../ho
 import { Card, CardHeader, CardTitle, CardDescription, CardAction, CardContent } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Progress } from "../../components/ui/progress";
-import { useAuth } from "../../contexts/AuthContext";
 
 type ScreenState = "loading" | "populated" | "empty" | "error";
 
@@ -48,41 +47,6 @@ interface CircleData {
   id: string;
   name: string;
   memberCount: number;
-  onlineCount: number;
-}
-
-function normalizedIdentity(value: unknown) {
-  return String(value || "").trim().toLowerCase();
-}
-
-function currentGuardianIsCircleMember(circle: any, identities: Set<string>) {
-  const members = Array.isArray(circle?.members) ? circle.members : [];
-  return members.some((member: any) => [
-    member?.did,
-    member?.nodeHint,
-    member?.node_hint,
-    member?.deviceId,
-    member?.device_id,
-    member?.peerId,
-    member?.peer_id,
-  ].some((value) => identities.has(normalizedIdentity(value))));
-}
-
-function currentGuardianAlreadyCounted(circle: any, identities: Set<string>) {
-  const members = Array.isArray(circle?.members) ? circle.members : [];
-  return members.some((member: any) => {
-    const isSelf = [
-      member?.did,
-      member?.nodeHint,
-      member?.node_hint,
-      member?.deviceId,
-      member?.device_id,
-      member?.peerId,
-      member?.peer_id,
-    ].some((value) => identities.has(normalizedIdentity(value)));
-    if (!isSelf) return false;
-    return member?.online === true || normalizedIdentity(member?.presenceStatus) === "online";
-  });
 }
 
 // ── Shared sub-components ────────────────────────────────────────────────────
@@ -293,37 +257,27 @@ function CirclesDeskGrid({ navigate, circles }: { navigate: (p: string) => void;
       </CardHeader>
       <CardContent className="px-5 [&:last-child]:pb-5">
         <div className="grid gap-2.5" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))" }}>
-          {circles.map((circle) => {
-            const ratio = circle.memberCount ? (circle.onlineCount / circle.memberCount) * 100 : 0;
-            return (
-              <button
-                key={circle.id}
-                onClick={() => navigate(`/network/${circle.id}`)}
-                className="flex flex-col gap-3 rounded-lg border border-border bg-muted/40 p-3.5 text-left transition-colors hover:border-primary/40 hover:bg-muted"
-              >
-                <div className="flex items-center gap-2.5">
-                  <span
-                    className="flex size-8 shrink-0 items-center justify-center rounded-lg"
-                    style={{ backgroundColor: "color-mix(in srgb, var(--primary) 14%, transparent)", border: "1px solid color-mix(in srgb, var(--primary) 24%, transparent)" }}
-                  >
-                    <Users size={15} className="text-primary" />
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{circle.name}</span>
-                  <ChevronRight size={14} className="shrink-0 text-muted-foreground" />
+          {circles.map((circle) => (
+            <button
+              key={circle.id}
+              onClick={() => navigate(`/network/${circle.id}`)}
+              className="flex flex-col gap-3 rounded-lg border border-border bg-muted/40 p-3.5 text-left transition-colors hover:border-primary/40 hover:bg-muted"
+            >
+              <div className="flex items-center gap-2.5">
+                <span
+                  className="flex size-8 shrink-0 items-center justify-center rounded-lg"
+                  style={{ backgroundColor: "color-mix(in srgb, var(--primary) 14%, transparent)", border: "1px solid color-mix(in srgb, var(--primary) 24%, transparent)" }}
+                >
+                  <Users size={15} className="text-primary" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold text-foreground">{circle.name}</span>
+                  <span className="mt-1 block text-xs text-muted-foreground">{circle.memberCount} members</span>
                 </div>
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <span className="size-1.5 rounded-full" style={{ backgroundColor: "var(--chart-2)" }} />
-                      Members online
-                    </span>
-                    <span className="text-xs font-medium text-foreground tabular-nums">{circle.onlineCount}/{circle.memberCount}</span>
-                  </div>
-                  <Progress value={ratio} className="h-1.5" />
-                </div>
-              </button>
-            );
-          })}
+                <ChevronRight size={14} className="shrink-0 text-muted-foreground" />
+              </div>
+            </button>
+          ))}
         </div>
       </CardContent>
     </Card>
@@ -452,10 +406,7 @@ function CirclesCard({ navigate, circles }: { navigate: (p: string) => void; cir
             </div>
             <div className="flex flex-col flex-1 min-w-0">
               <span className="truncate" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)", lineHeight: 1.3 }}>{circle.name}</span>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <div style={{ width: "5px", height: "5px", borderRadius: "50%", backgroundColor: "var(--chart-2)", flexShrink: 0 }} />
-                <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{circle.onlineCount}/{circle.memberCount} online</span>
-              </div>
+              <span className="mt-0.5" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{circle.memberCount} members</span>
             </div>
             <ChevronRight size={13} style={{ color: "var(--muted-foreground)", flexShrink: 0 }} />
           </button>
@@ -469,7 +420,6 @@ function CirclesCard({ navigate, circles }: { navigate: (p: string) => void; cir
 export function HM01Dashboard() {
   const navigate = useNavigate();
   const { name: userName } = useCurrentUser();
-  const { session } = useAuth();
   const [bannerVisible, setBannerVisible] = useState(() => !localStorage.getItem(BANNER_KEY));
 
   // Fetch live data from the Guardian API. API failures remain explicit.
@@ -505,30 +455,11 @@ export function HM01Dashboard() {
 
   const circles = useMemo(() => {
     const circlesList = Array.isArray(circlesData) ? circlesData : [];
-    const currentGuardianIds = new Set([
-      session?.guardianDid,
-      session?.guardianFingerprint,
-      guardianData?.guardianDid,
-      guardianData?.did,
-      guardianData?.fingerprint,
-      guardianData?.nodeId,
-      guardianData?.id,
-      guardianData?.name,
-    ].map(normalizedIdentity).filter(Boolean));
     return circlesList.map((circle: any) => ({
       ...circle,
       memberCount: circle.memberCount || 0,
-      onlineCount: Math.min(
-        circle.memberCount || 0,
-        (circle.onlineCount ?? 0)
-          + (currentGuardianIds.size > 0
-            && currentGuardianIsCircleMember(circle, currentGuardianIds)
-            && !currentGuardianAlreadyCounted(circle, currentGuardianIds)
-            ? 1
-            : 0),
-      ),
     }));
-  }, [circlesData, guardianData, session?.guardianDid, session?.guardianFingerprint]);
+  }, [circlesData]);
 
   // Live values come from Guardian's persisted alert and active-block stores.
   const threats24h = threatData?.threats24h ?? 0;
