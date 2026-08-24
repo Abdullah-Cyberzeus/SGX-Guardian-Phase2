@@ -33,3 +33,4 @@ telemetry/
 frontend/node_modules/
 frontend/*.tsbuildinfo
 /SGX Frontend/
+*.tar
