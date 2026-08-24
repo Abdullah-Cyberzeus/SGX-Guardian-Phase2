@@ -941,8 +941,13 @@ mod tests {
     use super::*;
     use crate::call::identity::TrustedPeerIdentity;
     use crate::call::signaling::MediaType;
+    use crate::call::{
+        CallSignalHub, CallState, GroupCallState, GroupParticipant, GroupRole, GroupSession,
+        SessionManager,
+    };
     use async_trait::async_trait;
     use chrono::Utc;
+    use std::collections::HashMap;
     use tempfile::tempdir;
 
     struct StaticIdentity(TrustedPeerIdentity);
@@ -962,6 +967,174 @@ mod tests {
                 })
             }
         }
+    }
+
+    fn participant(
+        device_id: &str,
+        nebula_ip: &str,
+        role: GroupRole,
+        state: GroupMemberState,
+    ) -> GroupParticipant {
+        GroupParticipant {
+            device_id: device_id.into(),
+            virtual_id: format!("vid-{device_id}"),
+            nebula_ip: nebula_ip.into(),
+            role,
+            state,
+            audio_allowed: true,
+            video_allowed: true,
+            media_ready: false,
+            joined_at: None,
+            last_seen_at: None,
+            is_local_browser: false,
+        }
+    }
+
+    fn group_session(group_id: &str) -> GroupSession {
+        let now = Utc::now();
+        let mut participants = HashMap::new();
+        participants.insert(
+            "host".into(),
+            participant(
+                "host",
+                "127.0.0.1",
+                GroupRole::Host,
+                GroupMemberState::Joined,
+            ),
+        );
+        participants.insert(
+            "member".into(),
+            participant(
+                "member",
+                "127.0.0.1",
+                GroupRole::Member,
+                GroupMemberState::Joined,
+            ),
+        );
+        GroupSession {
+            group_id: group_id.into(),
+            title: "Coverage room".into(),
+            host_device_id: "host".into(),
+            requested_media: vec![MediaType::Audio],
+            state: GroupCallState::Active,
+            participants,
+            created_at: now,
+            updated_at: now,
+            ended_at: None,
+        }
+    }
+
+    fn envelope(
+        signer: &KeyManager,
+        kind: SignalKind,
+        session_id: &str,
+        sender_device_id: &str,
+        sequence: u64,
+        nonce: &str,
+        payload: serde_json::Value,
+    ) -> SignalingEnvelope {
+        SignalingEnvelope::new(
+            kind,
+            session_id,
+            sender_device_id,
+            format!("vid-{sender_device_id}"),
+            sequence,
+            nonce,
+            payload,
+        )
+        .sign(signer)
+        .unwrap()
+    }
+
+    fn secure_signaling(
+        signer: Arc<KeyManager>,
+        trusted_device_id: &str,
+        trusted_key: &KeyManager,
+    ) -> NebulaSignaling {
+        NebulaSignaling::new_secure(
+            Arc::new(NebulaClient),
+            signer,
+            Arc::new(StaticIdentity(TrustedPeerIdentity {
+                device_id: trusted_device_id.into(),
+                did: format!("did:guardian:{trusted_device_id}"),
+                public_key_point: trusted_key.pubkey_der().unwrap(),
+            })),
+        )
+    }
+
+    async fn stream_containing(payload: &[u8]) -> TcpStream {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut writer = TcpStream::connect(address).await.unwrap();
+        let (reader, _) = listener.accept().await.unwrap();
+        writer.write_all(payload).await.unwrap();
+        writer.shutdown().await.unwrap();
+        reader
+    }
+
+    async fn outgoing_session(manager: &SessionManager, nonce: &str, peer_ip: &str) -> String {
+        let session_id = manager
+            .create_session(
+                "local".into(),
+                "vid-local".into(),
+                "peer-placeholder".into(),
+                String::new(),
+                vec![MediaType::Audio],
+                nonce.into(),
+            )
+            .await
+            .unwrap();
+        manager
+            .set_nebula_endpoints(&session_id, None, Some(peer_ip.into()))
+            .await
+            .unwrap();
+        for state in [CallState::LocalPolicyCheck, CallState::OfferSent] {
+            manager
+                .update_session_state(&session_id, state, format!("advance to {state}"))
+                .await
+                .unwrap();
+        }
+        session_id
+    }
+
+    fn group_control_envelope(
+        message: GroupWireMessage,
+        group_id: &str,
+        sender_device_id: &str,
+    ) -> SignalingEnvelope {
+        SignalingEnvelope::new(
+            SignalKind::GroupControl,
+            group_id,
+            sender_device_id,
+            format!("vid-{sender_device_id}"),
+            1,
+            format!("{group_id}-{sender_device_id}"),
+            serde_json::to_value(message).unwrap(),
+        )
+    }
+
+    async fn local_group(manager: &GroupSessionManager, title: &str) -> GroupSession {
+        let mut member = participant(
+            "member",
+            "192.168.100.2",
+            GroupRole::Member,
+            GroupMemberState::Invited,
+        );
+        member.is_local_browser = true;
+        manager
+            .create(
+                title.into(),
+                participant(
+                    "host",
+                    "192.168.100.1",
+                    GroupRole::Host,
+                    GroupMemberState::Joined,
+                ),
+                vec![member],
+                vec![MediaType::Audio],
+            )
+            .await
+            .unwrap()
     }
 
     #[test]
@@ -998,6 +1171,1054 @@ mod tests {
         let msg = SignalingMessage::Answer(answer);
         assert_eq!(msg.session_id(), "session-123");
         assert_eq!(msg.device_id(), "device-2");
+    }
+
+    #[tokio::test]
+    async fn message_parser_covers_envelopes_legacy_messages_and_rejections() {
+        let signaling = NebulaSignaling::new(Arc::new(NebulaClient));
+        assert!(signaling.handle_message("not json").await.is_err());
+        assert!(signaling.handle_message(r#"{"value":1}"#).await.is_err());
+        assert!(signaling
+            .handle_message(r#"{"type":"unknown"}"#)
+            .await
+            .is_err());
+        assert!(signaling
+            .handle_message(r#"{"type":"offer","version":1}"#)
+            .await
+            .is_err());
+
+        let versioned = SignalingEnvelope::new(
+            SignalKind::Heartbeat,
+            "envelope-session",
+            "device-envelope",
+            "vid-envelope",
+            1,
+            "envelope-nonce",
+            serde_json::json!({"alive": true}),
+        );
+        let parsed = signaling
+            .handle_message(&serde_json::to_string(&versioned).unwrap())
+            .await
+            .unwrap();
+        assert!(matches!(parsed, SignalingMessage::Envelope(_)));
+        assert_eq!(parsed.session_id(), "envelope-session");
+        assert_eq!(parsed.device_id(), "device-envelope");
+
+        let offer = CallOffer {
+            device_id: "legacy-caller".into(),
+            virtual_id: "legacy-caller-vid".into(),
+            session_id: "legacy-offer".into(),
+            timestamp: Utc::now(),
+            nonce: "legacy-offer-nonce".into(),
+            requested_media: vec![MediaType::Audio],
+            signature: "present".into(),
+        };
+        let mut offer_json = serde_json::to_value(&offer).unwrap();
+        offer_json["type"] = serde_json::json!("call_offer");
+        let parsed = signaling
+            .handle_message(&offer_json.to_string())
+            .await
+            .unwrap();
+        assert!(matches!(parsed, SignalingMessage::Offer(_)));
+
+        let answer = CallAnswer {
+            device_id: "legacy-receiver".into(),
+            virtual_id: "legacy-receiver-vid".into(),
+            session_id: "legacy-answer".into(),
+            timestamp: Utc::now(),
+            nonce: "legacy-answer-nonce".into(),
+            accepted_media: vec![MediaType::Audio],
+            accepted: true,
+            rejection_reason: None,
+            signature: "present".into(),
+        };
+        let mut answer_json = serde_json::to_value(&answer).unwrap();
+        answer_json["type"] = serde_json::json!("call_answer");
+        let parsed = signaling
+            .handle_message(&answer_json.to_string())
+            .await
+            .unwrap();
+        assert!(matches!(parsed, SignalingMessage::Answer(_)));
+    }
+
+    #[tokio::test]
+    async fn connection_reader_accepts_probe_and_rejects_bad_frames() {
+        let dir = tempdir().unwrap();
+        let signaling = NebulaSignaling::new(Arc::new(NebulaClient));
+        let sessions = Arc::new(SessionManager::new());
+        let signals = Arc::new(CallSignalHub::default());
+        let groups = Arc::new(GroupSessionManager::new(dir.path().join("frames.log")));
+
+        signaling
+            .receive_connection(
+                stream_containing(&[]).await,
+                "192.168.100.8".into(),
+                sessions.clone(),
+                signals.clone(),
+                groups.clone(),
+                "local".into(),
+            )
+            .await
+            .unwrap();
+
+        let invalid_utf8 = signaling
+            .receive_connection(
+                stream_containing(&[0xff, 0xfe]).await,
+                "192.168.100.8".into(),
+                sessions.clone(),
+                signals.clone(),
+                groups.clone(),
+                "local".into(),
+            )
+            .await;
+        assert!(matches!(
+            invalid_utf8,
+            Err(CallError::SerializationError(_))
+        ));
+
+        let oversized = vec![b'x'; MAX_SIGNALING_MESSAGE_BYTES + 1];
+        let too_large = signaling
+            .receive_connection(
+                stream_containing(&oversized).await,
+                "192.168.100.8".into(),
+                sessions.clone(),
+                signals.clone(),
+                groups.clone(),
+                "local".into(),
+            )
+            .await;
+        assert!(matches!(too_large, Err(CallError::SerializationError(_))));
+
+        let malformed = signaling
+            .receive_connection(
+                stream_containing(br#"{"type":"unknown"}"#).await,
+                "192.168.100.8".into(),
+                sessions,
+                signals,
+                groups,
+                "local".into(),
+            )
+            .await;
+        assert!(matches!(malformed, Err(CallError::SerializationError(_))));
+    }
+
+    #[tokio::test]
+    async fn connection_reader_handles_legacy_offer_and_answer_lifecycle() {
+        let dir = tempdir().unwrap();
+        let signaling = NebulaSignaling::new(Arc::new(NebulaClient));
+        let sessions = Arc::new(SessionManager::new());
+        let signals = Arc::new(CallSignalHub::default());
+        let groups = Arc::new(GroupSessionManager::new(dir.path().join("legacy.log")));
+        let peer_ip = "192.168.100.40";
+
+        let offer = CallOffer {
+            device_id: "legacy-peer".into(),
+            virtual_id: "legacy-peer-vid".into(),
+            session_id: "legacy-incoming".into(),
+            timestamp: Utc::now(),
+            nonce: "legacy-incoming-nonce".into(),
+            requested_media: vec![MediaType::Audio],
+            signature: "legacy-signature".into(),
+        };
+        let mut offer_payload = serde_json::to_value(&offer).unwrap();
+        offer_payload["type"] = serde_json::json!("call_offer");
+        signaling
+            .receive_connection(
+                stream_containing(offer_payload.to_string().as_bytes()).await,
+                peer_ip.into(),
+                sessions.clone(),
+                signals.clone(),
+                groups.clone(),
+                "local".into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            sessions.get_session("legacy-incoming").await.unwrap().state,
+            CallState::OfferReceived
+        );
+
+        let outgoing_id = outgoing_session(&sessions, "legacy-answer-nonce", peer_ip).await;
+        let answer = CallAnswer {
+            device_id: "legacy-peer".into(),
+            virtual_id: "legacy-peer-vid".into(),
+            session_id: outgoing_id.clone(),
+            timestamp: Utc::now(),
+            nonce: "legacy-answer-nonce".into(),
+            accepted_media: vec![MediaType::Audio],
+            accepted: true,
+            rejection_reason: None,
+            signature: "legacy-signature".into(),
+        };
+        let mut answer_payload = serde_json::to_value(&answer).unwrap();
+        answer_payload["type"] = serde_json::json!("call_answer");
+        signaling
+            .receive_connection(
+                stream_containing(answer_payload.to_string().as_bytes()).await,
+                peer_ip.into(),
+                sessions.clone(),
+                signals.clone(),
+                groups.clone(),
+                "local".into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            sessions.get_session(&outgoing_id).await.unwrap().state,
+            CallState::Accepted
+        );
+
+        let rejected_id = outgoing_session(&sessions, "legacy-reject-nonce", peer_ip).await;
+        let rejected = CallAnswer {
+            session_id: rejected_id.clone(),
+            nonce: "legacy-reject-nonce".into(),
+            accepted_media: vec![],
+            accepted: false,
+            rejection_reason: Some("declined".into()),
+            ..answer
+        };
+        let mut rejected_payload = serde_json::to_value(&rejected).unwrap();
+        rejected_payload["type"] = serde_json::json!("call_answer");
+        signaling
+            .receive_connection(
+                stream_containing(rejected_payload.to_string().as_bytes()).await,
+                peer_ip.into(),
+                sessions.clone(),
+                signals.clone(),
+                groups.clone(),
+                "local".into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            sessions.get_session(&rejected_id).await.unwrap().state,
+            CallState::EndCall
+        );
+
+        let mut unsigned_offer = offer.clone();
+        unsigned_offer.session_id = "unsigned-offer".into();
+        unsigned_offer.signature.clear();
+        let mut unsigned_payload = serde_json::to_value(unsigned_offer).unwrap();
+        unsigned_payload["type"] = serde_json::json!("call_offer");
+        assert!(matches!(
+            signaling
+                .receive_connection(
+                    stream_containing(unsigned_payload.to_string().as_bytes()).await,
+                    peer_ip.into(),
+                    sessions.clone(),
+                    signals.clone(),
+                    groups.clone(),
+                    "local".into(),
+                )
+                .await,
+            Err(CallError::SignatureVerificationFailed)
+        ));
+
+        let mut stale_offer = offer;
+        stale_offer.session_id = "stale-offer".into();
+        stale_offer.timestamp = Utc::now() - chrono::Duration::seconds(MAX_OFFER_AGE_SECS + 1);
+        let mut stale_payload = serde_json::to_value(stale_offer).unwrap();
+        stale_payload["type"] = serde_json::json!("call_offer");
+        assert!(matches!(
+            signaling
+                .receive_connection(
+                    stream_containing(stale_payload.to_string().as_bytes()).await,
+                    peer_ip.into(),
+                    sessions,
+                    signals,
+                    groups,
+                    "local".into(),
+                )
+                .await,
+            Err(CallError::InvalidOffer { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn outbound_secure_messages_use_the_tcp_transport() {
+        let _env_guard = crate::test_utils::TEST_ENV_LOCK.lock().await;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let previous_port = std::env::var("SGX_CALL_SIGNALING_PORT").ok();
+        std::env::set_var("SGX_CALL_SIGNALING_PORT", port.to_string());
+
+        let receiver = tokio::spawn(async move {
+            let mut messages = Vec::new();
+            for _ in 0..5 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut payload = String::new();
+                stream.read_to_string(&mut payload).await.unwrap();
+                messages.push(payload);
+            }
+            messages
+        });
+
+        let dir = tempdir().unwrap();
+        let sender = Arc::new(
+            KeyManager::load_or_generate(dir.path().join("sender.pk8").to_str().unwrap()).unwrap(),
+        );
+        let signaling = secure_signaling(sender.clone(), "sender", &sender);
+        let offer = CallOffer::new(
+            "sender".into(),
+            "vid-sender".into(),
+            "outbound-offer".into(),
+            "offer-nonce".into(),
+            vec![MediaType::Audio],
+            &sender,
+        )
+        .await
+        .unwrap();
+        signaling.send_offer(&offer, "127.0.0.1").await.unwrap();
+
+        let answer = CallAnswer::accept(
+            "sender".into(),
+            "vid-sender".into(),
+            "outbound-answer".into(),
+            "answer-nonce".into(),
+            vec![MediaType::Audio],
+            &sender,
+        )
+        .await
+        .unwrap();
+        signaling.send_answer(&answer, "127.0.0.1").await.unwrap();
+        signaling
+            .send_browser_signal(
+                SignalKind::IceCandidate,
+                "browser-session",
+                "sender",
+                "vid-sender",
+                serde_json::json!({"candidate":"candidate:1"}),
+                "127.0.0.1",
+            )
+            .await
+            .unwrap();
+        signaling
+            .send_group_control(
+                &GroupWireMessage::Heartbeat {
+                    group_id: "outbound-group".into(),
+                    device_id: "sender".into(),
+                },
+                "outbound-group",
+                "sender",
+                "vid-sender",
+                "127.0.0.1",
+            )
+            .await
+            .unwrap();
+
+        let mut group = group_session("broadcast-group");
+        group.participants.insert(
+            "declined".into(),
+            participant(
+                "declined",
+                "127.0.0.1",
+                GroupRole::Member,
+                GroupMemberState::Declined,
+            ),
+        );
+        let mut local_browser =
+            participant("browser", "", GroupRole::Member, GroupMemberState::Joined);
+        local_browser.is_local_browser = true;
+        group.participants.insert("browser".into(), local_browser);
+        signaling
+            .broadcast_group_snapshot(&group, "host")
+            .await
+            .unwrap();
+
+        let messages = receiver.await.unwrap();
+        match previous_port {
+            Some(value) => std::env::set_var("SGX_CALL_SIGNALING_PORT", value),
+            None => std::env::remove_var("SGX_CALL_SIGNALING_PORT"),
+        }
+        assert_eq!(messages.len(), 5);
+        assert!(messages
+            .iter()
+            .all(|message| message.contains("\"version\":1")));
+
+        assert!(signaling
+            .send_browser_signal(
+                SignalKind::Offer,
+                "bad-kind",
+                "sender",
+                "vid-sender",
+                serde_json::json!({}),
+                "127.0.0.1",
+            )
+            .await
+            .is_err());
+        let insecure = NebulaSignaling::new(Arc::new(NebulaClient));
+        assert!(insecure
+            .send_browser_signal(
+                SignalKind::Heartbeat,
+                "unsigned",
+                "sender",
+                "vid-sender",
+                serde_json::json!({}),
+                "127.0.0.1",
+            )
+            .await
+            .is_err());
+        let mut missing_host = group;
+        missing_host.participants.remove("host");
+        assert!(signaling
+            .broadcast_group_snapshot(&missing_host, "host")
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn overlay_configuration_and_listener_bind_fail_closed() {
+        let _env_guard = crate::test_utils::TEST_ENV_LOCK.lock().await;
+        let previous_ip = std::env::var("SGX_NEBULA_LOCAL_IP_OVERRIDE").ok();
+        let previous_port = std::env::var("SGX_CALL_SIGNALING_PORT").ok();
+        std::env::set_var("SGX_NEBULA_LOCAL_IP_OVERRIDE", " 127.0.0.1 ");
+
+        std::env::set_var("SGX_CALL_SIGNALING_PORT", "invalid");
+        assert_eq!(signaling_port(), 50065);
+        std::env::set_var("SGX_CALL_SIGNALING_PORT", "0");
+        assert_eq!(signaling_port(), 50065);
+
+        let occupied = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let occupied_port = occupied.local_addr().unwrap().port();
+        std::env::set_var("SGX_CALL_SIGNALING_PORT", occupied_port.to_string());
+        assert_eq!(signaling_port(), occupied_port);
+
+        let signaling = Arc::new(NebulaSignaling::new(Arc::new(NebulaClient)));
+        assert_eq!(signaling.get_local_nebula_ip().await.unwrap(), "127.0.0.1");
+        let result = signaling
+            .run_listener(
+                Arc::new(SessionManager::new()),
+                Arc::new(CallSignalHub::default()),
+                Arc::new(GroupSessionManager::new(
+                    tempdir().unwrap().path().join("listener.log"),
+                )),
+                "local".into(),
+            )
+            .await;
+        assert!(matches!(result, Err(CallError::NebulaError { .. })));
+
+        assert!(is_nebula_overlay_peer("192.168.100.7".parse().unwrap()));
+        assert!(!is_nebula_overlay_peer("192.168.101.7".parse().unwrap()));
+        assert!(!is_nebula_overlay_peer("::1".parse().unwrap()));
+
+        match previous_ip {
+            Some(value) => std::env::set_var("SGX_NEBULA_LOCAL_IP_OVERRIDE", value),
+            None => std::env::remove_var("SGX_NEBULA_LOCAL_IP_OVERRIDE"),
+        }
+        match previous_port {
+            Some(value) => std::env::set_var("SGX_CALL_SIGNALING_PORT", value),
+            None => std::env::remove_var("SGX_CALL_SIGNALING_PORT"),
+        }
+    }
+
+    #[tokio::test]
+    async fn authenticated_answers_accept_reject_and_validate_session_binding() {
+        let dir = tempdir().unwrap();
+        let peer = Arc::new(
+            KeyManager::load_or_generate(dir.path().join("peer.pk8").to_str().unwrap()).unwrap(),
+        );
+        let local = Arc::new(
+            KeyManager::load_or_generate(dir.path().join("local.pk8").to_str().unwrap()).unwrap(),
+        );
+        let signaling = secure_signaling(local, "peer", &peer);
+        let groups = Arc::new(GroupSessionManager::new(dir.path().join("answers.log")));
+        let signals = Arc::new(CallSignalHub::default());
+        let peer_ip = "192.168.100.20";
+
+        let accepted_sessions = Arc::new(SessionManager::new());
+        let accepted_id = outgoing_session(&accepted_sessions, "accept-nonce", peer_ip).await;
+        let accepted = CallAnswer::accept(
+            "peer".into(),
+            "vid-peer".into(),
+            accepted_id.clone(),
+            "accept-nonce".into(),
+            vec![MediaType::Audio],
+            &peer,
+        )
+        .await
+        .unwrap();
+        signaling
+            .process_envelope(
+                envelope(
+                    &peer,
+                    SignalKind::Answer,
+                    &accepted_id,
+                    "peer",
+                    1,
+                    "accepted-envelope",
+                    serde_json::to_value(&accepted).unwrap(),
+                ),
+                peer_ip.into(),
+                accepted_sessions.clone(),
+                signals.clone(),
+                groups.clone(),
+                "local".into(),
+            )
+            .await
+            .unwrap();
+        let accepted_session = accepted_sessions.get_session(&accepted_id).await.unwrap();
+        assert_eq!(accepted_session.state, CallState::Accepted);
+        assert_eq!(accepted_session.receiver.device_id, "peer");
+
+        let rejected_sessions = Arc::new(SessionManager::new());
+        let rejected_id = outgoing_session(&rejected_sessions, "reject-nonce", peer_ip).await;
+        let rejected = CallAnswer::reject(
+            "peer".into(),
+            "vid-peer".into(),
+            rejected_id.clone(),
+            "reject-nonce".into(),
+            "not now".into(),
+            &peer,
+        )
+        .await
+        .unwrap();
+        signaling
+            .process_envelope(
+                envelope(
+                    &peer,
+                    SignalKind::Answer,
+                    &rejected_id,
+                    "peer",
+                    2,
+                    "rejected-envelope",
+                    serde_json::to_value(&rejected).unwrap(),
+                ),
+                peer_ip.into(),
+                rejected_sessions.clone(),
+                signals.clone(),
+                groups.clone(),
+                "local".into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            rejected_sessions
+                .get_session(&rejected_id)
+                .await
+                .unwrap()
+                .state,
+            CallState::EndCall
+        );
+
+        let mismatched_sessions = Arc::new(SessionManager::new());
+        let mismatched_id = outgoing_session(&mismatched_sessions, "mismatch-nonce", peer_ip).await;
+        let mismatched = CallAnswer::accept(
+            "peer".into(),
+            "vid-peer".into(),
+            mismatched_id.clone(),
+            "wrong-nonce".into(),
+            vec![MediaType::Audio],
+            &peer,
+        )
+        .await
+        .unwrap();
+        let result = signaling
+            .process_envelope(
+                envelope(
+                    &peer,
+                    SignalKind::Answer,
+                    &mismatched_id,
+                    "peer",
+                    3,
+                    "mismatched-envelope",
+                    serde_json::to_value(&mismatched).unwrap(),
+                ),
+                peer_ip.into(),
+                mismatched_sessions,
+                signals.clone(),
+                groups.clone(),
+                "local".into(),
+            )
+            .await;
+        assert!(matches!(result, Err(CallError::InvalidOffer { .. })));
+
+        let malformed = signaling
+            .process_envelope(
+                envelope(
+                    &peer,
+                    SignalKind::Answer,
+                    "malformed-answer",
+                    "peer",
+                    4,
+                    "malformed-envelope",
+                    serde_json::json!({"accepted": true}),
+                ),
+                peer_ip.into(),
+                Arc::new(SessionManager::new()),
+                signals,
+                groups,
+                "local".into(),
+            )
+            .await;
+        assert!(matches!(malformed, Err(CallError::SerializationError(_))));
+    }
+
+    #[tokio::test]
+    async fn authenticated_media_dispatches_state_ready_heartbeat_and_hangup() {
+        let dir = tempdir().unwrap();
+        let peer = Arc::new(
+            KeyManager::load_or_generate(dir.path().join("media-peer.pk8").to_str().unwrap())
+                .unwrap(),
+        );
+        let local = Arc::new(
+            KeyManager::load_or_generate(dir.path().join("media-local.pk8").to_str().unwrap())
+                .unwrap(),
+        );
+        let signaling = secure_signaling(local, "peer", &peer);
+        let sessions = Arc::new(SessionManager::new());
+        let session_id = outgoing_session(&sessions, "media-nonce", "192.168.100.20").await;
+        sessions
+            .set_receiver_acceptance_with_device(
+                &session_id,
+                "vid-peer".into(),
+                vec![MediaType::Audio],
+                Some("peer".into()),
+            )
+            .await
+            .unwrap();
+        for state in [
+            CallState::Verifying,
+            CallState::Authorizing,
+            CallState::Accepted,
+        ] {
+            sessions
+                .update_session_state(&session_id, state, format!("advance to {state}"))
+                .await
+                .unwrap();
+        }
+        let signals = Arc::new(CallSignalHub::default());
+        let groups = Arc::new(GroupSessionManager::new(dir.path().join("media.log")));
+
+        signaling
+            .process_envelope(
+                envelope(
+                    &peer,
+                    SignalKind::SdpOffer,
+                    &session_id,
+                    "peer",
+                    1,
+                    "media-sdp",
+                    serde_json::json!({"type":"offer","sdp":"v=0"}),
+                ),
+                "192.168.100.20".into(),
+                sessions.clone(),
+                signals.clone(),
+                groups.clone(),
+                "local".into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            sessions.get_session(&session_id).await.unwrap().state,
+            CallState::MediaNegotiation
+        );
+
+        signaling
+            .process_envelope(
+                envelope(
+                    &peer,
+                    SignalKind::MediaReady,
+                    &session_id,
+                    "peer",
+                    2,
+                    "media-ready",
+                    serde_json::json!({"ready":true}),
+                ),
+                "192.168.100.20".into(),
+                sessions.clone(),
+                signals.clone(),
+                groups.clone(),
+                "local".into(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            sessions
+                .get_session(&session_id)
+                .await
+                .unwrap()
+                .remote_media_ready
+        );
+
+        signaling
+            .process_envelope(
+                envelope(
+                    &peer,
+                    SignalKind::Heartbeat,
+                    &session_id,
+                    "peer",
+                    3,
+                    "heartbeat",
+                    serde_json::json!({}),
+                ),
+                "192.168.100.20".into(),
+                sessions.clone(),
+                signals.clone(),
+                groups.clone(),
+                "local".into(),
+            )
+            .await
+            .unwrap();
+
+        signaling
+            .process_envelope(
+                envelope(
+                    &peer,
+                    SignalKind::Hangup,
+                    &session_id,
+                    "peer",
+                    4,
+                    "hangup",
+                    serde_json::json!({"reason":"done"}),
+                ),
+                "192.168.100.20".into(),
+                sessions.clone(),
+                signals.clone(),
+                groups,
+                "local".into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            sessions.get_session(&session_id).await.unwrap().state,
+            CallState::EndCall
+        );
+        assert_eq!(signals.list_after(&session_id, 0).await.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn authenticated_media_rejects_nonparticipants_and_wrong_state() {
+        let dir = tempdir().unwrap();
+        let peer = Arc::new(
+            KeyManager::load_or_generate(dir.path().join("outsider.pk8").to_str().unwrap())
+                .unwrap(),
+        );
+        let local = Arc::new(
+            KeyManager::load_or_generate(dir.path().join("target.pk8").to_str().unwrap()).unwrap(),
+        );
+        let signaling = secure_signaling(local, "outsider", &peer);
+        let sessions = Arc::new(SessionManager::new());
+        let session_id = sessions
+            .create_session(
+                "caller".into(),
+                "vid-caller".into(),
+                "receiver".into(),
+                "vid-receiver".into(),
+                vec![MediaType::Audio],
+                "authorization-nonce".into(),
+            )
+            .await
+            .unwrap();
+        let result = signaling
+            .process_envelope(
+                envelope(
+                    &peer,
+                    SignalKind::IceCandidate,
+                    &session_id,
+                    "outsider",
+                    1,
+                    "outsider-media",
+                    serde_json::json!({"candidate":"candidate:2"}),
+                ),
+                "192.168.100.30".into(),
+                sessions.clone(),
+                Arc::new(CallSignalHub::default()),
+                Arc::new(GroupSessionManager::new(dir.path().join("outsider.log"))),
+                "receiver".into(),
+            )
+            .await;
+        assert!(matches!(result, Err(CallError::UnauthorizedDevice { .. })));
+
+        let participant_signaling = secure_signaling(
+            Arc::new(
+                KeyManager::load_or_generate(dir.path().join("target-2.pk8").to_str().unwrap())
+                    .unwrap(),
+            ),
+            "caller",
+            &peer,
+        );
+        let wrong_state = participant_signaling
+            .process_envelope(
+                envelope(
+                    &peer,
+                    SignalKind::IceComplete,
+                    &session_id,
+                    "caller",
+                    1,
+                    "wrong-state-media",
+                    serde_json::json!({}),
+                ),
+                "192.168.100.30".into(),
+                sessions,
+                Arc::new(CallSignalHub::default()),
+                Arc::new(GroupSessionManager::new(dir.path().join("wrong-state.log"))),
+                "receiver".into(),
+            )
+            .await;
+        assert!(matches!(
+            wrong_state,
+            Err(CallError::InvalidStateTransition { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn group_control_rejects_malformed_and_spoofed_messages() {
+        let dir = tempdir().unwrap();
+        let signaling = NebulaSignaling::new(Arc::new(NebulaClient));
+        let groups = Arc::new(GroupSessionManager::new(dir.path().join("spoofed.log")));
+        let sample = group_session("spoofed-group");
+
+        let malformed = SignalingEnvelope::new(
+            SignalKind::GroupControl,
+            "spoofed-group",
+            "member",
+            "vid-member",
+            1,
+            "malformed-group-control",
+            serde_json::json!({"action":"not_a_group_action"}),
+        );
+        assert!(matches!(
+            signaling
+                .process_group_control(
+                    malformed,
+                    "192.168.100.2".into(),
+                    groups.clone(),
+                    "host".into(),
+                )
+                .await,
+            Err(CallError::SerializationError(_))
+        ));
+
+        let spoofed = [
+            GroupWireMessage::Invite {
+                session: sample.clone(),
+            },
+            GroupWireMessage::Join {
+                group_id: "different-group".into(),
+                device_id: "member".into(),
+            },
+            GroupWireMessage::Decline {
+                group_id: "different-group".into(),
+                device_id: "member".into(),
+            },
+            GroupWireMessage::Leave {
+                group_id: "different-group".into(),
+                device_id: "member".into(),
+            },
+            GroupWireMessage::End {
+                group_id: "different-group".into(),
+                device_id: "member".into(),
+            },
+            GroupWireMessage::Heartbeat {
+                group_id: "different-group".into(),
+                device_id: "member".into(),
+            },
+            GroupWireMessage::Snapshot { session: sample },
+        ];
+        for (index, message) in spoofed.into_iter().enumerate() {
+            let result = signaling
+                .process_group_control(
+                    group_control_envelope(message, "spoofed-group", "member"),
+                    "192.168.100.2".into(),
+                    groups.clone(),
+                    "host".into(),
+                )
+                .await;
+            assert!(
+                matches!(result, Err(CallError::UnauthorizedDevice { .. })),
+                "spoofed group-control case {index} should fail closed"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn group_control_dispatches_join_decline_leave_heartbeat_and_end() {
+        let dir = tempdir().unwrap();
+        let signaling = NebulaSignaling::new(Arc::new(NebulaClient));
+
+        let join_groups = Arc::new(GroupSessionManager::new(dir.path().join("join.log")));
+        let join_group = local_group(&join_groups, "Join").await;
+        signaling
+            .process_group_control(
+                group_control_envelope(
+                    GroupWireMessage::Join {
+                        group_id: join_group.group_id.clone(),
+                        device_id: "member".into(),
+                    },
+                    &join_group.group_id,
+                    "member",
+                ),
+                "192.168.100.2".into(),
+                join_groups.clone(),
+                "host".into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            join_groups
+                .get(&join_group.group_id)
+                .await
+                .unwrap()
+                .participants["member"]
+                .state,
+            GroupMemberState::Joined
+        );
+
+        signaling
+            .process_group_control(
+                group_control_envelope(
+                    GroupWireMessage::Heartbeat {
+                        group_id: join_group.group_id.clone(),
+                        device_id: "member".into(),
+                    },
+                    &join_group.group_id,
+                    "member",
+                ),
+                "192.168.100.2".into(),
+                join_groups.clone(),
+                "host".into(),
+            )
+            .await
+            .unwrap();
+        signaling
+            .process_group_control(
+                group_control_envelope(
+                    GroupWireMessage::Leave {
+                        group_id: join_group.group_id.clone(),
+                        device_id: "member".into(),
+                    },
+                    &join_group.group_id,
+                    "member",
+                ),
+                "192.168.100.2".into(),
+                join_groups.clone(),
+                "host".into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            join_groups
+                .get(&join_group.group_id)
+                .await
+                .unwrap()
+                .participants["member"]
+                .state,
+            GroupMemberState::Left
+        );
+
+        let decline_groups = Arc::new(GroupSessionManager::new(dir.path().join("decline.log")));
+        let decline_group = local_group(&decline_groups, "Decline").await;
+        signaling
+            .process_group_control(
+                group_control_envelope(
+                    GroupWireMessage::Decline {
+                        group_id: decline_group.group_id.clone(),
+                        device_id: "member".into(),
+                    },
+                    &decline_group.group_id,
+                    "member",
+                ),
+                "192.168.100.2".into(),
+                decline_groups.clone(),
+                "host".into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            decline_groups
+                .get(&decline_group.group_id)
+                .await
+                .unwrap()
+                .participants["member"]
+                .state,
+            GroupMemberState::Declined
+        );
+
+        let end_groups = Arc::new(GroupSessionManager::new(dir.path().join("end.log")));
+        let end_group = local_group(&end_groups, "End").await;
+        signaling
+            .process_group_control(
+                group_control_envelope(
+                    GroupWireMessage::End {
+                        group_id: end_group.group_id.clone(),
+                        device_id: "host".into(),
+                    },
+                    &end_group.group_id,
+                    "host",
+                ),
+                "192.168.100.1".into(),
+                end_groups.clone(),
+                "host".into(),
+            )
+            .await
+            .unwrap();
+        assert!(end_groups.get(&end_group.group_id).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn group_media_ready_requires_joined_members() {
+        let dir = tempdir().unwrap();
+        let member_key = Arc::new(
+            KeyManager::load_or_generate(dir.path().join("group-member.pk8").to_str().unwrap())
+                .unwrap(),
+        );
+        let local_key = Arc::new(
+            KeyManager::load_or_generate(dir.path().join("group-host.pk8").to_str().unwrap())
+                .unwrap(),
+        );
+        let signaling = secure_signaling(local_key, "member", &member_key);
+        let groups = Arc::new(GroupSessionManager::new(dir.path().join("group-media.log")));
+        let group = local_group(&groups, "Group media").await;
+        let sessions = Arc::new(SessionManager::new());
+        let signals = Arc::new(CallSignalHub::default());
+
+        let not_joined = signaling
+            .process_envelope(
+                envelope(
+                    &member_key,
+                    SignalKind::SdpAnswer,
+                    &group.group_id,
+                    "member",
+                    1,
+                    "group-media-before-join",
+                    serde_json::json!({"type":"answer","sdp":"v=0"}),
+                ),
+                "192.168.100.2".into(),
+                sessions.clone(),
+                signals.clone(),
+                groups.clone(),
+                "host".into(),
+            )
+            .await;
+        assert!(matches!(
+            not_joined,
+            Err(CallError::UnauthorizedDevice { .. })
+        ));
+
+        groups
+            .join(&group.group_id, "member", "192.168.100.2")
+            .await
+            .unwrap();
+        signaling
+            .process_envelope(
+                envelope(
+                    &member_key,
+                    SignalKind::MediaReady,
+                    &group.group_id,
+                    "member",
+                    2,
+                    "group-media-ready",
+                    serde_json::json!({"ready":true}),
+                ),
+                "192.168.100.2".into(),
+                sessions,
+                signals,
+                groups.clone(),
+                "host".into(),
+            )
+            .await
+            .unwrap();
+        assert!(groups.get(&group.group_id).await.unwrap().participants["member"].media_ready);
     }
 
     #[tokio::test]

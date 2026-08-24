@@ -262,4 +262,15 @@ mod tests {
             other => panic!("unexpected error: {:?}", other),
         }
     }
+
+    #[test]
+    fn cylenium_provider_reports_its_registered_name_and_feature_flag() {
+        let disabled = CyleniumProvider::new(false);
+        assert_eq!(disabled.name(), CYLENIUM_PROVIDER_NAME);
+        assert!(!disabled.enabled());
+
+        let enabled = CyleniumProvider::new(true);
+        assert_eq!(enabled.name(), CYLENIUM_PROVIDER_NAME);
+        assert!(enabled.enabled());
+    }
 }

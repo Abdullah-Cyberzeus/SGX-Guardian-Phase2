@@ -123,8 +123,12 @@ rules:
 
     #[tokio::test]
     async fn test_call_policy_enforcer_denies_wildcard_tcp_call() {
+        let _env_guard = crate::test_utils::TEST_ENV_LOCK.lock().await;
         let dir = tempdir().expect("create temp dir");
+        let previous_policy_dir = env::var("SGX_GUARDIAN_POLICY_DIR").ok();
+        let previous_signaling_port = env::var("SGX_CALL_SIGNALING_PORT").ok();
         env::set_var("SGX_GUARDIAN_POLICY_DIR", dir.path());
+        env::set_var("SGX_CALL_SIGNALING_PORT", "50065");
         fs::write(dir.path().join("active_policy.yaml"), DENY_CALLS_POLICY)
             .expect("write active policy");
 
@@ -140,5 +144,14 @@ rules:
 
         let enforcer = CallPolicyEnforcer;
         assert!(!enforcer.allow_call(&session).await.unwrap());
+
+        match previous_policy_dir {
+            Some(value) => env::set_var("SGX_GUARDIAN_POLICY_DIR", value),
+            None => env::remove_var("SGX_GUARDIAN_POLICY_DIR"),
+        }
+        match previous_signaling_port {
+            Some(value) => env::set_var("SGX_CALL_SIGNALING_PORT", value),
+            None => env::remove_var("SGX_CALL_SIGNALING_PORT"),
+        }
     }
 }

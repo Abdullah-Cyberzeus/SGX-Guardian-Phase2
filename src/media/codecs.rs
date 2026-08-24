@@ -234,6 +234,64 @@ mod tests {
         let video = CodecCapability::video(VideoCodec::VP9);
         assert_eq!(video.bitrate_kbps(), 2500);
     }
+
+    #[test]
+    fn all_video_codecs_expose_names_bitrate_control_and_defaults() {
+        let cases = [
+            (VideoCodec::VP9, "vp9", 2500),
+            (VideoCodec::AV1, "av1", 1500),
+            (VideoCodec::H264, "h264", 2000),
+        ];
+
+        for (codec, name, expected_bitrate) in cases {
+            assert_eq!(codec.as_str(), name);
+            assert!(codec.supports_bitrate_control());
+            match CodecCapability::video(codec) {
+                CodecCapability::Video {
+                    codec: actual,
+                    width,
+                    height,
+                    fps,
+                    bitrate_kbps,
+                } => {
+                    assert_eq!(actual, codec);
+                    assert_eq!((width, height, fps), (1280, 720, 30));
+                    assert_eq!(bitrate_kbps, expected_bitrate);
+                }
+                CodecCapability::Audio { .. } => panic!("expected video capability"),
+            }
+        }
+    }
+
+    #[test]
+    fn audio_capability_defaults_cover_fallback_codec() {
+        match CodecCapability::audio(AudioCodec::G711) {
+            CodecCapability::Audio {
+                codec,
+                sample_rate,
+                channels,
+                bitrate_kbps,
+            } => {
+                assert_eq!(codec, AudioCodec::G711);
+                assert_eq!((sample_rate, channels, bitrate_kbps), (8000, 1, 64));
+            }
+            CodecCapability::Video { .. } => panic!("expected audio capability"),
+        }
+    }
+
+    #[test]
+    fn codec_capabilities_round_trip_through_json() {
+        for capability in [
+            CodecCapability::video(VideoCodec::VP9),
+            CodecCapability::video(VideoCodec::AV1),
+            CodecCapability::video(VideoCodec::H264),
+            CodecCapability::audio(AudioCodec::Opus),
+        ] {
+            let encoded = serde_json::to_string(&capability).unwrap();
+            let decoded: CodecCapability = serde_json::from_str(&encoded).unwrap();
+            assert_eq!(decoded.bitrate_kbps(), capability.bitrate_kbps());
+        }
+    }
 }
 
 pub mod mod_inner {

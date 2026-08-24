@@ -2089,4 +2089,129 @@ mod tests {
             Some(paired.device_id.as_str())
         );
     }
+
+    #[tokio::test]
+    async fn oidc_transactions_are_single_use_replaceable_and_persistent() {
+        let td = TempDir::new().expect("tempdir");
+        let admin_dir = td.path().join("admin");
+        let stores = AdminStores::new(&admin_dir);
+        let now = chrono::Utc::now().timestamp();
+        let mut record = OidcTransactionRecord {
+            state: "state-1".into(),
+            nonce: "nonce-original".into(),
+            client_id: "sgx-client".into(),
+            redirect_uri: "https://guardian.example/auth/callback".into(),
+            created_at: now,
+            expires_at: now + 300,
+            used: false,
+        };
+        stores
+            .oidc_transactions
+            .put(record.clone())
+            .await
+            .expect("store transaction");
+
+        record.nonce = "nonce-replaced".into();
+        stores
+            .oidc_transactions
+            .put(record.clone())
+            .await
+            .expect("replace transaction with same state");
+
+        let reopened = AdminStores::new(&admin_dir);
+        let consumed = reopened
+            .oidc_transactions
+            .consume("state-1")
+            .await
+            .expect("consume transaction")
+            .expect("transaction exists");
+        assert_eq!(consumed.nonce, "nonce-replaced");
+        assert!(consumed.used);
+        assert!(reopened
+            .oidc_transactions
+            .consume("state-1")
+            .await
+            .expect("replay lookup")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn oidc_transactions_reject_unknown_and_expired_state() {
+        let td = TempDir::new().expect("tempdir");
+        let stores = AdminStores::new(td.path().join("admin"));
+        assert!(stores
+            .oidc_transactions
+            .consume("unknown")
+            .await
+            .expect("unknown lookup")
+            .is_none());
+
+        let now = chrono::Utc::now().timestamp();
+        stores
+            .oidc_transactions
+            .put(OidcTransactionRecord {
+                state: "expired".into(),
+                nonce: "nonce".into(),
+                client_id: "sgx-client".into(),
+                redirect_uri: "https://guardian.example/auth/callback".into(),
+                created_at: now - 600,
+                expires_at: now,
+                used: false,
+            })
+            .await
+            .expect("store expired transaction");
+        assert!(stores
+            .oidc_transactions
+            .consume("expired")
+            .await
+            .expect("expired lookup")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn user_store_links_and_resolves_the_durable_oidc_subject() {
+        let td = TempDir::new().expect("tempdir");
+        let stores = AdminStores::new(td.path().join("admin"));
+        let user = stores
+            .users
+            .create(NewUser {
+                name: "Cylenium Owner".into(),
+                email: "Owner@Example.com".into(),
+                pw_hash: "unusable".into(),
+                role: UserRole::Admin,
+                oidc_sub: None,
+            })
+            .await
+            .expect("create local account");
+
+        assert!(stores
+            .users
+            .find_by_oidc_sub("cylenium-subject")
+            .await
+            .expect("subject lookup")
+            .is_none());
+        let linked = stores
+            .users
+            .link_oidc_sub(&user.user_id, "cylenium-subject")
+            .await
+            .expect("link subject");
+        assert_eq!(linked.oidc_sub.as_deref(), Some("cylenium-subject"));
+        assert_eq!(
+            stores
+                .users
+                .find_by_oidc_sub("cylenium-subject")
+                .await
+                .expect("linked lookup")
+                .expect("linked user")
+                .user_id,
+            user.user_id
+        );
+        assert!(stores
+            .users
+            .link_oidc_sub("missing-user", "other-subject")
+            .await
+            .expect_err("unknown user")
+            .to_string()
+            .contains("user not found"));
+    }
 }

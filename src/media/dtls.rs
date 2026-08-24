@@ -350,4 +350,87 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn handshake_state_labels_cover_every_state() {
+        let cases = [
+            (DtlsHandshakeState::New, "new"),
+            (DtlsHandshakeState::ClientHelloSent, "client_hello_sent"),
+            (
+                DtlsHandshakeState::ServerHelloReceived,
+                "server_hello_received",
+            ),
+            (
+                DtlsHandshakeState::CertificateExchange,
+                "certificate_exchange",
+            ),
+            (DtlsHandshakeState::HandshakeComplete, "handshake_complete"),
+            (DtlsHandshakeState::Failed, "failed"),
+            (DtlsHandshakeState::Closed, "closed"),
+        ];
+        for (state, label) in cases {
+            assert_eq!(state.as_str(), label);
+        }
+    }
+
+    #[test]
+    fn context_rejects_missing_certificate_and_invalid_remote_fingerprints() {
+        assert!(matches!(
+            DtlsContext::new("peer", b""),
+            Err(MediaError::InvalidState(_))
+        ));
+
+        let mut ctx = DtlsContext::new("peer", b"local-cert").unwrap();
+        for invalid in [
+            "",
+            "sha-256 not-hex",
+            "sha-1 0123456789abcdef0123456789abcdef01234567",
+            "sha-256 0123",
+        ] {
+            assert!(ctx.set_remote_fingerprint(invalid).is_err());
+        }
+        let local_fingerprint = ctx.local_fingerprint().to_string();
+        assert!(ctx.set_remote_fingerprint(local_fingerprint).is_err());
+        assert_eq!(ctx.remote_fingerprint(), None);
+    }
+
+    #[test]
+    fn handshake_rejects_missing_prerequisites_and_repeated_transitions() {
+        let mut ctx = DtlsContext::new("peer", b"local-cert").unwrap();
+        assert!(ctx.start_handshake().is_err());
+        assert!(ctx.process_server_hello().is_err());
+        assert!(ctx.complete_handshake().is_err());
+
+        ctx.set_remote_fingerprint(remote_fingerprint()).unwrap();
+        ctx.start_handshake().unwrap();
+        assert!(ctx.start_handshake().is_err());
+        assert!(ctx.complete_handshake().is_err());
+        ctx.process_server_hello().unwrap();
+        assert!(ctx.process_server_hello().is_err());
+        ctx.complete_handshake().unwrap();
+        assert!(ctx.complete_handshake().is_err());
+        assert!(ctx.set_remote_fingerprint(other_fingerprint()).is_err());
+    }
+
+    #[test]
+    fn sdp_parser_skips_bad_lines_before_accepting_valid_sha256() {
+        let digest = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99";
+        let sdp = format!(
+            "v=0\r\na=fingerprint:sha-256\r\na=fingerprint:sha-1 {digest}\r\na=fingerprint:SHA-256 {digest}\r\n"
+        );
+        assert_eq!(
+            extract_sdp_fingerprint(&sdp),
+            Some("sha-256 aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899".into())
+        );
+    }
+
+    #[test]
+    fn closing_unstarted_context_is_safe_and_clears_material() {
+        let mut ctx = DtlsContext::new("peer", b"local-cert").unwrap();
+        ctx.close().unwrap();
+        assert_eq!(ctx.state(), DtlsHandshakeState::Closed);
+        assert_eq!(ctx.master_key(), None);
+        assert_eq!(ctx.master_salt(), None);
+        assert!(ctx.start_handshake().is_err());
+    }
 }

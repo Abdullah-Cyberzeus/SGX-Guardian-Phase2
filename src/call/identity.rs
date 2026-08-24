@@ -142,7 +142,16 @@ impl PeerIdentityResolver for DidPeerIdentityResolver {
 
 #[cfg(test)]
 mod tests {
-    use super::{uncompressed_p256_point, P256_SPKI_DER_PREFIX};
+    use super::{uncompressed_p256_point, DidPeerIdentityResolver, P256_SPKI_DER_PREFIX};
+    use crate::did::{Resolver, ResolverConfig};
+    use tempfile::tempdir;
+
+    fn resolver(
+        primary: impl AsRef<std::path::Path>,
+        fallback: impl AsRef<std::path::Path>,
+    ) -> DidPeerIdentityResolver {
+        DidPeerIdentityResolver::new(Resolver::new(ResolverConfig::default()), primary, fallback)
+    }
 
     #[test]
     fn accepts_raw_and_spki_wrapped_p256_points() {
@@ -160,5 +169,55 @@ mod tests {
     fn rejects_invalid_p256_key_encodings() {
         assert_eq!(uncompressed_p256_point(&[0x04; 64]), None);
         assert_eq!(uncompressed_p256_point(&[0x02; 65]), None);
+    }
+
+    #[tokio::test]
+    async fn trusted_registry_uses_fallback_and_requires_verified_did_binding() {
+        let dir = tempdir().unwrap();
+        let primary = dir.path().join("primary");
+        let fallback = dir.path().join("fallback");
+        std::fs::create_dir_all(&fallback).unwrap();
+        std::fs::write(
+            fallback.join("trusted_peers.json"),
+            serde_json::to_vec(&serde_json::json!([
+                {
+                    "ip": "192.168.100.9",
+                    "status": "verified",
+                    "did": "did:guardian:trusted-peer"
+                }
+            ]))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let resolver = resolver(&primary, &fallback);
+        assert_eq!(
+            resolver.trusted_did("192.168.100.9").await.unwrap(),
+            "did:guardian:trusted-peer"
+        );
+        assert!(resolver.trusted_did("192.168.100.99").await.is_err());
+
+        std::fs::create_dir_all(&primary).unwrap();
+        std::fs::write(
+            primary.join("trusted_peers.json"),
+            br#"[{"ip":"192.168.100.10","status":"pending","did":"did:guardian:pending"}]"#,
+        )
+        .unwrap();
+        assert!(resolver.trusted_did("192.168.100.10").await.is_err());
+
+        std::fs::write(
+            primary.join("trusted_peers.json"),
+            br#"[{"ip":"192.168.100.10","status":"trusted","did":""}]"#,
+        )
+        .unwrap();
+        assert!(resolver.trusted_did("192.168.100.10").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn malformed_trusted_registry_fails_closed() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("trusted_peers.json"), b"not-json").unwrap();
+        let resolver = resolver(dir.path(), dir.path().join("missing"));
+        assert!(resolver.trusted_did("192.168.100.8").await.is_err());
     }
 }

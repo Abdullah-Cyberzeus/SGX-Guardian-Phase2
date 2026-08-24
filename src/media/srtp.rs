@@ -178,4 +178,31 @@ mod tests {
         let _ = session.encrypt(b"packet2");
         assert_eq!(session.packet_counter(), 2);
     }
+
+    #[test]
+    fn empty_and_large_video_payloads_round_trip() {
+        let material = SrtpKeyMaterial::new(vec![0x5a; 16], vec![0xa5; 12]).unwrap();
+        let mut empty_session = SrtpSession::new(material).unwrap();
+        let encrypted = empty_session.encrypt(&[]).unwrap();
+        assert!(encrypted.is_empty());
+        assert_eq!(empty_session.decrypt(&encrypted).unwrap(), Vec::<u8>::new());
+
+        let material = SrtpKeyMaterial::new(vec![0x11; 16], vec![0x22; 12]).unwrap();
+        let mut video_session = SrtpSession::new(material).unwrap();
+        let video_packet: Vec<u8> = (0..4096).map(|index| (index % 251) as u8).collect();
+        let encrypted = video_session.encrypt(&video_packet).unwrap();
+        assert_eq!(encrypted.len(), video_packet.len());
+        assert_ne!(encrypted, video_packet);
+        assert_eq!(video_session.decrypt(&encrypted).unwrap(), video_packet);
+    }
+
+    #[test]
+    fn consecutive_packets_use_different_counter_material() {
+        let material = SrtpKeyMaterial::new(vec![0x33; 16], vec![0x44; 12]).unwrap();
+        let mut session = SrtpSession::new(material).unwrap();
+        let first = session.encrypt(b"same video payload").unwrap();
+        let second = session.encrypt(b"same video payload").unwrap();
+        assert_ne!(first, second);
+        assert_eq!(session.packet_counter(), 2);
+    }
 }

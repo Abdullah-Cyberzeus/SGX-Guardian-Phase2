@@ -292,4 +292,82 @@ mod tests {
         assert_eq!(agent.connection_state(), IceConnectionState::Closed);
         assert_eq!(agent.local_candidates().len(), 0);
     }
+
+    #[test]
+    fn ice_state_labels_cover_every_state() {
+        for (state, label) in [
+            (IceGatheringState::New, "new"),
+            (IceGatheringState::Gathering, "gathering"),
+            (IceGatheringState::Complete, "complete"),
+        ] {
+            assert_eq!(state.as_str(), label);
+        }
+        for (state, label) in [
+            (IceConnectionState::New, "new"),
+            (IceConnectionState::Checking, "checking"),
+            (IceConnectionState::Connected, "connected"),
+            (IceConnectionState::Disconnected, "disconnected"),
+            (IceConnectionState::Failed, "failed"),
+            (IceConnectionState::Closed, "closed"),
+        ] {
+            assert_eq!(state.as_str(), label);
+        }
+    }
+
+    #[test]
+    fn gathering_and_local_candidate_state_guards_fail_closed() {
+        let mut agent = IceAgent::new("peer");
+        let candidate = IceCandidate::new(
+            "candidate:2 1 UDP 2130706431 192.168.100.2 5001 typ host",
+            0,
+        );
+        assert!(agent.add_local_candidate(candidate.clone()).is_err());
+
+        agent.gathering_state = IceGatheringState::Gathering;
+        agent.add_local_candidate(candidate).unwrap();
+        assert_eq!(agent.local_candidates().len(), 1);
+
+        agent.gathering_state = IceGatheringState::Complete;
+        assert!(agent.start_gathering().is_err());
+        assert!(agent
+            .add_local_candidate(IceCandidate::new("candidate:3 typ host", 0))
+            .is_err());
+    }
+
+    #[test]
+    fn remote_candidates_connect_only_when_a_local_candidate_exists() {
+        let mut agent = IceAgent::new("peer");
+        agent
+            .add_remote_candidate(
+                IceCandidate::new("candidate:remote typ srflx", 0).with_mid("video"),
+            )
+            .unwrap();
+        assert_eq!(agent.connection_state(), IceConnectionState::New);
+        assert_eq!(agent.remote_candidates().len(), 1);
+        assert_eq!(
+            agent.remote_candidates()[0].sdp_mid.as_deref(),
+            Some("video")
+        );
+
+        agent.gathering_state = IceGatheringState::Gathering;
+        agent
+            .add_local_candidate(IceCandidate::new("candidate:local typ host", 0))
+            .unwrap();
+        agent
+            .add_remote_candidate(IceCandidate::new("candidate:remote-2 typ relay", 0))
+            .unwrap();
+        assert_eq!(agent.connection_state(), IceConnectionState::Connected);
+
+        agent.close().unwrap();
+        assert!(agent.local_candidates().is_empty());
+        assert!(agent.remote_candidates().is_empty());
+    }
+
+    #[test]
+    fn candidate_type_detection_rejects_unclassified_candidates() {
+        let candidate = IceCandidate::new("candidate:1 1 UDP 1 192.168.100.2 5000", 0);
+        assert!(!candidate.is_host_candidate());
+        assert!(!candidate.is_srflx_candidate());
+        assert!(!candidate.is_relay_candidate());
+    }
 }

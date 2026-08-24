@@ -44,7 +44,7 @@ export function storeCyleniumCodeVerifier(codeVerifier: string) {
   sessionStorage.setItem(CYLENIUM_PKCE_CODE_VERIFIER_KEY, codeVerifier);
 }
 
-async function buildCyleniumAuthorizeUrl(state: string, nonce: string): Promise<string> {
+export async function buildCyleniumAuthorizeUrl(state: string, nonce: string): Promise<string> {
   const codeVerifier = generateCyleniumCodeVerifier();
   const codeChallenge = await sha256Base64Url(codeVerifier);
   storeCyleniumCodeVerifier(codeVerifier);
@@ -65,21 +65,21 @@ async function buildCyleniumAuthorizeUrl(state: string, nonce: string): Promise<
   return authorizeUrl.toString();
 }
 
-async function beginCyleniumLogin(navigate: (url: string) => void) {
+export async function prepareCyleniumLogin(): Promise<string> {
   if (!isCyleniumConfigured()) {
     throw new Error(cyleniumConfigErrorMessage());
   }
   const { state, nonce } = await startCyleniumAuthorization();
   storeCyleniumState(state);
-  navigate(await buildCyleniumAuthorizeUrl(state, nonce));
+  return buildCyleniumAuthorizeUrl(state, nonce);
 }
 
 export async function startCyleniumOidcRedirect() {
-  await beginCyleniumLogin((url) => window.location.assign(url));
+  window.location.assign(await prepareCyleniumLogin());
 }
 
 export async function replaceWithCyleniumLogin() {
-  await beginCyleniumLogin((url) => window.location.replace(url));
+  window.location.replace(await prepareCyleniumLogin());
 }
 
 export function storeCyleniumState(state: string) {

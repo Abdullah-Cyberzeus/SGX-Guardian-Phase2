@@ -15,7 +15,7 @@ const POLL_MS = 10_000;
 
 type RoleRecord = RegistryNode | RelayNode;
 
-function mergeLiveNodes(
+export function mergeLiveNodes(
   circles: CircleTopologyCircle[],
   peers: Peer[],
   roleGroups: Array<{ records: RoleRecord[]; roles: TopologyRole[] }>,

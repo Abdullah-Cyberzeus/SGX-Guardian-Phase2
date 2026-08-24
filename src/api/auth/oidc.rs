@@ -492,12 +492,291 @@ mod tests {
         assert!(err.to_string().contains("missing iat"));
     }
 
+    fn valid_claims() -> IdTokenClaims {
+        let now = Utc::now().timestamp();
+        IdTokenClaims {
+            iss: "https://issuer".into(),
+            sub: "cylenium-user".into(),
+            aud: Audience::One("sgx-client".into()),
+            exp: now + 300,
+            iat: Some(now),
+            nbf: Some(now - 1),
+            email: Some("owner@example.com".into()),
+            name: Some("Owner".into()),
+            nonce: Some("nonce-1".into()),
+        }
+    }
+
+    #[test]
+    fn accepts_valid_single_and_multiple_audiences() {
+        let claims = valid_claims();
+        validate_claims(&claims, "https://issuer", "sgx-client", " nonce-1 ")
+            .expect("single audience");
+
+        let mut claims = claims;
+        claims.aud = Audience::Many(vec!["another-client".into(), "sgx-client".into()]);
+        validate_claims(&claims, "https://issuer", "sgx-client", "nonce-1").expect("audience list");
+    }
+
+    #[test]
+    fn rejects_invalid_claim_timing_and_identity_fields() {
+        let now = Utc::now().timestamp();
+        let cases = [
+            ("missing expected nonce", {
+                let claims = valid_claims();
+                (claims, "https://issuer", "sgx-client", "")
+            }),
+            ("issuer mismatch", {
+                let claims = valid_claims();
+                (claims, "https://other", "sgx-client", "nonce-1")
+            }),
+            ("audience mismatch", {
+                let claims = valid_claims();
+                (claims, "https://issuer", "other-client", "nonce-1")
+            }),
+        ];
+        for (expected, (claims, issuer, audience, nonce)) in cases {
+            let error = validate_claims(&claims, issuer, audience, nonce).expect_err(expected);
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+
+        let mut expired = valid_claims();
+        expired.exp = now;
+        assert!(
+            validate_claims(&expired, "https://issuer", "sgx-client", "nonce-1")
+                .expect_err("expired")
+                .to_string()
+                .contains("expired")
+        );
+
+        let mut future_iat = valid_claims();
+        future_iat.iat = Some(now + IAT_FUTURE_LEEWAY_SECS + 1);
+        future_iat.exp = now + 600;
+        assert!(
+            validate_claims(&future_iat, "https://issuer", "sgx-client", "nonce-1")
+                .expect_err("future iat")
+                .to_string()
+                .contains("iat is in the future")
+        );
+
+        let mut reversed_times = valid_claims();
+        reversed_times.exp = now + 30;
+        reversed_times.iat = Some(now + 30);
+        assert!(
+            validate_claims(&reversed_times, "https://issuer", "sgx-client", "nonce-1")
+                .expect_err("iat after exp")
+                .to_string()
+                .contains("before exp")
+        );
+
+        let mut future_nbf = valid_claims();
+        future_nbf.nbf = Some(now + 120);
+        assert!(
+            validate_claims(&future_nbf, "https://issuer", "sgx-client", "nonce-1")
+                .expect_err("future nbf")
+                .to_string()
+                .contains("not yet valid")
+        );
+
+        let mut blank_nonce = valid_claims();
+        blank_nonce.nonce = Some("  ".into());
+        assert!(
+            validate_claims(&blank_nonce, "https://issuer", "sgx-client", "nonce-1")
+                .expect_err("blank nonce")
+                .to_string()
+                .contains("missing nonce")
+        );
+    }
+
+    fn test_jwk(kid: Option<&str>, alg: Option<&str>) -> Jwk {
+        Jwk {
+            kty: "EC".into(),
+            kid: kid.map(str::to_string),
+            alg: alg.map(str::to_string),
+            crv: Some("P-256".into()),
+            x: Some(URL_SAFE_NO_PAD.encode([0u8; 32])),
+            y: Some(URL_SAFE_NO_PAD.encode([0u8; 32])),
+            n: None,
+            e: None,
+        }
+    }
+
+    #[test]
+    fn selects_exact_key_and_rejects_missing_or_ambiguous_keys() {
+        let header = JwtHeader {
+            alg: "ES256".into(),
+            kid: Some("key-2".into()),
+            typ: Some("JWT".into()),
+        };
+        let jwks = Jwks {
+            keys: vec![
+                test_jwk(Some("key-1"), Some("ES256")),
+                test_jwk(Some("key-2"), None),
+            ],
+        };
+        assert_eq!(
+            select_jwk(&jwks, &header)
+                .expect("matching key")
+                .kid
+                .as_deref(),
+            Some("key-2")
+        );
+
+        let missing = JwtHeader {
+            kid: Some("missing".into()),
+            ..header
+        };
+        assert!(select_jwk(&jwks, &missing)
+            .expect_err("missing key")
+            .to_string()
+            .contains("not found"));
+
+        let ambiguous_header = JwtHeader {
+            alg: "ES256".into(),
+            kid: None,
+            typ: None,
+        };
+        let ambiguous = Jwks {
+            keys: vec![test_jwk(None, None), test_jwk(None, Some("ES256"))],
+        };
+        assert!(select_jwk(&ambiguous, &ambiguous_header)
+            .expect_err("ambiguous key")
+            .to_string()
+            .contains("ambiguous"));
+    }
+
+    #[test]
+    fn rejects_unsupported_or_malformed_signing_keys() {
+        let mut ec = test_jwk(Some("key"), Some("ES256"));
+        assert!(verify_signature(&ec, "HS256", b"input", b"signature")
+            .expect_err("unsupported algorithm")
+            .to_string()
+            .contains("unsupported"));
+
+        ec.crv = Some("P-384".into());
+        assert!(verify_signature(&ec, "ES256", b"input", b"signature")
+            .expect_err("unsupported curve")
+            .to_string()
+            .contains("curve"));
+
+        ec.crv = Some("P-256".into());
+        ec.x = None;
+        assert!(verify_signature(&ec, "ES256", b"input", b"signature")
+            .expect_err("missing x")
+            .to_string()
+            .contains("missing jwk x"));
+
+        ec.x = Some(URL_SAFE_NO_PAD.encode([0u8; 31]));
+        assert!(verify_signature(&ec, "ES256", b"input", b"signature")
+            .expect_err("short coordinate")
+            .to_string()
+            .contains("coordinate length"));
+
+        ec.x = Some(URL_SAFE_NO_PAD.encode([0u8; 32]));
+        assert!(verify_signature(&ec, "ES256", b"input", b"bad")
+            .expect_err("invalid signature")
+            .to_string()
+            .contains("signature verification failed"));
+
+        let rsa = Jwk {
+            kty: "RSA".into(),
+            kid: None,
+            alg: Some("RS256".into()),
+            crv: None,
+            x: None,
+            y: None,
+            n: Some(URL_SAFE_NO_PAD.encode([1u8; 256])),
+            e: Some(URL_SAFE_NO_PAD.encode([1u8, 0, 1])),
+        };
+        assert!(verify_signature(&rsa, "RS256", b"input", b"bad")
+            .expect_err("invalid rsa signature")
+            .to_string()
+            .contains("signature verification failed"));
+    }
+
+    #[test]
+    fn rejects_malformed_unsigned_and_mismatched_jwts() {
+        let empty = Jwks { keys: vec![] };
+        for (token, expected) in [
+            ("header.claims", "missing jwt signature"),
+            ("a.b.c.d", "too many segments"),
+        ] {
+            assert!(
+                verify_id_token_with_jwks(token, &empty, "issuer", "client", "nonce")
+                    .expect_err(expected)
+                    .to_string()
+                    .contains(expected)
+            );
+        }
+
+        let claims = URL_SAFE_NO_PAD.encode(b"{}");
+        let unsigned_header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none","typ":"JWT"}"#);
+        let unsigned = format!("{unsigned_header}.{claims}.");
+        assert!(
+            verify_id_token_with_jwks(&unsigned, &empty, "issuer", "client", "nonce")
+                .expect_err("unsigned")
+                .to_string()
+                .contains("unsigned")
+        );
+
+        let wrong_type_header = URL_SAFE_NO_PAD.encode(br#"{"alg":"ES256","typ":"JWE"}"#);
+        let wrong_type = format!("{wrong_type_header}.{claims}.AA");
+        assert!(
+            verify_id_token_with_jwks(&wrong_type, &empty, "issuer", "client", "nonce")
+                .expect_err("wrong type")
+                .to_string()
+                .contains("jwt typ")
+        );
+
+        let keyed_header =
+            URL_SAFE_NO_PAD.encode(br#"{"alg":"ES256","typ":"JWT","kid":"missing"}"#);
+        let missing_key = format!("{keyed_header}.{claims}.AA");
+        assert!(
+            verify_id_token_with_jwks(&missing_key, &empty, "issuer", "client", "nonce")
+                .expect_err("missing key")
+                .to_string()
+                .contains("matching jwk not found")
+        );
+    }
+
+    #[test]
+    fn decodes_jwk_parts_and_reports_invalid_values() {
+        assert_eq!(
+            decode_jwk_part(Some("AQID"), "x").expect("decode"),
+            vec![1, 2, 3]
+        );
+        assert!(decode_jwk_part(None, "x")
+            .expect_err("missing")
+            .to_string()
+            .contains("missing jwk x"));
+        assert!(decode_jwk_part(Some("!"), "x")
+            .expect_err("invalid")
+            .to_string()
+            .contains("invalid jwk x"));
+    }
+
     #[test]
     fn form_encoding_escapes_values() {
         assert_eq!(
             form_urlencoded(&[("redirect_uri", "https://sgx.example/cb?a=1&b=2")]),
             "redirect_uri=https%3A%2F%2Fsgx.example%2Fcb%3Fa%3D1%26b%3D2"
         );
+        assert_eq!(percent_encode("A z/~"), "A+z%2F~");
+    }
+
+    #[test]
+    fn constructs_clients_with_an_injected_http_client() {
+        let config = CyleniumOidcConfig {
+            issuer: "https://issuer".into(),
+            token_endpoint: "https://issuer/token".into(),
+            jwks_uri: "https://issuer/jwks".into(),
+            client_id: "client".into(),
+            client_secret: None,
+            redirect_uri: "https://guardian/callback".into(),
+        };
+        let client = CyleniumOidcClient::with_http_client(config.clone(), reqwest::Client::new());
+        assert_eq!(client.config.client_id, config.client_id);
+        assert!(client.config.client_secret.is_none());
     }
 
     #[derive(Clone)]

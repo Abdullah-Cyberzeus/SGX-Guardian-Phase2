@@ -326,4 +326,82 @@ mod tests {
         stats.bytes_sent = 1024 * 100;
         assert_eq!(stats.bytes_sent, 102400);
     }
+
+    #[test]
+    fn media_stream_state_labels_cover_every_state() {
+        for (state, label) in [
+            (MediaStreamState::Inactive, "inactive"),
+            (MediaStreamState::Active, "active"),
+            (MediaStreamState::Paused, "paused"),
+            (MediaStreamState::Error, "error"),
+        ] {
+            assert_eq!(state.as_str(), label);
+        }
+    }
+
+    #[test]
+    fn video_pause_resume_and_deactivate_lifecycle() {
+        let mut video = VideoStream::new("av1".into(), 3840, 2160, 60, 8000);
+        assert_eq!(video.resolution(), "3840x2160");
+        video.activate();
+        assert_eq!(video.state, MediaStreamState::Active);
+        video.pause();
+        assert_eq!(video.state, MediaStreamState::Paused);
+        video.activate();
+        assert_eq!(video.state, MediaStreamState::Active);
+        video.deactivate();
+        assert_eq!(video.state, MediaStreamState::Inactive);
+    }
+
+    #[test]
+    fn screen_share_pause_resume_and_deactivate_lifecycle() {
+        let mut screen = ScreenShareStream::new("vp9".into(), 2560, 1440, 30, 5000);
+        screen.activate();
+        screen.pause();
+        assert_eq!(screen.state, MediaStreamState::Paused);
+        screen.activate();
+        assert_eq!(screen.state, MediaStreamState::Active);
+        screen.deactivate();
+        assert_eq!(screen.state, MediaStreamState::Inactive);
+    }
+
+    #[test]
+    fn inactive_and_error_video_streams_do_not_report_active_media() {
+        let mut state = CallMediaState::new("video-session".into());
+        state.add_video(VideoStream::new("h264".into(), 1280, 720, 30, 2000));
+        assert!(!state.is_video_active());
+        assert!(!state.is_any_stream_active());
+
+        state.video.as_mut().unwrap().state = MediaStreamState::Error;
+        assert!(!state.is_video_active());
+        state.video.as_mut().unwrap().activate();
+        assert!(state.is_video_active());
+        assert!(state.is_any_stream_active());
+    }
+
+    #[test]
+    fn media_state_and_statistics_round_trip_through_json() {
+        let mut state = CallMediaState::new("serialize-video".into());
+        let mut video = VideoStream::new("vp9".into(), 1920, 1080, 30, 4000);
+        video.stats = MediaStats {
+            bytes_sent: 10_000,
+            bytes_received: 20_000,
+            packets_sent: 100,
+            packets_received: 98,
+            packet_loss_percent: 2.0,
+            rtt_ms: 35,
+            jitter_ms: 4,
+        };
+        video.activate();
+        state.add_video(video);
+
+        let encoded = serde_json::to_string(&state).unwrap();
+        let decoded: CallMediaState = serde_json::from_str(&encoded).unwrap();
+        let decoded_video = decoded.video.unwrap();
+        assert_eq!(decoded_video.codec, "vp9");
+        assert_eq!(decoded_video.stats.bytes_received, 20_000);
+        assert_eq!(decoded_video.stats.packets_received, 98);
+        assert_eq!(decoded_video.stats.rtt_ms, 35);
+        assert_eq!(decoded_video.stats.jitter_ms, 4);
+    }
 }

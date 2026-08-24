@@ -68,4 +68,33 @@ mod tests {
         assert_eq!(engine.webrtc().peer_id(), "test-peer");
         assert_eq!(engine.ice().peer_id(), "test-peer");
     }
+
+    #[test]
+    fn media_engine_mutable_components_drive_video_connection_lifecycle() {
+        let mut engine = MediaEngine::new("video-peer".into()).unwrap();
+        engine.webrtc_mut().start_connecting().unwrap();
+        engine.webrtc_mut().mark_connected().unwrap();
+        engine
+            .webrtc_mut()
+            .create_media_stream("camera".into(), false, true)
+            .unwrap();
+        assert!(engine
+            .webrtc()
+            .get_media_stream("camera")
+            .unwrap()
+            .video_enabled());
+
+        engine.ice_mut().start_gathering().unwrap();
+        engine
+            .ice_mut()
+            .add_remote_candidate(IceCandidate::new(
+                "candidate:2 1 UDP 1 192.168.100.2 5000 typ host",
+                0,
+            ))
+            .unwrap();
+        assert_eq!(
+            engine.ice().connection_state(),
+            IceConnectionState::Connected
+        );
+    }
 }

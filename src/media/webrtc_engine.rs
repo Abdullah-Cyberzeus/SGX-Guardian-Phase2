@@ -359,4 +359,92 @@ mod tests {
         assert_eq!(engine.local_candidates().len(), 0);
         assert_eq!(engine.media_stream_count(), 0);
     }
+
+    #[test]
+    fn peer_connection_state_labels_cover_every_state() {
+        for (state, label) in [
+            (PeerConnectionState::New, "new"),
+            (PeerConnectionState::Connecting, "connecting"),
+            (PeerConnectionState::Connected, "connected"),
+            (PeerConnectionState::Disconnected, "disconnected"),
+            (PeerConnectionState::Failed, "failed"),
+            (PeerConnectionState::Closed, "closed"),
+        ] {
+            assert_eq!(state.as_str(), label);
+        }
+    }
+
+    #[test]
+    fn builder_applies_video_data_stun_and_transport_configuration() {
+        let engine = PeerConnectionBuilder::new("configured-peer")
+            .enable_audio(false)
+            .enable_video(true)
+            .enable_data_channel(false)
+            .add_stun_server("stun:video.example:3478")
+            .ice_transport_policy("relay")
+            .build()
+            .unwrap();
+
+        assert!(!engine.is_audio_enabled());
+        assert!(engine.is_video_enabled());
+        assert!(!engine.config().enable_data_channel);
+        assert_eq!(engine.config().ice_transport_policy, "relay");
+        assert!(engine
+            .config()
+            .stun_servers
+            .iter()
+            .any(|server| server == "stun:video.example:3478"));
+    }
+
+    #[test]
+    fn video_stream_respects_global_camera_configuration_and_replaces_by_id() {
+        let mut disabled = PeerConnectionBuilder::new("camera-disabled")
+            .enable_audio(false)
+            .enable_video(false)
+            .build()
+            .unwrap();
+        disabled
+            .create_media_stream("camera".into(), true, true)
+            .unwrap();
+        let stream = disabled.get_media_stream("camera").unwrap();
+        assert!(!stream.audio_enabled());
+        assert!(!stream.video_enabled());
+        assert_eq!(disabled.media_stream_count(), 1);
+        assert!(disabled.get_media_stream("missing").is_none());
+
+        disabled
+            .create_media_stream("camera".into(), false, true)
+            .unwrap();
+        assert_eq!(disabled.media_stream_count(), 1);
+        assert!(!disabled.get_media_stream("camera").unwrap().video_enabled());
+    }
+
+    #[test]
+    fn invalid_connection_transitions_are_rejected() {
+        let mut engine = WebRtcEngine::new("transition-peer");
+        assert!(engine.mark_connected().is_err());
+        engine.start_connecting().unwrap();
+        assert!(engine.start_connecting().is_err());
+        engine.mark_connected().unwrap();
+        assert!(engine.mark_connected().is_err());
+        engine.close().unwrap();
+        assert!(engine.start_connecting().is_err());
+        assert!(engine.mark_connected().is_err());
+    }
+
+    #[test]
+    fn close_clears_local_remote_candidates_and_video_streams() {
+        let mut engine = WebRtcEngine::new("cleanup-peer");
+        engine.add_local_candidate("local".into()).unwrap();
+        engine.add_remote_candidate("remote".into()).unwrap();
+        engine
+            .create_media_stream("video".into(), false, true)
+            .unwrap();
+        assert_eq!(engine.remote_candidates().len(), 1);
+
+        engine.close().unwrap();
+        assert!(engine.local_candidates().is_empty());
+        assert!(engine.remote_candidates().is_empty());
+        assert_eq!(engine.media_stream_count(), 0);
+    }
 }

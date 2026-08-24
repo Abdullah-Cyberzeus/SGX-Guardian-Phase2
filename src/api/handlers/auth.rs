@@ -1,10 +1,10 @@
 use crate::api::auth::{
     middleware::AuthenticatedSession,
-    oidc::{CyleniumOidcClient, CyleniumOidcConfig},
+    oidc::{CyleniumOidcClient, CyleniumOidcConfig, IdTokenClaims},
     password,
     provider::Credentials,
     session,
-    store::{NewUser, OidcTransactionRecord, UserRole},
+    store::{NewUser, OidcTransactionRecord, User, UserRole},
 };
 use crate::api::{error::ApiError, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
@@ -358,55 +358,7 @@ pub async fn cylenium_callback(
         )
         .await
         .map_err(|e| ApiError::Unauthorized(format!("cylenium OIDC login failed: {}", e)))?;
-    // The OIDC `sub` claim, not email, is the durable identity key: email
-    // can change or be reassigned at the IdP, but `sub` is permanent for a
-    // given Cylenium user.
-    let sub = claims.sub.trim();
-    if sub.is_empty() {
-        return Err(ApiError::Unauthorized(
-            "cylenium ID token missing subject claim".into(),
-        ));
-    }
-    let email = claims
-        .email
-        .as_deref()
-        .map(str::trim)
-        .filter(|email| !email.is_empty())
-        .ok_or_else(|| ApiError::Unauthorized("cylenium ID token missing email claim".into()))?;
-    let user = match state.admin.users.find_by_oidc_sub(sub).await? {
-        Some(user) => user,
-        None => match state.admin.users.find_by_email(email).await? {
-            // A local/password account already owns this email: link it to
-            // this Cylenium subject so future logins resolve by sub.
-            Some(existing) => {
-                state
-                    .admin
-                    .users
-                    .link_oidc_sub(&existing.user_id, sub)
-                    .await?
-            }
-            None => {
-                let name = claims
-                    .name
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or(email)
-                    .to_string();
-                state
-                    .admin
-                    .users
-                    .create(NewUser {
-                        name,
-                        email: email.to_string(),
-                        pw_hash: password::random_unusable_hash().await?,
-                        role: UserRole::Admin,
-                        oidc_sub: Some(sub.to_string()),
-                    })
-                    .await?
-            }
-        },
-    };
+    let user = resolve_cylenium_user(&state, &claims).await?;
 
     let (token, claims, session_rec) = session::issue(
         state.signer.clone(),
@@ -440,6 +392,58 @@ pub async fn cylenium_callback(
         guardian_did: state.device_did.clone(),
         expires_at: claims.exp,
     }))
+}
+
+async fn resolve_cylenium_user(state: &AppState, claims: &IdTokenClaims) -> Result<User, ApiError> {
+    // The OIDC `sub` claim, not email, is the durable identity key: email
+    // can change or be reassigned at the IdP, but `sub` is permanent for a
+    // given Cylenium user.
+    let sub = claims.sub.trim();
+    if sub.is_empty() {
+        return Err(ApiError::Unauthorized(
+            "cylenium ID token missing subject claim".into(),
+        ));
+    }
+    let email = claims
+        .email
+        .as_deref()
+        .map(str::trim)
+        .filter(|email| !email.is_empty())
+        .ok_or_else(|| ApiError::Unauthorized("cylenium ID token missing email claim".into()))?;
+    Ok(match state.admin.users.find_by_oidc_sub(sub).await? {
+        Some(user) => user,
+        None => match state.admin.users.find_by_email(email).await? {
+            // A local/password account already owns this email: link it to
+            // this Cylenium subject so future logins resolve by sub.
+            Some(existing) => {
+                state
+                    .admin
+                    .users
+                    .link_oidc_sub(&existing.user_id, sub)
+                    .await?
+            }
+            None => {
+                let name = claims
+                    .name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or(email)
+                    .to_string();
+                state
+                    .admin
+                    .users
+                    .create(NewUser {
+                        name,
+                        email: email.to_string(),
+                        pw_hash: password::random_unusable_hash().await?,
+                        role: UserRole::Admin,
+                        oidc_sub: Some(sub.to_string()),
+                    })
+                    .await?
+            }
+        },
+    })
 }
 
 pub async fn logout(
@@ -712,4 +716,135 @@ fn random_url_safe(len: usize) -> String {
     let mut bytes = vec![0u8; len];
     OsRng.fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::auth::oidc::Audience;
+    use tempfile::TempDir;
+
+    fn claims(sub: &str, email: Option<&str>, name: Option<&str>) -> IdTokenClaims {
+        let now = chrono::Utc::now().timestamp();
+        IdTokenClaims {
+            iss: "https://login.cylenium.example".into(),
+            sub: sub.into(),
+            aud: Audience::One("sgx-client".into()),
+            exp: now + 300,
+            iat: Some(now),
+            nbf: None,
+            email: email.map(str::to_string),
+            name: name.map(str::to_string),
+            nonce: Some("nonce".into()),
+        }
+    }
+
+    fn test_state(td: &TempDir) -> Arc<AppState> {
+        AppState::for_tests(
+            td.path(),
+            "nodeA",
+            td.path().join("config").to_string_lossy().to_string(),
+        )
+    }
+
+    #[tokio::test]
+    async fn cylenium_resolves_an_existing_account_by_durable_subject() {
+        let td = TempDir::new().expect("tempdir");
+        let state = test_state(&td);
+        let existing = state
+            .admin
+            .users
+            .create(NewUser {
+                name: "Existing Owner".into(),
+                email: "old-address@example.com".into(),
+                pw_hash: "unusable".into(),
+                role: UserRole::Admin,
+                oidc_sub: Some("subject-1".into()),
+            })
+            .await
+            .expect("create existing account");
+
+        let resolved = resolve_cylenium_user(
+            state.as_ref(),
+            &claims(
+                "subject-1",
+                Some("new-address@example.com"),
+                Some("Changed Name"),
+            ),
+        )
+        .await
+        .expect("resolve by subject");
+        assert_eq!(resolved.user_id, existing.user_id);
+        assert_eq!(resolved.email, "old-address@example.com");
+    }
+
+    #[tokio::test]
+    async fn cylenium_links_a_matching_local_email_on_first_login() {
+        let td = TempDir::new().expect("tempdir");
+        let state = test_state(&td);
+        let existing = state
+            .admin
+            .users
+            .create(NewUser {
+                name: "Local Owner".into(),
+                email: "owner@example.com".into(),
+                pw_hash: "local-password-hash".into(),
+                role: UserRole::Admin,
+                oidc_sub: None,
+            })
+            .await
+            .expect("create local account");
+
+        let resolved = resolve_cylenium_user(
+            state.as_ref(),
+            &claims("subject-linked", Some(" OWNER@example.com "), None),
+        )
+        .await
+        .expect("link local account");
+        assert_eq!(resolved.user_id, existing.user_id);
+        assert_eq!(resolved.oidc_sub.as_deref(), Some("subject-linked"));
+        assert_eq!(state.admin.users.count().await.expect("count"), 1);
+    }
+
+    #[tokio::test]
+    async fn cylenium_creates_a_new_owner_and_uses_email_when_name_is_blank() {
+        let td = TempDir::new().expect("tempdir");
+        let state = test_state(&td);
+        let resolved = resolve_cylenium_user(
+            state.as_ref(),
+            &claims("subject-new", Some("new@example.com"), Some("   ")),
+        )
+        .await
+        .expect("create Cylenium account");
+
+        assert_eq!(resolved.name, "new@example.com");
+        assert_eq!(resolved.email, "new@example.com");
+        assert_eq!(resolved.role, UserRole::Admin);
+        assert_eq!(resolved.oidc_sub.as_deref(), Some("subject-new"));
+        assert_eq!(state.admin.users.count().await.expect("count"), 1);
+    }
+
+    #[tokio::test]
+    async fn cylenium_rejects_missing_subject_or_email_claims() {
+        let td = TempDir::new().expect("tempdir");
+        let state = test_state(&td);
+
+        for invalid in [
+            claims("  ", Some("owner@example.com"), None),
+            claims("subject", None, None),
+            claims("subject", Some("   "), None),
+        ] {
+            let error = resolve_cylenium_user(state.as_ref(), &invalid)
+                .await
+                .expect_err("missing identity claim");
+            assert!(matches!(error, ApiError::Unauthorized(_)));
+        }
+        assert_eq!(state.admin.users.count().await.expect("count"), 0);
+    }
+
+    #[test]
+    fn cylenium_state_and_nonce_are_url_safe_and_have_expected_entropy_length() {
+        let value = random_url_safe(32);
+        assert_eq!(URL_SAFE_NO_PAD.decode(value).expect("decode").len(), 32);
+    }
 }
