@@ -42,6 +42,16 @@ pub struct Device {
 
     /// Last seen timestamp
     pub last_seen: DateTime<Utc>,
+
+    /// Last-observed Home Assistant state attributes, verbatim.
+    ///
+    /// This is what drives capability derivation (see `device::capabilities`):
+    /// `supported_features`, `hvac_modes`, `min_temp`/`max_temp`, `preset_modes`, etc.
+    ///
+    /// `#[serde(default)]` is mandatory — `DeviceRegistry::new` treats a parse failure as
+    /// "start empty", so a registry written before this field existed must still load.
+    #[serde(default)]
+    pub attributes: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Helper to determine if an HA entity ID belongs to a supported domain.

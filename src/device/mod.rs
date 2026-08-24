@@ -1,4 +1,4 @@
-pub mod command_tracker;
+pub mod capabilities;
 pub mod manager;
 pub mod registry;
 pub mod state;

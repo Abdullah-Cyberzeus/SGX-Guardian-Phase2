@@ -1,5 +1,18 @@
 use serde::{Deserialize, Serialize};
 
+/// OAuth scopes Home Assistant's `nest` integration requires, space separated.
+///
+/// Both are mandatory:
+/// * `sdm.service` — issuing device commands (set temperature, mode, preset).
+/// * `pubsub`      — the Cloud Pub/Sub feed HA subscribes to for device state updates.
+///
+/// Granting only `sdm.service` yields a working-but-blind integration: commands reach the
+/// thermostat, while HA's Pub/Sub subscriber fails to authenticate (`invalid_scope`) and the
+/// entity's state freezes at whatever it was when the subscription died. That looks exactly
+/// like "the device cannot be controlled", because the UI never reflects any change.
+pub const NEST_OAUTH_SCOPES: &str =
+    "https://www.googleapis.com/auth/sdm.service https://www.googleapis.com/auth/pubsub";
+
 /// Represents Google Nest SDM & OAuth 2.0 Credentials (stored AES-GCM-256 encrypted at rest).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NestCredentials {

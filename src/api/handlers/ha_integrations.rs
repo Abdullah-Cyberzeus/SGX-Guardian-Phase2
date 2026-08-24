@@ -223,7 +223,7 @@ pub async fn connect_integration(
         let flow_client = get_nest_ha_flow_client();
         let device_manager = state.get_device_manager().await;
 
-        let discovered_count = manager
+        let (discovered_count, ha_restarting) = manager
             .connect_nest(creds, flow_client.as_ref(), device_manager.as_ref())
             .await
             .map_err(|e| {
@@ -233,13 +233,23 @@ pub async fn connect_integration(
                 )
             })?;
 
+        let message = if ha_restarting {
+            format!(
+                "Connected {} — Home Assistant is restarting to load your devices. They'll appear automatically within about a minute.",
+                provider.display_name()
+            )
+        } else {
+            format!("Successfully connected integration for {}", provider.display_name())
+        };
+
         return Ok((
             StatusCode::OK,
             Json(serde_json::json!({
                 "status": "connected",
                 "provider": provider.as_str(),
-                "message": format!("Successfully connected integration for {}", provider.display_name()),
-                "devices_discovered": discovered_count
+                "message": message,
+                "devices_discovered": discovered_count,
+                "ha_restarting": ha_restarting
             })),
         ));
     }
@@ -354,9 +364,13 @@ pub async fn get_nest_oauth_url() -> Result<impl IntoResponse, (StatusCode, Json
         .as_deref()
         .unwrap_or("be666f67-3423-4a5d-b82d-38ec2865e1fa");
 
+    // Both SDM and Pub/Sub scopes are required — see `nest::NEST_OAUTH_SCOPES`. The space
+    // separator must be percent-encoded for the authorization URL.
+    let scope = crate::nest::NEST_OAUTH_SCOPES.replace(' ', "%20");
+
     let auth_url = format!(
-        "https://nestservices.google.com/partnerconnections/{}/auth?redirect_uri={}&response_type=code&client_id={}&scope=https://www.googleapis.com/auth/sdm.service%20https://www.googleapis.com/auth/nest-device-access.camera&access_type=offline&prompt=consent",
-        pid, redirect_uri, cid
+        "https://nestservices.google.com/partnerconnections/{}/auth?redirect_uri={}&response_type=code&client_id={}&scope={}&access_type=offline&prompt=consent",
+        pid, redirect_uri, cid, scope
     );
 
     Ok((
@@ -468,7 +482,7 @@ pub async fn nest_oauth_callback(
     let flow_client = get_nest_ha_flow_client();
     let device_manager = state.get_device_manager().await;
 
-    let discovered_count = manager
+    let (discovered_count, ha_restarting) = manager
         .connect_nest(creds, flow_client.as_ref(), device_manager.as_ref())
         .await
         .map_err(|e| {
@@ -478,9 +492,17 @@ pub async fn nest_oauth_callback(
             )
         })?;
 
+    let body_text = if ha_restarting {
+        "Home Assistant is restarting to load your Nest device(s). This takes under a minute — \
+         you can close this window now, and they'll appear automatically in SG-X Guardian."
+            .to_string()
+    } else {
+        format!("Discovered {} device(s). You may now close this window.", discovered_count)
+    };
+
     let html_content = format!(
-        "<!DOCTYPE html><html><head><title>SG-X Guardian</title><style>body{{font-family:sans-serif;text-align:center;padding:50px;background:#121212;color:#fff;}}h1{{color:#4caf50;}}</style></head><body><h1>🎉 Google Nest Connected Successfully!</h1><p>Discovered {} device(s). You may now close this window.</p></body></html>",
-        discovered_count
+        "<!DOCTYPE html><html><head><title>SG-X Guardian</title><style>body{{font-family:sans-serif;text-align:center;padding:50px;background:#121212;color:#fff;}}h1{{color:#4caf50;}}</style></head><body><h1>🎉 Google Nest Connected Successfully!</h1><p>{}</p></body></html>",
+        body_text
     );
 
     Ok((StatusCode::OK, axum::response::Html(html_content)).into_response())

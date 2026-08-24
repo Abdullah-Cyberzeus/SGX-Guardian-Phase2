@@ -20,6 +20,8 @@ export interface SmartDevice {
   current_state: string;
   health_status: 'online' | 'offline' | 'error' | string;
   last_seen: string;
+  /** Raw Home Assistant attributes for this entity. */
+  attributes?: Record<string, unknown>;
 }
 
 export interface DeviceListFilters {
@@ -37,6 +39,91 @@ export interface DeviceStateSnapshot {
   current_state: string;
   health_status: string;
   last_seen: string;
+  attributes?: Record<string, unknown>;
+  /** Home Assistant's configured temperature unit, e.g. "°F". */
+  temperature_unit?: string;
+}
+
+// ── GET /ha/devices/{id}/capabilities ───────────────────────────────────────
+// Mirrors `src/device/capabilities.rs`. The control UI is rendered entirely from
+// this, so an option is only ever offered when the device actually supports it.
+
+export type ParamKind = 'number' | 'enum' | 'bool' | 'rgb' | 'text';
+
+export interface CommandParamSpec {
+  name: string;
+  label: string;
+  kind: ParamKind;
+  required: boolean;
+  min?: number;
+  max?: number;
+  step?: number;
+  /** Unit to display alongside the input, e.g. "°F", "%", "K". */
+  unit?: string;
+  /** Permitted values for `enum` params — the device's real modes. */
+  options?: string[];
+  /** Current value on the device, used to pre-fill the control. */
+  default?: unknown;
+}
+
+export interface CommandSpec {
+  command: string;
+  label: string;
+  domain: string;
+  params: CommandParamSpec[];
+}
+
+export interface Reading {
+  key: string;
+  label: string;
+  value: unknown;
+  unit?: string | null;
+}
+
+export interface ClimateCapabilities {
+  hvac_modes: string[];
+  preset_modes: string[];
+  fan_modes: string[];
+  swing_modes: string[];
+  min_temp?: number | null;
+  max_temp?: number | null;
+  target_temp_step?: number | null;
+  supports_target_temperature: boolean;
+  supports_temperature_range: boolean;
+  supports_target_humidity: boolean;
+  current_temperature?: number | null;
+  target_temperature?: number | null;
+  target_temp_low?: number | null;
+  target_temp_high?: number | null;
+  current_humidity?: number | null;
+  hvac_action?: string | null;
+  preset_mode?: string | null;
+  fan_mode?: string | null;
+}
+
+export interface LightCapabilities {
+  supported_color_modes: string[];
+  effect_list: string[];
+  min_color_temp_kelvin?: number | null;
+  max_color_temp_kelvin?: number | null;
+  brightness?: number | null;
+  supports_brightness: boolean;
+  supports_color: boolean;
+  supports_color_temp: boolean;
+}
+
+export interface DeviceCapabilities {
+  device_id: string;
+  ha_entity_id: string;
+  domain: string;
+  temperature_unit: string;
+  supported_features: number;
+  /** When false the device is read-only and no command controls should render. */
+  controllable: boolean;
+  supported_commands: CommandSpec[];
+  readings: Reading[];
+  climate?: ClimateCapabilities;
+  light?: LightCapabilities;
 }
 
 // ── POST /ha/devices/{id}/command ───────────────────────────────────────────
@@ -50,6 +137,10 @@ export interface DeviceCommandResponse {
   status: string;
   command_id: string;
   message: string;
+  entity_id?: string;
+  command?: string;
+  params?: Record<string, unknown> | null;
+  accepted_at?: string;
 }
 
 // ── POST /ha/devices/sync ───────────────────────────────────────────────────
@@ -203,8 +294,16 @@ export const smartHomeService = {
   getDeviceState: (id: string): Promise<DeviceStateSnapshot> =>
     api.get<DeviceStateSnapshot>(`/ha/devices/${encodeURIComponent(id)}/state`),
 
+  /** What this device can actually do, derived from its Home Assistant attributes. */
+  getDeviceCapabilities: (id: string): Promise<DeviceCapabilities> =>
+    api.get<DeviceCapabilities>(`/ha/devices/${encodeURIComponent(id)}/capabilities`),
+
+  // The backend allows 30s for Home Assistant to complete a service call (a cloud
+  // thermostat waits on the vendor round-trip), so the client must not give up first.
   sendDeviceCommand: (id: string, body: DeviceCommandRequest): Promise<DeviceCommandResponse> =>
-    api.post<DeviceCommandResponse>(`/ha/devices/${encodeURIComponent(id)}/command`, body),
+    api.post<DeviceCommandResponse>(`/ha/devices/${encodeURIComponent(id)}/command`, body, {
+      timeoutMs: 35_000,
+    }),
 
   syncDevices: (): Promise<DeviceSyncResponse> =>
     api.post<DeviceSyncResponse>('/ha/devices/sync'),

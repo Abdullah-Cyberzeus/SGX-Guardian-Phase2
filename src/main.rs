@@ -3250,30 +3250,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ),
             );
 
-            let ha_rest = std::sync::Arc::new(
-                sgx_guardian_client::homeassistant::rest::HaRestClient::new(ha_config.clone()),
-            );
-            let registry = std::sync::Arc::new(
-                sgx_guardian_client::device::registry::DeviceRegistry::new(&devices_file),
-            );
-            let command_tracker =
-                sgx_guardian_client::device::command_tracker::CommandTracker::new();
+            let ha_rest = std::sync::Arc::new(sgx_guardian_client::homeassistant::rest::HaRestClient::new(ha_config.clone()));
+            let registry = std::sync::Arc::new(sgx_guardian_client::device::registry::DeviceRegistry::new(&devices_file));
+            // HA emits a state_changed event on every attribute tick, so device updates are
+            // written on a short debounce instead of fsyncing the registry per event.
+            registry.start_flusher(std::time::Duration::from_secs(2));
             let device_manager = sgx_guardian_client::device::manager::DeviceManager::new(
-                registry,
-                command_tracker,
+                std::sync::Arc::clone(&registry),
                 ha_rest,
                 std::sync::Arc::clone(&ha_event_bus),
                 Some(std::sync::Arc::clone(&notification_manager)),
             );
 
-            // Start listening for state_changed events and run startup reconciliation
-            std::sync::Arc::clone(&device_manager)
-                .start_event_listener()
-                .await;
-            let dm_reconcile = std::sync::Arc::clone(&device_manager);
-            tokio::spawn(async move {
-                dm_reconcile.reconcile_state().await;
-            });
+            // Start listening for state_changed events. Reconciliation is kicked off further
+            // below, once the integration manager is wired in, so vendor tagging is correct.
+            std::sync::Arc::clone(&device_manager).start_event_listener().await;
 
             // Initialize Automation Engine (Phase 5)
             let presence_tracker =
@@ -3303,6 +3294,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ),
             );
             refresh_worker.start();
+
+            // Lets the device manager tell a Nest thermostat from any other `climate.*`
+            // entity, so unbranded thermostats are not blanket-tagged as Google Nest.
+            device_manager
+                .set_integration_manager(std::sync::Arc::clone(&integration_manager))
+                .await;
+
+            // Startup reconciliation: reads HA's unit system and every entity's attributes.
+            let dm_reconcile = std::sync::Arc::clone(&device_manager);
+            tokio::spawn(async move {
+                dm_reconcile.reconcile_state().await;
+            });
 
             // Populate API State for Phase 7 REST & WebSocket endpoints
             *api_state.device_manager.write().await = Some(std::sync::Arc::clone(&device_manager));
