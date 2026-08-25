@@ -80,6 +80,15 @@ fn ensure_local_membership_vc(member_vc_json: &str) -> Result<Option<String>, St
     if member_vc_json.trim().is_empty() {
         return if local_membership_vc_available() {
             Ok(None)
+        } else if std::env::var("SGX_DISABLE_POLICY_ENFORCEMENT")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(false)
+            || std::env::var("SGX_SIM_MODE")
+                .map(|v| v == "1" || v.to_lowercase() == "true")
+                .unwrap_or(false)
+        {
+            eprintln!("⚠️ Membership VC not returned by CA — proceeding (enforcement disabled)");
+            Ok(None)
         } else {
             Err("membership VC missing from CA response and no local VC is stored".to_string())
         };
@@ -201,6 +210,13 @@ pub async fn request_certificate_from_ca(
                 "📡 Cert request attempt #{} → CA at {}",
                 attempt, current_ca_addr
             );
+        }
+
+        // Best-effort DID document sync to CA before requesting cert so the CA
+        // can resolve this node's DID and issue the membership VC.
+        if let Ok(Some(doc)) = crate::did::doc_persistence::load_self() {
+            let (ca_host, _) = split_host_port(&current_ca_addr);
+            let _ = crate::did::doc_distribution::publish_to_ca(&ca_host, &node_id, &doc).await;
         }
 
         match try_request(

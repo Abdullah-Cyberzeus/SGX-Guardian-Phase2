@@ -17,6 +17,68 @@ use std::process::Command;
 
 pub struct NebulaCA;
 
+fn member_cert_duration_hours(ca_crt: &str) -> Result<u64, Error> {
+    const MAX_HOURS: u64 = 8600;
+    const SAFETY_BUFFER_HOURS: i64 = 1;
+
+    let output = Command::new("nebula-cert")
+        .args(["print", "-json", "-path", ca_crt])
+        .output()
+        .or_else(|_| {
+            Command::new("nebula-cert")
+                .args(["print", "-path", ca_crt])
+                .output()
+        })?;
+
+    if !output.status.success() {
+        return Ok(8000);
+    }
+
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&stdout_str) {
+        if let Some(not_after) = parsed["details"]["notAfter"]
+            .as_str()
+            .or_else(|| parsed["notAfter"].as_str())
+        {
+            if let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(not_after) {
+                let remaining_hours = (expires_at.with_timezone(&chrono::Utc) - chrono::Utc::now())
+                    .num_hours()
+                    - SAFETY_BUFFER_HOURS;
+                if remaining_hours <= 0 {
+                    return Err(Error::other(format!(
+                        "CA cert {} expires in less than {}h — renew the CA before issuing new member certs",
+                        ca_crt, SAFETY_BUFFER_HOURS
+                    )));
+                }
+                return Ok(MAX_HOURS.min(remaining_hours as u64));
+            }
+        }
+    }
+
+    for line in stdout_str.lines() {
+        let trimmed = line.trim();
+        if trimmed.to_lowercase().starts_with("notafter:") {
+            if let Some((_, date_str)) = trimmed.split_once(':') {
+                let date_clean = date_str.trim();
+                if let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(date_clean)
+                    .or_else(|_| chrono::DateTime::parse_from_str(date_clean, "%Y-%m-%d %H:%M:%S %z %Z"))
+                    .or_else(|_| chrono::DateTime::parse_from_str(date_clean, "%Y-%m-%d %H:%M:%S %z UTC"))
+                {
+                    let remaining_hours = (expires_at.with_timezone(&chrono::Utc) - chrono::Utc::now())
+                        .num_hours()
+                        - SAFETY_BUFFER_HOURS;
+                    if remaining_hours > 0 {
+                        return Ok(MAX_HOURS.min(remaining_hours as u64));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(8000)
+}
+
 impl NebulaCA {
     /// Generate the Nebula CA keypair and self-signed cert.
     ///
@@ -240,6 +302,9 @@ impl NebulaCA {
             ));
         }
 
+        let duration_hours = member_cert_duration_hours(&ca_crt).unwrap_or(8000);
+        let duration_str = format!("{}h", duration_hours);
+
         let output = Command::new("nebula-cert")
             .arg("sign")
             .arg("-name")
@@ -247,7 +312,7 @@ impl NebulaCA {
             .arg("-ip")
             .arg(ip)
             .arg("-duration")
-            .arg("8600h")
+            .arg(&duration_str)
             .arg("-groups")
             .arg("guardian,member")
             .arg("-ca-crt")

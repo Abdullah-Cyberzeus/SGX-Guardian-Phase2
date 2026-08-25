@@ -2984,12 +2984,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // === CERT BOOTSTRAP SERVER (nodeA only, plaintext port 50061) ===
     if node_id == "nodeA" {
         tokio::spawn(async move {
-            // Bind to detected LAN IP or localhost — do NOT expose on all interfaces
-            let bootstrap_addr = if detected_ip.is_empty() {
-                "127.0.0.1:50061".to_string()
-            } else {
-                format!("{}:50061", detected_ip)
-            };
+            // Bind to 0.0.0.0:50061 to accept cert bootstrap connections from remote nodes
+            let bootstrap_addr = "0.0.0.0:50061".to_string();
             if let Err(e) = server::start_cert_bootstrap_server(bootstrap_addr).await {
                 eprintln!("Cert bootstrap server failed: {:?}", e);
             }

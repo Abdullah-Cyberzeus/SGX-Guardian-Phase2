@@ -9,7 +9,7 @@
 ARG RUST_IMAGE=rust:1.90-bookworm
 ARG NODE_IMAGE=node:22-bookworm-slim
 ARG RUNTIME_IMAGE=debian:bookworm-slim
-ARG NEBULA_VERSION=1.10.3
+ARG NEBULA_VERSION=1.9.4
 
 # Build the React application inside Docker. The Rust build embeds this output
 # into the daemon binary, so it must never depend on a stale host-side dist/.
@@ -81,8 +81,8 @@ WORKDIR /nebula-src
 # Bump NEBULA_VERSION and both hashes together when upgrading.
 RUN set -eu; \
     case "${TARGETARCH}" in \
-        amd64) NEBULA_SHA256="99ac335caeb69d02a6b6b00a3d4b5d0a36ec3971df480a1cc50e6db378342955"; EXPECT_MACHINE="3e00" ;; \
-        arm64) NEBULA_SHA256="69b2764b0c27b04e4f3fb47764cf330555beb5a49e62e045ed5f208a14341343"; EXPECT_MACHINE="b700" ;; \
+        amd64) NEBULA_SHA256="2216dfab57c0c387a762f788a1d6c4609c73bb56c24053396e01a56f70328d9a"; EXPECT_MACHINE="3e00" ;; \
+        arm64) NEBULA_SHA256="ae531ce56b5cf9e65f4e5ce19719b7861e2c7137d3b57a713e1879a545a9a2d6"; EXPECT_MACHINE="b700" ;; \
         *) echo "ERROR: unsupported TARGETARCH '${TARGETARCH}' for Nebula" >&2; exit 1 ;; \
     esac; \
     TARBALL="nebula-linux-${TARGETARCH}.tar.gz"; \
