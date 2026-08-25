@@ -912,10 +912,9 @@ function ConnectIntegrationDialog({
 }
 
 function IntegrationsTab({
-  data, loading, error, onRefetch, cyleniumConnected, onConnectCylenium,
+  data, loading, error, onRefetch,
 }: {
   data: IntegrationsOverview | null; loading: boolean; error: Error | null; onRefetch: () => void;
-  cyleniumConnected: boolean; onConnectCylenium: () => void;
 }) {
   const [connectTarget, setConnectTarget] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
@@ -942,55 +941,6 @@ function IntegrationsTab({
   return (
     <div className="flex flex-col gap-4">
       {error && <ErrorBanner error={error} onRetry={onRefetch} />}
-
-      {/* Cylenium Cloud — unrelated to the HA bridge; kept as-is (existing OAuth flow) */}
-      <div
-        className="rounded-lg p-4 flex flex-col gap-3"
-        style={{ backgroundColor: "color-mix(in srgb, var(--primary) 5%, var(--card))", border: "1.5px solid var(--primary)" }}
-      >
-        <div className="flex items-center justify-between">
-          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "9px", fontWeight: "var(--font-weight-semibold)", color: "var(--primary)", letterSpacing: "0.14em" }}>
-            CERVAIS
-          </span>
-          {cyleniumConnected && <StatusBadge status="Connected" variant="success" />}
-        </div>
-        <div className="flex items-center gap-3">
-          <div
-            className="rounded-lg flex items-center justify-center flex-shrink-0"
-            style={{ width: "44px", height: "44px", backgroundColor: "color-mix(in srgb, var(--primary) 15%, transparent)", border: "1px solid color-mix(in srgb, var(--primary) 25%, transparent)" }}
-          >
-            <Cloud size={22} style={{ color: "var(--primary)" }} />
-          </div>
-          <div>
-            <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)", marginBottom: "2px" }}>
-              Cylenium Cloud
-            </p>
-            <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
-              Unified security visibility for your Guardian network
-            </p>
-          </div>
-        </div>
-        {cyleniumConnected ? (
-          <>
-            <div className="rounded-md p-3 flex flex-col gap-2" style={{ backgroundColor: "color-mix(in srgb, var(--chart-2) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--chart-2) 20%, transparent)" }}>
-              <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginBottom: "4px" }}>Last sync: Just now</p>
-              {syncFeatures.map(({ label }) => (
-                <div key={label} className="flex items-center gap-2">
-                  <Check size={12} style={{ color: "var(--chart-2)", flexShrink: 0 }} />
-                  <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--foreground)" }}>{label}</span>
-                </div>
-              ))}
-            </div>
-            <a href="#" className="flex items-center gap-1.5" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: "var(--primary)", textDecoration: "none" }}>
-              <ExternalLink size={12} /> View in Cylenium Dashboard
-            </a>
-          </>
-        ) : (
-          <button onClick={onConnectCylenium} style={{ ...primaryButtonStyle({ fullWidth: true }), height: "44px", boxShadow: "0 0 20px color-mix(in srgb, var(--primary) 20%, transparent)" }}>
-            <Cloud size={15} /> Connect Cylenium
-          </button>
-        )}
-      </div>
 
       <div className="flex items-center gap-3">
         <div style={{ flex: 1, height: "1px", backgroundColor: "var(--border)" }} />
@@ -1789,8 +1739,6 @@ export function DV11SmartHome() {
               loading={integrationsQuery.loading}
               error={integrationsQuery.error}
               onRefetch={integrationsQuery.refetch}
-              cyleniumConnected={cyleniumConnected}
-              onConnectCylenium={() => setCyleniumFlow("what-syncs")}
             />
           )}
           {activeTab === "automations" && (
