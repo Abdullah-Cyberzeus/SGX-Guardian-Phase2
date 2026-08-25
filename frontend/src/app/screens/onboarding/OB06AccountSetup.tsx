@@ -568,45 +568,6 @@ export function OB06AccountSetup() {
           {loading ? <Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /> : (mode === "create" ? role === "member" ? "Continue to Member Join" : "Create Admin Account" : "Log In")}
         </button>
 
-        {/* Divider */}
-        <div className="flex items-center gap-3">
-          <div style={{ flex: 1, height: "1px", backgroundColor: "var(--border)" }} />
-          <span
-            style={{
-              fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)",
-              color: "var(--muted-foreground)", flexShrink: 0,
-            }}
-          >
-            or
-          </span>
-          <div style={{ flex: 1, height: "1px", backgroundColor: "var(--border)" }} />
-        </div>
-
-        {/* Continue with Cylenium */}
-        <button
-          onClick={handleCylenium}
-          disabled={!cyleniumEnabled}
-          className="w-full flex items-center justify-center gap-2.5 transition-opacity active:opacity-80"
-          style={{
-            height: "52px",
-            backgroundColor: "transparent",
-            color: "var(--foreground)",
-            fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)",
-            borderRadius: "var(--radius)",
-            border: "1.5px solid var(--border)",
-            cursor: cyleniumEnabled ? "pointer" : "default",
-            opacity: cyleniumEnabled ? 1 : 0.6,
-          }}
-        >
-          {/* Cervais shield icon */}
-          <div
-            className="flex items-center justify-center rounded-md flex-shrink-0"
-            style={{ width: "22px", height: "22px", backgroundColor: "color-mix(in srgb, var(--primary) 15%, transparent)" }}
-          >
-            <Shield size={13} style={{ color: "var(--primary)" }} />
-          </div>
-          {cyleniumEnabled ? "Continue with Cylenium" : "Cylenium Not Configured"}
-        </button>
       </div>
 
       <style>{`

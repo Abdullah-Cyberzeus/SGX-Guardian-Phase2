@@ -111,9 +111,10 @@ function usePWA() {
     }
 
     if (!window.isSecureContext) {
-      setRegistrationError(
-        `The origin ${window.location.origin} is not browser-trusted. Use trusted HTTPS nodea.guardian, nodeb.guardian, or nodec.guardian`,
-      );
+      // Offline/PWA install is unavailable outside a secure context (plain
+      // HTTP origin), but the app itself still works fine online — this is
+      // not a failure worth surfacing to the user.
+      console.warn(`[SW] Skipping offline install: ${window.location.origin} is not a secure context`);
       return;
     }
 
