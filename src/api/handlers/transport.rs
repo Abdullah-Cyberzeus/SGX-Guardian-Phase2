@@ -291,7 +291,13 @@ fn detect_interfaces(sys_net_dir: &str) -> Vec<TransportInterface> {
             .unwrap_or(false);
 
         let ip = ip_by_interface.get(&name).cloned();
-        let available = is_up && ip.is_some();
+        // For cellular interfaces (wwan*, rmnet*), consider available if operstate is "up"
+        // even without IP. For other types, require both conditions.
+        let available = if transport == TransportType::Cellular {
+            is_up
+        } else {
+            is_up && ip.is_some()
+        };
 
         out.push(TransportInterface {
             name,
