@@ -334,3 +334,167 @@ fn write_ruleset(path: &PathBuf, data: &str) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::enforcement::model::{
+        Action, ConntrackState, EnforcementRule, ForwardRule, InterfaceMatch, IsolationRule,
+        NatRule, PortRange, Protocol,
+    };
+    use crate::enforcement::translator::TranslatedRules;
+
+    #[test]
+    fn test_render_enforcement_variations() {
+        // Single TCP port with src and dst
+        let rule1 = EnforcementRule {
+            action: Action::Allow,
+            protocol: Protocol::Tcp,
+            src_ip: Some("192.168.1.50".into()),
+            dst_ip: Some("10.0.0.1".into()),
+            ports: Some(PortRange {
+                start: 443,
+                end: 443,
+            }),
+            in_interface: Some("eth0".into()),
+        };
+        let rendered1 = render_enforcement(&rule1).unwrap();
+        assert_eq!(
+            rendered1,
+            r#"iifname "eth0" ip saddr 192.168.1.50 ip daddr 10.0.0.1 tcp dport 443 accept"#
+        );
+
+        // UDP port range with deny action
+        let rule2 = EnforcementRule {
+            action: Action::Deny,
+            protocol: Protocol::Udp,
+            src_ip: None,
+            dst_ip: None,
+            ports: Some(PortRange {
+                start: 5000,
+                end: 5010,
+            }),
+            in_interface: None,
+        };
+        let rendered2 = render_enforcement(&rule2).unwrap();
+        assert_eq!(rendered2, "udp dport 5000-5010 drop");
+
+        // Masquerade action is invalid in enforcement rules and returns Err
+        let rule3 = EnforcementRule {
+            action: Action::Masquerade,
+            protocol: Protocol::Tcp,
+            src_ip: None,
+            dst_ip: None,
+            ports: None,
+            in_interface: None,
+        };
+        let err3 = render_enforcement(&rule3);
+        assert!(err3.is_err());
+        assert!(err3.unwrap_err().to_string().contains("masquerade action invalid"));
+    }
+
+    #[test]
+    fn test_render_forward_rule() {
+        let rule = ForwardRule {
+            action: Action::Allow,
+            interfaces: InterfaceMatch {
+                in_interface: Some("wlan0".into()),
+                out_interface: Some("eth0".into()),
+            },
+            state: Some(vec![ConntrackState::Established, ConntrackState::Related]),
+        };
+        let rendered = render_forward(&rule).unwrap();
+        assert_eq!(
+            rendered,
+            r#"iifname "wlan0" oifname "eth0" ct state established,related accept"#
+        );
+    }
+
+    #[test]
+    fn test_render_isolation_rule() {
+        let rule = IsolationRule {
+            action: Action::Deny,
+            interfaces: InterfaceMatch {
+                in_interface: Some("ap0".into()),
+                out_interface: Some("ap0".into()),
+            },
+        };
+        let rendered = render_isolation(&rule).unwrap();
+        assert_eq!(rendered, r#"iifname "ap0" oifname "ap0" drop"#);
+    }
+
+    #[test]
+    fn test_render_nat_rule() {
+        let rule = NatRule {
+            action: Action::Masquerade,
+            out_interface: Some("eth0".into()),
+            src_subnet: Some("192.168.10.0/24".into()),
+        };
+        let rendered = render_nat(&rule).unwrap();
+        assert_eq!(
+            rendered,
+            r#"ip saddr 192.168.10.0/24 oifname "eth0" masquerade"#
+        );
+    }
+
+    #[test]
+    fn test_build_nft_ruleset_structure() {
+        let rules = TranslatedRules {
+            enforcement: vec![EnforcementRule {
+                action: Action::Allow,
+                protocol: Protocol::Tcp,
+                src_ip: None,
+                dst_ip: None,
+                ports: Some(PortRange {
+                    start: 9999,
+                    end: 9999,
+                }),
+                in_interface: None,
+            }],
+            forward: vec![ForwardRule {
+                action: Action::Allow,
+                interfaces: InterfaceMatch {
+                    in_interface: Some("br0".into()),
+                    out_interface: Some("eth0".into()),
+                },
+                state: None,
+            }],
+            isolation: vec![IsolationRule {
+                action: Action::Deny,
+                interfaces: InterfaceMatch {
+                    in_interface: Some("wlan1".into()),
+                    out_interface: Some("wlan1".into()),
+                },
+            }],
+            nat: vec![NatRule {
+                action: Action::Masquerade,
+                out_interface: Some("wan0".into()),
+                src_subnet: None,
+            }],
+        };
+
+        let ruleset = build_nft_ruleset(&rules).unwrap();
+
+        // Must declare and delete tables atomically
+        assert!(ruleset.contains("table inet sgx_guardian\ndelete table inet sgx_guardian\n"));
+        assert!(ruleset.contains("table ip sgx_nat\ndelete table ip sgx_nat\n"));
+
+        // Must define filter chains
+        assert!(ruleset.contains("chain input {"));
+        assert!(ruleset.contains("type filter hook input priority 0; policy drop;"));
+        assert!(ruleset.contains("chain forward {"));
+        assert!(ruleset.contains("type filter hook forward priority 0; policy drop;"));
+
+        // Must preserve dev safety rules
+        assert!(ruleset.contains("iif lo accept"));
+        assert!(ruleset.contains("tcp dport 22 accept"));
+        assert!(ruleset.contains("udp dport 4242 counter accept"));
+
+        // Must include translated rules
+        assert!(ruleset.contains("tcp dport 9999 accept"));
+        assert!(ruleset.contains(r#"iifname "br0" oifname "eth0" accept"#));
+        assert!(ruleset.contains(r#"iifname "wlan1" oifname "wlan1" drop"#));
+        assert!(ruleset.contains(r#"oifname "wan0" masquerade"#));
+    }
+}
+

@@ -177,3 +177,136 @@ fn sort_json_keys(v: &serde_json::Value) -> serde_json::Value {
         _ => v.clone(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crl::entry::{
+        RevocationReason, RevokerRole, Severity, CRL_CONTEXT_CORE, CRL_CONTEXT_SGX,
+        CRL_UNREVOKE_TOMBSTONE_TYPE,
+    };
+
+    fn sample_crl_entry(id: &str, did: &str) -> CrlEntry {
+        CrlEntry {
+            context: vec![CRL_CONTEXT_CORE.into(), CRL_CONTEXT_SGX.into()],
+            id: format!("urn:uuid:{}", id),
+            r#type: vec!["VerifiableCredential".into(), "RevocationCredential".into()],
+            revoked_did: did.into(),
+            device_id: None,
+            user_id: None,
+            circle_id: "c1".into(),
+            reason: RevocationReason::Compromised,
+            severity: Severity::Critical,
+            timestamp: "2026-01-01T00:00:00Z".into(),
+            revoker_did: "did:guardian:owner".into(),
+            revoker_role: RevokerRole::Owner,
+            evidence: None,
+            proof: Proof::default(),
+            peers_notified: vec![],
+            propagated: false,
+        }
+    }
+
+    fn sample_tombstone(id: &str, did: &str) -> UnrevokeTombstone {
+        UnrevokeTombstone {
+            context: vec![CRL_CONTEXT_CORE.into()],
+            id: format!("urn:uuid:{}", id),
+            r#type: vec!["VerifiableCredential".into(), CRL_UNREVOKE_TOMBSTONE_TYPE.into()],
+            revoked_did: did.into(),
+            original_entry_id: "urn:uuid:orig-1".into(),
+            owner_did: "did:guardian:owner".into(),
+            sequence: 1,
+            timestamp: "2026-01-01T00:00:00Z".into(),
+            proof: Proof::default(),
+            peers_notified: vec![],
+            propagated: false,
+        }
+    }
+
+    #[test]
+    fn test_crl_new_and_empty() {
+        let crl = CertificateRevocationList::new("did:guardian:issuer", "circle-1");
+        assert_eq!(crl.issuer, "did:guardian:issuer");
+        assert_eq!(crl.circle_id, "circle-1");
+        assert_eq!(crl.entries.len(), 0);
+        assert_eq!(crl.tombstones.len(), 0);
+        assert!(!crl.contains("did:guardian:target"));
+    }
+
+    #[test]
+    fn test_crl_upsert_and_contains() {
+        let mut crl = CertificateRevocationList::new("did:guardian:issuer", "circle-1");
+
+        let entry1 = sample_crl_entry("1111", "did:guardian:target-b");
+        let entry2 = sample_crl_entry("2222", "did:guardian:target-a");
+
+        assert!(crl.upsert(entry1.clone()).unwrap());
+        assert!(crl.contains("did:guardian:target-b"));
+        assert!(!crl.contains("did:guardian:target-a"));
+
+        assert!(crl.upsert(entry2).unwrap());
+        assert!(crl.contains("did:guardian:target-a"));
+        assert!(crl.contains("did:guardian:target-b"));
+
+        // Entries must be kept sorted by revoked_did
+        assert_eq!(crl.entries[0].revoked_did, "did:guardian:target-a");
+        assert_eq!(crl.entries[1].revoked_did, "did:guardian:target-b");
+
+        // Duplicate ID returns Ok(false)
+        assert!(!crl.upsert(entry1).unwrap());
+
+        // Duplicate revoked_did with new ID returns AlreadyRevoked
+        let duplicate_did_entry = sample_crl_entry("3333", "did:guardian:target-a");
+        assert!(matches!(
+            crl.upsert(duplicate_did_entry),
+            Err(CrlError::AlreadyRevoked(_))
+        ));
+    }
+
+    #[test]
+    fn test_crl_remove_and_tombstone_lifecycle() {
+        let mut crl = CertificateRevocationList::new("did:guardian:issuer", "circle-1");
+        let entry = sample_crl_entry("1111", "did:guardian:alice");
+        crl.upsert(entry).unwrap();
+
+        assert!(crl.contains("did:guardian:alice"));
+        let removed = crl.remove("did:guardian:alice").unwrap();
+        assert_eq!(removed.revoked_did, "did:guardian:alice");
+        assert!(!crl.contains("did:guardian:alice"));
+
+        // Removing non-existent returns NotRevoked
+        assert!(matches!(
+            crl.remove("did:guardian:alice"),
+            Err(CrlError::NotRevoked(_))
+        ));
+
+        // Upsert tombstone
+        let tombstone = sample_tombstone("t1", "did:guardian:alice");
+        assert!(crl.upsert_tombstone(tombstone));
+        assert!(crl.tombstone("did:guardian:alice").is_some());
+
+        // Revoking again removes the tombstone
+        let new_entry = sample_crl_entry("4444", "did:guardian:alice");
+        assert!(crl.upsert(new_entry).unwrap());
+        assert!(crl.contains("did:guardian:alice"));
+        assert!(crl.tombstone("did:guardian:alice").is_none());
+    }
+
+    #[test]
+    fn test_crl_recompute_root_and_canonical_bytes() {
+        let mut crl = CertificateRevocationList::new("did:guardian:issuer", "circle-1");
+        crl.recompute_root();
+        let root1 = crl.merkle_root.clone();
+        assert!(!root1.is_empty());
+
+        let entry = sample_crl_entry("1111", "did:guardian:alice");
+        crl.upsert(entry).unwrap();
+        crl.recompute_root();
+        let root2 = crl.merkle_root.clone();
+        assert_ne!(root1, root2);
+
+        let bytes = crl.canonical_bytes_for_sign().unwrap();
+        assert!(!bytes.is_empty());
+    }
+}
+

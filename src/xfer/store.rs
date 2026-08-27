@@ -544,3 +544,172 @@ fn validate_receiver_state(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::did::document::Proof;
+
+    fn sample_manifest() -> FileManifest {
+        FileManifest {
+            transfer_id: "xfer-123".into(),
+            circle_id: "circle-abc".into(),
+            sender_did: "did:guardian:sender1".into(),
+            filename: "report.pdf".into(),
+            size: 1024,
+            chunk_bytes: 512,
+            chunk_count: 2,
+            chunk_digests: vec!["hash1".into(), "hash2".into()],
+            file_sha256: "filehash123".into(),
+            created_at: "2026-01-01T00:00:00Z".into(),
+            proof: Proof::default(),
+        }
+    }
+
+    #[test]
+    fn test_transfer_status_serde_roundtrip() {
+        let statuses = vec![
+            (TransferStatus::Queued, "\"queued\""),
+            (TransferStatus::Connecting, "\"connecting\""),
+            (TransferStatus::Sending, "\"sending\""),
+            (TransferStatus::Receiving, "\"receiving\""),
+            (TransferStatus::Completed, "\"completed\""),
+            (TransferStatus::Failed, "\"failed\""),
+            (TransferStatus::Cancelled, "\"cancelled\""),
+        ];
+
+        for (status, expected_json) in statuses {
+            let serialized = serde_json::to_string(&status).unwrap();
+            assert_eq!(serialized, expected_json);
+            let deserialized: TransferStatus = serde_json::from_str(&serialized).unwrap();
+            assert_eq!(deserialized, status);
+        }
+    }
+
+    #[test]
+    fn test_receiver_state_have_chunks() {
+        let state = ReceiverState {
+            transfer_id: "xfer-1".into(),
+            circle_id: "c1".into(),
+            sender_did: "did:guardian:s1".into(),
+            filename: "test.txt".into(),
+            size: 100,
+            chunk_bytes: 50,
+            chunk_count: 2,
+            file_sha256: "sha".into(),
+            received_chunks: vec![0, 1],
+            status: TransferStatus::Completed,
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            completed_at: Some("2026-01-01T00:01:00Z".into()),
+            last_error: None,
+            vault_id: Some("v1".into()),
+        };
+
+        assert_eq!(state.have_chunks(), vec![0, 1]);
+    }
+
+    #[test]
+    fn test_same_manifest_core_comparison() {
+        let manifest_a = sample_manifest();
+        let mut manifest_b = manifest_a.clone();
+        // Changing non-core proof or created_at does not change core equality
+        manifest_b.created_at = "2026-02-02T00:00:00Z".into();
+        assert!(same_manifest_core(&manifest_a, &manifest_b));
+
+        // Changing a core field like filename causes difference
+        let mut manifest_c = manifest_a.clone();
+        manifest_c.filename = "different.pdf".into();
+        assert!(!same_manifest_core(&manifest_a, &manifest_c));
+
+        // Changing size causes difference
+        let mut manifest_d = manifest_a.clone();
+        manifest_d.size = 2048;
+        assert!(!same_manifest_core(&manifest_a, &manifest_d));
+    }
+
+    #[test]
+    fn test_validate_receiver_state_success_and_conflict() {
+        let manifest = sample_manifest();
+        let state = ReceiverState {
+            transfer_id: manifest.transfer_id.clone(),
+            circle_id: manifest.circle_id.clone(),
+            sender_did: manifest.sender_did.clone(),
+            filename: manifest.filename.clone(),
+            size: manifest.size,
+            chunk_bytes: manifest.chunk_bytes,
+            chunk_count: manifest.chunk_count,
+            file_sha256: manifest.file_sha256.clone(),
+            received_chunks: vec![],
+            status: TransferStatus::Receiving,
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            completed_at: None,
+            last_error: None,
+            vault_id: None,
+        };
+
+        assert!(validate_receiver_state(&state, &manifest).is_ok());
+
+        // Tampered sha256 in state must be rejected
+        let mut tampered_state = state.clone();
+        tampered_state.file_sha256 = "corrupted_hash".into();
+        assert!(matches!(
+            validate_receiver_state(&tampered_state, &manifest),
+            Err(XferError::Conflict(_))
+        ));
+
+        // Tampered sender_did must be rejected
+        let mut tampered_sender = state.clone();
+        tampered_sender.sender_did = "did:guardian:attacker".into();
+        assert!(matches!(
+            validate_receiver_state(&tampered_sender, &manifest),
+            Err(XferError::Conflict(_))
+        ));
+    }
+
+    #[test]
+    fn test_sender_progress_and_inbox_item_serde() {
+        let sender = SenderProgress {
+            transfer_id: "x1".into(),
+            circle_id: "c1".into(),
+            actor_did: "did:guardian:actor".into(),
+            peer_did: "did:guardian:peer".into(),
+            filename: "doc.docx".into(),
+            file_path: "/tmp/doc.docx".into(),
+            size: 500,
+            chunk_bytes: 250,
+            chunk_count: 2,
+            requested_chunks: 1,
+            sent_chunks: 1,
+            bytes_sent: 250,
+            status: TransferStatus::Sending,
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            completed_at: None,
+            last_error: None,
+        };
+        let serialized = serde_json::to_string(&sender).unwrap();
+        let deserialized: SenderProgress = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.transfer_id, sender.transfer_id);
+        assert_eq!(deserialized.actor_did, sender.actor_did);
+
+        let inbox = InboxItem {
+            transfer_id: "x1".into(),
+            circle_id: "c1".into(),
+            sender_did: "did:guardian:peer".into(),
+            filename: "doc.docx".into(),
+            size: 500,
+            completed: true,
+            path: Some("/tmp/inbox/doc.docx".into()),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            completed_at: Some("2026-01-01T00:01:00Z".into()),
+            file_sha256: "sha".into(),
+            vault_id: Some("v1".into()),
+            download_path: Some("/api/download".into()),
+            vault_available: true,
+        };
+        let inbox_str = serde_json::to_string(&inbox).unwrap();
+        let inbox_deserialized: InboxItem = serde_json::from_str(&inbox_str).unwrap();
+        assert_eq!(inbox_deserialized.transfer_id, inbox.transfer_id);
+        assert!(inbox_deserialized.vault_available);
+    }
+}
+

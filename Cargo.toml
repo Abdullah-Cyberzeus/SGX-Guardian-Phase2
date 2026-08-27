@@ -79,3 +79,7 @@ members = ["sgx-pa-cli"]
 
 [lib]
 doctest = false
+
+[profile.test]
+debug = 1        # Keep line numbers for backtraces, but drop heavy symbol tables
+opt-level = 0

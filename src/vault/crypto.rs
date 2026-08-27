@@ -311,3 +311,110 @@ pub fn decrypt_file(
     writer.get_ref().sync_all()?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    struct MockKeyWrapper;
+
+    impl KeyWrapper for MockKeyWrapper {
+        fn scheme(&self) -> &'static str {
+            "mock-wrapper"
+        }
+        fn key_id(&self) -> String {
+            "mock-key-1".to_string()
+        }
+        fn wrap(&self, dek: &[u8; 32]) -> Result<Vec<u8>, VaultError> {
+            Ok(dek.to_vec())
+        }
+        fn unwrap(&self, wrapped: &[u8]) -> Result<[u8; 32], VaultError> {
+            if wrapped.len() != 32 {
+                return Err(VaultError::Crypto("invalid wrapped key length".into()));
+            }
+            let mut key = [0_u8; 32];
+            key.copy_from_slice(wrapped);
+            Ok(key)
+        }
+    }
+
+    #[test]
+    fn test_expected_chunk_count_and_len() {
+        assert_eq!(expected_chunk_count(0, 1024), 0);
+        assert_eq!(expected_chunk_count(500, 1024), 1);
+        assert_eq!(expected_chunk_count(1024, 1024), 1);
+        assert_eq!(expected_chunk_count(1025, 1024), 2);
+        assert_eq!(expected_chunk_count(2048, 1024), 2);
+
+        // 2500 bytes with 1000-byte chunks -> 3 chunks
+        assert_eq!(expected_plain_len(2500, 1000, 0, 3), 1000);
+        assert_eq!(expected_plain_len(2500, 1000, 1, 3), 1000);
+        assert_eq!(expected_plain_len(2500, 1000, 2, 3), 500);
+    }
+
+    #[test]
+    fn test_make_key_validates_aes256() {
+        let key_bytes = [0x42_u8; 32];
+        let key = make_key(&key_bytes);
+        assert!(key.is_ok());
+    }
+
+    #[test]
+    fn test_encrypt_and_decrypt_file_roundtrip() {
+        let dir = tempdir().expect("tempdir");
+        let input_file = dir.path().join("plain.txt");
+        let cipher_file = dir.path().join("cipher.bin");
+        let output_file = dir.path().join("decrypted.txt");
+
+        let original_data = b"Guardian Secure Vault Payload: Hello World 2026!";
+        std::fs::write(&input_file, original_data).unwrap();
+
+        let sha256_plain = hex::encode(Sha256::digest(original_data));
+        let ingest_meta = IngestMeta {
+            filename: "plain.txt".into(),
+            mime: "text/plain".into(),
+            sha256_plain: sha256_plain.clone(),
+            size_plain: original_data.len() as u64,
+            chunk_bytes: 16, // small chunk to force multi-chunk encryption
+        };
+
+        let wrapper = MockKeyWrapper;
+        let outcome = encrypt_file(&input_file, &cipher_file, &ingest_meta, &wrapper)
+            .expect("encrypt file");
+
+        assert!(cipher_file.exists());
+        assert_eq!(outcome.enc.chunk_bytes, 16);
+        assert_eq!(outcome.enc.wrap_scheme, "mock-wrapper");
+
+        let record = VaultRecord {
+            vault_id: "v-test-1".into(),
+            namespace: "personal".into(),
+            circle_id: "".into(),
+            filename: "plain.txt".into(),
+            mime: "text/plain".into(),
+            size_plain: original_data.len() as u64,
+            size_cipher: outcome.size_cipher,
+            sha256_plain,
+            sender_did: "did:guardian:uploader".into(),
+            received_at: "2026-08-27T00:00:00Z".into(),
+            source: crate::vault::model::VaultSource::Upload,
+            folder_id: "f1".into(),
+            starred: false,
+            description: "Test upload".into(),
+            owner_did: "did:guardian:owner".into(),
+            revoked: false,
+            revoked_at: None,
+            expires_at: None,
+            conversation_recipient_did: None,
+            message_id: None,
+            enc: outcome.enc,
+        };
+
+        decrypt_file(&cipher_file, &output_file, &record, &wrapper).expect("decrypt file");
+
+        let decrypted_data = std::fs::read(&output_file).unwrap();
+        assert_eq!(decrypted_data, original_data);
+    }
+}
+

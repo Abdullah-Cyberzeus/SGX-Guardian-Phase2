@@ -414,3 +414,139 @@ fn sort_value(value: &Value) -> Value {
         _ => value.clone(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vault::namespace::VaultNamespace;
+
+    fn sample_node(id: &str, parent: &str, name: &str) -> FolderNode {
+        FolderNode {
+            folder_id: id.to_string(),
+            parent_id: parent.to_string(),
+            name: name.to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_folder_index_creation_and_lookups() {
+        let ns = VaultNamespace::Personal;
+        let mut index = FolderIndex::new(&ns);
+        assert_eq!(index.namespace, ns.storage_key());
+        assert_eq!(index.folders.len(), 0);
+        assert!(!index.contains_folder("f1"));
+        assert!(index.folder("f1").is_none());
+
+        let node = sample_node("f1", "", "Documents");
+        index.folders.push(node.clone());
+
+        assert!(index.contains_folder("f1"));
+        assert_eq!(index.folder("f1"), Some(&node));
+        assert_eq!(index.folder("non-existent"), None);
+    }
+
+    #[test]
+    fn test_children_of_sorting() {
+        let ns = VaultNamespace::Personal;
+        let mut index = FolderIndex::new(&ns);
+
+        index.folders.push(sample_node("f3", "root", "Zebra"));
+        index.folders.push(sample_node("f1", "root", "apple"));
+        index.folders.push(sample_node("f2", "root", "Banana"));
+        index.folders.push(sample_node("f4", "other", "OtherChild"));
+
+        let children = index.children_of("root");
+        assert_eq!(children.len(), 3);
+        assert_eq!(children[0].name, "apple");
+        assert_eq!(children[1].name, "Banana");
+        assert_eq!(children[2].name, "Zebra");
+
+        let other_children = index.children_of("other");
+        assert_eq!(other_children.len(), 1);
+        assert_eq!(other_children[0].name, "OtherChild");
+
+        let empty = index.children_of("non-existent");
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn test_breadcrumbs_success_and_errors() {
+        let ns = VaultNamespace::Personal;
+        let mut index = FolderIndex::new(&ns);
+
+        index.folders.push(sample_node("f1", "", "Root"));
+        index.folders.push(sample_node("f2", "f1", "Sub1"));
+        index.folders.push(sample_node("f3", "f2", "Sub2"));
+
+        // Empty folder_id returns empty path
+        let root_crumbs = index.breadcrumbs("").unwrap();
+        assert!(root_crumbs.is_empty());
+
+        // Level 1
+        let f1_crumbs = index.breadcrumbs("f1").unwrap();
+        assert_eq!(f1_crumbs.len(), 1);
+        assert_eq!(f1_crumbs[0].folder_id, "f1");
+
+        // Level 3
+        let f3_crumbs = index.breadcrumbs("f3").unwrap();
+        assert_eq!(f3_crumbs.len(), 3);
+        assert_eq!(f3_crumbs[0].folder_id, "f1");
+        assert_eq!(f3_crumbs[1].folder_id, "f2");
+        assert_eq!(f3_crumbs[2].folder_id, "f3");
+
+        // Not found error
+        let not_found = index.breadcrumbs("unknown");
+        assert!(matches!(not_found, Err(VaultError::NotFound(_))));
+
+        // Broken chain error
+        let mut broken_index = FolderIndex::new(&ns);
+        broken_index.folders.push(sample_node("f2", "missing_parent", "Sub"));
+        let broken = broken_index.breadcrumbs("f2");
+        assert!(matches!(broken, Err(VaultError::InvalidStructure(_))));
+    }
+
+    #[test]
+    fn test_sort_value_deep_sorting() {
+        let unsorted = serde_json::json!({
+            "z": 1,
+            "a": {
+                "d": [3, 2, 1],
+                "b": "nested"
+            },
+            "m": [
+                {"y": 2, "x": 1}
+            ]
+        });
+
+        let sorted = sort_value(&unsorted);
+        let sorted_str = serde_json::to_string(&sorted).unwrap();
+
+        // Keys in "a" and outer object must be lexicographically sorted
+        assert_eq!(
+            sorted_str,
+            r#"{"a":{"b":"nested","d":[3,2,1]},"m":[{"x":1,"y":2}],"z":1}"#
+        );
+    }
+
+    #[test]
+    fn test_canonical_bytes_for_sign_determinism() {
+        let ns = VaultNamespace::Personal;
+        let mut index = FolderIndex::new(&ns);
+        index.folders.push(sample_node("f1", "", "Docs"));
+
+        let bytes1 = index.canonical_bytes_for_sign().unwrap();
+        let bytes2 = index.canonical_bytes_for_sign().unwrap();
+        assert_eq!(bytes1, bytes2);
+        assert!(!bytes1.is_empty());
+    }
+
+    #[test]
+    fn test_folder_node_serde_roundtrip() {
+        let node = sample_node("f123", "p456", "Test Folder");
+        let serialized = serde_json::to_string(&node).unwrap();
+        let deserialized: FolderNode = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(node, deserialized);
+    }
+}
+

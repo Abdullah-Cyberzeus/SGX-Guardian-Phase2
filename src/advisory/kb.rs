@@ -290,3 +290,92 @@ fn severity_rank(severity: Severity) -> u8 {
         Severity::Critical => 4,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_severity_ranking_calculations() {
+        assert_eq!(severity_rank(Severity::Info), 0);
+        assert_eq!(severity_rank(Severity::Low), 1);
+        assert_eq!(severity_rank(Severity::Medium), 2);
+        assert_eq!(severity_rank(Severity::High), 3);
+        assert_eq!(severity_rank(Severity::Critical), 4);
+
+        assert_eq!(severity_name_rank("info"), 0);
+        assert_eq!(severity_name_rank("low"), 1);
+        assert_eq!(severity_name_rank("Medium"), 2);
+        assert_eq!(severity_name_rank("HIGH"), 3);
+        assert_eq!(severity_name_rank("Critical"), 4);
+        assert_eq!(severity_name_rank("unknown"), 0);
+    }
+
+    #[test]
+    fn test_recommendation_rule_matching_logic() {
+        let rule = RecommendationRule {
+            rule_match: RuleMatch {
+                category: Some("malware".into()),
+                signature_contains: Some("c2".into()),
+                severity_at_least: Some("high".into()),
+            },
+            title: "Malware Alert".into(),
+            summary: "C2 traffic detected".into(),
+            steps: vec![RuleStep {
+                action: "Isolate device".into(),
+                rationale: "Prevent lateral movement".into(),
+                automatable: true,
+            }],
+            references: vec!["cve".into()],
+        };
+
+        // Exact match
+        assert!(rule.matches("malware", "Known C2 Beacon", Severity::High));
+        assert!(rule.matches("MALWARE", "c2 communication", Severity::Critical));
+
+        // Category mismatch
+        assert!(!rule.matches("exploit", "Known C2 Beacon", Severity::High));
+
+        // Signature substring mismatch
+        assert!(!rule.matches("malware", "Unknown Trojan", Severity::High));
+
+        // Severity below threshold
+        assert!(!rule.matches("malware", "Known C2 Beacon", Severity::Medium));
+        assert!(!rule.matches("malware", "Known C2 Beacon", Severity::Low));
+    }
+
+    #[test]
+    fn test_default_rules_structure_and_fallback() {
+        let kb = RecommendationRules::default_rules();
+        assert!(!kb.rules.is_empty());
+        assert!(!kb.fallback.title.is_empty());
+
+        let fallback_steps = kb.fallback.steps();
+        assert_eq!(fallback_steps.len(), 2);
+        assert_eq!(fallback_steps[0].order, 1);
+        assert_eq!(fallback_steps[1].order, 2);
+    }
+
+    #[test]
+    fn test_validate_signature_integrity() {
+        let mut kb = RecommendationRules::default_rules();
+        // Unsigned rules pass validation
+        assert!(kb.validate_signature().is_ok());
+
+        // Calculate correct SHA-256
+        let unsigned = kb.clone();
+        let bytes = serde_json::to_vec(&unsigned).unwrap();
+        let valid_hash = hex::encode(Sha256::digest(bytes));
+
+        kb.signature_sha256 = Some(valid_hash);
+        assert!(kb.validate_signature().is_ok());
+
+        // Tampered signature must fail
+        kb.signature_sha256 = Some("0000000000000000000000000000000000000000000000000000000000000000".into());
+        assert!(matches!(
+            kb.validate_signature(),
+            Err(AdvisoryError::InvalidRules(_))
+        ));
+    }
+}
+

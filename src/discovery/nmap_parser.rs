@@ -294,3 +294,138 @@ fn ipv4_24_prefix(ip: &str) -> Option<String> {
     }
     Some(format!("{}.{}.{}.0/24", parts[0], parts[1], parts[2]))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SAMPLE_NMAP_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<nmaprun scanner="nmap" version="7.93">
+<host>
+    <status state="up"/>
+    <address addr="192.168.1.100" addrtype="ipv4"/>
+    <address addr="00:11:22:33:44:55" addrtype="mac" vendor="Raspberry Pi Foundation"/>
+    <hostnames>
+        <hostname name="raspberrypi.local"/>
+    </hostnames>
+    <ports>
+        <port protocol="tcp" portid="22">
+            <state state="open"/>
+            <service name="ssh" product="OpenSSH" version="8.9p1">
+                <cpe>cpe:/a:openbsd:openssh:8.9p1</cpe>
+            </service>
+            <script id="ssh-hostkey" output="2048 SHA256:abcd"/>
+        </port>
+        <port protocol="tcp" portid="80">
+            <state state="closed"/>
+        </port>
+    </ports>
+    <os>
+        <osmatch name="Linux 5.15">
+            <osclass>
+                <cpe>cpe:/o:linux:linux_kernel:5.15</cpe>
+            </osclass>
+        </osmatch>
+    </os>
+    <hostscript>
+        <script id="smb-os-discovery" output="Linux"/>
+    </hostscript>
+</host>
+<host>
+    <status state="down"/>
+    <address addr="192.168.1.101" addrtype="ipv4"/>
+</host>
+</nmaprun>"#;
+
+    #[test]
+    fn test_parse_nmap_xml_extracts_device_details() {
+        let devices = parse(SAMPLE_NMAP_XML).expect("parse valid nmap XML");
+        assert_eq!(devices.len(), 1); // Down host is skipped
+
+        let dev = &devices[0];
+        assert_eq!(dev.ip, "192.168.1.100");
+        assert_eq!(dev.mac.as_deref(), Some("00:11:22:33:44:55"));
+        assert_eq!(dev.vendor.as_deref(), Some("Raspberry Pi Foundation"));
+        assert_eq!(dev.hostname.as_deref(), Some("raspberrypi.local"));
+        assert_eq!(dev.os_fingerprint.as_deref(), Some("Linux 5.15"));
+        assert!(dev.os_cpe.contains(&"cpe:/o:linux:linux_kernel:5.15".to_string()));
+
+        // Only open ports are preserved (port 22 open, port 80 closed)
+        assert_eq!(dev.open_ports.len(), 1);
+        let p22 = &dev.open_ports[0];
+        assert_eq!(p22.port, 22);
+        assert_eq!(p22.protocol, "tcp");
+        assert_eq!(p22.service.as_deref(), Some("ssh"));
+        assert_eq!(p22.product_version.as_deref(), Some("OpenSSH 8.9p1"));
+        assert_eq!(p22.scripts.len(), 1);
+        assert_eq!(p22.scripts[0].id, "ssh-hostkey");
+
+        // Host script preserved
+        assert_eq!(dev.host_scripts.len(), 1);
+        assert_eq!(dev.host_scripts[0].id, "smb-os-discovery");
+    }
+
+    #[test]
+    fn test_ipv4_24_prefix_helper() {
+        assert_eq!(
+            ipv4_24_prefix("192.168.1.50"),
+            Some("192.168.1.0/24".to_string())
+        );
+        assert_eq!(
+            ipv4_24_prefix("10.0.5.1"),
+            Some("10.0.5.0/24".to_string())
+        );
+        assert_eq!(ipv4_24_prefix("invalid-ip"), None);
+        assert_eq!(ipv4_24_prefix("192.168.1"), None);
+    }
+
+    #[test]
+    fn test_dedup_aliased_macs() {
+        let mut devices = vec![
+            ConnectedDevice {
+                device_id: "id-1".into(),
+                ip: "192.168.1.10".into(),
+                mac: Some("AA:BB:CC:DD:EE:FF".into()),
+                vendor: Some("Netgear".into()),
+                hostname: None,
+                os_fingerprint: None,
+                os_cpe: vec![],
+                open_ports: vec![],
+                host_scripts: vec![],
+                status: DeviceStatus::Unauthorized,
+                first_seen: "2026-01-01T00:00:00Z".into(),
+                last_seen: "2026-01-01T00:00:00Z".into(),
+                vuln_triaged: false,
+                last_scan_intensity: None,
+            },
+            ConnectedDevice {
+                device_id: "id-2".into(),
+                ip: "10.0.0.50".into(),
+                mac: Some("AA:BB:CC:DD:EE:FF".into()), // Same MAC (gateway alias)
+                vendor: Some("Netgear".into()),
+                hostname: None,
+                os_fingerprint: None,
+                os_cpe: vec![],
+                open_ports: vec![],
+                host_scripts: vec![],
+                status: DeviceStatus::Unauthorized,
+                first_seen: "2026-01-01T00:00:00Z".into(),
+                last_seen: "2026-01-01T00:00:00Z".into(),
+                vuln_triaged: false,
+                last_scan_intensity: None,
+            },
+        ];
+
+        dedup_aliased_macs(&mut devices);
+
+        // One keeps MAC, one is stripped and stamped with (mac_aliased)
+        assert!(devices.iter().any(|d| d.mac.is_some()));
+        assert!(devices.iter().any(|d| d.mac.is_none()
+            && d.vendor
+                .as_deref()
+                .unwrap_or("")
+                .contains("mac_aliased to AA:BB:CC:DD:EE:FF")));
+    }
+}
+

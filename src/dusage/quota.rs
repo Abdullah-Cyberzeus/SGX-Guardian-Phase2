@@ -84,3 +84,77 @@ pub fn env_default_quota(period: &str) -> Option<DusageQuota> {
         .filter(|value| *value > 0)?;
     Some(DusageQuota::new(quota_bytes, period.to_string(), 0))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn test_normalize_period() {
+        assert_eq!(normalize_period("daily").unwrap(), "daily");
+        assert_eq!(normalize_period("WEEKLY ").unwrap(), "weekly");
+        assert_eq!(normalize_period(" Monthly").unwrap(), "monthly");
+        assert!(matches!(
+            normalize_period("yearly"),
+            Err(DusageError::InvalidPeriod(_))
+        ));
+    }
+
+    #[test]
+    fn test_period_start_for_calculations() {
+        // Thursday 2026-06-18 15:30:00 UTC
+        let now = Utc.with_ymd_and_hms(2026, 6, 18, 15, 30, 0).unwrap();
+
+        let day_start = period_start_for(now, "daily").unwrap();
+        assert_eq!(day_start, Utc.with_ymd_and_hms(2026, 6, 18, 0, 0, 0).unwrap());
+
+        let week_start = period_start_for(now, "weekly").unwrap();
+        // Monday was June 15, 2026
+        assert_eq!(week_start, Utc.with_ymd_and_hms(2026, 6, 15, 0, 0, 0).unwrap());
+
+        let month_start = period_start_for(now, "monthly").unwrap();
+        assert_eq!(month_start, Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn test_next_period_start_and_year_rollover() {
+        let dec_start = Utc.with_ymd_and_hms(2026, 12, 1, 0, 0, 0).unwrap();
+        let next_month = next_period_start(dec_start, "monthly").unwrap();
+        assert_eq!(next_month, Utc.with_ymd_and_hms(2027, 1, 1, 0, 0, 0).unwrap());
+
+        let day_start = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let next_day = next_period_start(day_start, "daily").unwrap();
+        assert_eq!(next_day, Utc.with_ymd_and_hms(2026, 1, 2, 0, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn test_period_has_rolled() {
+        let period_start = "2026-06-01T00:00:00Z";
+
+        let during_month = Utc.with_ymd_and_hms(2026, 6, 20, 0, 0, 0).unwrap();
+        assert!(!period_has_rolled(period_start, "monthly", during_month));
+
+        let next_month = Utc.with_ymd_and_hms(2026, 7, 1, 0, 0, 0).unwrap();
+        assert!(period_has_rolled(period_start, "monthly", next_month));
+
+        // Invalid start date triggers rolled fallback
+        assert!(period_has_rolled("invalid-date", "monthly", during_month));
+    }
+
+    #[test]
+    fn test_used_pct_and_usage_band() {
+        assert_eq!(used_pct(500, Some(1000)), Some(50.0));
+        assert_eq!(used_pct(500, None), None);
+        assert_eq!(used_pct(500, Some(0)), None);
+
+        assert_eq!(usage_band(None), "none");
+        assert_eq!(usage_band(Some(30.0)), "green");
+        assert_eq!(usage_band(Some(50.0)), "green");
+        assert_eq!(usage_band(Some(50.1)), "amber");
+        assert_eq!(usage_band(Some(80.0)), "amber");
+        assert_eq!(usage_band(Some(80.1)), "red");
+        assert_eq!(usage_band(Some(120.0)), "red");
+    }
+}
+

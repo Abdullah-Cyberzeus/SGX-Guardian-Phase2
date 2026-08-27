@@ -74,3 +74,76 @@ pub async fn start_event_dispatcher(bus: Arc<EventBus>) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_event_bus_publish_and_subscribe() {
+        let bus = EventBus::new();
+        let mut sub1 = bus.subscribe();
+        let mut sub2 = bus.subscribe();
+
+        let event = HaEvent::NotificationCreated {
+            id: "notif-1".to_string(),
+            title: "Door Opened".to_string(),
+            message: "Front door sensor triggered".to_string(),
+            severity: "warning".to_string(),
+        };
+
+        bus.publish(event);
+
+        // Both subscribers receive the event
+        match sub1.recv().await.unwrap() {
+            HaEvent::NotificationCreated { id, title, .. } => {
+                assert_eq!(id, "notif-1");
+                assert_eq!(title, "Door Opened");
+            }
+            _ => panic!("unexpected event variant"),
+        }
+
+        match sub2.recv().await.unwrap() {
+            HaEvent::NotificationCreated { id, message, severity, .. } => {
+                assert_eq!(id, "notif-1");
+                assert_eq!(message, "Front door sensor triggered");
+                assert_eq!(severity, "warning");
+            }
+            _ => panic!("unexpected event variant"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_event_bus_state_changed_payload() {
+        let bus = EventBus::new();
+        let mut sub = bus.subscribe();
+
+        let state_val = json!({
+            "entity_id": "light.living_room",
+            "state": "on",
+            "attributes": {
+                "brightness": 255
+            }
+        });
+
+        bus.publish(HaEvent::StateChanged(state_val.clone()));
+
+        match sub.recv().await.unwrap() {
+            HaEvent::StateChanged(val) => {
+                assert_eq!(val["entity_id"], "light.living_room");
+                assert_eq!(val["state"], "on");
+                assert_eq!(val["attributes"]["brightness"], 255);
+            }
+            _ => panic!("unexpected event variant"),
+        }
+    }
+
+    #[test]
+    fn test_event_bus_publish_without_subscribers_does_not_panic() {
+        let bus = EventBus::new();
+        // Publishing when no receiver is subscribed should cleanly no-op
+        bus.publish(HaEvent::Unknown(json!({"raw": "data"})));
+    }
+}
+

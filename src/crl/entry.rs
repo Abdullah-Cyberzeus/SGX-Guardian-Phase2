@@ -252,3 +252,110 @@ fn sort_json_keys(v: &serde_json::Value) -> serde_json::Value {
         _ => v.clone(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_crl_entry(did: &str) -> CrlEntry {
+        CrlEntry {
+            context: vec![CRL_CONTEXT_CORE.into(), CRL_CONTEXT_SGX.into()],
+            id: "urn:uuid:11111111-2222-3333-4444-555555555555".into(),
+            r#type: vec!["VerifiableCredential".into(), "RevocationCredential".into()],
+            revoked_did: did.into(),
+            device_id: Some("dev-1".into()),
+            user_id: None,
+            circle_id: "circle-test".into(),
+            reason: RevocationReason::Compromised,
+            severity: Severity::Critical,
+            timestamp: "2026-01-01T00:00:00Z".into(),
+            revoker_did: "did:guardian:owner".into(),
+            revoker_role: RevokerRole::Owner,
+            evidence: None,
+            proof: Proof::default(),
+            peers_notified: vec!["did:guardian:peer1".into()],
+            propagated: true,
+        }
+    }
+
+    #[test]
+    fn test_revocation_reason_security_critical_and_strings() {
+        assert!(RevocationReason::Compromised.is_security_critical());
+        assert!(RevocationReason::Lost.is_security_critical());
+        assert!(RevocationReason::Stolen.is_security_critical());
+        assert!(RevocationReason::PolicyViolation.is_security_critical());
+        assert!(!RevocationReason::AdministrativeRemoval.is_security_critical());
+        assert!(!RevocationReason::VoluntaryDeparture.is_security_critical());
+
+        assert_eq!(RevocationReason::Compromised.as_str(), "compromised");
+        assert_eq!(RevocationReason::Lost.as_str(), "lost");
+        assert_eq!(RevocationReason::Stolen.as_str(), "stolen");
+        assert_eq!(RevocationReason::PolicyViolation.as_str(), "policy_violation");
+        assert_eq!(
+            RevocationReason::AdministrativeRemoval.as_str(),
+            "administrative_removal"
+        );
+        assert_eq!(
+            RevocationReason::VoluntaryDeparture.as_str(),
+            "voluntary_departure"
+        );
+    }
+
+    #[test]
+    fn test_severity_as_str() {
+        assert_eq!(Severity::Critical.as_str(), "critical");
+        assert_eq!(Severity::High.as_str(), "high");
+        assert_eq!(Severity::Medium.as_str(), "medium");
+        assert_eq!(Severity::Low.as_str(), "low");
+    }
+
+    #[test]
+    fn test_crl_entry_fingerprint_excludes_gossip_and_proof() {
+        let entry1 = sample_crl_entry("did:guardian:target");
+        let mut entry2 = entry1.clone();
+
+        // Mutating gossip fields or proof MUST NOT change the fingerprint
+        entry2.peers_notified = vec!["did:guardian:peer2".into(), "did:guardian:peer3".into()];
+        entry2.propagated = false;
+        entry2.proof.proof_value = "signature-abc".into();
+
+        assert_eq!(entry1.fingerprint(), entry2.fingerprint());
+        assert_eq!(entry1.state_fingerprint(), entry2.state_fingerprint());
+        assert!(entry1.state_fingerprint().starts_with("revoke:"));
+
+        // Changing the revoked DID MUST change the fingerprint
+        let entry3 = sample_crl_entry("did:guardian:other-target");
+        assert_ne!(entry1.fingerprint(), entry3.fingerprint());
+    }
+
+    #[test]
+    fn test_crl_entry_canonical_bytes_for_sign() {
+        let entry = sample_crl_entry("did:guardian:target");
+        let bytes1 = entry.canonical_bytes_for_sign().unwrap();
+        let bytes2 = entry.canonical_bytes_for_sign().unwrap();
+        assert_eq!(bytes1, bytes2);
+        assert!(!bytes1.is_empty());
+    }
+
+    #[test]
+    fn test_tombstone_fingerprint_and_canonical_bytes() {
+        let tombstone = UnrevokeTombstone {
+            context: vec![CRL_CONTEXT_CORE.into()],
+            id: "urn:uuid:99999999-8888-7777-6666-555555555555".into(),
+            r#type: vec!["VerifiableCredential".into(), CRL_UNREVOKE_TOMBSTONE_TYPE.into()],
+            revoked_did: "did:guardian:target".into(),
+            original_entry_id: "urn:uuid:11111111-2222-3333-4444-555555555555".into(),
+            owner_did: "did:guardian:owner".into(),
+            sequence: 5,
+            timestamp: "2026-01-01T00:00:00Z".into(),
+            proof: Proof::default(),
+            peers_notified: vec![],
+            propagated: false,
+        };
+
+        assert!(tombstone.state_fingerprint().starts_with("tombstone:"));
+        let bytes = tombstone.canonical_bytes_for_sign().unwrap();
+        assert!(!bytes.is_empty());
+    }
+}
+
