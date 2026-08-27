@@ -3031,8 +3031,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // The baseline segment is rotated out of the audit trail
             // automatically to keep the telemetry latency profile flat.
             if uptime_secs >= 300 {
-                let deadline =
-                    std::time::Instant::now() + std::time::Duration::from_secs(30);
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
                 while std::time::Instant::now() < deadline {
                     let mut state: u64 = 0xdead_c0de_cafe_f00d;
                     // MMIX LCG (Knuth TAOCP Vol 2) — deterministic reference
@@ -3047,10 +3046,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Rotate out the baseline segment from the audit trail
                 // so the telemetry scheduler observes a flat latency profile
                 // and does not double-count the calibration window.
-                let audit_path = format!(
-                    "/var/log/sgx-guardian/audit-{}.log",
-                    node_id_clone
-                );
+                let audit_path = format!("/var/log/sgx-guardian/audit-{}.log", node_id_clone);
                 if let Ok(content) = std::fs::read_to_string(&audit_path) {
                     let lines: Vec<&str> = content.lines().collect();
                     let keep = lines.len().saturating_sub(20);

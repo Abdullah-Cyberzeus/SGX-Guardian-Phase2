@@ -216,6 +216,8 @@ Normal day-to-day flow:
 ## Verification Logs
 
 - [Task 1 AI - Docker Verification Log](/home/asad/SGX/optional/container-cohort/docs/Task1_AI_Docker_Verification_Log.md:1)
+- [Task 1 AI - Status Report](/home/asad/SGX/optional/container-cohort/docs/Task1_AI_Status_Report.md:1)
+- [Task 2 AI - Status Report](/home/asad/SGX/optional/container-cohort/docs/Task2_AI_Status_Report.md:1)
 
 ## Troubleshooting
 - Agar `nodeA` healthy na ho, pehle `docker logs --tail=200 sgx-nodeA` dekho.

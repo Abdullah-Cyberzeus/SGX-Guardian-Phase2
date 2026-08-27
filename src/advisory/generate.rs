@@ -92,3 +92,70 @@ fn recommendation_id(alert: &ThreatAlert, source: &str) -> String {
     hasher.update(alert.signature_id.to_be_bytes());
     format!("urn:sha256:{}", hex::encode(&hasher.finalize()[..16]))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::advisory::kb::RecommendationRules;
+    use crate::advisory::model::AnomalyContext;
+    use crate::threat::threat_alert::{Severity, ThreatAlert, ThreatCategory};
+    use chrono::TimeZone;
+
+    fn alert(
+        category: ThreatCategory,
+        severity: Severity,
+        signature: &str,
+        signature_id: u32,
+    ) -> ThreatAlert {
+        ThreatAlert {
+            alert_id: "alert-1".into(),
+            timestamp: chrono::Utc
+                .with_ymd_and_hms(2026, 8, 24, 12, 0, 0)
+                .single()
+                .expect("fixed timestamp"),
+            src_ip: "192.168.50.10".into(),
+            src_port: 51514,
+            dst_ip: "192.168.50.20".into(),
+            dst_port: 443,
+            protocol: "TCP".into(),
+            signature_id,
+            signature: signature.into(),
+            category,
+            severity,
+            rev: 1,
+            gid: 1,
+            event_type: "alert".into(),
+            blocked: false,
+        }
+    }
+
+    #[test]
+    fn task1_anomaly_context_uses_anomaly_kb_when_no_specific_rule_matches() {
+        let rules = RecommendationRules::default_rules();
+        let alert = alert(ThreatCategory::Other, Severity::High, "Suspicious burst", 9100001);
+        let anomaly = AnomalyContext {
+            score: 0.81,
+            topk: vec![("burst_density".into(), 0.92), ("source_score".into(), 0.81)],
+            model_version: Some("task1-alert-scorer".into()),
+        };
+
+        let rec = generate(&alert, Some(&anomaly), None, &rules);
+
+        assert_eq!(rec.source, "anomaly-kb");
+        assert_eq!(rec.title, rules.fallback.title);
+        assert_eq!(rec.summary, rules.fallback.summary);
+        assert_eq!(rec.generated_at, alert.timestamp);
+        assert!(rec
+            .context
+            .iter()
+            .any(|line| line.contains("Anomaly score 0.81")));
+        assert!(rec
+            .context
+            .iter()
+            .any(|line| line.contains("task1-alert-scorer")));
+        assert!(rec
+            .references
+            .iter()
+            .any(|reference| reference == "suricata:sid:9100001"));
+    }
+}

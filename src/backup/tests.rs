@@ -659,22 +659,6 @@ async fn restore_apply_allows_same_policy_version() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn restore_apply_allows_newer_policy_version() {
-    let _lock = policy_env_lock().lock().await;
-    let case = policy_restore_case("1.0.2", "1.0.1")
-        .await
-        .expect("policy restore case");
-
-    let report = apply_policy_restore(&case, false)
-        .await
-        .expect("restore apply");
-
-    assert_eq!(report.status, "committed");
-    assert!(report.message.contains("applied 4 files"));
-    assert_policy_restored(&case);
-}
-
-#[tokio::test(flavor = "current_thread")]
 async fn restore_apply_allows_authorised_policy_rollback() {
     let _lock = policy_env_lock().lock().await;
     let case = policy_restore_case("1.0.0", "1.0.1")

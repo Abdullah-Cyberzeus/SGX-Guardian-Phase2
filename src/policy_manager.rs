@@ -206,3 +206,84 @@ pub fn load_and_activate_policy(path: &str) -> Result<VerifiedPolicy> {
     );
     Ok(verified)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::engine::general_purpose;
+    use p256::ecdsa::{signature::Signer, Signature, SigningKey};
+    use rand::rngs::OsRng;
+    use sha2::{Digest, Sha256};
+    use tempfile::tempdir;
+    use std::fs;
+
+    const POLICY_YAML: &str = r#"
+policy_id: "policy-test"
+version: "1.0.0"
+rules:
+  - id: "allow-https"
+    action: "ALLOW"
+    src: "10.0.0.0/24"
+    dst: "0.0.0.0/0"
+    protocol: "TCP"
+    port: 443
+"#;
+
+    fn signed_policy_envelope(policy_yaml: &str, version: u32, digest_hex: Option<String>) -> String {
+        let signing_key = SigningKey::random(&mut OsRng);
+        let digest = Sha256::digest(policy_yaml.as_bytes());
+        let signature: Signature = signing_key.sign(&digest);
+        let pubkey = signing_key.verifying_key().to_encoded_point(false);
+
+        serde_json::json!({
+            "version": version,
+            "policy_b64": general_purpose::STANDARD.encode(policy_yaml.as_bytes()),
+            "digest_hex": digest_hex.unwrap_or_else(|| hex::encode(digest)),
+            "signature_b64": general_purpose::STANDARD.encode(signature.to_der().as_bytes()),
+            "signing_pubkey_b64": general_purpose::STANDARD.encode(pubkey.as_bytes())
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn verify_signed_policy_returns_verified_policy_for_valid_envelope() {
+        let td = tempdir().expect("create temp dir");
+        let path = td.path().join("policy.sig");
+        fs::write(&path, signed_policy_envelope(POLICY_YAML, 1, None))
+            .expect("write policy file");
+
+        let verified = verify_signed_policy(path.to_str().expect("utf8 path"))
+            .expect("verify signed policy");
+
+        assert_eq!(verified.policy_yaml, POLICY_YAML);
+        assert_eq!(verified.digest_hex, hex::encode(Sha256::digest(POLICY_YAML.as_bytes())));
+        assert_eq!(verified.signer_pubkey.len(), 65);
+    }
+
+    #[test]
+    fn verify_signed_policy_rejects_unsupported_version() {
+        let td = tempdir().expect("create temp dir");
+        let path = td.path().join("policy.sig");
+        fs::write(&path, signed_policy_envelope(POLICY_YAML, 2, None))
+            .expect("write policy file");
+
+        let err = verify_signed_policy(path.to_str().expect("utf8 path"))
+            .expect_err("unsupported version should fail");
+        assert!(err.to_string().contains("Unsupported policy version"));
+    }
+
+    #[test]
+    fn verify_signed_policy_rejects_digest_mismatch() {
+        let td = tempdir().expect("create temp dir");
+        let path = td.path().join("policy.sig");
+        fs::write(
+            &path,
+            signed_policy_envelope(POLICY_YAML, 1, Some("00".repeat(32))),
+        )
+        .expect("write policy file");
+
+        let err = verify_signed_policy(path.to_str().expect("utf8 path"))
+            .expect_err("digest mismatch should fail");
+        assert!(err.to_string().contains("Policy digest mismatch"));
+    }
+}

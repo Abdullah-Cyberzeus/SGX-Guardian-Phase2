@@ -208,6 +208,7 @@ mod tests {
             .contains(&ActionType::EnableDebugLogging {
                 interface: "eth0".to_string()
             }));
+        assert!(plan.justification.contains("SUSPICIOUS"));
     }
 
     #[test]
@@ -237,5 +238,86 @@ mod tests {
             .requires_approval
             .iter()
             .any(|action| matches!(action, ActionType::TightenAttestation { .. })));
+    }
+
+    #[test]
+    fn test_anomaly_category_requests_virtual_shift_update() {
+        let score = make_score(0.93, ThreatCategory::Anomaly);
+        let plan = generate_plan(score).expect("should generate plan");
+
+        assert_eq!(plan.auto_execute, vec![ActionType::AlertOnly]);
+        assert!(plan
+            .requires_approval
+            .contains(&ActionType::TightenAttestation { interval_secs: 30 }));
+        assert!(plan.requires_approval.iter().any(|action| {
+            matches!(
+                action,
+                ActionType::ProposePolicyUpdate { rule_delta }
+                if rule_delta == "virtual_shift: tighten policy for 192.168.1.105;"
+            )
+        }));
+        assert!(plan.justification.contains("CRITICAL"));
+    }
+
+    #[test]
+    fn test_other_category_stays_local_only() {
+        let score = make_score(0.78, ThreatCategory::Other);
+        let plan = generate_plan(score).expect("should generate plan");
+
+        assert_eq!(plan.auto_execute, vec![ActionType::AlertOnly]);
+        assert!(plan
+            .requires_approval
+            .contains(&ActionType::NftablesBlockIp {
+                duration_secs: 1800
+            }));
+        assert!(plan.requires_approval.iter().any(|action| {
+            matches!(action, ActionType::EnableDebugLogging { interface } if interface == "eth0")
+        }));
+        assert!(plan.justification.contains("ELEVATED"));
+    }
+
+    #[test]
+    fn test_malware_category_requests_long_block_and_quarantine() {
+        let score = make_score(0.91, ThreatCategory::Malware);
+        let plan = generate_plan(score).expect("should generate plan");
+
+        assert_eq!(plan.auto_execute, vec![ActionType::AlertOnly]);
+        assert!(plan
+            .requires_approval
+            .contains(&ActionType::NftablesBlockIp {
+                duration_secs: 86400
+            }));
+        assert!(plan.requires_approval.contains(&ActionType::QuarantinePeer {
+            peer_id: "peer-192.168.1.105".to_string()
+        }));
+        assert!(plan.requires_approval.iter().any(|action| {
+            matches!(
+                action,
+                ActionType::ProposePolicyUpdate { rule_delta }
+                if rule_delta == "deny ip saddr 192.168.1.105 drop;"
+            )
+        }));
+        assert!(plan.justification.contains("CRITICAL"));
+    }
+
+    #[test]
+    fn test_policy_violation_category_requests_logging_and_policy_update() {
+        let score = make_score(0.80, ThreatCategory::PolicyViolation);
+        let plan = generate_plan(score).expect("should generate plan");
+
+        assert_eq!(plan.auto_execute, vec![ActionType::AlertOnly]);
+        assert!(plan
+            .requires_approval
+            .contains(&ActionType::EnableDebugLogging {
+                interface: "eth0".to_string()
+            }));
+        assert!(plan.requires_approval.iter().any(|action| {
+            matches!(
+                action,
+                ActionType::ProposePolicyUpdate { rule_delta }
+                if rule_delta == "deny ip saddr 192.168.1.105 drop;"
+            )
+        }));
+        assert!(plan.justification.contains("ELEVATED"));
     }
 }

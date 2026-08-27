@@ -119,10 +119,12 @@ fn current_policy_digest(active_path: &Path) -> Result<Option<String>> {
 
 /// Rollback active policy from backup
 pub fn rollback_policy() -> Result<()> {
-    let backup_path = backup_policy_path();
-    let active_path = active_policy_path();
+    rollback_policy_with_paths(&active_policy_path(), &backup_policy_path())
+}
+
+fn rollback_policy_with_paths(active_path: &Path, backup_path: &Path) -> Result<()> {
     if backup_path.exists() {
-        fs::copy(&backup_path, &active_path).context("Failed to rollback policy")?;
+        fs::copy(backup_path, active_path).context("Failed to rollback policy")?;
     }
     Ok(())
 }
@@ -311,5 +313,86 @@ rbac_rules:
         let rules = load_rbac_rules().expect("load default rbac rules");
         // Should get default rules when no active policy exists
         assert!(!rules.is_empty());
+    }
+
+    #[test]
+    fn rollback_policy_with_paths_restores_backup_without_env_mutation() {
+        let td = tempdir().expect("failed to create temp dir");
+        let active_path = td.path().join("active_policy.yaml");
+        let backup_path = td.path().join("backup_policy.yaml");
+
+        let active_yaml = "policy_id: active\nversion: \"1\"\nrules: []\n";
+        let backup_yaml = "policy_id: backup\nversion: \"1\"\nrules: []\n";
+
+        fs::write(&active_path, active_yaml).expect("write active policy");
+        fs::write(&backup_path, backup_yaml).expect("write backup policy");
+
+        rollback_policy_with_paths(&active_path, &backup_path).expect("rollback policy");
+
+        assert_eq!(
+            fs::read_to_string(&active_path).expect("read active policy"),
+            backup_yaml
+        );
+        assert_eq!(
+            fs::read_to_string(&backup_path).expect("read backup policy"),
+            backup_yaml
+        );
+    }
+
+    #[test]
+    fn rollback_policy_with_paths_without_backup_is_noop() {
+        let td = tempdir().expect("failed to create temp dir");
+        let active_path = td.path().join("active_policy.yaml");
+        let backup_path = td.path().join("backup_policy.yaml");
+
+        let active_yaml = "policy_id: active\nversion: \"1\"\nrules: []\n";
+        fs::write(&active_path, active_yaml).expect("write active policy");
+
+        rollback_policy_with_paths(&active_path, &backup_path).expect("rollback policy");
+
+        assert_eq!(
+            fs::read_to_string(&active_path).expect("read active policy"),
+            active_yaml
+        );
+        assert!(!backup_path.exists(), "backup should remain absent");
+    }
+
+    #[test]
+    fn activate_policy_with_paths_without_existing_active_sets_backup_rotated_false() {
+        let td = tempdir().expect("failed to create temp dir");
+        let active_path = td.path().join("active_policy.yaml");
+        let backup_path = td.path().join("backup_policy.yaml");
+        let pending_path = td.path().join("pending_policy.yaml");
+
+        let new_yaml = "policy_id: new\nversion: \"1\"\nrules: []\n";
+        let new_digest = hex::encode(Sha256::digest(new_yaml.as_bytes()));
+
+        let outcome = activate_policy_with_paths(
+            &active_path,
+            &backup_path,
+            &pending_path,
+            new_yaml,
+            &new_digest,
+        )
+        .expect("activation should succeed");
+
+        assert_eq!(
+            outcome,
+            ActivationOutcome::Activated {
+                backup_rotated: false
+            }
+        );
+        assert_eq!(
+            fs::read_to_string(&active_path).expect("read active policy"),
+            new_yaml
+        );
+        assert!(
+            !backup_path.exists(),
+            "backup should not be created on first activation"
+        );
+        assert!(
+            !pending_path.exists(),
+            "pending policy should be promoted into active"
+        );
     }
 }

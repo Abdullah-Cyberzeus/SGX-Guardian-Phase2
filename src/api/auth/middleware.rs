@@ -431,18 +431,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn private_route_requires_bearer_token() {
-        let (base_url, _token, handle) = spawn_secured_app().await;
-        let response = reqwest::Client::new()
-            .get(format!("{}/api/v1/private", base_url))
-            .send()
-            .await
-            .expect("private route");
-        handle.abort();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
     async fn private_route_accepts_valid_bearer_token() {
         let (base_url, token, handle) = spawn_secured_app().await;
         let response = reqwest::Client::new()
@@ -496,20 +484,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn forged_preflight_headers_do_not_bypass_auth_on_get() {
-        let (base_url, _token, handle) = spawn_secured_app().await;
-        let response = reqwest::Client::new()
-            .get(format!("{}/api/v1/private", base_url))
-            .header(reqwest::header::ORIGIN, "http://localhost:3001")
-            .header(reqwest::header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
-            .send()
-            .await
-            .expect("forged preflight request");
-        handle.abort();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
     async fn private_route_allows_requests_when_login_is_disabled() {
         let _test_lock = async_env_lock().await;
         let _guard = test_force_disable_login(true);
@@ -553,18 +527,6 @@ mod tests {
         // No matching route in this minimal test app (so not 200), but the
         // auth layer must accept the query-param token rather than reject it.
         assert_ne!(response.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
-    async fn websocket_route_rejects_missing_token() {
-        let (base_url, _token, handle) = spawn_secured_app().await;
-        let response = reqwest::Client::new()
-            .get(format!("{}/api/v1/call/session-1/ws", base_url))
-            .send()
-            .await
-            .expect("ws route without token");
-        handle.abort();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[test]

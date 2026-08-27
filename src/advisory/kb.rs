@@ -300,3 +300,75 @@ fn severity_rank(severity: Severity) -> u8 {
         Severity::Critical => 4,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::advisory::errors::AdvisoryError;
+    use sha2::{Digest, Sha256};
+
+    #[test]
+    fn recommendation_rule_matches_category_signature_and_severity() {
+        let rule = RecommendationRule {
+            rule_match: RuleMatch {
+                category: Some("Anomaly".into()),
+                signature_contains: Some("burst".into()),
+                severity_at_least: Some("medium".into()),
+            },
+            title: "title".into(),
+            summary: "summary".into(),
+            steps: vec![],
+            references: vec![],
+        };
+
+        assert!(rule.matches("anomaly", "Suspicious BURST observed", Severity::High));
+        assert!(!rule.matches("malware", "Suspicious BURST observed", Severity::High));
+        assert!(!rule.matches("anomaly", "quiet traffic", Severity::High));
+        assert!(!rule.matches("anomaly", "Suspicious BURST observed", Severity::Low));
+    }
+
+    #[test]
+    fn recommendation_template_steps_are_numbered_and_cap_at_u8_max() {
+        let template = RecommendationTemplate {
+            title: "title".into(),
+            summary: "summary".into(),
+            steps: (0..260)
+                .map(|idx| RuleStep {
+                    action: format!("action-{idx}"),
+                    rationale: format!("rationale-{idx}"),
+                    automatable: idx % 2 == 0,
+                })
+                .collect(),
+            references: vec![],
+        };
+
+        let steps = template.steps();
+
+        assert_eq!(steps.len(), 260);
+        assert_eq!(steps.first().map(|step| step.order), Some(1));
+        assert_eq!(steps.get(254).map(|step| step.order), Some(255));
+        assert_eq!(steps.get(255).map(|step| step.order), Some(255));
+        assert_eq!(steps.last().map(|step| step.order), Some(255));
+    }
+
+    #[test]
+    fn validate_signature_accepts_matching_digest_and_rejects_tampering() {
+        let mut rules = RecommendationRules::default_rules();
+        let mut unsigned = rules.clone();
+        unsigned.signature_sha256 = None;
+        let digest = hex::encode(Sha256::digest(
+            serde_json::to_vec(&unsigned).expect("serialize unsigned rules"),
+        ));
+        rules.signature_sha256 = Some(digest);
+
+        assert!(rules.validate_signature().is_ok());
+
+        let mut tampered = rules.clone();
+        tampered.fallback.summary.push_str(" (tampered)");
+
+        let err = tampered
+            .validate_signature()
+            .expect_err("tampered rules should fail validation");
+        assert!(matches!(err, AdvisoryError::InvalidRules(message) if message.contains("signature_sha256")));
+    }
+}

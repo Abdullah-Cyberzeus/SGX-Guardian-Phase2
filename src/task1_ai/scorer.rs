@@ -216,6 +216,7 @@ fn category_profile(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     fn make_alert(
         category: ThreatCategory,
@@ -300,5 +301,141 @@ mod tests {
         assert_eq!(state.active_ip_count(), 1);
         state.cleanup();
         assert_eq!(state.active_ip_count(), 0);
+    }
+
+    #[test]
+    fn exploit_burst_crosses_threshold_and_marks_exploit_category() {
+        let mut state = AlertScorerState::new(120);
+        let mut last = None;
+
+        for offset in 0..6 {
+            let mut alert = make_alert(
+                ThreatCategory::Exploit,
+                Severity::Critical,
+                "10.10.10.10",
+                4001,
+            );
+            alert.timestamp = Utc
+                .with_ymd_and_hms(2026, 8, 24, 12, 0, 0)
+                .single()
+                .expect("fixed timestamp")
+                + chrono::Duration::seconds(offset);
+
+            let feature = feature_from_alert(&alert);
+            last = process_feature(&feature, &mut state);
+        }
+
+        let score = last.expect("expected exploit burst to trigger");
+        assert_eq!(score.category, ThreatCategory::Exploit);
+        assert_eq!(score.contributing_ip, "10.10.10.10");
+        assert_eq!(score.alert_count, 6);
+        assert_eq!(score.top_signature_id, 4001);
+        assert_eq!(score.top_signature_count, 6);
+        assert!(score.score >= 0.50);
+
+        let ctx = anomaly_context_from_score(&score);
+        assert_eq!(ctx.model_version.as_deref(), Some("task1-alert-scorer"));
+        assert_eq!(ctx.topk.len(), 4);
+        assert!(ctx
+            .topk
+            .iter()
+            .any(|(name, value)| name == "source_score" && (*value - score.score).abs() < 1e-6));
+    }
+
+    #[test]
+    fn anomaly_context_from_score_clamps_and_reports_topk_metrics() {
+        let score = AlertAnomalyScore {
+            score: 1.4,
+            contributing_ip: "172.16.0.7".to_string(),
+            alert_count: 25,
+            top_signature_id: 9001,
+            top_signature_count: 10,
+            category: ThreatCategory::Anomaly,
+            computed_at: Utc
+                .with_ymd_and_hms(2026, 8, 24, 12, 30, 0)
+                .single()
+                .expect("fixed timestamp"),
+            window_secs: 120,
+        };
+
+        let ctx = anomaly_context_from_score(&score);
+
+        assert_eq!(ctx.score, 1.0);
+        assert_eq!(ctx.model_version.as_deref(), Some("task1-alert-scorer"));
+        assert_eq!(ctx.topk.len(), 4);
+        assert!(ctx
+            .topk
+            .iter()
+            .any(|(name, value)| name == "alert_count" && (*value - 0.5).abs() < 1e-6));
+        assert!(ctx
+            .topk
+            .iter()
+            .any(|(name, value)| name == "signature_repeat" && (*value - 0.4).abs() < 1e-6));
+        assert!(ctx
+            .topk
+            .iter()
+            .any(|(name, value)| name == "burst_density" && (*value - 1.0).abs() < 1e-6));
+        assert!(ctx
+            .topk
+            .iter()
+            .any(|(name, value)| name == "source_score" && (*value - 1.0).abs() < 1e-6));
+    }
+
+    #[test]
+    fn malware_burst_crosses_threshold_and_marks_malware_category() {
+        let mut state = AlertScorerState::new(120);
+        let base = Utc
+            .with_ymd_and_hms(2026, 8, 24, 13, 0, 0)
+            .single()
+            .expect("fixed timestamp");
+        let mut last = None;
+
+        for offset in 0..4 {
+            let mut alert = make_alert(
+                ThreatCategory::Malware,
+                Severity::Critical,
+                "10.10.10.11",
+                5001,
+            );
+            alert.timestamp = base + chrono::Duration::seconds(offset);
+            let feature = feature_from_alert(&alert);
+            last = process_feature(&feature, &mut state);
+        }
+
+        let score = last.expect("expected malware burst to trigger");
+        assert_eq!(score.category, ThreatCategory::Malware);
+        assert_eq!(score.alert_count, 4);
+        assert_eq!(score.top_signature_id, 5001);
+        assert_eq!(score.top_signature_count, 4);
+        assert!(score.score >= 0.50);
+    }
+
+    #[test]
+    fn policy_violation_burst_crosses_threshold_and_marks_policy_violation_category() {
+        let mut state = AlertScorerState::new(120);
+        let base = Utc
+            .with_ymd_and_hms(2026, 8, 24, 13, 30, 0)
+            .single()
+            .expect("fixed timestamp");
+        let mut last = None;
+
+        for offset in 0..5 {
+            let mut alert = make_alert(
+                ThreatCategory::PolicyViolation,
+                Severity::Critical,
+                "10.10.10.12",
+                5002,
+            );
+            alert.timestamp = base + chrono::Duration::seconds(offset);
+            let feature = feature_from_alert(&alert);
+            last = process_feature(&feature, &mut state);
+        }
+
+        let score = last.expect("expected policy violation burst to trigger");
+        assert_eq!(score.category, ThreatCategory::PolicyViolation);
+        assert_eq!(score.alert_count, 5);
+        assert_eq!(score.top_signature_id, 5002);
+        assert_eq!(score.top_signature_count, 5);
+        assert!(score.score >= 0.50);
     }
 }

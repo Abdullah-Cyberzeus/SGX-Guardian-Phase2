@@ -191,6 +191,21 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn sample_policy() -> Policy {
+        Policy {
+            policy_id: "policy-1".into(),
+            version: "1.2.3".into(),
+            rules: vec![Rule {
+                id: "rule-1".into(),
+                action: "ALLOW".into(),
+                src: "0.0.0.0/0".into(),
+                dst: "10.0.0.10".into(),
+                protocol: "TCP".into(),
+                port: None,
+            }],
+        }
+    }
+
     const ACTIVE_POLICY_YAML: &str = r#"
 policy_id: "active-policy"
 version: "2.0.0"
@@ -214,6 +229,50 @@ rules:
     protocol: "TCP"
     port: 80
 "#;
+
+    #[test]
+    fn canonical_policy_bytes_are_stable_and_digest_is_hex() {
+        let policy = sample_policy();
+        let canonical = String::from_utf8(canonical_policy_bytes(&policy))
+            .expect("canonical policy bytes should be valid utf8");
+
+        assert_eq!(
+            canonical,
+            r#"{"policy_id":"policy-1","rules":[{"action":"ALLOW","dst":"10.0.0.10","id":"rule-1","port":null,"protocol":"TCP","src":"0.0.0.0/0"}],"version":"1.2.3"}"#
+        );
+
+        let digest = canonical_policy_digest(&policy);
+        assert_eq!(digest.len(), 64);
+        assert!(digest.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn validate_policy_parses_valid_yaml_and_rejects_missing_version() {
+        let valid = r#"
+policy_id: "policy-1"
+version: "1.2.3"
+rules:
+  - id: "rule-1"
+    action: "ALLOW"
+    src: "0.0.0.0/0"
+    dst: "10.0.0.10"
+    protocol: "TCP"
+"#;
+        let parsed = validate_policy(valid).expect("valid policy should parse");
+        assert_eq!(parsed.policy_id, "policy-1");
+        assert_eq!(parsed.rules.len(), 1);
+
+        let invalid = r#"
+policy_id: "policy-1"
+rules:
+  - id: "rule-1"
+    action: "ALLOW"
+    src: "0.0.0.0/0"
+    dst: "10.0.0.10"
+    protocol: "TCP"
+"#;
+        assert!(validate_policy(invalid).is_err());
+    }
 
     #[test]
     fn effective_policy_material_prefers_active_policy_file() {
