@@ -169,7 +169,7 @@ The following data changes in the real world and must update in the UI without t
 
 #### **Guardian Device Status**
 
-**What changes:** online/offline, battery %, signal strength, peer count **Why it matters:** The dashboard hero card shows Guardian status — if it goes offline, the user must see the offline banner immediately **Recommended:** WebSocket connection from the Guardian hardware device → Supabase → frontend **Update frequency:** Battery \+ signal every 30 seconds. Online/offline immediately on change.
+**What changes:** online/offline, signal strength, peer count **Why it matters:** The dashboard hero card shows Guardian status — if it goes offline, the user must see the offline banner immediately **Recommended:** WebSocket connection from the Guardian hardware device → Supabase → frontend **Update frequency:** Signal every 30 seconds. Online/offline immediately on change.
 
 ---
 

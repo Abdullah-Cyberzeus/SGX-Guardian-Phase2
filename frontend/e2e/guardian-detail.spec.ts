@@ -130,16 +130,6 @@ test.describe('Guardian Detail Page', () => {
     await expect(page.locator('body')).toContainText('Last Seen');
   });
 
-  // ── Battery section ──────────────────────────────────────────────────────
-
-  test('shows Battery section', async ({ page }) => {
-    await expect(page.locator('body')).toContainText('Battery');
-  });
-
-  test('shows battery percentage', async ({ page }) => {
-    await expect(page.locator('body')).toContainText('%');
-  });
-
   // ── Copy Public Key action ───────────────────────────────────────────────
 
   test('has Copy button', async ({ page }) => {

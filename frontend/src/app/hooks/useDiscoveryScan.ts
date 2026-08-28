@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import { discoveryService } from "../services/discoveryService";
 import type { DiscoveryIntensity } from "../services/discoveryService";
+import { guardianDisplayText } from "../utils/displayText";
 
 /**
  * Module-level store for the in-flight discovery scan.
@@ -118,19 +119,19 @@ export async function startScan(key: ScanKey, label: string, target?: string): P
 
   try {
     const result = await discoveryService.runScan(key === "default" ? undefined : key, target);
-    const summary = (result.stdout || "").split("\n").find((l) => l.trim()) ?? "";
+    const summary = guardianDisplayText((result.stdout || "").split("\n").find((l) => l.trim()) ?? "");
     if (result.success) {
       const rec: LastRunRecord = { key, label, at: Date.now() };
       saveLastRun(rec);
       toast.success("Discovery scan completed", { description: summary || undefined });
       finish({ result: "success", message: summary }, rec);
     } else {
-      const msg = result.stderr || summary;
+      const msg = guardianDisplayText(result.stderr || summary);
       toast.error("Scan reported a failure", { description: msg || undefined });
       finish({ result: "error", message: msg });
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : undefined;
+    const msg = err instanceof Error ? guardianDisplayText(err.message) : undefined;
     toast.error("Scan failed", { description: msg });
     finish({ result: "error", message: msg });
   }

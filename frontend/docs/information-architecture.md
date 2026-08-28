@@ -194,7 +194,7 @@ flowchart LR
 The Home section is a **single screen** with contextual deep links into Alerts and Network. It is the app's entry point on every launch after onboarding.
 
 flowchart TD
- A\[Home Dashboard\] \--\> B\[Guardian Device Card\\nStatus \+ Battery \+ Signal \+ Peers\]
+ A\[Home Dashboard\] \--\> B\[Guardian Device Card\\nStatus \+ Signal \+ Peers\]
  A \--\> C\[Security Health Score\\n0-100 ring visualization\]
  A \--\> D\[Active Alerts Summary\\nCount by severity \+ View All link\]
  A \--\> E\[Quick Actions Tray\\nScan / View Topology / Archive All\]

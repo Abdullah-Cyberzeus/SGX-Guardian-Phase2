@@ -38,7 +38,7 @@ type CyleniumFlow = null | "what-syncs" | "connecting" | "done";
 
 const syncFeatures = [
   { label: "Security Alerts", desc: "Real-time threat notifications sent to Cylenium dashboard" },
-  { label: "Device Telemetry", desc: "Guardian health, battery, and connectivity data" },
+  { label: "Device Telemetry", desc: "Guardian health and connectivity data" },
   { label: "Audit Logs", desc: "All events and actions logged to Cylenium Cloud" },
 ];
 

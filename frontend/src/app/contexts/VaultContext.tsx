@@ -16,6 +16,7 @@ import {
 } from "../components/vault/types";
 import { vaultService, type VaultRecord, type VaultDownloadRecord } from "../services/vaultService";
 import { useAuth } from "./AuthContext";
+import { useGuardianInfo } from "../hooks/useApiData";
 import { fileRepository } from "../../pwa/db/fileRepository";
 
 interface VaultChildren {
@@ -72,6 +73,8 @@ interface VaultContextValue {
   toggleStar: (id: string) => Promise<void>;
   /** Owner-only: blocks future downloads without deleting the file. */
   revokeFile: (id: string) => Promise<void>;
+  /** Owner-only: lifts a previously revoked file's download block. */
+  restoreFile: (id: string) => Promise<void>;
   /** Owner-only: sets or clears (pass null) the file's expiry timestamp. */
   setFileExpiry: (id: string, expiresAt: string | null) => Promise<void>;
   /** Owner-only: who downloaded this file and when. */
@@ -103,6 +106,8 @@ function toBrowserFolderId(value: unknown): string {
  */
 export function VaultProvider({ children }: { children: ReactNode }) {
   const { session, loading: authLoading } = useAuth();
+  const { data: guardianInfo } = useGuardianInfo();
+  const deviceName = guardianInfo?.deviceId || guardianInfo?.name || "SG-X Guardian";
   const cacheScopeId = session?.browserMemberDid
     || session?.guardianDid
     || session?.user.id
@@ -528,6 +533,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     setFiles((prev) => prev.map((file) => file.id === id ? updated : file));
   }, [mapRecord]);
 
+  const restoreFile = useCallback(async (id: string) => {
+    const updated = mapRecord(await vaultService.restore(id));
+    setFiles((prev) => prev.map((file) => file.id === id ? updated : file));
+  }, [mapRecord]);
+
   const setFileExpiry = useCallback(async (id: string, expiresAt: string | null) => {
     const updated = mapRecord(await vaultService.setExpiry(id, expiresAt));
     setFiles((prev) => prev.map((file) => file.id === id ? updated : file));
@@ -547,7 +557,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     () => ({
       folders,
       files,
-      deviceName: "SG-X Guardian",
+      deviceName,
       encryption: "AES-256-GCM",
       capacityBytes,
       usedBytes,
@@ -577,12 +587,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       moveFile,
       toggleStar,
       revokeFile,
+      restoreFile,
       setFileExpiry,
       getFileHistory,
     }),
     [
       folders,
       files,
+      deviceName,
       capacityBytes,
       loading,
       error,
@@ -611,6 +623,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       moveFile,
       toggleStar,
       revokeFile,
+      restoreFile,
       setFileExpiry,
       getFileHistory,
     ],

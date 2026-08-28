@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { PageHeader } from "../../components/PageHeader";
-import { Wifi, Battery, Signal, Cpu, Clock, Radio, Server, Globe, Key, Copy, Check, Loader2, Shield } from "lucide-react";
+import { Wifi, Signal, Cpu, Clock, Server, Globe, Key, Copy, Check, Loader2, Shield, Pencil, X } from "lucide-react";
 import { toast } from "sonner";
 import { guardianService } from "../../services/guardianService";
 import { wifiService, type WifiModeResponse } from "../../services/wifiService";
@@ -13,7 +13,6 @@ interface GuardianData {
   uptime: string;
   connectionType: string;
   signal: number;
-  battery: number;
   status: string;
   lastSeen: string;
   ip: string;
@@ -59,6 +58,84 @@ function LastRow({ label, value, icon: Icon }: { label: string; value: string; i
         {Icon && <Icon size={13} style={{ color: "var(--muted-foreground)" }} />}
         <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", color: "var(--foreground)" }}>{value}</span>
       </div>
+    </div>
+  );
+}
+
+function EditableIdentityRow({
+  label,
+  value,
+  icon: Icon,
+  last = false,
+  onSave,
+}: {
+  label: string;
+  value: string;
+  icon?: any;
+  last?: boolean;
+  onSave: (value: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!editing) setDraft(value);
+  }, [editing, value]);
+
+  const save = async () => {
+    const next = draft.trim();
+    if (!next || next === value) {
+      setDraft(value);
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(next);
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-between gap-4 px-4 py-3.5" style={{ borderBottom: last ? undefined : "1px solid var(--border)" }}>
+      <div className="flex items-center gap-2">
+        {Icon && <Icon size={14} style={{ color: "var(--muted-foreground)" }} />}
+        <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>{label}</span>
+      </div>
+      {editing ? (
+        <div className="flex min-w-0 items-center gap-1.5">
+          <input
+            autoFocus
+            value={draft}
+            maxLength={128}
+            disabled={saving}
+            aria-label={`Edit ${label}`}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void save();
+              if (event.key === "Escape") { setDraft(value); setEditing(false); }
+            }}
+            className="min-w-0 rounded-md border border-border bg-background px-2 py-1 text-right outline-none focus:border-primary"
+            style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--foreground)" }}
+          />
+          <button type="button" onClick={() => void save()} disabled={saving || !draft.trim()} aria-label={`Save ${label}`} className="rounded p-1.5 hover:bg-muted disabled:opacity-50">
+            {saving ? <Loader2 className="animate-spin" size={14} /> : <Check size={14} />}
+          </button>
+          <button type="button" onClick={() => { setDraft(value); setEditing(false); }} disabled={saving} aria-label={`Cancel editing ${label}`} className="rounded p-1.5 hover:bg-muted disabled:opacity-50">
+            <X size={14} />
+          </button>
+        </div>
+      ) : (
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--foreground)", fontWeight: "var(--font-weight-medium)" }}>{value}</span>
+          <button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${label}`} className="rounded p-1.5 hover:bg-muted">
+            <Pencil size={13} style={{ color: "var(--muted-foreground)" }} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -132,6 +209,22 @@ export function HM02GuardianDetail() {
   const [loading, setLoading] = useState(true);
   const [dataSource, setDataSource] = useState<'api' | 'error'>('api');
 
+  const updateDisplayInfo = async (field: 'deviceName' | 'displayHostname', value: string) => {
+    try {
+      const updated = await guardianService.updateDisplayInfo({ [field]: value });
+      setGuardian((current) => current ? {
+        ...current,
+        deviceId: updated.deviceName || updated.nodeId,
+        hostname: updated.displayHostname || updated.hostname,
+        name: field === 'displayHostname' ? (updated.displayHostname || updated.hostname) : current.name,
+      } : current);
+      toast.success(`${field === 'deviceName' ? 'Device ID' : 'Hostname'} updated`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not update device info');
+      throw error;
+    }
+  };
+
   useEffect(() => {
     wifiService.getWifiMode().then(setWifiMode).catch(() => setWifiMode(null));
     async function fetchData() {
@@ -146,7 +239,6 @@ export function HM02GuardianDetail() {
           uptime: (data as any).uptime || 'Running',
           connectionType: (data as any).connectionType || 'Ethernet',
           signal: (data as any).signal ?? 100,
-          battery: (data as any).battery ?? 100,
           status: (data as any).status || 'online',
           lastSeen: (data as any).lastSeen || 'Just now',
           ip: (data as any).ip || '—',
@@ -210,15 +302,7 @@ export function HM02GuardianDetail() {
 
         {/* Device Info */}
         <Section title="Device Info">
-          <div
-            className="flex items-center justify-between px-4 py-3.5"
-            style={{ borderBottom: "1px solid var(--border)" }}
-          >
-            <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>Device ID</span>
-            <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--foreground)", fontWeight: "var(--font-weight-medium)" }}>
-              {guardian.deviceId}
-            </span>
-          </div>
+          <EditableIdentityRow label="Device ID" value={guardian.deviceId} onSave={(value) => updateDisplayInfo('deviceName', value)} />
           <Row label="Model" value={guardian.model} icon={Cpu} />
           <Row label="Firmware" value={guardian.firmware} />
           <LastRow label="Uptime" value={guardian.uptime} icon={Clock} />
@@ -226,15 +310,7 @@ export function HM02GuardianDetail() {
 
         {/* Node Identity - maps to sgx-pa-cli status */}
         <Section title="Node Identity">
-          <div className="flex items-center justify-between px-4 py-3.5" style={{ borderBottom: "1px solid var(--border)" }}>
-            <div className="flex items-center gap-2">
-              <Server size={14} style={{ color: "var(--muted-foreground)" }} />
-              <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>Hostname</span>
-            </div>
-            <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: "var(--foreground)" }}>
-              {guardian.hostname}
-            </span>
-          </div>
+          <EditableIdentityRow label="Hostname" value={guardian.hostname} icon={Server} onSave={(value) => updateDisplayInfo('displayHostname', value)} />
           <div className="flex items-center justify-between px-4 py-3.5" style={{ borderBottom: "1px solid var(--border)" }}>
             <div className="flex items-center gap-2">
               <Globe size={14} style={{ color: "var(--muted-foreground)" }} />
@@ -280,32 +356,6 @@ export function HM02GuardianDetail() {
           <LastRow label="External Network" value={wifiMode?.module2.saved_networks.join(", ") || "None"} />
         </Section>
 
-        {/* Battery */}
-        <Section title="Battery">
-          <div className="px-4 pt-4 pb-3">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <Battery size={18} style={{ color: guardian.battery > 20 ? "var(--chart-2)" : "var(--destructive)" }} />
-                <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
-                  {guardian.battery}%
-                </span>
-              </div>
-              <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
-                ~18h remaining
-              </span>
-            </div>
-            <div className="rounded-full overflow-hidden" style={{ height: "8px", backgroundColor: "var(--muted)" }}>
-              <div
-                className="h-full rounded-full"
-                style={{
-                  width: `${guardian.battery}%`,
-                  backgroundColor: guardian.battery > 20 ? "var(--chart-2)" : "var(--destructive)",
-                }}
-              />
-            </div>
-          </div>
-          <LastRow label="Estimated Runtime" value="~18 hours" icon={Radio} />
-        </Section>
         </div>
       </div>
     </div>

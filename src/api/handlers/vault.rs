@@ -1041,6 +1041,38 @@ pub async fn revoke(
     Ok(Json(record))
 }
 
+pub async fn restore(
+    State(state): State<Arc<AppState>>,
+    session: Option<Extension<AuthenticatedSession>>,
+    Path(id): Path<String>,
+) -> Result<Json<VaultRecord>, ApiError> {
+    let config = VaultConfig::from_env();
+    let id = validate_vault_id(&id).map_err(map_vault_error)?;
+    let caller_did = resolve_caller_did(&state, &session);
+    let mut record = load_record_by_id(&config, &id).await?;
+    authorize_owner_only(&session, &caller_did, &record)?;
+    record.revoked = false;
+    record.revoked_at = None;
+    persistence::save_record(&config, &record)
+        .await
+        .map_err(map_vault_error)?;
+
+    log_audit(
+        &state.node_id,
+        AuditCategory::Vault,
+        AuditSeverity::Warning,
+        AuditAction::Updated,
+        &format!(
+            "vault file access restored id={} namespace={} by={}",
+            record.vault_id,
+            record.namespace_key(),
+            caller_did
+        ),
+    );
+
+    Ok(Json(record))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SetExpiryRequest {
     pub expires_at: Option<String>,

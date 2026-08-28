@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useGroupCall } from "./GroupCallContext";
+import { useGuardianInfo } from "../../app/hooks/useApiData";
 
 function StreamTile({ peerId, stream }: { peerId: string; stream?: MediaStream }) {
   const ref = useRef<HTMLVideoElement>(null);
@@ -16,6 +17,8 @@ export function GroupCallingScreen({ localDevice: fallbackLocalDevice }: { local
     toggleMute, toggleCamera, shareScreen, leaveGroup, endGroup, moderate, rejoinGroup,
   } = useGroupCall();
   const localDevice = resolvedLocalDevice || fallbackLocalDevice;
+  const { data: guardianInfo } = useGuardianInfo();
+  const localDeviceName = guardianInfo?.deviceId || guardianInfo?.name || localDevice;
   if (!group || incoming || !localDevice) return null;
   const local = group.participants[localDevice];
   if (!local || local.state === "kicked" || local.state === "declined") return null;
@@ -46,7 +49,7 @@ export function GroupCallingScreen({ localDevice: fallbackLocalDevice }: { local
   return <div className="call-overlay group-call-overlay" role="dialog" aria-modal="true">
     <header className="call-header"><div><strong>{group.title}</strong><span className="secure-label">◆ Trusted group · {joined.length} joined</span></div></header>
     <main className="group-stage">
-      <StreamTile peerId={`${localDevice} (you)`} stream={localStream} />
+      <StreamTile peerId={`${localDeviceName} (you)`} stream={localStream} />
       {joined.filter((participant) => participant.device_id !== localDevice).map((participant) =>
         <article className="group-member-wrap" key={participant.device_id}>
           <StreamTile peerId={participant.device_id} stream={remoteStreams[participant.device_id]} />

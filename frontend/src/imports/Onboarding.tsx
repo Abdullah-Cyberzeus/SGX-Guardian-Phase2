@@ -55,11 +55,6 @@ function Header() {
           <g id="Right">
             <path d={svgPaths.p2141deb0} fill="var(--fill-0, white)" id="Cellular Connection" />
             <path d={svgPaths.p3bb0d180} fill="var(--fill-0, white)" id="Wifi" />
-            <g id="Battery">
-              <rect height="10" id="Border" opacity="0.35" rx="2.16667" stroke="var(--stroke-0, white)" width="20.7034" x="250.211" y="0.5" />
-              <path d={svgPaths.p1df61100} fill="var(--fill-0, white)" id="Cap" opacity="0.4" />
-              <rect fill="var(--fill-0, white)" height="7.11765" id="Capacity" rx="1.33333" width="17.7573" x="251.684" y="1.94116" />
-            </g>
           </g>
           <g id="Time">
             <path d={svgPaths.p35f59100} fill="var(--fill-0, white)" />

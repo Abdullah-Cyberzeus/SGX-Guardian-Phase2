@@ -58,7 +58,10 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
 
     Router::new()
         // Phase 1 - read endpoints
-        .route("/api/v1/node/status", get(handlers::node::status))
+        .route(
+            "/api/v1/node/status",
+            get(handlers::node::status).patch(handlers::node::update_display_info),
+        )
         .route("/api/v1/node/boot-status", get(handlers::node::boot_status))
         .route("/api/v1/node/restart", post(handlers::node::restart))
         .route("/api/v1/peers", get(handlers::peers::list))

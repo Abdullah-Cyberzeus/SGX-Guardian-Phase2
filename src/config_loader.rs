@@ -89,7 +89,11 @@ pub struct ApiConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct NodeConfig {
     pub node_id: String,
+    #[serde(default)]
+    pub device_name: Option<String>,
     pub hostname: String,
+    #[serde(default)]
+    pub display_hostname: Option<String>,
     pub ip: String,
     pub port: u16,
     pub public_key: String,

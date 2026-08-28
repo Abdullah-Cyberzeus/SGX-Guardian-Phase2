@@ -216,6 +216,9 @@ fn member_required_scope(method: &Method, path: &str) -> Option<&'static str> {
     if method == Method::GET && path == "/api/v1/node/status" {
         return Some(scope::GUARDIAN_READ);
     }
+    if method == Method::PATCH && path == "/api/v1/node/status" {
+        return Some(scope::SETTINGS_OWN);
+    }
     if method == Method::GET && path == "/api/v1/pwa/identity" {
         return Some(scope::GUARDIAN_READ);
     }

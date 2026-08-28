@@ -46,7 +46,9 @@ export interface ThreatIntel {
 // Backend response shape for /node/status
 interface BackendNodeStatus {
   nodeId: string;
+  deviceName: string;
   hostname: string;
+  displayHostname: string;
   ip: string;
   port: number;
   publicKey: string;
@@ -61,13 +63,12 @@ export const guardianService = {
     const res = await api.get<BackendNodeStatus>('/node/status');
     return {
       id: res.nodeId,
-      name: res.hostname || res.nodeId,
-      deviceId: res.nodeId,
+      name: res.displayHostname || res.hostname || res.nodeId,
+      deviceId: res.deviceName || res.nodeId,
       firmware: 'v1.0.0',
       uptime: 'Running',
       connectionType: 'Ethernet',
       signal: 100,
-      battery: 100,
       peerCount: 0,
       status: 'online' as const,
       lastSeen: 'Just now',
@@ -75,12 +76,15 @@ export const guardianService = {
       mac: 'N/A',
       model: 'SG-X Guardian',
       serialNumber: res.nodeId,
-      hostname: res.hostname,
+      hostname: res.displayHostname || res.hostname,
       port: res.port,
       publicKey: res.publicKey,
       offlineMode: res.offlineMode,
     };
   },
+
+  updateDisplayInfo: (data: { deviceName?: string; displayHostname?: string }) =>
+    api.patch<BackendNodeStatus>('/node/status', data),
 
   // GET /api/guardian/status
   getStatus: () => api.get<GuardianInfo & { node: unknown; uptime: number; timestamp: string }>(

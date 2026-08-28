@@ -97,6 +97,7 @@ export const vaultService = {
   star: (id: string, starred?: boolean) =>
     api.post<VaultRecord>(`${filePath(id)}/star`, starred === undefined ? undefined : { starred }),
   revoke: (id: string) => api.post<VaultRecord>(`${filePath(id)}/revoke`),
+  restore: (id: string) => api.post<VaultRecord>(`${filePath(id)}/restore`),
   setExpiry: (id: string, expiresAt: string | null) =>
     api.patch<VaultRecord>(`${filePath(id)}/expiry`, { expires_at: expiresAt }),
   history: (id: string) => api.get<VaultHistoryResponse>(`${filePath(id)}/history`),

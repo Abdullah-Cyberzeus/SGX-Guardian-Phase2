@@ -87,11 +87,12 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
   const navigate = useNavigate();
   const {
     deviceName, encryption, offline, removeFile, renameFile, moveFile, toggleStar,
-    revokeFile, setFileExpiry, getFileHistory, getFolder, folders,
+    revokeFile, restoreFile, setFileExpiry, getFileHistory, getFolder, folders,
   } = useVault();
   const { session } = useAuth();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [revokeConfirmOpen, setRevokeConfirmOpen] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [name, setName] = useState(file.name);
@@ -179,6 +180,18 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
       toast.success("Access revoked", { description: "New downloads of this file are now blocked." });
     } catch (cause) {
       toast.error("Revoke failed", { description: cause instanceof Error ? cause.message : "Try again." });
+    }
+  };
+
+  const handleRestore = async () => {
+    setRestoring(true);
+    try {
+      await restoreFile(file.id);
+      toast.success("Access restored", { description: "This file can be downloaded again." });
+    } catch (cause) {
+      toast.error("Restore failed", { description: cause instanceof Error ? cause.message : "Try again." });
+    } finally {
+      setRestoring(false);
     }
   };
 
@@ -547,6 +560,17 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
               >
                 <ShieldOff size={16} style={{ color: "var(--destructive)" }} />
                 <span style={{ color: "var(--destructive)" }}>Revoke access</span>
+              </Button>
+            )}
+            {file.revoked && (
+              <Button
+                variant="outline"
+                onClick={() => void handleRestore()}
+                disabled={restoring}
+                className="h-11 w-full gap-2"
+              >
+                <ShieldCheck size={16} />
+                {restoring ? "Restoring…" : "Restore access"}
               </Button>
             )}
           </div>

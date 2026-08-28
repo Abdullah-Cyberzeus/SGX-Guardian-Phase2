@@ -15,7 +15,6 @@ export const mockGuardian = {
   uptime: "14d 6h 32m",
   connectionType: "WiFi",
   signal: 87,
-  battery: 73,
   peerCount: 8,
   status: "online" as const,
   lastSeen: "Just now",

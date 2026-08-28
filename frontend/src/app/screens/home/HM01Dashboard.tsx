@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useNavigate } from "react-router";
 import {
-  Battery, Signal, Users, AlertTriangle, ChevronRight,
+  Signal, Users, AlertTriangle, ChevronRight,
   Shield, X, ShieldCheck,
 } from "lucide-react";
 import { SkeletonCard } from "../../components/SkeletonBlock";
@@ -32,7 +32,6 @@ interface GuardianData {
   name: string;
   connectionType: string;
   ip: string;
-  battery: number;
   signal: number;
   peerCount: number;
 }
@@ -72,9 +71,8 @@ function GuardianCard({ onClick, guardian }: { onClick: () => void; guardian: Gu
         </div>
         <ChevronRight size={18} style={{ color: "var(--muted-foreground)", marginTop: "2px" }} />
       </div>
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3">
         {[
-          { icon: Battery, label: "Battery", value: `${guardian.battery}%` },
           { icon: Signal, label: "Signal", value: `${guardian.signal}%` },
           { icon: Users, label: "Peers", value: `${guardian.peerCount}` },
         ].map(({ icon: Icon, label, value }) => (
@@ -168,7 +166,6 @@ function HealthHeroCard({ score, threats24h, blocked }: { score: number | null; 
 
 function GuardianDeskCard({ guardian, onClick }: { guardian: GuardianData; onClick: () => void }) {
   const stats = [
-    { icon: Battery, label: "Battery", value: guardian.battery, bar: true },
     { icon: Signal, label: "Signal", value: guardian.signal, bar: true },
     { icon: Users, label: "Peers", value: guardian.peerCount, bar: false },
   ];
@@ -430,7 +427,7 @@ export function HM01Dashboard() {
 
   // Map API data to expected format (backend: /node/status)
   const guardian = useMemo(() => {
-    const defaults = { name: 'SGX Guardian', connectionType: 'Ethernet', ip: '—', battery: 100, signal: 100, peerCount: 0 };
+    const defaults = { name: 'SGX Guardian', connectionType: 'Ethernet', ip: '—', signal: 100, peerCount: 0 };
     if (!guardianData) return defaults;
     return {
       ...defaults,
@@ -438,7 +435,6 @@ export function HM01Dashboard() {
       name: guardianData.name || defaults.name,
       connectionType: guardianData.connectionType || defaults.connectionType,
       ip: guardianData.ip || defaults.ip,
-      battery: guardianData.battery ?? defaults.battery,
       signal: guardianData.signal ?? defaults.signal,
       peerCount: guardianData.peerCount ?? defaults.peerCount,
     };

@@ -182,6 +182,9 @@ export const managedDeviceService = {
   // POST /api/v1/managed-devices/{device_id}/reject
   reject: (id: string, data?: RejectDeviceRequest) => api.post<DeviceActionResponse>(`${devicePath(id)}/reject`, data),
 
+  // POST /api/v1/managed-devices/{device_id}/approve
+  approve: (id: string) => api.post<DeviceActionResponse>(`${devicePath(id)}/approve`),
+
   // POST /api/v1/managed-devices/{device_id}/block
   block: (id: string) => api.post<DeviceActionResponse>(`${devicePath(id)}/block`),
 

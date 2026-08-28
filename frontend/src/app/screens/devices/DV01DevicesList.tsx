@@ -98,7 +98,7 @@ function DeviceDetailPanel({
         if (active) setDetail(data);
       })
       .catch((e: any) => {
-        if (active && !fallbackDevice) toast.error(e.message || "Failed to load device details");
+        if (active && !fallbackDevice) toast.error(guardianDisplayText(e.message) || "Failed to load device details");
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -301,7 +301,7 @@ function scoreColor(score: number | null): string {
 }
 
 function fleetDeviceLabel(device: ManagedDevice): string {
-  return safeTrim(device.display_name) || safeTrim(device.hostname) || safeTrim(device.ip) || safeTrim(device.mac) || safeTrim(device.device_id);
+  return guardianDisplayText(safeTrim(device.display_name) || safeTrim(device.hostname) || safeTrim(device.ip) || safeTrim(device.mac) || safeTrim(device.device_id));
 }
 
 function ScoreStat({ label, score }: { label: string; score: number | null }) {
@@ -330,17 +330,18 @@ function FleetDetailPanel({
   onChanged: () => void;
 }) {
   const [editingName, setEditingName] = useState(false);
-  const [nameDraft, setNameDraft] = useState(device.display_name ?? "");
+  const [nameDraft, setNameDraft] = useState(guardianDisplayText(device.display_name ?? ""));
   const [savingName, setSavingName] = useState(false);
   const [togglingMonitor, setTogglingMonitor] = useState(false);
   const [blocking, setBlocking] = useState(false);
+  const [approving, setApproving] = useState(false);
   const [scanRun, setScanRun] = useState<DeviceScanRun | null>(null);
   const [scanning, setScanning] = useState(false);
   const pollRef = useRef<number | null>(null);
 
   useEffect(() => {
     setEditingName(false);
-    setNameDraft(device.display_name ?? "");
+    setNameDraft(guardianDisplayText(device.display_name ?? ""));
     setScanRun(null);
     return () => {
       if (pollRef.current) window.clearInterval(pollRef.current);
@@ -376,7 +377,7 @@ function FleetDetailPanel({
         onChanged();
       }
     } catch (error: any) {
-      toast.error(error.message || "Failed to start scan");
+      toast.error(guardianDisplayText(error.message) || "Failed to start scan");
     } finally {
       setScanning(false);
     }
@@ -390,7 +391,7 @@ function FleetDetailPanel({
       setEditingName(false);
       onChanged();
     } catch (error: any) {
-      toast.error(error.message || "Failed to update device name");
+      toast.error(guardianDisplayText(error.message) || "Failed to update device name");
     } finally {
       setSavingName(false);
     }
@@ -402,7 +403,7 @@ function FleetDetailPanel({
       await managedDeviceService.edit(device.device_id, { monitoring_enabled: checked });
       onChanged();
     } catch (error: any) {
-      toast.error(error.message || "Failed to update monitoring");
+      toast.error(guardianDisplayText(error.message) || "Failed to update monitoring");
     } finally {
       setTogglingMonitor(false);
     }
@@ -420,9 +421,22 @@ function FleetDetailPanel({
       }
       onChanged();
     } catch (error: any) {
-      toast.error(error.message || "Block/unblock failed");
+      toast.error(guardianDisplayText(error.message) || "Block/unblock failed");
     } finally {
       setBlocking(false);
+    }
+  };
+
+  const handleApprove = async () => {
+    setApproving(true);
+    try {
+      await managedDeviceService.approve(device.device_id);
+      toast.success("Device approved and unblocked");
+      onChanged();
+    } catch (error: any) {
+      toast.error(guardianDisplayText(error.message) || "Failed to approve device");
+    } finally {
+      setApproving(false);
     }
   };
 
@@ -470,7 +484,7 @@ function FleetDetailPanel({
                 </button>
               </div>
             )}
-            <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{device.ip || device.mac || device.device_id}</p>
+            <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{guardianDisplayText(device.ip || device.mac || device.device_id)}</p>
           </div>
         </div>
         <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--muted-foreground)", flexShrink: 0 }}>
@@ -498,7 +512,7 @@ function FleetDetailPanel({
           {(securityReasons.length > 0 || privacyReasons.length > 0) && (
             <div className="mt-3 flex flex-col gap-1">
               {[...securityReasons, ...privacyReasons].slice(0, 6).map((reason, i) => (
-                <p key={i} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>• {reason}</p>
+                <p key={i} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>• {guardianDisplayText(reason)}</p>
               ))}
             </div>
           )}
@@ -519,7 +533,7 @@ function FleetDetailPanel({
             ].map(({ label, value, mono }, i, arr) => (
               <div key={label} className="flex items-center justify-between px-4 py-3" style={{ borderBottom: i < arr.length - 1 ? "1px solid var(--border)" : undefined }}>
                 <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{label}</span>
-                <span style={{ fontFamily: mono ? "JetBrains Mono, monospace" : "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--foreground)", wordBreak: "break-all", maxWidth: "200px", textAlign: "right" }}>{value}</span>
+                <span style={{ fontFamily: mono ? "JetBrains Mono, monospace" : "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--foreground)", wordBreak: "break-all", maxWidth: "200px", textAlign: "right" }}>{guardianDisplayText(value)}</span>
               </div>
             ))}
           </div>
@@ -531,7 +545,7 @@ function FleetDetailPanel({
             <div className="flex flex-wrap gap-1.5">
               {openPorts.slice(0, 12).map((port) => (
                 <span key={`${port.port}-${port.protocol}`} className="rounded-md px-2 py-0.5" style={{ backgroundColor: "var(--secondary)", border: "1px solid var(--border)", fontFamily: "JetBrains Mono, monospace", fontSize: "11px", color: "var(--foreground)" }}>
-                  {port.port}/{port.protocol}{port.service ? ` ${port.service}` : ""}
+                  {guardianDisplayText(`${port.port}/${port.protocol}${port.service ? ` ${port.service}` : ""}`)}
                 </span>
               ))}
               {openPorts.length > 12 && (
@@ -574,10 +588,10 @@ function FleetDetailPanel({
                 <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)", textTransform: "capitalize" }}>{scanRun.state}</span>
               </div>
               {scanFindings.slice(0, 5).map((finding, i) => (
-                <p key={i} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>• {finding}</p>
+                <p key={i} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>• {guardianDisplayText(finding)}</p>
               ))}
               {scanRecommendations.slice(0, 3).map((rec, i) => (
-                <p key={i} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--chart-5)", lineHeight: 1.5 }}>→ {rec}</p>
+                <p key={i} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--chart-5)", lineHeight: 1.5 }}>→ {guardianDisplayText(rec)}</p>
               ))}
             </div>
           )}
@@ -587,24 +601,34 @@ function FleetDetailPanel({
         <div>
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "8px" }}>ACTIONS</p>
           <div className="flex flex-col gap-2">
-            <button
-              onClick={handleToggleBlock}
-              disabled={blocking || !hasIp}
-              title={!hasIp ? "Device has no IP target" : undefined}
-              className="w-full flex items-center justify-center gap-2 rounded-lg"
-              style={{
-                height: "44px",
-                backgroundColor: device.blocked ? "color-mix(in srgb, var(--chart-2) 12%, transparent)" : "color-mix(in srgb, var(--chart-5) 12%, transparent)",
-                border: `1px solid color-mix(in srgb, ${device.blocked ? "var(--chart-2)" : "var(--chart-5)"} 25%, transparent)`,
-                color: device.blocked ? "var(--chart-2)" : "var(--chart-5)",
-                fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)",
-                cursor: blocking || !hasIp ? "default" : "pointer", opacity: !hasIp ? 0.5 : 1,
-              }}
-            >
-              {blocking ? <Loader2 size={16} className="animate-spin" /> : device.blocked ? <ShieldCheck size={16} /> : <Ban size={16} />}
-              {device.blocked ? "Unblock Device" : "Block Device"}
-            </button>
-            {!device.rejected && (
+            {device.rejected ? (
+              <button
+                onClick={handleApprove}
+                disabled={approving}
+                className="w-full flex items-center justify-center gap-2 rounded-lg"
+                style={{ height: "44px", backgroundColor: "color-mix(in srgb, var(--chart-2) 12%, transparent)", border: "1px solid color-mix(in srgb, var(--chart-2) 25%, transparent)", color: "var(--chart-2)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", cursor: approving ? "wait" : "pointer" }}
+              >
+                {approving ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />} Approve Device
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={handleToggleBlock}
+                  disabled={blocking || !hasIp}
+                  title={!hasIp ? "Device has no IP target" : undefined}
+                  className="w-full flex items-center justify-center gap-2 rounded-lg"
+                  style={{
+                    height: "44px",
+                    backgroundColor: device.blocked ? "color-mix(in srgb, var(--chart-2) 12%, transparent)" : "color-mix(in srgb, var(--chart-5) 12%, transparent)",
+                    border: `1px solid color-mix(in srgb, ${device.blocked ? "var(--chart-2)" : "var(--chart-5)"} 25%, transparent)`,
+                    color: device.blocked ? "var(--chart-2)" : "var(--chart-5)",
+                    fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)",
+                    cursor: blocking || !hasIp ? "default" : "pointer", opacity: !hasIp ? 0.5 : 1,
+                  }}
+                >
+                  {blocking ? <Loader2 size={16} className="animate-spin" /> : device.blocked ? <ShieldCheck size={16} /> : <Ban size={16} />}
+                  {device.blocked ? "Unblock Device" : "Block Device"}
+                </button>
               <button
                 onClick={() => onReject(device)}
                 className="w-full flex items-center justify-center gap-2 rounded-lg"
@@ -612,6 +636,7 @@ function FleetDetailPanel({
               >
                 <UserX size={16} /> Reject & Block
               </button>
+              </>
             )}
             <button
               onClick={() => onDelete(device)}
@@ -657,7 +682,7 @@ function AddManualDeviceDialog({ open, onOpenChange, onAdded }: { open: boolean;
       onOpenChange(false);
       onAdded();
     } catch (error: any) {
-      toast.error(error.message || "Failed to add device");
+      toast.error(guardianDisplayText(error.message) || "Failed to add device");
     } finally {
       setSaving(false);
     }
@@ -714,7 +739,7 @@ function RejectDeviceDialog({ device, onOpenChange, onRejected }: { device: Mana
       onOpenChange(false);
       onRejected();
     } catch (error: any) {
-      toast.error(error.message || "Failed to reject device");
+      toast.error(guardianDisplayText(error.message) || "Failed to reject device");
     } finally {
       setSaving(false);
     }
@@ -784,7 +809,7 @@ export function DV01DevicesList() {
     } catch (e: any) {
       console.warn("Failed to load paired devices", e.message);
       setPairedLoaded(false);
-      toast.error(e.message || "Failed to load paired devices");
+      toast.error(guardianDisplayText(e.message) || "Failed to load paired devices");
     } finally {
       setLoading(false);
     }
@@ -796,7 +821,7 @@ export function DV01DevicesList() {
       setUnpairedDevices(data.filter(isValidPairedDevice));
     } catch (e: any) {
       console.warn("Failed to load unpaired devices", e.message);
-      toast.error(e.message || "Failed to load unpaired devices");
+      toast.error(guardianDisplayText(e.message) || "Failed to load unpaired devices");
     }
   }, []);
 
@@ -806,7 +831,7 @@ export function DV01DevicesList() {
       setAllDevices(data);
     } catch (e: any) {
       console.warn("Failed to load device stats", e.message);
-      toast.error(e.message || "Failed to load device stats");
+      toast.error(guardianDisplayText(e.message) || "Failed to load device stats");
     }
   }, []);
 
@@ -820,7 +845,7 @@ export function DV01DevicesList() {
       setFleetDevices(Array.isArray(list) ? list : []);
       setFleetSummary(summary);
     } catch (e: any) {
-      toast.error(e.message || "Failed to load fleet devices");
+      toast.error(guardianDisplayText(e.message) || "Failed to load fleet devices");
     } finally {
       setFleetLoading(false);
     }
@@ -855,7 +880,7 @@ export function DV01DevicesList() {
       setPairedDevices((prev) => prev.filter((device) => device.deviceId !== unpairId));
       await Promise.all([loadPairedDevices(), loadUnpairedDevices(), loadAllDevices()]);
     } catch (e: any) {
-      toast.error(e.message || "Failed to unpair device");
+      toast.error(guardianDisplayText(e.message) || "Failed to unpair device");
     } finally {
       setUnpairLoading(false);
     }
@@ -886,7 +911,7 @@ export function DV01DevicesList() {
       setRepairPairingData(data);
       toast.success("Pairing code generated");
     } catch (e: any) {
-      toast.error(e.message || "Failed to generate pairing code");
+      toast.error(guardianDisplayText(e.message) || "Failed to generate pairing code");
       resetRepair();
     } finally {
       setRepairLoading(false);
@@ -902,7 +927,7 @@ export function DV01DevicesList() {
       resetRepair();
       await Promise.all([loadPairedDevices(), loadUnpairedDevices(), loadAllDevices()]);
     } catch (e: any) {
-      toast.error(e.message || "Re-pair failed. Check the proof and try again.");
+      toast.error(guardianDisplayText(e.message) || "Re-pair failed. Check the proof and try again.");
     } finally {
       setRepairLoading(false);
     }
@@ -930,7 +955,7 @@ export function DV01DevicesList() {
       if (selectedFleetId === deleteTarget.device_id) setSelectedFleetId(null);
       loadFleet();
     } catch (e: any) {
-      toast.error(e.message || "Failed to remove device");
+      toast.error(guardianDisplayText(e.message) || "Failed to remove device");
     } finally {
       setDeleting(false);
     }

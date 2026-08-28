@@ -189,7 +189,7 @@ DKP Status tab, Rotate dialog open/cancel/confirm → toast, daemon restart bann
 
 Tests against `testdata/config/nodeA.yaml` via `/api/v1/node/status`.
 
-Page load, `guardian-node-A` hostname, Device Details subtitle, Online badge, Monitoring Active, Device Info (nodeA ID, Model, Firmware, Uptime), Node Identity (hostname, port 50051, Public Key, placeholder-key-A), Connection (127.0.0.1, Ethernet, MAC Address, Last Seen), Battery, Copy button stability
+Page load, `guardian-node-A` hostname, Device Details subtitle, Online badge, Monitoring Active, Device Info (nodeA ID, Model, Firmware, Uptime), Node Identity (hostname, port 50051, Public Key, placeholder-key-A), Connection (127.0.0.1, Ethernet, MAC Address, Last Seen), Copy button stability
 
 ---
 

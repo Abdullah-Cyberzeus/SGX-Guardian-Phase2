@@ -1,6 +1,6 @@
 import api from './api';
 
-function formatTimeAgo(isoDate: string): string {
+export function formatTimeAgo(isoDate: string): string {
   const diff = Date.now() - new Date(isoDate).getTime();
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return 'Just now';

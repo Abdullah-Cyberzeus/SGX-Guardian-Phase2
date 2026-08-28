@@ -313,7 +313,7 @@ The new Dashboard will answer three questions instantly:
 | ----- | ----- | ----- | ----- |
 | H1 | Guardian device card (name, status, connection type) | Existing | Must Have |
 | H2 | Security Health Score (0–100 ring visualization) | **New** | Must Have |
-| H3 | Connection metrics (battery, signal, peers) | Existing | Must Have |
+| H3 | Connection metrics (signal, peers) | Existing | Must Have |
 | H4 | Active alerts summary (count by severity) | Existing — Enhanced | Must Have |
 | H5 | Quick Actions tray (Scan, Archive All, View Topology) | **New** | Should Have |
 | H6 | Your Circles summary (count, online members) | Existing | Should Have |
@@ -571,4 +571,3 @@ The following questions require answers from Cervais before design can be fully 
 | Q6 | Is the Chat feature encrypted end-to-end over the Guardian's P2P channel? (user-facing trust signal) | Circle chat screen design | Cervais |
 | Q7 | What does "Service Access" in the Devices tab mean? (no screenshot available) | Devices screen completeness | Cervais |
 | Q8 | Will the app require a login screen / auth flow, or does the DID handle all auth? | Onboarding flow design | Cervais |
-

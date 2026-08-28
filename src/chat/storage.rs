@@ -345,7 +345,9 @@ async fn read_all_receipts(
 }
 
 /// Internal helper: Reads a generic JSONL file into a chronological vector of messages.
-/// Gracefully handles missing files (returns empty list instead of crashing).
+/// Gracefully handles missing files and isolated malformed records. Chat logs are
+/// append-only, so a power loss can leave one partial trailing line; that record
+/// must not make every valid message in the conversation unavailable.
 async fn read_history_file(
     path: &PathBuf,
 ) -> Result<Vec<ChatMessageRecord>, Box<dyn std::error::Error + Send + Sync>> {
@@ -365,14 +367,26 @@ async fn read_history_file(
     let mut messages = Vec::new();
     let mut seen_message_ids = HashSet::new();
     let mut line = String::new();
+    let mut line_number = 0usize;
 
     while reader.read_line(&mut line).await? > 0 {
+        line_number += 1;
         let trimmed = line.trim();
         if !trimmed.is_empty() {
-            let record = serde_json::from_str::<ChatMessageRecord>(trimmed)
-                .map_err(|e| format!("Corrupted JSON in chat history: {}", e))?;
-            if seen_message_ids.insert(record.message_id.clone()) {
-                messages.push(record);
+            match serde_json::from_str::<ChatMessageRecord>(trimmed) {
+                Ok(record) => {
+                    if seen_message_ids.insert(record.message_id.clone()) {
+                        messages.push(record);
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        line = line_number,
+                        %error,
+                        "Skipping malformed chat-history record"
+                    );
+                }
             }
         }
         line.clear();
@@ -383,4 +397,41 @@ async fn read_history_file(
 
 fn safe_filename(id: &str) -> String {
     format!("{}.jsonl", id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn message(id: &str, sequence: u64) -> ChatMessageRecord {
+        ChatMessageRecord {
+            message_id: id.to_string(),
+            sender_did: "did:guardian:nodeA".to_string(),
+            recipient_did: "did:guardian:nodeB".to_string(),
+            group_id: None,
+            timestamp: sequence as i64,
+            seq_no: sequence,
+            encrypted_payload: "{}".to_string(),
+            signature: "test-signature".to_string(),
+            status: MessageStatus::Delivered,
+            read_by: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_record_does_not_block_valid_conversation_history() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("nodeB.jsonl");
+        let first = serde_json::to_string(&message("msg-1", 1)).expect("serialize first");
+        let second = serde_json::to_string(&message("msg-2", 2)).expect("serialize second");
+        tokio::fs::write(&path, format!("{}\n{{partial-json\n{}\n", first, second))
+            .await
+            .expect("write history");
+
+        let history = read_history_file(&path).await.expect("read history");
+
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].message_id, "msg-1");
+        assert_eq!(history[1].message_id, "msg-2");
+    }
 }

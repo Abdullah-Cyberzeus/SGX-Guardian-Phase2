@@ -907,11 +907,6 @@ export function NW04CircleDetail() {
                     </div>
                   )}
                   <div className="h-px" style={{ backgroundColor: "var(--border)" }} />
-                  <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>Or record an invitation</p>
-                  <div className="flex gap-2">
-                    <input placeholder="teammate@company.com" className="flex-1 px-3 outline-none" style={{ height: "40px", backgroundColor: "var(--input-background)", border: "1px solid var(--border)", borderRadius: "var(--radius)", color: "var(--foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)" }} />
-                    <button className="px-4 rounded-md transition-opacity active:opacity-80" style={{ height: "40px", backgroundColor: "var(--secondary)", color: "var(--secondary-foreground)", border: "1px solid var(--border)", cursor: "pointer", borderRadius: "var(--radius)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)" }}>Record</button>
-                  </div>
                   <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--muted-foreground)", textAlign: "center" }}>Users need to have SG-X Guardian installed to join.</p>
                 </div>
               )}
@@ -1029,8 +1024,7 @@ export function NW04CircleDetail() {
                 </div>
               </div>
               {[
-                { label: "Connection Type", value: "WiFi" },
-                { label: "Last Seen", value: selectedMember.lastSeen },
+                { label: "Connection Type", value: "Wi-Fi" },
                 { label: "Role", value: selectedMember.role.toLowerCase() === "owner" ? "Admin" : selectedMember.role },
                 { label: "Guardian Health", value: "Score: 88" },
               ].map(({ label, value }) => (

@@ -114,6 +114,8 @@ interface AuthPayload {
 interface LoginBypassProbe {
   nodeId?: string;
   hostname?: string;
+  displayHostname?: string;
+  deviceName?: string;
   offlineMode?: number | boolean;
 }
 
@@ -200,7 +202,7 @@ async function persistOfflineMembership(session: Session) {
 
 function makeLoginBypassSession(probe?: LoginBypassProbe): Session {
   const nodeId = probe?.nodeId?.trim() || "guardian-local";
-  const hostname = probe?.hostname?.trim() || nodeId;
+  const hostname = probe?.displayHostname?.trim() || probe?.deviceName?.trim() || probe?.hostname?.trim() || nodeId;
   return {
     token: "",
     scopes: ["admin:*"],

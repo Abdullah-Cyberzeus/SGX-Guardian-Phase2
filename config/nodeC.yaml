@@ -1,6 +1,8 @@
 ---
 node_id: "nodeC"
+device_name: "nodeC"
 hostname: "nodec.guardian"
+display_hostname: "nodec.guardian"
 ip: "127.0.0.1"
 port: 50053
 public_key: "placeholder-key-C"

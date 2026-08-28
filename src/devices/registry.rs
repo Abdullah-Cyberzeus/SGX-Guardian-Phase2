@@ -142,6 +142,18 @@ impl DeviceRegistry {
         Ok(record.clone())
     }
 
+    pub fn approve(&mut self, device_id: &str) -> DevicesResult<DeviceRecord> {
+        let record = self
+            .devices
+            .get_mut(device_id)
+            .ok_or(DevicesError::NotFound)?;
+        record.rejected = false;
+        record.rejection_reason = None;
+        record.blocked = false;
+        record.touch();
+        Ok(record.clone())
+    }
+
     pub fn clear_rejection_for_mac(&mut self, mac: &str) -> Option<DeviceRecord> {
         let normalized = normalize_mac_for_match(mac);
         let record = self.devices.values_mut().find(|record| {
@@ -217,6 +229,25 @@ fn normalize_mac_for_match(mac: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn approve_clears_rejection_reason_and_block() {
+        let mut registry = DeviceRegistry::default();
+        let record = registry
+            .insert_manual(AddManualDevice {
+                ip: Some("192.168.1.77".into()),
+                ..Default::default()
+            })
+            .expect("insert manual");
+        registry
+            .reject(&record.device_id, Some("Unknown device".into()))
+            .expect("reject");
+
+        let approved = registry.approve(&record.device_id).expect("approve");
+        assert!(!approved.rejected);
+        assert!(!approved.blocked);
+        assert_eq!(approved.rejection_reason, None);
+    }
 
     #[tokio::test]
     async fn registry_rejects_tampering() {

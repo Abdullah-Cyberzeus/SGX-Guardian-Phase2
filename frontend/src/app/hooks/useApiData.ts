@@ -190,10 +190,16 @@ export async function fetchCommunicationPeers(isMember: boolean, guardianDid?: s
     peerService.getAll(),
     peerService.getContacts().catch(() => [] as Peer[]),
   ]);
-  const byDid = new Map(peers.filter((peer) => peer.did).map((peer) => [peer.did!, peer]));
+  // DIDs are compared case-insensitively so the same peer reported with
+  // differently-cased DIDs by the raw registry vs. Circle/contact metadata
+  // overlays into one entry instead of appearing twice.
+  const guardianDidLower = guardianDid?.toLowerCase();
+  const byDid = new Map(
+    peers.filter((peer) => peer.did).map((peer) => [peer.did!.toLowerCase(), peer]),
+  );
   for (const contact of contacts) {
-    if (!contact.did || contact.did === guardianDid) continue;
-    byDid.set(contact.did, contact);
+    if (!contact.did || contact.did.toLowerCase() === guardianDidLower) continue;
+    byDid.set(contact.did.toLowerCase(), contact);
   }
   return [...byDid.values()];
 }

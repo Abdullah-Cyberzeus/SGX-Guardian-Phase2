@@ -1947,7 +1947,7 @@ function RunDetailsDialog({
               }}
             >
               <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px", color: "var(--destructive)", whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}>
-                {details.errorMessage}
+                {guardianDisplayText(details.errorMessage)}
               </p>
             </div>
           )}

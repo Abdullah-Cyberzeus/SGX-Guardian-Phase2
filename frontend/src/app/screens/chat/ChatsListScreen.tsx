@@ -15,23 +15,28 @@ function initials(peer: Peer) {
 }
 
 function displayName(peer: Peer, contactName?: string) {
-  return contactName || peer.peerId || peer.did || "Trusted peer";
+  return contactName || peer.displayName || peer.peerId || peer.did || "Trusted peer";
 }
 
 function dedupePeers(peers: Peer[]) {
+  // DIDs are compared case-insensitively: the same peer can surface with
+  // differently-cased DIDs across sources (raw attestation registry vs.
+  // Circle/contact metadata), which otherwise produces a duplicate row for
+  // one physical device.
   const byDid = new Map<string, Peer>();
   for (const peer of peers) {
     if (!peer.did) continue;
-    const existing = byDid.get(peer.did);
+    const key = peer.did.toLowerCase();
+    const existing = byDid.get(key);
     if (!existing) {
-      byDid.set(peer.did, peer);
+      byDid.set(key, peer);
       continue;
     }
     // Either source reporting "hidden" (the contact opted to hide presence)
     // must win outright — OR-ing raw `online` flags together would let an
     // ungated duplicate resurrect an otherwise-hidden contact's status.
     const hidden = existing.presenceStatus === "hidden" || peer.presenceStatus === "hidden";
-    byDid.set(peer.did, {
+    byDid.set(key, {
       ...existing,
       ...peer,
       online: hidden ? false : existing.online || peer.online,

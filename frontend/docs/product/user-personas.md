@@ -67,7 +67,7 @@ Marcus is the **primary user** of the SG-X Guardian mobile app. He is the person
 
 **2:30 PM** — Gets a call from his team lead Sofia. She's added him to a new Circle for their incident response team. He needs to accept the invite — she sent it as a link.
 
-**4:45 PM** — End of day check: reviews the day's security posture, confirms no outstanding HIGH alerts, checks that the Guardian's battery and connection are healthy.
+**4:45 PM** — End of day check: reviews the day's security posture, confirms no outstanding HIGH alerts, and checks that the Guardian's connection is healthy.
 
 ---
 
@@ -102,7 +102,7 @@ Marcus is the **primary user** of the SG-X Guardian mobile app. He is the person
 | ----- | ----- |
 | **Security health at a glance** | Dashboard must lead with a single Health Score ring (0–100) that gives an instant yes/no on system status |
 | **Actionable alert detail** | Alert expanded view must include: device name, IP address, protocol, AI recommendation, and one-tap remediation options |
-| **Clear connection status** | Guardian device card must always show: connected/disconnected, battery %, signal strength, last seen timestamp |
+| **Clear connection status** | Guardian device card must always show: connected/disconnected, signal strength, last seen timestamp |
 | **Fast one-handed navigation** | All primary actions must be reachable within 2 taps from the bottom nav. No buried menus. |
 | **Offline awareness** | If the Guardian is unreachable, the app must say so clearly — not just show stale data silently |
 | **Plain-language DID explanation** | First time Marcus sees his DID or needs to share it, the app must explain it in one sentence |
@@ -324,4 +324,3 @@ These personas directly drive the following design decisions:
 | Guardian Simulator removed from production | Marcus | He accidentally tapped it — not a user feature |
 | Members tab shows last seen \+ connection type | Sofia | Needs team context not just online/offline |
 | Min touch target 44px on all interactive elements | Marcus | Gloved hands, field conditions, WCAG AA |
-

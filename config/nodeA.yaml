@@ -1,6 +1,8 @@
 ---
 node_id: "nodeA"
+device_name: "nodeA"
 hostname: "nodea.guardian"
+display_hostname: "nodea.guardian"
 ip: "127.0.0.1"
 port: 50051
 public_key: "placeholder-key-A"

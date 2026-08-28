@@ -169,6 +169,10 @@ pub fn devices_router() -> Router<Arc<AppState>> {
             post(handlers::devices::reject),
         )
         .route(
+            "/api/v1/managed-devices/{device_id}/approve",
+            post(handlers::devices::approve),
+        )
+        .route(
             "/api/v1/managed-devices/{device_id}/unblock",
             post(handlers::devices::unblock),
         )
@@ -238,6 +242,10 @@ pub fn vault_router() -> Router<Arc<AppState>> {
         .route(
             "/api/v1/vault/files/{id}/revoke",
             post(handlers::vault::revoke),
+        )
+        .route(
+            "/api/v1/vault/files/{id}/restore",
+            post(handlers::vault::restore),
         )
         .route(
             "/api/v1/vault/files/{id}/expiry",

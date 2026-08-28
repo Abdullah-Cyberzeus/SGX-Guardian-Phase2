@@ -21,7 +21,7 @@ import { toast } from "sonner";
 
 type Mode = "active" | "archived" | "bulk";
 type SeverityFilter = "ALL" | "HIGH" | "MEDIUM" | "LOW";
-type StatusFilter = "ALL" | "Active" | "Acknowledged" | "Blocked";
+type StatusFilter = "ALL" | "Active" | "Acknowledged" | "Blocked" | "Quarantine";
 type AlertView = Alert & Partial<typeof mockAlerts[number]>;
 type RecommendationState =
   | { status: "idle" | "loading" }
@@ -529,6 +529,7 @@ function AlertListPanel({
           <option value="Active">Active</option>
           <option value="Acknowledged">Acknowledged</option>
           <option value="Blocked">Blocked</option>
+          <option value="Quarantine">Quarantine</option>
         </select>
       </div>
 
@@ -705,7 +706,8 @@ export function AL01AlertsList() {
     return baseAlerts.filter((a: any) => {
       const matchSearch = !search || a.title.toLowerCase().includes(search.toLowerCase()) || a.device.toLowerCase().includes(search.toLowerCase());
       const matchSeverity = severityFilter === "ALL" || a.severity === severityFilter;
-      const matchStatus = statusFilter === "ALL" || a.status === statusFilter;
+      const matchStatus = statusFilter === "ALL" || a.status === statusFilter
+        || (statusFilter === "Quarantine" && a.status === "Blocked");
       return matchSearch && matchSeverity && matchStatus;
     });
   }, [baseAlerts, search, severityFilter, statusFilter]);

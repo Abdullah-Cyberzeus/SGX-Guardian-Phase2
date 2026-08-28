@@ -1272,6 +1272,46 @@ pub async fn reject(
     }))
 }
 
+pub async fn approve(
+    State(state): State<Arc<AppState>>,
+    Path(device_id): Path<String>,
+) -> Result<Json<DeviceActionResponse>, ApiError> {
+    let device = load_managed_devices(state.as_ref())
+        .await?
+        .into_iter()
+        .find(|device| device.device_id == device_id)
+        .ok_or_else(|| ApiError::NotFound("device not found".into()))?;
+
+    if let Some(mac) = device.mac.as_deref().filter(|mac| !mac.trim().is_empty()) {
+        crate::api::handlers::discovery::approve_device(
+            State(state.clone()),
+            Json(crate::api::handlers::discovery::ApproveRequest {
+                mac: mac.to_string(),
+                label: device
+                    .display_name
+                    .clone()
+                    .or_else(|| device.hostname.clone())
+                    .or_else(|| device.vendor.clone()),
+            }),
+        )
+        .await?;
+    }
+
+    approve_managed_device(state.as_ref(), &device).await?;
+    log_audit(
+        &state.node_id,
+        AuditCategory::Enforcement,
+        AuditSeverity::Info,
+        AuditAction::Succeeded,
+        &format!("Device approved: {}", device_id),
+    );
+    Ok(Json(DeviceActionResponse {
+        device_id,
+        success: true,
+        message: "device approved, rejection cleared, and firewall block removed".into(),
+    }))
+}
+
 pub async fn unblock(
     State(state): State<Arc<AppState>>,
     Path(device_id): Path<String>,
@@ -1434,6 +1474,39 @@ async fn reject_device(
     let record = registry.reject(device_id, reason).map_err(devices_error)?;
     registry.save_atomic(&path).await.map_err(devices_error)?;
     remove_from_whitelist(state, device_id).await?;
+    Ok(record)
+}
+
+async fn approve_managed_device(
+    state: &AppState,
+    device: &ManagedDeviceResponse,
+) -> Result<crate::devices::DeviceRecord, ApiError> {
+    let cfg = devices_config_for_state(state);
+    let path = cfg.registry_path();
+    let mut registry = crate::devices::registry::DeviceRegistry::load(&path)
+        .await
+        .map_err(devices_error)?;
+    let is_blocked = registry
+        .devices
+        .get(&device.device_id)
+        .is_some_and(|record| record.blocked);
+
+    if is_blocked {
+        let ip = device
+            .ip
+            .as_deref()
+            .ok_or_else(|| ApiError::BadRequest("blocked device has no IP target".into()))?;
+        let blocker = build_threat_blocker(state).await?;
+        blocker
+            .unblock_ip(ip)
+            .await
+            .map_err(api_error_from_threat_blocker_error)?;
+    }
+
+    let record = registry
+        .approve(&device.device_id)
+        .map_err(devices_error)?;
+    registry.save_atomic(&path).await.map_err(devices_error)?;
     Ok(record)
 }
 
@@ -1688,19 +1761,19 @@ async fn run_targeted_scan_progress(
 
     set_scan_stage(&mut run, 2, "running");
     crate::devices::scan::append_run(&scans_path, &run).await?;
-    let observed_device = match targeted_scan_findings(&discovery_config_dir, &ip, timeout_secs)
-        .await
-    {
-        Ok(device) => device,
-        Err(err) => {
-            run.findings = vec![format!("targeted scan failed: {}", err)];
-            run.recommendations = vec!["verify nmap availability and target reachability".into()];
-            set_scan_stage(&mut run, 2, "failed");
-            run.finished_at = Some(Utc::now().to_rfc3339());
-            crate::devices::scan::append_run(&scans_path, &run).await?;
-            return Ok(());
-        }
-    };
+    let observed_device =
+        match targeted_scan_findings(&discovery_config_dir, &ip, timeout_secs).await {
+            Ok(device) => device,
+            Err(err) => {
+                run.findings = vec![format!("targeted scan failed: {}", err)];
+                run.recommendations =
+                    vec!["verify Guardian scanner availability and target reachability".into()];
+                set_scan_stage(&mut run, 2, "failed");
+                run.finished_at = Some(Utc::now().to_rfc3339());
+                crate::devices::scan::append_run(&scans_path, &run).await?;
+                return Ok(());
+            }
+        };
 
     set_scan_stage(&mut run, 2, "complete");
     crate::devices::scan::append_run(&scans_path, &run).await?;
@@ -2274,7 +2347,6 @@ mod tests {
         session::Claims,
         store::PairingChallengeRecord,
     };
-    use crate::api::handlers::discovery::{approve_device, ApproveRequest};
     use crate::did::document::Proof;
     use crate::discovery::{ConnectedDevice, DeviceStatus, OpenPort};
     use crate::key_manager::KeyManager;
@@ -3301,12 +3373,9 @@ mod tests {
         .expect("read whitelist");
         assert!(!whitelist.contains("AA:BB:CC:DD:EE:44"));
 
-        let _approve_response = approve_device(
+        let _approve_response = approve(
             State(state.clone()),
-            Json(ApproveRequest {
-                mac: "AA:BB:CC:DD:EE:44".into(),
-                label: Some("Sensor".into()),
-            }),
+            Path("reject-device-1".into()),
         )
         .await
         .expect("approve device");

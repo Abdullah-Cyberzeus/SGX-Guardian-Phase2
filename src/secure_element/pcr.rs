@@ -484,6 +484,9 @@ const PCR_DYNAMIC_DENYLIST: &[&str] = &[
     "ip",
     "lan_ip",
     "detected_ip",
+    // Human-facing labels do not alter the measured security posture.
+    "device_name",
+    "display_hostname",
     "endpoint",
     "endpoints",
     "runtime",
@@ -808,5 +811,39 @@ mod tests {
 
         assert_ne!(node_uid, hw_uid);
         assert_eq!(node_uid.len(), 64); // SHA256 hex
+    }
+
+    #[test]
+    fn canonical_config_ignores_cosmetic_names_but_keeps_security_fields() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let first = dir.path().join("first.yaml");
+        let cosmetic = dir.path().join("cosmetic.yaml");
+        let security = dir.path().join("security.yaml");
+
+        std::fs::write(
+            &first,
+            "node_id: nodeA\ndevice_name: First\ndisplay_hostname: first.guardian\noffline_mode: 1\n",
+        )
+        .expect("write first config");
+        std::fs::write(
+            &cosmetic,
+            "node_id: nodeA\ndevice_name: Second\ndisplay_hostname: second.guardian\noffline_mode: 1\n",
+        )
+        .expect("write cosmetic config");
+        std::fs::write(
+            &security,
+            "node_id: nodeA\ndevice_name: Second\ndisplay_hostname: second.guardian\noffline_mode: 0\n",
+        )
+        .expect("write security config");
+
+        let first_measurement =
+            canonical_static_yaml_measurement(first.to_str().expect("utf8 path"));
+        let cosmetic_measurement =
+            canonical_static_yaml_measurement(cosmetic.to_str().expect("utf8 path"));
+        let security_measurement =
+            canonical_static_yaml_measurement(security.to_str().expect("utf8 path"));
+
+        assert_eq!(first_measurement, cosmetic_measurement);
+        assert_ne!(first_measurement, security_measurement);
     }
 }

@@ -131,8 +131,42 @@ public_key: dummy_pubkey
 
     let body: serde_json::Value = res.json().await.unwrap();
     assert_eq!(body["nodeId"], "test-nodeA");
+    assert_eq!(body["deviceName"], "test-nodeA");
     assert_eq!(body["hostname"], "test-host");
+    assert_eq!(body["displayHostname"], "test-host");
     assert_eq!(body["ip"], "10.0.0.1");
+}
+
+#[tokio::test]
+async fn test_node_display_info_can_change_without_changing_identity() {
+    let temp_dir = TempDir::new().unwrap();
+    let (base_url, _handle, state) = spawn_api(temp_dir.path()).await;
+    let config_path = temp_dir.path().join("config/test-nodeA.yaml");
+    let config_yaml = "node_id: test-nodeA\nhostname: test-host\nip: 10.0.0.1\nport: 50051\npublic_key: dummy_pubkey\ncustom_section:\n  preserved: true\n";
+    std::fs::write(&config_path, config_yaml).unwrap();
+
+    let client = AppState::authed_client_for_tests(&state).await;
+    let response = client
+        .patch(format!("{}/api/v1/node/status", base_url))
+        .json(&serde_json::json!({
+            "deviceName": "Living Room Guardian",
+            "displayHostname": "guardian-home"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["deviceName"], "Living Room Guardian");
+    assert_eq!(body["displayHostname"], "guardian-home");
+    assert_eq!(body["nodeId"], "test-nodeA");
+    assert_eq!(body["hostname"], "test-host");
+
+    let persisted = std::fs::read_to_string(config_path).unwrap();
+    assert!(persisted.contains("device_name: \"Living Room Guardian\""));
+    assert!(persisted.contains("display_hostname: \"guardian-home\""));
+    assert!(persisted.contains("custom_section:"));
 }
 
 #[tokio::test]

@@ -20,6 +20,19 @@ import { toast } from "sonner";
 
 type FilterTab = "all" | "verified" | "pending" | "failed";
 
+/** Full-word relative time for the network-status banner (e.g. "2 days ago"),
+ *  distinct from the compact "2d ago" used on individual peer rows. */
+function formatVerifiedAgo(isoDate: string): string {
+  const diffMs = Date.now() - new Date(isoDate).getTime();
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
 function StatusBadge({ status }: { status: Peer["status"] }) {
   const config = {
     verified: {
@@ -275,6 +288,15 @@ export function NW03PeersList() {
     pending: peers.filter((p) => p.status === "pending").length,
     failed: peers.filter((p) => p.status === "failed").length,
   }), [peers]);
+
+  const lastVerifiedAgo = useMemo(() => {
+    const verifiedTimestamps = peers
+      .filter((p) => p.status === "verified" && p.lastSeen)
+      .map((p) => new Date(p.lastSeen).getTime())
+      .filter((t) => !Number.isNaN(t));
+    if (verifiedTimestamps.length === 0) return null;
+    return formatVerifiedAgo(new Date(Math.max(...verifiedTimestamps)).toISOString());
+  }, [peers]);
 
   const handleAttest = async (peerId: string) => {
     setAttestingId(peerId);
@@ -537,7 +559,7 @@ export function NW03PeersList() {
           </button>
         </div>
 
-        {/* Data source + CLI info */}
+        {/* Network verification status */}
         <div className="px-4 pb-6">
           <div
             className="flex items-start gap-3 p-4 rounded-lg"
@@ -556,8 +578,9 @@ export function NW03PeersList() {
                   lineHeight: 1.5,
                 }}
               >
-                Peers are discovered and attested via <code style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px" }}>sgx-pa-cli peers</code>.
-                Data sourced from <code style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px" }}>trusted_peers.json</code>.
+                {counts.verified > 0
+                  ? `Your Guardian network is verified and secure. Peer verification last completed ${lastVerifiedAgo || "recently"}.`
+                  : "Your Guardian network has no verified peers yet."}
               </p>
               <p
                 style={{

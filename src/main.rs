@@ -57,13 +57,6 @@ fn env_true(key: &str) -> bool {
     )
 }
 
-#[cfg(feature = "secure-element")]
-fn should_attempt_se050() -> bool {
-    env_true("SGX_SE050_REQUIRED")
-        || env_true("SGX_SE050_PROBE")
-        || (0..=8).any(|index| std::path::Path::new(&format!("/dev/i2c-{index}")).exists())
-}
-
 fn audit_key_backend(node_id: &str, message: &str) {
     log_audit(
         node_id,
@@ -75,7 +68,14 @@ fn audit_key_backend(node_id: &str, message: &str) {
 }
 
 fn initialize_key_manager(node_id: &str, node_key_path: &str) -> anyhow::Result<KeyManager> {
+    let se050_required = env_true("SGX_SE050_REQUIRED");
+
     if GATES.force_software_keys {
+        if se050_required {
+            return Err(anyhow::anyhow!(
+                "SGX_SE050_REQUIRED conflicts with SGX_FORCE_SOFTWARE_KEYS"
+            ));
+        }
         let km = KeyManager::load_or_generate(node_key_path)?;
         println!("Key backend: software keys (forced by SGX_FORCE_SOFTWARE_KEYS)");
         audit_key_backend(node_id, "Key backend selected: software forced");
@@ -85,7 +85,7 @@ fn initialize_key_manager(node_id: &str, node_key_path: &str) -> anyhow::Result<
     #[cfg(feature = "tpm")]
     {
         let tpm_config = sgx_guardian_client::tpm::TpmConfig::default();
-        if sgx_guardian_client::tpm::should_attempt(&tpm_config) {
+        if !se050_required && sgx_guardian_client::tpm::should_attempt(&tpm_config) {
             match KeyManager::init_with_tpm(
                 &tpm_config,
                 sgx_guardian_client::tpm::TPM_BASE_PATH,
@@ -105,24 +105,44 @@ fn initialize_key_manager(node_id: &str, node_key_path: &str) -> anyhow::Result<
 
     #[cfg(feature = "secure-element")]
     {
-        if should_attempt_se050() {
-            let se_config = secure_element::SeConfig::default();
-            match KeyManager::init_with_se050(&se_config, "/var/lib/sgx-guardian", node_key_path) {
-                Ok(km) if km.backend_name() == "SE050" => {
-                    println!("Secure Element detected and initialized; key backend: SE050");
-                    audit_key_backend(node_id, "Key backend selected: SE050 hardware");
-                    return Ok(km);
+        // The SE050 middleware may be usable even when its I2C device is
+        // outside a small hard-coded range or hidden behind a container.
+        // Always attempt the configured backend, matching the known-good
+        // attestation builds, and only permit fallback when it is optional.
+        let se_config = secure_element::SeConfig::default();
+        match KeyManager::init_with_se050(&se_config, "/var/lib/sgx-guardian", node_key_path) {
+            Ok(km) if km.backend_name() == "SE050" => {
+                println!("Secure Element detected and initialized; key backend: SE050");
+                audit_key_backend(node_id, "Key backend selected: SE050 hardware");
+                return Ok(km);
+            }
+            Ok(_) if se050_required => {
+                return Err(anyhow::anyhow!(
+                    "SE050 is required but initialization selected a software key backend"
+                ));
+            }
+            Ok(km) => {
+                println!("SE050 not active; key backend: software");
+                audit_key_backend(node_id, "Key backend selected: software fallback");
+                return Ok(km);
+            }
+            Err(error) => {
+                if se050_required {
+                    return Err(anyhow::anyhow!(
+                        "SE050 is required but initialization failed: {}",
+                        error
+                    ));
                 }
-                Ok(km) => {
-                    println!("SE050 not active; key backend: software");
-                    audit_key_backend(node_id, "Key backend selected: software fallback");
-                    return Ok(km);
-                }
-                Err(error) => {
-                    eprintln!("SE050 probe failed: {}", error);
-                }
+                eprintln!("SE050 probe failed: {}", error);
             }
         }
+    }
+
+    #[cfg(not(feature = "secure-element"))]
+    if se050_required {
+        return Err(anyhow::anyhow!(
+            "SGX_SE050_REQUIRED is set but secure-element support is not compiled in"
+        ));
     }
 
     let km = KeyManager::load_or_generate(node_key_path)?;
@@ -812,7 +832,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut snapshot = pcr_engine.snapshot();
         snapshot.measurement_errors = measurement_errors;
         snapshot.integrity_status = integrity_status;
-        snapshot.device_uid = read_device_uid(&node_id);
+        #[cfg(feature = "secure-element")]
+        let se_node_uid = if km.backend_name() == "SE050" {
+            let se_config = sgx_guardian_client::secure_element::config::SeConfig::default();
+            Some(node_device_uid(
+                &se_config,
+                "/var/lib/sgx-guardian/keys/dkp_pub.der",
+                &node_id,
+            ))
+        } else {
+            None
+        };
+        #[cfg(not(feature = "secure-element"))]
+        let se_node_uid: Option<String> = None;
+
+        snapshot.device_uid = se_node_uid
+            .unwrap_or_else(|| sgx_guardian_client::key_manager::runtime_device_uid(&node_id));
         snapshot.key_version = read_dkp_key_version();
 
         // Generate nonce + timestamp
@@ -978,7 +1013,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("⚠️ No config found for {} — using defaults", node);
         NodeConfig {
             node_id: node.to_string(),
+            device_name: None,
             hostname: format!("guardian-node-{}", &node[4..]),
+            display_hostname: None,
             ip: "0.0.0.0".to_string(),
             port: match node {
                 "nodeA" => 50051,
@@ -1182,46 +1219,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (reattest_tx, mut reattest_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     sgx_guardian_client::attestation_service::set_reattest_sender(reattest_tx);
     let node_key_path_for_reattest = node_key_path.clone();
-    tokio::spawn(async move {
-        while let Some(peer_did) = reattest_rx.recv().await {
-            let resolver = sgx_guardian_client::did::Resolver::new(Default::default());
-            let res = match resolver.resolve(&peer_did).await {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!("Re-attest: cannot resolve {}: {}", peer_did, e);
-                    continue;
-                }
-            };
-            let attest_endpoint = res.services.iter().find(|s| s.r#type == "SGXAttestation");
-            let Some(endpoint) = attest_endpoint else {
-                tracing::warn!("Re-attest: peer {} has no SGXAttestation service", peer_did);
-                continue;
-            };
-            let url = endpoint.endpoint.trim_start_matches("tcp://");
-            let Some((ip, port_str)) = url.rsplit_once(':') else {
-                tracing::warn!("Re-attest: cannot parse endpoint {}", endpoint.endpoint);
-                continue;
-            };
-            let Ok(port) = port_str.parse::<u16>() else {
-                tracing::warn!("Re-attest: cannot parse port in {}", endpoint.endpoint);
-                continue;
-            };
-            let km_for_reattest = match KeyManager::load_or_generate(&node_key_path_for_reattest) {
-                Ok(km) => km,
-                Err(e) => {
-                    tracing::warn!("Re-attest: cannot load local key: {}", e);
-                    continue;
-                }
-            };
-            tracing::info!("Re-attesting with peer {} at {}:{}", peer_did, ip, port);
-            let _ = sgx_guardian_client::attestation_service::AttestationService::mutual_attest(
-                ip.to_string(),
-                port,
-                &km_for_reattest,
-            )
-            .await;
-        }
-    });
 
     step(9, "Guardian Mesh subsystem gate");
     if !GATES.disable_nebula {
@@ -1681,6 +1678,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
         let resolver_for_pull = did_resolver.clone();
         resolver_for_flag = did_resolver.clone();
+        let resolver_for_reattest = did_resolver.clone();
+        tokio::spawn(async move {
+            while let Some(peer_did) = reattest_rx.recv().await {
+                let res = match resolver_for_reattest.resolve(&peer_did).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::warn!("Re-attest: cannot resolve {}: {}", peer_did, e);
+                        continue;
+                    }
+                };
+                let attest_endpoint = res.services.iter().find(|s| s.r#type == "SGXAttestation");
+                let Some(endpoint) = attest_endpoint else {
+                    tracing::warn!("Re-attest: peer {} has no SGXAttestation service", peer_did);
+                    continue;
+                };
+                let url = endpoint.endpoint.trim_start_matches("tcp://");
+                let Some((ip, port_str)) = url.rsplit_once(':') else {
+                    tracing::warn!("Re-attest: cannot parse endpoint {}", endpoint.endpoint);
+                    continue;
+                };
+                let Ok(port) = port_str.parse::<u16>() else {
+                    tracing::warn!("Re-attest: cannot parse port in {}", endpoint.endpoint);
+                    continue;
+                };
+                let km_for_reattest =
+                    match KeyManager::load_or_generate(&node_key_path_for_reattest) {
+                        Ok(km) => km,
+                        Err(e) => {
+                            tracing::warn!("Re-attest: cannot load local key: {}", e);
+                            continue;
+                        }
+                    };
+                tracing::info!("Re-attesting with peer {} at {}:{}", peer_did, ip, port);
+                let _ =
+                    sgx_guardian_client::attestation_service::AttestationService::mutual_attest(
+                        ip.to_string(),
+                        port,
+                        &km_for_reattest,
+                    )
+                    .await;
+            }
+        });
 
         let node_for_registry_sync = node_id.clone();
         let nebula_dir_for_registry_sync = nebula_base_dir.clone();
