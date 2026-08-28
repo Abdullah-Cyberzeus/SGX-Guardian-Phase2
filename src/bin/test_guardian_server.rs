@@ -111,8 +111,11 @@ async fn main() {
 
     let node_id = std::env::var("TEST_GUARDIAN_NODE_ID").unwrap_or_else(|_| "nodeA".to_string());
 
-    let state =
-        AppState::for_tests(&state_dir, &node_id, config_dir.to_string_lossy().to_string());
+    let state = AppState::for_tests(
+        &state_dir,
+        &node_id,
+        config_dir.to_string_lossy().to_string(),
+    );
 
     bootstrap_owner_identity(
         &node_id,

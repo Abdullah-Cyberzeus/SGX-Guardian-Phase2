@@ -257,11 +257,8 @@ pub async fn create(
                 .intersection(&member_circle_ids)
                 .cloned()
                 .collect();
-            match crate::api::handlers::browser_member::dids_for_circles(
-                &state,
-                &scoped_circle_ids,
-            )
-            .await
+            match crate::api::handlers::browser_member::dids_for_circles(&state, &scoped_circle_ids)
+                .await
             {
                 Ok(dids) => dids,
                 Err(error_value) => {
@@ -285,9 +282,10 @@ pub async fn create(
             && (trusted.iter().any(|peer| {
                 request.member_ids.contains(&peer.peer_id)
                     && !peer.did.as_ref().is_some_and(|did| contacts.contains(did))
-            }) || request.member_ids.iter().any(|id| {
-                local_browser_dids.contains(id) && !member_browser_dids.contains(id)
-            }));
+            }) || request
+                .member_ids
+                .iter()
+                .any(|id| local_browser_dids.contains(id) && !member_browser_dids.contains(id)));
         if unauthorized_requested {
             if let Some(Extension(session)) = session.as_ref() {
                 crate::api::auth::authorization::audit_member_resource_denied(

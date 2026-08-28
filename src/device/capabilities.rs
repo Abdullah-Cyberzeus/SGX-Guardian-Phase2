@@ -375,13 +375,10 @@ pub fn derive(device: &Device, temperature_unit: &str) -> DeviceCapabilities {
                     "input_select",
                     "select_option",
                     "Select Option",
-                    vec![CommandParamSpec::enumerated(
-                        "option",
-                        "Option",
-                        options,
-                        true,
-                    )
-                    .default_value(Some(Value::String(state.to_string())))],
+                    vec![
+                        CommandParamSpec::enumerated("option", "Option", options, true)
+                            .default_value(Some(Value::String(state.to_string()))),
+                    ],
                 )];
             }
         }
@@ -470,13 +467,10 @@ fn derive_climate(
             "climate",
             "set_hvac_mode",
             "Set HVAC Mode",
-            vec![CommandParamSpec::enumerated(
-                "hvac_mode",
-                "HVAC mode",
-                hvac_modes.clone(),
-                true,
-            )
-            .default_value(Some(Value::String(state.to_string())))],
+            vec![
+                CommandParamSpec::enumerated("hvac_mode", "HVAC mode", hvac_modes.clone(), true)
+                    .default_value(Some(Value::String(state.to_string()))),
+            ],
         ));
     }
 
@@ -533,13 +527,10 @@ fn derive_climate(
             "climate",
             "set_preset_mode",
             "Set Preset Mode",
-            vec![CommandParamSpec::enumerated(
-                "preset_mode",
-                "Preset",
-                preset_modes,
-                true,
-            )
-            .default_value(climate.preset_mode.clone().map(Value::String))],
+            vec![
+                CommandParamSpec::enumerated("preset_mode", "Preset", preset_modes, true)
+                    .default_value(climate.preset_mode.clone().map(Value::String)),
+            ],
         ));
     }
 
@@ -669,8 +660,14 @@ fn derive_light(
         on_params.push(
             CommandParamSpec::number("color_temp_kelvin", "Color temperature", false)
                 .bounds(
-                    light.min_color_temp_kelvin.map(|v| v as f64).or(Some(2000.0)),
-                    light.max_color_temp_kelvin.map(|v| v as f64).or(Some(6535.0)),
+                    light
+                        .min_color_temp_kelvin
+                        .map(|v| v as f64)
+                        .or(Some(2000.0)),
+                    light
+                        .max_color_temp_kelvin
+                        .map(|v| v as f64)
+                        .or(Some(6535.0)),
                     Some(50.0),
                 )
                 .unit("K"),
@@ -737,11 +734,9 @@ fn derive_cover(sf: u64) -> Vec<CommandSpec> {
             "cover",
             "set_cover_position",
             "Set Position",
-            vec![
-                CommandParamSpec::number("position", "Position", true)
-                    .bounds(Some(0.0), Some(100.0), Some(1.0))
-                    .unit("%"),
-            ],
+            vec![CommandParamSpec::number("position", "Position", true)
+                .bounds(Some(0.0), Some(100.0), Some(1.0))
+                .unit("%")],
         ));
     }
     if sf & cover_features::SET_TILT_POSITION != 0 {
@@ -762,7 +757,12 @@ fn derive_cover(sf: u64) -> Vec<CommandSpec> {
 fn derive_media_player(attrs: &Map<String, Value>, sf: u64) -> Vec<CommandSpec> {
     let mut commands = Vec::new();
     if sf & media_features::TURN_ON != 0 {
-        commands.push(CommandSpec::new("media_player", "turn_on", "Turn On", vec![]));
+        commands.push(CommandSpec::new(
+            "media_player",
+            "turn_on",
+            "Turn On",
+            vec![],
+        ));
     }
     if sf & media_features::TURN_OFF != 0 {
         commands.push(CommandSpec::new(
@@ -919,7 +919,10 @@ mod tests {
         assert_eq!(temp.max, Some(90.0));
         assert_eq!(temp.unit.as_deref(), Some("°F"));
         assert_eq!(temp.default, Some(Value::from(74.0)));
-        assert!(temp.required, "single-setpoint device requires `temperature`");
+        assert!(
+            temp.required,
+            "single-setpoint device requires `temperature`"
+        );
 
         // Only the modes the device actually has.
         let hvac = &caps.command("set_hvac_mode").unwrap().params[0];
@@ -1020,11 +1023,17 @@ mod tests {
 
         let f = derive(&device_with("climate.f", "heat", attrs.clone()), "°F");
         let fp = &f.command("set_temperature").unwrap().params[0];
-        assert_eq!((fp.min, fp.max, fp.step), (Some(45.0), Some(95.0), Some(1.0)));
+        assert_eq!(
+            (fp.min, fp.max, fp.step),
+            (Some(45.0), Some(95.0), Some(1.0))
+        );
 
         let c = derive(&device_with("climate.c", "heat", attrs), "°C");
         let cp = &c.command("set_temperature").unwrap().params[0];
-        assert_eq!((cp.min, cp.max, cp.step), (Some(7.0), Some(35.0), Some(0.5)));
+        assert_eq!(
+            (cp.min, cp.max, cp.step),
+            (Some(7.0), Some(35.0), Some(0.5))
+        );
     }
 
     /// Permanent guard: sensors used to be handed a nonfunctional On/Off control.

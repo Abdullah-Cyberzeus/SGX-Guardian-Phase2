@@ -289,7 +289,10 @@ pub async fn execute_device_command(
             // Home Assistant refused or was unreachable — an upstream problem.
             StatusCode::BAD_GATEWAY
         };
-        return Err((status, Json(serde_json::json!({ "error": e, "command_id": cmd_id }))));
+        return Err((
+            status,
+            Json(serde_json::json!({ "error": e, "command_id": cmd_id })),
+        ));
     }
 
     // Home Assistant returns 2xx only after the service handler completes, so the command

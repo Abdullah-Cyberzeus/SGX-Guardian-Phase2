@@ -4,6 +4,8 @@ import { Archive, ArchiveRestore, Check, ChevronLeft, Clipboard, Copy, Download,
 import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
 import { useContactNames } from "../../contexts/ContactNameContext";
+import { useAuth } from "../../contexts/AuthContext";
+import { useGuardianInfo } from "../../hooks/useApiData";
 import circleService, { Circle, CircleInvite, CircleMember, CircleRole, MemberEnrollment, MemberEnrollmentInvite } from "../../services/circleService";
 import didService, { DIDDocumentPeerSummary } from "../../services/didService";
 
@@ -46,7 +48,9 @@ function ConfirmDialog({ title, message, confirmLabel, onConfirm, onClose, busy,
 export function CircleManagementScreen() {
   const { circleId = "" } = useParams();
   const navigate = useNavigate();
+  const { session } = useAuth();
   const { displayForDid } = useContactNames();
+  const { data: guardianInfo } = useGuardianInfo();
   const [tab, setTab] = useState<Tab>("details");
   const [circle, setCircle] = useState<Circle | null>(null);
   const [members, setMembers] = useState<CircleMember[]>([]);
@@ -367,10 +371,13 @@ export function CircleManagementScreen() {
     return `${peer.did} ${peer.node_name}`.toLowerCase().includes(needle);
   });
   const selectedPeer = didPeers.find((peer) => sameDid(peer.did, targetDid));
+  const localGuardianName = guardianInfo?.deviceId || guardianInfo?.name || guardianInfo?.hostname;
 
   const memberRow = (member: CircleMember, revoked = false) => {
     const primaryOwner = sameDid(member.did, circle?.ownerDid);
-    const memberDisplayName = displayForDid(member.did, member.name || member.email || member.did);
+    const memberDisplayName = sameDid(member.did, session?.guardianDid) && localGuardianName
+      ? localGuardianName
+      : displayForDid(member.did, member.name || member.email || member.did);
     const memberSecondary = displayForDid(member.did, member.did);
     return (
     <div key={member.did || member.id} className="flex flex-col gap-3 border-b border-border p-4 last:border-0 sm:flex-row sm:items-center">

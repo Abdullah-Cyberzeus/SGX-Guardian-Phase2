@@ -39,7 +39,7 @@ interface UseApiDataResult<T> {
  */
 export function useApiData<T>(
   apiCall: () => Promise<T>,
-  options?: { autoFetch?: boolean; pollingInterval?: number }
+  options?: { autoFetch?: boolean; pollingInterval?: number; refreshEvents?: string[] }
 ): UseApiDataResult<T> {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
@@ -93,6 +93,15 @@ export function useApiData<T>(
       return () => clearInterval(id);
     }
   }, []);
+
+  useEffect(() => {
+    if (!options?.refreshEvents?.length) return;
+    const refresh = () => void fetchData(true);
+    options.refreshEvents.forEach((eventName) => window.addEventListener(eventName, refresh));
+    return () => {
+      options.refreshEvents?.forEach((eventName) => window.removeEventListener(eventName, refresh));
+    };
+  }, [fetchData, options?.refreshEvents]);
 
   return { data, loading, error, source, refetch };
 }
@@ -199,7 +208,17 @@ export async function fetchCommunicationPeers(isMember: boolean, guardianDid?: s
   );
   for (const contact of contacts) {
     if (!contact.did || contact.did.toLowerCase() === guardianDidLower) continue;
-    byDid.set(contact.did.toLowerCase(), contact);
+    const key = contact.did.toLowerCase();
+    const existing = byDid.get(key);
+    byDid.set(key, existing ? {
+      ...existing,
+      ...contact,
+      peerId: existing.peerId || contact.peerId,
+      ip: existing.ip || contact.ip,
+      port: existing.port || contact.port,
+      callAvailable: contact.callAvailable && existing.callAvailable,
+      callUnavailableReason: contact.callUnavailableReason || existing.callUnavailableReason,
+    } : contact);
   }
   return [...byDid.values()];
 }
@@ -280,7 +299,10 @@ export function useDusageQuota() {
  * Hook for guardian info (dashboard)
  */
 export function useGuardianInfo() {
-  return useApiData(() => guardianService.getInfo(), { pollingInterval: 15000 });
+  return useApiData(() => guardianService.getInfo(), {
+    pollingInterval: 15000,
+    refreshEvents: ["sgx:guardian-display-updated"],
+  });
 }
 
 /**

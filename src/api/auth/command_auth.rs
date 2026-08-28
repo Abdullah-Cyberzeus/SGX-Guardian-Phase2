@@ -296,9 +296,16 @@ impl CommandAuthorizer {
                 if command == "turn_on" && state == "on" {
                     // An adjustment (brightness, color, ...) makes it a real change.
                     if let Some(params_val) = params {
-                        let adjusts = ["brightness", "color_temp", "color_temp_kelvin", "rgb_color", "hs_color", "effect"]
-                            .iter()
-                            .any(|key| params_val.get(key).is_some());
+                        let adjusts = [
+                            "brightness",
+                            "color_temp",
+                            "color_temp_kelvin",
+                            "rgb_color",
+                            "hs_color",
+                            "effect",
+                        ]
+                        .iter()
+                        .any(|key| params_val.get(key).is_some());
                         if adjusts {
                             return Ok(());
                         }
@@ -349,7 +356,12 @@ mod tests {
 
     /// Builds capabilities through the real derivation path, so these tests exercise
     /// derivation and validation together rather than a hand-written fixture.
-    fn caps_for(entity_id: &str, state: &str, attributes: serde_json::Value, unit: &str) -> DeviceCapabilities {
+    fn caps_for(
+        entity_id: &str,
+        state: &str,
+        attributes: serde_json::Value,
+        unit: &str,
+    ) -> DeviceCapabilities {
         capabilities::derive(&device(entity_id, state, attributes), unit)
     }
 

@@ -563,7 +563,7 @@ async fn security_headers(req: Request<axum::body::Body>, next: Next) -> Respons
     headers.insert(
         HeaderName::from_static("permissions-policy"),
         HeaderValue::from_static(
-            "camera=(self), microphone=(self), display-capture=(self), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), interest-cohort=()",
+            "camera=(self), microphone=(self), display-capture=(self), geolocation=(self), payment=(), usb=(), serial=(), bluetooth=(), interest-cohort=()",
         ),
     );
     headers.insert(

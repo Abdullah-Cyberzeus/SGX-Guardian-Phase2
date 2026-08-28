@@ -919,7 +919,11 @@ impl UserStore for JsonUserStore {
                 if user.browser_registration_id.as_deref() != Some(registration_id.as_str()) {
                     return Err(anyhow!("browser registration changed"));
                 }
-                if !user.circle_ids.iter().any(|existing| existing == &circle_id) {
+                if !user
+                    .circle_ids
+                    .iter()
+                    .any(|existing| existing == &circle_id)
+                {
                     user.circle_ids.push(circle_id);
                     user.circle_ids.sort();
                     user.circle_ids.dedup();

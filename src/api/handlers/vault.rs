@@ -1237,7 +1237,9 @@ pub(crate) fn authorize_record_access(
                 return Ok(());
             }
             let Some(Extension(authed)) = session.as_ref() else {
-                return Err(ApiError::Forbidden("Circle session is required".to_string()));
+                return Err(ApiError::Forbidden(
+                    "Circle session is required".to_string(),
+                ));
             };
             if authed.claims.circle_ids.contains(&circle_id) {
                 Ok(())
@@ -1274,8 +1276,8 @@ fn authorize_owner_only(
     caller_did: &str,
     record: &VaultRecord,
 ) -> Result<(), ApiError> {
-    let circle_admin = is_admin_caller(session)
-        && matches!(record.namespace_ref(), VaultNamespace::Circle(_));
+    let circle_admin =
+        is_admin_caller(session) && matches!(record.namespace_ref(), VaultNamespace::Circle(_));
     if circle_admin || caller_did == record.owner_did {
         Ok(())
     } else {

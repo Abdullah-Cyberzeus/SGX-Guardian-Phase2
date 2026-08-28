@@ -21,11 +21,14 @@ import {
   useMemberList,
   useRelayLighthouseList,
   useDIDDocumentPeers,
+  useGuardianInfo,
 } from "../../hooks/useApiData";
 import { useContactNames } from "../../contexts/ContactNameContext";
 import { relayService } from "../../services/relayService";
 import type { RelayNode, RegistryNode } from "../../services/relayService";
 import type { DIDDocumentPeerSummary } from "../../services/didService";
+import { displayLocalGuardianNode } from "../../utils/localGuardianName";
+import type { LocalGuardianIdentity } from "../../utils/localGuardianName";
 import { toast } from "sonner";
 
 type NodeEntry = RegistryNode & Partial<Pick<RelayNode, "maxPeers" | "maxBandwidthMbps" | "currentMbps">>;
@@ -121,6 +124,7 @@ function NodeCard({
   onToggleLighthouse,
   onSetLimits,
   peerDid,
+  guardianInfo,
 }: {
   node: NodeEntry;
   icon: typeof Radio;
@@ -129,10 +133,11 @@ function NodeCard({
   onToggleLighthouse: (node: NodeEntry) => void;
   onSetLimits?: (node: NodeEntry) => void;
   peerDid?: string;
+  guardianInfo?: LocalGuardianIdentity | null;
 }) {
   const { displayForDid } = useContactNames();
   const hasRuntime = typeof node.maxBandwidthMbps === "number";
-  const nodeDisplayName = displayForDid(peerDid, node.node);
+  const nodeDisplayName = displayForDid(peerDid, displayLocalGuardianNode(node.node, guardianInfo));
   return (
     <div
       className="rounded-lg border p-4 flex flex-col gap-3"
@@ -250,10 +255,12 @@ function LimitsModal({
   relay,
   onClose,
   onSave,
+  guardianInfo,
 }: {
   relay: NodeEntry;
   onClose: () => void;
   onSave: (maxPeers: number, maxBandwidthMbps: number) => Promise<void>;
+  guardianInfo?: LocalGuardianIdentity | null;
 }) {
   const [maxPeers, setMaxPeers] = useState(String(relay.maxPeers ?? 1));
   const [maxBandwidth, setMaxBandwidth] = useState(String(relay.maxBandwidthMbps ?? 1));
@@ -296,7 +303,7 @@ function LimitsModal({
                 Set Relay Limits
               </p>
               <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginTop: "2px" }}>
-                {relay.node}
+                {displayLocalGuardianNode(relay.node, guardianInfo)}
               </p>
             </div>
           </div>
@@ -443,6 +450,7 @@ export function NW06RelayList() {
   const memberData = useMemberList();
   const dualData = useRelayLighthouseList();
   const didPeersData = useDIDDocumentPeers();
+  const { data: guardianInfo } = useGuardianInfo();
 
   const [tab, setTab] = useState<TabKey>("relays");
   const [editingRelay, setEditingRelay] = useState<NodeEntry | null>(null);
@@ -693,6 +701,7 @@ export function NW06RelayList() {
                   onToggleLighthouse={n => handleToggle(n, "lighthouse")}
                   onSetLimits={setEditingRelay}
                   peerDid={didForNode(node.node)}
+                  guardianInfo={guardianInfo}
                 />
               ))
             )}
@@ -706,6 +715,7 @@ export function NW06RelayList() {
           relay={editingRelay}
           onClose={() => setEditingRelay(null)}
           onSave={handleSetLimits}
+          guardianInfo={guardianInfo}
         />
       )}
 

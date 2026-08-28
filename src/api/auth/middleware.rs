@@ -418,7 +418,10 @@ mod tests {
     fn member_tokens_may_lag_additions_but_never_removals() {
         let old_claims = vec!["circle-a".to_string()];
         let expanded_account = vec!["circle-a".to_string(), "circle-b".to_string()];
-        assert!(member_circle_claims_are_safe(&old_claims, &expanded_account));
+        assert!(member_circle_claims_are_safe(
+            &old_claims,
+            &expanded_account
+        ));
 
         let stale_removed_claims = vec!["circle-a".to_string(), "circle-b".to_string()];
         let reduced_account = vec!["circle-a".to_string()];

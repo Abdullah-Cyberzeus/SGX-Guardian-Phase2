@@ -63,7 +63,8 @@ export const guardianService = {
     const res = await api.get<BackendNodeStatus>('/node/status');
     return {
       id: res.nodeId,
-      name: res.displayHostname || res.hostname || res.nodeId,
+      nodeId: res.nodeId,
+      name: res.deviceName || res.displayHostname || res.hostname || res.nodeId,
       deviceId: res.deviceName || res.nodeId,
       firmware: 'v1.0.0',
       uptime: 'Running',

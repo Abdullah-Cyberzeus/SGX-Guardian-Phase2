@@ -741,7 +741,11 @@ pub async fn join_additional_circle(
         )));
     }
     enrollment_not_expired(&existing)?;
-    if user.circle_ids.iter().any(|circle_id| circle_id == &existing.circle_id) {
+    if user
+        .circle_ids
+        .iter()
+        .any(|circle_id| circle_id == &existing.circle_id)
+    {
         return Err(ApiError::Conflict(
             "you are already a member of this Circle".into(),
         ));
@@ -764,8 +768,7 @@ pub async fn join_additional_circle(
     }
     if circle.owner_did != state.device_did {
         return Err(ApiError::Forbidden(
-            "additional PWA membership must be approved by a Circle owned by this Guardian"
-                .into(),
+            "additional PWA membership must be approved by a Circle owned by this Guardian".into(),
         ));
     }
     let original = invite::load_invite(&existing.invite_id)
@@ -891,7 +894,11 @@ async fn decide_member_enrollment(
                 )
                 .await
         } else {
-            state.admin.users.set_member_status(&user_id, "active").await
+            state
+                .admin
+                .users
+                .set_member_status(&user_id, "active")
+                .await
         };
         if let Err(error) = account_result {
             let _ = invite::remove_redemption(&token.id, &records[index].member_did);
@@ -920,11 +927,9 @@ async fn decide_member_enrollment(
     let view = MemberEnrollmentView::from(&records[index]);
     drop(_guard);
     if approve {
-        if let Err(error) = crate::api::handlers::circle::refresh_and_broadcast_member_snapshot(
-            state,
-            circle_id,
-        )
-        .await
+        if let Err(error) =
+            crate::api::handlers::circle::refresh_and_broadcast_member_snapshot(state, circle_id)
+                .await
         {
             tracing::warn!(
                 circle = circle_id,
@@ -1572,16 +1577,13 @@ pub async fn contacts(
     // device-health, it's also the human running the Guardian.
     let owner_hide_presence = {
         let users = state.admin.users.list().await?;
-        users
-            .iter()
-            .any(|user| {
-                matches!(
-                    user.role,
-                    crate::api::auth::store::UserRole::Owner
-                        | crate::api::auth::store::UserRole::Admin
-                ) && user.status == "active"
-                    && user.hide_presence
-            })
+        users.iter().any(|user| {
+            matches!(
+                user.role,
+                crate::api::auth::store::UserRole::Owner | crate::api::auth::store::UserRole::Admin
+            ) && user.status == "active"
+                && user.hide_presence
+        })
     };
     let self_presence = presence_fields(owner_hide_presence, true, &now);
     let mut contacts = vec![PwaContact {

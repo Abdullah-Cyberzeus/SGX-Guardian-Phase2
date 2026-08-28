@@ -6,8 +6,10 @@ import {
 } from "lucide-react";
 import { PageHeader } from "../../components/PageHeader";
 import { useDusageCurrent, useDusageHistory, useDusageQuota } from "../../hooks/useApiData";
+import type { InterfaceUsage } from "../../services/dusageService";
 import { dusageService } from "../../services/dusageService";
-import { guardianDisplayText } from "../../utils/displayText";
+import { networkInterfaceDisplay } from "../../utils/networkInterfaceDisplay";
+import type { InterfaceGroup } from "../../utils/networkInterfaceDisplay";
 
 function formatBytes(bytes: number): string {
   if (!bytes || bytes < 0) return "0 B";
@@ -43,6 +45,18 @@ function formatDateTime(iso?: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
   return date.toLocaleString();
+}
+
+function groupInterfacesByDisplay(ifaces: InterfaceUsage[]) {
+  const groups: Record<InterfaceGroup, InterfaceUsage[]> = {
+    "WIRELESS CONNECTIONS": [],
+    "GUARDIAN NETWORK": [],
+    INFRASTRUCTURE: [],
+  };
+  for (const iface of ifaces) {
+    groups[networkInterfaceDisplay(iface.iface).group].push(iface);
+  }
+  return groups;
 }
 
 function SectionCard({ title, titleColor, icon: Icon, right, divider, children }: { title: string; titleColor?: string; icon?: typeof BarChart2; right?: ReactNode; divider?: boolean; children: ReactNode }) {
@@ -161,6 +175,7 @@ export function ST04DataUsage() {
   const pct = current.used_pct != null ? Math.min(100, Math.round(current.used_pct)) : 0;
   const barColor = bandColor[current.usage_band] || bandColor.none;
   const pastPeriods = (history || []).slice(-6).reverse();
+  const interfaceGroups = groupInterfacesByDisplay(current.interfaces);
 
   return (
     <div className="flex flex-col h-full">
@@ -254,21 +269,41 @@ export function ST04DataUsage() {
           <div className="flex-1 min-w-0 flex flex-col gap-4 lg:order-1">
             {/* API 1's interfaces[] — one card per actual interface with its rx/tx detail */}
             <SectionCard title="Network Interfaces" titleColor="var(--primary)" icon={Network}>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {current.interfaces.map((iface) => (
-                  <div key={iface.iface} className="rounded-lg border p-3 flex flex-col items-center" style={{ backgroundColor: "var(--background)", borderColor: "var(--border)" }}>
-                    <Network size={18} style={{ color: "var(--primary)", marginBottom: "8px" }} />
-                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{guardianDisplayText(iface.iface)}</p>
-                    <div className="flex items-center gap-1.5" style={{ marginTop: "6px" }}>
-                      <span style={{ color: "var(--chart-4)", fontSize: "var(--text-xs)" }}>↓</span>
-                      <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--chart-2)", minWidth: "48px", textAlign: "left" }}>{formatBytes(iface.rx_bytes)}</span>
+              <div className="flex flex-col gap-4">
+                {(Object.entries(interfaceGroups) as [InterfaceGroup, InterfaceUsage[]][])
+                  .filter(([, ifaces]) => ifaces.length > 0)
+                  .map(([group, ifaces]) => (
+                    <div key={group}>
+                      <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "8px" }}>
+                        {group}
+                      </p>
+                      <div className="flex flex-col gap-1">
+                        {ifaces.map((iface) => {
+                          const meta = networkInterfaceDisplay(iface.iface);
+                          const bytes = iface.rx_bytes + iface.tx_bytes;
+                          const active = bytes > 0;
+                          return (
+                            <div key={iface.iface} className="grid items-center gap-3 rounded-md px-2 py-2" style={{ gridTemplateColumns: "1fr auto auto", backgroundColor: "var(--background)", border: "1px solid var(--border)" }}>
+                              <div className="min-w-0">
+                                <p className="truncate" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
+                                  {meta.displayName}
+                                </p>
+                                <p className="truncate" title={meta.description} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginTop: "2px" }}>
+                                  {meta.description}
+                                </p>
+                              </div>
+                              <span className="flex items-center gap-1" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: active ? "var(--chart-2)" : "var(--muted-foreground)", whiteSpace: "nowrap" }}>
+                                {active ? "✓ Active" : "⊘ Inactive"}
+                              </span>
+                              <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: active ? "var(--foreground)" : "var(--muted-foreground)", minWidth: "64px", textAlign: "right", whiteSpace: "nowrap" }}>
+                                {active ? formatBytes(bytes) : "—"}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1.5" style={{ marginTop: "2px" }}>
-                      <span style={{ color: "var(--chart-4)", fontSize: "var(--text-xs)" }}>↑</span>
-                      <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--chart-2)", minWidth: "48px", textAlign: "left" }}>{formatBytes(iface.tx_bytes)}</span>
-                    </div>
-                  </div>
-                ))}
+                  ))}
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
                 <div className="rounded-lg p-3" style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }}>

@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router";
 import { PageHeader } from "../../components/PageHeader";
-import { useCircles, usePeers } from "../../hooks/useApiData";
+import { useCircles, useGuardianInfo, usePeers } from "../../hooks/useApiData";
 import {
   Send, Phone, Video, UserPlus, Copy, Check, X, ChevronRight,
   Link, QrCode, Search, MessageSquare, Users, PhoneCall, Mail, MessageCircle,
@@ -42,6 +42,7 @@ export function NW04CircleDetail() {
 
   const { data: circlesData, loading: circlesLoading, error: circlesError, refetch: refetchCircles } = useCircles();
   const { data: peersData, loading: peersLoading, error: peersError } = usePeers();
+  const { data: guardianInfo } = useGuardianInfo();
   const circles: any[] = Array.isArray(circlesData) ? circlesData : [];
   const trustedPeers = Array.isArray(peersData) ? peersData : [];
 
@@ -96,6 +97,11 @@ export function NW04CircleDetail() {
   const selectedMember = members.find((m: any) => String(m.did || m.id) === memberDetailOpen);
   const memberToRemove = members.find((m: any) => String(m.did || m.id) === removeDialogOpen);
   const sameDid = (left?: string, right?: string) => String(left || "").trim().toLowerCase() === String(right || "").trim().toLowerCase();
+  const localGuardianName = guardianInfo?.deviceId || guardianInfo?.name || guardianInfo?.hostname;
+  const memberDisplayName = (member: any) => {
+    if (sameDid(member?.did, session?.guardianDid) && localGuardianName) return localGuardianName;
+    return String(displayForDid(member?.did, member?.name || member?.nodeHint || member?.did || "Guardian member"));
+  };
 
   useEffect(() => {
     setLocalMembers(null);
@@ -380,7 +386,7 @@ export function NW04CircleDetail() {
     chatService.history(directMember.did)
       .then(({ messages: history }) => {
         if (cancelled) return;
-        const directMemberName = displayForDid(directMember.did, directMember.name || directMember.nodeHint || directMember.did);
+        const directMemberName = memberDisplayName(directMember);
         setDirectMessages(history.map((item) => ({
           id: item.message_id,
           sender: item.sender_did === directMember.did ? directMemberName : "Me",
@@ -776,7 +782,7 @@ export function NW04CircleDetail() {
                         : trustedPeer.callUnavailableReason || (!trustedPeer.callAvailable ? "Peer is not available for calls" : "");
                   const invitePending = Boolean((member as any).pending) || String((member as any).status || (member as any).membershipStatus || "").toLowerCase() === "pending";
                   const callsDisabled = invitePending || busy || isCurrentMember || !target || target === currentDevice || (!browserCallAvailable && !trustedPeer?.callAvailable);
-                  const memberName = String(displayForDid(member.did, member.name || member.nodeHint || member.did || "Guardian member"));
+                  const memberName = memberDisplayName(member);
                   const memberSecondary = member.email || (isBrowserMember ? "Browser PWA member" : displayForDid(member.did, member.did));
                   const memberKey = String(member.did || member.id || `${memberName}-${i}`);
                   return (
@@ -1008,7 +1014,7 @@ export function NW04CircleDetail() {
         <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center cursor-pointer" style={{ backgroundColor: "rgba(0,0,0,0.6)" }} onClick={() => setMemberDetailOpen(null)}>
           <div className="w-full rounded-t-xl md:rounded-xl border-t md:border border-border" style={{ backgroundColor: "var(--card)", maxWidth: "440px" }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-border">
-              <h3 style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{displayForDid(selectedMember.did, selectedMember.name || selectedMember.nodeHint || selectedMember.did || "Guardian member")}</h3>
+              <h3 style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{memberDisplayName(selectedMember)}</h3>
               <button onClick={() => setMemberDetailOpen(null)} style={{ background: "none", border: "none", cursor: "pointer" }}>
                 <X size={20} style={{ color: "var(--muted-foreground)" }} />
               </button>

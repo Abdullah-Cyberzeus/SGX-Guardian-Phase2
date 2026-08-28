@@ -65,7 +65,12 @@ impl ChatService for MyChatService {
         // the relaying Guardian and separately authorize the actor in the
         // message's Circle.
         verify_peer_is_trusted(&self.state, &relay_did).await?;
-        verify_relayed_actor(&self.state, &relay_did, &req.sender_did, group_id.as_deref())?;
+        verify_relayed_actor(
+            &self.state,
+            &relay_did,
+            &req.sender_did,
+            group_id.as_deref(),
+        )?;
 
         // A chat envelope contains only attachment metadata. Pull the bytes
         // from the attested sender before acknowledging the message so the UI
@@ -104,6 +109,10 @@ impl ChatService for MyChatService {
                 .await
                 .map_err(|e| Status::internal(format!("Failed to save group message: {}", e)))?;
         } else {
+            eprintln!(
+                "💬 History: storing inbound message under sender_did={} (this is the exact key /chat/history?peer_did=... must match to find it)",
+                req.sender_did
+            );
             crate::chat::storage::append_p2p_message(&req.sender_did, &record)
                 .await
                 .map_err(|e| Status::internal(format!("Failed to save message: {}", e)))?;
@@ -429,8 +438,7 @@ fn verify_relayed_actor(
         .circles
         .into_iter()
         .filter(|circle| {
-            !circle.is_archived()
-                && group_id.is_none_or(|expected| circle.circle_id == expected)
+            !circle.is_archived() && group_id.is_none_or(|expected| circle.circle_id == expected)
         })
         .any(|circle| {
             crate::circle::members::list_members(&state.node_id, &circle.circle_id)
@@ -469,22 +477,18 @@ fn verify_relayed_actor(
 
 async fn trusted_peer_grpc_addr(state: &Arc<AppState>, did: &str) -> Result<String, Status> {
     let peers = load_trusted_peers(state).await;
-    let target_peer_id = did.strip_prefix("did:guardian:").unwrap_or(did);
+    let node_hint = crate::api::handlers::chat::member_node_hint_for_did(state, did);
     let peer = peers.iter().find(|peer| {
         let status = peer.get("status").and_then(|value| value.as_str());
-        matches!(status, Some("trusted" | "verified"))
-            && (peer.get("did").and_then(|value| value.as_str()) == Some(did)
-                || peer.get("peer_id").and_then(|value| value.as_str()) == Some(target_peer_id))
+        crate::api::handlers::chat::is_trusted_status(status)
+            && crate::api::handlers::chat::peer_matches_identity(peer, did, node_hint.as_deref())
     });
     let peer = peer.ok_or_else(|| Status::permission_denied("sender is not trusted"))?;
     let ip = peer
         .get("ip")
         .and_then(|value| value.as_str())
         .ok_or_else(|| Status::failed_precondition("trusted sender has no overlay IP"))?;
-    let peer_id = peer
-        .get("peer_id")
-        .and_then(|value| value.as_str())
-        .unwrap_or(target_peer_id);
+    let peer_id = crate::api::handlers::chat::peer_route_id(peer);
     Ok(crate::api::handlers::chat::get_grpc_addr(ip, peer_id))
 }
 
@@ -516,13 +520,11 @@ async fn load_trusted_peers(state: &Arc<AppState>) -> Vec<serde_json::Value> {
 }
 
 async fn verify_peer_is_trusted(state: &Arc<AppState>, did: &str) -> Result<(), Status> {
-    let target_peer_id = did.strip_prefix("did:guardian:").unwrap_or(did);
+    let node_hint = crate::api::handlers::chat::member_node_hint_for_did(state, did);
     let is_trusted = load_trusted_peers(state).await.iter().any(|p| {
         let status = p.get("status").and_then(|v| v.as_str());
-        let is_valid_status = status == Some("trusted") || status == Some("verified");
-        let matches_did = p.get("did").and_then(|v| v.as_str()) == Some(did)
-            || p.get("peer_id").and_then(|v| v.as_str()) == Some(target_peer_id);
-        is_valid_status && matches_did
+        crate::api::handlers::chat::is_trusted_status(status)
+            && crate::api::handlers::chat::peer_matches_identity(p, did, node_hint.as_deref())
     });
 
     if !is_trusted {

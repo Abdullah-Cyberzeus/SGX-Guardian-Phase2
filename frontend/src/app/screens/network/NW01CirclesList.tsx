@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { Archive, Plus, MessageSquare, Users, Shield, Network, Send, X, ChevronRight, Loader2, Phone, Video, PhoneCall, FolderOpen, Copy, Check, Link } from "lucide-react";
 import { mockCircles, mockUser } from "../../data/mockData";
-import { useCircleInviteInbox, useCircles } from "../../hooks/useApiData";
+import { useCircleInviteInbox, useCircles, useGuardianInfo } from "../../hooks/useApiData";
 import { EmptyState } from "../../components/EmptyState";
 import { CircleLiveTopology } from "../../components/circle-topology/CircleLiveTopology";
 import { CallScreen } from "../../components/circle/CallScreen";
@@ -14,6 +14,7 @@ import type { CallMode, CallRecord } from "../../components/circle/types";
 import { useVault } from "../../contexts/VaultContext";
 import circleService, { type CircleInvite } from "../../services/circleService";
 import { toast } from "sonner";
+import { useAuth } from "../../contexts/AuthContext";
 
 // ── Circle list item row ──────────────────────────────────────────────────────
 function CircleRow({
@@ -93,6 +94,8 @@ function CircleRow({
 function CircleDetailPanel({ circle }: { circle: typeof mockCircles[0] }) {
   const navigate = useNavigate();
   const vault = useVault();
+  const { session } = useAuth();
+  const { data: guardianInfo } = useGuardianInfo();
 
   const [activeTab, setActiveTab] =
     useState<"chat" | "calls" | "files" | "members">("members");
@@ -106,6 +109,12 @@ function CircleDetailPanel({ circle }: { circle: typeof mockCircles[0] }) {
   const [copied, setCopied] = useState(false);
 
   const members = circle.members || [];
+  const localGuardianName = guardianInfo?.deviceId || guardianInfo?.name || guardianInfo?.hostname;
+  const memberDisplayName = (member: any) => {
+    const did = String(member?.did || "").trim().toLowerCase();
+    if (did && did === String(session?.guardianDid || "").trim().toLowerCase() && localGuardianName) return localGuardianName;
+    return member?.name || member?.nodeHint || member?.did || "Guardian member";
+  };
 
   const tabs = [
     { id: "chat" as const, label: "Chat", icon: MessageSquare },
@@ -353,39 +362,41 @@ function CircleDetailPanel({ circle }: { circle: typeof mockCircles[0] }) {
         {/* ── Members ── */}
         {activeTab === "members" && (
           <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
-            {members.map((member: any) => (
+            {members.map((member: any) => {
+              const memberName = memberDisplayName(member);
+              return (
               <div key={member.id} className="flex items-center gap-3 p-3 rounded-lg border border-border" style={{ backgroundColor: "var(--card)" }}>
                 <div className="flex items-center justify-center rounded-full flex-shrink-0" style={{ width: "40px", height: "40px", backgroundColor: "color-mix(in srgb, var(--primary) 15%, transparent)", border: "1.5px solid color-mix(in srgb, var(--primary) 25%, transparent)", position: "relative" }}>
                   <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--primary)" }}>
-                    {member.initials || member.name.split(" ").map((n: string) => n[0]).join("")}
+                    {member.initials || memberName.split(" ").map((n: string) => n[0]).join("")}
                   </span>
                   <div style={{ position: "absolute", bottom: "1px", right: "1px", width: "8px", height: "8px", borderRadius: "50%", backgroundColor: member.presenceStatus === "online" ? "var(--chart-2)" : "var(--muted-foreground)", border: "1.5px solid var(--card)" }} />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", color: "var(--foreground)" }}>{member.name}</p>
+                  <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", color: "var(--foreground)" }}>{memberName}</p>
                   <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>{String(member.role).toLowerCase() === "owner" ? "Admin" : member.role} · {member.status}</p>
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
                   <button
                     onClick={() => navigate(`/network/${circle.id}?tab=chat&peer=${encodeURIComponent(member.did || "")}`)}
                     disabled={!member.did}
-                    aria-label={`Message ${member.name}`}
+                    aria-label={`Message ${memberName}`}
                     className="flex items-center justify-center rounded-full transition-opacity active:opacity-70 disabled:cursor-not-allowed disabled:opacity-35"
                     style={{ width: "34px", height: "34px", backgroundColor: "color-mix(in srgb, var(--primary) 12%, transparent)", border: "1px solid color-mix(in srgb, var(--primary) 25%, transparent)", cursor: member.did ? "pointer" : "not-allowed" }}
                   >
                     <MessageSquare size={15} style={{ color: "var(--primary)" }} />
                   </button>
                   <button
-                    onClick={() => startMemberCall("voice", { id: member.id, name: member.name })}
-                    aria-label={`Voice call ${member.name}`}
+                    onClick={() => startMemberCall("voice", { id: member.id, name: memberName })}
+                    aria-label={`Voice call ${memberName}`}
                     className="flex items-center justify-center rounded-full transition-opacity active:opacity-70"
                     style={{ width: "34px", height: "34px", backgroundColor: "color-mix(in srgb, var(--primary) 12%, transparent)", border: "1px solid color-mix(in srgb, var(--primary) 25%, transparent)", cursor: "pointer" }}
                   >
                     <Phone size={15} style={{ color: "var(--primary)" }} />
                   </button>
                   <button
-                    onClick={() => startMemberCall("video", { id: member.id, name: member.name })}
-                    aria-label={`Video call ${member.name}`}
+                    onClick={() => startMemberCall("video", { id: member.id, name: memberName })}
+                    aria-label={`Video call ${memberName}`}
                     className="flex items-center justify-center rounded-full transition-opacity active:opacity-70"
                     style={{ width: "34px", height: "34px", backgroundColor: "color-mix(in srgb, var(--primary) 12%, transparent)", border: "1px solid color-mix(in srgb, var(--primary) 25%, transparent)", cursor: "pointer" }}
                   >
@@ -393,7 +404,7 @@ function CircleDetailPanel({ circle }: { circle: typeof mockCircles[0] }) {
                   </button>
                 </div>
               </div>
-            ))}
+            );})}
           </div>
         )}
 

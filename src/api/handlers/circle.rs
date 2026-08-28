@@ -527,7 +527,8 @@ async fn append_browser_members(
             _ => continue,
         };
         let did = crate::api::handlers::browser_member::did_for_registration(&registration_id);
-        let presence = crate::api::handlers::pwa::presence_fields_for_privacy(user.hide_presence, true, "");
+        let presence =
+            crate::api::handlers::pwa::presence_fields_for_privacy(user.hide_presence, true, "");
         if members.iter().any(|member| {
             member.browser_registration_id.as_deref() == Some(registration_id.as_str())
                 || member.did == did
@@ -1272,8 +1273,8 @@ pub async fn receive_member_snapshot(
         Some(&local),
         Some(&state.node_id),
     )
-        .await
-        .map_err(map_circle_error)?;
+    .await
+    .map_err(map_circle_error)?;
     for member in &snapshot.members {
         if member.membership_status == crate::vc::credential::MembershipStatus::Active
             && member.lifecycle_state == crate::circle::MemberLifecycleState::Active
@@ -1419,19 +1420,19 @@ async fn broadcast_member_snapshot(
         };
         let timestamp = Utc::now().to_rfc3339();
         let nonce = Uuid::new_v4().to_string();
-        let canonical =
-            match guardian_snapshot_auth_bytes(&owner.did, &timestamp, &nonce, snapshot) {
-                Ok(bytes) => bytes,
-                Err(err) => {
-                    tracing::warn!(
-                        "Circle member snapshot auth canonical failed circle={} target={} error={}",
-                        snapshot.circle_id,
-                        member_did,
-                        err
-                    );
-                    continue;
-                }
-            };
+        let canonical = match guardian_snapshot_auth_bytes(&owner.did, &timestamp, &nonce, snapshot)
+        {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                tracing::warn!(
+                    "Circle member snapshot auth canonical failed circle={} target={} error={}",
+                    snapshot.circle_id,
+                    member_did,
+                    err
+                );
+                continue;
+            }
+        };
         let digest = Sha256::digest(&canonical);
         let signature = match km.sign(&digest) {
             Ok(signature) => signature,
@@ -1630,7 +1631,10 @@ async fn invite_delivery_endpoints(
         if peer.did != target_did {
             continue;
         }
-        push_unique_endpoint(&mut endpoints, format!("http://sgx-{}:8443", peer.node_name));
+        push_unique_endpoint(
+            &mut endpoints,
+            format!("http://sgx-{}:8443", peer.node_name),
+        );
         push_container_host_port(&mut endpoints, &peer.node_name);
     }
     if let Ok(primary) = invite::resolve_circle_endpoint(target_did, resolver).await {

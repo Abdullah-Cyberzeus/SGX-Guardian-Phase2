@@ -270,7 +270,10 @@ impl IntegrationManager {
         if let Some(client) = flow_client {
             match client.setup_nest_config_entry(&nest_creds).await {
                 Ok((entry_id, restarted)) => {
-                    info!("✅ Programmatically created HA Nest config entry '{}'", entry_id);
+                    info!(
+                        "✅ Programmatically created HA Nest config entry '{}'",
+                        entry_id
+                    );
                     ha_restarting = restarted;
                     if restarted {
                         pending_entry_id = Some(entry_id.clone());
@@ -309,9 +312,11 @@ impl IntegrationManager {
             // up to a minute — poll and reconcile in the background instead. The frontend
             // already refetches the device list periodically, so devices simply appear once
             // HA is back, with no manual restart or "Sync Devices" click required.
-            if let (Some(client), Some(dm), Some(entry_id)) =
-                (flow_client.cloned(), device_manager.cloned(), pending_entry_id)
-            {
+            if let (Some(client), Some(dm), Some(entry_id)) = (
+                flow_client.cloned(),
+                device_manager.cloned(),
+                pending_entry_id,
+            ) {
                 let integration_manager = Arc::clone(self);
                 tokio::spawn(async move {
                     // Wait for the *specific* Nest entry to reach "loaded" — not just for
@@ -344,7 +349,10 @@ impl IntegrationManager {
                         meta_mut.last_synced = Some(Utc::now());
                         let _ = integration_manager.store.save(&write_guard);
                     }
-                    info!("✅ Nest device discovery complete after HA restart: {} device(s)", count);
+                    info!(
+                        "✅ Nest device discovery complete after HA restart: {} device(s)",
+                        count
+                    );
                 });
             }
             return Ok((0, true));
@@ -506,7 +514,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_disconnect_purges_vendor_devices() {
-                use crate::device::manager::DeviceManager;
+        use crate::device::manager::DeviceManager;
         use crate::device::registry::DeviceRegistry;
         use crate::device::state::{Device, DeviceHealth};
         use crate::homeassistant::events::EventBus;
@@ -525,12 +533,7 @@ mod tests {
             token: "test".to_string(),
         }));
 
-        let dm = DeviceManager::new(
-            registry.clone(),
-            ha_rest,
-            event_bus,
-            None,
-        );
+        let dm = DeviceManager::new(registry.clone(), ha_rest, event_bus, None);
 
         // Add 2 Kasa devices and 1 Nest device to registry
         let dev1 = Device {
@@ -609,9 +612,15 @@ mod tests {
             Some("refresh_token_nest".to_string()),
         );
 
-        let (count, ha_restarting) = manager.connect_nest(creds.clone(), None, None).await.unwrap();
+        let (count, ha_restarting) = manager
+            .connect_nest(creds.clone(), None, None)
+            .await
+            .unwrap();
         assert_eq!(count, 0);
-        assert!(!ha_restarting, "no flow_client supplied, so no restart should be triggered");
+        assert!(
+            !ha_restarting,
+            "no flow_client supplied, so no restart should be triggered"
+        );
 
         let status = manager
             .get_integration(VendorProvider::GoogleNest)
@@ -641,7 +650,9 @@ mod tests {
         let dev_file = temp_dir.path().join("devices_nest_disconnect_test.json");
 
         let event_bus = crate::homeassistant::events::EventBus::new();
-        let registry = Arc::new(crate::device::registry::DeviceRegistry::new(dev_file.to_str().unwrap()));
+        let registry = Arc::new(crate::device::registry::DeviceRegistry::new(
+            dev_file.to_str().unwrap(),
+        ));
         let ha_rest = Arc::new(crate::homeassistant::rest::HaRestClient::new(
             crate::homeassistant::HomeAssistantConfig {
                 url: "http://localhost:8123".to_string(),
@@ -649,12 +660,8 @@ mod tests {
             },
         ));
 
-        let dm = crate::device::manager::DeviceManager::new(
-            registry.clone(),
-            ha_rest,
-            event_bus,
-            None,
-        );
+        let dm =
+            crate::device::manager::DeviceManager::new(registry.clone(), ha_rest, event_bus, None);
 
         let nest_dev = crate::device::state::Device {
             id: "dev_nest_thermostat_1".to_string(),

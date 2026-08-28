@@ -1503,9 +1503,7 @@ async fn approve_managed_device(
             .map_err(api_error_from_threat_blocker_error)?;
     }
 
-    let record = registry
-        .approve(&device.device_id)
-        .map_err(devices_error)?;
+    let record = registry.approve(&device.device_id).map_err(devices_error)?;
     registry.save_atomic(&path).await.map_err(devices_error)?;
     Ok(record)
 }
@@ -3373,12 +3371,9 @@ mod tests {
         .expect("read whitelist");
         assert!(!whitelist.contains("AA:BB:CC:DD:EE:44"));
 
-        let _approve_response = approve(
-            State(state.clone()),
-            Path("reject-device-1".into()),
-        )
-        .await
-        .expect("approve device");
+        let _approve_response = approve(State(state.clone()), Path("reject-device-1".into()))
+            .await
+            .expect("approve device");
 
         let response = detail(State(state), Path("reject-device-1".into()))
             .await

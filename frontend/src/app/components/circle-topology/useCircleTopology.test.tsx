@@ -20,6 +20,7 @@ const serviceMocks = vi.hoisted(() => ({
   getMembers: vi.fn(),
   getDualRole: vi.fn(),
   getDidPeers: vi.fn(),
+  getGuardianInfo: vi.fn(),
 }));
 
 vi.mock("../../services/peerService", () => ({
@@ -35,6 +36,9 @@ vi.mock("../../services/relayService", () => ({
 }));
 vi.mock("../../services/didService", () => ({
   didService: { getDocumentPeers: serviceMocks.getDidPeers },
+}));
+vi.mock("../../services/guardianService", () => ({
+  guardianService: { getInfo: serviceMocks.getGuardianInfo },
 }));
 
 function peer(overrides: Partial<Peer>): Peer {
@@ -171,6 +175,7 @@ function resolveDefaultServices() {
   serviceMocks.getMembers.mockResolvedValue({ members: [] });
   serviceMocks.getDualRole.mockResolvedValue({ relayLighthouses: [] });
   serviceMocks.getDidPeers.mockResolvedValue({ peers: [] });
+  serviceMocks.getGuardianInfo.mockResolvedValue({ id: "local-node", nodeId: "local-node", deviceId: "Local Guardian" });
 }
 
 beforeEach(() => {

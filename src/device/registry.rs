@@ -242,10 +242,20 @@ mod tests {
         let path = file.path().to_str().unwrap().to_string();
         let registry = DeviceRegistry::new(&path);
 
-        let fetched = registry.get_device("dev_legacy").await.expect("legacy device must load");
+        let fetched = registry
+            .get_device("dev_legacy")
+            .await
+            .expect("legacy device must load");
         assert_eq!(fetched.ha_entity_id, "climate.basement_room_2");
-        assert_eq!(fetched.room.as_deref(), Some("Basement"), "user-assigned room must survive");
-        assert!(fetched.attributes.is_empty(), "missing attributes default to an empty map");
+        assert_eq!(
+            fetched.room.as_deref(),
+            Some("Basement"),
+            "user-assigned room must survive"
+        );
+        assert!(
+            fetched.attributes.is_empty(),
+            "missing attributes default to an empty map"
+        );
     }
 
     #[tokio::test]
@@ -255,19 +265,27 @@ mod tests {
         let registry = DeviceRegistry::new(&path);
 
         registry
-            .upsert_devices_bulk(vec![create_dummy_device("bulk1"), create_dummy_device("bulk2")])
+            .upsert_devices_bulk(vec![
+                create_dummy_device("bulk1"),
+                create_dummy_device("bulk2"),
+            ])
             .await
             .unwrap();
         assert!(registry.get_device("bulk1").await.is_some());
         assert!(registry.get_device("bulk2").await.is_some());
 
         // Deferred writes are visible in the cache immediately...
-        registry.upsert_device_deferred(create_dummy_device("deferred")).await;
+        registry
+            .upsert_device_deferred(create_dummy_device("deferred"))
+            .await;
         assert!(registry.get_device("deferred").await.is_some());
 
         // ...and reach disk on flush.
         assert!(registry.flush_if_dirty().await, "first flush should write");
-        assert!(!registry.flush_if_dirty().await, "second flush is a no-op when clean");
+        assert!(
+            !registry.flush_if_dirty().await,
+            "second flush is a no-op when clean"
+        );
 
         let reloaded = DeviceRegistry::new(&path);
         assert!(reloaded.get_device("deferred").await.is_some());

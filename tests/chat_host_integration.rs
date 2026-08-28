@@ -43,7 +43,10 @@ fn isolate_circle_identity(root: &std::path::Path) {
         sgx_guardian_client::virtual_id::RUNTIME_VID_STATE_DIR_ENV,
         root.join("virtual-id"),
     );
-    std::env::set_var(doc_persistence::SELF_DOC_PATH_ENV, root.join("did_doc.json"));
+    std::env::set_var(
+        doc_persistence::SELF_DOC_PATH_ENV,
+        root.join("did_doc.json"),
+    );
     std::env::set_var(doc_persistence::PEERS_DOC_DIR_ENV, root.join("did-peers"));
     std::env::set_var(
         doc_persistence::CA_AGGREGATE_PATH_ENV,

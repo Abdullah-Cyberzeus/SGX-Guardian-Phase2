@@ -22,6 +22,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { useBootStatus } from "../../hooks/useApiData";
+import { nodeService } from "../../services/nodeService";
 import { toast } from "sonner";
 
 // Trust Chain Step Component
@@ -181,21 +182,41 @@ function HashDisplay({ hash, label }: { hash: string; label?: string }) {
 export function SC01BootStatus() {
   const navigate = useNavigate();
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [manualBootStatus, setManualBootStatus] = useState<Awaited<ReturnType<typeof nodeService.getBootStatus>> | null>(null);
 
   // Fetch data from backend API
   const { data: bootStatusData, loading, error, source } = useBootStatus();
-  const bootStatus = useMemo(() => bootStatusData || {
+  const bootStatus = useMemo(() => manualBootStatus || bootStatusData || {
     bootChain: 'UNKNOWN' as const,
     habEnabled: false,
     deviceClosed: false,
     habEvents: 'N/A',
+    habDescription: 'Boot status has not been loaded yet',
     deviceModel: 'Unknown',
     lastChecked: new Date().toISOString(),
     binaryHash: 'N/A',
     trustChain: [],
-  }, [bootStatusData]);
+  }, [bootStatusData, manualBootStatus]);
 
-  const isSecure = bootStatus.bootChain === "INTACT" && bootStatus.habEnabled && bootStatus.deviceClosed;
+  const hasHabEvents = bootStatus.habEvents === "Found";
+  const isSecure = bootStatus.bootChain === "INTACT" && bootStatus.habEnabled && bootStatus.deviceClosed && !hasHabEvents;
+  const bootState = isSecure
+    ? {
+      title: "Secure Boot Chain Intact",
+      description: "HAB is enabled, the device is closed, and all boot stages are enforcing signature checks",
+      tone: "secure" as const,
+    }
+    : hasHabEvents || bootStatus.bootChain === "COMPROMISED"
+      ? {
+        title: "Boot Chain Needs Attention",
+        description: bootStatus.habDescription || "One or more boot status checks did not pass",
+        tone: "danger" as const,
+      }
+      : {
+        title: "Boot Chain Status Unknown",
+        description: bootStatus.habDescription || "Boot verification data is incomplete",
+        tone: "warning" as const,
+      };
 
   if (loading) {
     return (
@@ -206,14 +227,22 @@ export function SC01BootStatus() {
     );
   }
 
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
     setIsRefreshing(true);
-    setTimeout(() => {
-      setIsRefreshing(false);
-      toast.success("Boot status refreshed", {
-        description: "All checks passed",
+    try {
+      const latest = await nodeService.getBootStatus();
+      setManualBootStatus(latest);
+      const latestSecure = latest.bootChain === "INTACT" && latest.habEnabled && latest.deviceClosed && latest.habEvents !== "Found";
+      toast[latestSecure ? "success" : "warning"]("Boot status refreshed", {
+        description: latestSecure ? "All checks passed" : latest.habDescription || "Boot status still needs attention",
       });
-    }, 1500);
+    } catch (err) {
+      toast.error("Boot status refresh failed", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   const formatDate = (dateStr: string) => {
@@ -239,11 +268,15 @@ export function SC01BootStatus() {
           style={{
             backgroundColor: isSecure
               ? "color-mix(in srgb, var(--chart-2) 10%, transparent)"
-              : "color-mix(in srgb, var(--destructive) 10%, transparent)",
+              : bootState.tone === "warning"
+                ? "color-mix(in srgb, var(--chart-5) 10%, transparent)"
+                : "color-mix(in srgb, var(--destructive) 10%, transparent)",
             border: `1px solid ${
               isSecure
                 ? "color-mix(in srgb, var(--chart-2) 25%, transparent)"
-                : "color-mix(in srgb, var(--destructive) 25%, transparent)"
+                : bootState.tone === "warning"
+                  ? "color-mix(in srgb, var(--chart-5) 25%, transparent)"
+                  : "color-mix(in srgb, var(--destructive) 25%, transparent)"
             }`,
           }}
         >
@@ -258,22 +291,20 @@ export function SC01BootStatus() {
                 fontFamily: "Inter, sans-serif",
                 fontSize: "var(--text-base)",
                 fontWeight: "var(--font-weight-semibold)",
-                color: isSecure ? "var(--chart-2)" : "var(--destructive)",
+                color: isSecure ? "var(--chart-2)" : bootState.tone === "warning" ? "var(--chart-5)" : "var(--destructive)",
               }}
             >
-              {isSecure ? "Secure Boot Chain Intact" : "Boot Chain Compromised"}
+              {bootState.title}
             </p>
             <p
               style={{
                 fontFamily: "Inter, sans-serif",
                 fontSize: "var(--text-xs)",
-                color: isSecure ? "var(--chart-2)" : "var(--destructive)",
+                color: isSecure ? "var(--chart-2)" : bootState.tone === "warning" ? "var(--chart-5)" : "var(--destructive)",
                 opacity: 0.85,
               }}
             >
-              {isSecure
-                ? "All boot stages verified successfully"
-                : "One or more boot stages failed verification"}
+              {bootState.description}
             </p>
           </div>
         </div>
@@ -306,17 +337,30 @@ export function SC01BootStatus() {
                   fontFamily: "Inter, sans-serif",
                   fontSize: "var(--text-sm)",
                   fontWeight: "var(--font-weight-bold)",
-                  color: bootStatus.habEnabled ? "var(--chart-2)" : "var(--destructive)",
+                  color: bootStatus.habEnabled ? "var(--chart-2)" : "var(--chart-5)",
                 }}
               >
-                {bootStatus.habEnabled ? "Enabled" : "Disabled"}
+                {bootStatus.habEnabled ? "Enabled" : "Not detected"}
               </span>
               {bootStatus.habEnabled ? (
                 <CheckCircle2 size={14} style={{ color: "var(--chart-2)" }} />
               ) : (
-                <XCircle size={14} style={{ color: "var(--destructive)" }} />
+                <Info size={14} style={{ color: "var(--chart-5)" }} />
               )}
             </div>
+            {bootStatus.habDescription && (
+              <p
+                style={{
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "10px",
+                  color: "var(--muted-foreground)",
+                  marginTop: "8px",
+                  lineHeight: 1.4,
+                }}
+              >
+                {bootStatus.habDescription}
+              </p>
+            )}
           </div>
 
           {/* Device Closed */}
@@ -396,10 +440,10 @@ export function SC01BootStatus() {
                 fontFamily: "Inter, sans-serif",
                 fontSize: "var(--text-sm)",
                 fontWeight: "var(--font-weight-bold)",
-                color: bootStatus.bootChain === "INTACT" ? "var(--chart-2)" : "var(--destructive)",
+                color: bootStatus.bootChain === "INTACT" ? "var(--chart-2)" : "var(--chart-5)",
               }}
             >
-              {bootStatus.bootChain}
+              {bootStatus.bootChain === "INTACT" ? "INTACT" : "INCOMPLETE / UNKNOWN"}
             </span>
           </div>
 

@@ -40,7 +40,7 @@ import { buildTopologyLinks, useCircleTopology } from "./useCircleTopology";
 import { ALL_CIRCLES_ID, buildCircleMembershipIndex, getNodeCircles } from "./circleMembership";
 import { matchDidDocumentPeer } from "./nodeTelemetry";
 import { PRESENCE_COLORS, TRUST_COLORS, paletteCssVars } from "./palette";
-import { geofenceApi, type CreateZoneRequest, type GeofenceEvent, type GeofenceStatus, type GeofenceZone, type ThreatAlert, type ZoneAutomation } from "../../../api/geofence";
+import { geofenceApi, type CreateZoneRequest, type GeofenceEvent, type GeofenceStatus, type GeofenceZone, type StoredLocation, type ThreatAlert, type ZoneAutomation } from "../../../api/geofence";
 import { alertDetails, configuredActions, eventDetails, locationSourceLabel, sourceLabel, zoneTypeLabel } from "../geofenceDisplay";
 import attestationService, { type PeerAttestationRecord } from "../../services/attestationService";
 import type { DIDDocumentPeerSummary } from "../../services/didService";
@@ -57,6 +57,78 @@ const POLL_MS = 10_000;
 
 type Filter = "all" | "online" | "offline" | "verified" | "lighthouse" | "relay";
 type ViewMode = "mesh" | "map";
+type BrowserLocationAttempt = { options: PositionOptions };
+
+const browserLocationAttempts: BrowserLocationAttempt[] = [
+  { options: { enableHighAccuracy: false, timeout: 2000, maximumAge: 300000 } },
+  { options: { enableHighAccuracy: false, timeout: 12000, maximumAge: 60000 } },
+];
+
+function getBrowserPosition(options: PositionOptions): Promise<GeolocationPosition> {
+  return new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(resolve, reject, options);
+  });
+}
+
+function getBrowserPositionFromWatch(options: PositionOptions, timeoutMs: number): Promise<GeolocationPosition> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timeoutId = 0;
+    let watchId = 0;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeoutId);
+      navigator.geolocation.clearWatch(watchId);
+      callback();
+    };
+    timeoutId = window.setTimeout(() => {
+      finish(() => reject(new Error("Browser location timed out")));
+    }, timeoutMs);
+    watchId = navigator.geolocation.watchPosition(
+      (position) => finish(() => resolve(position)),
+      (error) => {
+        if (error.code === error.PERMISSION_DENIED) {
+          finish(() => reject(error));
+        }
+      },
+      options,
+    );
+  });
+}
+
+async function getBrowserPositionWithFallback(): Promise<GeolocationPosition> {
+  let lastError: unknown = null;
+  for (const attempt of browserLocationAttempts) {
+    try {
+      return await getBrowserPosition(attempt.options);
+    } catch (err) {
+      lastError = err;
+      if (isPermissionDenied(err)) {
+        throw lastError;
+      }
+    }
+  }
+  try {
+    return await getBrowserPositionFromWatch({ enableHighAccuracy: false, maximumAge: 300000 }, 25000);
+  } catch (err) {
+    lastError = err;
+    if (isPermissionDenied(err)) {
+      throw lastError;
+    }
+  }
+  throw lastError ?? new Error("Location unavailable");
+}
+
+function getLocationErrorCode(err: unknown): number | undefined {
+  return typeof err === "object" && err !== null && "code" in err && typeof (err as { code?: unknown }).code === "number"
+    ? (err as { code: number }).code
+    : undefined;
+}
+
+function isPermissionDenied(err: unknown) {
+  return getLocationErrorCode(err) === 1;
+}
 
 const presenceMeta: Record<PresenceStatus, { label: string; color: string }> = {
   online: { label: "Online", color: PRESENCE_COLORS.online },
@@ -593,6 +665,7 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
   const meshLinks = links.filter((link) => link.kind === "mesh").length;
   const relayLinks = links.filter((link) => link.kind === "relay").length;
   const attestationLinks = links.filter((link) => link.kind === "attestation").length;
+  const locationBusy = geofenceBusy === "Getting location...";
 
   const refreshGeofence = useCallback(async () => {
     setGeofenceError(null);
@@ -604,14 +677,20 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
         geofenceApi.events().catch((error) => { throw new Error(`Geofence events request failed: ${error instanceof Error ? error.message : "Unknown error"}`); }),
         geofenceApi.alerts().catch((error) => { throw new Error(`Geofence alerts request failed: ${error instanceof Error ? error.message : "Unknown error"}`); }),
       ]);
-      setGeofenceStatus({ ...status, location: status.location ?? location.location });
+      const mergedStatus: GeofenceStatus = {
+        ...status,
+        location: status.location ?? location.location ?? geofenceStatus?.location ?? null,
+      };
+      setGeofenceStatus(mergedStatus);
       setGeofenceZones(zoneResult.zones);
       setGeofenceEvents(eventResult.events);
       setGeofenceAlerts(alertResult.alerts);
+      return mergedStatus;
     } catch (err) {
       setGeofenceError(err instanceof Error ? err.message : "Geofence refresh failed: Unknown error");
+      return null;
     }
-  }, []);
+  }, [geofenceStatus?.location]);
 
   const refreshSimulationResults = useCallback(async () => {
     const [status, eventResult, alertResult] = await Promise.all([
@@ -626,8 +705,20 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
 
   const refreshAll = useCallback(() => { void refresh(); void refreshGeofence(); }, [refresh, refreshGeofence]);
 
+  const applyBrowserLocation = useCallback((location: StoredLocation) => {
+    setGeofenceStatus((current) => ({
+      source: current?.source ?? "reported",
+      selection_mode: current?.selection_mode ?? "forced",
+      source_reason: current?.source_reason ?? "Browser location reported from this device",
+      zones: current?.zones ?? [],
+      ...current,
+      location,
+    }));
+    setViewMode("map");
+  }, []);
+
   const reportLocation = useCallback(() => {
-    if (locationRequestInFlightRef.current || geofenceBusy) return;
+    if (locationRequestInFlightRef.current) return;
     setGeofenceToast(null);
     if (!navigator.geolocation) {
       setGeofenceError("Location unavailable");
@@ -636,14 +727,27 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
     locationRequestInFlightRef.current = true;
     setGeofenceBusy("Getting location...");
     setGeofenceError(null);
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
+    void (async () => {
+      try {
+        const position = await getBrowserPositionWithFallback();
+        const browserLocation: StoredLocation = {
+          source: "reported",
+          fix: {
+            kind: "coordinate",
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+            accuracy_m: position.coords.accuracy,
+          },
+          updated_at: new Date().toISOString(),
+        };
+        applyBrowserLocation(browserLocation);
         try {
-          await geofenceApi.reportLocation({
+          const result = await geofenceApi.reportLocation({
             lat: position.coords.latitude,
             lng: position.coords.longitude,
             accuracy_m: position.coords.accuracy,
           });
+          applyBrowserLocation(result.location);
           await refreshGeofence();
           setGeofenceToast({ message: "Location updated successfully", tone: "success" });
         } catch (err) {
@@ -652,21 +756,28 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
           locationRequestInFlightRef.current = false;
           setGeofenceBusy(null);
         }
-      },
-      (err) => {
+      } catch (err) {
+        const code = getLocationErrorCode(err);
         locationRequestInFlightRef.current = false;
         setGeofenceBusy(null);
-        setGeofenceError(err.code === err.PERMISSION_DENIED
+        const refreshedStatus = await refreshGeofence();
+        const fallbackLocation = refreshedStatus?.location ?? geofenceStatus?.location;
+        if (fallbackLocation) {
+          setViewMode("map");
+          setGeofenceToast({ message: "Showing last stored location. Browser did not return a fresh location fix.", tone: "error" });
+          setGeofenceError(null);
+          return;
+        }
+        setGeofenceError(code === 1
           ? "Permission denied"
-          : err.code === err.POSITION_UNAVAILABLE
-            ? "Location unavailable"
-            : err.code === err.TIMEOUT
-              ? "Request timed out"
-              : "Location unavailable");
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
-    );
-  }, [geofenceBusy, refreshGeofence]);
+          : code === 2
+            ? "Browser location unavailable. Make sure location services are enabled for this device."
+            : code === 3
+              ? "Browser location timed out. Make sure location services are enabled for this device."
+              : "Browser location unavailable. Make sure location services are enabled for this device.");
+      }
+    })();
+  }, [applyBrowserLocation, geofenceStatus?.location, refreshGeofence]);
 
   const saveZone = async (body: CreateZoneRequest) => {
     setGeofenceBusy("Creating zone");
@@ -1196,7 +1307,7 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
           </div>
           <div className="clt-geofence-actions">
             <button onClick={() => void refreshGeofence()} disabled={!!geofenceBusy} title="Refresh geofence" aria-label="Refresh geofence"><RefreshCw size={12} /></button>
-            <button onClick={reportLocation} disabled={!!geofenceBusy} title="Update browser location" aria-label="Update browser location"><MapPin size={12} /></button>
+            <button onClick={reportLocation} disabled={locationBusy} title="Update browser location" aria-label="Update browser location"><MapPin size={12} /></button>
             <button onClick={() => setEditingZone(null)} disabled={!!geofenceBusy || !selected} title={selected ? `Create zone on ${displayForDid(selected.did, selected.label)}` : "Select a topology node first"} aria-label="Create zone on selected node"><Plus size={12} /></button>
             <button onClick={() => setEditingZone(selectedZone)} disabled={!!geofenceBusy || !selectedZone} title="Edit selected zone" aria-label="Edit selected zone"><Pencil size={12} /></button>
             <button onClick={() => selectedZone && void runZoneAction(selectedZone, "toggle")} disabled={!!geofenceBusy || !selectedZone} title={selectedZone?.enabled ? "Disable zone" : "Enable zone"} aria-label={selectedZone?.enabled ? "Disable zone" : "Enable zone"}><ShieldCheck size={12} /></button>

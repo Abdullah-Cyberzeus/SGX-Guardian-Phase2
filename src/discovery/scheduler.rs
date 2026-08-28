@@ -1,7 +1,7 @@
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::discovery::{
-    config::{NmapConfig, ScheduledScanKind},
+    config::{NmapConfig, ScheduleDay, ScheduledScanKind},
     connected_device::DeviceStatus,
     error::DiscoveryResult,
     inventory::Inventory,
@@ -12,7 +12,7 @@ use crate::discovery::{
     whitelist::Whitelist,
     ScanIntensity,
 };
-use chrono::Utc;
+use chrono::{Datelike, Local, Timelike, Utc};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -51,6 +51,7 @@ impl DiscoveryScheduler {
         let period = schedule_period(kind);
         let mut poll = interval(Duration::from_secs(60));
         let mut next_run = Instant::now() + period;
+        let mut last_daily_slot: Option<String> = None;
         poll.tick().await;
 
         loop {
@@ -75,11 +76,20 @@ impl DiscoveryScheduler {
                 continue;
             }
 
-            if Instant::now() < next_run {
-                continue;
+            if kind == ScheduledScanKind::Daily {
+                let Some(slot) = daily_schedule_slot(&cfg) else {
+                    continue;
+                };
+                if last_daily_slot.as_deref() == Some(&slot) {
+                    continue;
+                }
+                last_daily_slot = Some(slot);
+            } else {
+                if Instant::now() < next_run {
+                    continue;
+                }
+                next_run = Instant::now() + period;
             }
-
-            next_run = Instant::now() + period;
 
             if let Err(err) = self.run_one(&cfg, kind, intensity).await {
                 log_audit(
@@ -326,6 +336,40 @@ fn schedule_name(kind: ScheduledScanKind) -> &'static str {
     }
 }
 
+fn daily_schedule_slot(cfg: &NmapConfig) -> Option<String> {
+    let now = Local::now();
+    let profile = &cfg.schedules.daily;
+    if !profile
+        .days
+        .iter()
+        .any(|day| schedule_day_matches(*day, now.weekday()))
+    {
+        return None;
+    }
+
+    let (hour, minute) = profile.time.split_once(':')?;
+    let hour = hour.parse::<u32>().ok()?;
+    let minute = minute.parse::<u32>().ok()?;
+    if now.hour() != hour || now.minute() != minute {
+        return None;
+    }
+
+    Some(format!("{}-{:02}:{:02}", now.date_naive(), hour, minute))
+}
+
+fn schedule_day_matches(day: ScheduleDay, weekday: chrono::Weekday) -> bool {
+    matches!(
+        (day, weekday),
+        (ScheduleDay::Monday, chrono::Weekday::Mon)
+            | (ScheduleDay::Tuesday, chrono::Weekday::Tue)
+            | (ScheduleDay::Wednesday, chrono::Weekday::Wed)
+            | (ScheduleDay::Thursday, chrono::Weekday::Thu)
+            | (ScheduleDay::Friday, chrono::Weekday::Fri)
+            | (ScheduleDay::Saturday, chrono::Weekday::Sat)
+            | (ScheduleDay::Sunday, chrono::Weekday::Sun)
+    )
+}
+
 const DEFAULT_NMAP_YAML: &str = r#"# /etc/sgx-guardian/discovery/nmap.yaml
 # Scheduled NMAP discovery - off by default. Admin opts in.
 enabled: false
@@ -337,6 +381,8 @@ schedules:
     intensity: standard   # stealth | standard | aggressive
   daily:
     intensity: aggressive # stealth | standard | aggressive
+    days: [monday, wednesday, friday]
+    time: "23:00"         # local HH:MM
 "#;
 
 const DEFAULT_WHITELIST_YAML: &str = r#"# /etc/sgx-guardian/discovery/whitelist.yaml

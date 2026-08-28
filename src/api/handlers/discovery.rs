@@ -5,7 +5,7 @@ use crate::discovery::whitelist::{
 use crate::discovery::{
     nmap_parser,
     run_history::{self, ScanRunRecord},
-    ConnectedDevice, DeviceStatus, NmapConfig, ScanIntensity, ScanSchedule, ScheduleProfile,
+    ConnectedDevice, DeviceStatus, NmapConfig, ScanIntensity, ScanSchedule, ScheduleDay,
     ScheduledScans,
 };
 use axum::body::Bytes;
@@ -302,6 +302,8 @@ pub struct SchedulePatch {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ScheduleProfilePatch {
     pub intensity: Option<ScanIntensity>,
+    pub days: Option<Vec<ScheduleDay>>,
+    pub time: Option<String>,
 }
 
 pub async fn get_whitelist(
@@ -635,20 +637,30 @@ fn apply_schedule_patch(
     }
 
     if let Some(schedules) = patch.schedules {
-        if let Some(hourly) = schedules.hourly.and_then(|profile| profile.intensity) {
-            cfg.schedules.hourly = ScheduleProfile { intensity: hourly };
+        if let Some(hourly) = schedules.hourly {
+            if let Some(intensity) = hourly.intensity {
+                cfg.schedules.hourly.intensity = intensity;
+            }
         }
-        if let Some(daily) = schedules.daily.and_then(|profile| profile.intensity) {
-            cfg.schedules.daily = ScheduleProfile { intensity: daily };
+        if let Some(daily) = schedules.daily {
+            if let Some(intensity) = daily.intensity {
+                cfg.schedules.daily.intensity = intensity;
+            }
+            if let Some(days) = daily.days {
+                cfg.schedules.daily.days = days;
+            }
+            if let Some(time) = daily.time {
+                cfg.schedules.daily.time = time.trim().to_string();
+            }
         }
     }
 
     if let Some(hourly) = patch.hourly_intensity {
-        cfg.schedules.hourly = ScheduleProfile { intensity: hourly };
+        cfg.schedules.hourly.intensity = hourly;
     }
 
     if let Some(daily) = patch.daily_intensity {
-        cfg.schedules.daily = ScheduleProfile { intensity: daily };
+        cfg.schedules.daily.intensity = daily;
     }
 
     Ok(())
@@ -1112,7 +1124,9 @@ mod tests {
     use crate::did::Resolver;
     use crate::discovery::run_history::{self, ScanRunRecord, ScanRunSource};
     use crate::discovery::whitelist::WhitelistEntry;
-    use crate::discovery::{ConnectedDevice, DeviceStatus, NmapConfig, OpenPort, ScanIntensity};
+    use crate::discovery::{
+        ConnectedDevice, DeviceStatus, NmapConfig, OpenPort, ScanIntensity, ScheduleDay,
+    };
     use crate::virtual_id_cache::VirtualIdCache;
     use axum::extract::{Query, State};
     use axum::Json;
@@ -1207,9 +1221,13 @@ mod tests {
             schedules: Some(SchedulePatch {
                 hourly: Some(ScheduleProfilePatch {
                     intensity: Some(ScanIntensity::Stealth),
+                    days: None,
+                    time: None,
                 }),
                 daily: Some(ScheduleProfilePatch {
                     intensity: Some(ScanIntensity::Aggressive),
+                    days: Some(vec![ScheduleDay::Monday, ScheduleDay::Wednesday]),
+                    time: Some("23:00".into()),
                 }),
             }),
             hourly_intensity: None,
@@ -1224,6 +1242,11 @@ mod tests {
         assert!(cfg.exclude.is_empty());
         assert_eq!(cfg.schedules.hourly.intensity, ScanIntensity::Stealth);
         assert_eq!(cfg.schedules.daily.intensity, ScanIntensity::Aggressive);
+        assert_eq!(
+            cfg.schedules.daily.days,
+            vec![ScheduleDay::Monday, ScheduleDay::Wednesday]
+        );
+        assert_eq!(cfg.schedules.daily.time, "23:00");
     }
 
     #[test]

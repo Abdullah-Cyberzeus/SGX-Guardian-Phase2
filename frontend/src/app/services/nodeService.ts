@@ -35,6 +35,7 @@ export interface RestartResponse {
 // Backend response shapes
 interface BackendNodeStatus {
   nodeId: string;
+  displayHostname?: string;
   hostname: string;
   ip: string;
   port: number;
@@ -47,6 +48,7 @@ interface BackendBootStatus {
   habEnabled: boolean;
   deviceClosed: boolean;
   habEventsFound: boolean;
+  habDescription?: string;
   deviceModel: string;
   kernelVersion: string;
   bootChainIntact: boolean;
@@ -60,7 +62,7 @@ export const nodeService = {
   getStatus: async (): Promise<NodeStatus> => {
     const res = await api.get<BackendNodeStatus>('/node/status');
     return {
-      hostname: res.hostname,
+      hostname: res.displayHostname || res.hostname,
       port: res.port,
       publicKey: res.publicKey,
       offlineMode: res.offlineMode,
@@ -81,6 +83,7 @@ export const nodeService = {
       habEnabled: res.habEnabled,
       deviceClosed: res.deviceClosed,
       habEvents: res.habEventsFound ? 'Found' : 'None',
+      habDescription: res.habDescription || '',
       deviceModel: res.deviceModel || 'Unknown',
       bootChain: res.bootChainIntact ? 'INTACT' as const : 'COMPROMISED' as const,
       binaryHash: res.guardianBinaryHash || 'N/A',

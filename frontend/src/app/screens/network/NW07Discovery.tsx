@@ -18,7 +18,6 @@ import {
   Check,
   X,
   LayoutList,
-  Braces,
   Trash2,
   History,
   CalendarClock,
@@ -53,6 +52,7 @@ import type {
   InventorySummary,
   OpenPort,
   RiskLevel,
+  ScheduleDay,
   ScheduleRun,
   ScheduleRunStatus,
   WhitelistDoc,
@@ -1268,7 +1268,7 @@ function WhitelistDetailDialog({
 
           {!hasFingerprint && (
             <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginTop: "12px" }}>
-              No expected fingerprint set. Edit this entry in the JSON view to add expected OS, ports, or IPs.
+              No expected fingerprint set for this entry.
             </p>
           )}
         </Dialog.Content>
@@ -1290,7 +1290,7 @@ function WhitelistTab({ inventoryDevices, data, loading, error, refetch, onSaved
   const [text, setText] = useState("");
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [view, setView] = useState<"table" | "json">("table");
+  const [view, setView] = useState<"table">("table");
   const [detailMac, setDetailMac] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1369,66 +1369,50 @@ function WhitelistTab({ inventoryDevices, data, loading, error, refetch, onSaved
           </p>
           {loading && <Loader2 className="animate-spin" size={13} style={{ color: "var(--muted-foreground)" }} />}
         </div>
-        {/* View toggle: structured table vs raw JSON */}
         <div className="flex items-center gap-1 p-0.5 rounded-md" style={{ backgroundColor: "var(--muted)" }}>
-          {([["table", "Table", LayoutList], ["json", "JSON", Braces]] as const).map(([key, label, Icon]) => (
-            <button
-              key={key}
-              onClick={() => setView(key)}
-              className="flex items-center gap-1 px-2 py-1 rounded"
-              style={{
-                backgroundColor: view === key ? "var(--card)" : "transparent",
-                color: view === key ? "var(--foreground)" : "var(--muted-foreground)",
-                border: view === key ? "1px solid var(--border)" : "1px solid transparent",
-                cursor: "pointer",
-                fontFamily: "Inter, sans-serif",
-                fontSize: "var(--text-xs)",
-                fontWeight: "var(--font-weight-medium)",
-              }}
-            >
-              <Icon size={12} /> {label}
-            </button>
-          ))}
+          <button
+            type="button"
+            aria-pressed={view === "table"}
+            onClick={() => setView("table")}
+            className="flex items-center gap-1 px-2 py-1 rounded"
+            style={{
+              backgroundColor: "var(--card)",
+              color: "var(--foreground)",
+              border: "1px solid var(--border)",
+              cursor: "pointer",
+              fontFamily: "Inter, sans-serif",
+              fontSize: "var(--text-xs)",
+              fontWeight: "var(--font-weight-medium)",
+            }}
+          >
+            <LayoutList size={12} /> Table
+          </button>
         </div>
       </div>
 
       <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
-        {view === "table"
-          ? "Approved devices in the discovery whitelist. Remove an entry here, or edit full details in the JSON view."
-          : "Edit the whitelist document directly. Saving replaces the whitelist and refreshes matching inventory statuses."}
+        Approved devices in the discovery whitelist. Remove entries here to refresh matching inventory statuses.
       </p>
 
       {error && (
         <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--destructive)" }}>{guardianDisplayText(error.message)}</p>
       )}
 
-      {view === "json" ? (
-        <textarea
-          value={text}
-          onChange={(e) => {
-            setText(e.target.value);
-            setDirty(true);
-          }}
-          spellCheck={false}
-          rows={16}
-          className="w-full px-3 py-2 rounded-md"
-          style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)", color: "var(--foreground)", fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", lineHeight: 1.6, resize: "vertical" }}
-        />
-      ) : parseError ? (
+      {view === "table" && parseError ? (
         <div className="rounded-lg border p-4" style={{ backgroundColor: "var(--card)", borderColor: "color-mix(in srgb, var(--chart-4) 30%, var(--border))" }}>
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--chart-4)" }}>
-            The whitelist JSON is currently invalid — switch to the JSON view to fix it.
+            The whitelist could not be displayed. Reload the current whitelist and try again.
           </p>
         </div>
-      ) : devices.length === 0 ? (
+      ) : view === "table" && devices.length === 0 ? (
         <div className="rounded-lg border p-6 text-center" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
           <ListChecks size={32} style={{ color: "var(--muted-foreground)", margin: "0 auto 12px" }} />
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--foreground)" }}>No whitelisted devices yet</p>
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginTop: "4px" }}>
-            Approve a device from the Inventory tab, or add one in the JSON view.
+            Approve a device from the Inventory tab to add it here.
           </p>
         </div>
-      ) : (
+      ) : view === "table" ? (
         <div className="flex flex-col gap-2">
           {devices.map((d) => (
             <WhitelistEntryCard
@@ -1440,7 +1424,7 @@ function WhitelistTab({ inventoryDevices, data, loading, error, refetch, onSaved
             />
           ))}
         </div>
-      )}
+      ) : null}
 
       <div className="flex items-center justify-between">
         <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
@@ -1516,13 +1500,89 @@ const fieldStyle = {
   fontSize: "var(--text-sm)",
 } as const;
 
+const SCHEDULE_DAYS: { key: ScheduleDay; label: string; short: string }[] = [
+  { key: "monday", label: "Monday", short: "Mon" },
+  { key: "tuesday", label: "Tuesday", short: "Tue" },
+  { key: "wednesday", label: "Wednesday", short: "Wed" },
+  { key: "thursday", label: "Thursday", short: "Thu" },
+  { key: "friday", label: "Friday", short: "Fri" },
+  { key: "saturday", label: "Saturday", short: "Sat" },
+  { key: "sunday", label: "Sunday", short: "Sun" },
+];
+
+const DEFAULT_SCAN_DAYS: ScheduleDay[] = ["monday", "wednesday", "friday"];
+const DEFAULT_SCAN_TIME = "23:00";
+
 const DEFAULT_SCHEDULE: DiscoverySchedule = {
   enabled: false,
   target_cidr: null,
   timeout_secs: 600,
   exclude: [],
-  schedules: { hourly: { intensity: "standard" }, daily: { intensity: "aggressive" } },
+  schedules: {
+    hourly: { intensity: "standard" },
+    daily: { intensity: "aggressive", days: DEFAULT_SCAN_DAYS, time: DEFAULT_SCAN_TIME },
+  },
 };
+
+function normalizeScheduleForm(cfg: DiscoverySchedule): DiscoverySchedule {
+  return {
+    ...cfg,
+    schedules: {
+      hourly: {
+        intensity: cfg.schedules?.hourly?.intensity ?? DEFAULT_SCHEDULE.schedules.hourly.intensity,
+      },
+      daily: {
+        intensity: cfg.schedules?.daily?.intensity ?? DEFAULT_SCHEDULE.schedules.daily.intensity,
+        days: cfg.schedules?.daily?.days?.length ? cfg.schedules.daily.days : DEFAULT_SCAN_DAYS,
+        time: cfg.schedules?.daily?.time || DEFAULT_SCAN_TIME,
+      },
+    },
+  };
+}
+
+function formatScheduleTime(time: string): string {
+  const [hourText, minuteText] = time.split(":");
+  const hour24 = Number(hourText);
+  const minute = Number(minuteText);
+  if (!Number.isFinite(hour24) || !Number.isFinite(minute)) return time;
+  const hour12 = hour24 % 12 || 12;
+  const suffix = hour24 >= 12 ? "PM" : "AM";
+  return `${hour12}:${String(minute).padStart(2, "0")} ${suffix}`;
+}
+
+function getTimeZoneLabel(): string {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (zone === "America/New_York") return "Eastern Time";
+  if (zone === "America/Chicago") return "Central Time";
+  if (zone === "America/Denver") return "Mountain Time";
+  if (zone === "America/Los_Angeles") return "Pacific Time";
+  return zone?.replaceAll("_", " ") || "Local Time";
+}
+
+function formatScanSchedule(days: ScheduleDay[], time: string): string {
+  const selected = SCHEDULE_DAYS.filter((day) => days.includes(day.key)).map((day) => day.label);
+  const dayText = selected.length ? selected.join(", ") : "No days selected";
+  return `${dayText} at ${formatScheduleTime(time)} (${getTimeZoneLabel()})`;
+}
+
+function computeNextScheduledScan(days: ScheduleDay[], time: string, now: Date = new Date()): Date | null {
+  if (!days.length) return null;
+  const [hourText, minuteText] = time.split(":");
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
+
+  let best: Date | null = null;
+  for (let offset = 0; offset <= 7; offset++) {
+    const candidate = new Date(now);
+    candidate.setDate(now.getDate() + offset);
+    candidate.setHours(hour, minute, 0, 0);
+    const dayKey = SCHEDULE_DAYS[(candidate.getDay() + 6) % 7].key;
+    if (!days.includes(dayKey) || candidate <= now) continue;
+    if (!best || candidate < best) best = candidate;
+  }
+  return best;
+}
 
 function ScheduleTab() {
   const { data, loading, error, refetch } = useDiscoverySchedule();
@@ -1534,7 +1594,7 @@ function ScheduleTab() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (data && !dirty) setForm(data);
+    if (data && !dirty) setForm(normalizeScheduleForm(data));
   }, [data, dirty]);
 
   const update = (patch: Partial<DiscoverySchedule>) => {
@@ -1550,9 +1610,9 @@ function ScheduleTab() {
         target_cidr: form.target_cidr && form.target_cidr.trim() ? form.target_cidr.trim() : null,
         timeout_secs: Number(form.timeout_secs),
         exclude: form.exclude,
-        schedules: form.schedules,
+        schedules: normalizeScheduleForm(form).schedules,
       });
-      setForm(updated);
+      setForm(normalizeScheduleForm(updated));
       setDirty(false);
       toast.success("Schedule updated");
       refetch();
@@ -1564,6 +1624,23 @@ function ScheduleTab() {
   };
 
   const labelStyle = { fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", fontWeight: "var(--font-weight-medium)" } as const;
+  const scanDays = form.schedules.daily.days ?? DEFAULT_SCAN_DAYS;
+  const scanTime = form.schedules.daily.time ?? DEFAULT_SCAN_TIME;
+  const nextScan = computeNextScheduledScan(scanDays, scanTime);
+  const toggleDay = (day: ScheduleDay) => {
+    const current = form.schedules.daily.days ?? [];
+    const nextDays = current.includes(day) ? current.filter((d) => d !== day) : [...current, day];
+    update({
+      schedules: {
+        ...form.schedules,
+        daily: {
+          ...form.schedules.daily,
+          days: SCHEDULE_DAYS.filter((d) => nextDays.includes(d.key)).map((d) => d.key),
+          time: scanTime,
+        },
+      },
+    });
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -1621,13 +1698,68 @@ function ScheduleTab() {
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        {(["hourly", "daily"] as const).map((period) => (
-          <div key={period} className="flex flex-col gap-1">
-            <label style={labelStyle}>{period[0].toUpperCase() + period.slice(1)} intensity</label>
+      <div className="flex flex-col gap-1">
+        <label style={labelStyle}>Scan Intensity</label>
+        <select
+          value={form.schedules.hourly.intensity}
+          onChange={(e) => update({ schedules: { ...form.schedules, hourly: { intensity: e.target.value } } })}
+          className="w-full px-3 py-2 rounded-md"
+          style={fieldStyle}
+        >
+          {INTENSITIES.map((i) => (
+            <option key={i} value={i}>{i}</option>
+          ))}
+        </select>
+      </div>
+
+      <div className="flex flex-col gap-3 rounded-lg border p-3" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
+        <div className="flex items-center justify-between gap-2">
+          <label style={labelStyle}>Scan Schedule</label>
+          <IntensityBadge intensity={form.schedules.daily.intensity} />
+        </div>
+
+        <div className="grid grid-cols-7 gap-1">
+          {SCHEDULE_DAYS.map((day) => {
+            const selected = scanDays.includes(day.key);
+            return (
+              <button
+                key={day.key}
+                type="button"
+                onClick={() => toggleDay(day.key)}
+                className="flex items-center justify-center rounded-md px-2 py-2"
+                title={day.label}
+                style={{
+                  backgroundColor: selected ? "var(--primary)" : "var(--background)",
+                  border: selected ? "1px solid var(--primary)" : "1px solid var(--border)",
+                  color: selected ? "var(--primary-foreground)" : "var(--foreground)",
+                  cursor: "pointer",
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "var(--text-xs)",
+                  fontWeight: "var(--font-weight-medium)",
+                }}
+              >
+                {day.short}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="flex flex-col gap-1">
+            <label style={labelStyle}>Time</label>
+            <input
+              type="time"
+              value={scanTime}
+              onChange={(e) => update({ schedules: { ...form.schedules, daily: { ...form.schedules.daily, days: scanDays, time: e.target.value } } })}
+              className="w-full px-3 py-2 rounded-md"
+              style={fieldStyle}
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label style={labelStyle}>Schedule Intensity</label>
             <select
-              value={form.schedules[period].intensity}
-              onChange={(e) => update({ schedules: { ...form.schedules, [period]: { intensity: e.target.value } } })}
+              value={form.schedules.daily.intensity}
+              onChange={(e) => update({ schedules: { ...form.schedules, daily: { ...form.schedules.daily, days: scanDays, time: scanTime, intensity: e.target.value } } })}
               className="w-full px-3 py-2 rounded-md"
               style={fieldStyle}
             >
@@ -1636,7 +1768,17 @@ function ScheduleTab() {
               ))}
             </select>
           </div>
-        ))}
+        </div>
+
+        <div
+          className="rounded-md border px-3 py-2"
+          style={{ backgroundColor: "var(--background)", borderColor: "var(--border)", fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--foreground)", lineHeight: 1.65 }}
+        >
+          <div>✓ {formatScanSchedule(scanDays, scanTime)}</div>
+          <div style={{ color: "var(--muted-foreground)" }}>
+            Next scan: {nextScan ? `${SCHEDULE_DAYS[(nextScan.getDay() + 6) % 7].label} at ${formatScheduleTime(scanTime)} (${formatRelative(nextScan)})` : "Select at least one day"}
+          </div>
+        </div>
       </div>
 
       <button
@@ -2004,7 +2146,7 @@ function RunsTab({ onEditSchedule }: { onEditSchedule: () => void }) {
   const [approveTarget, setApproveTarget] = useState<ConnectedDevice | null>(null);
   const [detailTarget, setDetailTarget] = useState<ConnectedDevice | null>(null);
 
-  const cfg = schedule.data;
+  const cfg = useMemo(() => (schedule.data ? normalizeScheduleForm(schedule.data) : null), [schedule.data]);
   const realRuns: ScheduleRun[] | null = useMemo(() => {
     if (!runs.data || !Array.isArray(runs.data) || runs.data.length === 0) return null;
     // /discovery/runs carries only timestamps. Enrich any run that lines up with
@@ -2056,15 +2198,16 @@ function RunsTab({ onEditSchedule }: { onEditSchedule: () => void }) {
 
   const next = useMemo(() => {
     const fallback = computeNextRuns();
+    const dailyFallback = cfg ? computeNextScheduledScan(cfg.schedules.daily.days ?? DEFAULT_SCAN_DAYS, cfg.schedules.daily.time ?? DEFAULT_SCAN_TIME) ?? fallback.daily : fallback.daily;
     const hourly = cfg?.next_run_hourly ? new Date(cfg.next_run_hourly) : fallback.hourly;
-    const daily = cfg?.next_run_daily ? new Date(cfg.next_run_daily) : fallback.daily;
+    const daily = cfg?.next_run_daily ? new Date(cfg.next_run_daily) : dailyFallback;
     return {
       hourly: Number.isNaN(hourly.getTime()) ? fallback.hourly : hourly,
-      daily: Number.isNaN(daily.getTime()) ? fallback.daily : daily,
+      daily: Number.isNaN(daily.getTime()) ? dailyFallback : daily,
       hourlyEstimated: !cfg?.next_run_hourly,
       dailyEstimated: !cfg?.next_run_daily,
     };
-  }, [cfg?.next_run_hourly, cfg?.next_run_daily]);
+  }, [cfg]);
 
   if (schedule.loading && !cfg) {
     return (
@@ -2141,19 +2284,34 @@ function RunsTab({ onEditSchedule }: { onEditSchedule: () => void }) {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 mb-3">
-          {(["hourly", "daily"] as const).map((period) => (
-            <div
-              key={period}
-              className="rounded-md border p-2 flex items-center justify-between"
-              style={{ backgroundColor: "var(--background)", borderColor: "var(--border)" }}
-            >
-              <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", textTransform: "capitalize" }}>
-                {period}
-              </span>
-              <IntensityBadge intensity={cfg?.schedules[period].intensity ?? "—"} />
-            </div>
-          ))}
+        <div className="grid gap-2 mb-3 sm:grid-cols-2">
+          <div
+            className="rounded-md border p-2 flex items-center justify-between"
+            style={{ backgroundColor: "var(--background)", borderColor: "var(--border)" }}
+          >
+            <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
+              Scan Intensity
+            </span>
+            <IntensityBadge intensity={cfg?.schedules.hourly.intensity ?? "—"} />
+          </div>
+          <div
+            className="rounded-md border p-2 flex items-center justify-between"
+            style={{ backgroundColor: "var(--background)", borderColor: "var(--border)" }}
+          >
+            <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
+              Schedule Intensity
+            </span>
+            <IntensityBadge intensity={cfg?.schedules.daily.intensity ?? "—"} />
+          </div>
+          <div
+            className="rounded-md border p-2 sm:col-span-2"
+            style={{ backgroundColor: "var(--background)", borderColor: "var(--border)" }}
+          >
+            <p style={labelStyle}>Scan Schedule</p>
+            <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--foreground)", marginTop: "4px" }}>
+              {cfg ? `✓ ${formatScanSchedule(cfg.schedules.daily.days ?? DEFAULT_SCAN_DAYS, cfg.schedules.daily.time ?? DEFAULT_SCAN_TIME)}` : "—"}
+            </p>
+          </div>
         </div>
 
         <button

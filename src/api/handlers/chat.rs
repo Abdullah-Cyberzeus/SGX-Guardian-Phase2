@@ -43,6 +43,120 @@ pub(crate) fn get_grpc_addr(ip: &str, peer_id_str: &str) -> String {
     format!("{}:{}", ip, chat_port)
 }
 
+/// A peer registry entry counts as trusted enough to chat with. Mirrors
+/// `peers.rs::list`'s own definition of "trusted" (which also accepts
+/// `"success"`) — every chat trust check here and in grpc_server.rs
+/// previously only accepted `"trusted"`/`"verified"`, so a `"success"`
+/// status peer was exposed to the frontend as a normal, chattable contact
+/// (and thus polled for history/unread) while every actual send/read check
+/// silently rejected it as untrusted.
+pub(crate) fn is_trusted_status(status: Option<&str>) -> bool {
+    matches!(status, Some("trusted") | Some("verified") | Some("success"))
+}
+
+pub(crate) fn peer_route_id(peer: &serde_json::Value) -> &str {
+    peer.get("node_id")
+        .or_else(|| peer.get("nodeId"))
+        .or_else(|| peer.get("peer_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+}
+
+pub(crate) fn member_node_hint_for_did(state: &AppState, did: &str) -> Option<String> {
+    let registry = crate::circle::store::load_or_seed(&state.node_id).ok()?;
+    for circle in registry
+        .circles
+        .into_iter()
+        .filter(|circle| !circle.is_archived())
+    {
+        let Ok(members) = crate::circle::members::list_members(&state.node_id, &circle.circle_id)
+        else {
+            continue;
+        };
+        for member in members {
+            if member.did.eq_ignore_ascii_case(did)
+                && matches!(
+                    member.lifecycle_state,
+                    crate::circle::members::MemberLifecycleState::Active
+                )
+            {
+                let hint = member.node_hint.unwrap_or_default();
+                if !hint.trim().is_empty() {
+                    return Some(hint);
+                }
+            }
+        }
+    }
+    None
+}
+
+async fn load_registry_peers(state: &AppState) -> Vec<serde_json::Value> {
+    let global_path = std::path::Path::new(&state.log_dir_primary).join("trusted_peers.json");
+    let per_node_path = std::path::Path::new(&state.log_dir_primary)
+        .join(format!("trusted_peers_{}.json", state.node_id));
+    let global_json = tokio::fs::read_to_string(&global_path)
+        .await
+        .unwrap_or_else(|_| "[]".to_string());
+    let per_node_json = tokio::fs::read_to_string(&per_node_path)
+        .await
+        .unwrap_or_else(|_| "[]".to_string());
+    let mut peers: Vec<serde_json::Value> = serde_json::from_str(&global_json).unwrap_or_default();
+    peers
+        .extend(serde_json::from_str::<Vec<serde_json::Value>>(&per_node_json).unwrap_or_default());
+    peers
+}
+
+/// Finds the trusted/verified registry entry `did` resolves to — by direct
+/// DID/peer_id match, or (when Circle membership is available) by
+/// node-hint. Returns the full registry object (not just its `did` field)
+/// so callers can also match other identity fields it carries, since the
+/// registry entry for a peer can have no `did` field at all and still be
+/// resolvable this way. `None` only when nothing in the trusted registry
+/// matches `did` by any means.
+pub(crate) async fn find_trusted_peer_for_did(
+    state: &AppState,
+    did: &str,
+) -> Option<serde_json::Value> {
+    let peers = load_registry_peers(state).await;
+    let node_hint = member_node_hint_for_did(state, did);
+    peers.into_iter().find(|peer| {
+        let status = peer.get("status").and_then(|v| v.as_str());
+        is_trusted_status(status) && peer_matches_identity(peer, did, node_hint.as_deref())
+    })
+}
+
+/// Resolves `did` to the registry's own canonical `did` string for that
+/// peer, or `None` if no trusted/verified entry matches at all, or matches
+/// but carries no `did` field of its own (identified only by peer_id/
+/// node_hint — see `find_trusted_peer_for_did`). Used as a fallback when a
+/// direct history lookup by the caller-supplied DID comes up empty, since
+/// the frontend's idea of a peer's DID (from Circle membership or a stale
+/// local cache) can diverge in casing or format from what that peer
+/// actually used when storing its side of the conversation.
+pub(crate) async fn resolve_canonical_peer_did(state: &AppState, did: &str) -> Option<String> {
+    find_trusted_peer_for_did(state, did)
+        .await
+        .and_then(|peer| peer.get("did").and_then(|v| v.as_str()).map(str::to_string))
+}
+
+pub(crate) fn peer_matches_identity(
+    peer: &serde_json::Value,
+    did: &str,
+    node_hint: Option<&str>,
+) -> bool {
+    let target_peer_id = did.strip_prefix("did:guardian:").unwrap_or(did);
+    let peer_did = peer.get("did").and_then(|v| v.as_str()).unwrap_or("");
+    let peer_id = peer.get("peer_id").and_then(|v| v.as_str()).unwrap_or("");
+    let route_id = peer_route_id(peer);
+    peer_did.eq_ignore_ascii_case(did)
+        || peer_did.eq_ignore_ascii_case(target_peer_id)
+        || peer_id.eq_ignore_ascii_case(target_peer_id)
+        || peer_id.eq_ignore_ascii_case(did)
+        || node_hint.is_some_and(|hint| {
+            route_id.eq_ignore_ascii_case(hint) || peer_id.eq_ignore_ascii_case(hint)
+        })
+}
+
 /// Returns the local Nebula overlay IP (from the `nebula0` interface), or None if not found.
 /// Used to detect corrupted registry entries where a peer's DID is stored with our own IP.
 fn get_local_nebula_ip() -> Option<String> {
@@ -365,12 +479,14 @@ pub async fn send_message(
             let snapshot_has_sender = crate::circle::snapshot::load(&circle_id)
                 .map_err(|error| ApiError::Internal(format!("load Circle snapshot: {error:?}")))?
                 .is_some_and(|snapshot| {
-                    snapshot.members.iter().any(|member| member.did == sender_did)
+                    snapshot
+                        .members
+                        .iter()
+                        .any(|member| member.did == sender_did)
                 });
             if !snapshot_has_sender {
                 crate::api::handlers::circle::refresh_and_broadcast_member_snapshot(
-                    &state,
-                    &circle_id,
+                    &state, &circle_id,
                 )
                 .await
                 .map_err(|error| {
@@ -387,7 +503,7 @@ pub async fn send_message(
 
         for p in raw_peers.iter() {
             let status = p.get("status").and_then(|v| v.as_str());
-            if status == Some("trusted") || status == Some("verified") {
+            if is_trusted_status(status) {
                 let did_val = p
                     .get("did")
                     .and_then(|v| v.as_str())
@@ -398,7 +514,7 @@ pub async fn send_message(
                             .map(|s| format!("did:guardian:{}", s))
                     });
                 let ip_str = p.get("ip").and_then(|v| v.as_str());
-                let peer_id_str = p.get("peer_id").and_then(|v| v.as_str()).unwrap_or("");
+                let peer_id_str = peer_route_id(p);
 
                 if let (Some(did), Some(ip_str)) = (did_val, ip_str) {
                     // Only send if the peer's DID is in the circle member list
@@ -432,21 +548,11 @@ pub async fn send_message(
     } else if !is_local_direct {
         // P2P Chat: Find the specific trusted peer.
         // Match by full DID string OR by the base58 key suffix OR by peer_id.
-        let target_peer_id = req
-            .recipient_did
-            .strip_prefix("did:guardian:")
-            .unwrap_or(&req.recipient_did);
+        let recipient_node_hint = member_node_hint_for_did(&state, &req.recipient_did);
         let target_peer = raw_peers.iter().find(|p| {
             let status = p.get("status").and_then(|v| v.as_str());
-            let is_trusted = status == Some("trusted") || status == Some("verified");
-            let peer_did = p.get("did").and_then(|v| v.as_str()).unwrap_or("");
-            let peer_id = p.get("peer_id").and_then(|v| v.as_str()).unwrap_or("");
-            // Match full DID, or the key suffix, or the plain peer_id label
-            let matches = peer_did == req.recipient_did.as_str()
-                || peer_did == target_peer_id
-                || peer_id == target_peer_id
-                || peer_id == req.recipient_did.as_str();
-            is_trusted && matches
+            is_trusted_status(status)
+                && peer_matches_identity(p, &req.recipient_did, recipient_node_hint.as_deref())
         });
 
         if let Some(peer) = target_peer {
@@ -475,7 +581,7 @@ pub async fn send_message(
             let ip = ip_str
                 .parse::<std::net::IpAddr>()
                 .map_err(|_| ApiError::Internal(format!("Peer has invalid IP: {}", ip_str)))?;
-            let peer_id_str = peer.get("peer_id").and_then(|v| v.as_str()).unwrap_or("");
+            let peer_id_str = peer_route_id(peer);
             let target_addr = get_grpc_addr(&ip.to_string(), peer_id_str);
             eprintln!("💬 Chat: target peer found — sending to {}", target_addr);
             target_peers_info.push((req.recipient_did.clone(), target_addr));
@@ -894,34 +1000,15 @@ pub async fn mark_as_read(
     // this reader hides read receipts, so a remote sender never learns
     // their message was read either.
     if !hide_read_receipts {
-        let peers_path = std::path::Path::new(&state.log_dir_primary).join("trusted_peers.json");
-        let peers_json = tokio::fs::read_to_string(&peers_path)
-            .await
-            .unwrap_or_else(|_| "[]".to_string());
-        let raw_peers: Vec<serde_json::Value> =
-            serde_json::from_str(&peers_json).unwrap_or_default();
+        let target_peer = find_trusted_peer_for_did(&state, &req.original_sender_did).await;
 
-        let target_peer = raw_peers.iter().find(|p| {
-            let status = p.get("status").and_then(|v| v.as_str());
-            let is_trusted = status == Some("trusted") || status == Some("verified");
-            let matches_did = p.get("did").and_then(|v| v.as_str())
-                == Some(req.original_sender_did.as_str())
-                || p.get("peer_id").and_then(|v| v.as_str())
-                    == Some(
-                        req.original_sender_did
-                            .strip_prefix("did:guardian:")
-                            .unwrap_or(&req.original_sender_did),
-                    );
-            is_trusted && matches_did
-        });
-
-        if let Some(peer) = target_peer {
+        if let Some(peer) = target_peer.as_ref() {
             let peer_ip = peer
                 .get("ip")
                 .and_then(|v| v.as_str())
                 .unwrap_or("127.0.0.1")
                 .to_string();
-            let peer_id_str = peer.get("peer_id").and_then(|v| v.as_str()).unwrap_or("");
+            let peer_id_str = peer_route_id(peer);
             let target_addr = get_grpc_addr(&peer_ip, peer_id_str);
 
             let grpc_req = crate::proto::sgx::PushReceiptRequest {
@@ -975,7 +1062,7 @@ pub async fn trigger_sync(
 
     for peer in raw_peers {
         let status = peer.get("status").and_then(|v| v.as_str());
-        if status != Some("trusted") && status != Some("verified") {
+        if !is_trusted_status(status) {
             continue;
         }
 
@@ -1001,7 +1088,7 @@ pub async fn trigger_sync(
             Ok(ip) => ip,
             Err(_) => continue,
         };
-        let peer_id_str = peer.get("peer_id").and_then(|v| v.as_str()).unwrap_or("");
+        let peer_id_str = peer_route_id(&peer);
         let target_addr = get_grpc_addr(&peer_ip.to_string(), peer_id_str);
 
         let mut last_seq_no = 0;
@@ -1058,9 +1145,92 @@ pub async fn get_history(
         let own_did = crate::api::handlers::browser_member::did_from_session(&session)
             .unwrap_or_else(|| state.device_did.clone());
         let conversation_id = local_pair_conversation_id(&state, &own_did, &peer_did);
-        crate::chat::storage::read_p2p_history(&conversation_id)
+        // Tagged distinctly (🔎, not 💬) and always printed — carries both
+        // DIDs on one line so it can be grepped for a specific pair without
+        // having to infer which of several concurrent background-poll
+        // lookups (unread badge refresh, etc.) belongs to which peer.
+        eprintln!(
+            "🔎 History request: own_did={} peer_did={} conversation_id={}",
+            own_did, peer_did, conversation_id
+        );
+        let mut history = crate::chat::storage::read_p2p_history(&conversation_id)
             .await
-            .map_err(|e| ApiError::Internal(format!("Failed to read P2P history: {}", e)))?
+            .map_err(|e| ApiError::Internal(format!("Failed to read P2P history: {}", e)))?;
+        // The requested peer_did came straight from the frontend (Circle
+        // roster or a locally cached peer entry) and can diverge in casing
+        // or format from the DID that peer actually used to store its side
+        // of the exchange. Retry once against the registry's own canonical
+        // DID for that identity before concluding the conversation is
+        // empty — this is the one lookup path that didn't share the
+        // node-hint fallback `send_message`/`mark_as_read` already use.
+        if history.is_empty() {
+            if let Some(canonical_did) = resolve_canonical_peer_did(&state, &peer_did).await {
+                if canonical_did != peer_did {
+                    let alt_conversation_id =
+                        local_pair_conversation_id(&state, &own_did, &canonical_did);
+                    history = crate::chat::storage::read_p2p_history(&alt_conversation_id)
+                        .await
+                        .unwrap_or_default();
+                    eprintln!(
+                        "💬 History: direct lookup for peer_did={} empty, canonical retry via {} found {} message(s)",
+                        peer_did, canonical_did, history.len()
+                    );
+                }
+            }
+        }
+        // Last resort — and the one that does NOT require Circle membership
+        // or a `did` field in the registry at all: find whichever trusted
+        // registry entry `peer_did` resolves to (by any of its identity
+        // fields — see `peer_matches_identity`), then check every *existing*
+        // conversation file to see whether ITS key also resolves to that
+        // same registry entry. A received message is filed verbatim under
+        // the sender's own self-declared DID (`push_message` in
+        // grpc_server.rs) — ground truth, independent of this node's
+        // registry quality — so this finds it even when neither side's
+        // guess at the other's DID matches the other's literally.
+        if history.is_empty() {
+            if let Some(target_peer) = find_trusted_peer_for_did(&state, &peer_did).await {
+                let node_hint = member_node_hint_for_did(&state, &peer_did);
+                let candidates = crate::chat::storage::list_p2p_conversation_ids().await;
+                eprintln!(
+                    "💬 History: canonical retry also empty for peer_did={}, scanning {} existing conversation file(s) against matched registry entry {:?}",
+                    peer_did, candidates.len(), target_peer.get("peer_id").and_then(|v| v.as_str())
+                );
+                for candidate_did in candidates {
+                    if candidate_did == peer_did {
+                        continue;
+                    }
+                    if peer_matches_identity(&target_peer, &candidate_did, node_hint.as_deref()) {
+                        let alt_conversation_id =
+                            local_pair_conversation_id(&state, &own_did, &candidate_did);
+                        let found = crate::chat::storage::read_p2p_history(&alt_conversation_id)
+                            .await
+                            .unwrap_or_default();
+                        eprintln!(
+                            "💬 History: candidate conversation file {} matched — {} message(s)",
+                            candidate_did,
+                            found.len()
+                        );
+                        if !found.is_empty() {
+                            history = found;
+                            break;
+                        }
+                    }
+                }
+            } else {
+                eprintln!(
+                    "💬 History: no trusted registry entry resolves peer_did={} at all — nothing to scan for",
+                    peer_did
+                );
+            }
+        }
+        eprintln!(
+            "🔎 History result: own_did={} peer_did={} -> {} message(s)",
+            own_did,
+            peer_did,
+            history.len()
+        );
+        history
     } else if let Some(group_id) = query.group_id {
         ensure_local_guardian_circle_access(&state, &session, &group_id)?;
         let mut group_messages = crate::chat::storage::read_group_history(&group_id)
@@ -1134,9 +1304,10 @@ async fn ensure_member_contact_access(
     // therefore direct-message its own Guardian or another browser member
     // hosted here, but never a remote Guardian/device from the Circle roster.
     // Remote Guardians remain reachable through the replicated group chat.
-    let browser_contact = crate::api::handlers::browser_member::dids_for_circles(state, &circle_ids)
-        .await?
-        .contains(contact_did);
+    let browser_contact =
+        crate::api::handlers::browser_member::dids_for_circles(state, &circle_ids)
+            .await?
+            .contains(contact_did);
     if browser_allowed || browser_contact {
         Ok(())
     } else {
@@ -1257,6 +1428,35 @@ async fn handle_socket(
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn peer_route_id_prefers_stable_node_id_for_port_selection() {
+        let peer = serde_json::json!({
+            "peer_id": "Renamed Guardian",
+            "node_id": "nodeB",
+            "ip": "127.0.0.1",
+            "status": "verified",
+        });
+        assert_eq!(peer_route_id(&peer), "nodeB");
+        assert_eq!(
+            get_grpc_addr("127.0.0.1", peer_route_id(&peer)),
+            "127.0.0.1:50252"
+        );
+    }
+
+    #[test]
+    fn peer_identity_can_match_circle_node_hint_when_registry_lacks_did() {
+        let peer = serde_json::json!({
+            "peer_id": "nodeA",
+            "ip": "127.0.0.1",
+            "status": "verified",
+        });
+        assert!(peer_matches_identity(
+            &peer,
+            "did:guardian:z6MkRealDeviceDid",
+            Some("nodeA"),
+        ));
+    }
 
     /// `session: None` (the admin/device-level caller) short-circuits every
     /// circle/contact-membership check in this file before it touches any

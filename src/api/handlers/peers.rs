@@ -145,10 +145,15 @@ pub async fn list(State(s): State<Arc<AppState>>) -> Result<Json<PeersResponse>,
         let peer_id = peer.get("peer_id").and_then(|value| value.as_str());
         let Some(peer_id) = peer_id else { continue };
         let did = per_node_raw.iter().find_map(|candidate| {
+            // Case-insensitive: `peer_id` is a human-editable device label
+            // (renamed from Guardian device settings) and the merged/
+            // per-node registries can end up with it cased differently
+            // between files, which previously made this backfill silently
+            // no-op and left `did` unresolved for an otherwise-known peer.
             let same_peer = candidate
                 .get("peer_id")
                 .and_then(|value| value.as_str())
-                .is_some_and(|value| value == peer_id);
+                .is_some_and(|value| value.eq_ignore_ascii_case(peer_id));
             same_peer
                 .then(|| candidate.get("did").and_then(|value| value.as_str()))
                 .flatten()

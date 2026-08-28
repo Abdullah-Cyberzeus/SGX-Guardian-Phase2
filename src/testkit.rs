@@ -74,7 +74,9 @@ pub fn bootstrap_owner_identity(
     };
     let did_path = std::env::var("SGX_GUARDIAN_DID_PATH")
         .map_err(|_| "SGX_GUARDIAN_DID_PATH must be set before bootstrapping".to_string())?;
-    record.save(&did_path).map_err(|error| format!("save did record: {:?}", error))?;
+    record
+        .save(&did_path)
+        .map_err(|error| format!("save did record: {:?}", error))?;
 
     let mut doc = DidDocument::build(DocBuildInput {
         did: device_did,

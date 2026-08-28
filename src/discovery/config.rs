@@ -31,9 +31,25 @@ pub enum ScheduledScanKind {
     Daily,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ScheduleDay {
+    Monday,
+    Tuesday,
+    Wednesday,
+    Thursday,
+    Friday,
+    Saturday,
+    Sunday,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ScheduleProfile {
     pub intensity: ScanIntensity,
+    #[serde(default)]
+    pub days: Vec<ScheduleDay>,
+    #[serde(default = "default_schedule_time")]
+    pub time: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -112,13 +128,29 @@ fn default_schedule() -> ScanSchedule {
 fn default_hourly_profile() -> ScheduleProfile {
     ScheduleProfile {
         intensity: ScanIntensity::Standard,
+        days: Vec::new(),
+        time: default_schedule_time(),
     }
 }
 
 fn default_daily_profile() -> ScheduleProfile {
     ScheduleProfile {
         intensity: ScanIntensity::Aggressive,
+        days: default_schedule_days(),
+        time: default_schedule_time(),
     }
+}
+
+fn default_schedule_days() -> Vec<ScheduleDay> {
+    vec![
+        ScheduleDay::Monday,
+        ScheduleDay::Wednesday,
+        ScheduleDay::Friday,
+    ]
+}
+
+fn default_schedule_time() -> String {
+    "23:00".to_string()
 }
 
 fn default_timeout_secs() -> u64 {
@@ -181,6 +213,13 @@ impl<'de> Deserialize<'de> for NmapConfig {
             }
         }
 
+        if cfg.schedules.daily.days.is_empty() {
+            cfg.schedules.daily.days = default_schedule_days();
+        }
+        if cfg.schedules.daily.time.trim().is_empty() {
+            cfg.schedules.daily.time = default_schedule_time();
+        }
+
         Ok(cfg)
     }
 }
@@ -209,6 +248,13 @@ impl NmapConfig {
 
         for value in &self.exclude {
             validate_ip_or_cidr(value, "exclude")?;
+        }
+
+        validate_scan_time(&self.schedules.daily.time)?;
+        if self.schedules.daily.days.is_empty() {
+            return Err(DiscoveryError::BadConfig(
+                "schedules.daily.days must include at least one day".into(),
+            ));
         }
 
         Ok(())
@@ -513,6 +559,26 @@ fn validate_ip_or_cidr(value: &str, field_name: &str) -> DiscoveryResult<()> {
             value
         ))
     })
+}
+
+fn validate_scan_time(value: &str) -> DiscoveryResult<()> {
+    let Some((hour, minute)) = value.split_once(':') else {
+        return Err(DiscoveryError::BadConfig(
+            "schedules.daily.time must use HH:MM".into(),
+        ));
+    };
+    let hour = hour.parse::<u8>().map_err(|_| {
+        DiscoveryError::BadConfig("schedules.daily.time hour must be 00..=23".into())
+    })?;
+    let minute = minute.parse::<u8>().map_err(|_| {
+        DiscoveryError::BadConfig("schedules.daily.time minute must be 00..=59".into())
+    })?;
+    if hour > 23 || minute > 59 {
+        return Err(DiscoveryError::BadConfig(
+            "schedules.daily.time must be between 00:00 and 23:59".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn parse_ipv4_cidr(value: &str) -> Result<(Ipv4Addr, u8), String> {

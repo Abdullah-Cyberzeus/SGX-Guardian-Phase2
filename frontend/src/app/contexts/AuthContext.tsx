@@ -234,6 +234,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [session]);
 
   useEffect(() => {
+    const handleDisplayUpdated = (event: Event) => {
+      const detail = event instanceof CustomEvent ? event.detail as LoginBypassProbe | undefined : undefined;
+      const name = detail?.displayHostname?.trim()
+        || detail?.deviceName?.trim()
+        || detail?.hostname?.trim();
+      if (!name) return;
+      setSession((current) => {
+        if (!current || current.token) return current;
+        return {
+          ...current,
+          user: {
+            ...current.user,
+            email: `${name.toLowerCase()}@local.guardian`,
+            name,
+            user_metadata: {
+              ...current.user.user_metadata,
+              name,
+            },
+          },
+        };
+      });
+    };
+    window.addEventListener("sgx:guardian-display-updated", handleDisplayUpdated);
+    return () => window.removeEventListener("sgx:guardian-display-updated", handleDisplayUpdated);
+  }, []);
+
+  useEffect(() => {
     const handleUnauthorized = () => {
       sessionStorage.setItem(AUTH_NOTICE_KEY, "Your Guardian session expired or was revoked. Please sign in again.");
       injectToken(null);

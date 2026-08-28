@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { peerService, type Peer } from "../../services/peerService";
 import { relayService, type RegistryNode, type RelayNode } from "../../services/relayService";
 import { didService, type DIDDocumentPeerSummary } from "../../services/didService";
+import { guardianService } from "../../services/guardianService";
+import { displayLocalGuardianNode, type LocalGuardianIdentity } from "../../utils/localGuardianName";
 import { normalizeNodeId } from "./circleMembership";
 import type {
   CircleTopologyCircle,
@@ -19,6 +21,7 @@ export function mergeLiveNodes(
   circles: CircleTopologyCircle[],
   peers: Peer[],
   roleGroups: Array<{ records: RoleRecord[]; roles: TopologyRole[] }>,
+  guardianInfo?: LocalGuardianIdentity | null,
 ): CircleTopologyNode[] {
   const map = new Map<string, CircleTopologyNode>();
 
@@ -27,9 +30,10 @@ export function mergeLiveNodes(
       const id = normalizeNodeId(record.node);
       const previous = map.get(id);
       const roles = Array.from(new Set([...(previous?.roles ?? []), ...group.roles]));
+      const label = displayLocalGuardianNode(record.node, guardianInfo);
       map.set(id, {
         id,
-        label: record.node,
+        label,
         ip: previous?.ip || record.overlayIp || "Not reported",
         overlayIp: record.overlayIp,
         presence: record.active ? "online" : "offline",
@@ -53,7 +57,7 @@ export function mergeLiveNodes(
     const id = match?.id ?? probableId;
     map.set(id, {
       id,
-      label: match?.label ?? peer.peerId,
+      label: match?.label ?? displayLocalGuardianNode(peer.peerId, guardianInfo),
       ip: peer.ip || match?.ip || "Not reported",
       overlayIp: match?.overlayIp,
       presence: peer.online ? "online" : match?.presence ?? (peer.lastSeen ? "stale" : "unknown"),
@@ -165,6 +169,7 @@ export function useCircleTopology(circles: CircleTopologyCircle[]) {
       relayService.getMemberList(),
       relayService.getRelayLighthouseList(),
       didService.getDocumentPeers(),
+      guardianService.getInfo(),
     ]);
     if (!mounted.current) return;
 
@@ -187,13 +192,14 @@ export function useCircleTopology(circles: CircleTopologyCircle[]) {
     const members = results[3].status === "fulfilled" ? results[3].value.members : [];
     const dual = results[4].status === "fulfilled" ? results[4].value.relayLighthouses : [];
     const didPeersResult = results[5].status === "fulfilled" ? results[5].value.peers : [];
+    const guardianInfo = results[6].status === "fulfilled" ? results[6].value : null;
 
     const merged = mergeLiveNodes(circlesRef.current, peers, [
       { records: relays, roles: ["relay"] },
       { records: lighthouses, roles: ["lighthouse"] },
       { records: members, roles: ["member"] },
       { records: dual, roles: ["lighthouse", "relay"] },
-    ]);
+    ], guardianInfo);
 
     setNodes(merged);
     setDidPeers(didPeersResult);
@@ -206,7 +212,11 @@ export function useCircleTopology(circles: CircleTopologyCircle[]) {
   useEffect(() => {
     void refresh();
     const timer = window.setInterval(() => void refresh(), POLL_MS);
-    return () => window.clearInterval(timer);
+    window.addEventListener("sgx:guardian-display-updated", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("sgx:guardian-display-updated", refresh);
+    };
   }, [refresh]);
 
   const snapshot = useMemo<CircleTopologySnapshot>(() => ({

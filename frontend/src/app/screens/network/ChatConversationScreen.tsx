@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, MessageSquare, Phone, RefreshCw, RotateCcw, Search, Send, Video, X, XCircle } from "lucide-react";
+import { Info, Loader2, MessageSquare, Phone, RefreshCw, RotateCcw, Search, Send, UserPlus, Video, X, XCircle } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
+import * as Dialog from "@radix-ui/react-dialog";
 import { toast } from "sonner";
 import { PageHeader } from "../../components/PageHeader";
 import { AttachmentMenu } from "../../components/circle/AttachmentMenu";
@@ -15,13 +16,14 @@ import { useChatUnread } from "../../contexts/ChatUnreadContext";
 import { useChatPaneMode } from "../../contexts/ChatPaneModeContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { isMemberRole } from "../../utils/authorization";
-import { peerService } from "../../services/peerService";
+import { peerService, type Peer } from "../../services/peerService";
 import { useContactNames } from "../../contexts/ContactNameContext";
 import { messageRepository } from "../../../pwa/db/messageRepository";
 import { pendingRepository } from "../../../pwa/db/pendingRepository";
 import { decryptValue } from "../../../pwa/crypto/vault";
 import { contactRepository } from "../../../pwa/db/contactRepository";
 import { ApiError } from "../../services/api";
+import contactService from "../../services/contactService";
 
 function timeLabel(timestamp: number) {
   const date = new Date(timestamp > 10_000_000_000 ? timestamp : timestamp * 1000);
@@ -72,6 +74,142 @@ function conversationIdForRoute(isGroup: boolean, circleId?: string, peerDid?: s
   return `peer:${canonicalPeerDid}`;
 }
 
+function PeerDetailsDialog({
+  open,
+  onOpenChange,
+  peer,
+  title,
+  saved,
+  saving,
+  onAddContact,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  peer?: Peer | null;
+  title: string;
+  saved: boolean;
+  saving: boolean;
+  onAddContact: () => void;
+}) {
+  if (!peer) return null;
+  const rows = [
+    { label: "DID", value: peer.did, mono: true },
+    { label: "Device", value: peer.deviceName || peer.peerId },
+    { label: "Peer ID", value: peer.peerId, mono: true },
+    { label: "IP Address", value: peer.ip || "Hidden", mono: true },
+    { label: "Role", value: peer.role },
+    { label: "Type", value: peer.memberType },
+    { label: "Presence", value: peer.presenceStatus || (peer.online ? "online" : "offline") },
+  ];
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-[60] bg-background/80 backdrop-blur-sm" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-[70] flex w-[calc(100%-40px)] max-w-md -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-lg border border-border bg-card p-5 shadow-xl">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <Dialog.Title className="truncate text-base font-semibold">{title}</Dialog.Title>
+              <Dialog.Description className="mt-1 text-xs text-muted-foreground">Verified communication device</Dialog.Description>
+            </div>
+            <Dialog.Close asChild>
+              <button aria-label="Close device details" className="grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-muted"><X size={17} /></button>
+            </Dialog.Close>
+          </div>
+          <dl className="divide-y divide-border overflow-hidden rounded-lg border border-border">
+            {rows.map((row) => (
+              <div key={row.label} className="flex items-center justify-between gap-4 px-3 py-2.5">
+                <dt className="text-xs text-muted-foreground">{row.label}</dt>
+                <dd className={`min-w-0 truncate text-right text-xs font-medium ${row.mono ? "font-mono" : ""}`} title={row.value || undefined}>{row.value || "Unavailable"}</dd>
+              </div>
+            ))}
+          </dl>
+          <button
+            type="button"
+            onClick={onAddContact}
+            disabled={saved || saving}
+            className="flex h-11 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:cursor-default disabled:opacity-50"
+          >
+            {saving ? <Loader2 size={16} className="animate-spin" /> : <UserPlus size={16} />}
+            {saved ? "Contact saved" : "Save contact"}
+          </button>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function ContactSaveDialog({
+  open,
+  onOpenChange,
+  peer,
+  defaultName,
+  saving,
+  onSave,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  peer?: Peer | null;
+  defaultName: string;
+  saving: boolean;
+  onSave: (fields: { name: string; alias: string; notes: string }) => void;
+}) {
+  const [name, setName] = useState(defaultName);
+  const [alias, setAlias] = useState("");
+  const [notes, setNotes] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setName(defaultName);
+    setAlias(peer?.deviceName && peer.deviceName !== defaultName ? peer.deviceName : "");
+    setNotes("");
+  }, [defaultName, open, peer?.deviceName]);
+
+  if (!peer?.did) return null;
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-[80] bg-background/80 backdrop-blur-sm" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-[90] flex w-[calc(100%-40px)] max-w-md -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-lg border border-border bg-card p-5 shadow-xl">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <Dialog.Title className="text-base font-semibold">Save contact</Dialog.Title>
+              <Dialog.Description className="mt-1 text-xs text-muted-foreground">Add a trusted identity by DID.</Dialog.Description>
+            </div>
+            <Dialog.Close asChild>
+              <button aria-label="Close save contact" className="grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-muted"><X size={17} /></button>
+            </Dialog.Close>
+          </div>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-muted-foreground">DID</span>
+            <input value={peer.did} disabled className="h-11 w-full rounded-md border border-border bg-muted px-3 font-mono text-xs outline-none opacity-80" />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-muted-foreground">Name</span>
+            <input autoFocus value={name} onChange={(event) => setName(event.target.value)} disabled={saving} placeholder="Display name" className="h-11 w-full rounded-md border border-border bg-input-background px-3 text-sm outline-none" />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-muted-foreground">Alias</span>
+            <input value={alias} onChange={(event) => setAlias(event.target.value)} disabled={saving} placeholder="Optional alias" className="h-11 w-full rounded-md border border-border bg-input-background px-3 text-sm outline-none" />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-muted-foreground">Notes</span>
+            <textarea value={notes} onChange={(event) => setNotes(event.target.value)} disabled={saving} placeholder="Optional notes" rows={3} className="w-full resize-none rounded-md border border-border bg-input-background px-3 py-2 text-sm outline-none" />
+          </label>
+          <button
+            type="button"
+            onClick={() => onSave({ name, alias, notes })}
+            disabled={saving || !name.trim()}
+            className="flex h-11 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:cursor-default disabled:opacity-50"
+          >
+            {saving ? <Loader2 size={16} className="animate-spin" /> : <UserPlus size={16} />}
+            Save contact
+          </button>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
 export function ChatConversationScreen() {
   const { circleId, peerDid } = useParams<{ circleId: string; peerDid?: string }>();
   const navigate = useNavigate();
@@ -96,7 +234,7 @@ export function ChatConversationScreen() {
   const groupCalling = useGroupCall();
   const { group } = groupCalling;
   const { clearPeerUnread, clearCircleUnread, refresh: refreshUnread } = useChatUnread();
-  const { contactNameForDid } = useContactNames();
+  const { contacts, contactNameForDid, upsertContact, refreshContacts } = useContactNames();
   const [records, setRecords] = useState<ChatMessageRecord[]>([]);
   const [localDid, setLocalDid] = useState("");
   const [message, setMessage] = useState("");
@@ -107,10 +245,22 @@ export function ChatConversationScreen() {
   const [startingCall, setStartingCall] = useState<"audio" | "video" | null>(null);
   const [liveConnected, setLiveConnected] = useState(false);
   const [typingSenderDid, setTypingSenderDid] = useState<string | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [contactDialogOpen, setContactDialogOpen] = useState(false);
+  const [savingContact, setSavingContact] = useState(false);
   const [queuedMessageIds, setQueuedMessageIds] = useState<Set<string>>(new Set());
   const [queuedMessages, setQueuedMessages] = useState<Map<string, { state: string; lastError?: string }>>(new Map());
   const bottomRef = useRef<HTMLDivElement>(null);
   const recordsRef = useRef<ChatMessageRecord[]>(records);
+  const loadRequestRef = useRef(0);
+  // Messages the server has already accepted (a real message_id came back
+  // from POST /chat/send) but that a subsequent GET /chat/history has not
+  // yet reflected — e.g. a receiving/reading node whose peer-identity
+  // resolution takes another pass, or plain eventual-consistency lag. Kept
+  // here and re-merged into every history refresh until the server itself
+  // reports the message, so a fetch racing right behind a send can never
+  // make the just-sent message flash and vanish from the sender's own view.
+  const confirmedSendsRef = useRef<Map<string, ChatMessageRecord>>(new Map());
   const markedReadRef = useRef<Set<string>>(new Set());
   const unreadRefreshTimerRef = useRef<number | undefined>(undefined);
   const peerTypingTimeoutRef = useRef<number | undefined>(undefined);
@@ -172,13 +322,30 @@ export function ChatConversationScreen() {
   const loadHistory = useCallback(async () => {
     if ((isGroup && !circleId) || (!isGroup && !peerDid)) return;
     const conversationId = conversationIdForRoute(isGroup, circleId, peerDid, session?.guardianDid, session?.browserMemberDid);
+    // Several independent triggers can call loadHistory for the same
+    // conversation in quick succession (initial mount, the socket-driven
+    // refresh, offline-replay reconciliation) and their responses can land
+    // out of order. A token guard makes only the most recently *issued*
+    // call allowed to touch state, so a slow/failed stale call can never
+    // stomp a newer, already-rendered good result — this was the source of
+    // messages briefly showing then flashing to "No messages yet".
+    const requestToken = ++loadRequestRef.current;
+    const isStale = () => loadRequestRef.current !== requestToken;
     setLoading(true);
     try {
       const response = isGroup
         ? await chatService.groupHistory(circleId!)
         : await chatService.directHistory(peerDid!);
-      const sorted = [...response.messages]
-        .map((record) => ({ ...record, read_by: readBy(record) }))
+      if (isStale()) return;
+      const fetched = [...response.messages]
+        .map((record) => ({ ...record, read_by: readBy(record) }));
+      // A message still tracked here means the server accepted it (we hold
+      // a real message_id from its /chat/send response) but this fetch's
+      // list doesn't include it yet — keep showing it rather than let it
+      // vanish. Once the server does report it, drop the held copy so the
+      // server's version (status/read receipts) takes over.
+      for (const record of fetched) confirmedSendsRef.current.delete(record.message_id);
+      const sorted = [...fetched, ...confirmedSendsRef.current.values()]
         .sort((a, b) => a.seq_no - b.seq_no || a.timestamp - b.timestamp);
       setRecords(sorted);
       await Promise.all(sorted.map((record) => messageRepository.save({
@@ -190,17 +357,26 @@ export function ChatConversationScreen() {
         value: record,
       })));
     } catch (cause) {
+      if (isStale()) return;
       try {
         const cached = await messageRepository.list(conversationId);
         const restored = await Promise.all(cached.map((record) => decryptValue<ChatMessageRecord>(record.payload)));
-        setRecords(restored);
-        if (restored.length) toast.info("Showing encrypted cached messages");
-        else throw cause;
+        if (isStale()) return;
+        if (restored.length) {
+          setRecords(restored);
+          toast.info("Showing encrypted cached messages");
+        } else if (!recordsRef.current.length) {
+          // Only clear to empty when nothing was ever successfully shown —
+          // a transient fetch failure must never wipe an already-loaded
+          // conversation back to "No messages yet".
+          setRecords([]);
+        }
       } catch {
-        toast.error("Conversation could not be loaded", { description: cause instanceof Error ? cause.message : undefined });
+        if (!isStale() && !recordsRef.current.length) setRecords([]);
+        console.warn("Conversation history unavailable", cause);
       }
     } finally {
-      setLoading(false);
+      if (!isStale()) setLoading(false);
     }
   }, [circleId, isGroup, peerDid, session?.browserMemberDid, session?.guardianDid]);
 
@@ -391,7 +567,7 @@ export function ChatConversationScreen() {
       setMessage("");
       if (typingSendTimeoutRef.current) window.clearTimeout(typingSendTimeoutRef.current);
       sendTypingSignal(false);
-      setRecords((current) => current.some((record) => record.message_id === response.message_id) ? current : [...current, {
+      const acceptedRecord: ChatMessageRecord = {
         message_id: response.message_id,
         sender_did: localDid || "local",
         recipient_did: recipientId,
@@ -401,7 +577,11 @@ export function ChatConversationScreen() {
         encrypted_payload: JSON.stringify({ content: sentContent, attachment_id: attachmentId }),
         status: acceptedStatus(response.status),
         read_by: [],
-      }]);
+      };
+      // The server just handed back a real message_id, so this send is
+      // confirmed regardless of what the next history fetch shows.
+      confirmedSendsRef.current.set(response.message_id, acceptedRecord);
+      setRecords((current) => current.some((record) => record.message_id === response.message_id) ? current : [...current, acceptedRecord]);
       // Sending is complete once /chat/send responds. History refresh must not
       // keep the composer locked if storage or synchronization is slow.
       void loadHistory();
@@ -476,6 +656,33 @@ export function ChatConversationScreen() {
     } finally {
       setSending(false);
       setUploadProgress(null);
+    }
+  };
+
+  const peerSavedAsContact = !!peer?.did && contacts.some((contact) => contact.did.toLowerCase() === peer.did!.toLowerCase());
+  const openContactDialog = () => {
+    if (!peer?.did || peerSavedAsContact) return;
+    setContactDialogOpen(true);
+  };
+
+  const savePeerContact = async ({ name, alias, notes }: { name: string; alias: string; notes: string }) => {
+    if (!peer?.did || peerSavedAsContact || savingContact) return;
+    setSavingContact(true);
+    try {
+      const response = await contactService.create({
+        did: peer.did,
+        name: name.trim() || undefined,
+        alias: alias.trim() || undefined,
+        notes: notes.trim() || undefined,
+      });
+      upsertContact(response.contact);
+      void refreshContacts();
+      setContactDialogOpen(false);
+      toast.success("Contact saved");
+    } catch (cause) {
+      toast.error("Contact was not saved", { description: cause instanceof Error ? cause.message : undefined });
+    } finally {
+      setSavingContact(false);
     }
   };
 
@@ -585,6 +792,30 @@ export function ChatConversationScreen() {
           <button aria-label="Refresh messages" onClick={() => void loadHistory()} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted"><RefreshCw size={18} /></button>
         </div>
       } />
+      {!isGroup && peer && (
+        <div className="shrink-0 border-b border-border bg-card px-3 py-2 md:px-6">
+          <div className="mx-auto flex max-w-2xl items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => setDetailsOpen(true)}
+              className="flex min-w-0 items-center gap-2 rounded-full border border-border bg-input-background px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted"
+              title={peer.ip || "Device details"}
+            >
+              <Info size={14} className="shrink-0" />
+              <span className="truncate">Device info</span>
+            </button>
+            <button
+              type="button"
+              onClick={openContactDialog}
+              disabled={peerSavedAsContact || savingContact}
+              className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-border px-3 text-xs font-medium hover:bg-muted disabled:cursor-default disabled:opacity-45"
+            >
+              {savingContact ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
+              {peerSavedAsContact ? "Saved" : "Save contact"}
+            </button>
+          </div>
+        </div>
+      )}
       <div className="shrink-0 border-b border-border bg-card px-3 py-2 md:px-6">
         <div className="mx-auto flex max-w-2xl items-center gap-2 rounded-full border border-border bg-input-background px-3">
           <Search size={16} className="shrink-0 text-muted-foreground" />
@@ -627,6 +858,23 @@ export function ChatConversationScreen() {
           <button type="button" aria-label="Send message" onClick={() => void send(message)} disabled={sending || !message.trim()} className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground disabled:opacity-40">{sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}</button>
         </div>
       </div>
+      <PeerDetailsDialog
+        open={detailsOpen}
+        onOpenChange={setDetailsOpen}
+        peer={peer as Peer | null}
+        title={String(title || "Device")}
+        saved={peerSavedAsContact}
+        saving={savingContact}
+        onAddContact={openContactDialog}
+      />
+      <ContactSaveDialog
+        open={contactDialogOpen}
+        onOpenChange={setContactDialogOpen}
+        peer={peer as Peer | null}
+        defaultName={String(peerContactName || member?.name || peer?.displayName || peer?.peerId || "")}
+        saving={savingContact}
+        onSave={(fields) => void savePeerContact(fields)}
+      />
     </div>
   );
 }

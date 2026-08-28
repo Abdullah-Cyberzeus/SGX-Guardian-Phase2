@@ -110,7 +110,18 @@ export interface WhitelistDoc {
 
 export interface ScheduleEntry {
   intensity: string;
+  days?: ScheduleDay[];
+  time?: string;
 }
+
+export type ScheduleDay =
+  | 'monday'
+  | 'tuesday'
+  | 'wednesday'
+  | 'thursday'
+  | 'friday'
+  | 'saturday'
+  | 'sunday';
 
 export interface DiscoverySchedule {
   enabled: boolean;
