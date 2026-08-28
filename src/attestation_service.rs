@@ -967,8 +967,33 @@ fn load_node_config_for_attestation(node_id: &str) -> Result<NodeConfig> {
     ];
 
     for path in candidates {
-        if let Ok(conf) = load_config(&path) {
+        if let Ok(mut conf) = load_config(&path) {
+            if node_id == "nodeA" {
+                if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
+                    if !env_ip.is_empty() && env_ip != "0.0.0.0" && env_ip != "127.0.0.1" {
+                        conf.ip = env_ip;
+                    }
+                }
+            }
             return Ok(conf);
+        }
+    }
+
+    if node_id == "nodeA" {
+        if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
+            if !env_ip.is_empty() && env_ip != "0.0.0.0" && env_ip != "127.0.0.1" {
+                return Ok(NodeConfig {
+                    node_id: "nodeA".to_string(),
+                    hostname: "nodea.guardian".to_string(),
+                    ip: env_ip,
+                    port: 50051,
+                    public_key: String::new(),
+                    offline_mode: 0,
+                    metrics: None,
+                    relay: None,
+                    api: None,
+                });
+            }
         }
     }
 
@@ -984,6 +1009,14 @@ fn allowed_attestation_targets(local_node_id: &str) -> HashSet<String> {
         if node == local_node_id {
             continue;
         }
+        let base_port = match node {
+            "nodeA" => 50051,
+            "nodeB" => 50052,
+            "nodeC" => 50053,
+            _ => 50051,
+        };
+        let attest_port = attestation_listener_port_for_base(base_port);
+
         if let Ok(conf) = load_node_config_for_attestation(node) {
             if crate::dynamic_config::is_routable_ip(&conf.ip) {
                 targets.insert(format!(
@@ -992,13 +1025,9 @@ fn allowed_attestation_targets(local_node_id: &str) -> HashSet<String> {
                     attestation_listener_port_for_base(conf.port)
                 ));
             }
-            if let Some(overlay_ip) = overlay_ip_from_local_registry(node) {
-                targets.insert(format!(
-                    "{}:{}",
-                    overlay_ip,
-                    attestation_listener_port_for_base(conf.port)
-                ));
-            }
+        }
+        if let Some(overlay_ip) = overlay_ip_from_local_registry(node) {
+            targets.insert(format!("{}:{}", overlay_ip, attest_port));
         }
     }
     targets
@@ -1075,12 +1104,20 @@ async fn resolve_overlay_ip_for_node(node_id: &str) -> Option<String> {
     }
 
     // On member nodes, ask nodeA's registry service for authoritative mapping.
-    let ca_cfg = load_node_config_for_attestation("nodeA").ok()?;
-    if !crate::dynamic_config::is_routable_ip(&ca_cfg.ip) {
+    let ca_ip = if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
+        if !env_ip.is_empty() && env_ip != "0.0.0.0" && env_ip != "127.0.0.1" {
+            env_ip
+        } else {
+            load_node_config_for_attestation("nodeA").ok()?.ip
+        }
+    } else {
+        load_node_config_for_attestation("nodeA").ok()?.ip
+    };
+    if !crate::dynamic_config::is_routable_ip(&ca_ip) {
         return None;
     }
 
-    match crate::nebula::registry_sync::query_ip_from_ca(node_id, &ca_cfg.ip).await {
+    match crate::nebula::registry_sync::query_ip_from_ca(node_id, &ca_ip).await {
         Ok((_, ip)) if crate::dynamic_config::is_routable_ip(&ip) => Some(ip),
         _ => None,
     }
