@@ -1036,7 +1036,10 @@ mod tests {
         let error = manager.end(&created.group_id, "nodeB").await.unwrap_err();
 
         assert!(error.to_string().contains("Only the group host"));
-        assert_eq!(manager.get(&created.group_id).await.unwrap().state, GroupCallState::Active);
+        assert_eq!(
+            manager.get(&created.group_id).await.unwrap().state,
+            GroupCallState::Active
+        );
     }
 
     #[tokio::test]

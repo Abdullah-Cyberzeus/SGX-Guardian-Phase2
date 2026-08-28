@@ -62,9 +62,7 @@ impl DeviceManager {
             .get_integration(crate::integration::provider::VendorProvider::GoogleNest)
             .await
         {
-            Some(meta) => {
-                meta.status == crate::integration::provider::IntegrationStatus::Connected
-            }
+            Some(meta) => meta.status == crate::integration::provider::IntegrationStatus::Connected,
             None => false,
         }
     }
@@ -131,7 +129,10 @@ impl DeviceManager {
         // Pick up any change to HA's unit system (metric vs US customary) before deriving
         // anything from the attributes we are about to store.
         if let Err(e) = self.refresh_unit_system().await {
-            warn!("Could not refresh HA unit system, keeping cached value: {}", e);
+            warn!(
+                "Could not refresh HA unit system, keeping cached value: {}",
+                e
+            );
         }
 
         let nest_connected = self.is_nest_connected().await;

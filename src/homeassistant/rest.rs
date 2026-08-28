@@ -77,8 +77,7 @@ impl HaRestClient {
                 }
                 Err(e) => {
                     // Only a connection error is guaranteed not to have reached HA.
-                    let retryable =
-                        policy == RetryPolicy::Idempotent || e.is_connect();
+                    let retryable = policy == RetryPolicy::Idempotent || e.is_connect();
                     last_err = e.to_string();
                     attempt += 1;
 
@@ -97,7 +96,10 @@ impl HaRestClient {
 
         // 3. Request failed all retries -> increment failures
         self.circuit_breaker.on_failure().await;
-        Err(format!("Request failed after {} attempt(s): {}", attempt, last_err))
+        Err(format!(
+            "Request failed after {} attempt(s): {}",
+            attempt, last_err
+        ))
     }
 
     /// Fetches the status of the Home Assistant API to verify connectivity
@@ -106,13 +108,15 @@ impl HaRestClient {
         let token = self.config.token.clone();
 
         let client_clone = self.client.clone();
-        let resp = self.execute_with_circuit_breaker(RetryPolicy::Idempotent, move || {
-            let req = client_clone
-                .get(&url)
-                .timeout(READ_TIMEOUT)
-                .bearer_auth(&token);
-            req.send()
-        }).await?;
+        let resp = self
+            .execute_with_circuit_breaker(RetryPolicy::Idempotent, move || {
+                let req = client_clone
+                    .get(&url)
+                    .timeout(READ_TIMEOUT)
+                    .bearer_auth(&token);
+                req.send()
+            })
+            .await?;
 
         Ok(resp.status().is_success())
     }
@@ -123,13 +127,15 @@ impl HaRestClient {
         let token = self.config.token.clone();
 
         let client_clone = self.client.clone();
-        let resp = self.execute_with_circuit_breaker(RetryPolicy::Idempotent, move || {
-            let req = client_clone
-                .get(&url)
-                .timeout(READ_TIMEOUT)
-                .bearer_auth(&token);
-            req.send()
-        }).await?;
+        let resp = self
+            .execute_with_circuit_breaker(RetryPolicy::Idempotent, move || {
+                let req = client_clone
+                    .get(&url)
+                    .timeout(READ_TIMEOUT)
+                    .bearer_auth(&token);
+                req.send()
+            })
+            .await?;
 
         if resp.status().is_success() {
             resp.json::<Vec<serde_json::Value>>()
@@ -146,18 +152,26 @@ impl HaRestClient {
         let token = self.config.token.clone();
 
         let client_clone = self.client.clone();
-        let resp = self.execute_with_circuit_breaker(RetryPolicy::Idempotent, move || {
-            let req = client_clone
-                .get(&url)
-                .timeout(READ_TIMEOUT)
-                .bearer_auth(&token);
-            req.send()
-        }).await?;
+        let resp = self
+            .execute_with_circuit_breaker(RetryPolicy::Idempotent, move || {
+                let req = client_clone
+                    .get(&url)
+                    .timeout(READ_TIMEOUT)
+                    .bearer_auth(&token);
+                req.send()
+            })
+            .await?;
 
         if resp.status().is_success() {
-            resp.json::<serde_json::Value>().await.map_err(|e| e.to_string())
+            resp.json::<serde_json::Value>()
+                .await
+                .map_err(|e| e.to_string())
         } else {
-            Err(format!("Failed to get state for {}: HTTP {}", entity_id, resp.status()))
+            Err(format!(
+                "Failed to get state for {}: HTTP {}",
+                entity_id,
+                resp.status()
+            ))
         }
     }
 
@@ -170,16 +184,20 @@ impl HaRestClient {
         let token = self.config.token.clone();
 
         let client_clone = self.client.clone();
-        let resp = self.execute_with_circuit_breaker(RetryPolicy::Idempotent, move || {
-            let req = client_clone
-                .get(&url)
-                .timeout(READ_TIMEOUT)
-                .bearer_auth(&token);
-            req.send()
-        }).await?;
+        let resp = self
+            .execute_with_circuit_breaker(RetryPolicy::Idempotent, move || {
+                let req = client_clone
+                    .get(&url)
+                    .timeout(READ_TIMEOUT)
+                    .bearer_auth(&token);
+                req.send()
+            })
+            .await?;
 
         if resp.status().is_success() {
-            resp.json::<serde_json::Value>().await.map_err(|e| e.to_string())
+            resp.json::<serde_json::Value>()
+                .await
+                .map_err(|e| e.to_string())
         } else {
             Err(format!("Failed to get HA config: HTTP {}", resp.status()))
         }
@@ -215,21 +233,26 @@ impl HaRestClient {
         };
 
         let client_clone = self.client.clone();
-        let resp = self.execute_with_circuit_breaker(RetryPolicy::NonIdempotent, move || {
-            let req = client_clone
-                .post(&url)
-                .timeout(SERVICE_TIMEOUT)
-                .bearer_auth(&token)
-                .json(&payload);
-            req.send()
-        }).await?;
+        let resp = self
+            .execute_with_circuit_breaker(RetryPolicy::NonIdempotent, move || {
+                let req = client_clone
+                    .post(&url)
+                    .timeout(SERVICE_TIMEOUT)
+                    .bearer_auth(&token)
+                    .json(&payload);
+                req.send()
+            })
+            .await?;
 
         if resp.status().is_success() {
             Ok(())
         } else {
             let status = resp.status();
             let error_text = resp.text().await.unwrap_or_default();
-            Err(format!("Failed to call service {}.{}: HTTP {} - {}", domain, service, status, error_text))
+            Err(format!(
+                "Failed to call service {}.{}: HTTP {} - {}",
+                domain, service, status, error_text
+            ))
         }
     }
 }

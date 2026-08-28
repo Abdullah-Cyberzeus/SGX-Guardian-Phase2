@@ -107,14 +107,7 @@ pub async fn send_file(
     peer_did: String,
     path: PathBuf,
 ) -> Result<String, XferError> {
-    send_source(
-        node_id,
-        config,
-        actor_did,
-        peer_did,
-        SendSource::Path(path),
-    )
-    .await
+    send_source(node_id, config, actor_did, peer_did, SendSource::Path(path)).await
 }
 
 pub async fn send_vault_record(

@@ -65,7 +65,12 @@ impl ChatService for MyChatService {
         // the relaying Guardian and separately authorize the actor in the
         // message's Circle.
         verify_peer_is_trusted(&self.state, &relay_did).await?;
-        verify_relayed_actor(&self.state, &relay_did, &req.sender_did, group_id.as_deref())?;
+        verify_relayed_actor(
+            &self.state,
+            &relay_did,
+            &req.sender_did,
+            group_id.as_deref(),
+        )?;
 
         // A chat envelope contains only attachment metadata. Pull the bytes
         // from the attested sender before acknowledging the message so the UI
@@ -429,8 +434,7 @@ fn verify_relayed_actor(
         .circles
         .into_iter()
         .filter(|circle| {
-            !circle.is_archived()
-                && group_id.is_none_or(|expected| circle.circle_id == expected)
+            !circle.is_archived() && group_id.is_none_or(|expected| circle.circle_id == expected)
         })
         .any(|circle| {
             crate::circle::members::list_members(&state.node_id, &circle.circle_id)

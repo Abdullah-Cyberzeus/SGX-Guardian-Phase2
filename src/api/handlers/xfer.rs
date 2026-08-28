@@ -103,13 +103,10 @@ pub async fn send(
             .map(|Extension(session)| session.claims.circle_ids.clone())
             .unwrap_or_default()
     } else {
-        crate::api::auth::authorization::local_active_circle_ids(
-            &state.node_id,
-            &state.device_did,
-        )
-        .map_err(ApiError::Internal)?
-        .into_iter()
-        .collect()
+        crate::api::auth::authorization::local_active_circle_ids(&state.node_id, &state.device_did)
+            .map_err(ApiError::Internal)?
+            .into_iter()
+            .collect()
     };
     let allowed_circle_set = allowed_circle_ids.iter().cloned().collect();
     let mut allowed = crate::api::auth::authorization::scoped_circle_contact_dids(
@@ -139,12 +136,9 @@ pub async fn send(
         }
     }
 
-    let local_browser_recipient = crate::api::handlers::browser_member::state_for_did(
-        &state,
-        peer_did,
-        &allowed_circle_set,
-    )
-    .await?;
+    let local_browser_recipient =
+        crate::api::handlers::browser_member::state_for_did(&state, peer_did, &allowed_circle_set)
+            .await?;
     let is_local_recipient = peer_did == state.device_did
         || local_browser_recipient
             == Some(crate::api::handlers::browser_member::BrowserMemberState::Active);
@@ -257,7 +251,9 @@ pub async fn list(
     let caller_did = crate::api::handlers::vault::resolve_caller_did(&state, &session);
     // Legacy records predate actor scoping and therefore belong to the
     // Guardian. New network and same-board records carry the real actor DID.
-    let mut transfers = store::list_outbox().await.map_err(map_xfer_error)?
+    let mut transfers = store::list_outbox()
+        .await
+        .map_err(map_xfer_error)?
         .into_iter()
         .filter(|progress| {
             if progress.actor_did.is_empty() {
@@ -314,7 +310,10 @@ pub async fn detail(
             "transfer belongs to another identity".into(),
         ));
     }
-    if let Some(record) = store::load_local_transfer(id).await.map_err(map_xfer_error)? {
+    if let Some(record) = store::load_local_transfer(id)
+        .await
+        .map_err(map_xfer_error)?
+    {
         if record.sender_did == caller_did {
             return Ok(Json(local_sender_summary(record)));
         }
@@ -326,7 +325,10 @@ pub async fn detail(
         ));
     }
     if caller_did == state.device_did {
-        if let Some(state) = store::find_receiver_state(id).await.map_err(map_xfer_error)? {
+        if let Some(state) = store::find_receiver_state(id)
+            .await
+            .map_err(map_xfer_error)?
+        {
             return Ok(Json(receiver_summary(state)));
         }
     }

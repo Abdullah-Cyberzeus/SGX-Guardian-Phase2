@@ -239,7 +239,10 @@ pub async fn connect_integration(
                 provider.display_name()
             )
         } else {
-            format!("Successfully connected integration for {}", provider.display_name())
+            format!(
+                "Successfully connected integration for {}",
+                provider.display_name()
+            )
         };
 
         return Ok((
@@ -497,7 +500,10 @@ pub async fn nest_oauth_callback(
          you can close this window now, and they'll appear automatically in SG-X Guardian."
             .to_string()
     } else {
-        format!("Discovered {} device(s). You may now close this window.", discovered_count)
+        format!(
+            "Discovered {} device(s). You may now close this window.",
+            discovered_count
+        )
     };
 
     let html_content = format!(

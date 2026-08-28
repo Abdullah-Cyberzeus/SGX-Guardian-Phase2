@@ -365,12 +365,14 @@ pub async fn send_message(
             let snapshot_has_sender = crate::circle::snapshot::load(&circle_id)
                 .map_err(|error| ApiError::Internal(format!("load Circle snapshot: {error:?}")))?
                 .is_some_and(|snapshot| {
-                    snapshot.members.iter().any(|member| member.did == sender_did)
+                    snapshot
+                        .members
+                        .iter()
+                        .any(|member| member.did == sender_did)
                 });
             if !snapshot_has_sender {
                 crate::api::handlers::circle::refresh_and_broadcast_member_snapshot(
-                    &state,
-                    &circle_id,
+                    &state, &circle_id,
                 )
                 .await
                 .map_err(|error| {
@@ -1134,9 +1136,10 @@ async fn ensure_member_contact_access(
     // therefore direct-message its own Guardian or another browser member
     // hosted here, but never a remote Guardian/device from the Circle roster.
     // Remote Guardians remain reachable through the replicated group chat.
-    let browser_contact = crate::api::handlers::browser_member::dids_for_circles(state, &circle_ids)
-        .await?
-        .contains(contact_did);
+    let browser_contact =
+        crate::api::handlers::browser_member::dids_for_circles(state, &circle_ids)
+            .await?
+            .contains(contact_did);
     if browser_allowed || browser_contact {
         Ok(())
     } else {

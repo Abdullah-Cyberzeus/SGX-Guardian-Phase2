@@ -145,7 +145,10 @@ pub async fn accept_from_owner_for_node(
     }
     if let Some(local_did) = local_did {
         if local_did != snapshot.owner_did
-            && !snapshot.members.iter().any(|member| member.did == local_did)
+            && !snapshot
+                .members
+                .iter()
+                .any(|member| member.did == local_did)
         {
             if let Some(node_id) = node_id {
                 let _ = crate::circle::store::delete_circle(node_id, &snapshot.circle_id);

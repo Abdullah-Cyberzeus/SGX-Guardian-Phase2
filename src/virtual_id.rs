@@ -451,14 +451,12 @@ fn default_runtime_change_reason() -> String {
 }
 
 fn runtime_vid_state_path(node: &str, explicit: Option<&str>) -> PathBuf {
-    explicit
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::var_os(RUNTIME_VID_STATE_DIR_ENV)
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(DEFAULT_VID_STATE_DIR))
-                .join(runtime_vid_state_file_name(node))
-        })
+    explicit.map(PathBuf::from).unwrap_or_else(|| {
+        std::env::var_os(RUNTIME_VID_STATE_DIR_ENV)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_VID_STATE_DIR))
+            .join(runtime_vid_state_file_name(node))
+    })
 }
 
 fn runtime_vid_state_file_name(node: &str) -> String {

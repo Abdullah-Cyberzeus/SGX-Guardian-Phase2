@@ -3249,8 +3249,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ),
             );
 
-            let ha_rest = std::sync::Arc::new(sgx_guardian_client::homeassistant::rest::HaRestClient::new(ha_config.clone()));
-            let registry = std::sync::Arc::new(sgx_guardian_client::device::registry::DeviceRegistry::new(&devices_file));
+            let ha_rest = std::sync::Arc::new(
+                sgx_guardian_client::homeassistant::rest::HaRestClient::new(ha_config.clone()),
+            );
+            let registry = std::sync::Arc::new(
+                sgx_guardian_client::device::registry::DeviceRegistry::new(&devices_file),
+            );
             // HA emits a state_changed event on every attribute tick, so device updates are
             // written on a short debounce instead of fsyncing the registry per event.
             registry.start_flusher(std::time::Duration::from_secs(2));
@@ -3263,7 +3267,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Start listening for state_changed events. Reconciliation is kicked off further
             // below, once the integration manager is wired in, so vendor tagging is correct.
-            std::sync::Arc::clone(&device_manager).start_event_listener().await;
+            std::sync::Arc::clone(&device_manager)
+                .start_event_listener()
+                .await;
 
             // Initialize Automation Engine (Phase 5)
             let presence_tracker =

@@ -54,8 +54,7 @@ impl EnvGuard {
         let circle_base_prev = std::env::var_os(CIRCLE_BASE_ENV);
         let did_path_prev = std::env::var_os(DID_PATH_ENV);
         let device_key_dir_prev = std::env::var_os(issue::DEVICE_KEY_DIR_ENV);
-        let vid_state_dir_prev =
-            std::env::var_os(crate::virtual_id::RUNTIME_VID_STATE_DIR_ENV);
+        let vid_state_dir_prev = std::env::var_os(crate::virtual_id::RUNTIME_VID_STATE_DIR_ENV);
 
         std::env::set_var(SELF_DOC_PATH_ENV, &self_doc);
         std::env::set_var(PEERS_DOC_DIR_ENV, &peers_dir);
@@ -65,10 +64,7 @@ impl EnvGuard {
         std::env::set_var(CIRCLE_BASE_ENV, &circle_base);
         std::env::set_var(DID_PATH_ENV, &did_path);
         std::env::set_var(issue::DEVICE_KEY_DIR_ENV, &key_dir);
-        std::env::set_var(
-            crate::virtual_id::RUNTIME_VID_STATE_DIR_ENV,
-            &vid_state_dir,
-        );
+        std::env::set_var(crate::virtual_id::RUNTIME_VID_STATE_DIR_ENV, &vid_state_dir);
 
         Self {
             self_doc_prev,
@@ -743,7 +739,10 @@ async fn http_circle_create_is_idempotent_on_retry() {
         .unwrap();
     assert_eq!(first.status(), reqwest::StatusCode::CREATED);
     let first_body: serde_json::Value = first.json().await.unwrap();
-    let first_circle_id = first_body["circle"]["circleId"].as_str().unwrap().to_string();
+    let first_circle_id = first_body["circle"]["circleId"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let second = client
         .post(format!("{}/api/v1/circles", base_url))
@@ -986,15 +985,16 @@ async fn member_cannot_access_a_circle_they_do_not_belong_to() {
         .unwrap();
     let circle_b_id = circle_b["circle"]["circleId"].as_str().unwrap().to_string();
 
-    let member_a =
-        crate::api::state::AppState::member_client_for_tests(&state, &circle_a_id).await;
-    let member_b =
-        crate::api::state::AppState::member_client_for_tests(&state, &circle_b_id).await;
+    let member_a = crate::api::state::AppState::member_client_for_tests(&state, &circle_a_id).await;
+    let member_b = crate::api::state::AppState::member_client_for_tests(&state, &circle_b_id).await;
 
     // Positive control: a member of Circle A can read Circle A's roster,
     // read its chat history, and send into it.
     let roster_ok = member_a
-        .get(format!("{}/api/v1/circles/{}/members", base_url, circle_a_id))
+        .get(format!(
+            "{}/api/v1/circles/{}/members",
+            base_url, circle_a_id
+        ))
         .send()
         .await
         .unwrap();
@@ -1025,7 +1025,10 @@ async fn member_cannot_access_a_circle_they_do_not_belong_to() {
     // Negative cases: a member of Circle B must be rejected on all three
     // for Circle A, which they do not belong to.
     let roster_denied = member_b
-        .get(format!("{}/api/v1/circles/{}/members", base_url, circle_a_id))
+        .get(format!(
+            "{}/api/v1/circles/{}/members",
+            base_url, circle_a_id
+        ))
         .send()
         .await
         .unwrap();
@@ -1129,10 +1132,8 @@ async fn vault_file_download_is_restricted_to_circle_members() {
         .unwrap();
     let circle_b_id = circle_b["circle"]["circleId"].as_str().unwrap().to_string();
 
-    let member_a =
-        crate::api::state::AppState::member_client_for_tests(&state, &circle_a_id).await;
-    let member_b =
-        crate::api::state::AppState::member_client_for_tests(&state, &circle_b_id).await;
+    let member_a = crate::api::state::AppState::member_client_for_tests(&state, &circle_a_id).await;
+    let member_b = crate::api::state::AppState::member_client_for_tests(&state, &circle_b_id).await;
 
     let boundary = "vaultboundary";
     let body = format!(
@@ -1140,8 +1141,14 @@ async fn vault_file_download_is_restricted_to_circle_members() {
         b = boundary
     );
     let upload = member_a
-        .post(format!("{}/api/v1/vault/upload?ns={}", base_url, circle_a_id))
-        .header("Content-Type", format!("multipart/form-data; boundary={}", boundary))
+        .post(format!(
+            "{}/api/v1/vault/upload?ns={}",
+            base_url, circle_a_id
+        ))
+        .header(
+            "Content-Type",
+            format!("multipart/form-data; boundary={}", boundary),
+        )
         .body(body)
         .send()
         .await
@@ -1155,11 +1162,17 @@ async fn vault_file_download_is_restricted_to_circle_members() {
         upload_text
     );
     let upload_body: serde_json::Value = serde_json::from_str(&upload_text).unwrap();
-    let vault_id = upload_body["record"]["vault_id"].as_str().unwrap().to_string();
+    let vault_id = upload_body["record"]["vault_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // Positive control: a member of Circle A can download it.
     let owner_download = member_a
-        .get(format!("{}/api/v1/vault/files/{}/download", base_url, vault_id))
+        .get(format!(
+            "{}/api/v1/vault/files/{}/download",
+            base_url, vault_id
+        ))
         .send()
         .await
         .unwrap();
@@ -1167,7 +1180,10 @@ async fn vault_file_download_is_restricted_to_circle_members() {
 
     // A member of a different Circle must be rejected.
     let outsider_download = member_b
-        .get(format!("{}/api/v1/vault/files/{}/download", base_url, vault_id))
+        .get(format!(
+            "{}/api/v1/vault/files/{}/download",
+            base_url, vault_id
+        ))
         .send()
         .await
         .unwrap();

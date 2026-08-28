@@ -56,14 +56,20 @@ impl NestHaConfigFlowClient {
     /// `inject_direct_storage_entry`) — callers must wait for HA to come back before
     /// expecting entities to exist. It is false for the config-flow fallback below, which
     /// creates a live entry directly in HA's running process.
-    pub async fn setup_nest_config_entry(&self, creds: &NestCredentials) -> Result<(String, bool), String> {
+    pub async fn setup_nest_config_entry(
+        &self,
+        creds: &NestCredentials,
+    ) -> Result<(String, bool), String> {
         // Step 0: Try direct storage injection if local HA volume is accessible (instant, 100% reliable)
         if let Some(entry_id) = self.inject_direct_storage_entry(creds).await {
             info!("✅ Successfully established HA Nest config entry via direct storage provisioning: {}", entry_id);
             return Ok((entry_id, true));
         }
 
-        let flow_url = format!("{}/api/config/config_entries/flow", self.ha_url.trim_end_matches('/'));
+        let flow_url = format!(
+            "{}/api/config/config_entries/flow",
+            self.ha_url.trim_end_matches('/')
+        );
 
         // Step 1: Initiate 'nest' config flow
         let init_resp = self
@@ -167,7 +173,10 @@ impl NestHaConfigFlowClient {
         }
 
         if let Some(res) = step_data.result {
-            info!("✅ Successfully created HA Nest config entry: {}", res.entry_id);
+            info!(
+                "✅ Successfully created HA Nest config entry: {}",
+                res.entry_id
+            );
             return Ok((res.entry_id, false));
         }
 
@@ -183,7 +192,9 @@ impl NestHaConfigFlowClient {
             "/config/.storage",
         ];
 
-        let storage_path = storage_dirs.iter().find(|p| std::path::Path::new(p).exists())?;
+        let storage_path = storage_dirs
+            .iter()
+            .find(|p| std::path::Path::new(p).exists())?;
 
         let project_id_env = std::env::var("SGX_NEST_PROJECT_ID").ok();
         let project_id = creds.project_id.as_deref().or(project_id_env.as_deref())?;
@@ -192,7 +203,10 @@ impl NestHaConfigFlowClient {
         let client_id = creds.client_id.as_deref().or(client_id_env.as_deref())?;
 
         let client_secret_env = std::env::var("SGX_NEST_CLIENT_SECRET").ok();
-        let client_secret = creds.client_secret.as_deref().or(client_secret_env.as_deref())?;
+        let client_secret = creds
+            .client_secret
+            .as_deref()
+            .or(client_secret_env.as_deref())?;
 
         let access_token = creds.access_token.as_deref()?;
         let refresh_token = creds.refresh_token.as_deref().unwrap_or("");
@@ -201,21 +215,24 @@ impl NestHaConfigFlowClient {
 
         // 1. Update application_credentials
         let app_creds_path = format!("{}/application_credentials", storage_path);
-        let mut app_creds_json: serde_json::Value = if let Ok(data) = std::fs::read_to_string(&app_creds_path) {
-            serde_json::from_str(&data).unwrap_or_else(|_| serde_json::json!({
-                "version": 1,
-                "minor_version": 1,
-                "key": "application_credentials",
-                "data": { "items": [] }
-            }))
-        } else {
-            serde_json::json!({
-                "version": 1,
-                "minor_version": 1,
-                "key": "application_credentials",
-                "data": { "items": [] }
-            })
-        };
+        let mut app_creds_json: serde_json::Value =
+            if let Ok(data) = std::fs::read_to_string(&app_creds_path) {
+                serde_json::from_str(&data).unwrap_or_else(|_| {
+                    serde_json::json!({
+                        "version": 1,
+                        "minor_version": 1,
+                        "key": "application_credentials",
+                        "data": { "items": [] }
+                    })
+                })
+            } else {
+                serde_json::json!({
+                    "version": 1,
+                    "minor_version": 1,
+                    "key": "application_credentials",
+                    "data": { "items": [] }
+                })
+            };
 
         if let Some(items_arr) = app_creds_json
             .get_mut("data")
@@ -230,16 +247,20 @@ impl NestHaConfigFlowClient {
                 "client_id": client_id,
                 "client_secret": client_secret
             }));
-            let _ = std::fs::write(&app_creds_path, serde_json::to_string_pretty(&app_creds_json).unwrap_or_default());
+            let _ = std::fs::write(
+                &app_creds_path,
+                serde_json::to_string_pretty(&app_creds_json).unwrap_or_default(),
+            );
         }
 
         // 2. Update core.config_entries
         let entries_path = format!("{}/core.config_entries", storage_path);
-        let mut entries_json: serde_json::Value = if let Ok(data) = std::fs::read_to_string(&entries_path) {
-            serde_json::from_str(&data).ok()?
-        } else {
-            return None;
-        };
+        let mut entries_json: serde_json::Value =
+            if let Ok(data) = std::fs::read_to_string(&entries_path) {
+                serde_json::from_str(&data).ok()?
+            } else {
+                return None;
+            };
 
         let entry_id = format!("01M09NESTENTRY{:010x}", chrono::Utc::now().timestamp());
         let entries = entries_json
@@ -253,10 +274,14 @@ impl NestHaConfigFlowClient {
         let now_str = chrono::Utc::now().to_rfc3339();
         let expires_at_ts = chrono::Utc::now().timestamp() + 3600;
 
-        let cloud_project_id = std::env::var("SGX_NEST_CLOUD_PROJECT_ID")
-            .unwrap_or_else(|_| "sgx-home".to_string());
-        let subscriber_id = std::env::var("SGX_NEST_SUBSCRIBER_ID")
-            .unwrap_or_else(|_| format!("projects/{}/subscriptions/home-assistant-{}", cloud_project_id, project_id));
+        let cloud_project_id =
+            std::env::var("SGX_NEST_CLOUD_PROJECT_ID").unwrap_or_else(|_| "sgx-home".to_string());
+        let subscriber_id = std::env::var("SGX_NEST_SUBSCRIBER_ID").unwrap_or_else(|_| {
+            format!(
+                "projects/{}/subscriptions/home-assistant-{}",
+                cloud_project_id, project_id
+            )
+        });
 
         entries.push(serde_json::json!({
             "created_at": now_str,
@@ -310,7 +335,10 @@ impl NestHaConfigFlowClient {
         // The HTTP response to this call is not meaningful — HA closes the connection as
         // part of shutting down, so a transport error here is the expected outcome of a
         // successful restart request, not a failure.
-        let restart_url = format!("{}/api/services/homeassistant/restart", self.ha_url.trim_end_matches('/'));
+        let restart_url = format!(
+            "{}/api/services/homeassistant/restart",
+            self.ha_url.trim_end_matches('/')
+        );
         let _ = self
             .client
             .post(&restart_url)
@@ -344,7 +372,10 @@ impl NestHaConfigFlowClient {
         // the still-shutting-down process and see the *old* entry's "loaded" state.
         tokio::time::sleep(Duration::from_secs(3)).await;
 
-        let list_url = format!("{}/api/config/config_entries/entry", self.ha_url.trim_end_matches('/'));
+        let list_url = format!(
+            "{}/api/config/config_entries/entry",
+            self.ha_url.trim_end_matches('/')
+        );
         while tokio::time::Instant::now() < deadline {
             let resp = self
                 .client
@@ -360,10 +391,18 @@ impl NestHaConfigFlowClient {
             };
 
             if let Some(entries) = entries {
-                match entries.iter().find(|e| e.entry_id == entry_id).and_then(|e| e.state.as_deref()) {
+                match entries
+                    .iter()
+                    .find(|e| e.entry_id == entry_id)
+                    .and_then(|e| e.state.as_deref())
+                {
                     Some("loaded") => return true,
                     Some(s @ ("setup_error" | "migration_error" | "failed_unload")) => {
-                        tracing::warn!("Nest config entry {} reached terminal state '{}' after restart", entry_id, s);
+                        tracing::warn!(
+                            "Nest config entry {} reached terminal state '{}' after restart",
+                            entry_id,
+                            s
+                        );
                         return false;
                     }
                     _ => {} // setup_in_progress, not found yet, etc. — keep polling

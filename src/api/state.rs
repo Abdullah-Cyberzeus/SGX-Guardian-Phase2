@@ -378,7 +378,8 @@ impl AppState {
         use crate::api::auth::store::NewMemberRegistration;
 
         let registration_id = uuid::Uuid::new_v4().to_string();
-        let fingerprint = crate::api::handlers::pwa::guardian_fingerprint(&state.device_pubkey_point);
+        let fingerprint =
+            crate::api::handlers::pwa::guardian_fingerprint(&state.device_pubkey_point);
         let user = state
             .admin
             .users
