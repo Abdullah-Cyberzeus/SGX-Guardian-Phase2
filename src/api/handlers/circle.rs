@@ -2202,3 +2202,289 @@ fn map_vc_error(err: crate::vc::errors::VcError) -> ApiError {
         other => ApiError::Internal(other.to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn required_name_accepts_valid_names() {
+        assert_eq!(required_name(Some("Family Circle")).unwrap(), "Family Circle");
+        assert_eq!(required_name(Some("  Trusted Group  ")).unwrap(), "Trusted Group");
+    }
+
+    #[test]
+    fn required_name_rejects_missing_empty_or_too_long() {
+        assert!(matches!(
+            required_name(None),
+            Err(ApiError::BadRequest(msg)) if msg.contains("required")
+        ));
+        assert!(matches!(
+            required_name(Some("")),
+            Err(ApiError::BadRequest(msg)) if msg.contains("empty")
+        ));
+        assert!(matches!(
+            required_name(Some("   ")),
+            Err(ApiError::BadRequest(msg)) if msg.contains("empty")
+        ));
+        let too_long = "a".repeat(121);
+        assert!(matches!(
+            required_name(Some(&too_long)),
+            Err(ApiError::BadRequest(msg)) if msg.contains("120")
+        ));
+    }
+
+    #[test]
+    fn normalized_description_trims_and_handles_none() {
+        assert_eq!(normalized_description(None), "");
+        assert_eq!(normalized_description(Some("")), "");
+        assert_eq!(
+            normalized_description(Some("  Multi  \n  Line  ")),
+            "Multi  \n  Line"
+        );
+    }
+
+    #[test]
+    fn normalize_circle_id_accepts_valid_and_rejects_invalid() {
+        assert_eq!(normalize_circle_id("circle-1").unwrap(), "circle-1");
+        assert_eq!(normalize_circle_id("  family  ").unwrap(), "family");
+        assert!(matches!(
+            normalize_circle_id(""),
+            Err(ApiError::BadRequest(msg)) if msg.contains("empty")
+        ));
+        assert!(matches!(
+            normalize_circle_id("  "),
+            Err(ApiError::BadRequest(msg)) if msg.contains("empty")
+        ));
+        assert!(matches!(
+            normalize_circle_id("circle/id"),
+            Err(ApiError::BadRequest(msg)) if msg.contains("path separator")
+        ));
+        assert!(matches!(
+            normalize_circle_id("circle\\id"),
+            Err(ApiError::BadRequest(msg)) if msg.contains("path separator")
+        ));
+        assert!(matches!(
+            normalize_circle_id("circle id"),
+            Err(ApiError::BadRequest(msg)) if msg.contains("spaces")
+        ));
+    }
+
+    #[test]
+    fn required_did_parses_valid_and_rejects_invalid() {
+        // DID format: did:guardian:{base58-encoded-32-bytes}
+        let valid = "did:guardian:EtFW3QGXPgjjz6RYqqUQqdXrNKknaxFun18A6mr2mySB";
+        let result = required_did(Some(valid));
+        assert!(result.is_ok());
+
+        assert!(matches!(
+            required_did(None),
+            Err(ApiError::BadRequest(msg)) if msg.contains("required")
+        ));
+        assert!(matches!(
+            required_did(Some("not-a-did")),
+            Err(ApiError::BadRequest(msg)) if msg.contains("invalid DID")
+        ));
+        assert!(matches!(
+            required_did(Some("did:web:example.com")),
+            Err(ApiError::BadRequest(msg)) if msg.contains("invalid DID")
+        ));
+    }
+
+    #[test]
+    fn parse_role_accepts_owner_and_member_case_insensitive() {
+        assert_eq!(parse_role("owner").unwrap(), CredentialRole::Owner);
+        assert_eq!(parse_role("Owner").unwrap(), CredentialRole::Owner);
+        assert_eq!(parse_role("OWNER").unwrap(), CredentialRole::Owner);
+        assert_eq!(parse_role("member").unwrap(), CredentialRole::Member);
+        assert_eq!(parse_role("Member").unwrap(), CredentialRole::Member);
+        assert_eq!(parse_role("MEMBER").unwrap(), CredentialRole::Member);
+        assert_eq!(parse_role("  member  ").unwrap(), CredentialRole::Member);
+
+        assert!(matches!(
+            parse_role("admin"),
+            Err(ApiError::BadRequest(msg)) if msg.contains("unsupported role")
+        ));
+        assert!(matches!(
+            parse_role("guest"),
+            Err(ApiError::BadRequest(msg)) if msg.contains("unsupported role")
+        ));
+    }
+
+    #[test]
+    fn role_name_converts_enum_to_string() {
+        assert_eq!(role_name(&CredentialRole::Owner), "owner");
+        assert_eq!(role_name(&CredentialRole::Member), "member");
+    }
+
+    #[test]
+    fn validate_optional_days_uses_default_and_validates_range() {
+        // None -> DEFAULT
+        let default = issue::DEFAULT_VC_DURATION_DAYS;
+        assert_eq!(validate_optional_days(None).unwrap(), default);
+
+        // Valid range 1-3650
+        assert_eq!(validate_optional_days(Some(1)).unwrap(), 1);
+        assert_eq!(validate_optional_days(Some(365)).unwrap(), 365);
+        assert_eq!(validate_optional_days(Some(3650)).unwrap(), 3650);
+
+        // Out of range
+        assert!(matches!(
+            validate_optional_days(Some(0)),
+            Err(ApiError::BadRequest(msg)) if msg.contains("1 and 3650")
+        ));
+        assert!(matches!(
+            validate_optional_days(Some(-1)),
+            Err(ApiError::BadRequest(msg)) if msg.contains("1 and 3650")
+        ));
+        assert!(matches!(
+            validate_optional_days(Some(3651)),
+            Err(ApiError::BadRequest(msg)) if msg.contains("1 and 3650")
+        ));
+    }
+
+    #[test]
+    fn normalize_owner_url_adds_scheme_and_port() {
+        // Already has scheme and port
+        let result = normalize_owner_url("https://example.com:8443").unwrap();
+        assert_eq!(result, "https://example.com:8443");
+
+        // Missing port adds default
+        let result = normalize_owner_url("https://example.com").unwrap();
+        assert_eq!(result, "https://example.com:8443");
+
+        // No scheme adds https
+        let result = normalize_owner_url("example.com").unwrap();
+        assert_eq!(result, "https://example.com:8443");
+
+        // Custom port is preserved
+        let result = normalize_owner_url("example.com:9443").unwrap();
+        assert_eq!(result, "https://example.com:9443");
+
+        // With path
+        let result = normalize_owner_url("https://example.com/api/v1").unwrap();
+        assert_eq!(result, "https://example.com:8443/api/v1");
+
+        // Trailing slash is removed
+        let result = normalize_owner_url("https://example.com/").unwrap();
+        assert_eq!(result, "https://example.com:8443");
+
+        // Empty is rejected
+        assert!(matches!(
+            normalize_owner_url(""),
+            Err(ApiError::BadRequest(msg)) if msg.contains("empty")
+        ));
+        assert!(matches!(
+            normalize_owner_url("   "),
+            Err(ApiError::BadRequest(msg)) if msg.contains("empty")
+        ));
+    }
+
+    #[test]
+    fn push_unique_endpoint_prevents_duplicates() {
+        let mut endpoints = vec!["http://a".to_string(), "http://b".to_string()];
+        push_unique_endpoint(&mut endpoints, "http://a".to_string());
+        assert_eq!(endpoints.len(), 2);
+
+        push_unique_endpoint(&mut endpoints, "http://c".to_string());
+        assert_eq!(endpoints.len(), 3);
+        assert!(endpoints.contains(&"http://c".to_string()));
+    }
+
+    #[test]
+    fn container_endpoint_fallbacks_parses_192_168_100_and_generates() {
+        // IP 192.168.100.1 -> nodeA
+        let fallbacks = container_endpoint_fallbacks("https://192.168.100.1:8443/api/v1");
+        assert!(fallbacks.contains(&"http://sgx-nodeA:8443".to_string()));
+
+        // IP 192.168.100.2 -> nodeB
+        let fallbacks = container_endpoint_fallbacks("http://192.168.100.2:8443");
+        assert!(fallbacks.contains(&"http://sgx-nodeB:8443".to_string()));
+
+        // IP 192.168.100.3 -> nodeC
+        let fallbacks = container_endpoint_fallbacks("http://192.168.100.3:8443");
+        assert!(fallbacks.contains(&"http://sgx-nodeC:8443".to_string()));
+
+        // Non-matching IP returns empty
+        let fallbacks = container_endpoint_fallbacks("https://10.0.0.1:8443");
+        assert!(fallbacks.is_empty());
+
+        // No IP returns empty
+        let fallbacks = container_endpoint_fallbacks("https://example.com");
+        assert!(fallbacks.is_empty());
+    }
+
+    #[test]
+    fn container_host_candidates_includes_env_vars_and_defaults() {
+        let candidates = container_host_candidates();
+        // Should always include defaults if env not set
+        assert!(candidates.contains(&"127.0.0.1".to_string())
+            || candidates.contains(&"host.docker.internal".to_string()));
+        // No duplicates
+        let mut unique = candidates.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(candidates.len(), unique.len());
+    }
+
+    #[test]
+    fn map_circle_error_converts_to_correct_api_error() {
+        assert!(matches!(
+            map_circle_error(CircleError::NotFound("test".to_string())),
+            ApiError::NotFound(_)
+        ));
+        assert!(matches!(
+            map_circle_error(CircleError::Conflict("test".to_string())),
+            ApiError::Conflict(_)
+        ));
+        assert!(matches!(
+            map_circle_error(CircleError::Invalid("test".to_string())),
+            ApiError::BadRequest(_)
+        ));
+        assert!(matches!(
+            map_circle_error(CircleError::InvalidProof("test".to_string())),
+            ApiError::BadRequest(_)
+        ));
+    }
+
+    #[test]
+    fn is_member_browser_session_detects_member_role() {
+        // No session -> false
+        let no_session: Option<Extension<AuthenticatedSession>> = None;
+        assert!(!is_member_browser_session(&no_session));
+    }
+
+    #[test]
+    fn header_value_extracts_and_converts() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer token123".parse().unwrap(),
+        );
+        assert_eq!(
+            header_value(&headers, "authorization"),
+            Some("Bearer token123")
+        );
+        assert_eq!(header_value(&headers, "x-missing"), None);
+    }
+
+    #[test]
+    fn guardian_service_auth_bytes_for_hash_constructs_canonical() {
+        let path = "/api/v1/test";
+        let service_did = "did:guardian:EtFW3QGXPgjjz6RYqqUQqdXrNKknaxFun18A6mr2mySB";
+        let timestamp = "2026-08-31T00:00:00Z";
+        let nonce = "nonce-123";
+        let payload_hash = b"hash-data";
+
+        let result =
+            guardian_service_auth_bytes_for_hash(path, service_did, timestamp, nonce, payload_hash);
+        assert!(result.is_ok());
+
+        let bytes = result.unwrap();
+        let canonical = String::from_utf8(bytes).unwrap();
+        assert!(canonical.contains(path));
+        assert!(canonical.contains(service_did));
+        assert!(canonical.contains(timestamp));
+        assert!(canonical.contains(nonce));
+    }
+}

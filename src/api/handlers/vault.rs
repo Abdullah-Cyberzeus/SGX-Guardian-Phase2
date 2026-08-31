@@ -1850,4 +1850,46 @@ mod tests {
         let denied = history(State(state), other_session, Path(record.vault_id.clone())).await;
         assert!(matches!(denied, Err(ApiError::Forbidden(_))));
     }
+
+    #[test]
+    fn optional_namespace_parses_both_namespace_and_circle_id() {
+        // None for both args -> Ok(None)
+        assert_eq!(optional_namespace(None, None).unwrap(), None);
+
+        // "personal" namespace specified -> Ok(Some(Personal))
+        let result = optional_namespace(Some("personal"), None).unwrap();
+        assert!(matches!(result, Some(VaultNamespace::Personal)));
+    }
+
+    #[test]
+    fn required_namespace_parses_and_defaults() {
+        let result = required_namespace(None).unwrap();
+        assert!(matches!(result, VaultNamespace::Personal));
+    }
+
+    #[test]
+    fn map_vault_error_converts_to_correct_api_error() {
+        assert!(matches!(
+            map_vault_error(VaultError::NotFound("test".to_string())),
+            ApiError::NotFound(_)
+        ));
+        assert!(matches!(
+            map_vault_error(VaultError::Conflict("test".to_string())),
+            ApiError::Conflict(_)
+        ));
+        assert!(matches!(
+            map_vault_error(VaultError::InvalidStructure("test".to_string())),
+            ApiError::BadRequest(_)
+        ));
+    }
+
+    #[test]
+    fn idempotency_cache_stores_and_retrieves() {
+        idempotency_store("namespace", "unique-key", "vault-123");
+        let cached = idempotency_lookup("namespace", "unique-key");
+        assert_eq!(cached, Some("vault-123".to_string()));
+
+        // Different key returns None
+        assert_eq!(idempotency_lookup("namespace", "other-key"), None);
+    }
 }
