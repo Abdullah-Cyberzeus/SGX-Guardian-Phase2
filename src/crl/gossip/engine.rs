@@ -1178,4 +1178,1006 @@ mod unit_tests {
         assert!(response.entries.is_empty());
         assert!(response.want.is_empty());
     }
+
+    // --- shared identity fixture for load_identity / run_round_once /
+    // exchange_with_peer / handle_inbound below -----------------------------
+
+    /// Guards + backing tempdirs for one fully-isolated node identity
+    /// (DID record + software key manager + empty peer directory + empty
+    /// CRL store). Kept alive for the lifetime of the test that owns it so
+    /// `Drop` restores whatever env vars preceded it.
+    struct IdentityFixture {
+        _tmp: TempDir,
+        _did_guard: EnvGuard,
+        _keys_guard: EnvGuard,
+        _force_guard: EnvGuard,
+        _peers_guard: EnvGuard,
+        _crl_guard: EnvGuard,
+        peers_dir: std::path::PathBuf,
+        record: DidRecord,
+        km: std::sync::Arc<KeyManager>,
+        circle_id: String,
+    }
+
+    fn make_did_record(did: &str) -> DidRecord {
+        DidRecord {
+            did: did.to_string(),
+            method: "guardian".to_string(),
+            method_version: "1.0".to_string(),
+            did_id_b58: format!("b58-{}", did.replace(':', "_")),
+            did_id_hex: hex::encode(did.as_bytes()),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            deactivated_at: None,
+            derivation: crate::did::persistence::DerivationProof {
+                se050_uid: "se050-test-uid".to_string(),
+                se050_uid_source: "test".to_string(),
+                dkp_v1_pubkey_sha256_b16: "00".repeat(32),
+                dkp_v1_pubkey_path: "device.key".to_string(),
+                dkp_v1_pubkey_der_b64: None,
+                dik_pubkey_sha256_b16: "11".repeat(32),
+                dik_pubkey_der_b64: None,
+            },
+            current_dkp_version: 1,
+            deriv_signature_b64: "signature".to_string(),
+        }
+    }
+
+    /// Builds one isolated identity (own tempdir for DID record, software
+    /// keys, peer directory and CRL store) and eagerly runs `load_identity`
+    /// so callers get back the exact `(record, km, circle_id)` the
+    /// module-under-test will also resolve (same env vars, same node_id).
+    fn setup_identity_fixture(node_id: &str, local_did: &str) -> IdentityFixture {
+        let tmp = TempDir::new().expect("tempdir");
+        let did_path = tmp.path().join("did.json");
+        let key_dir = tmp.path().join("keys");
+        let peers_dir = tmp.path().join("peers");
+        let crl_dir = tmp.path().join("crl");
+        std::fs::create_dir_all(&peers_dir).expect("peers dir");
+        std::fs::create_dir_all(&crl_dir).expect("crl dir");
+
+        let did_record = make_did_record(local_did);
+        did_record
+            .save(did_path.to_str().expect("utf8 did path"))
+            .expect("save did record");
+
+        let did_guard = EnvGuard::set("SGX_GUARDIAN_DID_PATH", &did_path);
+        let keys_guard = EnvGuard::set(crate::vc::issue::DEVICE_KEY_DIR_ENV, &key_dir);
+        let force_guard = EnvGuard::set("SGX_FORCE_SOFTWARE_KEYS", "1");
+        let peers_guard = EnvGuard::set(doc_persistence::PEERS_DOC_DIR_ENV, &peers_dir);
+        let crl_guard = EnvGuard::set(persistence::CRL_BASE_ENV, &crl_dir);
+
+        let (record, km, circle_id) = load_identity(node_id).expect("identity must load");
+
+        IdentityFixture {
+            _tmp: tmp,
+            _did_guard: did_guard,
+            _keys_guard: keys_guard,
+            _force_guard: force_guard,
+            _peers_guard: peers_guard,
+            _crl_guard: crl_guard,
+            peers_dir,
+            record,
+            km,
+            circle_id,
+        }
+    }
+
+    fn sample_gossip_config(port: u16, threshold_pct: u8) -> GossipConfig {
+        GossipConfig {
+            enabled: true,
+            port,
+            interval_secs: 60,
+            threshold_pct,
+            emergency_enabled: false,
+            emergency_port: 0,
+            emergency_ttl: 1,
+        }
+    }
+
+    fn sample_sync_request(circle_id: &str, sender_did: &str) -> SyncRequest {
+        SyncRequest {
+            kind: KIND_REQUEST.to_string(),
+            circle_id: circle_id.to_string(),
+            sender_did: sender_did.to_string(),
+            sequence: 0,
+            merkle_root: String::new(),
+            fingerprints: Vec::new(),
+        }
+    }
+
+    fn base_sync_response(circle_id: &str, sender_did: &str) -> SyncResponse {
+        SyncResponse {
+            kind: KIND_RESPONSE.to_string(),
+            circle_id: circle_id.to_string(),
+            sender_did: sender_did.to_string(),
+            sequence: 0,
+            merkle_root: String::new(),
+            entries: Vec::new(),
+            tombstones: Vec::new(),
+            want: Vec::new(),
+            error: None,
+        }
+    }
+
+    // --- load_identity ------------------------------------------------------
+
+    #[test]
+    fn load_identity_succeeds_with_fixture_record_and_software_keys() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let tmp = TempDir::new().expect("tempdir");
+        let did_path = tmp.path().join("did.json");
+        let key_dir = tmp.path().join("keys");
+
+        let record = make_did_record("did:guardian:engineload0000");
+        record
+            .save(did_path.to_str().expect("utf8 path"))
+            .expect("save did record");
+
+        let _did_guard = EnvGuard::set("SGX_GUARDIAN_DID_PATH", &did_path);
+        let _keys_guard = EnvGuard::set(crate::vc::issue::DEVICE_KEY_DIR_ENV, &key_dir);
+        let _force_guard = EnvGuard::set("SGX_FORCE_SOFTWARE_KEYS", "1");
+
+        let result = load_identity("engine-load-identity-ok");
+        assert!(result.is_ok(), "expected Ok, got {:?}", result.err());
+        let (loaded, _km, circle_id) = result.expect("identity loaded");
+        assert_eq!(loaded.did, "did:guardian:engineload0000");
+        assert!(!circle_id.is_empty());
+    }
+
+    #[test]
+    fn load_identity_fails_when_did_record_missing() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let tmp = TempDir::new().expect("tempdir");
+        let missing_path = tmp.path().join("does-not-exist.json");
+        let _did_guard = EnvGuard::set("SGX_GUARDIAN_DID_PATH", &missing_path);
+
+        let result = load_identity("engine-load-identity-missing");
+        match result {
+            Ok(_) => panic!("missing did record must fail"),
+            Err(error) => assert!(error.contains("did record"), "unexpected error: {error}"),
+        }
+    }
+
+    // --- active_gossip_peers (error branch) ---------------------------------
+
+    #[test]
+    fn active_gossip_peers_returns_empty_when_peer_dir_is_not_a_directory() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let tmp = TempDir::new().expect("tempdir");
+        let not_a_dir = tmp.path().join("peers-is-a-file");
+        std::fs::write(&not_a_dir, b"not a directory").expect("write file");
+        let _peers_guard = EnvGuard::set(doc_persistence::PEERS_DOC_DIR_ENV, &not_a_dir);
+
+        let peers = active_gossip_peers("did:guardian:self0000");
+        assert!(peers.is_empty());
+    }
+
+    // --- run_round_once -------------------------------------------------
+
+    #[tokio::test]
+    async fn run_round_once_fails_when_identity_missing() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let tmp = TempDir::new().expect("tempdir");
+        let missing_path = tmp.path().join("no-did.json");
+        let _did_guard = EnvGuard::set("SGX_GUARDIAN_DID_PATH", &missing_path);
+        let resolver = Resolver::new(ResolverConfig::default());
+        let config = sample_gossip_config(0, 80);
+
+        let result = run_round_once("engine-round-missing-identity", &resolver, &config).await;
+        match result {
+            Ok(_) => panic!("expected error"),
+            Err(error) => assert!(error.contains("did record"), "unexpected error: {error}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn run_round_once_fails_when_no_active_peers() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let _fx = setup_identity_fixture(
+            "engine-round-nopeers",
+            "did:guardian:round-local-nopeers0000",
+        );
+        let resolver = Resolver::new(ResolverConfig::default());
+        let config = sample_gossip_config(0, 80);
+
+        let result = run_round_once("engine-round-nopeers", &resolver, &config).await;
+        match result {
+            Ok(_) => panic!("expected error"),
+            Err(error) => assert!(
+                error.contains("no active gossip peers"),
+                "unexpected error: {error}"
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn run_round_once_fails_when_chosen_peer_is_unreachable() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let fx = setup_identity_fixture(
+            "engine-round-unreachable",
+            "did:guardian:round-local-unreachable0000",
+        );
+        // Bind then immediately drop: reserves a free loopback port that
+        // nothing is listening on, so the connect below fails fast instead
+        // of relying on an arbitrary hard-coded port.
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        drop(listener);
+
+        write_peer_doc(
+            &fx.peers_dir,
+            "peer",
+            &sample_peer_doc(
+                "did:guardian:round-peer-unreachable0000",
+                Some("active"),
+                Some(&format!("{}/24", addr.ip())),
+                "peer-node",
+            ),
+        );
+
+        let resolver = Resolver::new(ResolverConfig::default());
+        let config = sample_gossip_config(addr.port(), 80);
+
+        let result = run_round_once("engine-round-unreachable", &resolver, &config).await;
+        match result {
+            Ok(_) => panic!("expected error"),
+            Err(error) => assert!(
+                error.contains("connect") || error.contains("timeout"),
+                "unexpected error: {error}"
+            ),
+        }
+    }
+
+    // --- exchange_with_peer (client side, scripted loopback peer) ----------
+
+    #[tokio::test]
+    async fn exchange_with_peer_fails_when_peer_unreachable() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let fx = setup_identity_fixture(
+            "engine-exchange-unreachable",
+            "did:guardian:exchange-local-unreachable0000",
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        drop(listener);
+
+        let resolver = Resolver::new(ResolverConfig::default());
+        let config = sample_gossip_config(addr.port(), 80);
+        let peer = GossipPeer {
+            did: "did:guardian:peer-unreachable0000".to_string(),
+            node_name: "peer-node".to_string(),
+            overlay_ip: addr.ip().to_string(),
+        };
+
+        let result = exchange_with_peer(
+            "engine-exchange-unreachable",
+            &fx.record,
+            fx.km.as_ref(),
+            &fx.circle_id,
+            &resolver,
+            &config,
+            &peer,
+            1,
+        )
+        .await;
+        match result {
+            Ok(_) => panic!("expected error"),
+            Err(error) => assert!(error.contains("connect"), "unexpected error: {error}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn exchange_with_peer_fails_when_peer_response_has_error() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let fx = setup_identity_fixture(
+            "engine-exchange-resperr",
+            "did:guardian:exchange-local-resperr0000",
+        );
+        let resolver = Resolver::new(ResolverConfig::default());
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let config = sample_gossip_config(addr.port(), 80);
+
+        let peer_did = "did:guardian:peer-resperr0000".to_string();
+        let peer_did_for_server = peer_did.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (read_half, mut write_half) = stream.into_split();
+            let mut reader = BufReader::new(read_half);
+            let _request_line = protocol::read_json_line(&mut reader)
+                .await
+                .expect("read request");
+            let mut response = base_sync_response("circle-irrelevant", &peer_did_for_server);
+            response.error = Some("peer says no".to_string());
+            protocol::write_json_line(&mut write_half, &response)
+                .await
+                .expect("write response");
+        });
+
+        let peer = GossipPeer {
+            did: peer_did,
+            node_name: "peer-node".to_string(),
+            overlay_ip: addr.ip().to_string(),
+        };
+        let result = exchange_with_peer(
+            "engine-exchange-resperr",
+            &fx.record,
+            fx.km.as_ref(),
+            &fx.circle_id,
+            &resolver,
+            &config,
+            &peer,
+            1,
+        )
+        .await;
+        server.await.expect("server task joined");
+        match result {
+            Ok(_) => panic!("expected error"),
+            Err(error) => assert!(
+                error.contains("rejected exchange"),
+                "unexpected error: {error}"
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn exchange_with_peer_fails_on_unexpected_response_kind() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let fx = setup_identity_fixture(
+            "engine-exchange-badkind",
+            "did:guardian:exchange-local-badkind0000",
+        );
+        let resolver = Resolver::new(ResolverConfig::default());
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let config = sample_gossip_config(addr.port(), 80);
+
+        let peer_did = "did:guardian:peer-badkind0000".to_string();
+        let peer_did_for_server = peer_did.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (read_half, mut write_half) = stream.into_split();
+            let mut reader = BufReader::new(read_half);
+            let _request_line = protocol::read_json_line(&mut reader)
+                .await
+                .expect("read request");
+            let mut response = base_sync_response("circle-irrelevant", &peer_did_for_server);
+            response.kind = "bogus-kind".to_string();
+            protocol::write_json_line(&mut write_half, &response)
+                .await
+                .expect("write response");
+        });
+
+        let peer = GossipPeer {
+            did: peer_did,
+            node_name: "peer-node".to_string(),
+            overlay_ip: addr.ip().to_string(),
+        };
+        let result = exchange_with_peer(
+            "engine-exchange-badkind",
+            &fx.record,
+            fx.km.as_ref(),
+            &fx.circle_id,
+            &resolver,
+            &config,
+            &peer,
+            1,
+        )
+        .await;
+        server.await.expect("server task joined");
+        match result {
+            Ok(_) => panic!("expected error"),
+            Err(error) => assert!(
+                error.contains("unexpected message kind"),
+                "unexpected error: {error}"
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn exchange_with_peer_fails_on_circle_mismatch() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let fx = setup_identity_fixture(
+            "engine-exchange-circle",
+            "did:guardian:exchange-local-circle0000",
+        );
+        let resolver = Resolver::new(ResolverConfig::default());
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let config = sample_gossip_config(addr.port(), 80);
+
+        let peer_did = "did:guardian:peer-circle0000".to_string();
+        let peer_did_for_server = peer_did.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (read_half, mut write_half) = stream.into_split();
+            let mut reader = BufReader::new(read_half);
+            let _request_line = protocol::read_json_line(&mut reader)
+                .await
+                .expect("read request");
+            let response = base_sync_response("a-different-circle", &peer_did_for_server);
+            protocol::write_json_line(&mut write_half, &response)
+                .await
+                .expect("write response");
+        });
+
+        let peer = GossipPeer {
+            did: peer_did,
+            node_name: "peer-node".to_string(),
+            overlay_ip: addr.ip().to_string(),
+        };
+        let result = exchange_with_peer(
+            "engine-exchange-circle",
+            &fx.record,
+            fx.km.as_ref(),
+            &fx.circle_id,
+            &resolver,
+            &config,
+            &peer,
+            1,
+        )
+        .await;
+        server.await.expect("server task joined");
+        match result {
+            Ok(_) => panic!("expected error"),
+            Err(error) => assert!(
+                error.contains("circle mismatch"),
+                "unexpected error: {error}"
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn exchange_with_peer_fails_on_sender_identity_mismatch() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let fx = setup_identity_fixture(
+            "engine-exchange-identity",
+            "did:guardian:exchange-local-identity0000",
+        );
+        let resolver = Resolver::new(ResolverConfig::default());
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let config = sample_gossip_config(addr.port(), 80);
+
+        let peer_did = "did:guardian:peer-identity0000".to_string();
+        let circle_id_for_server = fx.circle_id.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (read_half, mut write_half) = stream.into_split();
+            let mut reader = BufReader::new(read_half);
+            let _request_line = protocol::read_json_line(&mut reader)
+                .await
+                .expect("read request");
+            // Announces a different DID than the directory entry for this peer.
+            let response =
+                base_sync_response(&circle_id_for_server, "did:guardian:someone-else0000");
+            protocol::write_json_line(&mut write_half, &response)
+                .await
+                .expect("write response");
+        });
+
+        let peer = GossipPeer {
+            did: peer_did,
+            node_name: "peer-node".to_string(),
+            overlay_ip: addr.ip().to_string(),
+        };
+        let result = exchange_with_peer(
+            "engine-exchange-identity",
+            &fx.record,
+            fx.km.as_ref(),
+            &fx.circle_id,
+            &resolver,
+            &config,
+            &peer,
+            1,
+        )
+        .await;
+        server.await.expect("server task joined");
+        match result {
+            Ok(_) => panic!("expected error"),
+            Err(error) => assert!(
+                error.contains("peer identity mismatch"),
+                "unexpected error: {error}"
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn exchange_with_peer_fails_when_ack_has_error() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let fx = setup_identity_fixture(
+            "engine-exchange-ackerr",
+            "did:guardian:exchange-local-ackerr0000",
+        );
+        let resolver = Resolver::new(ResolverConfig::default());
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let config = sample_gossip_config(addr.port(), 80);
+
+        let peer_did = "did:guardian:peer-ackerr0000".to_string();
+        let peer_did_for_server = peer_did.clone();
+        let circle_id_for_server = fx.circle_id.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (read_half, mut write_half) = stream.into_split();
+            let mut reader = BufReader::new(read_half);
+            let _request_line = protocol::read_json_line(&mut reader)
+                .await
+                .expect("read request");
+            let response = base_sync_response(&circle_id_for_server, &peer_did_for_server);
+            protocol::write_json_line(&mut write_half, &response)
+                .await
+                .expect("write response");
+
+            let _push_line = protocol::read_json_line(&mut reader)
+                .await
+                .expect("read push");
+            let ack = SyncAck {
+                kind: KIND_ACK.to_string(),
+                merged: 0,
+                merkle_root: String::new(),
+                error: Some("peer failed to merge".to_string()),
+            };
+            protocol::write_json_line(&mut write_half, &ack)
+                .await
+                .expect("write ack");
+        });
+
+        let peer = GossipPeer {
+            did: peer_did,
+            node_name: "peer-node".to_string(),
+            overlay_ip: addr.ip().to_string(),
+        };
+        let result = exchange_with_peer(
+            "engine-exchange-ackerr",
+            &fx.record,
+            fx.km.as_ref(),
+            &fx.circle_id,
+            &resolver,
+            &config,
+            &peer,
+            1,
+        )
+        .await;
+        server.await.expect("server task joined");
+        match result {
+            Ok(_) => panic!("expected error"),
+            Err(error) => assert!(
+                error.contains("failed to merge push"),
+                "unexpected error: {error}"
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn exchange_with_peer_succeeds_full_round_trip() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let fx = setup_identity_fixture(
+            "engine-exchange-happy",
+            "did:guardian:exchange-local-happy0000",
+        );
+        let resolver = Resolver::new(ResolverConfig::default());
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let config = sample_gossip_config(addr.port(), 80);
+
+        let peer_did = "did:guardian:peer-happy0000".to_string();
+        let peer_did_for_server = peer_did.clone();
+        let circle_id_for_server = fx.circle_id.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (read_half, mut write_half) = stream.into_split();
+            let mut reader = BufReader::new(read_half);
+            let request_line = protocol::read_json_line(&mut reader)
+                .await
+                .expect("read request");
+            let request: SyncRequest =
+                serde_json::from_str(request_line.trim()).expect("parse request");
+            assert_eq!(request.kind, KIND_REQUEST);
+
+            let response = base_sync_response(&circle_id_for_server, &peer_did_for_server);
+            protocol::write_json_line(&mut write_half, &response)
+                .await
+                .expect("write response");
+
+            let push_line = protocol::read_json_line(&mut reader)
+                .await
+                .expect("read push");
+            let push: SyncPush = serde_json::from_str(push_line.trim()).expect("parse push");
+            assert_eq!(push.kind, KIND_PUSH);
+            assert!(push.entries.is_empty());
+            assert!(push.tombstones.is_empty());
+
+            let ack = SyncAck {
+                kind: KIND_ACK.to_string(),
+                merged: 0,
+                merkle_root: "peer-root".to_string(),
+                error: None,
+            };
+            protocol::write_json_line(&mut write_half, &ack)
+                .await
+                .expect("write ack");
+        });
+
+        let peer = GossipPeer {
+            did: peer_did.clone(),
+            node_name: "peer-happy-node".to_string(),
+            overlay_ip: addr.ip().to_string(),
+        };
+        let result = exchange_with_peer(
+            "engine-exchange-happy",
+            &fx.record,
+            fx.km.as_ref(),
+            &fx.circle_id,
+            &resolver,
+            &config,
+            &peer,
+            1,
+        )
+        .await;
+        server.await.expect("server task joined");
+
+        let report = result.expect("exchange should succeed");
+        assert_eq!(report.peer_did, peer_did);
+        assert_eq!(report.peer_node, "peer-happy-node");
+        assert_eq!(report.merged, 0);
+        assert_eq!(report.replaced, 0);
+        assert_eq!(report.pushed, 0);
+        assert_eq!(report.peer_merged, 0);
+        assert!(report.newly_propagated.is_empty());
+    }
+
+    // --- handle_inbound (server side, raw loopback client) ------------------
+
+    #[tokio::test]
+    async fn handle_inbound_rejects_wrong_message_kind() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let fx = setup_identity_fixture(
+            "engine-inbound-kind",
+            "did:guardian:inbound-local-kind0000",
+        );
+        let resolver = Resolver::new(ResolverConfig::default());
+        let config = sample_gossip_config(0, 80);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let node_id = "engine-inbound-kind".to_string();
+        let resolver_s = resolver.clone();
+        let config_s = config.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            handle_inbound(stream, &node_id, &resolver_s, &config_s).await
+        });
+
+        let client = TcpStream::connect(addr).await.expect("connect");
+        let (read_half, mut write_half) = client.into_split();
+        let mut reader = BufReader::new(read_half);
+
+        let mut request = sample_sync_request(&fx.circle_id, "did:guardian:whoever0000");
+        request.kind = "bogus-kind".to_string();
+        protocol::write_json_line(&mut write_half, &request)
+            .await
+            .expect("write request");
+
+        let line = protocol::read_json_line(&mut reader)
+            .await
+            .expect("read response");
+        let response: SyncResponse = serde_json::from_str(line.trim()).expect("parse response");
+        assert!(response
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("unexpected message kind"));
+
+        let result = server.await.expect("server task joined");
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn handle_inbound_rejects_circle_mismatch() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let fx = setup_identity_fixture(
+            "engine-inbound-circle",
+            "did:guardian:inbound-local-circle0000",
+        );
+        let resolver = Resolver::new(ResolverConfig::default());
+        let config = sample_gossip_config(0, 80);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let node_id = "engine-inbound-circle".to_string();
+        let resolver_s = resolver.clone();
+        let config_s = config.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            handle_inbound(stream, &node_id, &resolver_s, &config_s).await
+        });
+
+        let client = TcpStream::connect(addr).await.expect("connect");
+        let (read_half, mut write_half) = client.into_split();
+        let mut reader = BufReader::new(read_half);
+
+        let request = sample_sync_request("a-different-circle", "did:guardian:whoever0000");
+        protocol::write_json_line(&mut write_half, &request)
+            .await
+            .expect("write request");
+
+        let line = protocol::read_json_line(&mut reader)
+            .await
+            .expect("read response");
+        let response: SyncResponse = serde_json::from_str(line.trim()).expect("parse response");
+        assert!(response
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("circle mismatch"));
+
+        let result = server.await.expect("server task joined");
+        assert!(result.is_err());
+        let _ = fx;
+    }
+
+    #[tokio::test]
+    async fn handle_inbound_rejects_sender_equal_to_local_did() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let fx = setup_identity_fixture(
+            "engine-inbound-self",
+            "did:guardian:inbound-local-self0000",
+        );
+        let resolver = Resolver::new(ResolverConfig::default());
+        let config = sample_gossip_config(0, 80);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let node_id = "engine-inbound-self".to_string();
+        let resolver_s = resolver.clone();
+        let config_s = config.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            handle_inbound(stream, &node_id, &resolver_s, &config_s).await
+        });
+
+        let client = TcpStream::connect(addr).await.expect("connect");
+        let (read_half, mut write_half) = client.into_split();
+        let mut reader = BufReader::new(read_half);
+
+        let request = sample_sync_request(&fx.circle_id, &fx.record.did);
+        protocol::write_json_line(&mut write_half, &request)
+            .await
+            .expect("write request");
+
+        let line = protocol::read_json_line(&mut reader)
+            .await
+            .expect("read response");
+        let response: SyncResponse = serde_json::from_str(line.trim()).expect("parse response");
+        assert!(response
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("sender_did equals local DID"));
+
+        let result = server.await.expect("server task joined");
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn handle_inbound_rejects_revoked_sender() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let fx = setup_identity_fixture(
+            "engine-inbound-revoked",
+            "did:guardian:inbound-local-revoked0000",
+        );
+        let sender_did = "did:guardian:inbound-sender-revoked0000";
+        let mut crl = CertificateRevocationList::new(&fx.record.did, &fx.circle_id);
+        crl.entries.push(sample_crl_entry(
+            "urn:uuid:inbound-revoked-sender",
+            sender_did,
+            "2026-01-01T00:00:00Z",
+        ));
+        persistence::save_crl(&crl).expect("save crl");
+
+        let resolver = Resolver::new(ResolverConfig::default());
+        let config = sample_gossip_config(0, 80);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let node_id = "engine-inbound-revoked".to_string();
+        let resolver_s = resolver.clone();
+        let config_s = config.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            handle_inbound(stream, &node_id, &resolver_s, &config_s).await
+        });
+
+        let client = TcpStream::connect(addr).await.expect("connect");
+        let (read_half, mut write_half) = client.into_split();
+        let mut reader = BufReader::new(read_half);
+
+        let request = sample_sync_request(&fx.circle_id, sender_did);
+        protocol::write_json_line(&mut write_half, &request)
+            .await
+            .expect("write request");
+
+        let line = protocol::read_json_line(&mut reader)
+            .await
+            .expect("read response");
+        let response: SyncResponse = serde_json::from_str(line.trim()).expect("parse response");
+        assert!(response
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("sender is revoked"));
+
+        let result = server.await.expect("server task joined");
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn handle_inbound_rejects_sender_not_in_peer_directory() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let fx = setup_identity_fixture(
+            "engine-inbound-unknown",
+            "did:guardian:inbound-local-unknown0000",
+        );
+        let resolver = Resolver::new(ResolverConfig::default());
+        let config = sample_gossip_config(0, 80);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let node_id = "engine-inbound-unknown".to_string();
+        let resolver_s = resolver.clone();
+        let config_s = config.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            handle_inbound(stream, &node_id, &resolver_s, &config_s).await
+        });
+
+        let client = TcpStream::connect(addr).await.expect("connect");
+        let (read_half, mut write_half) = client.into_split();
+        let mut reader = BufReader::new(read_half);
+
+        let request = sample_sync_request(&fx.circle_id, "did:guardian:inbound-sender-unknown0000");
+        protocol::write_json_line(&mut write_half, &request)
+            .await
+            .expect("write request");
+
+        let line = protocol::read_json_line(&mut reader)
+            .await
+            .expect("read response");
+        let response: SyncResponse = serde_json::from_str(line.trim()).expect("parse response");
+        assert!(response
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("sender not in local peer directory"));
+
+        let result = server.await.expect("server task joined");
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn handle_inbound_rejects_push_with_wrong_kind() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let fx = setup_identity_fixture(
+            "engine-inbound-pushkind",
+            "did:guardian:inbound-local-pushkind0000",
+        );
+        let sender_did = "did:guardian:inbound-sender-pushkind0000";
+        write_peer_doc(
+            &fx.peers_dir,
+            "sender",
+            &sample_peer_doc(sender_did, Some("active"), Some("10.0.0.51/24"), "sender-node"),
+        );
+
+        let resolver = Resolver::new(ResolverConfig::default());
+        let config = sample_gossip_config(0, 80);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let node_id = "engine-inbound-pushkind".to_string();
+        let resolver_s = resolver.clone();
+        let config_s = config.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            handle_inbound(stream, &node_id, &resolver_s, &config_s).await
+        });
+
+        let client = TcpStream::connect(addr).await.expect("connect");
+        let (read_half, mut write_half) = client.into_split();
+        let mut reader = BufReader::new(read_half);
+
+        let request = sample_sync_request(&fx.circle_id, sender_did);
+        protocol::write_json_line(&mut write_half, &request)
+            .await
+            .expect("write request");
+        let line = protocol::read_json_line(&mut reader)
+            .await
+            .expect("read response");
+        let response: SyncResponse = serde_json::from_str(line.trim()).expect("parse response");
+        assert!(response.error.is_none());
+
+        let push = SyncPush {
+            kind: "bogus-push-kind".to_string(),
+            entries: Vec::new(),
+            tombstones: Vec::new(),
+        };
+        protocol::write_json_line(&mut write_half, &push)
+            .await
+            .expect("write push");
+
+        let result = server.await.expect("server task joined");
+        match result {
+            Ok(_) => panic!("expected error"),
+            Err(error) => assert!(
+                error.contains("unexpected message kind"),
+                "unexpected error: {error}"
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_inbound_succeeds_full_round_trip() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let fx = setup_identity_fixture(
+            "engine-inbound-happy",
+            "did:guardian:inbound-local-happy0000",
+        );
+        let sender_did = "did:guardian:inbound-sender-happy0000";
+        write_peer_doc(
+            &fx.peers_dir,
+            "sender",
+            &sample_peer_doc(sender_did, Some("active"), Some("10.0.0.52/24"), "sender-node"),
+        );
+
+        let resolver = Resolver::new(ResolverConfig::default());
+        let config = sample_gossip_config(0, 80);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let node_id = "engine-inbound-happy".to_string();
+        let resolver_s = resolver.clone();
+        let config_s = config.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            handle_inbound(stream, &node_id, &resolver_s, &config_s).await
+        });
+
+        let client = TcpStream::connect(addr).await.expect("connect");
+        let (read_half, mut write_half) = client.into_split();
+        let mut reader = BufReader::new(read_half);
+
+        let request = sample_sync_request(&fx.circle_id, sender_did);
+        protocol::write_json_line(&mut write_half, &request)
+            .await
+            .expect("write request");
+
+        let line = protocol::read_json_line(&mut reader)
+            .await
+            .expect("read response");
+        let response: SyncResponse = serde_json::from_str(line.trim()).expect("parse response");
+        assert_eq!(response.kind, KIND_RESPONSE);
+        assert!(response.error.is_none());
+        assert!(response.entries.is_empty());
+        assert!(response.want.is_empty());
+
+        let push = SyncPush {
+            kind: KIND_PUSH.to_string(),
+            entries: Vec::new(),
+            tombstones: Vec::new(),
+        };
+        protocol::write_json_line(&mut write_half, &push)
+            .await
+            .expect("write push");
+
+        let ack_line = protocol::read_json_line(&mut reader)
+            .await
+            .expect("read ack");
+        let ack: SyncAck = serde_json::from_str(ack_line.trim()).expect("parse ack");
+        assert_eq!(ack.kind, KIND_ACK);
+        assert!(ack.error.is_none());
+        assert_eq!(ack.merged, 0);
+
+        let result = server.await.expect("server task joined");
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+    }
 }

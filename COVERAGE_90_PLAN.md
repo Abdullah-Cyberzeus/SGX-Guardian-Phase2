@@ -1,33 +1,43 @@
-# Workspace Coverage Plan: 51.29% to 90%+
+# Workspace Coverage Plan: 57.78% to 90%+
 
 ## Objective
 
 Raise workspace-wide Rust line coverage from the current baseline to at least 90% without changing application behavior or removing features.
 
-Current baseline from `coverage.txt`:
+Current baseline from `coverage.txt` (regenerated 2026-08-31, branch `integrated_calls_messages_pwa`):
 
-- Covered lines: 26,906
+- Covered lines: 30,307
 - Total executable lines: 52,456
-- Current coverage: 51.29%
+- Current coverage: 57.78%
 - Covered lines required for 90%: 47,211
-- Additional covered lines required: 20,305
+- Additional covered lines required: 16,904
 - Final working target: 91–92%, providing a buffer for small instrumentation changes
 
-The first 28 high-priority files can raise overall coverage to approximately 70.62% if every one reaches 90%. Workspace-wide 90% will require covering the longer tail of approximately 150–200 files as well.
+Ranking is by lines still needed to bring each file to 90%, not raw current percentage — a huge low-percentage file (e.g. `src/main.rs`) and a near-miss file both matter, but the line count is what moves the workspace number.
+
+## ⚠️ Data-integrity note (2026-08-31)
+
+Re-ranking against today's `coverage.txt` surfaced a mismatch: the Progress Log below (Waves 2–4, i.e. "Wave B/C/D") describes ~280 tests added across files like `src/attestation_service.rs`, `src/crl/gossip/*.rs`, the `src/netbridge/*` cluster, `src/automation/engine.rs`, `src/runtime/runtime_manager.rs`, and `src/api/handlers/{call,circle,pwa}.rs`. Checking today's numbers against those claims:
+
+- Only 3 of the ~24 files claimed complete in Waves C/D are actually at ≥90% today: `src/crl/gossip/store.rs` (92.1%), `src/xfer/store.rs` (91.0%), `src/nebula/overlay_registry.rs` (91.6%), plus `src/automation/engine.rs` (90.8%).
+- The rest sit far below the claimed outcome — e.g. `src/attestation_service.rs` is 52.3%, the entire `netbridge` cluster is 8–43%, `src/api/handlers/call.rs` (claimed partially started in Wave B) is 7.6%.
+- A git-history check across every branch in this repo (`main`, `ahsan-unit-tests`, `feat/112-116-emergency-addons`, `shahzad2`) found **zero** `#[test]` functions in `src/automation/engine.rs`, despite the log claiming 34 tests were added there.
+
+Conclusion: the Wave 2–4 progress-log entries describe work that either never landed in any branch of this repository or was lost before being committed. They are kept below for a paper trail but should **not** be treated as evidence of coverage — only `coverage.txt`, regenerated fresh, is ground truth. All checklists below have been corrected against today's numbers. Wave 1/A (`src/main.rs` helpers) and the Wave H "long-tail batch 1" entry *are* corroborated by `git log` (commit `44e2af9`, "8 waves tests") and remain trustworthy.
 
 ## Expected checkpoints
 
-These estimates assume that each ranked target is brought to approximately 90% file coverage.
+These estimates assume that each ranked target is brought to approximately 90% file coverage. Recomputed from today's `coverage.txt`.
 
 | Ranked targets completed | Estimated workspace coverage |
 |---:|---:|
-| Top 20 files | 68.01% |
-| Top 40 files | 74.40% |
-| Top 60 files | 79.02% |
-| Top 80 files | 82.16% |
-| Top 100 files | 84.62% |
-| Top 150 files | 88.67% |
-| Top 200 files | 90.51% |
+| Top 20 files | 73.75% |
+| Top 40 files | 78.94% |
+| Top 60 files | 82.35% |
+| Top 80 files | 84.84% |
+| Top 100 files | 86.74% |
+| Top 150 files | 89.66% |
+| Top 200 files | 90.95% |
 
 ## Test placement rules
 
@@ -90,30 +100,23 @@ Acceptance criteria:
 
 Primary target:
 
-- `src/main.rs` — 10/1,974 lines, 0.51%
+- `src/main.rs` — 53/1,974 lines, 2.7% (as of today's `coverage.txt`, before this session's additions)
 
-Placement: primarily in-file unit tests.
+**Structural finding (2026-08-31):** `src/main.rs` is 3,848 total lines, but ~3,200 of them (`main()` itself, lines 179–3413) are a single `async fn main()` — the live daemon entrypoint. It initializes hardware key backends (TPM/SE050), binds the gRPC server, starts P2P discovery, spawns several infinite-loop background tasks, and blocks on an OS signal for shutdown. That function is not unit-testable as a black box; covering it meaningfully would require either decomposing it into injectable pieces (a real refactor of production code) or a fragile integration harness with mocked hardware/network. Per user decision, this wave is scoped to the 8 standalone helper functions outside `main()` only; the orchestrator body is intentionally left uncovered.
 
-Cover:
+Cover (helpers outside `main()` only):
 
-- [ ] Environment-variable defaults and overrides
-- [ ] Configuration construction
-- [ ] Address and port parsing
-- [ ] Feature enable/disable branches
-- [ ] Router and application-state construction
-- [ ] Invalid configuration paths
-- [ ] Startup validation before services bind
-- [ ] Graceful-shutdown helpers
-- [ ] Error formatting and propagation
-- [ ] Command-line mode selection
-- [ ] Disabled-service and optional-component branches
+- [x] `env_true` — documented truthy/falsy env values (pre-existing test)
+- [x] `json_equivalent` — semantic JSON vs. plain-text fallback (pre-existing test)
+- [x] `cert_matches_overlay_ip` / `read_ip_from_nebula_cert` — fake `nebula-cert` success/failure/private-IP shapes (pre-existing test)
+- [x] `read_runtime_virtual_id_pcr_snapshot` — missing-snapshot None path (pre-existing test)
+- [x] `serve_admin_tls_alias` — occupied-bind-address error path (pre-existing test)
+- [x] `initialize_key_manager` — SE050-required-but-unavailable error path, and software-key fallback path (added this session; both assertions hold regardless of the process-wide `GATES.force_software_keys` value, so they're stable across environments)
+- [x] `refresh_runtime_virtual_id_session` — full success path using `SGX_GUARDIAN_VID_STATE_DIR` override + tempdir (added this session)
+- [x] `refresh_and_publish_did_doc_inner` — missing-DID-record error path (added this session; `DEFAULT_DID_PATH` is a hardcoded `/var/lib` path with no override point, so only the early-return branch is reachable without a real filesystem/refactor)
+- [x] `resolve_ca_ip_from_config_inner` — full 20-attempt retry loop and `127.0.0.1` fallback (added this session; ~20s real-time test since the retry/sleep is hardcoded)
 
-Do not launch real long-running servers or system daemons. If startup code is monolithic, test private helpers directly and use test-only service substitutes where existing abstractions permit them.
-
-Target:
-
-- Initial file target: 70–80%
-- Final file target: at least 90% where startup-only operating-system branches are testable
+Target: helpers-only coverage achieved. `main()` itself remains out of scope for unit testing per the structural finding above — do not attempt to push this file toward 90% without first deciding on the refactor-vs-exclude question raised with the user.
 
 ## Wave B — Large API handlers
 
@@ -171,18 +174,18 @@ Expected workspace checkpoint: approximately 61–66%.
 
 ## Wave C — Attestation, certificates, CRL and transfers
 
-Targets:
+Targets (corrected against today's `coverage.txt` — see data-integrity note above):
 
-- [x] `src/attestation_service.rs`
-- [x] `src/crl/gossip/engine.rs`
-- [x] `src/crl/gossip/emergency.rs`
-- [x] `src/crl/gossip/store.rs`
-- [x] `src/crl/offline/sync.rs`
-- [x] `src/cert_client.rs`
-- [x] `src/xfer/engine.rs` (already had adequate coverage, no gaps found)
-- [x] `src/xfer/store.rs`
-- [x] `src/nebula/registry_sync.rs`
-- [x] `src/nebula/overlay_registry.rs`
+- [ ] `src/attestation_service.rs` — 776/1,485, 52.3%
+- [ ] `src/crl/gossip/engine.rs` — 158/431, 36.7%
+- [ ] `src/crl/gossip/emergency.rs` — 78/229, 34.1%
+- [x] `src/crl/gossip/store.rs` — 198/215, 92.1% — genuinely done
+- [ ] `src/crl/offline/sync.rs` — 80/168, 47.6%
+- [ ] `src/cert_client.rs` — 147/310, 47.4%
+- [ ] `src/xfer/engine.rs` — 461/742, 62.1%
+- [x] `src/xfer/store.rs` — 264/290, 91.0% — genuinely done
+- [ ] `src/nebula/registry_sync.rs` — 177/435, 40.7%
+- [x] `src/nebula/overlay_registry.rs` — 174/190, 91.6% — genuinely done
 
 Placement: in-file tests for private state machines and integration tests for public workflows.
 
@@ -206,22 +209,22 @@ Expected workspace checkpoint: approximately 68–72%.
 
 ## Wave D — Network bridge, automation and runtime
 
-Targets:
+Targets (corrected against today's `coverage.txt` — see data-integrity note above):
 
-- [x] `src/netbridge/mod.rs`
-- [x] `src/netbridge/routing.rs`
-- [x] `src/netbridge/uplink_monitor.rs`
-- [x] `src/netbridge/dhcp_client.rs`
-- [x] `src/netbridge/process.rs`
-- [x] `src/netbridge/nat.rs`
-- [x] `src/netbridge/wifi_client.rs`
-- [x] `src/netbridge/validator.rs`
-- [x] `src/runtime/runtime_manager.rs`
-- [x] `src/automation/engine.rs`
-- [x] `src/rules/exec/actions.rs`
-- [x] `src/rules/exec/mod.rs`
-- [x] `src/device/manager.rs`
-- [x] `src/discovery/scheduler.rs`
+- [ ] `src/netbridge/mod.rs` — 27/331, 8.2%
+- [ ] `src/netbridge/routing.rs` — 24/226, 10.6%
+- [ ] `src/netbridge/uplink_monitor.rs` — 55/184, 29.9%
+- [ ] `src/netbridge/dhcp_client.rs` — 64/148, 43.2%
+- [ ] `src/netbridge/process.rs` — 124/150, 82.7% (closest of the cluster to done)
+- [ ] `src/netbridge/nat.rs` — 40/137, 29.2%
+- [ ] `src/netbridge/wifi_client.rs` — 29/134, 21.6%
+- [ ] `src/netbridge/validator.rs` — 30/158, 19.0%
+- [ ] `src/runtime/runtime_manager.rs` — 132/289, 45.7%
+- [x] `src/automation/engine.rs` — 237/261, 90.8% — genuinely at target today (note: no dedicated `#[test]`s exist in this file on any branch checked; the coverage comes from other code exercising it, so treat this as fragile — a refactor elsewhere could silently drop it below 90%)
+- [ ] `src/rules/exec/actions.rs` — 175/242, 72.3%
+- [ ] `src/rules/exec/mod.rs` — 128/152, 84.2%
+- [ ] `src/device/manager.rs` — 241/268, 89.9% (1 line short of the 90% threshold)
+- [ ] `src/discovery/scheduler.rs` — 144/194, 74.2%
 
 Placement: primarily in-file unit tests with mocked command and provider results.
 
@@ -522,6 +525,14 @@ cargo tarpaulin \
 - [x] `src/cloud/mock_server.rs`: uplink acknowledgement contract for object, array and null payloads.
 - [x] `src/node_listener.rs`: default, valid override and invalid broadcast-port parsing.
 - [ ] Continue Wave H after regenerating coverage; the checked-in `coverage.txt` still predates Waves C and D.
+
+### 2026-08-31 — Plan refresh + Wave A closure (verified against `coverage.txt` and `git log`)
+
+- [x] Regenerated the ranking table and checkpoint estimates from today's `coverage.txt` (57.78%, 30,307/52,456 — up from the 51.29% baseline this doc originally recorded).
+- [x] Cross-checked every "[x] completed" claim in Waves C and D against both `coverage.txt` and `git log`/`git show` across all branches in the repo. Found the Wave 2–4 progress-log entries (Wave B/C/D) describe tests that are not present in any branch's history — see the data-integrity note near the top of this file. Corrected all affected checklists to reflect real, current percentages; only 4 files across Waves C/D are genuinely at ≥90% (`crl/gossip/store.rs`, `xfer/store.rs`, `nebula/overlay_registry.rs`, `automation/engine.rs`).
+- [x] Closed out Wave A (`src/main.rs`) to the extent it's honestly testable: added tests for `initialize_key_manager` (SE050-required-and-unavailable error path; software-key fallback path), `refresh_runtime_virtual_id_session` (full success path via `SGX_GUARDIAN_VID_STATE_DIR` + tempdir), `refresh_and_publish_did_doc_inner` (missing-DID-record error path — the deeper success path needs `DEFAULT_DID_PATH` to be overridable, which it isn't today), and `resolve_ca_ip_from_config_inner` (full retry-loop-to-fallback path, ~20s real time). All 10 tests in `src/main.rs`'s test module verified passing via `cargo test --bin sgx_guardian_client tests::`. The ~3,200-line `async fn main()` body remains out of scope per the structural finding recorded in Wave A — user chose "test the remaining helpers only" over refactoring `main()` or excluding the file from the coverage target.
+- [ ] Next: re-run `cargo tarpaulin` to confirm the actual post-session percentage for `src/main.rs` (not done this session — a full workspace tarpaulin run is expensive; only `cargo test` was used to verify the new tests pass).
+- [ ] Wave B, C, D, E targets are still open work — see corrected checklists above. Recommend picking one wave to actually execute (with each claim verified by re-running `cargo tarpaulin --include-files` on the specific file before checking it off) rather than batching claims across many files at once, which is what produced the discrepancy this entry corrects.
 
 ### Wave I — closure tooling added, final measurement pending
 

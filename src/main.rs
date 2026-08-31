@@ -3845,4 +3845,88 @@ mod tests {
 
         assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse);
     }
+
+    // initialize_key_manager: regardless of the process-wide GATES.force_software_keys
+    // Lazy value (fixed at first access, so tests can't reliably flip it), the two
+    // outcomes below hold under every branch combination — see the walk-through in
+    // the PR description for why. Both use a tempdir key path so nothing touches the
+    // real /var/lib/sgx-guardian tree.
+    #[test]
+    fn initialize_key_manager_errors_when_se050_required_but_unavailable() {
+        let _lock = ENV_LOCK.lock().expect("lock environment");
+        let _guard = EnvGuard::capture("SGX_SE050_REQUIRED");
+        std::env::set_var("SGX_SE050_REQUIRED", "1");
+        let temp = tempfile::tempdir().expect("create temp key dir");
+        let key_path = temp.path().join("node.key");
+
+        let result = initialize_key_manager("main-rs-test-node", key_path.to_str().unwrap());
+
+        assert!(
+            result.is_err(),
+            "SE050-required must fail without real SE050 hardware or a conflicting force-software gate"
+        );
+    }
+
+    #[test]
+    fn initialize_key_manager_falls_back_to_software_keys_without_hardware() {
+        let _lock = ENV_LOCK.lock().expect("lock environment");
+        let _guard = EnvGuard::capture("SGX_SE050_REQUIRED");
+        std::env::remove_var("SGX_SE050_REQUIRED");
+        let temp = tempfile::tempdir().expect("create temp key dir");
+        let key_path = temp.path().join("node.key");
+
+        let result = initialize_key_manager("main-rs-test-node", key_path.to_str().unwrap());
+
+        assert!(
+            result.is_ok(),
+            "software fallback must succeed without a required hardware backend: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn refresh_runtime_virtual_id_session_persists_state_in_an_isolated_dir() {
+        let _lock = ENV_LOCK.lock().expect("lock environment");
+        let _guard = EnvGuard::capture("SGX_GUARDIAN_VID_STATE_DIR");
+        let temp = tempfile::tempdir().expect("create temp vid state dir");
+        std::env::set_var("SGX_GUARDIAN_VID_STATE_DIR", temp.path());
+        let node_id = format!("main-rs-vid-test-{}", std::process::id());
+
+        let result = refresh_runtime_virtual_id_session(&node_id);
+
+        assert!(result.is_ok(), "unexpected error: {:?}", result.err());
+        let entries: Vec<_> = std::fs::read_dir(temp.path())
+            .expect("read temp vid state dir")
+            .collect();
+        assert!(
+            !entries.is_empty(),
+            "observe_runtime_virtual_id should have written a state file"
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_and_publish_did_doc_inner_reports_a_missing_did_record() {
+        let temp = tempfile::tempdir().expect("create temp key dir");
+        let key_path = temp.path().join("node.key");
+        let km = KeyManager::load_or_generate(key_path.to_str().unwrap()).expect("generate key");
+        let node_id = format!("main-rs-diddoc-test-{}", std::process::id());
+
+        // DEFAULT_DID_PATH is a hardcoded /var/lib path with nothing on disk in
+        // test environments, so resolve_local() must fail and the function must
+        // report that failure rather than panicking or hanging on a network call.
+        let result =
+            refresh_and_publish_did_doc_inner(&node_id, &km, "10.0.0.5/24", "ca.example", false, false)
+                .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn resolve_ca_ip_from_config_inner_falls_back_when_no_config_is_present() {
+        // No /etc/sgx-guardian/{nodeA.yaml,config/nodeA.yaml} exists in test
+        // environments, so this exhausts all 20 retry attempts (~20s) before
+        // returning the documented fallback.
+        let ip = resolve_ca_ip_from_config_inner().await;
+        assert_eq!(ip, "127.0.0.1");
+    }
 }

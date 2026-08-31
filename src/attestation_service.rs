@@ -3930,4 +3930,1117 @@ mod tests {
 
         fs::remove_dir_all(dir).ok();
     }
+
+    // ── Additional coverage: pure helpers, error/branch logic, and
+    // filesystem-isolated behavior reachable via the existing *_ENV
+    // override points (SGX_GUARDIAN_HOME, SGX_GUARDIAN_NODE_ID,
+    // SGX_GUARDIAN_DID_*). Hardware/root-only paths (compute_local_baseline
+    // reading a real /var/lib snapshot, the SE050/TPM signer, the `run()`
+    // orchestration loop, and start_attestation_listener) are intentionally
+    // left untouched — see the report for why.
+
+    fn make_pcr_snapshot(
+        schema_version: u8,
+        measured_at: String,
+        integrity_status: &str,
+    ) -> crate::secure_element::pcr::PcrSnapshot {
+        crate::secure_element::pcr::PcrSnapshot {
+            pcr_values: vec![],
+            composite_digest: String::new(),
+            composite_signature: None,
+            nonce: String::new(),
+            measured_at,
+            device_uid: "test-device".into(),
+            key_version: 1,
+            firmware_version: None,
+            measurement_errors: vec![],
+            integrity_status: integrity_status.to_string(),
+            schema_version,
+        }
+    }
+
+    fn spki_pubkey_b64(secret_bytes: [u8; 32]) -> String {
+        let secret = SecretKey::from_slice(&secret_bytes).expect("valid secret");
+        let signing_key = SigningKey::from(secret);
+        let raw_pubkey = signing_key
+            .verifying_key()
+            .to_encoded_point(false)
+            .as_bytes()
+            .to_vec();
+        let mut spki = vec![
+            0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01, 0x06,
+            0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
+        ];
+        spki.extend_from_slice(&raw_pubkey);
+        general_purpose::STANDARD.encode(spki)
+    }
+
+    fn make_test_evidence_with_baseline(
+        secret_bytes: [u8; 32],
+        policy: &str,
+        nonce: &str,
+        baseline_status: Option<BaselineStatus>,
+    ) -> AttestationEvidence {
+        let secret = SecretKey::from_slice(&secret_bytes).expect("valid deterministic secret key");
+        let signing_key = SigningKey::from(secret);
+        let verify_key = signing_key.verifying_key();
+        let raw_pubkey = verify_key.to_encoded_point(false).as_bytes().to_vec();
+
+        let mut spki = vec![
+            0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01, 0x06,
+            0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
+        ];
+        spki.extend_from_slice(&raw_pubkey);
+
+        let policy_digest = hex::encode(Sha256::digest(policy.as_bytes()));
+        let policy_digest_bytes = hex::decode(&policy_digest).unwrap();
+        let nonce_i_bytes = hex::decode(nonce).unwrap();
+        let virtual_id = hex::encode(
+            crate::virtual_id::VirtualIdInputs {
+                did: "did:guardian:test-subject",
+                dkp_pubkey_der: &spki,
+                pcr_values: &[],
+                policy_digest: &policy_digest_bytes,
+                nonce_i: &nonce_i_bytes,
+                nonce_r: &[],
+            }
+            .compute(),
+        );
+        let msg = build_evidence_signing_message(
+            nonce,
+            "",
+            &policy_digest,
+            baseline_status.as_ref(),
+            &virtual_id,
+        );
+
+        let signature: Signature = signing_key.sign(&msg);
+        let sig_der = signature.to_der();
+
+        AttestationEvidence {
+            node_id: "nodeA".to_string(),
+            subject_did: "did:guardian:test-subject".to_string(),
+            nonce: nonce.to_string(),
+            nonce_i: Some(nonce.to_string()),
+            nonce_r: Some(String::new()),
+            policy_digest,
+            virtual_id,
+            signature: general_purpose::STANDARD.encode(sig_der.as_bytes()),
+            pubkey_der_b64: general_purpose::STANDARD.encode(spki),
+            presented_vc_json: None,
+            pcr_values: None,
+            key_version: None,
+            baseline_status,
+        }
+    }
+
+    // ── AttestationService::verify_signed_evidence branch coverage ─────
+
+    #[test]
+    fn verify_signed_evidence_rejects_malformed_policy_digest() {
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::malformed-digest");
+            hex::encode(&hash[..16])
+        };
+        let mut ev = make_test_evidence(policy, &nonce);
+        ev.policy_digest = "not-a-64-char-hex-digest".to_string();
+        assert!(!AttestationService::verify_signed_evidence(&ev, policy).unwrap());
+    }
+
+    #[test]
+    fn verify_signed_evidence_rejects_policy_digest_mismatch() {
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::digest-mismatch");
+            hex::encode(&hash[..16])
+        };
+        let ev = make_test_evidence(policy, &nonce);
+        assert!(!AttestationService::verify_signed_evidence(&ev, "a completely different policy")
+            .unwrap());
+    }
+
+    #[test]
+    fn verify_signed_evidence_rejects_pcr_schema_version_mismatch() {
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::pcr-schema-mismatch");
+            hex::encode(&hash[..16])
+        };
+        let mut ev = make_test_evidence(policy, &nonce);
+        ev.pcr_values = Some(make_pcr_snapshot(
+            crate::secure_element::pcr::PCR_SCHEMA_VERSION + 1,
+            chrono::Utc::now().to_rfc3339(),
+            "PASS",
+        ));
+        assert!(!AttestationService::verify_signed_evidence(&ev, policy).unwrap());
+    }
+
+    #[test]
+    fn verify_signed_evidence_rejects_stale_pcr_snapshot() {
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::pcr-stale");
+            hex::encode(&hash[..16])
+        };
+        let mut ev = make_test_evidence(policy, &nonce);
+        let stale_ts = (chrono::Utc::now()
+            - chrono::Duration::seconds(crate::secure_element::pcr::MAX_PCR_SNAPSHOT_AGE_SECS + 60))
+        .to_rfc3339();
+        ev.pcr_values = Some(make_pcr_snapshot(
+            crate::secure_element::pcr::PCR_SCHEMA_VERSION,
+            stale_ts,
+            "PASS",
+        ));
+        assert!(!AttestationService::verify_signed_evidence(&ev, policy).unwrap());
+    }
+
+    #[test]
+    fn verify_signed_evidence_rejects_pcr_integrity_fail() {
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::pcr-integrity-fail");
+            hex::encode(&hash[..16])
+        };
+        let mut ev = make_test_evidence(policy, &nonce);
+        ev.pcr_values = Some(make_pcr_snapshot(
+            crate::secure_element::pcr::PCR_SCHEMA_VERSION,
+            chrono::Utc::now().to_rfc3339(),
+            "FAIL",
+        ));
+        assert!(!AttestationService::verify_signed_evidence(&ev, policy).unwrap());
+    }
+
+    #[test]
+    fn verify_signed_evidence_rejects_virtual_id_mismatch() {
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::vid-mismatch");
+            hex::encode(&hash[..16])
+        };
+        let mut ev = make_test_evidence(policy, &nonce);
+        ev.virtual_id = "deadbeef".repeat(8);
+        assert!(!AttestationService::verify_signed_evidence(&ev, policy).unwrap());
+    }
+
+    #[test]
+    fn verify_signed_evidence_rejects_invalid_pubkey_base64() {
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::bad-pubkey-b64");
+            hex::encode(&hash[..16])
+        };
+        let mut ev = make_test_evidence(policy, &nonce);
+        ev.pubkey_der_b64 = "not-valid-base64!!!".to_string();
+        assert!(!AttestationService::verify_signed_evidence(&ev, policy).unwrap());
+    }
+
+    #[test]
+    fn verify_signed_evidence_rejects_invalid_signature_base64() {
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::bad-signature-b64");
+            hex::encode(&hash[..16])
+        };
+        let mut ev = make_test_evidence(policy, &nonce);
+        ev.signature = "###not-base64###".to_string();
+        assert!(!AttestationService::verify_signed_evidence(&ev, policy).unwrap());
+    }
+
+    #[test]
+    fn verify_signed_evidence_rejects_unrecognized_signature_format() {
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::unknown-sig-format");
+            hex::encode(&hash[..16])
+        };
+        let mut ev = make_test_evidence(policy, &nonce);
+        ev.signature = general_purpose::STANDARD.encode([1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert!(!AttestationService::verify_signed_evidence(&ev, policy).unwrap());
+    }
+
+    #[test]
+    fn verify_signed_evidence_rejects_signature_verification_failure() {
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::sig-verify-fail");
+            hex::encode(&hash[..16])
+        };
+        let mut ev = make_test_evidence(policy, &nonce);
+        let mut sig_bytes = general_purpose::STANDARD.decode(&ev.signature).unwrap();
+        let last = sig_bytes.len() - 1;
+        sig_bytes[last] ^= 0xFF;
+        ev.signature = general_purpose::STANDARD.encode(sig_bytes);
+        assert!(!AttestationService::verify_signed_evidence(&ev, policy).unwrap());
+    }
+
+    #[test]
+    fn verify_signed_evidence_rejects_baseline_mismatch_state() {
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::baseline-mismatch");
+            hex::encode(&hash[..16])
+        };
+        let ev = make_test_evidence_with_baseline(
+            [9u8; 32],
+            policy,
+            &nonce,
+            Some(BaselineStatus {
+                state: "MISMATCH".into(),
+                mismatched_pcrs: vec![1, 3],
+                composite_digest: String::new(),
+            }),
+        );
+        assert!(!AttestationService::verify_signed_evidence(&ev, policy).unwrap());
+    }
+
+    #[test]
+    fn verify_signed_evidence_rejects_baseline_bad_signature_state() {
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::baseline-bad-sig");
+            hex::encode(&hash[..16])
+        };
+        let ev = make_test_evidence_with_baseline(
+            [9u8; 32],
+            policy,
+            &nonce,
+            Some(BaselineStatus {
+                state: "BAD_SIGNATURE".into(),
+                mismatched_pcrs: vec![],
+                composite_digest: String::new(),
+            }),
+        );
+        assert!(!AttestationService::verify_signed_evidence(&ev, policy).unwrap());
+    }
+
+    #[test]
+    fn verify_signed_evidence_rejects_baseline_absent_state() {
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::baseline-absent-state");
+            hex::encode(&hash[..16])
+        };
+        let ev = make_test_evidence_with_baseline(
+            [9u8; 32],
+            policy,
+            &nonce,
+            Some(BaselineStatus {
+                state: "ABSENT".into(),
+                mismatched_pcrs: vec![],
+                composite_digest: String::new(),
+            }),
+        );
+        assert!(!AttestationService::verify_signed_evidence(&ev, policy).unwrap());
+    }
+
+    #[test]
+    fn verify_signed_evidence_rejects_baseline_unknown_state() {
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::baseline-unknown-state");
+            hex::encode(&hash[..16])
+        };
+        let ev = make_test_evidence_with_baseline(
+            [9u8; 32],
+            policy,
+            &nonce,
+            Some(BaselineStatus {
+                state: "SOMETHING_WEIRD".into(),
+                mismatched_pcrs: vec![],
+                composite_digest: String::new(),
+            }),
+        );
+        assert!(!AttestationService::verify_signed_evidence(&ev, policy).unwrap());
+    }
+
+    #[test]
+    fn verify_signed_evidence_accepts_missing_baseline_status_as_legacy() {
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::baseline-legacy-none");
+            hex::encode(&hash[..16])
+        };
+        let ev = make_test_evidence_with_baseline([9u8; 32], policy, &nonce, None);
+        assert!(AttestationService::verify_signed_evidence(&ev, policy).unwrap());
+    }
+
+    // ── compute_local_baseline_status / local_dkp_pubkey_candidates ─────
+
+    #[test]
+    fn compute_local_baseline_status_returns_absent_when_snapshot_missing() {
+        // The snapshot path is a hardcoded /var/lib/sgx-guardian path with
+        // no override point, but that means it deterministically fails to
+        // read in this sandbox (no root, nothing written there), landing on
+        // the ABSENT branch — which is exactly what we assert.
+        let dir = temp_test_dir("baseline-absent");
+        let km = test_key_manager(&dir, "prover");
+        let status = compute_local_baseline_status("nonexistent-test-node-xyz", &km);
+        assert_eq!(status.state, "ABSENT");
+        assert!(status.mismatched_pcrs.is_empty());
+        assert!(status.composite_digest.is_empty());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn local_dkp_pubkey_candidates_includes_the_key_managers_pubkey() {
+        let dir = temp_test_dir("dkp-candidates");
+        let km = test_key_manager(&dir, "prover");
+        let candidates = local_dkp_pubkey_candidates(&km);
+        let expected_raw = normalize_p256_pubkey(km.pubkey_der().unwrap()).unwrap();
+        assert!(candidates.contains(&expected_raw));
+        fs::remove_dir_all(dir).ok();
+    }
+
+    // ── resolve_ca_host_for_vc / vc_required ────────────────────────────
+
+    #[test]
+    fn resolve_ca_host_for_vc_prefers_env_override() {
+        let _guard = EnvVarGuard::set("SGX_CA_HOST", Path::new("198.51.100.7"));
+        assert_eq!(resolve_ca_host_for_vc(), "198.51.100.7");
+    }
+
+    #[test]
+    fn resolve_ca_host_for_vc_falls_back_to_empty_when_nothing_routable() {
+        // Empty SGX_CA_HOST is treated the same as unset. dynamic_config's
+        // latest_known_ca_ip() reads a hardcoded /etc path absent in this
+        // sandbox, and config/nodeA.yaml (checked into this repo) uses the
+        // loopback IP 127.0.0.1, which is_routable_ip() rejects — so every
+        // fallback is exhausted and the result is the empty-string default.
+        let _guard = EnvVarGuard::set("SGX_CA_HOST", Path::new(""));
+        assert_eq!(resolve_ca_host_for_vc(), "");
+    }
+
+    #[test]
+    fn vc_required_defaults_true_and_honors_explicit_disable() {
+        {
+            let _guard = EnvVarGuard::set("SGX_REQUIRE_VC", Path::new("0"));
+            assert!(!vc_required());
+        }
+        {
+            let _guard = EnvVarGuard::set("SGX_REQUIRE_VC", Path::new("1"));
+            assert!(vc_required());
+        }
+    }
+
+    // ── jwk_raw_pubkey ───────────────────────────────────────────────────
+
+    #[test]
+    fn jwk_raw_pubkey_extracts_raw_point_and_rejects_malformed_shapes() {
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::jwk-raw");
+            hex::encode(&hash[..16])
+        };
+        let ev = make_test_evidence(policy, &nonce);
+        let vm = verification_method_from_evidence("did:guardian:jwk-test", "dkp-v1", &ev.pubkey_der_b64);
+        let doc = make_test_did_document("did:guardian:jwk-test", vec![vm]);
+        let raw = jwk_raw_pubkey(&doc).expect("valid jwk should decode");
+        assert_eq!(raw.len(), 65);
+        assert_eq!(raw[0], 0x04);
+
+        let empty_doc = make_test_did_document("did:guardian:empty", vec![]);
+        assert!(jwk_raw_pubkey(&empty_doc).is_none());
+
+        let mut bad_vm =
+            verification_method_from_evidence("did:guardian:jwk-test", "dkp-v1", &ev.pubkey_der_b64);
+        bad_vm.public_key_jwk.x = "not-base64-url!!".to_string();
+        let bad_doc = make_test_did_document("did:guardian:jwk-test", vec![bad_vm]);
+        assert!(jwk_raw_pubkey(&bad_doc).is_none());
+
+        let mut short_vm =
+            verification_method_from_evidence("did:guardian:jwk-test", "dkp-v1", &ev.pubkey_der_b64);
+        short_vm.public_key_jwk.x = general_purpose::URL_SAFE_NO_PAD.encode(b"short");
+        let short_doc = make_test_did_document("did:guardian:jwk-test", vec![short_vm]);
+        assert!(jwk_raw_pubkey(&short_doc).is_none());
+    }
+
+    // ── subject_did_from_attestation_pubkey ─────────────────────────────
+
+    #[test]
+    fn subject_did_from_attestation_pubkey_resolves_via_self_peer_and_ca_docs() {
+        let _lock = crate::did::doc_persistence::lock_test_env();
+        let base = temp_test_dir("subject-did-lookup");
+        let self_path = base.join("self_doc.json");
+        let peers_dir = base.join("peers");
+        let ca_path = base.join("ca_aggregate.json");
+        fs::create_dir_all(&peers_dir).expect("create peers dir");
+
+        let _self_guard = EnvVarGuard::set(crate::did::doc_persistence::SELF_DOC_PATH_ENV, &self_path);
+        let _peers_guard =
+            EnvVarGuard::set(crate::did::doc_persistence::PEERS_DOC_DIR_ENV, &peers_dir);
+        let _ca_guard = EnvVarGuard::set(crate::did::doc_persistence::CA_AGGREGATE_PATH_ENV, &ca_path);
+
+        let pk_self = spki_pubkey_b64([21u8; 32]);
+        let pk_peer = spki_pubkey_b64([22u8; 32]);
+        let pk_ca = spki_pubkey_b64([23u8; 32]);
+        let pk_unknown = spki_pubkey_b64([24u8; 32]);
+
+        let self_doc = make_test_did_document(
+            "did:guardian:subject-self",
+            vec![verification_method_from_evidence(
+                "did:guardian:subject-self",
+                "dkp-v1",
+                &pk_self,
+            )],
+        );
+        fs::write(&self_path, serde_json::to_string(&self_doc).unwrap()).expect("write self doc");
+
+        assert_eq!(
+            subject_did_from_attestation_pubkey(&pk_self),
+            Some(self_doc.id.clone())
+        );
+
+        let peer_doc = make_test_did_document(
+            "did:guardian:subject-peer",
+            vec![verification_method_from_evidence(
+                "did:guardian:subject-peer",
+                "dkp-v1",
+                &pk_peer,
+            )],
+        );
+        fs::write(
+            peers_dir.join("did_doc_peer.json"),
+            serde_json::to_string(&peer_doc).unwrap(),
+        )
+        .expect("write peer doc");
+
+        assert_eq!(
+            subject_did_from_attestation_pubkey(&pk_peer),
+            Some(peer_doc.id.clone())
+        );
+
+        let ca_doc = make_test_did_document(
+            "did:guardian:subject-ca",
+            vec![verification_method_from_evidence(
+                "did:guardian:subject-ca",
+                "dkp-v1",
+                &pk_ca,
+            )],
+        );
+        fs::write(&ca_path, serde_json::to_string(&vec![ca_doc.clone()]).unwrap())
+            .expect("write ca aggregate");
+
+        assert_eq!(
+            subject_did_from_attestation_pubkey(&pk_ca),
+            Some(ca_doc.id.clone())
+        );
+
+        assert_eq!(subject_did_from_attestation_pubkey(&pk_unknown), None);
+        assert_eq!(subject_did_from_attestation_pubkey("not-valid-base64!!!"), None);
+
+        fs::remove_dir_all(base).ok();
+    }
+
+    // ── parse_bool_env ───────────────────────────────────────────────────
+
+    #[test]
+    fn parse_bool_env_covers_truthy_falsy_and_default_paths() {
+        for truthy in ["1", "true", "TRUE", "yes", "on"] {
+            let _guard = EnvVarGuard::set("SGX_TEST_BOOL_ENV_FLAG", Path::new(truthy));
+            assert!(
+                parse_bool_env("SGX_TEST_BOOL_ENV_FLAG", false),
+                "expected {truthy} to be truthy"
+            );
+        }
+        for falsy in ["0", "false", "no", "banana"] {
+            let _guard = EnvVarGuard::set("SGX_TEST_BOOL_ENV_FLAG", Path::new(falsy));
+            assert!(
+                !parse_bool_env("SGX_TEST_BOOL_ENV_FLAG", true),
+                "expected {falsy} to be falsy"
+            );
+        }
+        assert!(parse_bool_env("SGX_TEST_BOOL_ENV_FLAG_UNSET_XYZ", true));
+        assert!(!parse_bool_env("SGX_TEST_BOOL_ENV_FLAG_UNSET_XYZ", false));
+    }
+
+    // ── node config / target resolution helpers (real checked-in configs) ──
+
+    #[test]
+    fn load_node_config_for_attestation_loads_repo_config_and_fails_for_unknown_node() {
+        // config/nodeA.yaml is checked into this repo, so the third
+        // candidate path resolves relative to the crate root (cargo test's
+        // working directory).
+        let conf = load_node_config_for_attestation("nodeA").expect("repo config/nodeA.yaml should load");
+        assert_eq!(conf.node_id, "nodeA");
+        assert_eq!(conf.ip, "127.0.0.1");
+
+        assert!(load_node_config_for_attestation("node-does-not-exist").is_err());
+    }
+
+    #[test]
+    fn allowed_attestation_targets_excludes_non_routable_loopback_peers() {
+        // config/nodeB.yaml and config/nodeC.yaml both use ip: 127.0.0.1,
+        // which dynamic_config::is_routable_ip() rejects as loopback, and
+        // the overlay registry file does not exist in this sandbox, so
+        // nodeA sees no allowed attestation targets.
+        let targets = allowed_attestation_targets("nodeA");
+        assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn infer_node_id_from_peer_uses_fast_path_then_falls_through_config_lookup() {
+        assert_eq!(
+            infer_node_id_from_peer("203.0.113.1", 50051).as_deref(),
+            Some("nodeA")
+        );
+        // A base_port outside the well-known set forces the fallback loop
+        // over node configs; none of the checked-in configs use this port,
+        // so it exercises the loop body and still returns None.
+        assert_eq!(infer_node_id_from_peer("127.0.0.1", 12345), None);
+    }
+
+    #[test]
+    fn overlay_ip_from_local_registry_is_none_when_registry_file_absent() {
+        // REGISTRY_PATH is a hardcoded system path with nothing on disk in
+        // this sandbox, so OverlayRegistry::load() fails and the function
+        // returns None without touching the network.
+        assert!(overlay_ip_from_local_registry("nodeB").is_none());
+    }
+
+    #[tokio::test]
+    async fn resolve_overlay_ip_for_node_returns_none_without_registry_or_routable_ca() {
+        let ip = resolve_overlay_ip_for_node("nodeB").await;
+        assert!(ip.is_none());
+    }
+
+    #[tokio::test]
+    async fn resolve_attestation_target_falls_back_to_routable_lan_ip_when_not_overlay_only() {
+        let target = resolve_attestation_target("203.0.113.5", 50052, false).await;
+        assert_eq!(
+            target,
+            Some(("203.0.113.5".to_string(), 50152, "nodeB".to_string()))
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_attestation_target_returns_none_for_non_routable_peer_ip() {
+        let target = resolve_attestation_target("127.0.0.1", 50052, false).await;
+        assert!(target.is_none());
+    }
+
+    #[tokio::test]
+    async fn resolve_attestation_target_waits_when_overlay_only_with_no_overlay_ip() {
+        let target = resolve_attestation_target("203.0.113.6", 50053, true).await;
+        assert!(target.is_none());
+        // Calling again for the same inferred node exercises the "already
+        // logged" dedup path in the OVERLAY_WAIT_LOGGED set.
+        let target2 = resolve_attestation_target("203.0.113.6", 50053, true).await;
+        assert!(target2.is_none());
+    }
+
+    #[tokio::test]
+    async fn target_is_reachable_true_for_open_port_false_for_closed() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accept_task = tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+        assert!(target_is_reachable("127.0.0.1", addr.port(), 2).await);
+        accept_task.await.ok();
+
+        let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let closed_port = probe.local_addr().unwrap().port();
+        drop(probe);
+        assert!(!target_is_reachable("127.0.0.1", closed_port, 1).await);
+    }
+
+    // ── write_evidence_framed / read_evidence_framed ────────────────────
+
+    #[tokio::test]
+    async fn write_and_read_evidence_framed_round_trip() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::framed-roundtrip");
+            hex::encode(&hash[..16])
+        };
+        let ev = make_test_evidence(policy, &nonce);
+        let ev_for_server = ev.clone();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            read_evidence_framed(&mut socket).await.unwrap()
+        });
+
+        let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        write_evidence_framed(&mut client, &ev_for_server).await.unwrap();
+
+        let received = server.await.unwrap();
+        assert_eq!(received.subject_did, ev.subject_did);
+        assert_eq!(received.virtual_id, ev.virtual_id);
+    }
+
+    #[tokio::test]
+    async fn write_evidence_framed_rejects_oversized_payload() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::framed-oversize");
+            hex::encode(&hash[..16])
+        };
+        let mut ev = make_test_evidence(policy, &nonce);
+        ev.presented_vc_json = Some("x".repeat((MAX_ATTEST_EVIDENCE_BYTES as usize) + 1024));
+
+        let _accept_task = tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+        let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let err = write_evidence_framed(&mut client, &ev).await.unwrap_err();
+        assert!(err.to_string().contains("too large"));
+    }
+
+    // ── verify_peer_vc_for_attestation (no-VC branches only; the full VC
+    // happy path needs a live CA/resolver and is out of scope here) ─────
+
+    #[tokio::test]
+    async fn verify_peer_vc_for_attestation_bails_when_required_and_no_vc_presented() {
+        let _guard = EnvVarGuard::set("SGX_REQUIRE_VC", Path::new("1"));
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::vc-required-missing");
+            hex::encode(&hash[..16])
+        };
+        let mut ev = make_test_evidence(policy, &nonce);
+        ev.presented_vc_json = None;
+        let err = verify_peer_vc_for_attestation(&ev, "peer-x").await.unwrap_err();
+        assert!(err.to_string().contains("presented no VC"));
+    }
+
+    #[tokio::test]
+    async fn verify_peer_vc_for_attestation_returns_none_when_not_required_and_no_docs_on_disk() {
+        let _guard = EnvVarGuard::set("SGX_REQUIRE_VC", Path::new("0"));
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::vc-not-required");
+            hex::encode(&hash[..16])
+        };
+        let mut ev = make_test_evidence(policy, &nonce);
+        ev.presented_vc_json = None;
+        // subject_did_from_attestation_pubkey resolves against the hardcoded
+        // /var/lib DID doc paths here (no override active), which are empty
+        // in this sandbox, so it deterministically returns None.
+        let result = verify_peer_vc_for_attestation(&ev, "peer-x").await.unwrap();
+        assert!(result.is_none());
+    }
+
+    // ── trusted-peer file helpers (SGX_GUARDIAN_HOME-isolated) ──────────
+
+    #[test]
+    fn remove_trusted_peer_deletes_matching_entry_and_updates_global_merge() {
+        let base = temp_test_dir("remove-trusted-peer");
+        let logs_dir = base.join("logs");
+        fs::create_dir_all(&logs_dir).expect("create logs dir");
+        let _home_guard = EnvVarGuard::set("SGX_GUARDIAN_HOME", &base);
+        let _node_guard = EnvVarGuard::set("SGX_GUARDIAN_NODE_ID", Path::new("nodeA"));
+
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::remove-trusted-peer");
+            hex::encode(&hash[..16])
+        };
+        let mut ev = make_test_evidence(policy, &nonce);
+        ev.subject_did = "did:guardian:remove-me".into();
+        write_trusted_peer("10.5.5.5:50152", "10.5.5.5", &ev, None);
+
+        let peers = load_trusted_peers_from_global();
+        assert!(peers.iter().any(|p| p.peer_id == "10.5.5.5:50152"));
+
+        remove_trusted_peer("10.5.5.5:50152");
+
+        let after = load_trusted_peers_from_global();
+        assert!(!after.iter().any(|p| p.peer_id == "10.5.5.5:50152"));
+
+        fs::remove_dir_all(base).ok();
+    }
+
+    #[test]
+    fn write_last_attestation_persists_full_record_and_defaults_for_missing_evidence() {
+        let base = temp_test_dir("write-last-attestation");
+        let logs_dir = base.join("logs");
+        fs::create_dir_all(&logs_dir).expect("create logs dir");
+        let _home_guard = EnvVarGuard::set("SGX_GUARDIAN_HOME", &base);
+
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::write-last-attestation");
+            hex::encode(&hash[..16])
+        };
+        let ev = make_test_evidence(policy, &nonce);
+        write_last_attestation("10.6.6.6:50152", &ev.policy_digest, "success", Some(&ev));
+
+        let (primary_dir, fallback_dir) = current_log_dirs();
+        let (_, fallback_file) = last_attestation_paths(&primary_dir, &fallback_dir);
+        let text = fs::read_to_string(&fallback_file).expect("read last_attestation.json");
+        let record: LastAttestation = serde_json::from_str(&text).expect("parse last_attestation");
+        assert_eq!(record.peer_id, "10.6.6.6:50152");
+        assert_eq!(record.peer_did.as_deref(), Some(ev.subject_did.as_str()));
+        assert_eq!(record.count, 1);
+
+        write_last_attestation("10.6.6.6:50152", "deadbeef", "failed", None);
+        let text2 = fs::read_to_string(&fallback_file).expect("read last_attestation.json again");
+        let record2: LastAttestation =
+            serde_json::from_str(&text2).expect("parse second last_attestation");
+        assert!(record2.peer_did.is_none());
+        assert!(record2.virtual_id.is_none());
+        assert_eq!(record2.result, "failed");
+
+        fs::remove_dir_all(base).ok();
+    }
+
+    #[test]
+    fn merge_trusted_peer_prefers_newer_timestamp_but_always_merges_present_fields() {
+        let now = Utc::now();
+        let older = (now - chrono::Duration::hours(1)).to_rfc3339();
+        let newer = now.to_rfc3339();
+
+        let mut existing = TrustedPeer {
+            peer_id: "10.7.7.7:50152".into(),
+            ip: "10.7.7.7".into(),
+            status: "verified".into(),
+            timestamp: older.clone(),
+            did: Some("did:guardian:peer-merge".into()),
+            virtual_id: Some("vid-old".into()),
+            last_attested_at: Some(older.clone()),
+            dkp_pubkey_sha256_b16: None,
+            pcr_composite_digest: None,
+            policy_digest: None,
+            rotation_reason: None,
+            nonce_i: None,
+            nonce_r: None,
+        };
+        let newer_candidate = TrustedPeer {
+            peer_id: "10.7.7.8:50152".into(),
+            ip: "10.7.7.8".into(),
+            status: "verified".into(),
+            timestamp: newer.clone(),
+            did: Some("did:guardian:peer-merge".into()),
+            virtual_id: Some("vid-new".into()),
+            last_attested_at: Some(newer.clone()),
+            dkp_pubkey_sha256_b16: Some("fp".into()),
+            pcr_composite_digest: Some("pcr".into()),
+            policy_digest: Some("policy".into()),
+            rotation_reason: Some("dkp_rotated".into()),
+            nonce_i: Some("ni".into()),
+            nonce_r: Some("nr".into()),
+        };
+        merge_trusted_peer(&mut existing, newer_candidate);
+        assert_eq!(existing.peer_id, "10.7.7.8:50152");
+        assert_eq!(existing.virtual_id.as_deref(), Some("vid-new"));
+        assert_eq!(existing.dkp_pubkey_sha256_b16.as_deref(), Some("fp"));
+        assert_eq!(existing.rotation_reason.as_deref(), Some("dkp_rotated"));
+
+        let mut existing2 = TrustedPeer {
+            peer_id: "A".into(),
+            ip: "1.1.1.1".into(),
+            status: "verified".into(),
+            timestamp: newer,
+            did: None,
+            virtual_id: None,
+            last_attested_at: None,
+            dkp_pubkey_sha256_b16: None,
+            pcr_composite_digest: None,
+            policy_digest: None,
+            rotation_reason: None,
+            nonce_i: None,
+            nonce_r: None,
+        };
+        let older_candidate = TrustedPeer {
+            peer_id: "B".into(),
+            ip: "2.2.2.2".into(),
+            status: "stale".into(),
+            timestamp: older,
+            did: Some("did:guardian:late".into()),
+            virtual_id: None,
+            last_attested_at: None,
+            dkp_pubkey_sha256_b16: None,
+            pcr_composite_digest: None,
+            policy_digest: None,
+            rotation_reason: None,
+            nonce_i: None,
+            nonce_r: None,
+        };
+        merge_trusted_peer(&mut existing2, older_candidate);
+        // Older candidate must not overwrite identity/timestamp fields...
+        assert_eq!(existing2.peer_id, "A");
+        // ...but present Option fields are still merged in unconditionally.
+        assert_eq!(existing2.did.as_deref(), Some("did:guardian:late"));
+    }
+
+    #[test]
+    fn trusted_peer_seen_at_prefers_last_attested_at_then_falls_back_to_timestamp() {
+        let mut peer = TrustedPeer {
+            peer_id: "x".into(),
+            ip: "1.1.1.1".into(),
+            status: "verified".into(),
+            timestamp: "2026-01-01T00:00:00Z".into(),
+            did: None,
+            virtual_id: None,
+            last_attested_at: Some("2026-02-02T00:00:00Z".into()),
+            dkp_pubkey_sha256_b16: None,
+            pcr_composite_digest: None,
+            policy_digest: None,
+            rotation_reason: None,
+            nonce_i: None,
+            nonce_r: None,
+        };
+        let seen = trusted_peer_seen_at(&peer).expect("parses last_attested_at");
+        assert_eq!(seen.to_rfc3339(), "2026-02-02T00:00:00+00:00");
+
+        peer.last_attested_at = None;
+        let seen2 = trusted_peer_seen_at(&peer).expect("parses timestamp fallback");
+        assert_eq!(seen2.to_rfc3339(), "2026-01-01T00:00:00+00:00");
+
+        peer.timestamp = "garbage".into();
+        assert!(trusted_peer_seen_at(&peer).is_none());
+    }
+
+    #[test]
+    fn load_trusted_peers_from_global_reads_merged_fallback_file() {
+        let base = temp_test_dir("load-trusted-global");
+        let logs_dir = base.join("logs");
+        fs::create_dir_all(&logs_dir).expect("create logs dir");
+        let _guard = EnvVarGuard::set("SGX_GUARDIAN_HOME", &base);
+
+        assert!(load_trusted_peers_from_global().is_empty());
+
+        let peers = vec![TrustedPeer {
+            peer_id: "10.8.8.8:50152".into(),
+            ip: "10.8.8.8".into(),
+            status: "verified".into(),
+            timestamp: Utc::now().to_rfc3339(),
+            did: None,
+            virtual_id: None,
+            last_attested_at: None,
+            dkp_pubkey_sha256_b16: None,
+            pcr_composite_digest: None,
+            policy_digest: None,
+            rotation_reason: None,
+            nonce_i: None,
+            nonce_r: None,
+        }];
+        fs::write(
+            logs_dir.join("trusted_peers.json"),
+            serde_json::to_string(&peers).unwrap(),
+        )
+        .unwrap();
+
+        let loaded = load_trusted_peers_from_global();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].peer_id, "10.8.8.8:50152");
+
+        fs::remove_dir_all(base).ok();
+    }
+
+    #[test]
+    fn cached_vid_from_trusted_peer_returns_none_for_blank_did() {
+        let peer = TrustedPeer {
+            peer_id: "x".into(),
+            ip: "1.1.1.1".into(),
+            status: "verified".into(),
+            timestamp: Utc::now().to_rfc3339(),
+            did: Some("   ".into()),
+            virtual_id: None,
+            last_attested_at: None,
+            dkp_pubkey_sha256_b16: None,
+            pcr_composite_digest: None,
+            policy_digest: None,
+            rotation_reason: None,
+            nonce_i: None,
+            nonce_r: None,
+        };
+        assert!(cached_vid_from_trusted_peer(&peer).is_none());
+
+        let mut peer2 = peer.clone();
+        peer2.did = Some("did:guardian:cached".into());
+        let cached =
+            cached_vid_from_trusted_peer(&peer2).expect("valid did should produce a CachedVid");
+        assert_eq!(cached.vid_hex, "");
+    }
+
+    #[test]
+    fn stable_dkp_state_uses_matching_did_document_verification_method() {
+        let policy = "allow: all";
+        let nonce = {
+            let hash = Sha256::digest(b"sgx-guardian-test-nonce::matching-did-doc");
+            hex::encode(&hash[..16])
+        };
+        let mut ev = make_test_evidence_with_secret([3u8; 32], policy, &nonce);
+        ev.subject_did = "did:guardian:matching-peer".into();
+
+        let matching_doc = make_test_did_document(
+            &ev.subject_did,
+            vec![verification_method_from_evidence(
+                &ev.subject_did,
+                "dkp-v9",
+                &ev.pubkey_der_b64,
+            )],
+        );
+
+        let state = stable_dkp_state_for_attestation_with_doc(&ev, Some(&matching_doc));
+        assert_eq!(state.verification_method_id, format!("{}#dkp-v9", ev.subject_did));
+        assert_eq!(state.kid, "dkp-v9");
+    }
+
+    #[test]
+    fn current_node_name_prefers_env_var_over_default() {
+        let _guard = EnvVarGuard::set("SGX_GUARDIAN_NODE_ID", Path::new("nodeZ"));
+        assert_eq!(current_node_name("fallback"), "nodeZ");
+    }
+
+    // ── record_attestation_success / observe_verified_virtual_id ────────
+
+    #[test]
+    fn record_attestation_success_updates_peer_health_snapshot() {
+        let key = format!("test-peer-health-{}", std::process::id());
+        record_attestation_success("10.9.9.9:1", &key);
+        record_attestation_success("10.9.9.9:2", &key);
+        let health = peer_health().lock().unwrap();
+        assert!(*health.verified_per_peer.get(&key).unwrap() >= 2);
+        assert!(health.last_verified_at.contains_key(&key));
+    }
+
+    #[test]
+    fn observe_verified_virtual_id_classifies_rotation_reasons_through_full_sequence() {
+        let base = temp_test_dir("observe-vid-sequence");
+        let logs_dir = base.join("logs");
+        fs::create_dir_all(&logs_dir).expect("create logs dir");
+        let _home_guard = EnvVarGuard::set("SGX_GUARDIAN_HOME", &base);
+
+        set_vid_cache(crate::virtual_id_cache::VirtualIdCache::new());
+        let cache = VID_CACHE
+            .get()
+            .expect("vid cache should be set (first writer in this binary wins)");
+
+        let pid = std::process::id();
+        let did_a = format!("did:guardian:observe-seq-a-{pid}");
+        let did_b = format!("did:guardian:observe-seq-b-{pid}");
+        let addr = format!("203.0.113.55:{}", 50000 + (pid % 1000));
+
+        fn ev(
+            subject_did: &str,
+            pubkey_label: &str,
+            policy_seed: &str,
+            pcr_seed: &str,
+            key_version: u32,
+            vid_label: &str,
+        ) -> AttestationEvidence {
+            AttestationEvidence {
+                node_id: "nodeB".into(),
+                subject_did: subject_did.to_string(),
+                nonce: "aa".into(),
+                nonce_i: Some("aa".into()),
+                nonce_r: Some("bb".into()),
+                policy_digest: hex::encode(Sha256::digest(policy_seed.as_bytes())),
+                virtual_id: hex::encode(Sha256::digest(vid_label.as_bytes())),
+                signature: String::new(),
+                pubkey_der_b64: general_purpose::STANDARD.encode(pubkey_label.as_bytes()),
+                presented_vc_json: None,
+                pcr_values: None,
+                key_version: Some(key_version),
+                baseline_status: Some(BaselineStatus {
+                    state: "ALL_MATCH".into(),
+                    mismatched_pcrs: vec![],
+                    composite_digest: hex::encode(Sha256::digest(pcr_seed.as_bytes())),
+                }),
+            }
+        }
+
+        // 1. FirstSeen
+        observe_verified_virtual_id(&ev(&did_a, "pk1", "policy1", "pcr1", 1, "vid1"), &addr);
+        let after1 = cache.current_for_sync(&did_a).expect("seeded after first observation");
+        assert_eq!(
+            after1.last_rotation_reason,
+            Some(crate::virtual_id_cache::RotationReason::InitialObservation)
+        );
+
+        // 2. Unchanged (identical evidence)
+        observe_verified_virtual_id(&ev(&did_a, "pk1", "policy1", "pcr1", 1, "vid1"), &addr);
+        let after2 = cache.current_for_sync(&did_a).unwrap();
+        assert_eq!(after2.vid_hex, after1.vid_hex);
+
+        // 3. DkpRotated — also exercises the "cooldown allows reattest" branch.
+        observe_verified_virtual_id(&ev(&did_a, "pk2", "policy1", "pcr1", 2, "vid2"), &addr);
+        let after3 = cache.current_for_sync(&did_a).unwrap();
+        assert_eq!(
+            after3.last_rotation_reason,
+            Some(crate::virtual_id_cache::RotationReason::DkpRotated)
+        );
+
+        // 4. PcrChanged immediately after — within the 30s cooldown, so this
+        // also exercises the "suppressed by cooldown" logging branch.
+        observe_verified_virtual_id(&ev(&did_a, "pk2", "policy1", "pcr2", 2, "vid3"), &addr);
+        let after4 = cache.current_for_sync(&did_a).unwrap();
+        assert_eq!(
+            after4.last_rotation_reason,
+            Some(crate::virtual_id_cache::RotationReason::PcrChanged)
+        );
+
+        // 5. PolicyChanged
+        observe_verified_virtual_id(&ev(&did_a, "pk2", "policy2", "pcr2", 2, "vid4"), &addr);
+        let after5 = cache.current_for_sync(&did_a).unwrap();
+        assert_eq!(
+            after5.last_rotation_reason,
+            Some(crate::virtual_id_cache::RotationReason::PolicyChanged)
+        );
+
+        // 6. MultipleSecurityInputs (dkp + pcr + policy all change together)
+        observe_verified_virtual_id(&ev(&did_a, "pk3", "policy3", "pcr3", 3, "vid5"), &addr);
+        let after6 = cache.current_for_sync(&did_a).unwrap();
+        assert_eq!(
+            after6.last_rotation_reason,
+            Some(crate::virtual_id_cache::RotationReason::MultipleSecurityInputs)
+        );
+
+        // 7. NonceOnly — only the VID hex changes, all stable inputs match.
+        observe_verified_virtual_id(&ev(&did_a, "pk3", "policy3", "pcr3", 3, "vid6"), &addr);
+        let after7 = cache.current_for_sync(&did_a).unwrap();
+        assert_eq!(
+            after7.last_rotation_reason,
+            Some(crate::virtual_id_cache::RotationReason::NonceOnly)
+        );
+        assert_eq!(after7.vid_hex, hex::encode(Sha256::digest(b"vid6")));
+
+        // 8. DidChanged — a brand-new DID observed at the same IP hint that
+        // DID_A used, which the cache recognizes as an identity swap.
+        observe_verified_virtual_id(&ev(&did_b, "pk4", "policy4", "pcr4", 1, "vid7"), &addr);
+        let after8 = cache.current_for_sync(&did_b).expect("new did seeded");
+        assert_eq!(
+            after8.last_rotation_reason,
+            Some(crate::virtual_id_cache::RotationReason::DidChanged)
+        );
+
+        fs::remove_dir_all(base).ok();
+    }
+
+    // ── SignedQuote::save / SignedQuote::load ───────────────────────────
+
+    #[test]
+    fn signed_quote_save_and_load_round_trip() {
+        let dir = temp_test_dir("quote-save-load");
+        let km = test_key_manager(&dir, "prover");
+        let quote = make_test_quote("nodeA");
+        let signed = quote.sign(&km).expect("sign quote");
+
+        let path = dir.join("signed_quote.json");
+        signed.save(path.to_str().unwrap()).expect("save signed quote");
+
+        let loaded = SignedQuote::load(path.to_str().unwrap()).expect("load signed quote");
+        assert_eq!(loaded.quote_json, signed.quote_json);
+        assert_eq!(loaded.signature_b64, signed.signature_b64);
+        assert_eq!(loaded.signing_backend, signed.signing_backend);
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn signed_quote_load_reports_error_for_missing_file() {
+        let dir = temp_test_dir("quote-load-missing");
+        let path = dir.join("does-not-exist.json");
+        let err = SignedQuote::load(path.to_str().unwrap()).unwrap_err();
+        assert!(!err.to_string().is_empty());
+        fs::remove_dir_all(dir).ok();
+    }
 }

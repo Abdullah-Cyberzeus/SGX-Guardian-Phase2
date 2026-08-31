@@ -51,9 +51,19 @@ pub struct RelaySetLimitArgs {
 #[derive(Args)]
 pub struct RelayToggleArgs {
     pub node: String,
-    #[arg(long, default_value_t = false, conflicts_with = "disable")]
+    #[arg(
+        long,
+        action = clap::ArgAction::SetTrue,
+        required_unless_present = "disable",
+        conflicts_with = "disable"
+    )]
     pub enable: bool,
-    #[arg(long, default_value_t = false, conflicts_with = "enable")]
+    #[arg(
+        long,
+        action = clap::ArgAction::SetTrue,
+        required_unless_present = "enable",
+        conflicts_with = "enable"
+    )]
     pub disable: bool,
 }
 

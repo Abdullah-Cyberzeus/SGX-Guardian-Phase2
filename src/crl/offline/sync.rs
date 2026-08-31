@@ -338,8 +338,10 @@ mod tests {
         CrlEntry, RevocationReason, RevokerRole, Severity, CRL_CONTEXT_CORE, CRL_CONTEXT_SGX,
     };
     use crate::crl::list::CertificateRevocationList;
-    use crate::did::document::Proof;
+    use crate::did::document::{DidDocument, Proof, ServiceEndpoint};
+    use crate::did::{persistence::DerivationProof, ResolverConfig};
     use tempfile::TempDir;
+    use tokio::net::TcpListener;
 
     struct CrlBaseGuard(Option<std::ffi::OsString>);
 
@@ -359,6 +361,90 @@ mod tests {
                 std::env::remove_var(persistence::CRL_BASE_ENV);
             }
         }
+    }
+
+    /// Generic env-var guard (mirrors `CrlBaseGuard`) for the identity/peer
+    /// directory env vars `run_cycle`/`reachable_peers` also read.
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(previous) => std::env::set_var(self.key, previous),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    fn make_did_record(did: &str) -> DidRecord {
+        DidRecord {
+            did: did.to_string(),
+            method: "guardian".to_string(),
+            method_version: "1.0".to_string(),
+            did_id_b58: format!("b58-{}", did.replace(':', "_")),
+            did_id_hex: hex::encode(did.as_bytes()),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            deactivated_at: None,
+            derivation: DerivationProof {
+                se050_uid: "se050-test-uid".to_string(),
+                se050_uid_source: "test".to_string(),
+                dkp_v1_pubkey_sha256_b16: "00".repeat(32),
+                dkp_v1_pubkey_path: "device.key".to_string(),
+                dkp_v1_pubkey_der_b64: None,
+                dik_pubkey_sha256_b16: "11".repeat(32),
+                dik_pubkey_der_b64: None,
+            },
+            current_dkp_version: 1,
+            deriv_signature_b64: "signature".to_string(),
+        }
+    }
+
+    fn sample_peer_doc(did: &str, status: Option<&str>, nebula_ip_cidr: Option<&str>) -> DidDocument {
+        let mut service = Vec::new();
+        if let Some(cidr) = nebula_ip_cidr {
+            service.push(ServiceEndpoint {
+                id: format!("{did}#sgx-mesh"),
+                svc_type: "SGXNebulaMesh".into(),
+                service_endpoint: format!("nebula://{cidr}"),
+            });
+        }
+        DidDocument {
+            context: vec![],
+            id: did.to_string(),
+            controller: did.to_string(),
+            verification_method: vec![],
+            authentication: vec![],
+            assertion_method: vec![],
+            service,
+            sgx_node_name: Some("peer-node".to_string()),
+            sgx_created: "2026-01-01T00:00:00Z".into(),
+            sgx_updated: "2026-01-01T00:00:00Z".into(),
+            sgx_version_id: 1,
+            sgx_method_spec_version: "1.0".into(),
+            sgx_status: status.map(|s| s.to_string()),
+            sgx_revoked_vm: vec![],
+            proof: None,
+        }
+    }
+
+    fn write_peer_doc(dir: &std::path::Path, name: &str, doc: &DidDocument) {
+        std::fs::create_dir_all(dir).expect("peers dir");
+        std::fs::write(
+            dir.join(format!("did_doc_{name}.json")),
+            serde_json::to_vec(doc).expect("serialize peer doc"),
+        )
+        .expect("write peer doc");
     }
 
     fn sample_entry(id: &str, propagated: bool) -> CrlEntry {
@@ -475,5 +561,175 @@ mod tests {
         let _ = entries_delivered();
         let _ = entries_fetched();
         let _ = is_online();
+    }
+
+    #[test]
+    fn record_local_vector_for_defaults_when_no_local_crl_then_reflects_saved_crl() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        SYNC_STATE.write().expect("sync state write").clear();
+
+        record_local_vector_for("did:guardian:peer-a");
+        let snapshot = sync_state_snapshot();
+        let state = snapshot
+            .get("did:guardian:peer-a")
+            .expect("peer entry recorded");
+        assert_eq!(state.last_seen_sequence, 0);
+        assert!(state.last_seen_merkle_root.is_empty());
+        assert!(!state.last_sync_at.is_empty());
+
+        let mut crl = CertificateRevocationList::new("did:guardian:self", "circle-alpha");
+        crl.entries.push(sample_entry("entry-1", true));
+        crl.sequence = 9;
+        crl.recompute_root();
+        let expected_root = crl.merkle_root.clone();
+        persistence::save_crl(&crl).expect("save local CRL");
+
+        record_local_vector_for("did:guardian:peer-a");
+        let snapshot = sync_state_snapshot();
+        let state = snapshot
+            .get("did:guardian:peer-a")
+            .expect("peer entry recorded again");
+        assert_eq!(state.last_seen_sequence, 9);
+        assert_eq!(state.last_seen_merkle_root, expected_root);
+    }
+
+    #[tokio::test]
+    async fn reachable_peers_returns_empty_when_no_peer_docs_present() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let temp = TempDir::new().expect("tempdir");
+        let peers_dir = temp.path().join("peers-missing");
+        let _peers_guard = EnvGuard::set(crate::did::doc_persistence::PEERS_DOC_DIR_ENV, &peers_dir);
+
+        let reachable = reachable_peers("did:guardian:self", &config(1)).await;
+        assert!(reachable.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reachable_peers_distinguishes_reachable_from_unreachable_peers() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        let peers_dir = temp.path().join("peers");
+        let _peers_guard = EnvGuard::set(crate::did::doc_persistence::PEERS_DOC_DIR_ENV, &peers_dir);
+
+        // A bound-but-listening loopback socket = reachable peer.
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let listen_addr = listener.local_addr().expect("addr");
+        let accept_task = tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+
+        // Bind-then-drop reserves a free port nobody listens on = unreachable.
+        let dead_listener = TcpListener::bind("127.0.0.1:0").await.expect("bind dead");
+        let dead_addr = dead_listener.local_addr().expect("dead addr");
+        drop(dead_listener);
+
+        write_peer_doc(
+            &peers_dir,
+            "reachable",
+            &sample_peer_doc(
+                "did:guardian:reachable-peer",
+                Some("active"),
+                Some(&format!("{}/24", listen_addr.ip())),
+            ),
+        );
+        write_peer_doc(
+            &peers_dir,
+            "unreachable",
+            &sample_peer_doc(
+                "did:guardian:unreachable-peer",
+                Some("active"),
+                Some(&format!("{}/24", dead_addr.ip())),
+            ),
+        );
+
+        // Same gossip port for both candidates: overlay_ip differs instead.
+        std::env::set_var("SGX_CRL_GOSSIP_PORT", listen_addr.port().to_string());
+        let reachable = reachable_peers("did:guardian:self", &config(1)).await;
+        std::env::remove_var("SGX_CRL_GOSSIP_PORT");
+
+        assert_eq!(reachable.len(), 1);
+        assert_eq!(reachable[0].did, "did:guardian:reachable-peer");
+        accept_task.await.expect("accept task joined");
+    }
+
+    #[tokio::test]
+    async fn run_cycle_offline_path_reports_zero_reachable_and_reconciles_pending() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        let did_path = temp.path().join("did.json");
+        let peers_dir = temp.path().join("peers-empty");
+        make_did_record("did:guardian:offline-node").save(did_path.to_str().unwrap()).expect("save did");
+        let _did_guard = EnvGuard::set("SGX_GUARDIAN_DID_PATH", &did_path);
+        let _peers_guard = EnvGuard::set(crate::did::doc_persistence::PEERS_DOC_DIR_ENV, &peers_dir);
+
+        // A locally-issued, not-yet-propagated entry so reconcile_from_local
+        // has something to pick up.
+        let mut crl = CertificateRevocationList::new("did:guardian:offline-node", "circle-alpha");
+        let mut local_entry = sample_entry("local-1", false);
+        local_entry.revoker_did = "did:guardian:offline-node".into();
+        crl.entries.push(local_entry);
+        crl.recompute_root();
+        persistence::save_crl(&crl).expect("save local CRL");
+
+        let resolver = Resolver::new(ResolverConfig::default());
+        let report = run_cycle("nodeA", &resolver, &config(3))
+            .await
+            .expect("cycle result");
+
+        assert!(!report.online);
+        assert_eq!(report.reachable_peers, 0);
+        assert_eq!(report.reconciled, 1);
+        assert_eq!(report.fetched, 0);
+        assert_eq!(report.delivered, 0);
+        assert_eq!(report.pending_remaining, queue::count());
+    }
+
+    #[tokio::test]
+    async fn run_cycle_online_path_counts_reachable_peer_and_survives_round_error() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        let did_path = temp.path().join("did.json");
+        let peers_dir = temp.path().join("peers");
+        make_did_record("did:guardian:online-node").save(did_path.to_str().unwrap()).expect("save did");
+        let _did_guard = EnvGuard::set("SGX_GUARDIAN_DID_PATH", &did_path);
+        let _peers_guard = EnvGuard::set(crate::did::doc_persistence::PEERS_DOC_DIR_ENV, &peers_dir);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        // Accept the connection then drop it immediately: the peer looks
+        // reachable at the TCP level, but the gossip handshake fails fast
+        // (EOF) instead of hanging on the protocol's read timeout.
+        let server = tokio::spawn(async move {
+            if let Ok((stream, _)) = listener.accept().await {
+                drop(stream);
+            }
+        });
+
+        write_peer_doc(
+            &peers_dir,
+            "peer",
+            &sample_peer_doc(
+                "did:guardian:online-peer",
+                Some("active"),
+                Some(&format!("{}/24", addr.ip())),
+            ),
+        );
+        std::env::set_var("SGX_CRL_GOSSIP_PORT", addr.port().to_string());
+
+        let resolver = Resolver::new(ResolverConfig::default());
+        let report = run_cycle("nodeA", &resolver, &config(3)).await;
+        std::env::remove_var("SGX_CRL_GOSSIP_PORT");
+        server.await.expect("server task joined");
+
+        let report = report.expect("cycle result");
+        assert!(report.online);
+        assert_eq!(report.reachable_peers, 1);
+        assert_eq!(report.fetched, 0);
+        assert_eq!(report.delivered, 0);
     }
 }

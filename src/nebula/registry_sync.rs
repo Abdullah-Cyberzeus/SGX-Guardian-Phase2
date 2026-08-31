@@ -1236,4 +1236,236 @@ mod tests {
         assert!(saved.relays.contains_key("nodeB"));
         let _ = std::fs::remove_file(&path);
     }
+
+    // ── handle_registry_connection ────────────────────────────────
+    //
+    // These exercise the connection handler directly over a loopback
+    // TcpStream pair (an OS-assigned ephemeral port via `bind("127.0.0.1:0")`),
+    // rather than through `start_registry_server`, which itself binds the
+    // fixed, hardcoded `REGISTRY_SYNC_PORT` and is not safely unit-testable
+    // (no root, and a fixed port risks colliding with a real service or other
+    // test runs). `is_ca_node()` reads the real process argv (`std::env::args()`),
+    // which cannot be faked per-test, so under `cargo test` it is always false —
+    // meaning only the "Only CA can ..." rejection branches of the CA-only
+    // actions are reachable here; their true-CA success branches (which also
+    // touch hardcoded `/var/lib/...` registry paths) are left uncovered.
+
+    fn empty_registry() -> SharedRegistry {
+        Arc::new(RwLock::new(OverlayRegistry::new(
+            "alpha",
+            "192.168.100",
+            "nodeA",
+        )))
+    }
+
+    async fn connected_pair() -> (TcpStream, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback listener");
+        let addr = listener.local_addr().expect("local addr");
+        let client = TcpStream::connect(addr).await.expect("connect loopback");
+        let (server, _) = listener.accept().await.expect("accept loopback");
+        (server, client)
+    }
+
+    async fn roundtrip(
+        registry: SharedRegistry,
+        request_line: &str,
+    ) -> RegistryResponse {
+        let (server, mut client) = connected_pair().await;
+
+        client
+            .write_all(request_line.as_bytes())
+            .await
+            .expect("write request");
+        client.write_all(b"\n").await.expect("write newline");
+
+        handle_registry_connection(server, registry)
+            .await
+            .expect("handle connection");
+
+        let mut reader = BufReader::new(client);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.expect("read response");
+        serde_json::from_str(line.trim()).expect("parse response json")
+    }
+
+    #[tokio::test]
+    async fn test_handle_registry_connection_request_too_large() {
+        let (server, mut client) = connected_pair().await;
+
+        let mut oversized = "a".repeat(9000);
+        oversized.push('\n');
+        client
+            .write_all(oversized.as_bytes())
+            .await
+            .expect("write oversized request");
+
+        handle_registry_connection(server, empty_registry())
+            .await
+            .expect("handle connection");
+
+        let mut reader = BufReader::new(client);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.expect("read response");
+        let resp: RegistryResponse = serde_json::from_str(line.trim()).unwrap();
+        assert!(!resp.success);
+        assert!(resp.error.unwrap().contains("Request too large"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_registry_connection_invalid_json() {
+        let resp = roundtrip(empty_registry(), "not valid json").await;
+        assert!(!resp.success);
+        assert!(resp.error.unwrap().contains("Invalid JSON"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_registry_connection_empty_line_closes_without_response() {
+        let (server, mut client) = connected_pair().await;
+
+        client.write_all(b"\n").await.expect("write empty line");
+
+        handle_registry_connection(server, empty_registry())
+            .await
+            .expect("handle connection");
+
+        let mut reader = BufReader::new(client);
+        let mut line = String::new();
+        let n = reader.read_line(&mut line).await.expect("read eof");
+        assert_eq!(n, 0, "expected EOF with no response written");
+    }
+
+    #[tokio::test]
+    async fn test_handle_registry_connection_unknown_action() {
+        let req = r#"{"action":"bogus","node_name":"nodeB"}"#;
+        let resp = roundtrip(empty_registry(), req).await;
+        assert!(!resp.success);
+        assert!(resp.error.unwrap().contains("Unknown action: bogus"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_registry_connection_query_hit() {
+        let registry = empty_registry();
+        {
+            let mut reg = registry.write().await;
+            reg.assign_ip("nodeB").expect("assign ip");
+        }
+        let req = r#"{"action":"query","node_name":"nodeB"}"#;
+        let resp = roundtrip(registry, req).await;
+        assert!(resp.success);
+        assert!(resp.ip_cidr.is_some());
+        assert!(resp.ip.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_handle_registry_connection_query_miss() {
+        let req = r#"{"action":"query","node_name":"ghost"}"#;
+        let resp = roundtrip(empty_registry(), req).await;
+        assert!(!resp.success);
+        assert!(resp.error.unwrap().contains("not found in registry"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_registry_connection_list() {
+        let req = r#"{"action":"list","node_name":""}"#;
+        let resp = roundtrip(empty_registry(), req).await;
+        assert!(resp.success);
+        assert!(resp.registry_summary.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_handle_registry_connection_assign_rejected_when_not_ca() {
+        let req = r#"{"action":"assign","node_name":"nodeB"}"#;
+        let resp = roundtrip(empty_registry(), req).await;
+        assert!(!resp.success);
+        assert!(resp.error.unwrap().contains("Only CA can assign IPs"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_registry_connection_publish_did_doc_rejected_when_not_ca() {
+        let req = r#"{"action":"publish_did_doc","node_name":"nodeB","did_doc_json":"{}"}"#;
+        let resp = roundtrip(empty_registry(), req).await;
+        assert!(!resp.success);
+        assert!(resp
+            .error
+            .unwrap()
+            .contains("Only CA can ingest DID documents"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_registry_connection_snapshot_did_doc_rejected_when_not_ca() {
+        let req = r#"{"action":"snapshot_did_doc","node_name":""}"#;
+        let resp = roundtrip(empty_registry(), req).await;
+        assert!(!resp.success);
+        assert!(resp
+            .error
+            .unwrap()
+            .contains("Only CA can serve DID document snapshots"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_registry_connection_resolve_did_rejected_when_not_ca() {
+        let req = r#"{"action":"resolve_did","node_name":"","did_query":"did:example:123"}"#;
+        let resp = roundtrip(empty_registry(), req).await;
+        assert!(!resp.success);
+        assert!(resp
+            .error
+            .unwrap()
+            .contains("Only CA can serve DID document point lookups"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_registry_connection_snapshot_rejected_when_not_ca() {
+        let req = r#"{"action":"snapshot","node_name":""}"#;
+        let resp = roundtrip(empty_registry(), req).await;
+        assert!(!resp.success);
+        assert!(resp
+            .error
+            .unwrap()
+            .contains("Only CA can serve registry snapshots"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_registry_connection_snapshot_lh_rejected_when_not_ca() {
+        let req = r#"{"action":"snapshot_lh","node_name":""}"#;
+        let resp = roundtrip(empty_registry(), req).await;
+        assert!(!resp.success);
+        assert!(resp
+            .error
+            .unwrap()
+            .contains("Only CA can serve registry snapshots"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_registry_connection_snapshot_relay_rejected_when_not_ca() {
+        let req = r#"{"action":"snapshot_relay","node_name":""}"#;
+        let resp = roundtrip(empty_registry(), req).await;
+        assert!(!resp.success);
+        assert!(resp
+            .error
+            .unwrap()
+            .contains("Only CA can serve registry snapshots"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_registry_connection_status_list_snapshot_rejected_when_not_ca() {
+        let req = r#"{"action":"status_list_snapshot","node_name":""}"#;
+        let resp = roundtrip(empty_registry(), req).await;
+        assert!(!resp.success);
+        assert!(resp
+            .error
+            .unwrap()
+            .contains("Only CA can serve registry snapshots"));
+    }
+
+    // ── local ip cache round trip (env-overridable path) ─────────
+    //
+    // `CACHE_PATH` itself is a hardcoded `/var/lib/...` constant with no
+    // env-var override in this file (unlike e.g. `src/did/doc_persistence.rs`'s
+    // `..._PATH_ENV` constants), and `save_local_ip_cache` additionally tries
+    // to `create_dir_all("/var/lib/sgx-guardian")`, which is not writable by
+    // an unprivileged test process. So `save_local_ip_cache`,
+    // `load_local_ip_cache`, `clear_local_ip_cache`, and `ensure_dirs` are not
+    // exercised here — they are left uncovered for that reason.
 }
