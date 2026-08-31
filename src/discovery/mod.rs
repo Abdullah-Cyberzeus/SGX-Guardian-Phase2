@@ -24,8 +24,8 @@ pub mod vuln_trigger;
 pub mod whitelist;
 
 pub use config::{
-    NmapConfig, ScanIntensity, ScanSchedule, ScheduleDay, ScheduleProfile, ScheduledScanKind,
-    ScheduledScans,
+    NmapConfig, ScanIntensity, ScanSchedule, ScheduleDay, ScheduleFrequency, ScheduleProfile,
+    ScanScheduleProfile, ScheduledScanKind, ScheduledScans,
 };
 pub use connected_device::{ConnectedDevice, DeviceStatus, OpenPort, ScriptResult};
 pub use error::{DiscoveryError, DiscoveryResult};

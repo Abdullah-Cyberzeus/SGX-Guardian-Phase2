@@ -1,7 +1,7 @@
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::discovery::{
-    config::{NmapConfig, ScheduleDay, ScheduledScanKind},
+    config::{NmapConfig, ScheduleDay, ScheduleFrequency, ScanScheduleProfile, ScheduledScanKind},
     connected_device::DeviceStatus,
     error::DiscoveryResult,
     inventory::Inventory,
@@ -13,6 +13,7 @@ use crate::discovery::{
     ScanIntensity,
 };
 use chrono::{Datelike, Local, Timelike, Utc};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -45,6 +46,11 @@ impl DiscoveryScheduler {
                 scheduler.run_schedule_loop(kind).await;
             });
         }
+
+        let scheduler = self.clone();
+        tokio::spawn(async move {
+            scheduler.run_profile_schedule_loop().await;
+        });
     }
 
     async fn run_schedule_loop(&self, kind: ScheduledScanKind) {
@@ -66,6 +72,11 @@ impl DiscoveryScheduler {
                 }
             };
 
+            if !cfg.scan_schedules.is_empty() {
+                next_run = Instant::now() + period;
+                continue;
+            }
+
             let Some(intensity) = cfg.scheduled_intensity(kind) else {
                 next_run = Instant::now() + period;
                 continue;
@@ -83,7 +94,33 @@ impl DiscoveryScheduler {
                 if last_daily_slot.as_deref() == Some(&slot) {
                     continue;
                 }
-                last_daily_slot = Some(slot);
+                tracing::info!(
+                    schedule = %schedule_name(kind),
+                    slot = %slot,
+                    timezone = %Local::now().format("%Z %:z"),
+                    "scheduled discovery scan is due"
+                );
+
+                match self.run_one(&cfg, kind, intensity).await {
+                    Ok(()) => last_daily_slot = Some(slot),
+                    Err(err) => {
+                        // Do not consume the slot on failure. The next poll
+                        // retries the same scheduled run and records each
+                        // attempt in run history for visibility.
+                        log_audit(
+                            &self.node_id,
+                            AuditCategory::Discovery,
+                            AuditSeverity::Warning,
+                            AuditAction::Failed,
+                            &format!(
+                                "{} Guardian network scan failed: {}",
+                                schedule_name(kind),
+                                err
+                            ),
+                        );
+                    }
+                }
+                continue;
             } else {
                 if Instant::now() < next_run {
                     continue;
@@ -103,6 +140,70 @@ impl DiscoveryScheduler {
                         err
                     ),
                 );
+            }
+        }
+    }
+
+    async fn run_profile_schedule_loop(&self) {
+        let mut poll = interval(Duration::from_secs(60));
+        let mut last_slots: HashMap<String, String> = HashMap::new();
+        poll.tick().await;
+
+        loop {
+            poll.tick().await;
+
+            let cfg = match NmapConfig::load(&self.config_path) {
+                Ok(cfg) => cfg,
+                Err(err) => {
+                    tracing::warn!("discovery config load failed: {}", err);
+                    continue;
+                }
+            };
+
+            let schedules = cfg.active_schedules().to_vec();
+            if schedules.is_empty() {
+                continue;
+            }
+
+            if !cfg.enabled {
+                continue;
+            }
+
+            for schedule in schedules {
+                let Some(slot) = active_schedule_slot(&schedule) else {
+                    continue;
+                };
+                if last_slots.get(&schedule.id).is_some_and(|last| last == &slot) {
+                    continue;
+                }
+
+                let kind_label = schedule.frequency.as_str();
+                tracing::info!(
+                    schedule = %kind_label,
+                    slot = %slot,
+                    timezone = %schedule.timezone,
+                    "scheduled discovery scan is due"
+                );
+
+                match self.run_one(&cfg, ScheduledScanKind::Daily, schedule.intensity).await {
+                    Ok(()) => {
+                        last_slots.insert(schedule.id.clone(), slot);
+                        if matches!(schedule.frequency, ScheduleFrequency::Once) {
+                            if let Err(err) = remove_one_shot_schedule(&self.config_path, &cfg, &schedule.id) {
+                                tracing::warn!("failed to remove one-shot schedule after run: {}", err);
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        log_audit(
+                            &self.node_id,
+                            AuditCategory::Discovery,
+                            AuditSeverity::Warning,
+                            AuditAction::Failed,
+                            &format!("scheduled Guardian network scan failed: {}", err),
+                        );
+                    }
+                }
             }
         }
     }
@@ -350,7 +451,11 @@ fn daily_schedule_slot(cfg: &NmapConfig) -> Option<String> {
     let (hour, minute) = profile.time.split_once(':')?;
     let hour = hour.parse::<u32>().ok()?;
     let minute = minute.parse::<u32>().ok()?;
-    if now.hour() != hour || now.minute() != minute {
+    // The scheduler polls periodically and is not guaranteed to wake at the
+    // exact second of the configured minute. Once the configured time has
+    // passed, the date/time slot uniquely identifies this day's run and
+    // `last_daily_slot` prevents duplicate execution.
+    if (now.hour(), now.minute()) < (hour, minute) {
         return None;
     }
 
@@ -368,6 +473,111 @@ fn schedule_day_matches(day: ScheduleDay, weekday: chrono::Weekday) -> bool {
             | (ScheduleDay::Saturday, chrono::Weekday::Sat)
             | (ScheduleDay::Sunday, chrono::Weekday::Sun)
     )
+}
+
+fn active_schedule_slot(schedule: &ScanScheduleProfile) -> Option<String> {
+    let now = Local::now();
+    let (hour, minute) = parse_schedule_time(&schedule.time)?;
+    let candidate = match schedule.frequency {
+        ScheduleFrequency::Once => {
+            let mut dt = now.with_hour(hour)?;
+            dt = dt.with_minute(minute)?;
+            dt = dt.with_second(0)?;
+            dt = dt.with_nanosecond(0)?;
+            dt
+        }
+        ScheduleFrequency::Daily | ScheduleFrequency::Custom => {
+            if !schedule.days.is_empty()
+                && !schedule
+                    .days
+                    .iter()
+                    .any(|day| schedule_day_matches(*day, now.weekday()))
+            {
+                return None;
+            }
+            let mut dt = now.with_hour(hour)?;
+            dt = dt.with_minute(minute)?;
+            dt = dt.with_second(0)?;
+            dt = dt.with_nanosecond(0)?;
+            dt
+        }
+        ScheduleFrequency::Weekly => {
+            if schedule.days.is_empty()
+                || !schedule
+                    .days
+                    .iter()
+                    .any(|day| schedule_day_matches(*day, now.weekday()))
+            {
+                return None;
+            }
+            let mut dt = now.with_hour(hour)?;
+            dt = dt.with_minute(minute)?;
+            dt = dt.with_second(0)?;
+            dt = dt.with_nanosecond(0)?;
+            dt
+        }
+        ScheduleFrequency::Monthly => {
+            let day_of_month = schedule.day_of_month.unwrap_or(1);
+            if now.day() as u8 != day_of_month {
+                return None;
+            }
+            let mut dt = now.with_hour(hour)?;
+            dt = dt.with_minute(minute)?;
+            dt = dt.with_second(0)?;
+            dt = dt.with_nanosecond(0)?;
+            dt
+        }
+    };
+
+    if candidate > now {
+        return None;
+    }
+
+    Some(match schedule.frequency {
+        ScheduleFrequency::Once => format!("once-{}", candidate.format("%Y-%m-%dT%H:%M")),
+        ScheduleFrequency::Monthly => format!("monthly-{}", candidate.format("%Y-%m")),
+        _ => format!("{}-{}", schedule.frequency.as_str(), candidate.format("%Y-%m-%d")),
+    })
+}
+
+fn parse_schedule_time(time: &str) -> Option<(u32, u32)> {
+    let (hour_text, minute_text) = time.split_once(':')?;
+    let hour = hour_text.parse::<u32>().ok()?;
+    let minute = minute_text.parse::<u32>().ok()?;
+    if hour > 23 || minute > 59 {
+        return None;
+    }
+    Some((hour, minute))
+}
+
+fn remove_one_shot_schedule(path: &PathBuf, cfg: &NmapConfig, schedule_id: &str) -> std::io::Result<()> {
+    let mut updated = cfg.clone();
+    updated.scan_schedules.retain(|schedule| schedule.id != schedule_id);
+    if updated.scan_schedules.is_empty() {
+        updated.enabled = false;
+    }
+    let yaml = serde_yaml::to_string(&updated).map_err(std::io::Error::other)?;
+    atomic_write_text(path, &yaml)
+}
+
+fn atomic_write_text(path: &PathBuf, content: &str) -> std::io::Result<()> {
+    let dir = path.parent().ok_or_else(|| std::io::Error::other("missing parent"))?;
+    let tmp = tempfile::NamedTempFile::new_in(dir)?;
+    std::fs::write(tmp.path(), content)?;
+    tmp.persist(path).map_err(|e| e.error)?;
+    Ok(())
+}
+
+impl ScheduleFrequency {
+    fn as_str(self) -> &'static str {
+        match self {
+            ScheduleFrequency::Once => "once",
+            ScheduleFrequency::Daily => "daily",
+            ScheduleFrequency::Weekly => "weekly",
+            ScheduleFrequency::Monthly => "monthly",
+            ScheduleFrequency::Custom => "custom",
+        }
+    }
 }
 
 const DEFAULT_NMAP_YAML: &str = r#"# /etc/sgx-guardian/discovery/nmap.yaml

@@ -478,11 +478,11 @@ function NodeDetails({ node, nodeCircles, didPeers, onClose }: {
       )}
 
       <dl className="clt-kv">
-        <div><dt>Node ID</dt><dd title={node.did || node.id}>{displayForDid(node.did, node.id)}</dd></div>
+        <div><dt>Node ID</dt><dd title={node.did || node.id}>{node.did || node.id}</dd></div>
         <div><dt>Physical IP</dt><dd>{node.ip || "Not reported"}</dd></div>
         <div><dt>Overlay IP</dt><dd>{node.overlayIp || "Not reported"}</dd></div>
         <div><dt>Last signal</dt><dd>{node.lastSeen}</dd></div>
-        {node.did && <div><dt>DID</dt><dd className="clt-truncate" title={node.did}>{displayForDid(node.did, node.did)}</dd></div>}
+        {node.did && <div><dt>DID</dt><dd className="clt-truncate" title={node.did}>{node.did}</dd></div>}
       </dl>
 
       <div className="clt-attestation-card">
@@ -604,13 +604,18 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
   const selectedCircleLabel = selectedCircleId === ALL_CIRCLES_ID
     ? "All my circles"
     : (circles.find((item) => item.id === selectedCircleId)?.name ?? circle.name);
+  const nodeCircleEntries = useCallback((node: CircleTopologyNode) => {
+    const keys = [node.id, node.did, node.label, node.ip, node.overlayIp].filter(Boolean) as string[];
+    const merged = keys.flatMap((key) => getNodeCircles(membershipIndex, key));
+    return Array.from(new Map(merged.map((entry) => [entry.circleId, entry])).values());
+  }, [membershipIndex]);
 
   const scopedNodes = useMemo(() => {
     const filtered = selectedCircleId === ALL_CIRCLES_ID
       ? snapshot.nodes
-      : snapshot.nodes.filter((node) => getNodeCircles(membershipIndex, node.id).some((entry) => entry.circleId === selectedCircleId));
+      : snapshot.nodes.filter((node) => nodeCircleEntries(node).some((entry) => entry.circleId === selectedCircleId));
     return assignPrimaryLighthouse(filtered);
-  }, [snapshot.nodes, selectedCircleId, membershipIndex]);
+  }, [snapshot.nodes, selectedCircleId, nodeCircleEntries]);
 
   const links = useMemo(() => buildTopologyLinks(scopedNodes), [scopedNodes]);
   const nodes = useMemo(() => layoutNodes(scopedNodes), [scopedNodes]);
@@ -618,8 +623,8 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
   const nodeMap = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const selected = nodes.find((node) => node.id === selectedId) ?? null;
   const selectedNodeCircles = useMemo(
-    () => (selected ? getNodeCircles(membershipIndex, selected.id).map((entry) => entry.circleName) : []),
-    [selected, membershipIndex],
+    () => (selected ? nodeCircleEntries(selected).map((entry) => entry.circleName) : []),
+    [selected, nodeCircleEntries],
   );
   const selectedZone = geofenceZones.find((zone) => zone.zone_id === selectedZoneId) ?? null;
   const editingZoneNode = useMemo(() => {
@@ -663,7 +668,10 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
   }), [scopedNodes]);
   const visibleNodes = useMemo(() => nodes.filter((node) => visibleIds.has(node.id)), [nodes, visibleIds]);
   const meshLinks = links.filter((link) => link.kind === "mesh").length;
-  const relayLinks = links.filter((link) => link.kind === "relay").length;
+  // A relay route is backed by an enabled relay node. Counting generated mesh
+  // edges under-reports when the relay is also the lighthouse/anchor, because
+  // the layout intentionally omits an anchor-to-itself edge.
+  const relayLinks = summary.relays;
   const attestationLinks = links.filter((link) => link.kind === "attestation").length;
   const locationBusy = geofenceBusy === "Getting location...";
 
@@ -1112,7 +1120,7 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
                     const radius = node.primaryLighthouse ? 30 : node.roles.includes("lighthouse") ? 26 : node.roles.includes("relay") ? 23 : 17;
                     const kind = nodeKind(node);
                     const dotRadius = node.primaryLighthouse ? 8 : node.roles.includes("lighthouse") ? 7 : node.roles.includes("relay") ? 6 : 5;
-                    const nodeCircleEntries = getNodeCircles(membershipIndex, node.id);
+                    const nodeCircleEntriesForNode = nodeCircleEntries(node);
                     const nodeZones = geofenceZones.filter((zone) => zoneMatchesNode(zone, node));
                     return (
                       <g
@@ -1161,11 +1169,11 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
                           {node.primaryLighthouse && <g className="clt-primary-mark" transform={`translate(${-radius - 5} ${-radius - 9})`}><circle r="12" /><path d="M-4 1-1 4 5-4" /></g>}
                           {node.roles.includes("lighthouse") && <g className="clt-role-mark" transform={`translate(${-radius - 4} ${radius - 2})`}><circle r="12" /><TowerControl x={-7} y={-7} width={14} height={14} /></g>}
                           {node.roles.includes("relay") && <g className="clt-role-mark clt-role-mark--relay" transform={`translate(${radius + 3} ${radius - 2})`}><circle r="12" /><Router x={-7} y={-7} width={14} height={14} /></g>}
-                          {nodeCircleEntries.length > 1 && (
+                          {nodeCircleEntriesForNode.length > 1 && (
                             <g className="clt-role-mark clt-role-mark--multi" transform={`translate(${radius + 4} ${-radius - 9})`}>
                               <circle r="12" />
                               <Layers x={-7} y={-7} width={14} height={14} />
-                              <title>{`Member of ${nodeCircleEntries.length} circles: ${nodeCircleEntries.map((entry) => entry.circleName).join(", ")}`}</title>
+                              <title>{`Member of ${nodeCircleEntriesForNode.length} circles: ${nodeCircleEntriesForNode.map((entry) => entry.circleName).join(", ")}`}</title>
                             </g>
                           )}
                           <text className="clt-node__label" y={radius + 27}>{nodeDisplayName}</text>

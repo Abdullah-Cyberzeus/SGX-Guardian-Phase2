@@ -177,8 +177,10 @@ impl AppState {
                 .get()
                 .cloned()
                 .unwrap_or_default(),
-            discovery_config_dir: "/etc/sgx-guardian/discovery".into(),
-            discovery_state_dir: "/var/lib/sgx-guardian/discovery".into(),
+            discovery_config_dir: std::env::var("SGX_GUARDIAN_DISCOVERY_CONFIG_DIR")
+                .unwrap_or_else(|_| "/etc/sgx-guardian/discovery".into()),
+            discovery_state_dir: std::env::var("SGX_GUARDIAN_DISCOVERY_STATE_DIR")
+                .unwrap_or_else(|_| "/var/lib/sgx-guardian/discovery".into()),
             threat_config_path: "/etc/sgx-guardian/threat/config.yaml".into(),
             threat_state_dir: "/var/lib/sgx-guardian/threat".into(),
             admin_dir: "/var/lib/sgx-guardian/admin".into(),

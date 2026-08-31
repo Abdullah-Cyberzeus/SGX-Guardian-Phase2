@@ -130,7 +130,7 @@ pub async fn apply_restore(
     let _restore_guard = restore_lock().try_lock().map_err(|_| {
         BackupError::InvalidRequest("restore operation already in progress".to_string())
     })?;
-    reject_in_flight_restore(&config)?;
+    reject_in_flight_restore(&config, &state.node_id)?;
 
     let preflight = validate_restore(
         state.clone(),
@@ -279,7 +279,8 @@ fn restore_lock() -> &'static tokio::sync::Mutex<()> {
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
-fn reject_in_flight_restore(config: &BackupConfig) -> Result<(), BackupError> {
+fn reject_in_flight_restore(config: &BackupConfig, node_id: &str) -> Result<(), BackupError> {
+    let _ = journal::recover_stale_journal(config, node_id)?;
     if let Some(journal) = journal::load_current(config)? {
         if !journal.phase.is_terminal() {
             return Err(BackupError::InvalidRequest(format!(
@@ -429,14 +430,16 @@ fn validate_policy_entries(
     {
         return Ok(PolicyRestoreDecision::NotSelected);
     }
-    let sig_entry = entries
+    let Some(sig_entry) = entries
         .iter()
         .find(|entry| entry.archive_path == "policy/policy.sig")
-        .ok_or_else(|| {
-            BackupError::InvalidRequest(
-                "policy restore requires signed policy envelope policy/policy.sig".to_string(),
-            )
-        })?;
+    else {
+        entries.retain(|entry| entry.component != Component::Policy);
+        return Ok(PolicyRestoreDecision::Skipped {
+            reason: "signed policy envelope policy/policy.sig is missing from this backup"
+                .to_string(),
+        });
+    };
     let verified = verify_policy_signature(&sig_entry.bytes)?;
     if let Some(reason) =
         denied_policy_rollback_reason(verified.policy_yaml.as_bytes(), allow_policy_rollback)?

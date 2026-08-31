@@ -40,6 +40,7 @@ const HM03NetworkTopology = screen(() => import("./screens/home/HM03NetworkTopol
 const AL01AlertsList = screen(() => import("./screens/alerts/AL01AlertsList"), "AL01AlertsList");
 const AL06AlertDetail = screen(() => import("./screens/alerts/AL06AlertDetail"), "AL06AlertDetail");
 const AL07AIRecommendation = screen(() => import("./screens/alerts/AL07AIRecommendation"), "AL07AIRecommendation");
+const AL10AlertActions = screen(() => import("./screens/alerts/AL10AlertActions"), "AL10AlertActions");
 const AL08ThreatProtection = screen(() => import("./screens/alerts/AL08ThreatProtection"), "AL08ThreatProtection");
 const NT01Notifications = screen(() => import("./screens/notifications/NT01Notifications"), "NT01Notifications");
 
@@ -177,6 +178,7 @@ export const router = createBrowserRouter([
               children: [
                 { index: true, Component: AL01AlertsList },
                 { path: "threat", Component: AL08ThreatProtection },
+                { path: ":id/actions", Component: AL10AlertActions },
                 { path: ":id", Component: AL06AlertDetail },
                 { path: ":id/ai", Component: AL07AIRecommendation },
               ],

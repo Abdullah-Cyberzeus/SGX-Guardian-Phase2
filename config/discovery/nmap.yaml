@@ -1,7 +1,18 @@
-enabled: false
+enabled: true
 target_cidr: null
 timeout_secs: 600
 exclude: []
+scan_schedules:
+  - id: sched-default
+    frequency: weekly
+    intensity: aggressive
+    days:
+      - monday
+      - wednesday
+      - friday
+    day_of_month: null
+    time: "23:00"
+    timezone: America/New_York
 schedules:
   hourly:
     intensity: stealth

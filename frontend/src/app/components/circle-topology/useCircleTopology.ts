@@ -17,6 +17,55 @@ const POLL_MS = 10_000;
 
 type RoleRecord = RegistryNode | RelayNode;
 
+function firstText(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    const text = String(value || "").trim();
+    if (text) return text;
+  }
+  return undefined;
+}
+
+function memberAliases(member: Record<string, unknown>): string[] {
+  return [
+    member.id,
+    member.nodeHint,
+    member.node_hint,
+    member.deviceId,
+    member.device_id,
+    member.peerId,
+    member.peer_id,
+    member.did,
+    member.name,
+    member.overlayIp,
+    member.overlay_ip,
+    member.physicalIp,
+    member.physical_ip,
+    member.ip,
+  ]
+    .map((value) => normalizeNodeId(firstText(value)))
+    .filter((value) => value && value !== "unknown-node");
+}
+
+function physicalIpFromPeer(peer: Peer): string | undefined {
+  return firstText(peer.physicalIp, peer.ip);
+}
+
+function overlayIpFromPeer(peer: Peer): string | undefined {
+  return firstText(peer.overlayIp);
+}
+
+function physicalIpFromMember(member: Record<string, unknown>): string | undefined {
+  return firstText(member.physicalIp, member.physical_ip, member.ip, member.endpointIp, member.endpoint_ip);
+}
+
+function overlayIpFromMember(member: Record<string, unknown>): string | undefined {
+  return firstText(member.overlayIp, member.overlay_ip, member.nebulaIp, member.nebula_ip, member.overlay);
+}
+
+function lastSignalFromMember(member: Record<string, unknown>): string | undefined {
+  return firstText(member.lastSeen, member.last_seen, member.lastSignal, member.last_signal, member.updatedAt, member.updated_at);
+}
+
 export function mergeLiveNodes(
   circles: CircleTopologyCircle[],
   peers: Peer[],
@@ -24,6 +73,16 @@ export function mergeLiveNodes(
   guardianInfo?: LocalGuardianIdentity | null,
 ): CircleTopologyNode[] {
   const map = new Map<string, CircleTopologyNode>();
+
+  const rolesFromPeer = (peer: Peer): TopologyRole[] => {
+    const raw = String(peer.role || "").trim().toLowerCase();
+    if (!raw) return [];
+    const roles = new Set<TopologyRole>();
+    if (raw.includes("relay")) roles.add("relay");
+    if (raw.includes("lighthouse") || raw === "lh_relay" || raw === "relay_lh") roles.add("lighthouse");
+    if (raw === "member") roles.add("member");
+    return Array.from(roles);
+  };
 
   for (const group of roleGroups) {
     for (const record of group.records) {
@@ -34,7 +93,7 @@ export function mergeLiveNodes(
       map.set(id, {
         id,
         label,
-        ip: previous?.ip || record.overlayIp || "Not reported",
+        ip: previous?.ip && previous.ip !== "Not reported" ? previous.ip : record.physicalIp || "Not reported",
         overlayIp: record.overlayIp,
         presence: record.active ? "online" : "offline",
         attestation: previous?.attestation ?? "never",
@@ -53,16 +112,23 @@ export function mergeLiveNodes(
     const probableId = normalizeNodeId(peer.peerId.split("|")[0] || peer.peerId);
     const match =
       map.get(probableId) ??
-      Array.from(map.values()).find((node) => node.ip === peer.ip || node.overlayIp === peer.ip);
+      Array.from(map.values()).find((node) => (
+        Boolean(peer.did && node.did === peer.did) ||
+        Boolean(peer.ip && (node.ip === peer.ip || node.overlayIp === peer.ip)) ||
+        Boolean(peer.overlayIp && node.overlayIp === peer.overlayIp)
+      ));
     const id = match?.id ?? probableId;
+    const peerRoles = rolesFromPeer(peer);
+    const mergedRoles = Array.from(new Set([...(match?.roles ?? []), ...peerRoles]));
+    const physicalIp = physicalIpFromPeer(peer) || match?.ip || "Not reported";
     map.set(id, {
       id,
       label: match?.label ?? displayLocalGuardianNode(peer.peerId, guardianInfo),
-      ip: peer.ip || match?.ip || "Not reported",
-      overlayIp: match?.overlayIp,
+      ip: physicalIp,
+      overlayIp: match?.overlayIp || overlayIpFromPeer(peer),
       presence: peer.online ? "online" : match?.presence ?? (peer.lastSeen ? "stale" : "unknown"),
       attestation: peer.status,
-      roles: match?.roles ?? ["member"],
+      roles: mergedRoles.length > 0 ? mergedRoles : ["member"],
       primaryLighthouse: match?.primaryLighthouse,
       lastSeen: peer.lastSeenAgo || match?.lastSeen || "Unknown",
       did: peer.did || match?.did,
@@ -80,16 +146,33 @@ export function mergeLiveNodes(
       const member = typeof rawMember === "string"
         ? { id: rawMember, name: rawMember, did: rawMember }
         : rawMember;
-      const id = normalizeNodeId(member.id || member.did || member.name);
-      if (map.has(id)) continue;
+      const record = member as Record<string, unknown>;
+      const aliases = memberAliases(record);
+      const matched = aliases.map((alias) => map.get(alias)).find(Boolean);
+      const id = matched?.id ?? aliases[0] ?? normalizeNodeId(member.id || member.did || member.name);
+      const physicalIp = physicalIpFromMember(record);
+      const overlayIp = overlayIpFromMember(record);
+      const lastSignal = lastSignalFromMember(record);
+      if (matched) {
+        map.set(id, {
+          ...matched,
+          label: matched.label || member.name || member.did || `Circle member ${index + 1}`,
+          ip: physicalIp || (matched.ip !== "Not reported" ? matched.ip : "Not reported"),
+          overlayIp: matched.overlayIp || overlayIp,
+          lastSeen: lastSignal || matched.lastSeen || "Not reported",
+          did: matched.did || member.did,
+        });
+        continue;
+      }
       map.set(id, {
         id,
         label: member.name || member.did || `Circle member ${index + 1}`,
-        ip: "Not reported",
+        ip: physicalIp || "Not reported",
+        overlayIp,
         presence: member.status === "online" ? "online" : member.status === "offline" ? "offline" : "unknown",
         attestation: member.pending ? "pending" : "verified",
         roles: ["member"],
-        lastSeen: member.lastSeen || "Not reported",
+        lastSeen: lastSignal || "Not reported",
         did: member.did,
       });
     }

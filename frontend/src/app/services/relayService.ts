@@ -2,6 +2,7 @@ import api from './api';
 
 export interface RelayNode {
   node: string;
+  physicalIp?: string;
   overlayIp: string;
   active: boolean;
   relayEnabled?: boolean;
@@ -14,6 +15,7 @@ export interface RelayNode {
 // Lighthouse/member entries omit relay runtime fields (peers/bandwidth)
 export interface RegistryNode {
   node: string;
+  physicalIp?: string;
   overlayIp: string;
   active: boolean;
   relayEnabled: boolean;

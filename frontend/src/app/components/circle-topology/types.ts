@@ -44,7 +44,21 @@ export interface CircleTopologyCircle {
         name: string;
         status?: string;
         lastSeen?: string;
+        last_seen?: string;
+        lastSignal?: string;
+        last_signal?: string;
         did?: string;
+        nodeHint?: string;
+        node_hint?: string;
+        deviceId?: string;
+        device_id?: string;
+        peerId?: string;
+        peer_id?: string;
+        physicalIp?: string;
+        physical_ip?: string;
+        ip?: string;
+        overlayIp?: string;
+        overlay_ip?: string;
         role?: string;
         pending?: boolean;
       }

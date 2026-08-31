@@ -1032,7 +1032,6 @@ export function NW04CircleDetail() {
               {[
                 { label: "Connection Type", value: "Wi-Fi" },
                 { label: "Role", value: selectedMember.role.toLowerCase() === "owner" ? "Admin" : selectedMember.role },
-                { label: "Guardian Health", value: "Score: 88" },
               ].map(({ label, value }) => (
                 <div key={label} className="flex items-center justify-between">
                   <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>{label}</span>

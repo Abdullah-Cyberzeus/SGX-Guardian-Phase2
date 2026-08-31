@@ -2983,12 +2983,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         use sgx_guardian_client::discovery::{DiscoveryScheduler, Inventory};
         use std::path::PathBuf;
 
-        let cfg_path = PathBuf::from("/etc/sgx-guardian/discovery/nmap.yaml");
-        let wl_path = PathBuf::from("/etc/sgx-guardian/discovery/whitelist.yaml");
-        let inv_path = PathBuf::from("/var/lib/sgx-guardian/discovery/inventory.json");
+        let discovery_config_dir = std::env::var("SGX_GUARDIAN_DISCOVERY_CONFIG_DIR")
+            .unwrap_or_else(|_| "/etc/sgx-guardian/discovery".into());
+        let discovery_state_dir = std::env::var("SGX_GUARDIAN_DISCOVERY_STATE_DIR")
+            .unwrap_or_else(|_| "/var/lib/sgx-guardian/discovery".into());
+        let cfg_path = PathBuf::from(&discovery_config_dir).join("nmap.yaml");
+        let wl_path = PathBuf::from(&discovery_config_dir).join("whitelist.yaml");
+        let inv_path = PathBuf::from(&discovery_state_dir).join("inventory.json");
 
-        let _ = std::fs::create_dir_all("/var/lib/sgx-guardian/discovery");
-        let _ = std::fs::create_dir_all("/etc/sgx-guardian/discovery");
+        let _ = std::fs::create_dir_all(&discovery_state_dir);
+        let _ = std::fs::create_dir_all(&discovery_config_dir);
 
         let scheduler = DiscoveryScheduler {
             node_id: node_id.clone(),

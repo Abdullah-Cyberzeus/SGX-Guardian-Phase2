@@ -41,7 +41,7 @@ import {
   type RestoreValidateResponse,
 } from "../../services/backupService";
 
-type RestoreStep = "form" | "review" | "done";
+type RestoreStep = "form" | "review" | "status" | "done";
 
 const COMPONENT_LABELS: Record<string, string> = {
   policy: "Policy",
@@ -62,6 +62,15 @@ function formatDate(iso?: string): string {
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function normalizeRestorePhase(phase?: string | null): string {
+  return (phase ?? "").trim().toLowerCase();
+}
+
+function isTerminalRestorePhase(phase?: string | null): boolean {
+  const normalized = normalizeRestorePhase(phase);
+  return normalized === "committed" || normalized === "rolled_back";
 }
 
 function Chip({ children }: { children: React.ReactNode }) {
@@ -295,13 +304,16 @@ export function ST05BackupRestore() {
 
   const openRestore = (record: BackupRecord) => {
     setRestoreTarget(record);
-    setRestoreStep("form");
     setRestorePassphrase("");
     setRestorePassphraseVisible(false);
     setRestoreComponents(new Set(ALL_BACKUP_COMPONENTS));
     setAllowPolicyRollback(false);
     setRestoreValidateResult(null);
     setRestoreApplyResult(null);
+    const selectedRestoreIsActive = !!journal
+      && !isTerminalRestorePhase(journal.phase)
+      && journal.bundle_id === record.id;
+    setRestoreStep(selectedRestoreIsActive ? "status" : "form");
   };
 
   const closeRestore = () => {
@@ -341,6 +353,13 @@ export function ST05BackupRestore() {
 
   const handleRestoreApply = async () => {
     if (!restoreTarget || !restorePassphrase.trim()) return;
+    if (journal && !isTerminalRestorePhase(journal.phase)) {
+      setRestoreStep("status");
+      toast.info("Restore already in progress", {
+        description: `Restore ${journal.restore_id} is ${journal.phase}. Review the current status before starting a new restore.`,
+      });
+      return;
+    }
     setRestoreApplying(true);
     try {
       const result = await backupService.restoreApply({
@@ -356,7 +375,16 @@ export function ST05BackupRestore() {
         description: result.message,
       });
     } catch (error) {
-      toast.error("Restore failed", { description: errorMessage(error, "Could not apply the restore") });
+      const message = errorMessage(error, "");
+      if (message.toLowerCase().includes("restore operation already in progress")) {
+        await loadStatus();
+        setRestoreStep("status");
+        toast.info("Restore already in progress", {
+          description: "The restore journal is already prepared. Review the current status instead of applying a second restore.",
+        });
+      } else {
+        toast.error("Restore failed", { description: errorMessage(error, "Could not apply the restore") });
+      }
     } finally {
       setRestoreApplying(false);
     }
@@ -377,6 +405,8 @@ export function ST05BackupRestore() {
   };
 
   const journal = restoreStatus?.journal ?? null;
+  const activeRestoreJournal = journal && !isTerminalRestorePhase(journal.phase) ? journal : null;
+  const activeRestoreIsThisBackup = !!activeRestoreJournal && !!restoreTarget && activeRestoreJournal.bundle_id === restoreTarget.id;
   const canUndo = !!journal?.snapshot_path && (journal.phase === "committed" || journal.phase === "committed_policy_skipped");
 
   return (
@@ -639,7 +669,7 @@ export function ST05BackupRestore() {
                         fontWeight: "var(--font-weight-semibold)",
                       }}
                     >
-                      <UploadCloud size={14} /> Restore
+                      <UploadCloud size={14} /> {activeRestoreJournal ? (activeRestoreJournal.bundle_id === record.id ? "Continue Restore" : "Restore") : "Restore"}
                     </button>
                     <button
                       onClick={() => setDeleteTarget(record)}
@@ -1008,6 +1038,51 @@ export function ST05BackupRestore() {
                     style={{ height: "46px", backgroundColor: "var(--destructive)", color: "var(--destructive-foreground)", border: "none", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)" }}
                   >
                     {restoreApplying ? <Loader2 size={16} className="animate-spin" /> : "Confirm & Restore"}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {restoreStep === "status" && (
+              <>
+                <div className="flex items-start gap-2 rounded-md p-3" style={{ backgroundColor: "color-mix(in srgb, var(--chart-5) 10%, var(--card))", border: "1px solid color-mix(in srgb, var(--chart-5) 30%, var(--border))" }}>
+                  <ShieldAlert size={16} style={{ color: "var(--chart-5)", flexShrink: 0, marginTop: "1px" }} />
+                  <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--foreground)", lineHeight: 1.5 }}>
+                    {activeRestoreIsThisBackup
+                      ? "A restore for this backup is already in progress."
+                      : "Another restore is already in progress. Finish it before starting a new one."}
+                  </p>
+                </div>
+
+                {activeRestoreJournal && (
+                  <dl className="flex flex-col gap-1.5" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)" }}>
+                    <div className="flex justify-between gap-3"><dt style={{ color: "var(--muted-foreground)" }}>Restore ID</dt><dd style={{ color: "var(--foreground)", textAlign: "right" }}>{activeRestoreJournal.restore_id}</dd></div>
+                    <div className="flex justify-between gap-3"><dt style={{ color: "var(--muted-foreground)" }}>Backup</dt><dd style={{ color: "var(--foreground)", textAlign: "right" }}>{activeRestoreJournal.bundle_id}</dd></div>
+                    <div className="flex justify-between gap-3"><dt style={{ color: "var(--muted-foreground)" }}>Phase</dt><dd style={{ color: "var(--foreground)", textAlign: "right" }}>{activeRestoreJournal.phase}</dd></div>
+                    <div className="flex justify-between gap-3"><dt style={{ color: "var(--muted-foreground)" }}>Updated</dt><dd style={{ color: "var(--foreground)", textAlign: "right" }}>{formatDate(activeRestoreJournal.updated_at)}</dd></div>
+                  </dl>
+                )}
+
+                {activeRestoreJournal?.message && (
+                  <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>
+                    {activeRestoreJournal.message}
+                  </p>
+                )}
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={loadStatus}
+                    className="flex-1 flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80"
+                    style={{ height: "46px", backgroundColor: "var(--secondary)", color: "var(--secondary-foreground)", border: "1px solid var(--border)", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)" }}
+                  >
+                    <RefreshCw size={16} className={statusLoading ? "animate-spin" : ""} /> Refresh
+                  </button>
+                  <button
+                    onClick={closeRestore}
+                    className="flex-1 flex items-center justify-center rounded-lg transition-opacity active:opacity-80"
+                    style={{ height: "46px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", border: "none", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)" }}
+                  >
+                    Close
                   </button>
                 </div>
               </>

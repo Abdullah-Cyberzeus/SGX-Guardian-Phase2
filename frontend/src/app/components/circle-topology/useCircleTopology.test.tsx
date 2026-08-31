@@ -117,6 +117,23 @@ describe("live topology node model", () => {
     expect(nodes.find((node) => node.id === "string-member")?.label).toBe("String Member");
   });
 
+  it("uses peer role metadata when registry role lists are empty", () => {
+    const nodes = mergeLiveNodes(
+      [],
+      [
+        peer({ peerId: "relay-lh", role: "lh_relay", ip: "10.0.0.9", did: "did:guardian:relay-lh" }),
+      ],
+      [],
+    );
+
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0].roles).toEqual(expect.arrayContaining(["relay", "lighthouse"]));
+    expect(nodes[0].primaryLighthouse).toBe(true);
+
+    const links = buildTopologyLinks(nodes);
+    expect(links).toHaveLength(0);
+  });
+
   it("uses member fallbacks and deterministic alphabetical ordering without a lighthouse", () => {
     const nodes = mergeLiveNodes(
       [{ id: "c", name: "C", members: [{ id: "", name: "", did: "did:guardian:z" }] }],
@@ -125,6 +142,37 @@ describe("live topology node model", () => {
     );
     expect(nodes.map((node) => node.label)).toEqual(["Alpha", "Bravo", "did:guardian:z"]);
     expect(nodes.every((node) => node.roles.includes("member"))).toBe(true);
+  });
+
+  it("joins role registries to circle members and keeps reported node telemetry", () => {
+    const nodes = mergeLiveNodes(
+      [{
+        id: "circle-a",
+        name: "Circle A",
+        members: [{
+          id: "did:guardian:relay-a",
+          name: "Relay A",
+          nodeHint: "relay-a",
+          physicalIp: "10.20.0.4",
+          overlayIp: "100.64.0.4",
+          lastSignal: "2026-08-24T12:00:00Z",
+        }],
+      }],
+      [],
+      [{
+        records: [{ node: "relay-a", overlayIp: "100.64.0.4", active: true }],
+        roles: ["relay"],
+      }],
+    );
+
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0]).toMatchObject({
+      id: "relay-a",
+      roles: ["relay"],
+      ip: "10.20.0.4",
+      overlayIp: "100.64.0.4",
+      lastSeen: "2026-08-24T12:00:00Z",
+    });
   });
 
   it("builds active mesh, relay, and verified-attestation links around the primary lighthouse", () => {

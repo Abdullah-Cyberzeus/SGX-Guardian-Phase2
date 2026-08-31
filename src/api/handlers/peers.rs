@@ -32,7 +32,7 @@ pub struct PeersResponse {
 
 /// Read-only peer state used by other authenticated API handlers. The DID and
 /// node ID are both required to prevent one Guardian's state being reported
-/// for another Guardian.
+/// for another Guardian.c
 #[derive(Debug, Clone)]
 pub struct GuardianPeerState {
     pub online: Option<bool>,

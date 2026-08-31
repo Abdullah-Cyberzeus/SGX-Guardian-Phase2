@@ -727,6 +727,41 @@ fn interrupted_restore_journal_is_marked_rolled_back_on_recovery() {
     );
 }
 
+#[test]
+fn stale_prepared_restore_journal_is_marked_rolled_back_on_status_recovery() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let config = BackupConfig {
+        base_dir: temp.path().join("backup"),
+        max_bundle_bytes: 1024,
+    };
+    let journal = RestoreJournal {
+        restore_id: "restore-stale".to_string(),
+        bundle_id: "bundle-stale".to_string(),
+        node_id: "nodeA".to_string(),
+        phase: RestorePhase::Prepared,
+        component_index: None,
+        snapshot_path: Some(
+            config
+                .pre_restore_dir()
+                .join("restore-stale")
+                .display()
+                .to_string(),
+        ),
+        updated_at: (Utc::now() - chrono::Duration::minutes(20)).to_rfc3339(),
+        message: Some("restore transaction prepared".to_string()),
+    };
+    journal::write_journal(&config, &journal).expect("write journal");
+
+    let status = journal::status_with_recovery(&config, "nodeA").expect("status with recovery");
+    let recovered = status.journal.expect("journal");
+
+    assert_eq!(recovered.phase, RestorePhase::RolledBack);
+    assert_eq!(
+        recovered.message.as_deref(),
+        Some("stale restore journal detected; recovery marked the transaction rolled_back")
+    );
+}
+
 fn test_state(node_id: &str) -> (tempfile::TempDir, std::sync::Arc<AppState>) {
     let temp = tempfile::tempdir().expect("tempdir");
     let state = AppState::for_tests(

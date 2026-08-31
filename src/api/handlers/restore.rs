@@ -111,9 +111,9 @@ pub async fn undo(
 }
 
 pub async fn status(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<crate::backup::restore::journal::RestoreStatus>, ApiError> {
-    crate::backup::restore::journal::status(&BackupConfig::from_env())
+    crate::backup::restore::journal::status_with_recovery(&BackupConfig::from_env(), &state.node_id)
         .map(Json)
         .map_err(map_backup_error)
 }

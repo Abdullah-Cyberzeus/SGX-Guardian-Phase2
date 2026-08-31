@@ -6,7 +6,7 @@ use crate::discovery::{
     nmap_parser,
     run_history::{self, ScanRunRecord},
     ConnectedDevice, DeviceStatus, NmapConfig, ScanIntensity, ScanSchedule, ScheduleDay,
-    ScheduledScans,
+    ScanScheduleProfile, ScheduledScans,
 };
 use axum::body::Bytes;
 use axum::extract::{Path as AxumPath, Query, State};
@@ -277,6 +277,7 @@ pub struct ScheduleDoc {
     pub timeout_secs: u64,
     pub exclude: Vec<String>,
     pub schedules: ScheduledScans,
+    pub scan_schedules: Vec<ScanScheduleProfile>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub legacy_schedule_mode: Option<ScanSchedule>,
 }
@@ -289,6 +290,8 @@ pub struct ScheduleUpdateRequest {
     pub timeout_secs: Option<u64>,
     pub exclude: Option<Vec<String>>,
     pub schedules: Option<SchedulePatch>,
+    pub scan_schedules: Option<Vec<ScanScheduleProfile>>,
+    pub schedule: Option<ScanSchedulePatch>,
     pub hourly_intensity: Option<ScanIntensity>,
     pub daily_intensity: Option<ScanIntensity>,
 }
@@ -301,9 +304,22 @@ pub struct SchedulePatch {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ScheduleProfilePatch {
+    pub frequency: Option<crate::discovery::config::ScheduleFrequency>,
     pub intensity: Option<ScanIntensity>,
     pub days: Option<Vec<ScheduleDay>>,
+    pub day_of_month: Option<Option<u8>>,
     pub time: Option<String>,
+    pub timezone: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ScanSchedulePatch {
+    pub frequency: Option<crate::discovery::config::ScheduleFrequency>,
+    pub intensity: Option<ScanIntensity>,
+    pub days: Option<Vec<ScheduleDay>>,
+    pub day_of_month: Option<Option<u8>>,
+    pub time: Option<String>,
+    pub timezone: Option<String>,
 }
 
 pub async fn get_whitelist(
@@ -575,6 +591,7 @@ fn schedule_doc_from_config(cfg: &NmapConfig) -> ScheduleDoc {
         timeout_secs: cfg.timeout_secs,
         exclude: cfg.exclude.clone(),
         schedules: cfg.schedules.clone(),
+        scan_schedules: cfg.scan_schedules.clone(),
         legacy_schedule_mode: cfg.legacy_schedule_mode(),
     }
 }
@@ -636,6 +653,15 @@ fn apply_schedule_patch(
         cfg.exclude = normalize_excludes(exclude)?;
     }
 
+    if let Some(mut scan_schedules) = patch.scan_schedules {
+        for schedule in &mut scan_schedules {
+            if schedule.id.trim().is_empty() {
+                schedule.id = crate::discovery::config::ScanScheduleProfile::default().id;
+            }
+        }
+        cfg.scan_schedules = scan_schedules;
+    }
+
     if let Some(schedules) = patch.schedules {
         if let Some(hourly) = schedules.hourly {
             if let Some(intensity) = hourly.intensity {
@@ -652,6 +678,31 @@ fn apply_schedule_patch(
             if let Some(time) = daily.time {
                 cfg.schedules.daily.time = time.trim().to_string();
             }
+        }
+    }
+
+    if let Some(schedule) = patch.schedule {
+        if cfg.scan_schedules.is_empty() {
+            cfg.scan_schedules.push(ScanScheduleProfile::default());
+        }
+        let current = cfg.scan_schedules.first_mut().expect("schedule inserted");
+        if let Some(frequency) = schedule.frequency {
+            current.frequency = frequency;
+        }
+        if let Some(intensity) = schedule.intensity {
+            current.intensity = intensity;
+        }
+        if let Some(days) = schedule.days {
+            current.days = days;
+        }
+        if let Some(day_of_month) = schedule.day_of_month {
+            current.day_of_month = day_of_month;
+        }
+        if let Some(time) = schedule.time {
+            current.time = time.trim().to_string();
+        }
+        if let Some(timezone) = schedule.timezone {
+            current.timezone = timezone.trim().to_string();
         }
     }
 
@@ -1218,16 +1269,24 @@ mod tests {
             target_cidr: Some(None),
             timeout_secs: Some(120),
             exclude: Some(vec![]),
+            scan_schedules: None,
+            schedule: None,
             schedules: Some(SchedulePatch {
                 hourly: Some(ScheduleProfilePatch {
+                    frequency: None,
                     intensity: Some(ScanIntensity::Stealth),
                     days: None,
+                    day_of_month: None,
                     time: None,
+                    timezone: None,
                 }),
                 daily: Some(ScheduleProfilePatch {
+                    frequency: None,
                     intensity: Some(ScanIntensity::Aggressive),
                     days: Some(vec![ScheduleDay::Monday, ScheduleDay::Wednesday]),
+                    day_of_month: None,
                     time: Some("23:00".into()),
+                    timezone: None,
                 }),
             }),
             hourly_intensity: None,

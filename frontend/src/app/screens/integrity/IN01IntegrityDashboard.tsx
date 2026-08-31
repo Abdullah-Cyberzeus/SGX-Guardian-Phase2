@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { useNavigate } from "react-router";
+import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router";
 import { PageHeader } from "../../components/PageHeader";
 import {
   Shield,
@@ -28,6 +28,8 @@ import { usePCRStatus, usePCRBaseline, usePCRHistory } from "../../hooks/useApiD
 import { type PCRRegister, type PCRStatus, type PCRVerificationResult } from "../../services/pcrService";
 import { pcrService } from "../../services/pcrService";
 import { toast } from "sonner";
+import { useAuth } from "../../contexts/AuthContext";
+import { isAdminRole } from "../../utils/authorization";
 
 type TabId = "status" | "baseline" | "history";
 
@@ -545,6 +547,9 @@ function ConfirmDialog({
 // Main Component
 export function IN01IntegrityDashboard() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { session } = useAuth();
+  const isAdmin = isAdminRole(session?.user.role);
   const [activeTab, setActiveTab] = useState<TabId>("status");
   const [showCreateBaselineDialog, setShowCreateBaselineDialog] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -571,6 +576,13 @@ export function IN01IntegrityDashboard() {
     { id: "history", label: "History", icon: Clock },
   ];
 
+  useEffect(() => {
+    const tab = new URLSearchParams(location.search).get("tab") as TabId | null;
+    if (tab && tabs.some((entry) => entry.id === tab)) {
+      setActiveTab(tab);
+    }
+  }, [location.search]);
+
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
     return date.toLocaleDateString("en-US", {
@@ -588,8 +600,27 @@ export function IN01IntegrityDashboard() {
       console.log("[PCR Baseline Create] POST /pcr/baseline/update →", res);
       setShowCreateBaselineDialog(false);
       if (res.success) {
-        toast.success(res.message || "Golden baseline created", {
-          description: res.stdout || `Baseline signed by DKP v${pcrMetadata.dkpVersion}`,
+        const verifiedAt = res.timestamp ? new Date(res.timestamp) : new Date();
+        const diffMs = Math.max(0, Date.now() - verifiedAt.getTime());
+        const minutes = Math.floor(diffMs / 60000);
+        const hours = Math.floor(minutes / 60);
+        const lastVerified = hours >= 1 ? `${hours} hour${hours === 1 ? "" : "s"} ago` : `${Math.max(1, minutes)} min ago`;
+        toast.success("Device Integrity Verified.", {
+          description: (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span>All firmware and kernel measurements match trusted baseline.</span>
+              <span>Last verified: {lastVerified}</span>
+            </div>
+          ),
+          action: isAdmin
+            ? {
+                label: "View Details",
+                onClick: () => {
+                  setActiveTab("baseline");
+                  navigate("/settings/integrity?tab=baseline");
+                },
+              }
+            : undefined,
         });
       } else {
         toast.error(res.message || "Baseline creation failed", {

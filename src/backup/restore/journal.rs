@@ -1,6 +1,6 @@
 use crate::backup::errors::BackupError;
 use crate::backup::BackupConfig;
-use chrono::Utc;
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -72,6 +72,14 @@ pub fn status(config: &BackupConfig) -> Result<RestoreStatus, BackupError> {
     })
 }
 
+pub fn status_with_recovery(
+    config: &BackupConfig,
+    node_id: &str,
+) -> Result<RestoreStatus, BackupError> {
+    recover_stale_journal(config, node_id)?;
+    status(config)
+}
+
 pub fn load_current(config: &BackupConfig) -> Result<Option<RestoreJournal>, BackupError> {
     let path = journal_path(config);
     if !path.exists() {
@@ -120,6 +128,38 @@ pub fn recover_if_interrupted_inner(
     );
     write_journal(config, &journal)?;
     Ok(Some(journal))
+}
+
+pub fn recover_stale_journal(
+    config: &BackupConfig,
+    node_id: &str,
+) -> Result<Option<RestoreJournal>, BackupError> {
+    let Some(journal) = load_current(config)? else {
+        return Ok(None);
+    };
+    if journal.phase.is_terminal() || !journal_is_stale(&journal) {
+        return Ok(None);
+    }
+
+    let mut recovered = journal;
+    recovered.phase = RestorePhase::RolledBack;
+    recovered.node_id = node_id.to_string();
+    recovered.updated_at = Utc::now().to_rfc3339();
+    recovered.message = Some(
+        "stale restore journal detected; recovery marked the transaction rolled_back"
+            .to_string(),
+    );
+    write_journal(config, &recovered)?;
+    Ok(Some(recovered))
+}
+
+fn journal_is_stale(journal: &RestoreJournal) -> bool {
+    const STALE_RESTORE_WINDOW_MINUTES: i64 = 15;
+    let Ok(updated_at) = DateTime::parse_from_rfc3339(&journal.updated_at) else {
+        return true;
+    };
+    Utc::now().signed_duration_since(updated_at.with_timezone(&Utc))
+        >= Duration::minutes(STALE_RESTORE_WINDOW_MINUTES)
 }
 
 fn secure_write_atomic(path: &Path, bytes: &[u8]) -> Result<(), BackupError> {

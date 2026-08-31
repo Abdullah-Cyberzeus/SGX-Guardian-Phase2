@@ -114,6 +114,18 @@ export interface ScheduleEntry {
   time?: string;
 }
 
+export type ScheduleFrequency = 'once' | 'daily' | 'weekly' | 'monthly' | 'custom';
+
+export interface ScanScheduleProfile {
+  id: string;
+  frequency: ScheduleFrequency;
+  intensity: string;
+  days?: ScheduleDay[];
+  day_of_month?: number | null;
+  time?: string;
+  timezone?: string;
+}
+
 export type ScheduleDay =
   | 'monday'
   | 'tuesday'
@@ -129,6 +141,7 @@ export interface DiscoverySchedule {
   target_cidr: string | null;
   timeout_secs: number;
   exclude: string[];
+  scan_schedules: ScanScheduleProfile[];
   schedules: {
     hourly: ScheduleEntry;
     daily: ScheduleEntry;
@@ -149,7 +162,7 @@ export interface DiscoverySchedule {
 //     start/finish, intensity, trigger, status, and device deltas.
 // `mapDiscoveryRun` duck-types each entry and fills whatever fields are present.
 
-export type ScheduleRunTrigger = 'hourly' | 'daily' | 'manual';
+export type ScheduleRunTrigger = 'hourly' | 'daily' | 'manual' | 'scheduled';
 export type ScheduleRunStatus = 'success' | 'failure' | 'running';
 
 /** Raw archive entry (`view=raw`, and today's `view=history` fallback). */
@@ -239,7 +252,7 @@ export function mapDiscoveryRun(r: DiscoveryRunAny): ScheduleRun {
     (h.source === 'manual'
       ? 'manual'
       : h.source === 'scheduled'
-        ? (h.schedule_kind ?? undefined) ?? undefined
+        ? (h.schedule_kind ?? 'scheduled')
         : undefined);
   const status: ScheduleRunStatus =
     h.status ?? (h.success === false ? 'failure' : !finished ? 'running' : 'success');
