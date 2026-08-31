@@ -60,14 +60,19 @@ impl NmapRunner {
         // behavior used in the field-qualification matrix. The spawn-drain change
         // landed with the Apr 2026 fix; both orders stay available for A/B
         // comparison on the boards (DEV-2041).
-        let timeout = Duration::from_secs(cfg.timeout_secs);
+        // A standard LAN discovery scan can legitimately take longer than a
+        // short UI-entered timeout. Keep the configured value as the upper
+        // bound when it is sensible, but never abort a real network scan at
+        // ten seconds before Nmap has had time to discover hosts.
+        let effective_timeout_secs = cfg.timeout_secs.max(300);
+        let timeout = Duration::from_secs(effective_timeout_secs);
         let status = match tokio::time::timeout(timeout, child.wait()).await {
             Ok(Ok(status)) => status,
             Ok(Err(e)) => return Err(DiscoveryError::Io(e)),
             Err(_) => {
                 return Err(DiscoveryError::NmapFailed(
                     -1,
-                    format!("timeout after {}s", cfg.timeout_secs),
+                    format!("timeout after {}s", effective_timeout_secs),
                 ));
             }
         };

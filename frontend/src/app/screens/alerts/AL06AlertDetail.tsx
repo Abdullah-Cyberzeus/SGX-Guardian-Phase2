@@ -1,18 +1,20 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { PageHeader } from "../../components/PageHeader";
 import { SeverityBadge } from "../../components/SeverityBadge";
 import { Brain, ChevronRight, Cpu, Scan, ShieldAlert } from "lucide-react";
 import { useAlerts } from "../../hooks/useApiData";
 import { guardianAlertHeading } from "../../services/alertService";
-import { mockAlerts } from "../../data/mockData";
+import { managedDeviceService } from "../../services/managedDeviceService";
+import { toast } from "sonner";
 
 export function AL06AlertDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: alertsData, loading } = useAlerts();
+  const [deviceBusy, setDeviceBusy] = useState<"open" | "scan" | null>(null);
 
-  const alerts = useMemo(() => (alertsData?.alerts?.length ? alertsData.alerts : mockAlerts), [alertsData]);
+  const alerts = useMemo(() => alertsData?.alerts ?? [], [alertsData]);
   const alert = useMemo(() => alerts.find((a) => a.id === id), [alerts, id]);
   const detail = (alert as any)?.aiDetail as { whatHappened?: string; whyItMatters?: string; actions?: string[] } | undefined;
 
@@ -32,18 +34,45 @@ export function AL06AlertDetail() {
     );
   }
 
-  const deviceTarget = encodeURIComponent(alert.deviceIp || alert.device || alert.id);
+  const resolveDevice = async () => {
+    const targets = new Set([alert.deviceIp, alert.srcIp, alert.dstIp].filter(Boolean));
+    const device = (await managedDeviceService.list()).find((candidate) => candidate.ip && targets.has(candidate.ip));
+    if (!device) throw new Error("This alert is not linked to a managed device.");
+    return device;
+  };
+
+  const openDevice = async () => {
+    setDeviceBusy("open");
+    try {
+      const device = await resolveDevice();
+      navigate(`/devices/${encodeURIComponent(device.device_id)}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to find the affected device");
+    } finally {
+      setDeviceBusy(null);
+    }
+  };
+
+  const runScan = async () => {
+    setDeviceBusy("scan");
+    try {
+      const device = await resolveDevice();
+      const scan = await managedDeviceService.startScan(device.device_id);
+      toast.success("Security scan started", { description: scan.scan_id });
+      navigate(`/devices/${encodeURIComponent(device.device_id)}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to start security scan");
+    } finally {
+      setDeviceBusy(null);
+    }
+  };
   const evidenceLines = [
     alert.originalEvidence,
     alert.signature ? `Signature: ${alert.signature}` : null,
     alert.signatureId ? `Signature ID: ${alert.signatureId}` : null,
     alert.rawTimestamp ? `Detected: ${alert.rawTimestamp}` : null,
   ].filter(Boolean) as string[];
-  const actions = detail?.actions ?? [
-    "Review the alert in the full analysis screen.",
-    "Validate the affected device and source address.",
-    "Escalate or archive once triage is complete.",
-  ];
+  const actions = detail?.actions ?? [];
 
   return (
     <div className="flex flex-col" style={{ minHeight: "100dvh" }}>
@@ -122,19 +151,21 @@ export function AL06AlertDetail() {
               </div>
               <div className="mt-4 flex flex-col gap-2">
                 <button
-                  onClick={() => navigate(`/devices/${deviceTarget}`, { state: { alertId: alert.id, deviceName: alert.device, deviceIp: alert.deviceIp, os: alert.os } })}
+                  onClick={() => void openDevice()}
+                  disabled={deviceBusy !== null}
                   className="flex items-center justify-between rounded-md px-3 py-2 text-left"
                   style={{ backgroundColor: "var(--secondary)", border: "1px solid var(--border)", color: "var(--foreground)", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)" }}
                 >
-                  View Device
+                  {deviceBusy === "open" ? "Opening Device…" : "View Device"}
                   <ChevronRight size={16} />
                 </button>
                 <button
-                  onClick={() => navigate(`/devices/${deviceTarget}/scan`, { state: { alertId: alert.id } })}
+                  onClick={() => void runScan()}
+                  disabled={deviceBusy !== null}
                   className="flex items-center justify-between rounded-md px-3 py-2 text-left"
                   style={{ backgroundColor: "color-mix(in srgb, var(--primary) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--primary) 18%, transparent)", color: "var(--primary)", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)" }}
                 >
-                  Run Security Scan
+                  {deviceBusy === "scan" ? "Starting Scan…" : "Run Security Scan"}
                   <Scan size={16} />
                 </button>
               </div>
@@ -157,13 +188,15 @@ export function AL06AlertDetail() {
                 <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "8px" }}>
                   Recommended Actions
                 </p>
-                <ol className="flex flex-col gap-2">
+                {actions.length === 0 ? (
+                  <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>No AI response plan has been generated for this alert.</p>
+                ) : <ol className="flex flex-col gap-2">
                   {actions.slice(0, 4).map((action, index) => (
                     <li key={index} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--foreground)", lineHeight: 1.5 }}>
                       {index + 1}. {action}
                     </li>
                   ))}
-                </ol>
+                </ol>}
               </div>
               <button
                 onClick={() => navigate(`/alerts/${alert.id}/ai`)}

@@ -39,6 +39,7 @@ pub enum ScheduleFrequency {
     Daily,
     Weekly,
     Monthly,
+    Yearly,
     Custom,
 }
 
@@ -82,6 +83,8 @@ pub struct ScanScheduleProfile {
     pub days: Vec<ScheduleDay>,
     #[serde(default)]
     pub day_of_month: Option<u8>,
+    #[serde(default)]
+    pub month: Option<u8>,
     #[serde(default = "default_schedule_time")]
     pub time: String,
     #[serde(default = "default_schedule_timezone")]
@@ -221,6 +224,7 @@ impl Default for ScanScheduleProfile {
             intensity: default_intensity(),
             days: default_schedule_days(),
             day_of_month: Some(1),
+            month: None,
             time: default_schedule_time(),
             timezone: default_schedule_timezone(),
         }
@@ -275,6 +279,7 @@ impl<'de> Deserialize<'de> for NmapConfig {
                         })
                         .unwrap_or_else(default_schedule_days),
                     day_of_month: None,
+                    month: None,
                     time: raw
                         .schedules
                         .as_ref()
@@ -318,7 +323,10 @@ impl<'de> Deserialize<'de> for NmapConfig {
             cfg.schedules.daily.time = default_schedule_time();
         }
 
-        if cfg.scan_schedules.is_empty() {
+        // Preserve an explicitly saved empty list. It means the administrator
+        // removed all tasks; recreating a legacy weekly task here made the UI
+        // appear to ignore deletes and user-selected schedules.
+        if cfg.scan_schedules.is_empty() && !scan_schedules_present {
             cfg.scan_schedules.push(ScanScheduleProfile {
                 id: default_schedule_id(),
                 frequency: ScheduleFrequency::Weekly,
@@ -329,12 +337,11 @@ impl<'de> Deserialize<'de> for NmapConfig {
                     cfg.schedules.daily.days.clone()
                 },
                 day_of_month: None,
+                month: None,
                 time: cfg.schedules.daily.time.clone(),
                 timezone: default_schedule_timezone(),
             });
         }
-        cfg.enabled = true;
-
         Ok(cfg)
     }
 }
@@ -379,10 +386,26 @@ impl NmapConfig {
                     "scan_schedules.timezone must not be empty".into(),
                 ));
             }
+            if !schedule
+                .timezone
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '_' | '+' | '-'))
+            {
+                return Err(DiscoveryError::BadConfig(
+                    "scan_schedules.timezone contains unsupported characters".into(),
+                ));
+            }
             if let Some(day) = schedule.day_of_month {
                 if !(1..=31).contains(&day) {
                     return Err(DiscoveryError::BadConfig(
                         "scan_schedules.day_of_month must be 1..=31".into(),
+                    ));
+                }
+            }
+            if let Some(month) = schedule.month {
+                if !(1..=12).contains(&month) {
+                    return Err(DiscoveryError::BadConfig(
+                        "scan_schedules.month must be 1..=12".into(),
                     ));
                 }
             }

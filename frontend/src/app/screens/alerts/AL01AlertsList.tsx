@@ -4,13 +4,12 @@ import {
   Clock, ChevronRight, ChevronDown, Trash2, Search, Shield, Archive,
   CheckSquare, Square, X, AlertTriangle, Brain, Loader2, Network,
 } from "lucide-react";
-import { mockAlerts } from "../../data/mockData";
 import { useAlerts, useThreatStatus } from "../../hooks/useApiData";
 import type { ThreatStatus } from "../../services/threatService";
 import { ApiError } from "../../services/api";
 import { advisoryService, type AdvisoryRules, type RemediationRecommendation } from "../../services/advisoryService";
 import { managedDeviceService, type ManagedDevice } from "../../services/managedDeviceService";
-import { guardianAlertHeading, type Alert } from "../../services/alertService";
+import { alertService, guardianAlertHeading, type Alert } from "../../services/alertService";
 import { guardianDisplayText } from "../../utils/displayText";
 import { ThreatProtectionPanel } from "./AL08ThreatProtection";
 import { AL09LiveAttackTopology } from "./AL09LiveAttackTopology";
@@ -22,7 +21,7 @@ import { toast } from "sonner";
 type Mode = "active" | "archived" | "bulk";
 type SeverityFilter = "ALL" | "HIGH" | "MEDIUM" | "LOW";
 type StatusFilter = "ALL" | "Active" | "Acknowledged" | "Blocked" | "Quarantine";
-type AlertView = Alert & Partial<typeof mockAlerts[number]>;
+type AlertView = Alert;
 type RecommendationState =
   | { status: "idle" | "loading" }
   | { status: "available" | "fallback"; recommendation: RemediationRecommendation; rules?: AdvisoryRules | null }
@@ -410,6 +409,8 @@ function AlertListPanel({
   toggleSelect, search, setSearch, severityFilter, setSeverityFilter,
   statusFilter, setStatusFilter, activeFilters, onSelectAlert, selectedAlertId, isPanel, alerts,
   threatStatus,
+  onArchive,
+  onDelete,
 }: {
   mode: Mode;
   setMode: (m: Mode) => void;
@@ -431,6 +432,8 @@ function AlertListPanel({
   isPanel?: boolean;
   alerts: AlertView[];
   threatStatus?: ThreatStatus | null;
+  onArchive: (alert: AlertView) => Promise<void>;
+  onDelete: (ids: string[]) => Promise<void>;
 }) {
   const navigate = useNavigate();
 
@@ -457,10 +460,8 @@ function AlertListPanel({
         </p>
         <div className="grid grid-cols-2 gap-2">
           {[
-            { label: "Threat Score", value: "34", color: "var(--destructive)", note: "Critical" },
-            { label: "IDS Alerts", value: threatStatus ? String(threatStatus.alert_count) : "12", color: "var(--destructive)", note: threatStatus ? "Guardian" : "+4 from yesterday" },
-            { label: "Blocked", value: threatStatus ? String(threatStatus.block_count) : "47", color: "var(--chart-2)", note: threatStatus ? "Active blocks" : "Auto-blocked" },
-            { label: "Quarantined", value: "3", color: "var(--chart-4)", note: "Pending review" },
+            { label: "IDS Alerts", value: String(alerts.length), color: "var(--destructive)", note: "Recorded events" },
+            { label: "Blocked", value: threatStatus ? String(threatStatus.block_count) : "—", color: "var(--chart-2)", note: "Active blocks" },
           ].map(({ label, value, color, note }) => (
             <div key={label} className="rounded-lg p-3" style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)", borderRadius: "var(--radius)" }}>
               <span style={{ fontFamily: "Inter, sans-serif", fontSize: "22px", fontWeight: 700, color, lineHeight: 1, display: "block", marginBottom: "2px" }}>{value}</span>
@@ -614,8 +615,8 @@ function AlertListPanel({
                       </div>
                     </div>
                     {mode !== "bulk" && (
-                      <button onClick={(e) => { e.stopPropagation(); toast.success("Alert archived"); }} style={{ background: "none", border: "none", cursor: "pointer", padding: "4px", flexShrink: 0 }}>
-                        <Trash2 size={15} style={{ color: "var(--muted-foreground)" }} />
+                      <button onClick={(e) => { e.stopPropagation(); void onArchive(alert); }} style={{ background: "none", border: "none", cursor: "pointer", padding: "4px", flexShrink: 0 }}>
+                        <Archive size={15} style={{ color: "var(--muted-foreground)" }} />
                       </button>
                     )}
                   </div>
@@ -640,9 +641,9 @@ function AlertListPanel({
                           style={{ height: "38px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", borderRadius: "var(--radius)", border: "none", cursor: "pointer" }}>
                           View Full Details
                         </button>
-                        <button className="px-3 rounded-md transition-opacity active:opacity-80"
+                        <button onClick={() => void onArchive(alert)} className="px-3 rounded-md transition-opacity active:opacity-80"
                           style={{ height: "38px", backgroundColor: "var(--secondary)", color: "var(--secondary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", border: "1px solid var(--border)", cursor: "pointer", borderRadius: "var(--radius)" }}>
-                          Archive
+                          {alert.archived ? "Restore" : "Archive"}
                         </button>
                       </div>
                     </div>
@@ -661,12 +662,34 @@ function AlertListPanel({
         <div className="border-t border-border flex items-center gap-3 px-4 py-4 flex-shrink-0" style={{ backgroundColor: "var(--card)" }}>
           <button className="flex-1 flex items-center justify-center gap-2 rounded-md"
             style={{ height: "44px", backgroundColor: "var(--secondary)", color: "var(--secondary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", border: "1px solid var(--border)", cursor: "pointer", borderRadius: "var(--radius)" }}
-            onClick={() => { if (selectedIds.size === 0) return; toast.success(`${selectedIds.size} alert${selectedIds.size > 1 ? "s" : ""} archived`); setSelectedIds(new Set()); setMode("active"); }}>
+            onClick={() => {
+              if (selectedIds.size === 0) return;
+              void (async () => {
+                try {
+                  await Promise.all(filtered.filter((alert) => selectedIds.has(alert.id)).map(onArchive));
+                  setSelectedIds(new Set());
+                  setMode("active");
+                } catch {
+                  // Each individual action already reports its server error.
+                }
+              })();
+            }}>
             <Archive size={15} /> Archive ({selectedIds.size})
           </button>
           <button className="flex-1 flex items-center justify-center gap-2 rounded-md"
             style={{ height: "44px", backgroundColor: "color-mix(in srgb, var(--destructive) 15%, transparent)", color: "var(--destructive)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", border: "1px solid color-mix(in srgb, var(--destructive) 30%, transparent)", cursor: "pointer", borderRadius: "var(--radius)" }}
-            onClick={() => { if (selectedIds.size === 0) return; toast.success(`${selectedIds.size} alert${selectedIds.size > 1 ? "s" : ""} deleted`); setSelectedIds(new Set()); setMode("active"); }}>
+            onClick={() => {
+              if (selectedIds.size === 0) return;
+              void (async () => {
+                try {
+                  await onDelete([...selectedIds]);
+                  setSelectedIds(new Set());
+                  setMode("active");
+                } catch {
+                  // deleteAlerts already reports its server error.
+                }
+              })();
+            }}>
             <Trash2 size={15} /> Delete ({selectedIds.size})
           </button>
         </div>
@@ -688,17 +711,12 @@ export function AL01AlertsList() {
   // Top-level view: alert list, live topology, and the Guardian Threat Protection panel.
   const [mainView, setMainView] = useState<"list" | "topology" | "threat">("list");
 
-  // Fetch alerts from API with fallback to mock data
-  const { data: alertsData, loading } = useAlerts();
+  const { data: alertsData, loading, refetch } = useAlerts();
   // Guardian IDS status feeds the intel card + the Threat Protection tab indicator.
   const { data: threatStatus } = useThreatStatus();
   const guardianActive = threatStatus?.suricata?.toLowerCase() === "active";
 
-  const alerts = useMemo(() => {
-    const liveAlerts = (alertsData?.alerts ?? []) as AlertView[];
-    if (liveAlerts.length > 0) return liveAlerts;
-    return mockAlerts.slice(0, 3) as AlertView[];
-  }, [alertsData]);
+  const alerts = useMemo(() => (alertsData?.alerts ?? []) as AlertView[], [alertsData]);
 
   const baseAlerts = useMemo(() => {
     return mode === "archived" ? alerts.filter((a: any) => a.archived) : alerts.filter((a: any) => !a.archived);
@@ -729,6 +747,33 @@ export function AL01AlertsList() {
     return selectedAlertId ? alerts.find((a: any) => a.id === selectedAlertId) : null;
   }, [selectedAlertId, alerts]);
 
+  const archiveAlert = async (alert: AlertView) => {
+    try {
+      if (alert.archived) {
+        await alertService.restore(alert.id);
+        toast.success("Alert restored to the active queue");
+      } else {
+        await alertService.archive(alert.id);
+        toast.success("Alert archived");
+      }
+      await refetch();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to update alert");
+      throw error;
+    }
+  };
+
+  const deleteAlerts = async (ids: string[]) => {
+    try {
+      await Promise.all(ids.map((id) => alertService.delete(id)));
+      toast.success(`${ids.length} alert${ids.length === 1 ? "" : "s"} deleted`);
+      await refetch();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to delete alerts");
+      throw error;
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full p-8">
@@ -742,6 +787,8 @@ export function AL01AlertsList() {
     toggleSelect, search, setSearch, severityFilter, setSeverityFilter,
     statusFilter, setStatusFilter, activeFilters, alerts,
     threatStatus,
+    onArchive: archiveAlert,
+    onDelete: deleteAlerts,
   };
 
   const MAIN_TABS: { key: "list" | "topology" | "threat"; label: string }[] = [

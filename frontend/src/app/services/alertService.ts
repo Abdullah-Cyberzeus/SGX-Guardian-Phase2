@@ -56,6 +56,12 @@ export interface AlertSummary {
   timestamp: string;
 }
 
+export interface AlertActionResponse {
+  success: boolean;
+  alert_id: string;
+  archived: boolean;
+}
+
 /** Keep raw alert evidence intact while presenting the product name in UI headings. */
 export function guardianAlertHeading(value: string): string {
   if (!/suricata/i.test(value)) return value;
@@ -76,6 +82,7 @@ interface ThreatAlertApi {
   severity: string;
   event_type: string;
   blocked?: boolean;
+  archived?: boolean;
   rev?: number;
   gid?: number;
 }
@@ -99,7 +106,7 @@ function normalizeThreatAlert(alert: ThreatAlertApi): Alert {
     deviceIp: alert.src_ip || '',
     os: guardianDisplayText(alert.protocol || 'Unknown protocol'),
     aiSummary: guardianDisplayText(`Guardian detected ${alert.signature || 'suspicious traffic'} targeting ${alert.dst_ip || 'an unknown destination'}.`),
-    archived: false,
+    archived: !!alert.archived,
     rawTimestamp: alert.timestamp,
     srcIp: alert.src_ip,
     srcPort: alert.src_port,
@@ -132,25 +139,14 @@ export const alertService = {
     return { alerts, total: alerts.length, unread: alerts.length, timestamp: new Date().toISOString() };
   },
 
-  // GET /api/alerts/:id
-  getById: (id: string) => api.get<Alert>(`/alerts/${id}`),
+  archive: (id: string) =>
+    api.post<AlertActionResponse>(`/threat/alerts/${encodeURIComponent(id)}/archive`),
 
-  // PUT /api/alerts/:id/read
-  markAsRead: (id: string) =>
-    api.put<{ success: boolean; alertId: string; status: string }>(`/alerts/${id}/read`),
+  restore: (id: string) =>
+    api.post<AlertActionResponse>(`/threat/alerts/${encodeURIComponent(id)}/restore`),
 
-  // PUT /api/alerts/:id/dismiss
-  dismiss: (id: string) =>
-    api.put<{ success: boolean; alertId: string; status: string }>(`/alerts/${id}/dismiss`),
-
-  // PUT /api/alerts/read-all
-  markAllAsRead: () => api.put<{ success: boolean; message: string }>('/alerts/read-all'),
-
-  // DELETE /api/alerts/:id
-  delete: (id: string) => api.delete<{ success: boolean; message: string }>(`/alerts/${id}`),
-
-  // GET /api/alerts/summary
-  getSummary: () => api.get<AlertSummary>('/alerts/summary'),
+  delete: (id: string) =>
+    api.delete<AlertActionResponse>(`/threat/alerts/${encodeURIComponent(id)}`),
 };
 
 export default alertService;

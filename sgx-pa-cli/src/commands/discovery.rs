@@ -129,9 +129,32 @@ struct WhitelistFile {
     devices: Vec<WhitelistEntry>,
 }
 
+const CONFIG_DIR_ENV: &str = "SGX_GUARDIAN_DISCOVERY_CONFIG_DIR";
+const STATE_DIR_ENV: &str = "SGX_GUARDIAN_DISCOVERY_STATE_DIR";
 const CONFIG_PATH: &str = "/etc/sgx-guardian/discovery/nmap.yaml";
 const WHITELIST_PATH: &str = "/etc/sgx-guardian/discovery/whitelist.yaml";
 const INVENTORY_PATH: &str = "/var/lib/sgx-guardian/discovery/inventory.json";
+
+fn config_path() -> PathBuf {
+    PathBuf::from(
+        std::env::var(CONFIG_DIR_ENV).unwrap_or_else(|_| "/etc/sgx-guardian/discovery".into()),
+    )
+    .join("nmap.yaml")
+}
+
+fn whitelist_path() -> PathBuf {
+    PathBuf::from(
+        std::env::var(CONFIG_DIR_ENV).unwrap_or_else(|_| "/etc/sgx-guardian/discovery".into()),
+    )
+    .join("whitelist.yaml")
+}
+
+fn inventory_path() -> PathBuf {
+    PathBuf::from(
+        std::env::var(STATE_DIR_ENV).unwrap_or_else(|_| "/var/lib/sgx-guardian/discovery".into()),
+    )
+    .join("inventory.json")
+}
 
 pub fn run(args: DiscoveryArgs) -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
@@ -154,12 +177,15 @@ pub fn run(args: DiscoveryArgs) -> Result<(), Box<dyn std::error::Error>> {
 async fn scan_now(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
     ensure_dirs()?;
     let started_at = chrono::Utc::now();
+    let config_path = config_path();
+    let whitelist_path = whitelist_path();
+    let inventory_path = inventory_path();
 
-    let cfg = match NmapConfig::load(Path::new(CONFIG_PATH)) {
+    let cfg = match NmapConfig::load(&config_path) {
         Ok(cfg) => cfg,
-        Err(_) if !Path::new(CONFIG_PATH).exists() => NmapConfig::default(),
+        Err(_) if !config_path.exists() => NmapConfig::default(),
         Err(e) => {
-            eprintln!("❌ Failed to load {}: {}", CONFIG_PATH, e);
+            eprintln!("❌ Failed to load {}: {}", config_path.display(), e);
             return Ok(());
         }
     };
@@ -193,13 +219,13 @@ async fn scan_now(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // CLI scan also persists raw XML so manual runs aren't invisible.
-    let state_dir = std::path::Path::new(INVENTORY_PATH)
+    let state_dir = inventory_path
         .parent()
         .unwrap_or_else(|| std::path::Path::new("/var/lib/sgx-guardian/discovery"));
     let raw_xml_path =
         sgx_guardian_client::discovery::raw_store::RawXmlStore::persist(state_dir, &xml).ok();
 
-    let whitelist = Whitelist::load(Path::new(WHITELIST_PATH)).unwrap_or_default();
+    let whitelist = Whitelist::load(&whitelist_path).unwrap_or_default();
     let devices = match nmap_parser::parse(&xml) {
         Ok(devices) => devices,
         Err(err) => {
@@ -218,7 +244,7 @@ async fn scan_now(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
     let semantics = cfg.scan_semantics_for_intensity(&target, intensity);
 
-    let inv_path = PathBuf::from(INVENTORY_PATH);
+    let inv_path = inventory_path;
     let mut inventory = Inventory::load(&inv_path).unwrap_or_default();
     let intensity_label = intensity_name(intensity);
     let delta = inventory.merge(devices, semantics);
@@ -251,7 +277,7 @@ async fn scan_now(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
     println!("intensity: {}", intensity_name(intensity));
     println!("new_devices: {}", delta.newly_seen.len());
     println!("updated_devices: {}", delta.updated.len());
-    println!("inventory: {}", INVENTORY_PATH);
+    println!("inventory: {}", inv_path.display());
 
     Ok(())
 }
@@ -283,7 +309,7 @@ fn show_whitelist() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn list_devices(only_unauthorized: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let inv_path = PathBuf::from(INVENTORY_PATH);
+    let inv_path = inventory_path();
     if !inv_path.exists() {
         println!("No inventory found. Run discovery scan first.");
         return Ok(());
@@ -611,7 +637,7 @@ fn append_manual_history(
     raw_xml_path: Option<PathBuf>,
     delta: Option<&sgx_guardian_client::discovery::inventory::InventoryDelta>,
 ) {
-    let inv_path = PathBuf::from(INVENTORY_PATH);
+    let inv_path = inventory_path();
     let counts = Inventory::load(&inv_path)
         .map(|inventory| run_history::status_counts(&inventory))
         .unwrap_or_default();
@@ -640,7 +666,7 @@ fn append_history_record(record: &run_history::ScanRunRecord) {
 }
 
 fn run_history_path() -> PathBuf {
-    PathBuf::from(INVENTORY_PATH)
+    inventory_path()
         .parent()
         .map(run_history::history_path)
         .unwrap_or_else(|| PathBuf::from("/var/lib/sgx-guardian/discovery/runs.jsonl"))
@@ -713,8 +739,16 @@ fn normalize_excludes(values: Vec<String>) -> Result<Vec<String>, Box<dyn std::e
 }
 
 fn ensure_dirs() -> std::io::Result<()> {
-    std::fs::create_dir_all("/etc/sgx-guardian/discovery")?;
-    std::fs::create_dir_all("/var/lib/sgx-guardian/discovery")?;
+    let config_dir = config_path()
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("/etc/sgx-guardian/discovery"));
+    let state_dir = inventory_path()
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("/var/lib/sgx-guardian/discovery"));
+    std::fs::create_dir_all(config_dir)?;
+    std::fs::create_dir_all(state_dir)?;
     Ok(())
 }
 

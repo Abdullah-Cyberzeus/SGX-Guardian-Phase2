@@ -5,8 +5,8 @@ use crate::discovery::whitelist::{
 use crate::discovery::{
     nmap_parser,
     run_history::{self, ScanRunRecord},
-    ConnectedDevice, DeviceStatus, NmapConfig, ScanIntensity, ScanSchedule, ScheduleDay,
-    ScanScheduleProfile, ScheduledScans,
+    ConnectedDevice, DeviceStatus, NmapConfig, ScanIntensity, ScanSchedule, ScanScheduleProfile,
+    ScheduleDay, ScheduledScans,
 };
 use axum::body::Bytes;
 use axum::extract::{Path as AxumPath, Query, State};
@@ -844,7 +844,16 @@ async fn scan_with_args(
 ) -> Result<Json<ScanResponse>, ApiError> {
     let args = build_scan_args(args, target);
     let refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
-    let resp = super::dkp::run_cli(&refs).await?;
+    let config_dir = state.discovery_config_dir.as_str();
+    let state_dir = state.discovery_state_dir.as_str();
+    let resp = super::dkp::run_cli_with_env(
+        &refs,
+        &[
+            ("SGX_GUARDIAN_DISCOVERY_CONFIG_DIR", config_dir),
+            ("SGX_GUARDIAN_DISCOVERY_STATE_DIR", state_dir),
+        ],
+    )
+    .await?;
     if resp.success {
         publish_rule_events_for_latest_run(state);
     }

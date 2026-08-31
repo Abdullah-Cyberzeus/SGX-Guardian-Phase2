@@ -1,7 +1,7 @@
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::discovery::{
-    config::{NmapConfig, ScheduleDay, ScheduleFrequency, ScanScheduleProfile, ScheduledScanKind},
+    config::{NmapConfig, ScanScheduleProfile, ScheduleDay, ScheduleFrequency, ScheduledScanKind},
     connected_device::DeviceStatus,
     error::DiscoveryResult,
     inventory::Inventory,
@@ -12,7 +12,7 @@ use crate::discovery::{
     whitelist::Whitelist,
     ScanIntensity,
 };
-use chrono::{Datelike, Local, Timelike, Utc};
+use chrono::{Datelike, Duration as ChronoDuration, Local, NaiveDate, Timelike, Utc};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -173,7 +173,10 @@ impl DiscoveryScheduler {
                 let Some(slot) = active_schedule_slot(&schedule) else {
                     continue;
                 };
-                if last_slots.get(&schedule.id).is_some_and(|last| last == &slot) {
+                if last_slots
+                    .get(&schedule.id)
+                    .is_some_and(|last| last == &slot)
+                {
                     continue;
                 }
 
@@ -185,12 +188,20 @@ impl DiscoveryScheduler {
                     "scheduled discovery scan is due"
                 );
 
-                match self.run_one(&cfg, ScheduledScanKind::Daily, schedule.intensity).await {
+                match self
+                    .run_one(&cfg, ScheduledScanKind::Daily, schedule.intensity)
+                    .await
+                {
                     Ok(()) => {
                         last_slots.insert(schedule.id.clone(), slot);
                         if matches!(schedule.frequency, ScheduleFrequency::Once) {
-                            if let Err(err) = remove_one_shot_schedule(&self.config_path, &cfg, &schedule.id) {
-                                tracing::warn!("failed to remove one-shot schedule after run: {}", err);
+                            if let Err(err) =
+                                remove_one_shot_schedule(&self.config_path, &cfg, &schedule.id)
+                            {
+                                tracing::warn!(
+                                    "failed to remove one-shot schedule after run: {}",
+                                    err
+                                );
                             }
                         }
                     }
@@ -476,68 +487,144 @@ fn schedule_day_matches(day: ScheduleDay, weekday: chrono::Weekday) -> bool {
 }
 
 fn active_schedule_slot(schedule: &ScanScheduleProfile) -> Option<String> {
-    let now = Local::now();
+    let now = schedule_clock(&schedule.timezone)?;
     let (hour, minute) = parse_schedule_time(&schedule.time)?;
     let candidate = match schedule.frequency {
         ScheduleFrequency::Once => {
-            let mut dt = now.with_hour(hour)?;
-            dt = dt.with_minute(minute)?;
-            dt = dt.with_second(0)?;
-            dt = dt.with_nanosecond(0)?;
-            dt
+            let today = NaiveDate::from_ymd_opt(now.year, now.month, now.day)?;
+            let scheduled_date = if (now.hour, now.minute) > (hour, minute) {
+                today.succ_opt()?
+            } else if (now.hour, now.minute) < (hour, minute) {
+                return None;
+            } else {
+                today
+            };
+            if scheduled_date != today {
+                return None;
+            }
+            format!("{}T{:02}:{:02}", scheduled_date, hour, minute)
         }
         ScheduleFrequency::Daily | ScheduleFrequency::Custom => {
             if !schedule.days.is_empty()
                 && !schedule
                     .days
                     .iter()
-                    .any(|day| schedule_day_matches(*day, now.weekday()))
+                    .any(|day| schedule_day_number(*day) == now.weekday)
             {
                 return None;
             }
-            let mut dt = now.with_hour(hour)?;
-            dt = dt.with_minute(minute)?;
-            dt = dt.with_second(0)?;
-            dt = dt.with_nanosecond(0)?;
-            dt
+            if (now.hour, now.minute) < (hour, minute) {
+                return None;
+            }
+            format!("{:04}-{:02}-{:02}", now.year, now.month, now.day)
         }
         ScheduleFrequency::Weekly => {
             if schedule.days.is_empty()
                 || !schedule
                     .days
                     .iter()
-                    .any(|day| schedule_day_matches(*day, now.weekday()))
+                    .any(|day| schedule_day_number(*day) == now.weekday)
             {
                 return None;
             }
-            let mut dt = now.with_hour(hour)?;
-            dt = dt.with_minute(minute)?;
-            dt = dt.with_second(0)?;
-            dt = dt.with_nanosecond(0)?;
-            dt
+            if (now.hour, now.minute) < (hour, minute) {
+                return None;
+            }
+            format!("{:04}-{:02}-{:02}", now.year, now.month, now.day)
         }
         ScheduleFrequency::Monthly => {
             let day_of_month = schedule.day_of_month.unwrap_or(1);
-            if now.day() as u8 != day_of_month {
+            let last_day = last_day_of_month(now.year, now.month)?;
+            if now.day != u32::from(day_of_month).min(last_day)
+                || (now.hour, now.minute) < (hour, minute)
+            {
                 return None;
             }
-            let mut dt = now.with_hour(hour)?;
-            dt = dt.with_minute(minute)?;
-            dt = dt.with_second(0)?;
-            dt = dt.with_nanosecond(0)?;
-            dt
+            format!("{:04}-{:02}", now.year, now.month)
+        }
+        ScheduleFrequency::Yearly => {
+            let month = schedule.month.unwrap_or(1);
+            if now.month != u32::from(month) {
+                return None;
+            }
+            let last_day = last_day_of_month(now.year, now.month)?;
+            let day = u32::from(schedule.day_of_month.unwrap_or(1)).min(last_day);
+            if now.day != day || (now.hour, now.minute) < (hour, minute) {
+                return None;
+            }
+            format!("{:04}", now.year)
         }
     };
 
-    if candidate > now {
+    Some(format!("{}-{candidate}", schedule.frequency.as_str()))
+}
+
+struct ScheduleClock {
+    year: i32,
+    month: u32,
+    day: u32,
+    hour: u32,
+    minute: u32,
+    /// ISO weekday: Monday = 1, Sunday = 7.
+    weekday: u8,
+}
+
+/// Resolve the configured IANA timezone using the host's zoneinfo database.
+/// This keeps scheduler execution aligned with the timezone selected in the UI,
+/// including daylight-saving transitions, instead of silently using server time.
+fn schedule_clock(timezone: &str) -> Option<ScheduleClock> {
+    if timezone.is_empty()
+        || !timezone
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '_' | '+' | '-'))
+    {
         return None;
     }
-
-    Some(match schedule.frequency {
-        ScheduleFrequency::Once => format!("once-{}", candidate.format("%Y-%m-%dT%H:%M")),
-        ScheduleFrequency::Monthly => format!("monthly-{}", candidate.format("%Y-%m")),
-        _ => format!("{}-{}", schedule.frequency.as_str(), candidate.format("%Y-%m-%d")),
+    let output = std::process::Command::new("date")
+        .env("TZ", timezone)
+        .arg("+%Y,%m,%d,%H,%M,%u")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let fields = std::str::from_utf8(&output.stdout)
+        .ok()?
+        .trim()
+        .split(',')
+        .collect::<Vec<_>>();
+    if fields.len() != 6 {
+        return None;
+    }
+    Some(ScheduleClock {
+        year: fields[0].parse().ok()?,
+        month: fields[1].parse().ok()?,
+        day: fields[2].parse().ok()?,
+        hour: fields[3].parse().ok()?,
+        minute: fields[4].parse().ok()?,
+        weekday: fields[5].parse().ok()?,
     })
+}
+
+fn schedule_day_number(day: ScheduleDay) -> u8 {
+    match day {
+        ScheduleDay::Monday => 1,
+        ScheduleDay::Tuesday => 2,
+        ScheduleDay::Wednesday => 3,
+        ScheduleDay::Thursday => 4,
+        ScheduleDay::Friday => 5,
+        ScheduleDay::Saturday => 6,
+        ScheduleDay::Sunday => 7,
+    }
+}
+
+fn last_day_of_month(year: i32, month: u32) -> Option<u32> {
+    let first_of_next = if month == 12 {
+        NaiveDate::from_ymd_opt(year.checked_add(1)?, 1, 1)?
+    } else {
+        NaiveDate::from_ymd_opt(year, month.checked_add(1)?, 1)?
+    };
+    Some((first_of_next - ChronoDuration::days(1)).day())
 }
 
 fn parse_schedule_time(time: &str) -> Option<(u32, u32)> {
@@ -550,9 +637,15 @@ fn parse_schedule_time(time: &str) -> Option<(u32, u32)> {
     Some((hour, minute))
 }
 
-fn remove_one_shot_schedule(path: &PathBuf, cfg: &NmapConfig, schedule_id: &str) -> std::io::Result<()> {
+fn remove_one_shot_schedule(
+    path: &PathBuf,
+    cfg: &NmapConfig,
+    schedule_id: &str,
+) -> std::io::Result<()> {
     let mut updated = cfg.clone();
-    updated.scan_schedules.retain(|schedule| schedule.id != schedule_id);
+    updated
+        .scan_schedules
+        .retain(|schedule| schedule.id != schedule_id);
     if updated.scan_schedules.is_empty() {
         updated.enabled = false;
     }
@@ -561,7 +654,9 @@ fn remove_one_shot_schedule(path: &PathBuf, cfg: &NmapConfig, schedule_id: &str)
 }
 
 fn atomic_write_text(path: &PathBuf, content: &str) -> std::io::Result<()> {
-    let dir = path.parent().ok_or_else(|| std::io::Error::other("missing parent"))?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("missing parent"))?;
     let tmp = tempfile::NamedTempFile::new_in(dir)?;
     std::fs::write(tmp.path(), content)?;
     tmp.persist(path).map_err(|e| e.error)?;
@@ -575,6 +670,7 @@ impl ScheduleFrequency {
             ScheduleFrequency::Daily => "daily",
             ScheduleFrequency::Weekly => "weekly",
             ScheduleFrequency::Monthly => "monthly",
+            ScheduleFrequency::Yearly => "yearly",
             ScheduleFrequency::Custom => "custom",
         }
     }

@@ -6,7 +6,7 @@ use axum::{
     http::{header, HeaderName, HeaderValue, Request},
     middleware::Next,
     response::Response,
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -297,6 +297,18 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             get(handlers::threat::threat_intel),
         )
         .route("/api/v1/threat/alerts", get(handlers::threat::list_alerts))
+        .route(
+            "/api/v1/threat/alerts/{alert_id}/archive",
+            post(handlers::threat::archive_alert),
+        )
+        .route(
+            "/api/v1/threat/alerts/{alert_id}/restore",
+            post(handlers::threat::restore_alert),
+        )
+        .route(
+            "/api/v1/threat/alerts/{alert_id}",
+            delete(handlers::threat::delete_alert),
+        )
         .route(
             "/api/v1/threat/modbus",
             get(handlers::threat::modbus_alerts),

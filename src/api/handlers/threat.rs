@@ -6,11 +6,12 @@ use crate::threat::{
     threat_alert::{Severity, ThreatAlert},
 };
 use axum::{
-    extract::{Query, State},
+    extract::{Path as AxumPath, Query, State},
     Json,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -21,11 +22,32 @@ pub struct AlertsQuery {
     pub severity: Option<String>,
 }
 
+#[derive(Serialize)]
+pub struct ThreatAlertView {
+    #[serde(flatten)]
+    pub alert: ThreatAlert,
+    pub archived: bool,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct AlertStateFile {
+    #[serde(default)]
+    archived: BTreeSet<String>,
+}
+
+#[derive(Serialize)]
+pub struct AlertActionResponse {
+    pub success: bool,
+    pub alert_id: String,
+    pub archived: bool,
+}
+
 pub async fn list_alerts(
     State(state): State<Arc<AppState>>,
     Query(query): Query<AlertsQuery>,
-) -> Result<Json<Vec<ThreatAlert>>, ApiError> {
+) -> Result<Json<Vec<ThreatAlertView>>, ApiError> {
     let mut alerts = load_alerts(&state).await?;
+    let alert_state = load_alert_state(&state).await?;
 
     if let Some(severity) = query.severity.as_deref() {
         alerts.retain(|alert| severity_matches(alert.severity, severity));
@@ -36,7 +58,84 @@ pub async fn list_alerts(
         alerts.drain(..alerts.len() - limit);
     }
 
-    Ok(Json(alerts))
+    Ok(Json(
+        alerts
+            .into_iter()
+            .map(|alert| ThreatAlertView {
+                archived: alert_state.archived.contains(&alert.alert_id),
+                alert,
+            })
+            .collect(),
+    ))
+}
+
+pub async fn archive_alert(
+    State(state): State<Arc<AppState>>,
+    AxumPath(alert_id): AxumPath<String>,
+) -> Result<Json<AlertActionResponse>, ApiError> {
+    ensure_alert_exists(&state, &alert_id).await?;
+    let mut alert_state = load_alert_state(&state).await?;
+    alert_state.archived.insert(alert_id.clone());
+    save_alert_state(&state, &alert_state).await?;
+    Ok(Json(AlertActionResponse {
+        success: true,
+        alert_id,
+        archived: true,
+    }))
+}
+
+pub async fn restore_alert(
+    State(state): State<Arc<AppState>>,
+    AxumPath(alert_id): AxumPath<String>,
+) -> Result<Json<AlertActionResponse>, ApiError> {
+    ensure_alert_exists(&state, &alert_id).await?;
+    let mut alert_state = load_alert_state(&state).await?;
+    alert_state.archived.remove(&alert_id);
+    save_alert_state(&state, &alert_state).await?;
+    Ok(Json(AlertActionResponse {
+        success: true,
+        alert_id,
+        archived: false,
+    }))
+}
+
+pub async fn delete_alert(
+    State(state): State<Arc<AppState>>,
+    AxumPath(alert_id): AxumPath<String>,
+) -> Result<Json<AlertActionResponse>, ApiError> {
+    let mut alerts = load_alerts(&state).await?;
+    let before = alerts.len();
+    alerts.retain(|alert| alert.alert_id != alert_id);
+    if alerts.len() == before {
+        return Err(ApiError::NotFound("alert not found".into()));
+    }
+
+    let path = alerts_path(&state);
+    let content = alerts
+        .iter()
+        .map(serde_json::to_string)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| ApiError::Internal(format!("failed to serialize alerts: {err}")))?
+        .join("\n");
+    tokio::fs::write(
+        &path,
+        if content.is_empty() {
+            content
+        } else {
+            format!("{content}\n")
+        },
+    )
+    .await
+    .map_err(|err| ApiError::Internal(format!("failed to write {}: {err}", path.display())))?;
+
+    let mut alert_state = load_alert_state(&state).await?;
+    alert_state.archived.remove(&alert_id);
+    save_alert_state(&state, &alert_state).await?;
+    Ok(Json(AlertActionResponse {
+        success: true,
+        alert_id,
+        archived: false,
+    }))
 }
 
 #[derive(Serialize)]
@@ -311,7 +410,7 @@ fn severity_matches(actual: Severity, expected: &str) -> bool {
 }
 
 async fn load_alerts(state: &AppState) -> Result<Vec<ThreatAlert>, ApiError> {
-    let path = PathBuf::from(&state.threat_state_dir).join("alerts.jsonl");
+    let path = alerts_path(state);
     let bytes = match tokio::fs::read(&path).await {
         Ok(bytes) => bytes,
         Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
@@ -329,6 +428,54 @@ async fn load_alerts(state: &AppState) -> Result<Vec<ThreatAlert>, ApiError> {
         .filter(|line| !line.is_empty())
         .filter_map(|line| serde_json::from_slice(line).ok())
         .collect())
+}
+
+fn alerts_path(state: &AppState) -> PathBuf {
+    PathBuf::from(&state.threat_state_dir).join("alerts.jsonl")
+}
+
+fn alert_state_path(state: &AppState) -> PathBuf {
+    PathBuf::from(&state.threat_state_dir).join("alert_state.json")
+}
+
+async fn ensure_alert_exists(state: &AppState, alert_id: &str) -> Result<(), ApiError> {
+    if load_alerts(state)
+        .await?
+        .iter()
+        .any(|alert| alert.alert_id == alert_id)
+    {
+        Ok(())
+    } else {
+        Err(ApiError::NotFound("alert not found".into()))
+    }
+}
+
+async fn load_alert_state(state: &AppState) -> Result<AlertStateFile, ApiError> {
+    let path = alert_state_path(state);
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|err| {
+            ApiError::Internal(format!("failed to parse {}: {err}", path.display()))
+        }),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(AlertStateFile::default()),
+        Err(err) => Err(ApiError::Internal(format!(
+            "failed to read {}: {err}",
+            path.display()
+        ))),
+    }
+}
+
+async fn save_alert_state(state: &AppState, alert_state: &AlertStateFile) -> Result<(), ApiError> {
+    let path = alert_state_path(state);
+    tokio::fs::create_dir_all(&state.threat_state_dir)
+        .await
+        .map_err(|err| {
+            ApiError::Internal(format!("failed to create threat state directory: {err}"))
+        })?;
+    let contents = serde_json::to_vec_pretty(alert_state)
+        .map_err(|err| ApiError::Internal(format!("failed to serialize alert state: {err}")))?;
+    tokio::fs::write(&path, contents)
+        .await
+        .map_err(|err| ApiError::Internal(format!("failed to write {}: {err}", path.display())))
 }
 
 async fn active_block_count(state: &AppState) -> usize {

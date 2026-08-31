@@ -114,7 +114,7 @@ export interface ScheduleEntry {
   time?: string;
 }
 
-export type ScheduleFrequency = 'once' | 'daily' | 'weekly' | 'monthly' | 'custom';
+export type ScheduleFrequency = 'once' | 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
 
 export interface ScanScheduleProfile {
   id: string;
@@ -122,6 +122,7 @@ export interface ScanScheduleProfile {
   intensity: string;
   days?: ScheduleDay[];
   day_of_month?: number | null;
+  month?: number | null;
   time?: string;
   timezone?: string;
 }

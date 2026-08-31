@@ -1515,6 +1515,7 @@ const SCHEDULE_FREQUENCIES: { key: ScanScheduleProfile["frequency"]; label: stri
   { key: "daily", label: "Daily" },
   { key: "weekly", label: "Weekly" },
   { key: "monthly", label: "Monthly" },
+  { key: "yearly", label: "Yearly" },
 ];
 
 const TIMEZONES: { key: string; label: string }[] = [
@@ -1526,6 +1527,7 @@ const TIMEZONES: { key: string; label: string }[] = [
 ];
 
 const DEFAULT_SCAN_DAYS: ScheduleDay[] = ["monday", "wednesday", "friday"];
+const EVERY_DAY: ScheduleDay[] = SCHEDULE_DAYS.map((day) => day.key);
 const DEFAULT_SCAN_TIME = "23:00";
 const DEFAULT_SCAN_TIMEZONE = "America/New_York";
 
@@ -1540,6 +1542,7 @@ function createDefaultScheduleTask(): ScanScheduleProfile {
     intensity: "aggressive",
     days: [...DEFAULT_SCAN_DAYS],
     day_of_month: 1,
+    month: 1,
     time: DEFAULT_SCAN_TIME,
     timezone: DEFAULT_SCAN_TIMEZONE,
   };
@@ -1554,14 +1557,15 @@ function normalizeScheduleTask(task: Partial<ScanScheduleProfile> = {}): ScanSch
       : task.days?.length
         ? task.days
         : frequency === "daily"
-          ? [...DEFAULT_SCAN_DAYS]
+          ? [...EVERY_DAY]
           : base.days;
   return {
     id: task.id?.trim() || base.id,
     frequency,
     intensity: task.intensity ?? base.intensity,
     days,
-    day_of_month: frequency === "monthly" ? (task.day_of_month ?? 1) : null,
+    day_of_month: frequency === "monthly" || frequency === "yearly" ? (task.day_of_month ?? 1) : null,
+    month: frequency === "yearly" ? (task.month ?? 1) : null,
     time: task.time || DEFAULT_SCAN_TIME,
     timezone: task.timezone || DEFAULT_SCAN_TIMEZONE,
   };
@@ -1597,7 +1601,7 @@ function normalizeScheduleForm(cfg: DiscoverySchedule): DiscoverySchedule {
     scan_schedules: (cfg.scan_schedules === undefined ? [legacyDerivedTask] : cfg.scan_schedules).map((task) =>
       normalizeScheduleTask({
         ...task,
-        days: task.frequency === "once" ? [] : task.days?.length ? task.days : legacyDays,
+        days: task.frequency === "once" ? [] : task.frequency === "daily" ? [...EVERY_DAY] : task.days?.length ? task.days : legacyDays,
         time: task.time || cfg.schedules?.daily?.time || DEFAULT_SCAN_TIME,
       }),
     ),
@@ -1636,6 +1640,13 @@ function formatScheduleSummary(schedule: ScanScheduleProfile): string {
   if (schedule.frequency === "monthly") {
     return `Monthly on day ${schedule.day_of_month ?? 1} at ${formatScheduleTime(schedule.time || DEFAULT_SCAN_TIME)} (${getTimeZoneLabel(schedule.timezone || DEFAULT_SCAN_TIMEZONE)})`;
   }
+  if (schedule.frequency === "yearly") {
+    const month = Math.max(1, Math.min(12, schedule.month ?? 1));
+    return `Yearly on ${new Date(2000, month - 1, 1).toLocaleString(undefined, { month: "long" })} ${schedule.day_of_month ?? 1} at ${formatScheduleTime(schedule.time || DEFAULT_SCAN_TIME)} (${getTimeZoneLabel(schedule.timezone || DEFAULT_SCAN_TIMEZONE)})`;
+  }
+  if (schedule.frequency === "daily") {
+    return `Every day at ${formatScheduleTime(schedule.time || DEFAULT_SCAN_TIME)} (${getTimeZoneLabel(schedule.timezone || DEFAULT_SCAN_TIMEZONE)})`;
+  }
   const selected = SCHEDULE_DAYS.filter((day) => (schedule.days ?? []).includes(day.key)).map((day) => day.label);
   const dayText = selected.length ? selected.join(", ") : "No days selected";
   return `${dayText} at ${formatScheduleTime(schedule.time || DEFAULT_SCAN_TIME)} (${getTimeZoneLabel(schedule.timezone || DEFAULT_SCAN_TIMEZONE)})`;
@@ -1669,7 +1680,20 @@ function computeNextScheduledScan(schedule: ScanScheduleProfile, now: Date = new
     return null;
   }
 
-  const days = schedule.days ?? [];
+  if (schedule.frequency === "yearly") {
+    const month = Math.max(1, Math.min(12, schedule.month ?? 1));
+    const dayOfMonth = schedule.day_of_month ?? 1;
+    for (let offset = 0; offset <= 2; offset++) {
+      const candidate = new Date(now.getFullYear() + offset, month - 1, 1);
+      const daysInMonth = new Date(candidate.getFullYear(), candidate.getMonth() + 1, 0).getDate();
+      candidate.setDate(Math.min(dayOfMonth, daysInMonth));
+      candidate.setHours(hour, minute, 0, 0);
+      if (candidate > now) return candidate;
+    }
+    return null;
+  }
+
+  const days = schedule.frequency === "daily" ? EVERY_DAY : (schedule.days ?? []);
   if (!days.length) return null;
   let best: Date | null = null;
   for (let offset = 0; offset <= 7; offset++) {
@@ -1729,6 +1753,7 @@ function ScheduleTab() {
   const [form, setForm] = useState<DiscoverySchedule>(DEFAULT_SCHEDULE);
   const [draftTask, setDraftTask] = useState<ScanScheduleProfile>(createDefaultScheduleTask());
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [draftChanged, setDraftChanged] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -1738,6 +1763,7 @@ function ScheduleTab() {
       setForm(normalized);
       setDraftTask(normalized.scan_schedules[0] ?? createDefaultScheduleTask());
       setEditingIndex(null);
+      setDraftChanged(false);
     }
   }, [data, dirty]);
 
@@ -1749,9 +1775,16 @@ function ScheduleTab() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const normalized = normalizeScheduleForm(form);
+      const currentTasks = form.scan_schedules ?? [];
+      const pendingTask = normalizeScheduleTask(draftTask);
+      const tasksToSave = !draftChanged
+        ? currentTasks
+        : editingIndex === null
+          ? [...currentTasks, pendingTask]
+          : currentTasks.map((task, index) => index === editingIndex ? pendingTask : task);
+      const normalized = normalizeScheduleForm({ ...form, scan_schedules: tasksToSave });
       const updated = await discoveryService.putSchedule({
-        enabled: normalized.scan_schedules.length > 0 ? true : form.enabled,
+        enabled: form.enabled,
         target_cidr: form.target_cidr && form.target_cidr.trim() ? form.target_cidr.trim() : null,
         timeout_secs: Number(form.timeout_secs),
         exclude: form.exclude,
@@ -1761,6 +1794,7 @@ function ScheduleTab() {
       setForm(normalizeScheduleForm(updated));
       setDraftTask(normalizeScheduleForm(updated).scan_schedules[0] ?? createDefaultScheduleTask());
       setEditingIndex(null);
+      setDraftChanged(false);
       setDirty(false);
       toast.success("Schedule updated");
       refetch();
@@ -1782,9 +1816,11 @@ function ScheduleTab() {
       ...task,
       days: SCHEDULE_DAYS.filter((d) => nextDays.includes(d.key)).map((d) => d.key),
     }));
+    setDraftChanged(true);
   };
   const updateSchedule = (patch: Partial<ScanScheduleProfile>) => {
     setDraftTask((task) => normalizeScheduleTask({ ...task, ...patch }));
+    setDraftChanged(true);
   };
   const commitDraftTask = () => {
     const nextTask = normalizeScheduleTask(draftTask);
@@ -1799,6 +1835,7 @@ function ScheduleTab() {
     });
     setDraftTask(createDefaultScheduleTask());
     setEditingIndex(null);
+    setDraftChanged(false);
     setDirty(true);
   };
   const editTask = (index: number) => {
@@ -1806,6 +1843,7 @@ function ScheduleTab() {
     if (!task) return;
     setDraftTask(task);
     setEditingIndex(index);
+    setDraftChanged(false);
   };
   const removeTask = (index: number) => {
     setForm((current) => ({
@@ -1815,6 +1853,7 @@ function ScheduleTab() {
     if (editingIndex === index) {
       setDraftTask(createDefaultScheduleTask());
       setEditingIndex(null);
+      setDraftChanged(false);
     }
     setDirty(true);
   };
@@ -1944,6 +1983,7 @@ function ScheduleTab() {
             onClick={() => {
               setDraftTask(createDefaultScheduleTask());
               setEditingIndex(null);
+              setDraftChanged(false);
             }}
             className="px-2 py-1 rounded-md"
             style={{ backgroundColor: "var(--muted)", border: "1px solid var(--border)", color: "var(--muted-foreground)", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)" }}
@@ -1974,8 +2014,9 @@ function ScheduleTab() {
               const nextFrequency = e.target.value as ScanScheduleProfile["frequency"];
               updateSchedule({
                 frequency: nextFrequency,
-                days: nextFrequency === "once" ? [] : nextFrequency === "monthly" ? [] : schedule.days?.length ? schedule.days : [...DEFAULT_SCAN_DAYS],
-                day_of_month: nextFrequency === "monthly" ? (schedule.day_of_month ?? 1) : null,
+                days: nextFrequency === "once" || nextFrequency === "monthly" || nextFrequency === "yearly" ? [] : nextFrequency === "daily" ? [...EVERY_DAY] : schedule.days?.length ? schedule.days : [...DEFAULT_SCAN_DAYS],
+                day_of_month: nextFrequency === "monthly" || nextFrequency === "yearly" ? (schedule.day_of_month ?? 1) : null,
+                month: nextFrequency === "yearly" ? (schedule.month ?? 1) : null,
               });
             }}
             className="w-full px-3 py-2 rounded-md"
@@ -2000,20 +2041,30 @@ function ScheduleTab() {
           />
         </div>
 
-        {schedule.frequency === "monthly" ? (
-          <div className="flex flex-col gap-1">
-            <label style={labelStyle}>Day of month</label>
-            <input
-              type="number"
-              min={1}
-              max={31}
-              value={schedule.day_of_month ?? 1}
-              onChange={(e) => updateSchedule({ day_of_month: Number(e.target.value) })}
-              className="w-full px-3 py-2 rounded-md"
-              style={fieldStyle}
-            />
-          </div>
-        ) : schedule.frequency !== "once" ? (
+        {schedule.frequency === "monthly" || schedule.frequency === "yearly" ? (
+          <>
+            <div className="flex flex-col gap-1">
+              <label style={labelStyle}>Day of month</label>
+              <input
+                type="number"
+                min={1}
+                max={31}
+                value={schedule.day_of_month ?? 1}
+                onChange={(e) => updateSchedule({ day_of_month: Number(e.target.value) })}
+                className="w-full px-3 py-2 rounded-md"
+                style={fieldStyle}
+              />
+            </div>
+          {schedule.frequency === "yearly" && (
+            <div className="flex flex-col gap-1">
+              <label style={labelStyle}>Month</label>
+              <select value={schedule.month ?? 1} onChange={(e) => updateSchedule({ month: Number(e.target.value) })} className="w-full px-3 py-2 rounded-md" style={fieldStyle}>
+                {Array.from({ length: 12 }, (_, index) => <option key={index + 1} value={index + 1}>{new Date(2000, index, 1).toLocaleString(undefined, { month: "long" })}</option>)}
+              </select>
+            </div>
+          )}
+          </>
+        ) : schedule.frequency === "weekly" ? (
           <div className="flex flex-col gap-1">
             <label style={labelStyle}>Days (select days to scan)</label>
             <div className="grid grid-cols-7 gap-1">
@@ -2067,6 +2118,7 @@ function ScheduleTab() {
               onClick={() => {
                 setDraftTask(createDefaultScheduleTask());
                 setEditingIndex(null);
+                setDraftChanged(false);
               }}
               className="px-3 py-2 rounded-md"
               style={{ backgroundColor: "var(--muted)", border: "1px solid var(--border)", color: "var(--muted-foreground)", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)" }}
@@ -2451,7 +2503,7 @@ function RunsTab({ onEditSchedule }: { onEditSchedule: () => void }) {
   const [detailTarget, setDetailTarget] = useState<ConnectedDevice | null>(null);
 
   const cfg = useMemo(() => (schedule.data ? normalizeScheduleForm(schedule.data) : null), [schedule.data]);
-  const enabled = !!cfg?.enabled || (cfg?.scan_schedules?.length ?? 0) > 0;
+  const enabled = !!cfg?.enabled;
   const realRuns: ScheduleRun[] | null = useMemo(() => {
     if (!runs.data || !Array.isArray(runs.data) || runs.data.length === 0) return null;
     // /discovery/runs carries only timestamps. Enrich any run that lines up with
