@@ -254,3 +254,183 @@ async fn refresh_runtime_config(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::async_env_lock;
+    use crate::threat::blocker::take_mock_nft_calls;
+    use crate::threat::config::BlockMode;
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    fn write_config(path: &Path, cfg: &SuricataConfig) {
+        std::fs::write(path, serde_yaml::to_string(cfg).unwrap()).expect("write config");
+    }
+
+    fn test_blocker(state_dir: &Path, cfg: Arc<Mutex<SuricataConfig>>) -> Arc<Blocker> {
+        Arc::new(Blocker::new(
+            cfg,
+            "test-node".to_string(),
+            state_dir.to_path_buf(),
+        ))
+    }
+
+    #[tokio::test]
+    async fn refresh_runtime_config_is_a_noop_when_config_is_unchanged() {
+        let _guard = async_env_lock().await;
+        let _nft_mock = ScopedEnvVar::set("SGX_THREAT_MOCK_NFT", "1");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("config.yaml");
+
+        let cfg = SuricataConfig {
+            enabled: true,
+            block_mode: BlockMode::InlineBlock,
+            ..SuricataConfig::default()
+        };
+        write_config(&config_path, &cfg);
+
+        let cfg_shared = Arc::new(Mutex::new(cfg.clone()));
+        let blocker = test_blocker(temp.path(), cfg_shared.clone());
+        let _ = take_mock_nft_calls();
+
+        refresh_runtime_config(&config_path, &cfg_shared, &blocker, "test-node")
+            .await
+            .expect("refresh should succeed on unchanged config");
+
+        assert_eq!(*cfg_shared.lock().await, cfg);
+        assert!(
+            take_mock_nft_calls().is_empty(),
+            "unchanged config must not touch nftables"
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_runtime_config_applies_change_and_ensures_table_when_enabled() {
+        let _guard = async_env_lock().await;
+        let _nft_mock = ScopedEnvVar::set("SGX_THREAT_MOCK_NFT", "1");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("config.yaml");
+
+        let initial = SuricataConfig {
+            enabled: false,
+            block_mode: BlockMode::AlertOnly,
+            ..SuricataConfig::default()
+        };
+        let updated = SuricataConfig {
+            enabled: true,
+            block_mode: BlockMode::InlineBlock,
+            ..SuricataConfig::default()
+        };
+        write_config(&config_path, &updated);
+
+        let cfg_shared = Arc::new(Mutex::new(initial));
+        let blocker = test_blocker(temp.path(), cfg_shared.clone());
+        let _ = take_mock_nft_calls();
+
+        refresh_runtime_config(&config_path, &cfg_shared, &blocker, "test-node")
+            .await
+            .expect("refresh should apply the change");
+
+        assert_eq!(*cfg_shared.lock().await, updated);
+        let calls = take_mock_nft_calls();
+        assert!(
+            !calls.is_empty(),
+            "enabling inline-block mode must ensure the nft table exists"
+        );
+        assert!(calls.iter().any(|c| c.contains(&"table".to_string())));
+    }
+
+    #[tokio::test]
+    async fn refresh_runtime_config_skips_nft_setup_when_next_config_is_disabled() {
+        let _guard = async_env_lock().await;
+        let _nft_mock = ScopedEnvVar::set("SGX_THREAT_MOCK_NFT", "1");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("config.yaml");
+
+        let initial = SuricataConfig {
+            enabled: true,
+            block_mode: BlockMode::InlineBlock,
+            rule_update_hours: 24,
+            ..SuricataConfig::default()
+        };
+        let updated = SuricataConfig {
+            enabled: false,
+            block_mode: BlockMode::InlineBlock,
+            rule_update_hours: 6,
+            ..SuricataConfig::default()
+        };
+        write_config(&config_path, &updated);
+
+        let cfg_shared = Arc::new(Mutex::new(initial));
+        let blocker = test_blocker(temp.path(), cfg_shared.clone());
+        let _ = take_mock_nft_calls();
+
+        refresh_runtime_config(&config_path, &cfg_shared, &blocker, "test-node")
+            .await
+            .expect("refresh should apply the change");
+
+        assert_eq!(*cfg_shared.lock().await, updated);
+        assert!(
+            take_mock_nft_calls().is_empty(),
+            "disabling the integration must not touch nftables"
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_runtime_config_propagates_load_error_for_invalid_yaml() {
+        let _guard = async_env_lock().await;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("config.yaml");
+        std::fs::write(&config_path, "not: [valid, yaml: structure").expect("write bad yaml");
+
+        let cfg_shared = Arc::new(Mutex::new(SuricataConfig::default()));
+        let blocker = test_blocker(temp.path(), cfg_shared.clone());
+
+        let err = refresh_runtime_config(&config_path, &cfg_shared, &blocker, "test-node")
+            .await
+            .expect_err("malformed yaml must fail to load");
+        assert!(matches!(err, crate::threat::ThreatError::Yaml(_)));
+    }
+
+    #[tokio::test]
+    async fn refresh_runtime_config_propagates_validation_error() {
+        let _guard = async_env_lock().await;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("config.yaml");
+        // block_ttl_secs = 0 fails SuricataConfig::validate().
+        let bad = SuricataConfig {
+            block_ttl_secs: 0,
+            ..SuricataConfig::default()
+        };
+        write_config(&config_path, &bad);
+
+        let cfg_shared = Arc::new(Mutex::new(SuricataConfig::default()));
+        let blocker = test_blocker(temp.path(), cfg_shared.clone());
+
+        let err = refresh_runtime_config(&config_path, &cfg_shared, &blocker, "test-node")
+            .await
+            .expect_err("invalid ttl must fail validation");
+        assert!(matches!(err, crate::threat::ThreatError::BadConfig(_)));
+    }
+}

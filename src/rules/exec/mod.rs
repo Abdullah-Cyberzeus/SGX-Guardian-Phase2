@@ -270,7 +270,20 @@ pub fn list_executions_at(path: &Path, limit: Option<usize>) -> RulesResult<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rules::model::{Condition, RuleDraft};
+    use crate::rules::model::{Condition, RuleAction, RuleDraft};
+
+    fn test_config(base: &std::path::Path, dry_run: bool) -> RulesConfig {
+        RulesConfig {
+            paths: RulesPaths::from_base(base.join("rules_base")),
+            dry_run,
+            max_executions: 100,
+            threat_config_path: base.join("threat_config.yaml"),
+            threat_state_dir: base.join("threat_state"),
+            discovery_config_path: base.join("discovery.yaml"),
+            transport_lock_dir: base.join("cot_lock"),
+            transport_lock_interface: None,
+        }
+    }
 
     fn report(action: &str, outcome: &str) -> ActionReport {
         ActionReport {
@@ -322,6 +335,257 @@ mod tests {
         // `all()` over an empty slice is vacuously true, so an empty report
         // list takes the dry-run branch before falling through to "executed".
         assert_eq!(aggregate_outcome(&[]), "dry-run");
+    }
+
+    fn sample_execution(id: &str) -> RuleExecution {
+        RuleExecution {
+            id: id.to_string(),
+            rule_id: "r".to_string(),
+            rule_name: "r".to_string(),
+            trigger_summary: "t".to_string(),
+            actions: vec![],
+            outcome: "executed".to_string(),
+            at: Utc::now().to_rfc3339(),
+        }
+    }
+
+    // ---- dry_run_plan ----------------------------------------------------------------
+
+    #[test]
+    fn dry_run_plan_downgrades_destructive_actions_without_allow_destructive() {
+        let rule = Rule::from_draft(RuleDraft {
+            name: Some("r".to_string()),
+            condition: Some(Condition::All(Vec::new())),
+            actions: Some(vec![
+                RuleAction::LockTransport,
+                RuleAction::Notify {
+                    severity: "info".to_string(),
+                },
+            ]),
+            allow_destructive: Some(false),
+            ..RuleDraft::default()
+        });
+        let plan = dry_run_plan(&rule);
+        assert_eq!(plan.len(), 2);
+        assert_eq!(plan[0].outcome, "downgraded");
+        assert_eq!(plan[1].outcome, "dry-run");
+    }
+
+    #[test]
+    fn dry_run_plan_keeps_destructive_actions_as_dry_run_when_allowed() {
+        let rule = Rule::from_draft(RuleDraft {
+            actions: Some(vec![RuleAction::LockTransport]),
+            allow_destructive: Some(true),
+            ..RuleDraft::default()
+        });
+        let plan = dry_run_plan(&rule);
+        assert_eq!(plan[0].outcome, "dry-run");
+    }
+
+    // ---- run_rule_for_test: guard decisions -------------------------------------------
+
+    #[tokio::test]
+    async fn run_rule_for_test_dry_run_reports_dry_run_outcome() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = test_config(dir.path(), true);
+        let rule = Rule::from_draft(RuleDraft {
+            name: Some("dry rule".to_string()),
+            condition: Some(Condition::All(Vec::new())),
+            actions: Some(vec![RuleAction::Notify {
+                severity: "info".to_string(),
+            }]),
+            ..RuleDraft::default()
+        });
+        let event = RuleEvent::sample_threat("node-1");
+
+        let execution = run_rule_for_test(config, "node-1", rule.clone(), event).await;
+        assert_eq!(execution.outcome, "dry-run");
+        assert_eq!(execution.rule_id, rule.rule_id);
+    }
+
+    #[tokio::test]
+    async fn run_rule_for_test_reports_rate_limited_when_cooldown_active() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = test_config(dir.path(), true);
+        let rule = Rule::from_draft(RuleDraft {
+            name: Some("cooldown rule".to_string()),
+            condition: Some(Condition::All(Vec::new())),
+            cooldown_secs: Some(3600),
+            actions: Some(vec![RuleAction::Notify {
+                severity: "info".to_string(),
+            }]),
+            ..RuleDraft::default()
+        });
+        let event = RuleEvent::sample_threat("node-1");
+
+        let first = run_rule_for_test(config.clone(), "node-1", rule.clone(), event.clone()).await;
+        assert_eq!(first.outcome, "dry-run");
+
+        let second = run_rule_for_test(config.clone(), "node-1", rule.clone(), event.clone()).await;
+        assert_eq!(second.outcome, "rate-limited");
+        assert!(second.actions[0].contains("cooldown"));
+    }
+
+    #[tokio::test]
+    async fn run_rule_for_test_reports_rate_limited_when_action_cap_exceeded() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = test_config(dir.path(), true);
+        let rule = Rule::from_draft(RuleDraft {
+            name: Some("rate rule".to_string()),
+            condition: Some(Condition::All(Vec::new())),
+            cooldown_secs: Some(1),
+            max_actions_per_hour: Some(1),
+            actions: Some(vec![RuleAction::Notify {
+                severity: "info".to_string(),
+            }]),
+            ..RuleDraft::default()
+        });
+        let event1 = RuleEvent::sample_threat("node-1");
+        let mut event2 = event1.clone();
+        if let RuleEvent::ThreatAlert { alert, .. } = &mut event2 {
+            alert.src_ip = "203.0.113.99".to_string();
+        }
+
+        let first = run_rule_for_test(config.clone(), "node-1", rule.clone(), event1).await;
+        assert_eq!(first.outcome, "dry-run");
+
+        let second = run_rule_for_test(config.clone(), "node-1", rule.clone(), event2).await;
+        assert_eq!(second.outcome, "rate-limited");
+    }
+
+    #[tokio::test]
+    async fn run_rule_for_test_reports_failed_when_guard_state_is_corrupted() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = test_config(dir.path(), true);
+        std::fs::create_dir_all(&config.paths.base).unwrap();
+        std::fs::write(&config.paths.state_file, b"not json").unwrap();
+
+        let rule = Rule::from_draft(RuleDraft {
+            name: Some("corrupt".to_string()),
+            condition: Some(Condition::All(Vec::new())),
+            ..RuleDraft::default()
+        });
+        let event = RuleEvent::sample_threat("node-1");
+
+        let execution = run_rule_for_test(config, "node-1", rule, event).await;
+        assert_eq!(execution.outcome, "failed");
+    }
+
+    // ---- run_rule_for_test: live (non-dry-run) dispatch -------------------------------
+
+    #[tokio::test]
+    async fn run_rule_for_test_downgrades_destructive_action_when_not_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = test_config(dir.path(), false);
+        let rule = Rule::from_draft(RuleDraft {
+            name: Some("destructive".to_string()),
+            condition: Some(Condition::All(Vec::new())),
+            actions: Some(vec![RuleAction::LockTransport]),
+            allow_destructive: Some(false),
+            ..RuleDraft::default()
+        });
+        let event = RuleEvent::sample_threat("node-1");
+
+        let execution = run_rule_for_test(config, "node-1", rule, event).await;
+        assert_eq!(execution.outcome, "downgraded");
+        // downgraded_report(LockTransport) + the RaiseAlert(critical) fallback report.
+        assert_eq!(execution.actions.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn run_rule_for_test_executes_non_destructive_action_when_live() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = test_config(dir.path(), false);
+        let rule = Rule::from_draft(RuleDraft {
+            name: Some("live notify".to_string()),
+            condition: Some(Condition::All(Vec::new())),
+            actions: Some(vec![RuleAction::Notify {
+                severity: "info".to_string(),
+            }]),
+            ..RuleDraft::default()
+        });
+        let event = RuleEvent::sample_threat("node-1");
+
+        let execution = run_rule_for_test(config, "node-1", rule, event).await;
+        assert_eq!(execution.outcome, "executed");
+    }
+
+    #[tokio::test]
+    async fn run_rule_for_test_runs_destructive_action_directly_when_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = test_config(dir.path(), false);
+        // LockTransport only ever writes a marker file under transport_lock_dir; it
+        // never touches a real network interface, so this stays fully offline.
+        config.transport_lock_interface = Some("eth0".to_string());
+        let rule = Rule::from_draft(RuleDraft {
+            name: Some("allowed destructive".to_string()),
+            condition: Some(Condition::All(Vec::new())),
+            actions: Some(vec![RuleAction::LockTransport]),
+            allow_destructive: Some(true),
+            ..RuleDraft::default()
+        });
+        let event = RuleEvent::sample_threat("node-1");
+
+        let execution = run_rule_for_test(config, "node-1", rule, event).await;
+        assert_eq!(execution.outcome, "executed");
+    }
+
+    // ---- process_event -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn process_event_completes_without_panicking_when_no_rules_registry_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = test_config(dir.path(), true);
+        let event = RuleEvent::sample_threat("node-1");
+        // No rules.json present, so load_registry short-circuits to an empty default
+        // registry without needing a real device key manager; the match loop has zero
+        // iterations and nothing is spawned.
+        process_event(config, "node-1".to_string(), event).await;
+    }
+
+    // ---- append_execution_at / list_executions_at --------------------------------------
+
+    #[test]
+    fn list_executions_at_returns_empty_when_file_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("executions.jsonl");
+        let out = list_executions_at(&path, None).unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn append_execution_at_appends_and_truncates_to_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("executions.jsonl");
+        for i in 0..5 {
+            append_execution_at(&path, &sample_execution(&format!("id-{}", i)), 3).unwrap();
+        }
+        let out = list_executions_at(&path, None).unwrap();
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0].id, "id-2");
+        assert_eq!(out[2].id, "id-4");
+    }
+
+    #[test]
+    fn list_executions_at_limit_returns_most_recent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("executions.jsonl");
+        for i in 0..5 {
+            append_execution_at(&path, &sample_execution(&format!("id-{}", i)), 100).unwrap();
+        }
+        let limited = list_executions_at(&path, Some(2)).unwrap();
+        assert_eq!(limited.len(), 2);
+        assert_eq!(limited[0].id, "id-3");
+        assert_eq!(limited[1].id, "id-4");
+    }
+
+    #[test]
+    fn list_executions_at_surfaces_error_on_corrupted_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("executions.jsonl");
+        std::fs::write(&path, "not valid json\n").unwrap();
+        let result = list_executions_at(&path, None);
+        assert!(result.is_err());
     }
 
     #[test]

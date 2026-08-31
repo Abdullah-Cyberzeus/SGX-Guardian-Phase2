@@ -3709,3 +3709,140 @@ fn json_equivalent(a: &str, b: &str) -> bool {
         _ => a.trim() == b.trim(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::Mutex as StdMutex;
+
+    static ENV_LOCK: StdMutex<()> = StdMutex::new(());
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn capture(key: &'static str) -> Self {
+            Self {
+                key,
+                previous: std::env::var_os(key),
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.as_ref() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[test]
+    fn env_true_accepts_only_the_documented_truthy_values() {
+        let _lock = ENV_LOCK.lock().expect("lock environment");
+        const KEY: &str = "SGX_MAIN_TEST_BOOLEAN_GATE";
+        let _guard = EnvGuard::capture(KEY);
+
+        std::env::remove_var(KEY);
+        assert!(!env_true(KEY));
+
+        for value in ["1", "true", "TRUE", "yes", "on"] {
+            std::env::set_var(KEY, value);
+            assert!(env_true(KEY), "{value} should enable the gate");
+        }
+        for value in ["0", "false", "True", "YES", "off", "", " true "] {
+            std::env::set_var(KEY, value);
+            assert!(!env_true(KEY), "{value:?} should not enable the gate");
+        }
+    }
+
+    #[test]
+    fn json_equivalent_handles_semantic_json_and_plain_text_fallbacks() {
+        assert!(json_equivalent(
+            r#"{"node":"nodeA","ports":[443,80]}"#,
+            r#"{ "ports": [443, 80], "node": "nodeA" }"#,
+        ));
+        assert!(!json_equivalent("[1,2]", "[2,1]"));
+        assert!(json_equivalent("  not-json  ", "not-json"));
+        assert!(!json_equivalent("not-json-a", "not-json-b"));
+        assert!(!json_equivalent(r#"{"valid":true}"#, "not-json"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn nebula_certificate_helpers_cover_success_failure_and_private_ip_shapes() {
+        let _lock = ENV_LOCK.lock().expect("lock environment");
+        let _path_guard = EnvGuard::capture("PATH");
+        let temp = tempfile::tempdir().expect("create temporary command directory");
+        let command = temp.path().join("nebula-cert");
+        let write_command = |body: &str| {
+            std::fs::write(&command, format!("#!/bin/sh\n{body}\n"))
+                .expect("write fake nebula-cert");
+            let mut permissions = std::fs::metadata(&command)
+                .expect("read fake command metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&command, permissions).expect("make fake command executable");
+        };
+        std::env::set_var("PATH", temp.path());
+
+        write_command("printf '%s\\n' 'Ips: 192.168.100.7/24'");
+        assert!(cert_matches_overlay_ip("ignored.crt", "192.168.100.7/24"));
+        assert_eq!(
+            read_ip_from_nebula_cert("ignored", "nodeA").as_deref(),
+            Some("192.168.100.7/24")
+        );
+
+        write_command("printf '%s\\n' 'overlay address 10.20.30.4/16, active'");
+        assert_eq!(
+            read_ip_from_nebula_cert("ignored", "nodeB").as_deref(),
+            Some("10.20.30.4/16")
+        );
+
+        write_command("printf '%s\\n' 'overlay address 172.16.5.2/24; active'");
+        assert_eq!(
+            read_ip_from_nebula_cert("ignored", "nodeC").as_deref(),
+            Some("172.16.5.2/24")
+        );
+
+        write_command("printf '%s\\n' 'overlay address 10.20.30.4 without cidr'");
+        assert!(read_ip_from_nebula_cert("ignored", "nodeD").is_none());
+
+        write_command("printf '%s\\n' 'certificate parse failed' >&2; exit 7");
+        assert!(!cert_matches_overlay_ip("missing.crt", "10.20.30.4/16"));
+    }
+
+    #[test]
+    fn missing_runtime_pcr_snapshot_returns_none() {
+        let node_id = format!(
+            "coverage-missing-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        );
+        assert!(read_runtime_virtual_id_pcr_snapshot(&node_id).is_none());
+    }
+
+    #[tokio::test]
+    async fn admin_tls_alias_reports_an_occupied_bind_address() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("reserve local port");
+        let bind = listener.local_addr().expect("read bound address");
+        let upstream = "127.0.0.1:9".parse().expect("parse upstream address");
+
+        let error = serve_admin_tls_alias(bind, upstream)
+            .await
+            .expect_err("second listener must not bind the occupied address");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse);
+    }
+}

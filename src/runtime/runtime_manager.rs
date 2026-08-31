@@ -576,8 +576,30 @@ impl RuntimeManager {
 mod tests {
     use super::RuntimeManager;
     use crate::network_selector::set_selected_interface;
+    use crate::runtime::errors::RuntimeError;
+    use crate::runtime::event_bus::{EventBus, RuntimeEvent};
     use crate::runtime::models::{GuardianConfig, RuntimeMode};
-    use crate::test_support::blocking_env_lock;
+    use crate::runtime::state::SystemState;
+    use crate::runtime::state_machine::StateMachine;
+    use crate::test_support::{async_env_lock, blocking_env_lock};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tempfile::TempDir;
+
+    fn new_manager() -> Arc<RuntimeManager> {
+        let event_bus = Arc::new(EventBus::new());
+        let state_machine = Arc::new(StateMachine::new(event_bus));
+        Arc::new(RuntimeManager::new(state_machine))
+    }
+
+    /// Points `GUARDIAN_CONFIG_FILE` at a fresh, isolated temp file holding
+    /// `config` so `ConfigStore::load()` never touches the real host config.
+    fn write_config(dir: &TempDir, config: &GuardianConfig) -> std::path::PathBuf {
+        let path = dir.path().join("wifi_config.json");
+        std::fs::write(&path, serde_json::to_string(config).expect("serialize config"))
+            .expect("write config file");
+        path
+    }
 
     #[test]
     fn detects_suricata_wifi_capture_references() {
@@ -658,5 +680,304 @@ mod tests {
             RuntimeManager::managed_interfaces(&RuntimeMode::DualWifi, &config),
             vec!["wlan1"]
         );
+    }
+
+    #[test]
+    fn mode_label_matches_all_variants() {
+        assert_eq!(RuntimeManager::mode_label(&RuntimeMode::Off), "Off");
+        assert_eq!(
+            RuntimeManager::mode_label(&RuntimeMode::HotspotOnly),
+            "HotspotOnly"
+        );
+        assert_eq!(
+            RuntimeManager::mode_label(&RuntimeMode::ClientOnly),
+            "ClientOnly"
+        );
+        assert_eq!(
+            RuntimeManager::mode_label(&RuntimeMode::DualWifi),
+            "DualWifi"
+        );
+    }
+
+    #[test]
+    fn verify_interface_exists_true_for_loopback() {
+        // "lo" is guaranteed to exist on any Linux host and querying it is a
+        // read-only `ip link show`, so this is safe without root or real hardware.
+        assert!(RuntimeManager::verify_interface_exists("lo"));
+    }
+
+    #[test]
+    fn verify_interface_exists_false_for_missing_interface() {
+        assert!(!RuntimeManager::verify_interface_exists(
+            "definitely-not-a-real-iface-zzz"
+        ));
+    }
+
+    #[tokio::test]
+    async fn start_hotspot_mode_errors_when_interface_missing() {
+        let manager = new_manager();
+        let mut config = GuardianConfig::default();
+        config.hotspot.interface = "zzz-fake-hotspot-iface".to_string();
+
+        let err = manager
+            .start_hotspot_mode(&config)
+            .await
+            .expect_err("a nonexistent hotspot interface must fail before any daemon starts");
+        assert!(matches!(err, RuntimeError::InvalidConfig(_)));
+
+        let status = manager.state_machine.get_status().await;
+        assert_eq!(status.state, SystemState::Error);
+        assert_eq!(
+            status.metadata.error_code.as_deref(),
+            Some("E_WIFI_MODULE_NOT_FOUND")
+        );
+    }
+
+    #[tokio::test]
+    async fn start_client_mode_errors_when_interface_missing() {
+        let manager = new_manager();
+        let mut config = GuardianConfig::default();
+        config.uplink.interface = "zzz-fake-uplink-iface".to_string();
+
+        let err = manager
+            .start_client_mode(&config)
+            .await
+            .expect_err("a nonexistent uplink interface must fail before wifi_client starts");
+        assert!(matches!(err, RuntimeError::InvalidConfig(_)));
+
+        let status = manager.state_machine.get_status().await;
+        assert_eq!(status.state, SystemState::Error);
+        assert_eq!(
+            status.metadata.error_code.as_deref(),
+            Some("E_WIFI_MODULE2_NOT_FOUND")
+        );
+    }
+
+    #[tokio::test]
+    async fn start_dual_wifi_mode_errors_when_uplink_interface_missing() {
+        let manager = new_manager();
+        let mut config = GuardianConfig::default();
+        // Both are fake; the uplink check runs first and must be what fails.
+        config.uplink.interface = "zzz-fake-uplink-iface".to_string();
+        config.hotspot.interface = "zzz-fake-hotspot-iface".to_string();
+
+        let err = manager
+            .start_dual_wifi_mode(&config)
+            .await
+            .expect_err("missing uplink interface must fail dual-wifi startup");
+        assert!(matches!(err, RuntimeError::InvalidConfig(_)));
+
+        let status = manager.state_machine.get_status().await;
+        assert_eq!(status.state, SystemState::Error);
+        assert_eq!(
+            status.metadata.error_code.as_deref(),
+            Some("E_WIFI_MODULE2_NOT_FOUND")
+        );
+    }
+
+    #[tokio::test]
+    async fn start_dual_wifi_mode_errors_when_hotspot_interface_missing_but_uplink_present() {
+        let manager = new_manager();
+        let mut config = GuardianConfig::default();
+        // "lo" passes the first (uplink) check, isolating the second (hotspot) check.
+        config.uplink.interface = "lo".to_string();
+        config.hotspot.interface = "zzz-fake-hotspot-iface".to_string();
+
+        let err = manager
+            .start_dual_wifi_mode(&config)
+            .await
+            .expect_err("missing hotspot interface must still fail dual-wifi startup");
+        assert!(matches!(err, RuntimeError::InvalidConfig(_)));
+
+        let status = manager.state_machine.get_status().await;
+        assert_eq!(status.state, SystemState::Error);
+        assert_eq!(
+            status.metadata.error_code.as_deref(),
+            Some("E_WIFI_MODULE_NOT_FOUND")
+        );
+    }
+
+    #[tokio::test]
+    async fn supervise_transition_reaches_target_and_completes() {
+        let manager = new_manager();
+
+        manager.clone().supervise_transition(RuntimeMode::Off).await;
+
+        let handle = manager
+            .supervisor_task
+            .lock()
+            .await
+            .take()
+            .expect("supervisor task should be recorded");
+        handle
+            .await
+            .expect("supervisor task should finish without panicking");
+
+        let status = manager.state_machine.get_status().await;
+        assert_eq!(status.state, SystemState::Idle);
+    }
+
+    #[tokio::test]
+    async fn supervise_transition_aborts_previous_task_on_duplicate_call() {
+        let _env_lock = async_env_lock().await;
+        let dir = TempDir::new().expect("tempdir");
+        // Default config has empty hotspot/uplink interfaces, so the first attempt
+        // is guaranteed to fail deterministically regardless of the host's real NICs.
+        write_config(&dir, &GuardianConfig::default());
+        std::env::set_var("GUARDIAN_CONFIG_FILE", dir.path().join("wifi_config.json"));
+
+        let event_bus = Arc::new(EventBus::new());
+        let mut events = event_bus.subscribe();
+        let state_machine = Arc::new(StateMachine::new(event_bus));
+        let manager = Arc::new(RuntimeManager::new(state_machine));
+
+        manager
+            .clone()
+            .supervise_transition(RuntimeMode::HotspotOnly)
+            .await;
+
+        // Wait for the first attempt to fail (it always will: no real interface
+        // named "" exists) so the supervisor loop is parked in its 10s backoff.
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match events.recv().await.expect("event bus closed unexpectedly") {
+                    RuntimeEvent::Error(_) => break,
+                    _ => continue,
+                }
+            }
+        })
+        .await
+        .expect("first supervised attempt did not fail within the timeout budget");
+
+        {
+            let guard = manager.supervisor_task.lock().await;
+            let task = guard.as_ref().expect("supervisor task should be recorded");
+            assert!(
+                !task.is_finished(),
+                "the first supervisor task should still be parked in its retry backoff"
+            );
+        }
+
+        // A second call must abort the still-retrying first task and take over.
+        manager.clone().supervise_transition(RuntimeMode::Off).await;
+
+        let handle = manager
+            .supervisor_task
+            .lock()
+            .await
+            .take()
+            .expect("replacement supervisor task should be recorded");
+        handle
+            .await
+            .expect("replacement supervisor task should finish without panicking");
+
+        std::env::remove_var("GUARDIAN_CONFIG_FILE");
+
+        let status = manager.state_machine.get_status().await;
+        assert_eq!(status.state, SystemState::Idle);
+    }
+
+    #[tokio::test]
+    async fn restart_reflects_persisted_config_mode() {
+        let _env_lock = async_env_lock().await;
+        let dir = TempDir::new().expect("tempdir");
+        let mut config = GuardianConfig::default();
+        config.mode = RuntimeMode::Off;
+        write_config(&dir, &config);
+        std::env::set_var("GUARDIAN_CONFIG_FILE", dir.path().join("wifi_config.json"));
+
+        let manager = new_manager();
+        let res = manager.restart().await;
+        std::env::remove_var("GUARDIAN_CONFIG_FILE");
+
+        assert!(res.is_ok());
+        let status = manager.state_machine.get_status().await;
+        assert_eq!(status.state, SystemState::Idle);
+    }
+
+    #[tokio::test]
+    async fn restart_propagates_config_load_failure() {
+        let _env_lock = async_env_lock().await;
+        let dir = TempDir::new().expect("tempdir");
+        let config_path = dir.path().join("wifi_config.json");
+        std::fs::write(&config_path, "{ not valid json").expect("write malformed config");
+        std::env::set_var("GUARDIAN_CONFIG_FILE", &config_path);
+
+        let manager = new_manager();
+        let res = manager.restart().await;
+        std::env::remove_var("GUARDIAN_CONFIG_FILE");
+
+        assert!(matches!(res, Err(RuntimeError::InvalidConfig(_))));
+    }
+
+    #[tokio::test]
+    async fn apply_saved_state_without_restore_flag_resets_idle() {
+        let _env_lock = async_env_lock().await;
+        let dir = TempDir::new().expect("tempdir");
+        let mut config = GuardianConfig::default();
+        config.mode = RuntimeMode::HotspotOnly; // a saved active mode...
+        config.flags.restore_on_boot = false; // ...must still be ignored here
+        write_config(&dir, &config);
+        std::env::set_var("GUARDIAN_CONFIG_FILE", dir.path().join("wifi_config.json"));
+
+        let manager = new_manager();
+        let res = manager.clone().apply_saved_state().await;
+        std::env::remove_var("GUARDIAN_CONFIG_FILE");
+
+        assert!(res.is_ok());
+        assert!(
+            manager.supervisor_task.lock().await.is_none(),
+            "restore disabled must never start a supervisor"
+        );
+        let status = manager.state_machine.get_status().await;
+        assert_eq!(status.state, SystemState::Idle);
+    }
+
+    #[tokio::test]
+    async fn apply_saved_state_off_mode_ignores_restore_flag() {
+        let _env_lock = async_env_lock().await;
+        let dir = TempDir::new().expect("tempdir");
+        let mut config = GuardianConfig::default();
+        config.mode = RuntimeMode::Off;
+        config.flags.restore_on_boot = true; // restore is on, but saved mode is already Off
+        write_config(&dir, &config);
+        std::env::set_var("GUARDIAN_CONFIG_FILE", dir.path().join("wifi_config.json"));
+
+        let manager = new_manager();
+        let res = manager.clone().apply_saved_state().await;
+        std::env::remove_var("GUARDIAN_CONFIG_FILE");
+
+        assert!(res.is_ok());
+        assert!(manager.supervisor_task.lock().await.is_none());
+        let status = manager.state_machine.get_status().await;
+        assert_eq!(status.state, SystemState::Idle);
+    }
+
+    #[tokio::test]
+    async fn apply_saved_state_with_restore_enabled_spawns_supervisor() {
+        let _env_lock = async_env_lock().await;
+        let dir = TempDir::new().expect("tempdir");
+        let mut config = GuardianConfig::default();
+        config.mode = RuntimeMode::HotspotOnly;
+        config.flags.restore_on_boot = true;
+        write_config(&dir, &config);
+        std::env::set_var("GUARDIAN_CONFIG_FILE", dir.path().join("wifi_config.json"));
+
+        let manager = new_manager();
+        let res = manager.clone().apply_saved_state().await;
+        std::env::remove_var("GUARDIAN_CONFIG_FILE");
+
+        assert!(res.is_ok());
+
+        // A supervisor must have been started to try to reach the saved mode;
+        // abort it immediately so it does not keep retrying past this test.
+        let mut guard = manager.supervisor_task.lock().await;
+        assert!(
+            guard.is_some(),
+            "restore_on_boot with a non-Off saved mode must start a supervisor"
+        );
+        if let Some(task) = guard.take() {
+            task.abort();
+        }
     }
 }

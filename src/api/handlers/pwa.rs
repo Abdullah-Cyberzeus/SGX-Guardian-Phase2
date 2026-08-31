@@ -1453,6 +1453,31 @@ fn audit_join_rejected(state: &AppState, actor: &str, reason: &str) {
 mod tests {
     use super::*;
 
+    fn enrollment_record(
+        approval_id: &str,
+        secret: &str,
+        state: &str,
+        expires_at: String,
+    ) -> MemberEnrollmentRecord {
+        MemberEnrollmentRecord {
+            approval_id: approval_id.into(),
+            invite_id: "invite-1".into(),
+            circle_id: "circle-1".into(),
+            circle_name: "Family".into(),
+            registration_id: "registration-1".into(),
+            member_did: "did:guardian:member".into(),
+            claim_hash: enrollment_claim_hash(secret),
+            state: state.into(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            expires_at,
+            user_id: None,
+            name: Some("Member".into()),
+            email: Some("member@example.test".into()),
+            decided_at: None,
+            additional_membership: false,
+        }
+    }
+
     #[test]
     fn fingerprint_is_stable_human_readable_and_eighty_bits() {
         let fingerprint = guardian_fingerprint(b"guardian-public-key");
@@ -1514,6 +1539,173 @@ mod tests {
         assert_eq!(visible.presence_status, "online");
         assert_eq!(visible.last_seen, "2026-08-17T12:00:00Z");
         assert!(visible.presence_expires_at.is_some());
+    }
+
+    #[test]
+    fn enrollment_claim_parser_accepts_valid_claim_and_rejects_invalid_shapes() {
+        let secret = "a".repeat(64);
+        let claim = format!(" approval-1.{secret} ");
+        let (approval_id, parsed_secret) =
+            parse_enrollment_claim(&claim).expect("valid enrollment claim");
+        assert_eq!(approval_id, "approval-1");
+        assert_eq!(parsed_secret, secret);
+
+        let invalid = [
+            "".to_string(),
+            "approval-only".to_string(),
+            format!(".{secret}"),
+            "approval.short".to_string(),
+            format!("approval-1.{}", "z".repeat(64)),
+        ];
+        for claim in invalid {
+            assert!(matches!(
+                parse_enrollment_claim(&claim),
+                Err(ApiError::BadRequest(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn enrollment_lookup_hashes_secret_and_distinguishes_missing_claims() {
+        let secret = "b".repeat(64);
+        let records = vec![enrollment_record(
+            "approval-1",
+            &secret,
+            "pending",
+            (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+        )];
+
+        assert_eq!(
+            enrollment_index_for_claim(&records, &format!("approval-1.{secret}"))
+                .expect("matching claim"),
+            0
+        );
+        assert!(matches!(
+            enrollment_index_for_claim(&records, &format!("approval-2.{secret}")),
+            Err(ApiError::NotFound(_))
+        ));
+        assert!(matches!(
+            enrollment_index_for_claim(&records, &format!("approval-1.{}", "c".repeat(64))),
+            Err(ApiError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn enrollment_expiry_and_view_cover_future_past_and_invalid_timestamps() {
+        let secret = "d".repeat(64);
+        let future = enrollment_record(
+            "future",
+            &secret,
+            "pending",
+            (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+        );
+        assert!(enrollment_not_expired(&future).is_ok());
+        assert_eq!(MemberEnrollmentView::from(&future).state, "pending");
+
+        let past = enrollment_record(
+            "past",
+            &secret,
+            "issued",
+            (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339(),
+        );
+        assert!(matches!(
+            enrollment_not_expired(&past),
+            Err(ApiError::BadRequest(_))
+        ));
+        assert_eq!(MemberEnrollmentView::from(&past).state, "expired");
+
+        let decided = enrollment_record(
+            "decided",
+            &secret,
+            "approved",
+            (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339(),
+        );
+        assert_eq!(MemberEnrollmentView::from(&decided).state, "approved");
+
+        let invalid = enrollment_record("invalid", &secret, "pending", "not-a-date".into());
+        assert!(matches!(
+            enrollment_not_expired(&invalid),
+            Err(ApiError::BadRequest(_))
+        ));
+    }
+
+    #[test]
+    fn enrollment_secrets_are_random_hex_and_hash_deterministically() {
+        let first = new_enrollment_secret();
+        let second = new_enrollment_secret();
+        assert_eq!(first.len(), 64);
+        assert!(first.chars().all(|value| value.is_ascii_hexdigit()));
+        assert_ne!(first, second);
+        assert_eq!(
+            enrollment_claim_hash("secret"),
+            enrollment_claim_hash("secret")
+        );
+        assert_ne!(
+            enrollment_claim_hash("secret"),
+            enrollment_claim_hash("rotated")
+        );
+    }
+
+    #[test]
+    fn display_name_role_and_presence_expiry_helpers_cover_fallbacks() {
+        let metadata = ContactMetadata {
+            display_name: Some("Preferred".into()),
+            full_name: Some("Full Name".into()),
+            ..ContactMetadata::default()
+        };
+        assert_eq!(
+            display_name_from("did:guardian:member", Some(&metadata), "Fallback"),
+            "Preferred"
+        );
+
+        let metadata = ContactMetadata {
+            display_name: Some("   ".into()),
+            full_name: Some("Full Name".into()),
+            ..ContactMetadata::default()
+        };
+        assert_eq!(
+            display_name_from("did:guardian:member", Some(&metadata), "Fallback"),
+            "Full Name"
+        );
+        assert_eq!(
+            display_name_from("did:guardian:member", None, "Fallback"),
+            "Fallback"
+        );
+        assert_eq!(
+            display_name_from("did:guardian:member", None, "  "),
+            "did:guardian:member"
+        );
+        assert_eq!(
+            role_label(&crate::vc::credential::CredentialRole::Owner),
+            "owner"
+        );
+        assert_eq!(
+            role_label(&crate::vc::credential::CredentialRole::Member),
+            "member"
+        );
+        assert!(presence_expiry_from("not-a-timestamp").is_none());
+        assert_eq!(normalized_fingerprint("ab-cd ef_01"), "ABCDEF01");
+    }
+
+    #[test]
+    fn registration_days_uses_positive_values_and_falls_back_for_invalid_values() {
+        const KEY: &str = "SGX_PWA_REGISTRATION_DAYS";
+        let previous = std::env::var_os(KEY);
+
+        std::env::remove_var(KEY);
+        assert_eq!(registration_days(), DEFAULT_REGISTRATION_DAYS);
+        std::env::set_var(KEY, "45");
+        assert_eq!(registration_days(), 45);
+        for value in ["0", "-1", "not-a-number"] {
+            std::env::set_var(KEY, value);
+            assert_eq!(registration_days(), DEFAULT_REGISTRATION_DAYS);
+        }
+
+        if let Some(previous) = previous {
+            std::env::set_var(KEY, previous);
+        } else {
+            std::env::remove_var(KEY);
+        }
     }
 }
 

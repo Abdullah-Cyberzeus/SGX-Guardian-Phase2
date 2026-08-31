@@ -197,4 +197,170 @@ mod tests {
             "entry_7890"
         );
     }
+
+    /// Spawns a tiny loopback HTTP server that answers each accepted connection with the
+    /// next queued (status, body) pair, in order. Purely local (127.0.0.1, ephemeral port) —
+    /// no real network, no external process.
+    async fn spawn_queue_server(responses: Vec<(u16, String)>) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            for (status, body) in responses {
+                if let Ok((mut socket, _)) = listener.accept().await {
+                    let mut buf = [0u8; 8192];
+                    let _ = socket.read(&mut buf).await;
+                    let reason = match status {
+                        200 => "OK",
+                        400 => "Bad Request",
+                        404 => "Not Found",
+                        _ => "Error",
+                    };
+                    let response = format!(
+                        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        status,
+                        reason,
+                        body.len(),
+                        body
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                    let _ = socket.shutdown().await;
+                }
+            }
+        });
+        format!("http://{}", addr)
+    }
+
+    fn local_creds() -> KasaCredentials {
+        KasaCredentials::new(Some("local".to_string()), None, None)
+    }
+
+    fn cloud_creds() -> KasaCredentials {
+        KasaCredentials::new(
+            Some("cloud".to_string()),
+            Some("user@example.com".to_string()),
+            Some("pass1234".to_string()),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_setup_kasa_config_entry_success_on_first_host() {
+        let base_url = spawn_queue_server(vec![
+            (200, r#"{"flow_id":"flow_kasa_ok"}"#.to_string()),
+            (
+                200,
+                r#"{"result":{"entry_id":"kasa_entry_ok_1"}}"#.to_string(),
+            ),
+        ])
+        .await;
+
+        let client = KasaHaConfigFlowClient::new(base_url, "tok".to_string());
+        let result = client.setup_kasa_config_entry(&local_creds()).await;
+        assert_eq!(result.unwrap(), "kasa_entry_ok_1");
+    }
+
+    #[tokio::test]
+    async fn test_setup_kasa_config_entry_already_configured() {
+        let base_url = spawn_queue_server(vec![
+            (200, r#"{"flow_id":"flow_kasa_already"}"#.to_string()),
+            (200, r#"{"reason":"already_configured"}"#.to_string()),
+        ])
+        .await;
+
+        let client = KasaHaConfigFlowClient::new(base_url, "tok".to_string());
+        let result = client.setup_kasa_config_entry(&local_creds()).await;
+        assert_eq!(result.unwrap(), "already_configured");
+    }
+
+    #[tokio::test]
+    async fn test_setup_kasa_config_entry_create_entry_without_explicit_id() {
+        let base_url = spawn_queue_server(vec![
+            (200, r#"{"flow_id":"flow_kasa_create"}"#.to_string()),
+            (200, r#"{"type":"create_entry"}"#.to_string()),
+        ])
+        .await;
+
+        let client = KasaHaConfigFlowClient::new(base_url, "tok".to_string());
+        let result = client.setup_kasa_config_entry(&local_creds()).await;
+        assert_eq!(result.unwrap(), "kasa_entry_created");
+    }
+
+    #[tokio::test]
+    async fn test_setup_kasa_config_entry_local_mode_no_devices_found() {
+        // init + one step attempt per fallback host (6), all inconclusive ("form" with no
+        // entry_id, no already_configured reason).
+        let mut responses = vec![(200, r#"{"flow_id":"flow_kasa_none"}"#.to_string())];
+        for _ in 0..6 {
+            responses.push((200, r#"{"type":"form"}"#.to_string()));
+        }
+        let base_url = spawn_queue_server(responses).await;
+
+        let client = KasaHaConfigFlowClient::new(base_url, "tok".to_string());
+        let result = client.setup_kasa_config_entry(&local_creds()).await;
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("No TP-Link Kasa devices found"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_setup_kasa_config_entry_cloud_mode_falls_back_to_saved() {
+        let mut responses = vec![(200, r#"{"flow_id":"flow_kasa_cloud"}"#.to_string())];
+        for _ in 0..6 {
+            responses.push((200, r#"{"type":"form"}"#.to_string()));
+        }
+        let base_url = spawn_queue_server(responses).await;
+
+        let client = KasaHaConfigFlowClient::new(base_url, "tok".to_string());
+        let result = client.setup_kasa_config_entry(&cloud_creds()).await;
+        assert_eq!(result.unwrap(), "kasa_cloud_saved");
+    }
+
+    #[tokio::test]
+    async fn test_setup_kasa_config_entry_initiate_rejected() {
+        let base_url = spawn_queue_server(vec![(400, r#"{"message":"bad handler"}"#.to_string())]).await;
+        let client = KasaHaConfigFlowClient::new(base_url, "tok".to_string());
+        let result = client.setup_kasa_config_entry(&local_creds()).await;
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("HA config flow initiation failed"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_setup_kasa_config_entry_unreachable_ha() {
+        // Port 1 on loopback: nothing listens there, so the connection is refused immediately.
+        // Local-only, no privileges required.
+        let client =
+            KasaHaConfigFlowClient::new("http://127.0.0.1:1".to_string(), "tok".to_string());
+        let result = client.setup_kasa_config_entry(&local_creds()).await;
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("Failed to initiate HA config flow"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_remove_kasa_config_entry_success() {
+        let base_url = spawn_queue_server(vec![(200, "{}".to_string())]).await;
+        let client = KasaHaConfigFlowClient::new(base_url, "tok".to_string());
+        let result = client.remove_kasa_config_entry("kasa_entry_1").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_remove_kasa_config_entry_failure() {
+        let base_url =
+            spawn_queue_server(vec![(404, r#"{"message":"not found"}"#.to_string())]).await;
+        let client = KasaHaConfigFlowClient::new(base_url, "tok".to_string());
+        let result = client.remove_kasa_config_entry("kasa_entry_missing").await;
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("Failed to remove HA config entry"),
+            "unexpected error: {err}"
+        );
+    }
 }

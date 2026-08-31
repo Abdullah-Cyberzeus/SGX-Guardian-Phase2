@@ -301,3 +301,87 @@ impl DhcpClientOrchestrator {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An interface name guaranteed not to exist on the host. Read-only
+    /// queries against it (`ip addr`, `ip route`, `/sys/class/net/.../address`,
+    /// `/proc` scans) deterministically come back empty/negative on every
+    /// platform, without any real network I/O and without touching real
+    /// routing/DHCP/system-service state.
+    const BOGUS_IFACE: &str = "sgxtest-bogus0";
+
+    // `start()`/`connect()`-style methods that spawn a real `udhcpc` process
+    // via `ProcessRunner`, and `ensure_default_route_and_dns` /
+    // `ensure_fallback_dns` (which mutate the real routing table and
+    // /etc/resolv.conf with no injectable path), are intentionally left
+    // uncovered: there is no seam to redirect them to a fake binary or a
+    // temp file, and exercising them for real would violate the "no real
+    // process/network/system-state mutation" isolation rules.
+
+    #[test]
+    fn new_orchestrator_has_no_runner() {
+        let orchestrator = DhcpClientOrchestrator::new(BOGUS_IFACE.to_string());
+        assert_eq!(orchestrator.interface, BOGUS_IFACE);
+        assert!(orchestrator.runner.is_none());
+        assert!(orchestrator.runner().is_none());
+    }
+
+    #[tokio::test]
+    async fn stop_without_a_running_process_is_a_noop() {
+        let mut orchestrator = DhcpClientOrchestrator::new(BOGUS_IFACE.to_string());
+        assert!(orchestrator.stop().await.is_ok());
+        assert!(orchestrator.runner.is_none());
+    }
+
+    #[tokio::test]
+    async fn is_network_ready_false_for_missing_interface() {
+        let orchestrator = DhcpClientOrchestrator::new(BOGUS_IFACE.to_string());
+        assert!(!orchestrator.is_network_ready().await);
+    }
+
+    #[tokio::test]
+    async fn wait_for_ip_times_out_immediately_with_zero_budget() {
+        // timeout_secs = 0 means the elapsed-time check is already false the
+        // instant it is evaluated, so the loop body (and therefore
+        // is_network_ready / ensure_default_route_and_dns) never runs at
+        // all — this deterministically exercises the timeout error path
+        // with zero real command invocations.
+        let orchestrator = DhcpClientOrchestrator::new(BOGUS_IFACE.to_string());
+        let result = orchestrator.wait_for_ip(0).await;
+        match result {
+            Err(NetbridgeError::ProcessExecutionFailed(msg)) => {
+                assert!(msg.contains("timed out"), "unexpected message: {msg}");
+                assert!(msg.contains(BOGUS_IFACE));
+            }
+            other => panic!("expected ProcessExecutionFailed(..timed out..), got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn get_gateway_ip_none_for_missing_interface() {
+        assert!(DhcpClientOrchestrator::get_gateway_ip(BOGUS_IFACE)
+            .await
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn get_mac_client_id_none_for_missing_interface() {
+        // /sys/class/net/<BOGUS_IFACE>/address does not exist, so the read
+        // fails and the function returns None without touching real
+        // hardware.
+        assert!(DhcpClientOrchestrator::get_mac_client_id(BOGUS_IFACE)
+            .await
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn terminate_stale_clients_is_a_noop_when_nothing_matches() {
+        // No process on this host will have "-i sgxtest-bogus0" in its
+        // /proc/<pid>/cmdline, so this exercises the /proc scan and filter
+        // logic without ever issuing a `kill` against a real process.
+        DhcpClientOrchestrator::terminate_stale_clients(BOGUS_IFACE).await;
+    }
+}

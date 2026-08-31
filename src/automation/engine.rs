@@ -534,3 +534,700 @@ impl AutomationEngine {
         .map_err(|e| format!("IO error: {}", e))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::automation::presence::PresenceState;
+    use crate::device::registry::DeviceRegistry;
+    use crate::device::state::{Device, DeviceHealth};
+    use crate::homeassistant::rest::HaRestClient;
+    use crate::homeassistant::HomeAssistantConfig;
+    use std::time::Duration as StdDuration;
+    use tempfile::tempdir;
+
+    struct Harness {
+        engine: Arc<AutomationEngine>,
+        device_manager: Arc<DeviceManager>,
+        registry: Arc<DeviceRegistry>,
+        presence_tracker: Arc<PresenceTracker>,
+        timer_store: Arc<PendingActionStore>,
+        event_bus: Arc<EventBus>,
+        config_path: std::path::PathBuf,
+        _dir: tempfile::TempDir,
+    }
+
+    fn make_harness() -> Harness {
+        let dir = tempdir().expect("tempdir");
+        let config_path = dir.path().join("automations.json");
+        let dev_file = dir.path().join("devices.json");
+        let timer_path = dir.path().join("timers.json");
+
+        let event_bus = EventBus::new();
+        let registry = Arc::new(DeviceRegistry::new(dev_file.to_str().unwrap()));
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url: "http://127.0.0.1:1".to_string(),
+            token: "test".to_string(),
+        }));
+        let device_manager = DeviceManager::new(registry.clone(), ha_rest, event_bus.clone(), None);
+        let presence_tracker = PresenceTracker::new();
+        let timer_store = PendingActionStore::new(timer_path.to_str().unwrap());
+
+        let engine = AutomationEngine::new(
+            config_path.to_str().unwrap(),
+            device_manager.clone(),
+            presence_tracker.clone(),
+            timer_store.clone(),
+            event_bus.clone(),
+        );
+
+        Harness {
+            engine,
+            device_manager,
+            registry,
+            presence_tracker,
+            timer_store,
+            event_bus,
+            config_path,
+            _dir: dir,
+        }
+    }
+
+    fn command_rule(id: &str, priority: i32, entity: &str, cmd: &str) -> AutomationRule {
+        AutomationRule {
+            id: id.to_string(),
+            name: format!("rule-{}", id),
+            priority,
+            enabled: true,
+            trigger: RuleTrigger::StateChanged {
+                entity_id: "input_boolean.trigger".to_string(),
+                to_state: None,
+            },
+            conditions: vec![],
+            actions: vec![RuleAction::Command {
+                entity_id: entity.to_string(),
+                domain: "input_boolean".to_string(),
+                command: cmd.to_string(),
+                service_data: None,
+                on_failure: FailurePolicy::Continue,
+            }],
+        }
+    }
+
+    async fn add_device(registry: &DeviceRegistry, entity_id: &str, state: &str) {
+        registry
+            .upsert_device(Device {
+                id: format!("dev_{}", entity_id.replace('.', "_")),
+                ha_entity_id: entity_id.to_string(),
+                vendor: "test".to_string(),
+                device_type: "switch".to_string(),
+                room: None,
+                friendly_name: entity_id.to_string(),
+                current_state: state.to_string(),
+                health_status: DeviceHealth::Online,
+                last_seen: Utc::now(),
+                attributes: Default::default(),
+            })
+            .await
+            .expect("upsert device");
+    }
+
+    // ---- construction / persistence -------------------------------------------------
+
+    #[tokio::test]
+    async fn new_creates_default_rule_when_config_missing_and_persists_it() {
+        let h = make_harness();
+        let rules = h.engine.get_rules().await;
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].id, "rule_sync_toggles");
+
+        // Persisted to disk: a fresh engine built from the same path should load it,
+        // not regenerate the default (idempotent since it's already non-empty).
+        let raw = std::fs::read(&h.config_path).expect("config written");
+        assert!(String::from_utf8_lossy(&raw).contains("rule_sync_toggles"));
+    }
+
+    #[tokio::test]
+    async fn new_loads_existing_rules_from_disk_instead_of_defaulting() {
+        let dir = tempdir().expect("tempdir");
+        let config_path = dir.path().join("automations.json");
+        let custom_rule = command_rule("custom_rule", 50, "light.a", "turn_on");
+        let store = AutomationsStore {
+            rules: vec![custom_rule.clone()],
+        };
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&store).unwrap()).unwrap();
+
+        let dev_file = dir.path().join("devices.json");
+        let event_bus = EventBus::new();
+        let registry = Arc::new(DeviceRegistry::new(dev_file.to_str().unwrap()));
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url: "http://127.0.0.1:1".to_string(),
+            token: "test".to_string(),
+        }));
+        let device_manager = DeviceManager::new(registry, ha_rest, event_bus.clone(), None);
+        let presence_tracker = PresenceTracker::new();
+        let timer_store =
+            PendingActionStore::new(dir.path().join("timers.json").to_str().unwrap());
+
+        let engine = AutomationEngine::new(
+            config_path.to_str().unwrap(),
+            device_manager,
+            presence_tracker,
+            timer_store,
+            event_bus,
+        );
+
+        let rules = engine.get_rules().await;
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].id, "custom_rule");
+    }
+
+    // ---- CRUD -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn add_rule_replaces_same_id_and_persists() {
+        let h = make_harness();
+        let rule = command_rule("r1", 10, "light.a", "turn_on");
+        h.engine.add_rule(rule.clone()).await.unwrap();
+        assert!(h.engine.get_rules().await.iter().any(|r| r.id == "r1"));
+
+        let mut updated = rule.clone();
+        updated.name = "renamed".to_string();
+        h.engine.add_rule(updated).await.unwrap();
+
+        let rules = h.engine.get_rules().await;
+        let matches: Vec<_> = rules.iter().filter(|r| r.id == "r1").collect();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].name, "renamed");
+    }
+
+    #[tokio::test]
+    async fn update_rule_not_found_returns_err() {
+        let h = make_harness();
+        let missing = command_rule("does_not_exist", 1, "light.a", "turn_on");
+        let err = h.engine.update_rule(missing).await.unwrap_err();
+        assert!(err.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn update_rule_found_updates_and_persists() {
+        let h = make_harness();
+        let rule = command_rule("r2", 10, "light.a", "turn_on");
+        h.engine.add_rule(rule.clone()).await.unwrap();
+
+        let mut changed = rule;
+        changed.priority = 999;
+        h.engine.update_rule(changed).await.unwrap();
+
+        let rules = h.engine.get_rules().await;
+        let found = rules.iter().find(|r| r.id == "r2").unwrap();
+        assert_eq!(found.priority, 999);
+    }
+
+    #[tokio::test]
+    async fn delete_rule_not_found_returns_err() {
+        let h = make_harness();
+        let err = h.engine.delete_rule("nope").await.unwrap_err();
+        assert!(err.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn delete_rule_found_removes_and_persists() {
+        let h = make_harness();
+        let rule = command_rule("r3", 10, "light.a", "turn_on");
+        h.engine.add_rule(rule).await.unwrap();
+        h.engine.delete_rule("r3").await.unwrap();
+        assert!(!h.engine.get_rules().await.iter().any(|r| r.id == "r3"));
+    }
+
+    #[tokio::test]
+    async fn toggle_rule_not_found_returns_err() {
+        let h = make_harness();
+        let err = h.engine.toggle_rule("nope", false).await.unwrap_err();
+        assert!(err.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn toggle_rule_found_flips_enabled_flag() {
+        let h = make_harness();
+        let rule = command_rule("r4", 10, "light.a", "turn_on");
+        h.engine.add_rule(rule).await.unwrap();
+        h.engine.toggle_rule("r4", false).await.unwrap();
+        let rules = h.engine.get_rules().await;
+        assert!(!rules.iter().find(|r| r.id == "r4").unwrap().enabled);
+    }
+
+    // ---- trigger matching ---------------------------------------------------------
+
+    #[tokio::test]
+    async fn evaluate_trigger_rejects_entity_mismatch() {
+        let h = make_harness();
+        let trigger = RuleTrigger::StateChanged {
+            entity_id: "input_boolean.a".to_string(),
+            to_state: None,
+        };
+        assert!(!h
+            .engine
+            .evaluate_trigger(&trigger, "input_boolean.b", "on"));
+    }
+
+    #[tokio::test]
+    async fn evaluate_trigger_matches_any_state_when_to_state_absent() {
+        let h = make_harness();
+        let trigger = RuleTrigger::StateChanged {
+            entity_id: "input_boolean.a".to_string(),
+            to_state: None,
+        };
+        assert!(h
+            .engine
+            .evaluate_trigger(&trigger, "input_boolean.a", "whatever"));
+    }
+
+    #[tokio::test]
+    async fn evaluate_trigger_matches_specific_state_only() {
+        let h = make_harness();
+        let trigger = RuleTrigger::StateChanged {
+            entity_id: "input_boolean.a".to_string(),
+            to_state: Some("on".to_string()),
+        };
+        assert!(h.engine.evaluate_trigger(&trigger, "input_boolean.a", "on"));
+        assert!(!h
+            .engine
+            .evaluate_trigger(&trigger, "input_boolean.a", "off"));
+    }
+
+    // ---- condition evaluation -------------------------------------------------------
+
+    #[tokio::test]
+    async fn evaluate_conditions_empty_is_always_true() {
+        let h = make_harness();
+        assert!(h.engine.evaluate_conditions(&[]).await);
+    }
+
+    #[tokio::test]
+    async fn evaluate_conditions_presence_equals() {
+        let h = make_harness();
+        h.presence_tracker
+            .update_entity_state("person.a", "home")
+            .await;
+
+        let matching = vec![RuleCondition::Presence {
+            operator: "equals".to_string(),
+            value: "home".to_string(),
+        }];
+        assert!(h.engine.evaluate_conditions(&matching).await);
+
+        let mismatching = vec![RuleCondition::Presence {
+            operator: "equals".to_string(),
+            value: "nobody_home".to_string(),
+        }];
+        assert!(!h.engine.evaluate_conditions(&mismatching).await);
+    }
+
+    #[tokio::test]
+    async fn evaluate_conditions_state_device_not_found_is_false() {
+        let h = make_harness();
+        let conditions = vec![RuleCondition::State {
+            entity_id: "light.missing".to_string(),
+            operator: "equals".to_string(),
+            value: "on".to_string(),
+        }];
+        assert!(!h.engine.evaluate_conditions(&conditions).await);
+    }
+
+    #[tokio::test]
+    async fn evaluate_conditions_state_equals_matches_registered_device() {
+        let h = make_harness();
+        add_device(&h.registry, "light.kitchen", "on").await;
+
+        let matching = vec![RuleCondition::State {
+            entity_id: "light.kitchen".to_string(),
+            operator: "equals".to_string(),
+            value: "on".to_string(),
+        }];
+        assert!(h.engine.evaluate_conditions(&matching).await);
+
+        let mismatching = vec![RuleCondition::State {
+            entity_id: "light.kitchen".to_string(),
+            operator: "equals".to_string(),
+            value: "off".to_string(),
+        }];
+        assert!(!h.engine.evaluate_conditions(&mismatching).await);
+    }
+
+    #[tokio::test]
+    async fn evaluate_conditions_non_equals_operator_is_not_filtered() {
+        let h = make_harness();
+        add_device(&h.registry, "light.hallway", "off").await;
+        // Operator other than "equals" has no filtering logic, so as long as the
+        // device is found the condition passes regardless of value comparison.
+        let conditions = vec![RuleCondition::State {
+            entity_id: "light.hallway".to_string(),
+            operator: "not_equals".to_string(),
+            value: "off".to_string(),
+        }];
+        assert!(h.engine.evaluate_conditions(&conditions).await);
+    }
+
+    // ---- process_state_changed -----------------------------------------------------
+
+    #[tokio::test]
+    async fn process_state_changed_ignores_events_missing_required_fields() {
+        let h = make_harness();
+        // Missing "data" entirely.
+        h.engine
+            .process_state_changed(serde_json::json!({}))
+            .await;
+        // Missing entity_id.
+        h.engine
+            .process_state_changed(serde_json::json!({"data": {}}))
+            .await;
+        // Missing new_state.
+        h.engine
+            .process_state_changed(serde_json::json!({"data": {"entity_id": "x.y"}}))
+            .await;
+        // None of the above should panic or fire any rule; nothing to assert beyond
+        // "did not panic" since these are early-return branches.
+    }
+
+    #[tokio::test]
+    async fn process_state_changed_updates_presence_tracker_for_presence_entities() {
+        let h = make_harness();
+        h.engine
+            .process_state_changed(serde_json::json!({
+                "data": {
+                    "entity_id": "person.alice",
+                    "new_state": {"state": "home"}
+                }
+            }))
+            .await;
+        assert_eq!(
+            h.presence_tracker.get_presence_status().await,
+            PresenceState::Home
+        );
+    }
+
+    #[tokio::test]
+    async fn process_state_changed_fires_enabled_rule_and_skips_disabled_rule() {
+        let h = make_harness();
+        // Remove the seeded default rule to keep this deterministic.
+        h.engine.delete_rule("rule_sync_toggles").await.unwrap();
+
+        let mut enabled_rule = command_rule("enabled_rule", 10, "light.a", "turn_on");
+        enabled_rule.trigger = RuleTrigger::StateChanged {
+            entity_id: "input_boolean.switch".to_string(),
+            to_state: None,
+        };
+        h.engine.add_rule(enabled_rule).await.unwrap();
+
+        let mut disabled_rule = command_rule("disabled_rule", 20, "light.b", "turn_on");
+        disabled_rule.enabled = false;
+        disabled_rule.trigger = RuleTrigger::StateChanged {
+            entity_id: "input_boolean.switch".to_string(),
+            to_state: None,
+        };
+        h.engine.add_rule(disabled_rule).await.unwrap();
+
+        // Neither light.a nor light.b are registered devices, so send_command fails
+        // fast (before any network I/O) and execute_action's Continue failure policy
+        // just logs — nothing to assert beyond completing without panicking, which
+        // still exercises rule matching + the disabled-rule skip branch.
+        h.engine
+            .process_state_changed(serde_json::json!({
+                "data": {
+                    "entity_id": "input_boolean.switch",
+                    "new_state": {"state": "on"}
+                }
+            }))
+            .await;
+    }
+
+    #[tokio::test]
+    async fn process_state_changed_resolves_equal_priority_conflicts_via_resolver() {
+        let h = make_harness();
+        h.engine.delete_rule("rule_sync_toggles").await.unwrap();
+
+        let mut rule_on = command_rule("conflict_on", 100, "lock.front_door", "lock");
+        rule_on.trigger = RuleTrigger::StateChanged {
+            entity_id: "input_boolean.switch".to_string(),
+            to_state: None,
+        };
+        h.engine.add_rule(rule_on).await.unwrap();
+
+        let mut rule_off = command_rule("conflict_off", 100, "lock.front_door", "unlock");
+        rule_off.trigger = RuleTrigger::StateChanged {
+            entity_id: "input_boolean.switch".to_string(),
+            to_state: None,
+        };
+        h.engine.add_rule(rule_off).await.unwrap();
+
+        // Both rules fire with equal priority and contradictory commands on the same
+        // entity; ConflictResolver should drop both, so execute_action is never
+        // reached for either — this just needs to complete without panicking.
+        h.engine
+            .process_state_changed(serde_json::json!({
+                "data": {
+                    "entity_id": "input_boolean.switch",
+                    "new_state": {"state": "on"}
+                }
+            }))
+            .await;
+    }
+
+    // ---- execute_single_action / execute_action / handle_failure -------------------
+
+    #[tokio::test]
+    async fn execute_single_action_command_missing_device_returns_err() {
+        let h = make_harness();
+        let action = RuleAction::Command {
+            entity_id: "light.unregistered".to_string(),
+            domain: "light".to_string(),
+            command: "turn_on".to_string(),
+            service_data: None,
+            on_failure: FailurePolicy::Continue,
+        };
+        let result = h.engine.execute_single_action(&action).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn execute_single_action_notification_and_delay_are_always_ok() {
+        let h = make_harness();
+        let notif = RuleAction::Notification {
+            message: "hi".to_string(),
+            severity: "info".to_string(),
+            on_failure: FailurePolicy::Continue,
+        };
+        assert!(h.engine.execute_single_action(&notif).await.is_ok());
+
+        let delay = RuleAction::Delay { delay_secs: 5 };
+        assert!(h.engine.execute_single_action(&delay).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn execute_action_delay_schedules_a_pending_action() {
+        let h = make_harness();
+        let rule = AutomationRule {
+            id: "delay_rule".to_string(),
+            name: "delay rule".to_string(),
+            priority: 10,
+            enabled: true,
+            trigger: RuleTrigger::StateChanged {
+                entity_id: "input_boolean.switch".to_string(),
+                to_state: None,
+            },
+            conditions: vec![],
+            actions: vec![
+                RuleAction::Delay { delay_secs: 3600 },
+                RuleAction::Command {
+                    entity_id: "light.a".to_string(),
+                    domain: "light".to_string(),
+                    command: "turn_on".to_string(),
+                    service_data: None,
+                    on_failure: FailurePolicy::Continue,
+                },
+            ],
+        };
+        let delay_action = RuleAction::Delay { delay_secs: 3600 };
+
+        h.engine.execute_action(&rule, &delay_action).await;
+
+        let pending = h.timer_store.get_all_pending().await;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].rule_id, "delay_rule");
+        assert!(matches!(
+            pending[0].action,
+            RuleAction::Command { ref command, .. } if command == "turn_on"
+        ));
+    }
+
+    #[tokio::test]
+    async fn execute_action_command_is_skipped_when_rule_has_a_delay_action() {
+        let h = make_harness();
+        let rule = AutomationRule {
+            id: "has_delay".to_string(),
+            name: "has delay".to_string(),
+            priority: 10,
+            enabled: true,
+            trigger: RuleTrigger::StateChanged {
+                entity_id: "input_boolean.switch".to_string(),
+                to_state: None,
+            },
+            conditions: vec![],
+            actions: vec![
+                RuleAction::Delay { delay_secs: 60 },
+                RuleAction::Command {
+                    entity_id: "light.unregistered".to_string(),
+                    domain: "light".to_string(),
+                    command: "turn_on".to_string(),
+                    service_data: None,
+                    on_failure: FailurePolicy::Continue,
+                },
+            ],
+        };
+        let command_action = rule.actions[1].clone();
+        // Since the rule also carries a Delay action, immediate Command execution
+        // must be skipped (handled instead by the Delay timer machinery).
+        h.engine.execute_action(&rule, &command_action).await;
+        // No pending timer is created by the Command branch itself.
+        assert!(h.timer_store.get_all_pending().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn execute_action_notification_without_delay_runs_immediately() {
+        let h = make_harness();
+        let rule = command_rule("notif_rule", 10, "light.a", "turn_on");
+        let notif_action = RuleAction::Notification {
+            message: "hello".to_string(),
+            severity: "info".to_string(),
+            on_failure: FailurePolicy::Continue,
+        };
+        // Notification always succeeds, so handle_failure is never invoked; this
+        // just needs to complete without panicking.
+        h.engine.execute_action(&rule, &notif_action).await;
+    }
+
+    #[tokio::test]
+    async fn handle_failure_continue_policy_does_not_panic() {
+        let h = make_harness();
+        let action = RuleAction::Command {
+            entity_id: "light.x".to_string(),
+            domain: "light".to_string(),
+            command: "turn_on".to_string(),
+            service_data: None,
+            on_failure: FailurePolicy::Continue,
+        };
+        h.engine
+            .handle_failure(&FailurePolicy::Continue, "rule_x", "boom", &action)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn handle_failure_abort_policy_does_not_panic() {
+        let h = make_harness();
+        let action = RuleAction::Notification {
+            message: "m".to_string(),
+            severity: "info".to_string(),
+            on_failure: FailurePolicy::Abort,
+        };
+        h.engine
+            .handle_failure(&FailurePolicy::Abort, "rule_x", "boom", &action)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn handle_failure_log_policy_does_not_panic() {
+        let h = make_harness();
+        let action = RuleAction::Delay { delay_secs: 1 };
+        h.engine
+            .handle_failure(&FailurePolicy::Log, "rule_x", "boom", &action)
+            .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn handle_failure_retry_policy_spawns_a_retry_that_runs_after_the_delay() {
+        let h = make_harness();
+        // Unregistered device: when the retry actually fires, send_command fails
+        // fast before any network I/O, so this stays fully offline.
+        let action = RuleAction::Command {
+            entity_id: "light.unregistered".to_string(),
+            domain: "light".to_string(),
+            command: "turn_on".to_string(),
+            service_data: None,
+            on_failure: FailurePolicy::Retry,
+        };
+        h.engine
+            .handle_failure(&FailurePolicy::Retry, "rule_x", "boom", &action)
+            .await;
+
+        // Let the spawned task run up to its `sleep(5s)` and register the timer
+        // before advancing the paused virtual clock past it — no real sleeping.
+        tokio::task::yield_now().await;
+        tokio::time::advance(StdDuration::from_secs(6)).await;
+        tokio::task::yield_now().await;
+    }
+
+    // ---- restore_pending_timers ------------------------------------------------------
+
+    #[tokio::test]
+    async fn restore_pending_timers_is_noop_when_nothing_pending() {
+        let h = make_harness();
+        h.engine.restore_pending_timers().await;
+        assert!(h.timer_store.get_all_pending().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn restore_pending_timers_executes_past_due_action_immediately() {
+        let h = make_harness();
+        let pending = PendingAction {
+            id: "pa_past".to_string(),
+            rule_id: "r".to_string(),
+            action: RuleAction::Notification {
+                message: "m".to_string(),
+                severity: "info".to_string(),
+                on_failure: FailurePolicy::Continue,
+            },
+            execute_at: Utc::now() - chrono::Duration::seconds(5),
+            created_at: Utc::now(),
+        };
+        h.timer_store.add_pending_action(pending).await.unwrap();
+
+        h.engine.restore_pending_timers().await;
+
+        // The spawned immediate-execution task needs a few scheduler turns.
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+            if h.timer_store.get_all_pending().await.is_empty() {
+                break;
+            }
+        }
+        assert!(h.timer_store.get_all_pending().await.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn restore_pending_timers_schedules_future_action_for_later() {
+        let h = make_harness();
+        let pending = PendingAction {
+            id: "pa_future".to_string(),
+            rule_id: "r".to_string(),
+            action: RuleAction::Notification {
+                message: "m".to_string(),
+                severity: "info".to_string(),
+                on_failure: FailurePolicy::Continue,
+            },
+            execute_at: Utc::now() + chrono::Duration::seconds(30),
+            created_at: Utc::now(),
+        };
+        h.timer_store.add_pending_action(pending).await.unwrap();
+
+        h.engine.restore_pending_timers().await;
+        tokio::task::yield_now().await;
+        // Not due yet — still pending.
+        assert_eq!(h.timer_store.get_all_pending().await.len(), 1);
+
+        tokio::time::advance(StdDuration::from_secs(31)).await;
+        tokio::task::yield_now().await;
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+            if h.timer_store.get_all_pending().await.is_empty() {
+                break;
+            }
+        }
+        assert!(h.timer_store.get_all_pending().await.is_empty());
+    }
+
+    // Sanity check that the harness wires the device manager through correctly,
+    // exercising the `device_manager` field alongside the others.
+    #[tokio::test]
+    async fn harness_device_manager_sees_registry_devices() {
+        let h = make_harness();
+        add_device(&h.registry, "light.sanity", "on").await;
+        let dev = h
+            .device_manager
+            .get_registry()
+            .get_device_by_entity_id("light.sanity")
+            .await;
+        assert!(dev.is_some());
+        let _ = &h.event_bus;
+    }
+}

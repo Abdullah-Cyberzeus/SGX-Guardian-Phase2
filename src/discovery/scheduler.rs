@@ -364,3 +364,351 @@ fn seed_if_missing(path: &std::path::Path, contents: &str) {
         let _ = std::fs::rename(&tmp, path);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::discovery::connected_device::{ConnectedDevice, DeviceStatus};
+    use crate::test_support::async_env_lock;
+    use std::ffi::OsString;
+    use tempfile::tempdir;
+
+    /// Scopes an environment-variable mutation to the current test, restoring the prior
+    /// value (or removing it) on drop. Mirrors the `ScopedEnvVar` pattern already used in
+    /// `src/api/handlers/devices.rs` for the same `SGX_TEST_NMAP_XML_FILE` fixture hook.
+    struct ScopedEnvVar {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &std::path::Path) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.take() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    fn dummy_connected_device(id: &str, ip: &str) -> ConnectedDevice {
+        let now = Utc::now().to_rfc3339();
+        ConnectedDevice {
+            device_id: id.to_string(),
+            ip: ip.to_string(),
+            mac: None,
+            vendor: None,
+            hostname: None,
+            os_fingerprint: None,
+            os_cpe: Vec::new(),
+            open_ports: Vec::new(),
+            host_scripts: Vec::new(),
+            status: DeviceStatus::Approved,
+            first_seen: now.clone(),
+            last_seen: now,
+            vuln_triaged: false,
+            last_scan_intensity: None,
+        }
+    }
+
+    const SUCCESS_XML: &str = r#"
+<nmaprun scanner="nmap" args="nmap -oX - 127.0.0.1/32">
+  <host>
+    <status state="up" reason="localhost-response"/>
+    <address addr="127.0.0.1" addrtype="ipv4"/>
+    <hostnames>
+      <hostname name="localhost" type="PTR"/>
+    </hostnames>
+    <ports>
+      <port protocol="tcp" portid="443">
+        <state state="open"/>
+        <service name="https" product="nginx" version="1.20.1"/>
+      </port>
+    </ports>
+    <os>
+      <osmatch name="Linux 5.x" accuracy="98"/>
+    </os>
+  </host>
+</nmaprun>
+"#;
+
+    fn make_scheduler(dir: &std::path::Path, node_id: &str) -> DiscoveryScheduler {
+        DiscoveryScheduler {
+            node_id: node_id.to_string(),
+            config_path: dir.join("nmap.yaml"),
+            whitelist_path: dir.join("whitelist.yaml"),
+            inventory_path: dir.join("inventory.json"),
+            state: Arc::new(Mutex::new(Inventory::default())),
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // schedule_period / schedule_name: pure per-variant mapping
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn schedule_period_maps_every_kind_to_its_expected_duration() {
+        assert_eq!(
+            schedule_period(ScheduledScanKind::Hourly),
+            Duration::from_secs(3600)
+        );
+        assert_eq!(
+            schedule_period(ScheduledScanKind::Daily),
+            Duration::from_secs(86_400)
+        );
+    }
+
+    #[test]
+    fn schedule_name_maps_every_kind_to_its_expected_label() {
+        assert_eq!(schedule_name(ScheduledScanKind::Hourly), "hourly");
+        assert_eq!(schedule_name(ScheduledScanKind::Daily), "daily");
+    }
+
+    // -----------------------------------------------------------------
+    // seed_if_missing
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn seed_if_missing_creates_file_with_contents_when_absent() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("nmap.yaml");
+        assert!(!path.exists());
+
+        seed_if_missing(&path, DEFAULT_NMAP_YAML);
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(contents, DEFAULT_NMAP_YAML);
+    }
+
+    #[test]
+    fn seed_if_missing_leaves_existing_file_untouched() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("whitelist.yaml");
+        std::fs::write(&path, "custom: true\n").unwrap();
+
+        seed_if_missing(&path, DEFAULT_WHITELIST_YAML);
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            contents, "custom: true\n",
+            "an existing file must never be overwritten"
+        );
+    }
+
+    #[test]
+    fn seed_if_missing_creates_missing_parent_directories() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("nested").join("deep").join("nmap.yaml");
+        assert!(!path.parent().unwrap().exists());
+
+        seed_if_missing(&path, DEFAULT_NMAP_YAML);
+
+        assert!(path.exists());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), DEFAULT_NMAP_YAML);
+    }
+
+    #[test]
+    fn seed_if_missing_is_a_noop_when_a_directory_already_occupies_the_path() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("nmap.yaml");
+        std::fs::create_dir_all(&path).unwrap();
+
+        // `path.exists()` is true for a directory too, so the function must return early
+        // rather than attempting (and failing) to write a file over the directory.
+        seed_if_missing(&path, DEFAULT_NMAP_YAML);
+
+        assert!(path.is_dir(), "the directory must be left untouched");
+    }
+
+    // -----------------------------------------------------------------
+    // start(): synchronous seeding/loading portion only. The two `tokio::spawn`ed
+    // `run_schedule_loop` background loops are intentionally never awaited or driven
+    // through real elapsed time here (see module-level test-isolation notes) — the
+    // current-thread test runtime drops (and aborts) them when the test function
+    // returns without yielding, so no scan ever actually runs.
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn start_seeds_default_config_and_whitelist_files_when_absent() {
+        let dir = tempdir().unwrap();
+        let scheduler = make_scheduler(dir.path(), "node-start-seed");
+        let config_path = scheduler.config_path.clone();
+        let whitelist_path = scheduler.whitelist_path.clone();
+
+        // `start()` is synchronous itself; it only needs an active tokio runtime context
+        // (this test's) for the `tokio::spawn` calls inside it to register successfully.
+        // Those two spawned background loops are never polled (the test never yields),
+        // so no real scan or timer wait ever runs — see the module-level note above.
+        scheduler.start();
+
+        assert_eq!(
+            std::fs::read_to_string(&config_path).unwrap(),
+            DEFAULT_NMAP_YAML
+        );
+        assert_eq!(
+            std::fs::read_to_string(&whitelist_path).unwrap(),
+            DEFAULT_WHITELIST_YAML
+        );
+    }
+
+    #[tokio::test]
+    async fn start_loads_existing_inventory_into_shared_state() {
+        let dir = tempdir().unwrap();
+        let scheduler = make_scheduler(dir.path(), "node-start-load");
+
+        // Pre-seed both config/whitelist (so start() doesn't overwrite anything
+        // interesting) and an existing inventory file in the on-disk format
+        // `Inventory::save_atomic` produces.
+        std::fs::write(&scheduler.config_path, DEFAULT_NMAP_YAML).unwrap();
+        std::fs::write(&scheduler.whitelist_path, DEFAULT_WHITELIST_YAML).unwrap();
+
+        let mut seed_inventory = Inventory::default();
+        let device = dummy_connected_device("preloaded-1", "10.0.0.5");
+        seed_inventory.by_id.insert(device.device_id.clone(), device);
+        seed_inventory
+            .save_atomic(&scheduler.inventory_path)
+            .unwrap();
+
+        scheduler.clone().start();
+
+        let state = scheduler.state.lock().await;
+        assert_eq!(state.by_id.len(), 1);
+        assert!(state.by_id.contains_key("preloaded-1"));
+    }
+
+    // -----------------------------------------------------------------
+    // run_one (via the `run_one_for_test` hook): success, nmap failure, parse failure
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn run_one_success_persists_inventory_history_and_raw_xml() {
+        let _env_guard = async_env_lock().await;
+        let dir = tempdir().unwrap();
+        let fixture_path = dir.path().join("fixture.xml");
+        std::fs::write(&fixture_path, SUCCESS_XML).unwrap();
+        std::fs::write(
+            dir.path().join("whitelist.yaml"),
+            "version: \"1.0\"\ndevices: []\n",
+        )
+        .unwrap();
+
+        let scheduler = make_scheduler(dir.path(), "node-run-success");
+        let mut cfg = NmapConfig::default();
+        cfg.enabled = true;
+        cfg.target_cidr = Some("127.0.0.1/32".to_string());
+        cfg.timeout_secs = 10;
+
+        let _fixture_env = ScopedEnvVar::set("SGX_TEST_NMAP_XML_FILE", &fixture_path);
+
+        scheduler
+            .run_one_for_test(&cfg, ScheduledScanKind::Hourly, ScanIntensity::Standard)
+            .await
+            .expect("run_one should succeed with fixture xml");
+
+        {
+            let inv = scheduler.state.lock().await;
+            assert_eq!(inv.by_id.len(), 1);
+        }
+
+        let history_path = run_history::history_path(dir.path());
+        let contents = std::fs::read_to_string(&history_path).unwrap();
+        let record: serde_json::Value =
+            serde_json::from_str(contents.lines().next().unwrap()).unwrap();
+        assert_eq!(record["success"], true);
+        assert_eq!(record["schedule_kind"], "hourly");
+        assert_eq!(record["new_devices"], 1);
+
+        assert!(dir.path().join("raw").exists());
+    }
+
+    #[tokio::test]
+    async fn run_one_nmap_run_failure_records_history_and_returns_err() {
+        let _env_guard = async_env_lock().await;
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("whitelist.yaml"),
+            "version: \"1.0\"\ndevices: []\n",
+        )
+        .unwrap();
+
+        let scheduler = make_scheduler(dir.path(), "node-run-nmap-fail");
+        let mut cfg = NmapConfig::default();
+        cfg.enabled = true;
+        cfg.target_cidr = Some("127.0.0.1/32".to_string());
+        cfg.timeout_secs = 5;
+
+        // Points at a file that does not exist: the fixture-loader's `?` surfaces the
+        // read error as a run failure without ever touching a real nmap process.
+        let missing_fixture = dir.path().join("does-not-exist.xml");
+        let _fixture_env = ScopedEnvVar::set("SGX_TEST_NMAP_XML_FILE", &missing_fixture);
+
+        let err = scheduler
+            .run_one_for_test(&cfg, ScheduledScanKind::Daily, ScanIntensity::Stealth)
+            .await
+            .expect_err("a missing fixture file should surface as a run failure");
+        assert!(!err.to_string().is_empty());
+
+        let history_path = run_history::history_path(dir.path());
+        let contents = std::fs::read_to_string(&history_path).unwrap();
+        let record: serde_json::Value =
+            serde_json::from_str(contents.lines().next().unwrap()).unwrap();
+        assert_eq!(record["success"], false);
+        assert_eq!(record["schedule_kind"], "daily");
+        assert!(!record["error"].as_str().unwrap().is_empty());
+
+        assert!(
+            !scheduler.inventory_path.exists(),
+            "inventory must not be written when the scan never produced XML"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_one_parse_failure_records_history_with_raw_xml_path() {
+        let _env_guard = async_env_lock().await;
+        let dir = tempdir().unwrap();
+        let fixture_path = dir.path().join("garbage.xml");
+        std::fs::write(&fixture_path, "not xml at all").unwrap();
+        std::fs::write(
+            dir.path().join("whitelist.yaml"),
+            "version: \"1.0\"\ndevices: []\n",
+        )
+        .unwrap();
+
+        let scheduler = make_scheduler(dir.path(), "node-run-parse-fail");
+        let mut cfg = NmapConfig::default();
+        cfg.enabled = true;
+        cfg.target_cidr = Some("127.0.0.1/32".to_string());
+        cfg.timeout_secs = 5;
+
+        let _fixture_env = ScopedEnvVar::set("SGX_TEST_NMAP_XML_FILE", &fixture_path);
+
+        let err = scheduler
+            .run_one_for_test(&cfg, ScheduledScanKind::Hourly, ScanIntensity::Aggressive)
+            .await
+            .expect_err("malformed xml must fail to parse");
+        assert!(!err.to_string().is_empty());
+
+        let history_path = run_history::history_path(dir.path());
+        let contents = std::fs::read_to_string(&history_path).unwrap();
+        let record: serde_json::Value =
+            serde_json::from_str(contents.lines().next().unwrap()).unwrap();
+        assert_eq!(record["success"], false);
+        assert!(
+            record["raw_xml_path"].is_string(),
+            "raw XML is persisted for forensic re-parsing even when parsing fails"
+        );
+
+        assert!(
+            !scheduler.inventory_path.exists(),
+            "inventory must not be written when parsing failed"
+        );
+    }
+}

@@ -434,4 +434,61 @@ mod tests {
         );
         assert!(RoutingManager::is_operation_not_supported(&error));
     }
+
+    #[test]
+    fn does_not_misclassify_unrelated_process_errors() {
+        let error =
+            NetbridgeError::ProcessExecutionFailed("ip route replace: File exists".to_string());
+        assert!(!RoutingManager::is_operation_not_supported(&error));
+
+        let io_error = NetbridgeError::ValidationFailed("missing interface".to_string());
+        assert!(!RoutingManager::is_operation_not_supported(&io_error));
+    }
+
+    #[test]
+    fn parse_interface_cidr_returns_none_without_an_inet_line() {
+        let output = "5: wlan0: <UP>\n    inet6 fe80::1/64 scope link\n";
+        assert_eq!(parse_interface_cidr(output), None);
+        assert_eq!(parse_interface_cidr(""), None);
+    }
+
+    #[test]
+    fn parse_interface_cidr_skips_malformed_lines_and_finds_the_first_valid_one() {
+        // The first "inet " line is missing the CIDR prefix and must be skipped;
+        // the parser should fall through to the next well-formed line.
+        let output = "\
+5: wlan0: <UP>
+    inet 192.168.1.200 scope global wlan0
+    inet 10.0.0.5/16 scope global secondary wlan0
+";
+        assert_eq!(
+            parse_interface_cidr(output),
+            Some((Ipv4Addr::new(10, 0, 0, 5), 16))
+        );
+    }
+
+    #[test]
+    fn network_cidr_handles_prefix_boundaries() {
+        let ip = Ipv4Addr::new(192, 168, 1, 200);
+        assert_eq!(network_cidr(ip, 0).as_deref(), Some("0.0.0.0/0"));
+        assert_eq!(network_cidr(ip, 32).as_deref(), Some("192.168.1.200/32"));
+        assert_eq!(network_cidr(ip, 33), None);
+    }
+
+    #[test]
+    fn inferred_gateway_is_none_for_point_to_point_and_host_prefixes() {
+        let ip = Ipv4Addr::new(192, 168, 1, 200);
+        assert_eq!(inferred_gateway(ip, 31), None);
+        assert_eq!(inferred_gateway(ip, 32), None);
+        assert_eq!(
+            inferred_gateway(ip, 30),
+            Some(Ipv4Addr::new(192, 168, 1, 201))
+        );
+    }
+
+    #[test]
+    fn routing_manager_constructors_are_usable() {
+        let _explicit = RoutingManager::new();
+        let _default = RoutingManager::default();
+    }
 }

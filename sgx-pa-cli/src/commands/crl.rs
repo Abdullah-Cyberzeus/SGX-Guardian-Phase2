@@ -396,3 +396,29 @@ fn parse_severity(raw: &str) -> Result<Severity, String> {
 fn normalize_token(raw: &str) -> String {
     raw.trim().to_ascii_lowercase().replace([' ', '-'], "_")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_token, parse_reason, parse_severity};
+
+    #[test]
+    fn normalize_token_converts_spaces_and_dashes() {
+        assert_eq!(normalize_token("Policy Violation"), "policy_violation");
+        assert_eq!(normalize_token("administrative-removal"), "administrative_removal");
+    }
+
+    #[test]
+    fn parse_reason_maps_known_values() {
+        assert!(matches!(parse_reason("compromised"), Ok(_)));
+        assert!(matches!(parse_reason("lost"), Ok(_)));
+        assert!(parse_reason("Policy Violation").is_ok());
+        assert!(parse_reason("unknown-reason").is_err());
+    }
+
+    #[test]
+    fn parse_severity_maps_known_values() {
+        assert!(parse_severity("critical").is_ok());
+        assert!(parse_severity("High").is_ok());
+        assert!(parse_severity("bogus").is_err());
+    }
+}

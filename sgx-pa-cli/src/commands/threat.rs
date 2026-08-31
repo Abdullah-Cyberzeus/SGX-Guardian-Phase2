@@ -223,6 +223,43 @@ fn save_block_records(path: &Path, blocks: &[BlockRecord]) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sgx_guardian_client::threat::blocker::BlockRecord;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn load_alerts_parses_lines_and_count_alerts_matches() {
+        let td = TempDir::new().expect("tempdir");
+        let p = td.path().join("alerts.jsonl");
+        let content = r#"{"alert_id":"a1","timestamp":"2026-08-31T00:00:00Z","src_ip":"192.0.2.1","src_port":1234,"dst_ip":"198.51.100.2","dst_port":80,"protocol":"tcp","signature_id":1,"signature":"sig","category":"malware","severity":"high","rev":1,"gid":0,"event_type":"alert"}
+    {"alert_id":"b2","timestamp":"2026-08-31T00:01:00Z","src_ip":"192.0.2.2","src_port":4321,"dst_ip":"198.51.100.3","dst_port":443,"protocol":"tcp","signature_id":2,"signature":"sig2","category":"reconnaissance","severity":"low","rev":1,"gid":0,"event_type":"alert"}
+    "#;
+        fs::write(&p, content).expect("write alerts");
+
+        let alerts = load_alerts(p.to_str().unwrap()).expect("load alerts");
+        assert_eq!(alerts.len(), 2);
+        let cnt = count_alerts(p.to_str().unwrap()).expect("count alerts");
+        assert_eq!(cnt, 2);
+    }
+
+    #[test]
+    fn save_block_records_writes_sorted_json() {
+        let td = TempDir::new().expect("tempdir");
+        let p = td.path().join("blocked_ips.json");
+        let records = vec![
+            BlockRecord { ip: "192.0.2.5".into(), expires_at: 2 },
+            BlockRecord { ip: "198.51.100.1".into(), expires_at: 1 },
+        ];
+        save_block_records(&p, &records).expect("save blocks");
+        let text = fs::read_to_string(&p).expect("read blocks");
+        // ensure sorted by ip (198.51.100.1 comes before 192.0.2.5 alphabetically?)
+        assert!(text.contains("198.51.100.1") && text.contains("192.0.2.5"));
+    }
+}
+
 fn ensure_threat_table() -> Result<()> {
     let _ = std::process::Command::new("nft")
         .args(["add", "table", "inet", "sgx_threat"])

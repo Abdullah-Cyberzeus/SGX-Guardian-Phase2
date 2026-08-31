@@ -559,4 +559,496 @@ mod tests {
         assert_eq!(value["blocked"], 0);
         assert!(value.get("lastUpdated").is_some());
     }
+
+    // ── severity_matches ────────────────────────────────────────────────────
+
+    #[test]
+    fn severity_matches_is_case_insensitive_on_as_str() {
+        assert!(severity_matches(Severity::Critical, "critical"));
+        assert!(severity_matches(Severity::Critical, "CRITICAL"));
+        assert!(severity_matches(Severity::Critical, "Critical"));
+    }
+
+    #[test]
+    fn severity_matches_also_accepts_debug_repr() {
+        // as_str() gives "high"; Debug gives "High" — both should match.
+        assert!(severity_matches(Severity::High, "High"));
+    }
+
+    #[test]
+    fn severity_matches_rejects_unrelated_severity() {
+        assert!(!severity_matches(Severity::Low, "high"));
+        assert!(!severity_matches(Severity::Info, "critical"));
+    }
+
+    // ── modbus_rule_matches ─────────────────────────────────────────────────
+
+    #[test]
+    fn modbus_rule_matches_by_signature_id() {
+        let alert = ThreatAlert {
+            signature_id: 10000201,
+            signature: "unrelated text".into(),
+            ..alert_at(Severity::High, false, Utc::now())
+        };
+        assert!(modbus_rule_matches(&MODBUS_RULES[0], &alert));
+    }
+
+    #[test]
+    fn modbus_rule_matches_by_signature_text() {
+        let alert = ThreatAlert {
+            signature_id: 0,
+            signature: MODBUS_RULE_1_SIGNATURES[1].to_string(),
+            ..alert_at(Severity::High, false, Utc::now())
+        };
+        assert!(modbus_rule_matches(&MODBUS_RULES[0], &alert));
+    }
+
+    #[test]
+    fn modbus_rule_does_not_match_unrelated_alert() {
+        let alert = ThreatAlert {
+            signature_id: 99,
+            signature: "totally unrelated".into(),
+            ..alert_at(Severity::High, false, Utc::now())
+        };
+        assert!(!modbus_rule_matches(&MODBUS_RULES[0], &alert));
+    }
+
+    // ── parse_nft_block_ip ──────────────────────────────────────────────────
+
+    #[test]
+    fn parse_nft_block_ip_extracts_ipv4_saddr() {
+        let line = "        ip saddr 203.0.113.5 counter packets 1 bytes 60 drop # handle 4";
+        assert_eq!(
+            parse_nft_block_ip(line),
+            Some("203.0.113.5".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_nft_block_ip_extracts_ipv6_saddr_and_strips_trailing_comma() {
+        let line = "ip6 saddr fe80::1, drop # handle 9";
+        assert_eq!(parse_nft_block_ip(line), Some("fe80::1".to_string()));
+    }
+
+    #[test]
+    fn parse_nft_block_ip_returns_none_when_no_saddr_present() {
+        let line = "chain input { type filter hook input priority -10; }";
+        assert_eq!(parse_nft_block_ip(line), None);
+    }
+
+    // ── load_alerts / list_alerts / modbus_alerts (filesystem-backed) ───────
+
+    fn test_state(temp: &tempfile::TempDir) -> Arc<AppState> {
+        let config_dir = temp.path().join("config");
+        std::fs::create_dir_all(&config_dir).expect("config dir");
+        AppState::for_tests(temp.path(), "nodeA", config_dir.display().to_string())
+    }
+
+    fn write_alerts_jsonl(state: &AppState, alerts: &[ThreatAlert]) {
+        let path = PathBuf::from(&state.threat_state_dir).join("alerts.jsonl");
+        let mut body = String::new();
+        for alert in alerts {
+            body.push_str(&serde_json::to_string(alert).unwrap());
+            body.push('\n');
+        }
+        std::fs::write(path, body).expect("write alerts.jsonl");
+    }
+
+    #[tokio::test]
+    async fn load_alerts_returns_empty_vec_when_file_missing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = test_state(&temp);
+        let alerts = load_alerts(&state).await.expect("load_alerts");
+        assert!(alerts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn load_alerts_skips_malformed_json_lines() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = test_state(&temp);
+        let good = alert_at(Severity::High, false, Utc::now());
+        let path = PathBuf::from(&state.threat_state_dir).join("alerts.jsonl");
+        let body = format!(
+            "{}\nnot valid json\n\n{}\n",
+            serde_json::to_string(&good).unwrap(),
+            serde_json::to_string(&good).unwrap()
+        );
+        std::fs::write(path, body).expect("write alerts.jsonl");
+
+        let alerts = load_alerts(&state).await.expect("load_alerts");
+        assert_eq!(alerts.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_alerts_filters_by_severity_and_honors_limit() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = test_state(&temp);
+        let now = Utc::now();
+        let alerts = vec![
+            alert_at(Severity::Critical, false, now),
+            alert_at(Severity::Low, false, now),
+            alert_at(Severity::Critical, true, now),
+        ];
+        write_alerts_jsonl(&state, &alerts);
+
+        let axum::Json(all) = list_alerts(
+            State(state.clone()),
+            Query(AlertsQuery {
+                limit: None,
+                severity: None,
+            }),
+        )
+        .await
+        .expect("list_alerts");
+        assert_eq!(all.len(), 3);
+
+        let axum::Json(critical_only) = list_alerts(
+            State(state.clone()),
+            Query(AlertsQuery {
+                limit: None,
+                severity: Some("critical".into()),
+            }),
+        )
+        .await
+        .expect("list_alerts filtered");
+        assert_eq!(critical_only.len(), 2);
+        assert!(critical_only
+            .iter()
+            .all(|a| matches!(a.severity, Severity::Critical)));
+
+        let axum::Json(limited) = list_alerts(
+            State(state.clone()),
+            Query(AlertsQuery {
+                limit: Some(1),
+                severity: None,
+            }),
+        )
+        .await
+        .expect("list_alerts limited");
+        assert_eq!(limited.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn modbus_alerts_groups_matches_per_rule_and_dedups_signatures() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = test_state(&temp);
+        let now = Utc::now();
+        let mut matching = alert_at(Severity::High, false, now);
+        matching.signature_id = MODBUS_RULE_1_SIGNATURE_IDS[0];
+        matching.signature = MODBUS_RULE_1_SIGNATURES[0].to_string();
+        let mut matching2 = matching.clone();
+        matching2.alert_id = "second".into();
+        let mut unrelated = alert_at(Severity::Low, false, now);
+        unrelated.signature_id = 42;
+        unrelated.signature = "unrelated".into();
+
+        write_alerts_jsonl(&state, &[matching, matching2, unrelated]);
+
+        let axum::Json(response) = modbus_alerts(State(state))
+            .await
+            .expect("modbus_alerts");
+
+        assert_eq!(response.total_matches, 2);
+        let rule1 = response
+            .rules
+            .iter()
+            .find(|r| r.rule_id == 1)
+            .expect("rule 1 present");
+        assert!(rule1.matched);
+        assert_eq!(rule1.match_count, 2);
+        assert_eq!(rule1.matched_signatures.len(), 1);
+
+        let rule2 = response
+            .rules
+            .iter()
+            .find(|r| r.rule_id == 2)
+            .expect("rule 2 present");
+        assert!(!rule2.matched);
+        assert_eq!(rule2.match_count, 0);
+    }
+
+    #[tokio::test]
+    async fn modbus_alerts_returns_empty_summary_when_alerts_file_missing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = test_state(&temp);
+
+        let axum::Json(response) = modbus_alerts(State(state))
+            .await
+            .expect("modbus_alerts on missing file");
+
+        assert_eq!(response.total_matches, 0);
+        assert!(response.rules.iter().all(|r| !r.matched));
+    }
+
+    // ── list_blocks / active_block_count (blocked_ips.json fallback path) ───
+
+    fn write_block_records(state: &AppState, records: &[crate::threat::blocker::BlockRecord]) {
+        let path = PathBuf::from(&state.threat_state_dir).join("blocked_ips.json");
+        std::fs::write(path, serde_json::to_vec_pretty(records).unwrap())
+            .expect("write blocked_ips.json");
+    }
+
+    #[tokio::test]
+    async fn list_blocks_falls_back_to_file_and_dedups_sorted() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = test_state(&temp);
+        write_block_records(
+            &state,
+            &[
+                crate::threat::blocker::BlockRecord {
+                    ip: "203.0.113.9".into(),
+                    expires_at: Utc::now().timestamp() + 3600,
+                },
+                crate::threat::blocker::BlockRecord {
+                    ip: "203.0.113.1".into(),
+                    expires_at: Utc::now().timestamp() + 3600,
+                },
+            ],
+        );
+
+        let axum::Json(response) = list_blocks(State(state)).await.expect("list_blocks");
+        assert_eq!(
+            response.blocked,
+            vec!["203.0.113.1".to_string(), "203.0.113.9".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn list_blocks_is_empty_when_no_state_and_no_nft_rules() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = test_state(&temp);
+        let axum::Json(response) = list_blocks(State(state)).await.expect("list_blocks");
+        assert!(response.blocked.is_empty());
+    }
+
+    #[tokio::test]
+    async fn threat_intel_excludes_expired_blocks_from_active_count() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = test_state(&temp);
+        let now_ts = Utc::now().timestamp();
+        write_block_records(
+            &state,
+            &[
+                crate::threat::blocker::BlockRecord {
+                    ip: "203.0.113.20".into(),
+                    expires_at: now_ts + 3600,
+                },
+                crate::threat::blocker::BlockRecord {
+                    ip: "203.0.113.21".into(),
+                    expires_at: now_ts - 10,
+                },
+            ],
+        );
+
+        let axum::Json(response) = threat_intel(State(state)).await.expect("threat_intel");
+        assert_eq!(response.blocked, 1);
+    }
+
+    // ── get_config / set_config ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn get_config_returns_defaults_when_file_missing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = test_state(&temp);
+        let axum::Json(cfg) = get_config(State(state)).await.expect("get_config");
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.block_mode.as_str(), "alert_only");
+    }
+
+    #[tokio::test]
+    async fn set_config_persists_patched_fields() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = test_state(&temp);
+
+        let axum::Json(action) = set_config(
+            State(state.clone()),
+            Json(ThreatConfigPatch {
+                enabled: Some(true),
+                block_mode: Some(BlockMode::InlineBlock),
+                rule_update_hours: Some(12),
+                block_ttl_secs: Some(120),
+                block_exempt: Some(vec!["10.0.0.0/8".into()]),
+            }),
+        )
+        .await
+        .expect("set_config");
+        assert!(action.success);
+
+        let axum::Json(cfg) = get_config(State(state)).await.expect("get_config reload");
+        assert!(cfg.enabled);
+        assert_eq!(cfg.block_mode.as_str(), "inline_block");
+        assert_eq!(cfg.rule_update_hours, 12);
+        assert_eq!(cfg.block_ttl_secs, 120);
+        assert_eq!(cfg.block_exempt, vec!["10.0.0.0/8".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn set_config_rejects_invalid_ttl_with_bad_request() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = test_state(&temp);
+
+        let err = set_config(
+            State(state),
+            Json(ThreatConfigPatch {
+                enabled: None,
+                block_mode: None,
+                rule_update_hours: None,
+                block_ttl_secs: Some(0),
+                block_exempt: None,
+            }),
+        )
+        .await
+        .expect_err("zero ttl must be rejected");
+        assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn set_config_rejects_invalid_cidr_in_exempt_list() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = test_state(&temp);
+
+        let err = set_config(
+            State(state),
+            Json(ThreatConfigPatch {
+                enabled: None,
+                block_mode: None,
+                rule_update_hours: None,
+                block_ttl_secs: None,
+                block_exempt: Some(vec!["not-a-cidr".into()]),
+            }),
+        )
+        .await
+        .expect_err("invalid cidr must be rejected");
+        assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    // ── block_ip / unblock / update_rules / validate_config via sgx-pa-cli ──
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    /// Writes an executable shell script standing in for `sgx-pa-cli` and
+    /// points `SGX_PA_CLI_PATH` at it so `run_cli` never touches a real binary.
+    fn install_fake_cli(temp: &tempfile::TempDir, exit_code: i32) -> ScopedEnvVar {
+        use std::os::unix::fs::PermissionsExt;
+        let script_path = temp.path().join("fake-sgx-pa-cli.sh");
+        std::fs::write(
+            &script_path,
+            format!(
+                "#!/bin/sh\necho \"args: $@\"\necho \"boom\" 1>&2\nexit {}\n",
+                exit_code
+            ),
+        )
+        .expect("write fake cli");
+        std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod fake cli");
+        ScopedEnvVar::set(
+            "SGX_PA_CLI_PATH",
+            script_path.to_str().expect("script path"),
+        )
+    }
+
+    #[tokio::test]
+    async fn block_ip_reports_success_when_cli_exits_zero() {
+        let _guard = crate::test_support::async_env_lock().await;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _cli = install_fake_cli(&temp, 0);
+        let state = test_state(&temp);
+
+        let axum::Json(action) = block_ip(
+            State(state),
+            Json(BlockReq {
+                ip: "203.0.113.55".into(),
+            }),
+        )
+        .await
+        .expect("block_ip");
+
+        assert!(action.success);
+        assert!(action.stdout.contains("203.0.113.55"));
+    }
+
+    #[tokio::test]
+    async fn unblock_reports_failure_when_cli_exits_nonzero() {
+        let _guard = crate::test_support::async_env_lock().await;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _cli = install_fake_cli(&temp, 1);
+        let state = test_state(&temp);
+
+        let axum::Json(action) = unblock(
+            State(state),
+            Json(UnblockReq {
+                ip: "203.0.113.56".into(),
+            }),
+        )
+        .await
+        .expect("unblock (CLI reports failure but the endpoint itself succeeds)");
+
+        assert!(!action.success);
+        assert!(action.stderr.contains("boom"));
+    }
+
+    #[tokio::test]
+    async fn update_rules_and_validate_config_surface_cli_output() {
+        let _guard = crate::test_support::async_env_lock().await;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _cli = install_fake_cli(&temp, 0);
+        let state = test_state(&temp);
+
+        let axum::Json(update) = update_rules(State(state.clone()))
+            .await
+            .expect("update_rules");
+        assert!(update.success);
+
+        let axum::Json(validate) = validate_config(State(state))
+            .await
+            .expect("validate_config");
+        assert!(validate.success);
+    }
+
+    #[tokio::test]
+    async fn block_ip_returns_internal_error_when_cli_binary_is_missing() {
+        let _guard = crate::test_support::async_env_lock().await;
+        let temp = tempfile::tempdir().expect("tempdir");
+        // Point SGX_PA_CLI_PATH at a nonexistent file so resolve_pa_cli_path's
+        // override branch fails; on a normal dev/CI machine none of the other
+        // lookup strategies (PATH, exe-sibling, fixed install paths) resolve
+        // a real "sgx-pa-cli" either, so this deterministically surfaces the
+        // BinaryMissing error path. (We deliberately do not mutate PATH here
+        // since that would race with other tests running in parallel.)
+        let _cli = ScopedEnvVar::set(
+            "SGX_PA_CLI_PATH",
+            temp.path().join("does-not-exist").to_str().unwrap(),
+        );
+        let state = test_state(&temp);
+
+        let err = block_ip(
+            State(state),
+            Json(BlockReq {
+                ip: "203.0.113.57".into(),
+            }),
+        )
+        .await
+        .expect_err("missing sgx-pa-cli must surface as an error");
+        assert!(matches!(err, ApiError::Internal(_)));
+    }
 }

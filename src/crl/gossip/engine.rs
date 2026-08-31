@@ -762,6 +762,13 @@ fn audit_reject(node_id: &str, sender_did: &str, reason: &str) {
 #[cfg(test)]
 mod unit_tests {
     use super::*;
+    use crate::crl::entry::{RevocationReason, RevokerRole, CRL_CONTEXT_CORE, CRL_CONTEXT_SGX};
+    use crate::crl::list::CertificateRevocationList;
+    use crate::crl::persistence;
+    use crate::did::doc_persistence;
+    use crate::did::document::{DidDocument, Proof, ServiceEndpoint};
+    use crate::did::ResolverConfig;
+    use tempfile::TempDir;
 
     #[test]
     fn parse_nebula_endpoint_extracts_ip_from_cidr() {
@@ -798,5 +805,377 @@ mod unit_tests {
     fn threshold_count_floors_at_one() {
         assert_eq!(threshold_count(0, 80), 1);
         assert_eq!(threshold_count(1, 1), 1);
+    }
+
+    #[test]
+    fn threshold_count_full_percentage_equals_member_count() {
+        assert_eq!(threshold_count(5, 100), 5);
+        assert_eq!(threshold_count(1, 100), 1);
+    }
+
+    // --- test env helpers ---------------------------------------------------
+
+    /// Restores whatever value (if any) preceded an `env::set_var` call on
+    /// `key`, even if the test body panics. Mirrors the `CrlBaseGuard`
+    /// pattern already used in `crl::offline::sync` and `crl::gossip::store`.
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(previous) => std::env::set_var(self.key, previous),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    fn sample_crl_entry(id: &str, revoked_did: &str, timestamp: &str) -> CrlEntry {
+        CrlEntry {
+            context: vec![CRL_CONTEXT_CORE.into(), CRL_CONTEXT_SGX.into()],
+            id: id.to_string(),
+            r#type: vec!["VerifiableCredential".into(), "RevocationCredential".into()],
+            revoked_did: revoked_did.to_string(),
+            device_id: None,
+            user_id: None,
+            circle_id: "circle-1".to_string(),
+            reason: RevocationReason::Compromised,
+            severity: Severity::High,
+            timestamp: timestamp.to_string(),
+            revoker_did: "did:guardian:owner".to_string(),
+            revoker_role: RevokerRole::Owner,
+            evidence: None,
+            proof: Proof::default(),
+            peers_notified: vec![],
+            propagated: false,
+        }
+    }
+
+    fn sample_tombstone(id: &str, revoked_did: &str) -> UnrevokeTombstone {
+        UnrevokeTombstone {
+            context: vec![CRL_CONTEXT_CORE.into(), CRL_CONTEXT_SGX.into()],
+            id: id.to_string(),
+            r#type: vec!["VerifiableCredential".into(), "UnrevokeTombstone".into()],
+            revoked_did: revoked_did.to_string(),
+            original_entry_id: "urn:uuid:orig-1".into(),
+            owner_did: "did:guardian:owner".into(),
+            sequence: 1,
+            timestamp: "2026-01-01T00:00:00Z".into(),
+            proof: Proof::default(),
+            peers_notified: vec![],
+            propagated: false,
+        }
+    }
+
+    fn sample_peer_doc(
+        did: &str,
+        status: Option<&str>,
+        nebula_ip_cidr: Option<&str>,
+        node_name: &str,
+    ) -> DidDocument {
+        let mut service = Vec::new();
+        if let Some(cidr) = nebula_ip_cidr {
+            service.push(ServiceEndpoint {
+                id: format!("{did}#sgx-mesh"),
+                svc_type: "SGXNebulaMesh".into(),
+                service_endpoint: format!("nebula://{cidr}"),
+            });
+        }
+        DidDocument {
+            context: vec![],
+            id: did.to_string(),
+            controller: did.to_string(),
+            verification_method: vec![],
+            authentication: vec![],
+            assertion_method: vec![],
+            service,
+            sgx_node_name: Some(node_name.to_string()),
+            sgx_created: "2026-01-01T00:00:00Z".into(),
+            sgx_updated: "2026-01-01T00:00:00Z".into(),
+            sgx_version_id: 1,
+            sgx_method_spec_version: "1.0".into(),
+            sgx_status: status.map(|s| s.to_string()),
+            sgx_revoked_vm: vec![],
+            proof: None,
+        }
+    }
+
+    fn write_peer_doc(dir: &std::path::Path, name: &str, doc: &DidDocument) {
+        std::fs::write(
+            dir.join(format!("did_doc_{name}.json")),
+            serde_json::to_vec(doc).expect("serialize peer doc"),
+        )
+        .expect("write peer doc");
+    }
+
+    // --- did_record_path -----------------------------------------------
+
+    #[test]
+    fn did_record_path_defaults_when_env_unset() {
+        let _lock = crate::test_support::blocking_env_lock();
+        std::env::remove_var("SGX_GUARDIAN_DID_PATH");
+        assert_eq!(did_record_path(), crate::did::DEFAULT_DID_PATH);
+    }
+
+    #[test]
+    fn did_record_path_honors_env_override() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let _guard = EnvGuard::set("SGX_GUARDIAN_DID_PATH", "/tmp/custom-did-path.json");
+        assert_eq!(did_record_path(), "/tmp/custom-did-path.json");
+    }
+
+    // --- active_gossip_peers ---------------------------------------------
+
+    #[test]
+    fn active_gossip_peers_filters_self_inactive_revoked_and_missing_endpoint() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let peers_dir = TempDir::new().expect("peers tempdir");
+        let crl_dir = TempDir::new().expect("crl tempdir");
+        let _peers_guard =
+            EnvGuard::set(doc_persistence::PEERS_DOC_DIR_ENV, peers_dir.path());
+        let _crl_guard = EnvGuard::set(persistence::CRL_BASE_ENV, crl_dir.path());
+
+        let self_did = "did:guardian:self0000";
+        let revoked_did = "did:guardian:revoked0000";
+
+        write_peer_doc(
+            peers_dir.path(),
+            "self",
+            &sample_peer_doc(self_did, Some("active"), Some("10.0.0.1/24"), "self-node"),
+        );
+        write_peer_doc(
+            peers_dir.path(),
+            "inactive",
+            &sample_peer_doc(
+                "did:guardian:inactive0000",
+                Some("pending"),
+                Some("10.0.0.2/24"),
+                "inactive-node",
+            ),
+        );
+        write_peer_doc(
+            peers_dir.path(),
+            "noendpoint",
+            &sample_peer_doc(
+                "did:guardian:noendpoint0000",
+                Some("active"),
+                None,
+                "no-endpoint-node",
+            ),
+        );
+        write_peer_doc(
+            peers_dir.path(),
+            "revoked",
+            &sample_peer_doc(
+                revoked_did,
+                Some("active"),
+                Some("10.0.0.3/24"),
+                "revoked-node",
+            ),
+        );
+        write_peer_doc(
+            peers_dir.path(),
+            "valid",
+            &sample_peer_doc(
+                "did:guardian:valid0000",
+                Some("active"),
+                Some("10.0.0.4/24"),
+                "valid-node",
+            ),
+        );
+
+        let mut crl = CertificateRevocationList::new(self_did, "circle-1");
+        crl.entries.push(sample_crl_entry(
+            "urn:uuid:r1",
+            revoked_did,
+            "2026-01-01T00:00:00Z",
+        ));
+        persistence::save_crl(&crl).expect("save crl");
+
+        let peers = active_gossip_peers(self_did);
+
+        assert_eq!(peers.len(), 1, "peers: {peers:?}");
+        assert_eq!(peers[0].did, "did:guardian:valid0000");
+        assert_eq!(peers[0].overlay_ip, "10.0.0.4");
+        assert_eq!(peers[0].node_name, "valid-node");
+    }
+
+    #[test]
+    fn active_gossip_peers_returns_empty_when_peer_dir_missing() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let peers_dir = TempDir::new().expect("peers tempdir");
+        let missing = peers_dir.path().join("does-not-exist");
+        let _peers_guard = EnvGuard::set(doc_persistence::PEERS_DOC_DIR_ENV, &missing);
+        let peers = active_gossip_peers("did:guardian:self0000");
+        assert!(peers.is_empty());
+    }
+
+    // --- counters and last round ------------------------------------------
+
+    static ROUND_STATE_TEST_LOCK: Lazy<std::sync::Mutex<()>> =
+        Lazy::new(|| std::sync::Mutex::new(()));
+
+    #[test]
+    fn round_counters_reflect_recorded_increments() {
+        let _guard = ROUND_STATE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let before_initiated = rounds_initiated();
+        let before_served = rounds_served();
+        let before_merged = entries_merged_total();
+
+        ROUNDS_INITIATED.fetch_add(1, Ordering::Relaxed);
+        ROUNDS_SERVED.fetch_add(2, Ordering::Relaxed);
+        ENTRIES_MERGED.fetch_add(3, Ordering::Relaxed);
+
+        assert_eq!(rounds_initiated(), before_initiated + 1);
+        assert_eq!(rounds_served(), before_served + 2);
+        assert_eq!(entries_merged_total(), before_merged + 3);
+    }
+
+    #[test]
+    fn record_last_round_and_last_round_roundtrip() {
+        let _guard = ROUND_STATE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let round = LastRound {
+            direction: "initiated".into(),
+            peer_did: "did:guardian:peer".into(),
+            peer_node: "node-a".into(),
+            merged: 2,
+            sent: 1,
+            merkle_root: "root123".into(),
+            at: "2026-01-01T00:00:00Z".into(),
+        };
+        record_last_round(round.clone());
+        let got = last_round().expect("last round recorded");
+        assert_eq!(got.direction, "initiated");
+        assert_eq!(got.peer_did, "did:guardian:peer");
+        assert_eq!(got.merkle_root, "root123");
+        assert_eq!(got.merged, 2);
+        assert_eq!(got.sent, 1);
+    }
+
+    // --- audit_* helpers ----------------------------------------------------
+
+    #[test]
+    fn audit_merged_entries_handles_empty_and_typical_input_without_panicking() {
+        audit_merged_entries("node-x", &[], "did:guardian:peer");
+        let mut entry = sample_crl_entry(
+            "urn:uuid:audit1",
+            "did:guardian:target",
+            "2026-01-01T00:00:00Z",
+        );
+        entry.severity = Severity::Critical;
+        audit_merged_entries("node-x", std::slice::from_ref(&entry), "did:guardian:peer");
+        entry.severity = Severity::Low;
+        audit_merged_entries("node-x", std::slice::from_ref(&entry), "did:guardian:peer");
+    }
+
+    #[test]
+    fn audit_merged_tombstones_handles_empty_and_typical_input_without_panicking() {
+        audit_merged_tombstones("node-x", &[], "did:guardian:peer");
+        let tombstone = sample_tombstone("urn:uuid:ts1", "did:guardian:target");
+        audit_merged_tombstones(
+            "node-x",
+            std::slice::from_ref(&tombstone),
+            "did:guardian:peer",
+        );
+    }
+
+    #[test]
+    fn audit_propagated_handles_empty_and_typical_input_without_panicking() {
+        audit_propagated("node-x", &[], 2);
+        audit_propagated("node-x", &["urn:uuid:e1".to_string()], 2);
+    }
+
+    #[test]
+    fn audit_reject_does_not_panic() {
+        audit_reject("node-x", "did:guardian:bad", "some reason");
+    }
+
+    // --- verify_batch ---------------------------------------------------
+
+    #[tokio::test]
+    async fn verify_batch_returns_empty_for_empty_input() {
+        let resolver = Resolver::new(ResolverConfig::default());
+        let (entries, tombstones) = verify_batch("node-x", &[], &[], &resolver, "circle-1").await;
+        assert!(entries.is_empty());
+        assert!(tombstones.is_empty());
+    }
+
+    #[tokio::test]
+    async fn verify_batch_rejects_entry_with_circle_mismatch() {
+        let resolver = Resolver::new(ResolverConfig::default());
+        let entry = sample_crl_entry(
+            "urn:uuid:mismatch1",
+            "did:guardian:target",
+            "2026-01-01T00:00:00Z",
+        );
+        let (entries, _) = verify_batch(
+            "node-x",
+            std::slice::from_ref(&entry),
+            &[],
+            &resolver,
+            "other-circle",
+        )
+        .await;
+        assert!(entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn verify_batch_rejects_tombstone_with_missing_required_fields() {
+        let resolver = Resolver::new(ResolverConfig::default());
+        let tombstone = sample_tombstone("urn:uuid:badts", "");
+        let (_, tombstones) = verify_batch(
+            "node-x",
+            &[],
+            std::slice::from_ref(&tombstone),
+            &resolver,
+            "circle-1",
+        )
+        .await;
+        assert!(tombstones.is_empty());
+    }
+
+    // --- reject -----------------------------------------------------------
+
+    #[tokio::test]
+    async fn reject_writes_error_sync_response_to_peer() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (_read_half, mut write_half) = stream.into_split();
+            reject(&mut write_half, "did:guardian:me", "circle-1", "test rejection").await;
+        });
+
+        let client = TcpStream::connect(addr).await.expect("connect loopback");
+        let (read_half, _write_half) = client.into_split();
+        let mut reader = BufReader::new(read_half);
+        let line = protocol::read_json_line(&mut reader)
+            .await
+            .expect("read line");
+        server.await.expect("server task");
+
+        let response: SyncResponse = serde_json::from_str(line.trim()).expect("parse response");
+        assert_eq!(response.kind, KIND_RESPONSE);
+        assert_eq!(response.sender_did, "did:guardian:me");
+        assert_eq!(response.circle_id, "circle-1");
+        assert_eq!(response.error.as_deref(), Some("test rejection"));
+        assert!(response.entries.is_empty());
+        assert!(response.want.is_empty());
     }
 }

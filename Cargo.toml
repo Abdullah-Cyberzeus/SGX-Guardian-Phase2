@@ -67,6 +67,7 @@ tonic-prost-build = "0.14.5"
 rcgen = "0.12"
 uuid = { version = "1", features = ["v4"] }
 tower = { version = "0.4", features = ["util"] }
+tokio = { version = "1.37", features = ["test-util"] }
 
 [features]
 default = ["secure-element"]

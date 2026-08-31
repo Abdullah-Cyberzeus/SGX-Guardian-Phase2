@@ -342,3 +342,166 @@ impl Validator {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Every method on `Validator` other than `check_port_available` shells out
+    // directly to an external binary (iw, hostapd, dnsmasq, wpa_supplicant,
+    // udhcpc, ip, wpa_cli, id) via `std::process::Command` with no injectable
+    // runner/trait seam (unlike `ProcessRunner` used elsewhere in this crate).
+    // Their outcomes depend on which binaries exist on the host and, for
+    // `check_root_permissions`, on whether the test process itself is root —
+    // so they cannot be driven deterministically without touching real system
+    // binaries/state. Per the isolation rules (no root, no mocked process
+    // seam available), those methods are intentionally left uncovered here:
+    // detect_wifi_interface, check_ap_mode_support, check_dnsmasq_installed,
+    // validate_runtime_conditions, check_wpa_supplicant_installed,
+    // check_udhcpc_installed, check_interface_exists, check_root_permissions,
+    // check_client_mode_support, check_interface_not_busy,
+    // check_wifi_scan_works, validate_uplink_runtime_conditions.
+
+    #[test]
+    fn display_command_execution_failed() {
+        let err = ValidationError::CommandExecutionFailed("iw dev".to_string());
+        assert_eq!(err.to_string(), "Failed to execute command: iw dev");
+    }
+
+    #[test]
+    fn display_interface_not_found() {
+        assert_eq!(
+            ValidationError::InterfaceNotFound.to_string(),
+            "No WiFi interface found"
+        );
+    }
+
+    #[test]
+    fn display_ap_mode_not_supported() {
+        assert_eq!(
+            ValidationError::APModeNotSupported.to_string(),
+            "WiFi interface does not support AP mode"
+        );
+    }
+
+    #[test]
+    fn display_hostapd_not_installed() {
+        assert_eq!(
+            ValidationError::HostapdNotInstalled.to_string(),
+            "hostapd is not installed"
+        );
+    }
+
+    #[test]
+    fn display_iw_not_installed() {
+        assert_eq!(
+            ValidationError::IwNotInstalled.to_string(),
+            "iw is not installed"
+        );
+    }
+
+    #[test]
+    fn display_dnsmasq_not_installed() {
+        assert_eq!(
+            ValidationError::DnsmasqNotInstalled.to_string(),
+            "dnsmasq is not installed"
+        );
+    }
+
+    #[test]
+    fn display_port_in_use() {
+        assert_eq!(
+            ValidationError::PortInUse(6767).to_string(),
+            "Port 6767 is already in use by another service"
+        );
+    }
+
+    #[test]
+    fn display_wpa_supplicant_not_installed() {
+        assert_eq!(
+            ValidationError::WpaSupplicantNotInstalled.to_string(),
+            "wpa_supplicant is not installed"
+        );
+    }
+
+    #[test]
+    fn display_udhcpc_not_installed() {
+        assert_eq!(
+            ValidationError::UdhcpcNotInstalled.to_string(),
+            "udhcpc is not installed"
+        );
+    }
+
+    #[test]
+    fn display_interface_not_available() {
+        assert_eq!(
+            ValidationError::InterfaceNotAvailable("wlan9".to_string()).to_string(),
+            "Interface wlan9 is not available or does not exist"
+        );
+    }
+
+    #[test]
+    fn display_permission_denied() {
+        assert_eq!(
+            ValidationError::PermissionDenied.to_string(),
+            "Root permissions required to initialize network interfaces"
+        );
+    }
+
+    #[test]
+    fn display_client_mode_not_supported() {
+        assert_eq!(
+            ValidationError::ClientModeNotSupported.to_string(),
+            "WiFi interface does not support managed (client) mode"
+        );
+    }
+
+    #[test]
+    fn display_interface_busy() {
+        assert_eq!(
+            ValidationError::InterfaceBusy("wlan0".to_string()).to_string(),
+            "Interface wlan0 is currently busy or managed by another wpa_supplicant process"
+        );
+    }
+
+    #[test]
+    fn display_scan_failed() {
+        assert_eq!(
+            ValidationError::ScanFailed("wlan0".to_string()).to_string(),
+            "Hardware WiFi scan failed on interface wlan0"
+        );
+    }
+
+    #[test]
+    fn validator_new_and_default_construct() {
+        let _ = Validator::new();
+        let _ = Validator::default();
+    }
+
+    #[test]
+    fn check_port_available_reports_free_port() {
+        let validator = Validator::new();
+        // Bind to port 0 to let the OS pick a free ephemeral UDP port, then
+        // release it immediately so the port is free again for the check.
+        let probe = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind probe socket");
+        let port = probe.local_addr().expect("local addr").port();
+        drop(probe);
+
+        assert!(validator.check_port_available(port).is_ok());
+    }
+
+    #[test]
+    fn check_port_available_reports_conflict() {
+        let validator = Validator::new();
+        // Hold a UDP socket open on 0.0.0.0 so the subsequent bind attempt
+        // inside check_port_available (also on 0.0.0.0) collides with it.
+        let held = std::net::UdpSocket::bind("0.0.0.0:0").expect("bind held socket");
+        let port = held.local_addr().expect("local addr").port();
+
+        match validator.check_port_available(port) {
+            Err(ValidationError::PortInUse(p)) => assert_eq!(p, port),
+            other => panic!("expected PortInUse({}), got {:?}", port, other),
+        }
+        drop(held);
+    }
+}

@@ -270,3 +270,77 @@ impl WifiClientOrchestrator {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::netbridge::types::WifiClientSettings;
+
+    /// An interface name guaranteed not to exist on the host, so `iw`,
+    /// `wpa_cli` and friends deterministically fail/return no-match output
+    /// without ever touching a real Wi-Fi radio.
+    const BOGUS_IFACE: &str = "sgxtest-bogus0";
+
+    fn settings() -> WifiClientSettings {
+        WifiClientSettings {
+            interface: BOGUS_IFACE.to_string(),
+            networks: Vec::new(),
+            country: "US".to_string(),
+        }
+    }
+
+    // `connect()` is intentionally left uncovered: it calls
+    // `WpaConfigGenerator::generate_default`, which reads a hardcoded
+    // `/etc/sgx-guardian/wpa_supplicant.conf.template` and, on success,
+    // spawns a real `wpa_supplicant` process via `ProcessRunner`. There is
+    // no injectable path or runner seam for either step, so exercising it
+    // would either be a no-op that depends on the template file's absence
+    // (fragile across hosts) or would launch a real process/mutate real
+    // filesystem state — both against the isolation rules.
+
+    #[test]
+    fn new_orchestrator_has_no_runner() {
+        let orchestrator = WifiClientOrchestrator::new(settings());
+        assert_eq!(orchestrator.settings.interface, BOGUS_IFACE);
+        assert!(orchestrator.runner.is_none());
+    }
+
+    #[test]
+    fn is_connected_false_for_missing_interface() {
+        let orchestrator = WifiClientOrchestrator::new(settings());
+        assert!(!orchestrator.is_connected());
+    }
+
+    #[test]
+    fn scan_networks_errors_for_missing_interface() {
+        // With no such interface, both the active `iw scan` and the
+        // `iw scan dump` fallback fail (or fail to spawn if `iw` is not
+        // installed), so this deterministically returns Err without
+        // touching a real Wi-Fi interface.
+        let orchestrator = WifiClientOrchestrator::new(settings());
+        assert!(orchestrator.scan_networks().is_err());
+    }
+
+    #[tokio::test]
+    async fn wait_for_association_times_out_immediately_with_zero_budget() {
+        // timeout_secs = 0 short-circuits the polling loop before any
+        // wpa_cli invocation, deterministically exercising the timeout
+        // error path with zero real command invocations.
+        let orchestrator = WifiClientOrchestrator::new(settings());
+        let result = orchestrator.wait_for_association(0).await;
+        match result {
+            Err(NetbridgeError::ProcessExecutionFailed(msg)) => {
+                assert!(msg.contains("timed out"), "unexpected message: {msg}");
+                assert!(msg.contains(BOGUS_IFACE));
+            }
+            other => panic!("expected ProcessExecutionFailed(..timed out..), got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn disconnect_without_a_running_process_is_a_noop() {
+        let mut orchestrator = WifiClientOrchestrator::new(settings());
+        assert!(orchestrator.disconnect().await.is_ok());
+        assert!(orchestrator.runner.is_none());
+    }
+}

@@ -940,4 +940,300 @@ mod tests {
         let saved = RelayRegistry::load(path.to_str().expect("path")).expect("load snapshot");
         assert!(saved.relays.contains_key("nodeA"));
     }
+
+    // ── parse_snapshot_payload ──────────────────────────────────
+
+    #[test]
+    fn test_parse_snapshot_payload_rejects_empty() {
+        let err = parse_snapshot_payload("   ").unwrap_err();
+        assert!(err.contains("empty snapshot payload"));
+    }
+
+    #[test]
+    fn test_parse_snapshot_payload_rejects_invalid_json() {
+        let err = parse_snapshot_payload("{not json").unwrap_err();
+        assert!(err.contains("invalid JSON snapshot"));
+    }
+
+    #[test]
+    fn test_parse_snapshot_payload_accepts_plain_object() {
+        let value = parse_snapshot_payload(r#"{"circle_id":"alpha"}"#).unwrap();
+        assert_eq!(value["circle_id"], "alpha");
+    }
+
+    #[test]
+    fn test_parse_snapshot_payload_rejects_control_response_with_error() {
+        let err =
+            parse_snapshot_payload(r#"{"success":false,"error":"nope"}"#).unwrap_err();
+        assert!(err.contains("control response"));
+    }
+
+    #[test]
+    fn test_parse_snapshot_payload_rejects_control_response_with_ip_cidr() {
+        let err =
+            parse_snapshot_payload(r#"{"success":true,"ip_cidr":"10.0.0.1/24"}"#).unwrap_err();
+        assert!(err.contains("control response"));
+    }
+
+    #[test]
+    fn test_parse_snapshot_payload_rejects_control_response_with_summary() {
+        let err = parse_snapshot_payload(r#"{"success":true,"registry_summary":"x"}"#)
+            .unwrap_err();
+        assert!(err.contains("control response"));
+    }
+
+    #[test]
+    fn test_parse_snapshot_payload_allows_success_only_field() {
+        // "success" alone, without error/ip_cidr/registry_summary, is not
+        // treated as a control response and passes through unchanged.
+        let value = parse_snapshot_payload(r#"{"success":true}"#).unwrap();
+        assert_eq!(value["success"], true);
+    }
+
+    // ── atomic_write ─────────────────────────────────────────────
+
+    #[test]
+    fn test_atomic_write_creates_parents_and_writes_content() {
+        let td = TempDir::new().expect("tempdir");
+        let path = td.path().join("a").join("b").join("out.json");
+        atomic_write(path.to_str().unwrap(), "hello world").expect("atomic write");
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "hello world");
+        // no leftover temp file
+        assert!(!path.with_extension("json.tmp").exists());
+    }
+
+    #[test]
+    fn test_atomic_write_fails_when_parent_creation_blocked() {
+        let td = TempDir::new().expect("tempdir");
+        let blocker = td.path().join("blocker");
+        std::fs::write(&blocker, b"not a directory").unwrap();
+        let bad_path = blocker.join("nested").join("out.json");
+        let err = atomic_write(bad_path.to_str().unwrap(), "content").unwrap_err();
+        assert!(err.contains("create parent"));
+    }
+
+    // ── is_ca_node ───────────────────────────────────────────────
+
+    #[test]
+    fn test_is_ca_node_runs_without_panic() {
+        // Depends on real process argv; only exercised for coverage of the
+        // branch, not for a specific truth value.
+        let _ = is_ca_node();
+    }
+
+    // ── RegistryRequest / RegistryResponse serde ────────────────
+
+    #[test]
+    fn test_registry_response_default_omits_optional_fields() {
+        let resp = RegistryResponse {
+            success: true,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(!json.contains("did_doc_json"));
+        assert!(!json.contains("did_doc_aggregate_json"));
+        assert!(!json.contains("status_list_body"));
+        assert!(json.contains("\"success\":true"));
+    }
+
+    #[test]
+    fn test_registry_request_roundtrip_serialization() {
+        let req = RegistryRequest {
+            action: "assign".to_string(),
+            node_name: "nodeB".to_string(),
+            pubkey_prefix: Some("abcd1234".to_string()),
+            did_doc_json: None,
+            did_query: None,
+            status_list_body: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: RegistryRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.action, "assign");
+        assert_eq!(back.node_name, "nodeB");
+        assert_eq!(back.pubkey_prefix.as_deref(), Some("abcd1234"));
+    }
+
+    // ── apply_overlay_snapshot ───────────────────────────────────
+
+    #[test]
+    fn test_apply_overlay_snapshot_rejects_invalid_json() {
+        let path = tmp_file("overlay_invalid_json");
+        let err = apply_overlay_snapshot("{bad", &path).unwrap_err();
+        assert!(err.contains("invalid JSON snapshot"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_apply_overlay_snapshot_rejects_invalid_schema() {
+        let path = tmp_file("overlay_invalid_schema");
+        let err = apply_overlay_snapshot(r#"{"foo":"bar"}"#, &path).unwrap_err();
+        assert!(err.contains("invalid overlay snapshot schema"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_apply_overlay_snapshot_rejects_missing_owner_allocation() {
+        let path = tmp_file("overlay_missing_owner");
+        let mut incoming = OverlayRegistry::new("alpha", "192.168.100", "nodeA");
+        incoming.allocations.remove("nodeA");
+        let payload = serde_json::to_string_pretty(&incoming).unwrap();
+        let err = apply_overlay_snapshot(&payload, &path).unwrap_err();
+        assert!(err.contains("missing owner allocation"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_apply_overlay_snapshot_rejects_when_existing_owner_dropped() {
+        let path = tmp_file("overlay_existing_owner_dropped");
+        let existing = OverlayRegistry::new("alpha", "192.168.100", "nodeX");
+        existing.save(&path).unwrap();
+
+        // Incoming snapshot is internally consistent (has its own owner)
+        // but does not carry an allocation for the *existing* owner nodeX.
+        let incoming = OverlayRegistry::new("alpha", "192.168.100", "nodeA");
+        let payload = serde_json::to_string_pretty(&incoming).unwrap();
+
+        let err = apply_overlay_snapshot(&payload, &path).unwrap_err();
+        assert!(err.contains("missing existing owner allocation"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_apply_overlay_snapshot_succeeds_and_normalizes_file() {
+        let path = tmp_file("overlay_success");
+        let mut incoming = OverlayRegistry::new("alpha", "192.168.100", "nodeA");
+        incoming.assign_ip("nodeB").unwrap();
+        let payload = serde_json::to_string_pretty(&incoming).unwrap();
+
+        apply_overlay_snapshot(&payload, &path).expect("apply overlay snapshot");
+
+        let saved = OverlayRegistry::load(&path).expect("load saved overlay");
+        assert_eq!(saved.owner_node, "nodeA");
+        assert!(saved.allocations.contains_key("nodeB"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_apply_overlay_snapshot_overwrites_existing_when_owner_present() {
+        let path = tmp_file("overlay_overwrite_ok");
+        let existing = OverlayRegistry::new("alpha", "192.168.100", "nodeA");
+        existing.save(&path).unwrap();
+
+        let mut incoming = OverlayRegistry::new("alpha", "192.168.100", "nodeA");
+        incoming.assign_ip("nodeC").unwrap();
+        let payload = serde_json::to_string_pretty(&incoming).unwrap();
+
+        apply_overlay_snapshot(&payload, &path).expect("apply overlay snapshot");
+        let saved = OverlayRegistry::load(&path).unwrap();
+        assert!(saved.allocations.contains_key("nodeC"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── apply_lighthouse_snapshot ────────────────────────────────
+
+    #[test]
+    fn test_apply_lighthouse_snapshot_rejects_invalid_json() {
+        let path = tmp_file("lh_invalid_json");
+        let err = apply_lighthouse_snapshot("not json", &path).unwrap_err();
+        assert!(err.contains("invalid JSON snapshot"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_apply_lighthouse_snapshot_rejects_invalid_schema() {
+        let path = tmp_file("lh_invalid_schema");
+        let err = apply_lighthouse_snapshot(r#"{"nope":true}"#, &path).unwrap_err();
+        assert!(err.contains("invalid lighthouse snapshot schema"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_apply_lighthouse_snapshot_rejects_empty_lighthouse_list() {
+        let path = tmp_file("lh_empty_list");
+        let incoming = LighthouseRegistry {
+            circle_id: "alpha".to_string(),
+            lighthouses: vec![],
+        };
+        let payload = serde_json::to_string_pretty(&incoming).unwrap();
+        let err = apply_lighthouse_snapshot(&payload, &path).unwrap_err();
+        assert!(err.contains("no lighthouse entries"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_apply_lighthouse_snapshot_rejects_when_no_entry_is_lighthouse() {
+        let path = tmp_file("lh_no_active_lighthouse");
+        let mut incoming = LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "1.2.3.4:4242");
+        // Demote the only entry so no lighthouse-role entries remain.
+        incoming.lighthouses[0].is_lighthouse = false;
+        let payload = serde_json::to_string_pretty(&incoming).unwrap();
+        let err = apply_lighthouse_snapshot(&payload, &path).unwrap_err();
+        assert!(err.contains("no lighthouse entries"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_apply_lighthouse_snapshot_succeeds_and_creates_parents() {
+        let td = TempDir::new().expect("tempdir");
+        let path = td.path().join("nested").join("lighthouse_registry.json");
+        let incoming =
+            LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "1.2.3.4:4242");
+        let payload = serde_json::to_string_pretty(&incoming).unwrap();
+
+        apply_lighthouse_snapshot(&payload, path.to_str().unwrap()).expect("apply lh snapshot");
+
+        let saved = LighthouseRegistry::load(path.to_str().unwrap()).unwrap();
+        assert_eq!(saved.lighthouses.len(), 1);
+        assert_eq!(saved.lighthouses[0].node_name, "nodeA");
+    }
+
+    #[test]
+    fn test_apply_lighthouse_snapshot_overwrites_existing_non_empty() {
+        let path = tmp_file("lh_overwrite_ok");
+        let existing = LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "1.2.3.4:4242");
+        existing.save(&path).unwrap();
+
+        let mut incoming =
+            LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "1.2.3.4:4242");
+        incoming.add_secondary("nodeB", "192.168.100.2", "5.6.7.8:4242");
+        let payload = serde_json::to_string_pretty(&incoming).unwrap();
+
+        apply_lighthouse_snapshot(&payload, &path).expect("apply lh snapshot");
+        let saved = LighthouseRegistry::load(&path).unwrap();
+        assert_eq!(saved.lighthouses.len(), 2);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── apply_relay_snapshot: additional coverage ────────────────
+
+    #[test]
+    fn test_apply_relay_snapshot_rejects_invalid_json() {
+        let path = tmp_file("relay_invalid_json");
+        let err = apply_relay_snapshot("{{{", &path).unwrap_err();
+        assert!(err.contains("invalid JSON snapshot"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_apply_relay_snapshot_rejects_invalid_schema() {
+        let path = tmp_file("relay_invalid_schema");
+        // Missing required "circle_id" and wrong shape for "relays".
+        let err = apply_relay_snapshot(r#"{"relays":123}"#, &path).unwrap_err();
+        assert!(err.contains("invalid relay snapshot schema"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_apply_relay_snapshot_succeeds_on_fresh_path() {
+        let path = tmp_file("relay_fresh_success");
+        let mut incoming = RelayRegistry::new("guardian-circle-alpha");
+        incoming.add_relay("nodeB", "192.168.100.2", "10.0.0.2:4242", 5, 10, true);
+        let payload = serde_json::to_string_pretty(&incoming).unwrap();
+
+        apply_relay_snapshot(&payload, &path).expect("apply relay snapshot");
+        let saved = RelayRegistry::load(&path).unwrap();
+        assert!(saved.relays.contains_key("nodeB"));
+        let _ = std::fs::remove_file(&path);
+    }
 }

@@ -587,4 +587,223 @@ mod tests {
         }
         assert!(reg.assign_ip("nodeOverflow").is_err());
     }
+
+    // ── set_ip: conflict resolution / validation branches ────────
+
+    #[test]
+    fn test_set_ip_assigns_new_member_within_range() {
+        let mut reg = make_registry();
+        reg.set_ip("nodeB", "192.168.100.5/24").unwrap();
+        assert_eq!(reg.get_ip_cidr("nodeB"), Some("192.168.100.5/24"));
+        assert_eq!(reg.next_host, 6);
+        assert!(!reg.allocations.get("nodeB").unwrap().is_owner);
+    }
+
+    #[test]
+    fn test_set_ip_rejects_missing_slash() {
+        let mut reg = make_registry();
+        let err = reg.set_ip("nodeB", "192.168.100.5").unwrap_err();
+        assert!(err.contains("Invalid CIDR format"));
+    }
+
+    #[test]
+    fn test_set_ip_rejects_non_numeric_cidr_mask() {
+        let mut reg = make_registry();
+        let err = reg.set_ip("nodeB", "192.168.100.5/abc").unwrap_err();
+        assert!(err.contains("Invalid CIDR mask"));
+    }
+
+    #[test]
+    fn test_set_ip_rejects_cidr_mismatch() {
+        let mut reg = make_registry();
+        let err = reg.set_ip("nodeB", "192.168.100.5/16").unwrap_err();
+        assert!(err.contains("CIDR mismatch"));
+    }
+
+    #[test]
+    fn test_set_ip_rejects_ip_outside_subnet() {
+        let mut reg = make_registry();
+        let err = reg.set_ip("nodeB", "10.0.0.5/24").unwrap_err();
+        assert!(err.contains("outside subnet base"));
+    }
+
+    #[test]
+    fn test_set_ip_rejects_non_numeric_host_octet() {
+        let mut reg = make_registry();
+        let err = reg.set_ip("nodeB", "192.168.100.xyz/24").unwrap_err();
+        assert!(err.contains("Invalid host octet"));
+    }
+
+    #[test]
+    fn test_set_ip_rejects_host_out_of_range() {
+        let mut reg = make_registry();
+        let err = reg.set_ip("nodeB", "192.168.100.0/24").unwrap_err();
+        assert!(err.contains("out of range"));
+    }
+
+    #[test]
+    fn test_set_ip_rejects_owner_host_change() {
+        let mut reg = make_registry();
+        let err = reg.set_ip("nodeA", "192.168.100.5/24").unwrap_err();
+        assert!(err.contains("must keep"));
+        // Owner record must be untouched.
+        assert_eq!(reg.get_ip("nodeA"), Some("192.168.100.1"));
+    }
+
+    #[test]
+    fn test_set_ip_rejects_conflict_with_other_node() {
+        let mut reg = make_registry();
+        reg.set_ip("nodeB", "192.168.100.5/24").unwrap();
+        let err = reg.set_ip("nodeC", "192.168.100.5/24").unwrap_err();
+        assert!(err.contains("IP conflict"));
+        assert!(!reg.is_allocated("nodeC"));
+    }
+
+    #[test]
+    fn test_set_ip_preserves_existing_pubkey_prefix() {
+        let mut reg = make_registry();
+        reg.assign_ip("nodeB").unwrap();
+        reg.set_pubkey_prefix("nodeB", "prefix1234");
+        // Re-set the same node to a different in-range IP.
+        reg.set_ip("nodeB", "192.168.100.9/24").unwrap();
+        assert_eq!(
+            reg.allocations.get("nodeB").unwrap().pubkey_prefix.as_deref(),
+            Some("prefix1234")
+        );
+    }
+
+    #[test]
+    fn test_set_ip_does_not_lower_next_host_counter() {
+        let mut reg = make_registry();
+        reg.assign_ip("nodeB").unwrap(); // .2
+        reg.assign_ip("nodeC").unwrap(); // .3, next_host becomes 4
+        assert_eq!(reg.next_host, 4);
+        // Re-setting nodeB to a lower host must not roll next_host backward.
+        reg.set_ip("nodeB", "192.168.100.2/24").unwrap();
+        assert_eq!(reg.next_host, 4);
+    }
+
+    #[test]
+    fn test_set_ip_raises_next_host_when_higher() {
+        let mut reg = make_registry();
+        reg.set_ip("nodeB", "192.168.100.10/24").unwrap();
+        assert_eq!(reg.next_host, 11);
+    }
+
+    // ── Accessors and no-op branches ──────────────────────────────
+
+    #[test]
+    fn test_set_pubkey_prefix_is_noop_for_unknown_node() {
+        let mut reg = make_registry();
+        reg.set_pubkey_prefix("ghost", "whatever");
+        assert!(!reg.allocations.contains_key("ghost"));
+    }
+
+    #[test]
+    fn test_allocated_count_matches_allocations_len() {
+        let mut reg = make_registry();
+        assert_eq!(reg.allocated_count(), 1); // owner only
+        reg.assign_ip("nodeB").unwrap();
+        assert_eq!(reg.allocated_count(), 2);
+    }
+
+    #[test]
+    fn test_get_ip_and_get_ip_cidr_none_for_unknown_node() {
+        let reg = make_registry();
+        assert_eq!(reg.get_ip("ghost"), None);
+        assert_eq!(reg.get_ip_cidr("ghost"), None);
+        assert!(!reg.is_allocated("ghost"));
+    }
+
+    #[test]
+    fn test_all_nodes_orders_owner_first_then_by_ip() {
+        let mut reg = make_registry();
+        reg.assign_ip("nodeC").unwrap(); // .2
+        reg.assign_ip("nodeB").unwrap(); // .3
+        let nodes = reg.all_nodes();
+        assert_eq!(nodes[0].node_name, "nodeA");
+        assert!(nodes[0].is_owner);
+        // Remaining entries sorted by overlay_ip ascending.
+        assert!(nodes[1].overlay_ip <= nodes[2].overlay_ip);
+    }
+
+    #[test]
+    fn test_summary_contains_key_fields() {
+        let mut reg = make_registry();
+        reg.assign_ip("nodeB").unwrap();
+        let s = reg.summary();
+        assert!(s.contains("alpha"));
+        assert!(s.contains("192.168.100"));
+        assert!(s.contains("24"));
+        assert!(s.contains("2 nodes"));
+    }
+
+    // ── load / load_or_create: corrupted and missing state ────────
+
+    #[test]
+    fn test_load_missing_file_returns_read_error() {
+        let err = OverlayRegistry::load("/nonexistent/path/does_not_exist.json").unwrap_err();
+        assert!(err.contains("Read error"));
+    }
+
+    #[test]
+    fn test_load_corrupted_json_returns_parse_error() {
+        let tmp = "/tmp/test_overlay_corrupted_load.json";
+        std::fs::write(tmp, b"{ not valid json ").unwrap();
+        let err = OverlayRegistry::load(tmp).unwrap_err();
+        assert!(err.contains("Parse error"));
+        let _ = fs::remove_file(tmp);
+    }
+
+    #[test]
+    fn test_load_or_create_builds_new_when_file_absent() {
+        let tmp = "/tmp/test_overlay_load_or_create_absent.json";
+        let _ = fs::remove_file(tmp);
+        let reg = OverlayRegistry::load_or_create(tmp, "beta", "192.168.101", "nodeA");
+        assert_eq!(reg.circle_id, "beta");
+        assert_eq!(reg.get_ip("nodeA"), Some("192.168.101.1"));
+        let _ = fs::remove_file(tmp);
+    }
+
+    #[test]
+    fn test_load_or_create_loads_existing_state() {
+        let tmp = "/tmp/test_overlay_load_or_create_existing.json";
+        let mut original = make_registry();
+        original.assign_ip("nodeB").unwrap();
+        original.save(tmp).unwrap();
+
+        let loaded = OverlayRegistry::load_or_create(tmp, "alpha", "192.168.100", "nodeA");
+        assert_eq!(loaded.allocations.len(), 2);
+        assert!(loaded.is_allocated("nodeB"));
+        let _ = fs::remove_file(tmp);
+    }
+
+    #[test]
+    fn test_load_or_create_falls_back_to_new_on_corrupted_file() {
+        let tmp = "/tmp/test_overlay_load_or_create_corrupt.json";
+        std::fs::write(tmp, b"not json at all").unwrap();
+
+        let reg = OverlayRegistry::load_or_create(tmp, "gamma", "192.168.102", "nodeA");
+        assert_eq!(reg.circle_id, "gamma");
+        assert_eq!(reg.allocated_count(), 1); // fresh registry, owner only
+        let _ = fs::remove_file(tmp);
+    }
+
+    // ── Compat bridge: OverlayRegistry -> OverlayPool ─────────────
+
+    #[test]
+    fn test_overlay_pool_from_overlay_registry_copies_allocations() {
+        let mut reg = make_registry();
+        reg.assign_ip("nodeB").unwrap();
+        reg.assign_ip("nodeC").unwrap();
+
+        let pool: crate::nebula::overlay::OverlayPool = (&reg).into();
+        assert_eq!(pool.circle_id, "alpha");
+        assert_eq!(pool.next_host, reg.next_host);
+        assert_eq!(
+            pool.allocations.get("nodeB").cloned(),
+            reg.get_ip("nodeB").map(|s| s.to_string())
+        );
+        assert_eq!(pool.allocations.len(), reg.allocations.len());
+    }
 }

@@ -486,6 +486,30 @@ fn normalize_p256_pubkey(pubkey_der_or_raw: &[u8]) -> &[u8] {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::normalize_p256_pubkey;
+
+    #[test]
+    fn normalize_strips_spki_header_when_91_bytes() {
+        // 91 bytes -> header 26 + 65 raw point
+        let mut v = vec![0u8; 91];
+        // put a marker at offset 26
+        v[26] = 0xAA;
+        let out = normalize_p256_pubkey(&v);
+        assert_eq!(out.len(), 65);
+        assert_eq!(out[0], 0xAA);
+    }
+
+    #[test]
+    fn normalize_leaves_other_lengths_untouched() {
+        let v = vec![1u8; 65];
+        let out = normalize_p256_pubkey(&v);
+        assert_eq!(out.len(), 65);
+        assert_eq!(out[0], 1u8);
+    }
+}
+
 fn sign_quote_hash(hash: &[u8], key_version: u32) -> Option<String> {
     use std::process::Command;
 

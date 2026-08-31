@@ -17,6 +17,23 @@ pub fn selected_indices(selection: &str) -> Vec<u32> {
         .unwrap_or_default()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selected_indices_parses_single_range() {
+        let v = selected_indices("sha1:0,1,2");
+        assert_eq!(v, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn selected_indices_returns_empty_on_invalid() {
+        let v = selected_indices("invalid-format");
+        assert!(v.is_empty());
+    }
+}
+
 pub fn read_pcr_values(cfg: &TpmConfig) -> Result<Vec<(u32, String)>, TpmError> {
     let cli = Tpm2Cli::new(cfg.clone());
     let raw = cli.pcr_read_text(&cfg.pcr_selection)?;

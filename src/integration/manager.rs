@@ -714,4 +714,214 @@ mod tests {
         let devices_left = registry.get_all_devices().await;
         assert_eq!(devices_left.len(), 0);
     }
+
+    #[tokio::test]
+    async fn test_fresh_manager_lists_both_providers_disconnected() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let int_file = temp_dir.path().join("integrations_fresh.json");
+
+        let manager = IntegrationManager::new(int_file.to_str().unwrap());
+        let list = manager.list_integrations().await;
+        assert_eq!(list.len(), 2);
+        for item in &list {
+            assert_eq!(item.status, IntegrationStatus::Disconnected);
+            assert!(item.credentials.is_none());
+            assert!(item.kasa_credentials.is_none());
+            assert!(item.nest_credentials.is_none());
+        }
+
+        let nest = manager
+            .get_integration(VendorProvider::GoogleNest)
+            .await
+            .unwrap();
+        assert_eq!(nest.name, "Google Nest");
+
+        let kasa = manager
+            .get_integration(VendorProvider::TpLinkKasa)
+            .await
+            .unwrap();
+        assert_eq!(kasa.name, "TP-Link Kasa Smart Home");
+    }
+
+    #[tokio::test]
+    async fn test_connect_kasa_flow_client_failure_records_error_status() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let int_file = temp_dir.path().join("integrations_kasa_fail.json");
+        let manager = IntegrationManager::new(int_file.to_str().unwrap());
+
+        // Port 1 on loopback: nothing is listening there, so every request fails fast with a
+        // connection error. This never leaves the loopback interface and needs no privileges.
+        let flow_client = crate::kasa::KasaHaConfigFlowClient::new(
+            "http://127.0.0.1:1".to_string(),
+            "tok".to_string(),
+        );
+        let creds = crate::kasa::KasaCredentials::new(Some("local".to_string()), None, None);
+
+        let result = manager.connect_kasa(creds, Some(&flow_client), None).await;
+        assert!(result.is_err());
+
+        let meta = manager
+            .get_integration(VendorProvider::TpLinkKasa)
+            .await
+            .unwrap();
+        assert!(
+            matches!(meta.status, IntegrationStatus::Error(_)),
+            "expected Error status, got {:?}",
+            meta.status
+        );
+        assert!(meta.error_message.is_some());
+        // Credentials are preserved even though the HA-side setup failed, so a retry can reuse them.
+        assert!(meta.kasa_credentials.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_connect_nest_invalid_credentials_rejected() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let int_file = temp_dir.path().join("integrations_nest_invalid.json");
+        let manager = IntegrationManager::new(int_file.to_str().unwrap());
+
+        // Empty access_token fails NestCredentials::validate() before any network/store activity.
+        let creds = crate::nest::NestCredentials::new(
+            None,
+            None,
+            None,
+            Some("".to_string()),
+            None,
+        );
+
+        let result = manager.connect_nest(creds, None, None).await;
+        assert!(result.is_err());
+
+        let meta = manager
+            .get_integration(VendorProvider::GoogleNest)
+            .await
+            .unwrap();
+        assert_eq!(
+            meta.status,
+            IntegrationStatus::Disconnected,
+            "rejected credentials must not mutate stored state"
+        );
+        assert!(meta.nest_credentials.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_connect_nest_ha_setup_failure_still_saves_credentials_as_connected() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let int_file = temp_dir.path().join("integrations_nest_ha_fail.json");
+        let manager = IntegrationManager::new(int_file.to_str().unwrap());
+
+        // Unreachable HA: setup_nest_config_entry() will fail, which connect_nest treats as
+        // non-fatal (it logs a warning and still persists the credentials locally).
+        let flow_client = crate::nest::NestHaConfigFlowClient::new(
+            "http://127.0.0.1:1".to_string(),
+            "tok".to_string(),
+        );
+        let creds = crate::nest::NestCredentials::new(
+            Some("client".to_string()),
+            Some("secret".to_string()),
+            Some("project".to_string()),
+            Some("access".to_string()),
+            Some("refresh".to_string()),
+        );
+
+        let (count, ha_restarting) = manager
+            .connect_nest(creds, Some(&flow_client), None)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+        assert!(!ha_restarting);
+
+        let meta = manager
+            .get_integration(VendorProvider::GoogleNest)
+            .await
+            .unwrap();
+        assert_eq!(meta.status, IntegrationStatus::Connected);
+        assert!(meta.nest_credentials.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_update_integration_status_sets_error_message() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let int_file = temp_dir.path().join("integrations_status.json");
+        let manager = IntegrationManager::new(int_file.to_str().unwrap());
+
+        manager
+            .update_integration_status(
+                VendorProvider::TpLinkKasa,
+                IntegrationStatus::Expired,
+                Some("token expired".to_string()),
+            )
+            .await
+            .unwrap();
+
+        let meta = manager
+            .get_integration(VendorProvider::TpLinkKasa)
+            .await
+            .unwrap();
+        assert_eq!(meta.status, IntegrationStatus::Expired);
+        assert_eq!(meta.error_message.as_deref(), Some("token expired"));
+    }
+
+    #[tokio::test]
+    async fn test_set_credentials_updates_last_synced() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let int_file = temp_dir.path().join("integrations_set_creds.json");
+        let manager = IntegrationManager::new(int_file.to_str().unwrap());
+
+        let creds = OAuthCredentials {
+            access_token: "tok_abc".to_string(),
+            refresh_token: Some("refresh_abc".to_string()),
+            expires_at: Some(Utc::now() + chrono::Duration::hours(1)),
+            token_type: "Bearer".to_string(),
+            scope: None,
+        };
+
+        manager
+            .set_credentials(VendorProvider::GoogleNest, creds)
+            .await
+            .unwrap();
+
+        let meta = manager
+            .get_integration(VendorProvider::GoogleNest)
+            .await
+            .unwrap();
+        assert!(meta.credentials.is_some());
+        assert_eq!(meta.credentials.unwrap().access_token, "tok_abc");
+        assert!(meta.last_synced.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_get_status_summary_structure() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let int_file = temp_dir.path().join("integrations_summary.json");
+        let manager = IntegrationManager::new(int_file.to_str().unwrap());
+
+        let summary = manager.get_status_summary().await;
+        assert_eq!(summary["total_integrations"], 2);
+
+        let providers = summary["providers"].as_object().unwrap();
+        assert!(providers.contains_key("google_nest"));
+        assert!(providers.contains_key("tp_link_kasa"));
+        assert_eq!(providers["google_nest"]["status"], "disconnected");
+        assert_eq!(providers["google_nest"]["has_credentials"], false);
+    }
+
+    #[tokio::test]
+    async fn test_disconnect_already_disconnected_integration_is_noop() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let int_file = temp_dir.path().join("integrations_noop_disconnect.json");
+        let manager = IntegrationManager::new(int_file.to_str().unwrap());
+
+        let removed = manager
+            .disconnect_integration(VendorProvider::TpLinkKasa, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(removed, 0);
+
+        let meta = manager
+            .get_integration(VendorProvider::TpLinkKasa)
+            .await
+            .unwrap();
+        assert_eq!(meta.status, IntegrationStatus::Disconnected);
+    }
 }

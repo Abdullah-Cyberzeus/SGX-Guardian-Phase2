@@ -1958,6 +1958,44 @@ pub async fn ice_servers() -> axum::response::Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::to_bytes;
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: Option<&str>) -> Self {
+            let guard = Self {
+                key,
+                previous: std::env::var_os(key),
+            };
+            if let Some(value) = value {
+                std::env::set_var(key, value);
+            } else {
+                std::env::remove_var(key);
+            }
+            guard
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.as_ref() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    async fn response_json(response: axum::response::Response) -> Value {
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read response body");
+        serde_json::from_slice(&bytes).expect("response body is JSON")
+    }
 
     #[test]
     fn test_initiate_request_serialization() {
@@ -2019,5 +2057,95 @@ mod tests {
 
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].id, "visible");
+    }
+
+    #[test]
+    fn browser_request_defaults_and_cursors_are_stable() {
+        let reject: BrowserRejectCallRequest =
+            serde_json::from_str("{}").expect("deserialize default rejection reason");
+        assert_eq!(reject.reason, "declined");
+
+        let call_cursor: CallSocketCursor =
+            serde_json::from_str("{}").expect("deserialize call cursor");
+        let signal_cursor: SignalCursor =
+            serde_json::from_str("{}").expect("deserialize signal cursor");
+        assert_eq!(call_cursor.after, 0);
+        assert_eq!(signal_cursor.after, 0);
+
+        let call_cursor: CallSocketCursor =
+            serde_json::from_str(r#"{"after":42}"#).expect("deserialize explicit cursor");
+        assert_eq!(call_cursor.after, 42);
+        let _router = create_call_router();
+    }
+
+    #[tokio::test]
+    async fn policy_check_rejects_invalid_roles_and_media_before_loading_policy() {
+        let cases = [
+            ("invalid", "operator", "audio", "Invalid caller_role"),
+            ("admin", "invalid", "audio", "Invalid target_role"),
+            ("admin", "operator", "data", "Invalid media_type"),
+        ];
+
+        for (caller_role, target_role, media_type, expected_error) in cases {
+            let response = policy_check(Json(PolicyCheckRequest {
+                caller_role: caller_role.into(),
+                target_role: target_role.into(),
+                media_type: media_type.into(),
+            }))
+            .await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let body = response_json(response).await;
+            assert!(body["error"]
+                .as_str()
+                .expect("error string")
+                .contains(expected_error));
+        }
+    }
+
+    #[tokio::test]
+    async fn ice_servers_covers_missing_malformed_turn_and_valid_configuration() {
+        let _guard = EnvGuard::set("SGX_WEBRTC_ICE_SERVERS", None);
+        let response = ice_servers().await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["configured"], false);
+        assert_eq!(body["ice_servers"], serde_json::json!([]));
+
+        std::env::set_var("SGX_WEBRTC_ICE_SERVERS", "not-json");
+        let response = ice_servers().await;
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = response_json(response).await;
+        assert!(body["error"]
+            .as_str()
+            .expect("error string")
+            .contains("valid JSON"));
+
+        std::env::set_var(
+            "SGX_WEBRTC_ICE_SERVERS",
+            r#"[{"urls":["turn:relay.example:3478"]}]"#,
+        );
+        let response = ice_servers().await;
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = response_json(response).await;
+        assert!(body["error"]
+            .as_str()
+            .expect("error string")
+            .contains("require username and credential"));
+
+        std::env::set_var(
+            "SGX_WEBRTC_ICE_SERVERS",
+            r#"[
+                {"urls":["stun:stun.example:3478"]},
+                {"urls":"turns:relay.example:5349","username":"user","credential":"secret"}
+            ]"#,
+        );
+        let response = ice_servers().await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["configured"], true);
+        assert_eq!(
+            body["ice_servers"].as_array().expect("server array").len(),
+            2
+        );
     }
 }

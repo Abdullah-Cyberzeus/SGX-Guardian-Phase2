@@ -264,7 +264,7 @@ impl NatManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{merge_with_active_policy, parse_interface_network_cidr};
+    use super::{merge_with_active_policy, parse_interface_network_cidr, NatManager};
     use crate::policy::Rule;
 
     fn rule(id: &str) -> Rule {
@@ -277,6 +277,14 @@ mod tests {
             port: Some(22),
         }
     }
+
+    // Note: `merge_with_active_policy` reads the crate-wide `crate::policy`
+    // runtime cache via `get_active_policy()`. That cache has no reset API and
+    // is otherwise untouched anywhere in the `--lib` unit-test binary, so these
+    // tests deliberately avoid `load_policy_runtime` (the only setter) to keep
+    // this suite's cache observations (`None`) deterministic and independent of
+    // test execution order, per the isolation rule against shared mutable
+    // process-wide state.
 
     #[test]
     fn dynamic_rules_are_added_once() {
@@ -291,11 +299,82 @@ mod tests {
     }
 
     #[test]
+    fn merge_uses_default_policy_metadata_when_no_active_policy_is_cached() {
+        let policy = merge_with_active_policy(vec![rule("dyn_test_01")]);
+        assert_eq!(policy.policy_id, "netbridge_dynamic_nat");
+        assert_eq!(policy.version, "1.0");
+    }
+
+    #[test]
+    fn merge_keeps_every_distinct_dynamic_rule() {
+        let policy = merge_with_active_policy(vec![
+            rule("dyn_nat_masquerade_01"),
+            rule("dyn_fwd_outbound_01"),
+            rule("dyn_fwd_inbound_01"),
+            rule("dyn_isolate_inbound_01"),
+        ]);
+        assert_eq!(policy.rules.len(), 4);
+        for id in [
+            "dyn_nat_masquerade_01",
+            "dyn_fwd_outbound_01",
+            "dyn_fwd_inbound_01",
+            "dyn_isolate_inbound_01",
+        ] {
+            assert!(policy.rules.iter().any(|r| r.id == id), "missing {}", id);
+        }
+    }
+
+    #[test]
+    fn merge_with_no_dynamic_rules_yields_no_dynamic_entries() {
+        let policy = merge_with_active_policy(vec![]);
+        assert!(policy.rules.iter().all(|r| !r.id.starts_with("dyn_")));
+    }
+
+    #[test]
+    fn merge_is_idempotent_across_repeated_calls_with_the_same_rules() {
+        let first = merge_with_active_policy(vec![rule("dyn_repeat_01")]);
+        let second = merge_with_active_policy(vec![rule("dyn_repeat_01")]);
+        assert_eq!(first.rules.len(), second.rules.len());
+        assert_eq!(first.policy_id, second.policy_id);
+    }
+
+    #[test]
     fn derives_hotspot_network_from_interface_address() {
         let output = "3: uap1: <UP>\n    inet 192.168.200.1/24 scope global uap1\n";
         assert_eq!(
             parse_interface_network_cidr(output).as_deref(),
             Some("192.168.200.0/24")
         );
+    }
+
+    #[test]
+    fn parse_interface_network_cidr_returns_none_without_an_inet_line() {
+        let output = "3: uap1: <UP>\n    inet6 fe80::1/64 scope link\n";
+        assert_eq!(parse_interface_network_cidr(output), None);
+        assert_eq!(parse_interface_network_cidr(""), None);
+    }
+
+    #[test]
+    fn parse_interface_network_cidr_rejects_malformed_and_out_of_range_prefixes() {
+        // Missing "/prefix" entirely.
+        let no_prefix = "3: uap1: <UP>\n    inet 192.168.200.1 scope global uap1\n";
+        assert_eq!(parse_interface_network_cidr(no_prefix), None);
+
+        // Prefix out of the valid 0..=32 range.
+        let bad_prefix = "3: uap1: <UP>\n    inet 192.168.200.1/33 scope global uap1\n";
+        assert_eq!(parse_interface_network_cidr(bad_prefix), None);
+    }
+
+    #[test]
+    fn nat_manager_starts_disabled_and_kernel_check_short_circuits_without_syscalls() {
+        let nat = NatManager::new();
+        assert!(!nat.is_enabled());
+        // `kernel_rules_active` must bail out on the in-memory flag before it
+        // would otherwise shell out to `nft`/`ip`, so this is safe to assert
+        // without touching real network or firewall state.
+        assert!(!nat.kernel_rules_active("ap0", "wlan0"));
+
+        let default_nat = NatManager::default();
+        assert!(!default_nat.is_enabled());
     }
 }

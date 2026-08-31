@@ -685,7 +685,10 @@ impl Drop for DualWifiOrchestrator {
 
 #[cfg(test)]
 mod tests {
-    use super::{hotspot_subnet_cidr, select_non_conflicting_dns_settings, shares_subnet_24};
+    use super::{
+        hotspot_subnet_cidr, parse_ipv4_octets, select_non_conflicting_dns_settings,
+        shares_subnet_24,
+    };
     use crate::netbridge::types::DnsmasqSettings;
 
     #[test]
@@ -719,5 +722,47 @@ mod tests {
             hotspot_subnet_cidr("192.168.200.1").as_deref(),
             Some("192.168.200.0/24")
         );
+    }
+
+    #[test]
+    fn parses_well_formed_ipv4_octets() {
+        assert_eq!(parse_ipv4_octets("192.168.1.5"), Some([192, 168, 1, 5]));
+        assert_eq!(parse_ipv4_octets("0.0.0.0"), Some([0, 0, 0, 0]));
+    }
+
+    #[test]
+    fn rejects_malformed_ipv4_octets() {
+        assert_eq!(parse_ipv4_octets("192.168.1"), None);
+        assert_eq!(parse_ipv4_octets("192.168.1.abc"), None);
+        assert_eq!(parse_ipv4_octets("300.1.1.1"), None);
+        assert_eq!(parse_ipv4_octets(""), None);
+    }
+
+    #[test]
+    fn subnet_sharing_is_false_for_unparsable_addresses() {
+        assert!(!shares_subnet_24("not-an-ip", "192.168.1.5"));
+        assert!(!shares_subnet_24("192.168.1.5", "not-an-ip"));
+        assert!(!shares_subnet_24("not-an-ip", "also-not-an-ip"));
+    }
+
+    #[test]
+    fn hotspot_subnet_cidr_rejects_invalid_gateway() {
+        assert!(hotspot_subnet_cidr("not-an-ip").is_none());
+        assert!(hotspot_subnet_cidr("10.0.0").is_none());
+    }
+
+    #[test]
+    fn selects_second_fallback_candidate_when_first_also_conflicts_with_uplink() {
+        let mut current = DnsmasqSettings::default();
+        current.gateway_ip = "10.42.0.1".to_string();
+
+        let updated = select_non_conflicting_dns_settings(&current, "10.42.0.77")
+            .expect("overlap with current gateway should trigger fallback search");
+
+        // The first fallback candidate (10.42.0.1) shares a /24 with the uplink,
+        // so selection must skip to the second candidate (172.22.0.1).
+        assert_eq!(updated.gateway_ip, "172.22.0.1");
+        assert_eq!(updated.dhcp_range_start, "172.22.0.100");
+        assert_eq!(updated.dhcp_range_end, "172.22.0.254");
     }
 }

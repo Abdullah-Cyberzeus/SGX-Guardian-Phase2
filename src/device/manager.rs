@@ -576,7 +576,88 @@ fn is_nest_entity(entity_id: &str, friendly_name: &str, nest_connected: bool) ->
 mod tests {
     use super::*;
     use crate::homeassistant::HomeAssistantConfig;
+    use crate::integration::manager::IntegrationManager;
+    use crate::integration::provider::{IntegrationStatus, VendorProvider};
     use tempfile::tempdir;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    /// Minimal loopback HTTP server that serves a queue of canned responses, in order, to
+    /// whichever client connects. Mirrors the pattern already used in
+    /// `tests/cov_wave9_homeassistant_client_test.rs` — a real TCP accept loop bound to an
+    /// ephemeral localhost port, not a mock trait. No external network is touched.
+    async fn mock_http_server(responses: Vec<(u16, String)>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            for (status, body) in responses {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 4096];
+                loop {
+                    let read = match stream.read(&mut buffer).await {
+                        Ok(n) => n,
+                        Err(_) => break,
+                    };
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..read]);
+                    let Some(header_end) =
+                        request.windows(4).position(|part| part == b"\r\n\r\n")
+                    else {
+                        continue;
+                    };
+                    let header_end = header_end + 4;
+                    let headers = String::from_utf8_lossy(&request[..header_end]);
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .and_then(|value| value.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    if request.len() >= header_end + content_length {
+                        break;
+                    }
+                }
+                let status_text = match status {
+                    200 => "200 OK",
+                    404 => "404 Not Found",
+                    500 => "500 Internal Server Error",
+                    other => panic!("mock_http_server: add a status text for {other}"),
+                };
+                let response = format!(
+                    "HTTP/1.1 {status_text}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn make_device(id: &str, entity_id: &str, state: &str) -> Device {
+        Device {
+            id: id.to_string(),
+            ha_entity_id: entity_id.to_string(),
+            vendor: "Unknown".to_string(),
+            device_type: entity_id.split('.').next().unwrap_or("unknown").to_string(),
+            room: None,
+            friendly_name: entity_id.to_string(),
+            current_state: state.to_string(),
+            health_status: DeviceHealth::Online,
+            last_seen: chrono::Utc::now(),
+            attributes: Default::default(),
+        }
+    }
+
+    /// A URL nothing listens on. Connection is refused immediately (loopback, no real
+    /// network) — safe for paths that must not actually reach Home Assistant.
+    const DEAD_URL: &str = "http://127.0.0.1:1";
 
     #[tokio::test]
     async fn test_device_health_transition_notification() {
@@ -698,5 +779,628 @@ mod tests {
             .unwrap();
         assert_eq!(dev.vendor, "google_nest");
         assert_eq!(dev.device_type, "climate");
+    }
+
+    // ---------------------------------------------------------------------
+    // is_nest_entity: pure branch matrix
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn test_is_nest_entity_matches_explicit_naming_regardless_of_connection_state() {
+        assert!(is_nest_entity(
+            "climate.nest_thermostat",
+            "Thermostat",
+            false
+        ));
+        assert!(is_nest_entity(
+            "climate.thermostat",
+            "Living Room Nest",
+            true
+        ));
+        assert!(is_nest_entity(
+            "climate.thermostat",
+            "Living Room Nest",
+            false
+        ));
+        assert!(is_nest_entity(
+            "switch.plug",
+            "Google Nest Hub Mini",
+            false
+        ));
+        assert!(is_nest_entity("switch.plug", "google_nest_hub", false));
+    }
+
+    #[test]
+    fn test_is_nest_entity_unbranded_climate_depends_on_connection_state() {
+        // No explicit "nest" naming: only counted as Nest when the integration is
+        // actually connected — otherwise an ecobee/Honeywell thermostat gets mislabeled.
+        assert!(is_nest_entity(
+            "climate.upstairs",
+            "Upstairs Thermostat",
+            true
+        ));
+        assert!(!is_nest_entity(
+            "climate.upstairs",
+            "Upstairs Thermostat",
+            false
+        ));
+    }
+
+    #[test]
+    fn test_is_nest_entity_non_climate_domain_never_matches_on_connection_alone() {
+        assert!(!is_nest_entity("sensor.upstairs_temp", "Upstairs Temp", true));
+        assert!(!is_nest_entity(
+            "switch.upstairs_plug",
+            "Upstairs Plug",
+            true
+        ));
+        assert!(!is_nest_entity("binary_sensor.motion", "Motion", true));
+    }
+
+    // ---------------------------------------------------------------------
+    // temperature_unit / refresh_unit_system
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_refresh_unit_system_success_updates_and_is_read_back() {
+        let dir = tempdir().unwrap();
+        let event_bus = EventBus::new();
+        let registry = Arc::new(DeviceRegistry::new(
+            dir.path().join("devices.json").to_str().unwrap(),
+        ));
+        let url = mock_http_server(vec![(
+            200,
+            r#"{"unit_system":{"temperature":"°F"}}"#.to_string(),
+        )])
+        .await;
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url,
+            token: "t".into(),
+        }));
+        let dm = DeviceManager::new(registry, ha_rest, event_bus, None);
+
+        dm.refresh_unit_system().await.expect("refresh should succeed");
+        assert_eq!(dm.temperature_unit().await, "°F");
+    }
+
+    #[tokio::test]
+    async fn test_temperature_unit_falls_back_to_default_and_caches_on_ha_error() {
+        let dir = tempdir().unwrap();
+        let event_bus = EventBus::new();
+        let registry = Arc::new(DeviceRegistry::new(
+            dir.path().join("devices.json").to_str().unwrap(),
+        ));
+        // Only one response is queued: the config body is missing unit_system.temperature.
+        // If the second `temperature_unit()` call below issued a fresh HTTP request, the
+        // mock server would have nothing left to serve and the test would hang/fail —
+        // proving the cache is actually used.
+        let url = mock_http_server(vec![(200, r#"{"foo":"bar"}"#.to_string())]).await;
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url,
+            token: "t".into(),
+        }));
+        let dm = DeviceManager::new(registry, ha_rest, event_bus, None);
+
+        assert_eq!(dm.temperature_unit().await, "°C");
+        assert_eq!(dm.temperature_unit().await, "°C");
+    }
+
+    // ---------------------------------------------------------------------
+    // reconcile_state
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_reconcile_state_updates_purges_and_tags_vendors() {
+        let dir = tempdir().unwrap();
+        let event_bus = EventBus::new();
+        let registry = Arc::new(DeviceRegistry::new(
+            dir.path().join("devices.json").to_str().unwrap(),
+        ));
+
+        // Ghost: supported domain, but HA will not report it -> removed.
+        registry
+            .upsert_device(make_device("dev_ghost", "light.ghost_deleted", "on"))
+            .await
+            .unwrap();
+        // Unsupported domain: purged regardless of what HA reports.
+        registry
+            .upsert_device(make_device(
+                "dev_unsupported",
+                "automation.morning_routine",
+                "on",
+            ))
+            .await
+            .unwrap();
+        // Will be updated in place (Online -> Offline, vendor tagged).
+        registry
+            .upsert_device(make_device(
+                "dev_kasa",
+                "switch.mock_kasa_plug",
+                "on",
+            ))
+            .await
+            .unwrap();
+
+        let states_body = serde_json::json!([
+            {"entity_id": "light.kitchen", "state": "on", "attributes": {"friendly_name": "Kitchen Light"}},
+            {"entity_id": "switch.mock_kasa_plug", "state": "unavailable", "attributes": {"friendly_name": "Mock Kasa Plug"}},
+            {"entity_id": "climate.living_room_nest_thermostat", "state": "heat", "attributes": {"friendly_name": "Living Room Nest Thermostat"}},
+            {"entity_id": "sensor.sun_next_rising", "state": "above_horizon", "attributes": {}}
+        ])
+        .to_string();
+
+        let url = mock_http_server(vec![
+            (200, r#"{"unit_system":{"temperature":"°C"}}"#.to_string()),
+            (200, states_body),
+        ])
+        .await;
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url,
+            token: "t".into(),
+        }));
+        let dm = DeviceManager::new(registry.clone(), ha_rest, event_bus, None);
+
+        dm.reconcile_state().await;
+
+        let all = registry.get_all_devices().await;
+        let entity_ids: Vec<&str> = all.iter().map(|d| d.ha_entity_id.as_str()).collect();
+        assert_eq!(
+            all.len(),
+            3,
+            "ghost and unsupported-domain devices should be purged, got: {:?}",
+            entity_ids
+        );
+
+        assert!(registry
+            .get_device_by_entity_id("light.ghost_deleted")
+            .await
+            .is_none());
+        assert!(registry
+            .get_device_by_entity_id("automation.morning_routine")
+            .await
+            .is_none());
+
+        let kitchen = registry
+            .get_device_by_entity_id("light.kitchen")
+            .await
+            .unwrap();
+        assert_eq!(kitchen.health_status, DeviceHealth::Online);
+        assert_eq!(kitchen.vendor, "Unknown");
+
+        let kasa = registry
+            .get_device_by_entity_id("switch.mock_kasa_plug")
+            .await
+            .unwrap();
+        assert_eq!(kasa.health_status, DeviceHealth::Offline);
+        assert_eq!(kasa.vendor, "tp_link");
+
+        let nest = registry
+            .get_device_by_entity_id("climate.living_room_nest_thermostat")
+            .await
+            .unwrap();
+        assert_eq!(nest.vendor, "google_nest");
+
+        // Internal unit-system cache picked up the config response along the way.
+        assert_eq!(dm.temperature_unit().await, "°C");
+    }
+
+    #[tokio::test]
+    async fn test_reconcile_state_states_fetch_failure_leaves_registry_untouched() {
+        let dir = tempdir().unwrap();
+        let event_bus = EventBus::new();
+        let registry = Arc::new(DeviceRegistry::new(
+            dir.path().join("devices.json").to_str().unwrap(),
+        ));
+        registry
+            .upsert_device(make_device("dev_x", "light.existing", "on"))
+            .await
+            .unwrap();
+
+        let url = mock_http_server(vec![
+            (200, r#"{"unit_system":{"temperature":"°C"}}"#.to_string()),
+            (500, r#"{"error":"boom"}"#.to_string()),
+        ])
+        .await;
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url,
+            token: "t".into(),
+        }));
+        let dm = DeviceManager::new(registry.clone(), ha_rest, event_bus, None);
+
+        dm.reconcile_state().await;
+
+        let all = registry.get_all_devices().await;
+        assert_eq!(all.len(), 1, "Pass 2 cleanup must not run when the states fetch failed");
+        assert_eq!(all[0].ha_entity_id, "light.existing");
+    }
+
+    #[tokio::test]
+    async fn test_reconcile_state_unbranded_climate_tagged_nest_when_connected() {
+        let dir = tempdir().unwrap();
+        let event_bus = EventBus::new();
+        let registry = Arc::new(DeviceRegistry::new(
+            dir.path().join("devices.json").to_str().unwrap(),
+        ));
+
+        let states_body = serde_json::json!([
+            {"entity_id": "climate.upstairs", "state": "cool", "attributes": {"friendly_name": "Upstairs Thermostat"}}
+        ])
+        .to_string();
+        let url = mock_http_server(vec![
+            (200, r#"{"unit_system":{"temperature":"°C"}}"#.to_string()),
+            (200, states_body),
+        ])
+        .await;
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url,
+            token: "t".into(),
+        }));
+        let dm = DeviceManager::new(registry.clone(), ha_rest, event_bus, None);
+
+        let integration_mgr = IntegrationManager::new(
+            dir.path().join("integrations.json").to_str().unwrap(),
+        );
+        integration_mgr
+            .update_integration_status(VendorProvider::GoogleNest, IntegrationStatus::Connected, None)
+            .await
+            .unwrap();
+        dm.set_integration_manager(integration_mgr).await;
+
+        dm.reconcile_state().await;
+
+        let dev = registry
+            .get_device_by_entity_id("climate.upstairs")
+            .await
+            .unwrap();
+        assert_eq!(
+            dev.vendor, "google_nest",
+            "unbranded climate entity must be tagged Nest while the integration is connected"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // handle_state_changed: malformed payloads and notification labels
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_handle_state_changed_ignores_malformed_payloads() {
+        let dir = tempdir().unwrap();
+        let event_bus = EventBus::new();
+        let registry = Arc::new(DeviceRegistry::new(
+            dir.path().join("devices.json").to_str().unwrap(),
+        ));
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url: DEAD_URL.to_string(),
+            token: "t".into(),
+        }));
+        let dm = DeviceManager::new(registry.clone(), ha_rest, event_bus, None);
+
+        dm.handle_state_changed(serde_json::json!({})).await; // no "data"
+        dm.handle_state_changed(serde_json::json!({"data": {}}))
+            .await; // no entity_id
+        dm.handle_state_changed(serde_json::json!({"data": {"entity_id": "automation.x"}}))
+            .await; // unsupported domain
+        dm.handle_state_changed(serde_json::json!({"data": {"entity_id": "light.no_state"}}))
+            .await; // missing new_state.state
+
+        assert!(registry.get_all_devices().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_handle_state_changed_notification_labels_nest_ecobee_and_smart_fallback() {
+        let dir = tempdir().unwrap();
+        let dev_file = dir.path().join("devices.json");
+        let notif_file = dir.path().join("notifications.json");
+        let event_bus = EventBus::new();
+        let registry = Arc::new(DeviceRegistry::new(dev_file.to_str().unwrap()));
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url: DEAD_URL.to_string(),
+            token: "t".into(),
+        }));
+        let notif_mgr = Arc::new(
+            crate::notification::manager::NotificationManager::load_or_create(
+                notif_file,
+                Some(event_bus.clone()),
+            ),
+        );
+        let dm = DeviceManager::new(registry, ha_rest, event_bus, Some(notif_mgr.clone()));
+
+        // Nest label: default (no integration manager wired) treats climate.* as Nest.
+        for state in ["heat", "unavailable"] {
+            dm.handle_state_changed(serde_json::json!({
+                "data": {
+                    "entity_id": "climate.living_room",
+                    "new_state": {"state": state, "attributes": {"friendly_name": "Living Room"}}
+                }
+            }))
+            .await;
+        }
+
+        // Smart fallback label: unrelated domain, no vendor match at all.
+        for state in ["locked", "unavailable"] {
+            dm.handle_state_changed(serde_json::json!({
+                "data": {
+                    "entity_id": "lock.front_door",
+                    "new_state": {"state": state, "attributes": {"friendly_name": "Front Door"}}
+                }
+            }))
+            .await;
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let notifs = notif_mgr.list_notifications(false, None).await;
+        assert!(notifs.iter().any(|n| n.title == "Nest Device Offline"));
+        assert!(notifs.iter().any(|n| n.title == "Smart Device Offline"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_state_changed_ecobee_label_when_nest_integration_disconnected() {
+        let dir = tempdir().unwrap();
+        let dev_file = dir.path().join("devices.json");
+        let notif_file = dir.path().join("notifications.json");
+        let event_bus = EventBus::new();
+        let registry = Arc::new(DeviceRegistry::new(dev_file.to_str().unwrap()));
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url: DEAD_URL.to_string(),
+            token: "t".into(),
+        }));
+        let notif_mgr = Arc::new(
+            crate::notification::manager::NotificationManager::load_or_create(
+                notif_file,
+                Some(event_bus.clone()),
+            ),
+        );
+        let dm = DeviceManager::new(registry, ha_rest, event_bus, Some(notif_mgr.clone()));
+
+        let integration_mgr = IntegrationManager::new(
+            dir.path().join("integrations.json").to_str().unwrap(),
+        );
+        integration_mgr
+            .update_integration_status(
+                VendorProvider::GoogleNest,
+                IntegrationStatus::Disconnected,
+                None,
+            )
+            .await
+            .unwrap();
+        dm.set_integration_manager(integration_mgr).await;
+
+        // "ecobee" in the entity_id, unbranded climate domain, Nest explicitly
+        // disconnected: is_nest_entity is false, so vendor stays "Unknown" — but the
+        // notification's vendor-label heuristic still recognizes "ecobee" in the id.
+        for state in ["cool", "unavailable"] {
+            dm.handle_state_changed(serde_json::json!({
+                "data": {
+                    "entity_id": "climate.ecobee_downstairs",
+                    "new_state": {"state": state, "attributes": {"friendly_name": "Ecobee Downstairs"}}
+                }
+            }))
+            .await;
+        }
+
+        let dev = dm
+            .get_registry()
+            .get_device_by_entity_id("climate.ecobee_downstairs")
+            .await
+            .unwrap();
+        assert_eq!(dev.vendor, "Unknown");
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let notifs = notif_mgr.list_notifications(false, None).await;
+        assert!(notifs.iter().any(|n| n.title == "Ecobee Device Offline"));
+    }
+
+    // ---------------------------------------------------------------------
+    // send_command
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_send_command_device_not_found_returns_error() {
+        let dir = tempdir().unwrap();
+        let event_bus = EventBus::new();
+        let registry = Arc::new(DeviceRegistry::new(
+            dir.path().join("devices.json").to_str().unwrap(),
+        ));
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url: DEAD_URL.to_string(),
+            token: "t".into(),
+        }));
+        let dm = DeviceManager::new(registry, ha_rest, event_bus, None);
+
+        let err = dm
+            .send_command("switch.missing", "switch", "turn_on", None)
+            .await
+            .unwrap_err();
+        assert!(err.contains("not found in registry"));
+    }
+
+    #[tokio::test]
+    async fn test_send_command_rejects_unsupported_command_for_read_only_device() {
+        let dir = tempdir().unwrap();
+        let event_bus = EventBus::new();
+        let registry = Arc::new(DeviceRegistry::new(
+            dir.path().join("devices.json").to_str().unwrap(),
+        ));
+        registry
+            .upsert_device(make_device("dev_sensor", "sensor.temp", "21.0"))
+            .await
+            .unwrap();
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url: DEAD_URL.to_string(),
+            token: "t".into(),
+        }));
+        let dm = DeviceManager::new(registry, ha_rest, event_bus, None);
+        // Skip the network round-trip for the unit-cache lookup — irrelevant to this path.
+        *dm.temperature_unit.write().await = Some("°C".to_string());
+
+        let err = dm
+            .send_command("sensor.temp", "sensor", "turn_on", None)
+            .await
+            .unwrap_err();
+        assert!(err.starts_with("invalid command:"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn test_send_command_success_calls_ha_service() {
+        let dir = tempdir().unwrap();
+        let event_bus = EventBus::new();
+        let registry = Arc::new(DeviceRegistry::new(
+            dir.path().join("devices.json").to_str().unwrap(),
+        ));
+        registry
+            .upsert_device(make_device("dev_switch", "switch.office_fan", "off"))
+            .await
+            .unwrap();
+
+        let url = mock_http_server(vec![(200, "[]".to_string())]).await;
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url,
+            token: "t".into(),
+        }));
+        let dm = DeviceManager::new(registry, ha_rest, event_bus, None);
+        *dm.temperature_unit.write().await = Some("°C".to_string());
+
+        dm.send_command("switch.office_fan", "switch", "turn_on", None)
+            .await
+            .expect("valid command should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_send_command_propagates_ha_service_failure() {
+        let dir = tempdir().unwrap();
+        let event_bus = EventBus::new();
+        let registry = Arc::new(DeviceRegistry::new(
+            dir.path().join("devices.json").to_str().unwrap(),
+        ));
+        registry
+            .upsert_device(make_device("dev_switch2", "switch.garage_fan", "off"))
+            .await
+            .unwrap();
+
+        let url = mock_http_server(vec![(500, r#"{"error":"nope"}"#.to_string())]).await;
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url,
+            token: "t".into(),
+        }));
+        let dm = DeviceManager::new(registry, ha_rest, event_bus, None);
+        *dm.temperature_unit.write().await = Some("°C".to_string());
+
+        let err = dm
+            .send_command("switch.garage_fan", "switch", "turn_on", None)
+            .await
+            .unwrap_err();
+        assert!(err.contains("Failed to call service"));
+    }
+
+    // ---------------------------------------------------------------------
+    // capabilities_for
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_capabilities_for_derives_from_device() {
+        let dir = tempdir().unwrap();
+        let event_bus = EventBus::new();
+        let registry = Arc::new(DeviceRegistry::new(
+            dir.path().join("devices.json").to_str().unwrap(),
+        ));
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url: DEAD_URL.to_string(),
+            token: "t".into(),
+        }));
+        let dm = DeviceManager::new(registry, ha_rest, event_bus, None);
+        *dm.temperature_unit.write().await = Some("°C".to_string());
+
+        let device = make_device("dev_light", "light.desk", "on");
+        let caps = dm.capabilities_for(&device).await;
+        assert_eq!(caps.domain, "light");
+        assert!(caps.controllable);
+    }
+
+    // ---------------------------------------------------------------------
+    // refresh_device_attributes
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_refresh_device_attributes_returns_none_when_device_missing() {
+        let dir = tempdir().unwrap();
+        let event_bus = EventBus::new();
+        let registry = Arc::new(DeviceRegistry::new(
+            dir.path().join("devices.json").to_str().unwrap(),
+        ));
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url: DEAD_URL.to_string(),
+            token: "t".into(),
+        }));
+        let dm = DeviceManager::new(registry, ha_rest, event_bus, None);
+
+        let result = dm
+            .refresh_device_attributes("light.missing")
+            .await
+            .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_refresh_device_attributes_updates_state_and_attributes() {
+        let dir = tempdir().unwrap();
+        let event_bus = EventBus::new();
+        let registry = Arc::new(DeviceRegistry::new(
+            dir.path().join("devices.json").to_str().unwrap(),
+        ));
+        registry
+            .upsert_device(make_device("dev_refresh", "light.hallway", "off"))
+            .await
+            .unwrap();
+
+        let url = mock_http_server(vec![(
+            200,
+            r#"{"state":"on","attributes":{"brightness":200}}"#.to_string(),
+        )])
+        .await;
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url,
+            token: "t".into(),
+        }));
+        let dm = DeviceManager::new(registry.clone(), ha_rest, event_bus, None);
+
+        let updated = dm
+            .refresh_device_attributes("light.hallway")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.current_state, "on");
+        assert_eq!(updated.attributes.get("brightness").unwrap(), 200);
+
+        let persisted = registry
+            .get_device_by_entity_id("light.hallway")
+            .await
+            .unwrap();
+        assert_eq!(persisted.current_state, "on");
+    }
+
+    #[tokio::test]
+    async fn test_refresh_device_attributes_propagates_ha_error() {
+        let dir = tempdir().unwrap();
+        let event_bus = EventBus::new();
+        let registry = Arc::new(DeviceRegistry::new(
+            dir.path().join("devices.json").to_str().unwrap(),
+        ));
+        registry
+            .upsert_device(make_device("dev_err", "light.broken", "off"))
+            .await
+            .unwrap();
+
+        let url = mock_http_server(vec![(500, "{}".to_string())]).await;
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url,
+            token: "t".into(),
+        }));
+        let dm = DeviceManager::new(registry, ha_rest, event_bus, None);
+
+        let err = dm
+            .refresh_device_attributes("light.broken")
+            .await
+            .unwrap_err();
+        assert!(err.contains("Failed to get state"));
     }
 }

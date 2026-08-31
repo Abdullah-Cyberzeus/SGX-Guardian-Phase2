@@ -451,6 +451,42 @@ fn resolve_pa_cli_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rules::model::RuleDraft;
+    use crate::rules::persistence::RulesPaths;
+
+    /// Serializes tests that mutate the process-wide `SGX_PA_CLI_PATH` env var.
+    static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn test_config(base: &std::path::Path) -> RulesConfig {
+        RulesConfig {
+            paths: RulesPaths::from_base(base.join("rules_base")),
+            dry_run: true,
+            max_executions: 100,
+            threat_config_path: base.join("threat_config.yaml"),
+            threat_state_dir: base.join("threat_state"),
+            discovery_config_path: base.join("discovery.yaml"),
+            transport_lock_dir: base.join("cot_lock"),
+            transport_lock_interface: None,
+        }
+    }
+
+    fn test_rule() -> Rule {
+        Rule::from_draft(RuleDraft {
+            name: Some("test rule".to_string()),
+            ..RuleDraft::default()
+        })
+    }
+
+    fn make_executable(path: &std::path::Path, script: &str) {
+        std::fs::write(path, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(path).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(path, perms).unwrap();
+        }
+    }
 
     #[test]
     fn parse_threat_severity_is_case_and_dash_insensitive_with_fallback() {
@@ -495,5 +531,319 @@ mod tests {
         assert!(!valid_interface_name("eth0; rm -rf /"));
         assert!(!valid_interface_name("eth0 && echo pwned"));
         assert!(!valid_interface_name("eth0/../etc"));
+    }
+
+    #[test]
+    fn normalized_trims_lowercases_and_converts_dashes() {
+        assert_eq!(normalized("  High-Risk "), "high_risk");
+        assert_eq!(normalized("Already_Snake"), "already_snake");
+    }
+
+    #[test]
+    fn dry_run_report_formats_action_label_and_outcome() {
+        let report = dry_run_report(&RuleAction::Notify {
+            severity: "info".to_string(),
+        });
+        assert_eq!(report.outcome, "dry-run");
+        assert_eq!(report.action, "Notify(info)");
+        assert!(report.message.contains("SGX_RULES_DRYRUN"));
+    }
+
+    #[test]
+    fn downgraded_report_formats_action_label_and_outcome() {
+        let report = downgraded_report(&RuleAction::LockTransport);
+        assert_eq!(report.outcome, "downgraded");
+        assert_eq!(report.action, "LockTransport");
+        assert!(report.message.contains("allow_destructive"));
+    }
+
+    #[test]
+    fn write_lock_file_creates_parent_dirs_and_writes_interface() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("subdir").join("node.lock");
+        write_lock_file(&path, "eth0").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "eth0\n");
+    }
+
+    #[test]
+    fn resolve_pa_cli_path_prefers_env_override_when_file_exists() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let fake_cli = dir.path().join("sgx-pa-cli");
+        make_executable(&fake_cli, "#!/bin/sh\nexit 0\n");
+
+        std::env::set_var("SGX_PA_CLI_PATH", &fake_cli);
+        let resolved = resolve_pa_cli_path();
+        std::env::remove_var("SGX_PA_CLI_PATH");
+
+        assert_eq!(resolved, Some(fake_cli));
+    }
+
+    #[test]
+    fn resolve_pa_cli_path_ignores_override_pointing_to_missing_file() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var(
+            "SGX_PA_CLI_PATH",
+            "/nonexistent/path/sgx-pa-cli-does-not-exist",
+        );
+        let resolved = resolve_pa_cli_path();
+        std::env::remove_var("SGX_PA_CLI_PATH");
+
+        assert_ne!(
+            resolved,
+            Some(std::path::PathBuf::from(
+                "/nonexistent/path/sgx-pa-cli-does-not-exist"
+            ))
+        );
+    }
+
+    #[test]
+    fn raise_alert_writes_to_threat_state_dir_and_reports_executed() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = test_config(dir.path());
+        let rule = test_rule();
+        let event = RuleEvent::sample_threat("node-1");
+
+        let report = raise_alert(&config, "node-1", &rule, &event, "critical");
+        assert_eq!(report.outcome, "executed");
+        assert!(config.threat_state_dir.join("alerts.jsonl").exists());
+    }
+
+    #[test]
+    fn raise_alert_falls_back_to_high_severity_for_unknown_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = test_config(dir.path());
+        let rule = test_rule();
+        let event = RuleEvent::sample_threat("node-1");
+
+        let report = raise_alert(&config, "node-1", &rule, &event, "not-a-real-severity");
+        assert_eq!(report.outcome, "executed");
+        assert!(report.action.contains("high"));
+    }
+
+    #[test]
+    fn raise_alert_reports_failed_when_state_dir_cannot_be_created() {
+        let dir = tempfile::tempdir().unwrap();
+        // A regular file where a directory is expected makes create_dir_all fail.
+        let blocker_file = dir.path().join("blocker_file");
+        std::fs::write(&blocker_file, b"x").unwrap();
+        let mut config = test_config(dir.path());
+        config.threat_state_dir = blocker_file.join("nested");
+        let rule = test_rule();
+        let event = RuleEvent::sample_threat("node-1");
+
+        let report = raise_alert(&config, "node-1", &rule, &event, "high");
+        assert_eq!(report.outcome, "failed");
+    }
+
+    #[test]
+    fn notify_builds_executed_report_with_severity_label() {
+        let rule = test_rule();
+        let event = RuleEvent::sample_threat("node-1");
+        let report = notify("node-1", &rule, &event, "critical");
+        assert_eq!(report.outcome, "executed");
+        assert_eq!(report.action, "Notify(critical)");
+    }
+
+    #[tokio::test]
+    async fn block_ip_reports_failed_when_event_has_no_source_ip() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = test_config(dir.path());
+        let event = RuleEvent::GeofenceEntry {
+            node_id: "n".to_string(),
+            device_id: "d".to_string(),
+            zone: "z".to_string(),
+        };
+        let report = block_ip(&config, "node-1", &event, Some(60)).await;
+        assert_eq!(report.outcome, "failed");
+        assert!(report.message.contains("no source IP"));
+    }
+
+    #[tokio::test]
+    async fn block_ip_reports_failed_for_unparseable_source_ip() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = test_config(dir.path());
+        let event = RuleEvent::DeviceDiscovered {
+            node_id: "n".to_string(),
+            device_id: "d".to_string(),
+            ip: "not-an-ip".to_string(),
+            status: "unauthorized".to_string(),
+            ports: vec![],
+            zone: None,
+        };
+        let report = block_ip(&config, "node-1", &event, None).await;
+        assert_eq!(report.outcome, "failed");
+    }
+
+    #[tokio::test]
+    async fn run_scan_reports_failed_for_invalid_intensity() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = test_config(dir.path());
+        let report = run_scan(&config, "node-1", "warp-speed").await;
+        assert_eq!(report.outcome, "failed");
+        assert!(report.message.contains("invalid scan intensity"));
+    }
+
+    #[tokio::test]
+    async fn revoke_did_reports_failed_when_event_has_no_target_did() {
+        let rule = test_rule();
+        let event = RuleEvent::sample_threat("node-1");
+        let report = revoke_did("node-1", &rule, &event).await;
+        assert_eq!(report.outcome, "failed");
+        assert!(report.message.contains("no DID"));
+    }
+
+    #[tokio::test]
+    async fn lock_transport_reports_failed_when_interface_not_configured() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = test_config(dir.path());
+        let report = lock_transport(&config, "node-1").await;
+        assert_eq!(report.outcome, "failed");
+        assert!(report.message.contains("SGX_RULES_LOCK_INTERFACE"));
+    }
+
+    #[tokio::test]
+    async fn lock_transport_reports_failed_for_invalid_interface_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = test_config(dir.path());
+        config.transport_lock_interface = Some("eth0; rm -rf /".to_string());
+        let report = lock_transport(&config, "node-1").await;
+        assert_eq!(report.outcome, "failed");
+        assert!(report.message.contains("invalid interface name"));
+    }
+
+    #[tokio::test]
+    async fn lock_transport_writes_lock_file_for_valid_interface() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = test_config(dir.path());
+        config.transport_lock_interface = Some("eth0".to_string());
+        let report = lock_transport(&config, "node-1").await;
+        assert_eq!(report.outcome, "executed");
+        assert!(config.transport_lock_dir.join("node-1.lock").exists());
+        let content =
+            std::fs::read_to_string(config.transport_lock_dir.join("node-1.lock")).unwrap();
+        assert_eq!(content, "eth0\n");
+    }
+
+    #[tokio::test]
+    async fn emergency_key_rotation_reports_executed_on_success() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("sgx-pa-cli");
+        make_executable(&script, "#!/bin/sh\necho rotated\nexit 0\n");
+
+        std::env::set_var("SGX_PA_CLI_PATH", &script);
+        let report = emergency_key_rotation("node-1").await;
+        std::env::remove_var("SGX_PA_CLI_PATH");
+
+        assert_eq!(report.outcome, "executed");
+        assert_eq!(report.message, "rotated");
+    }
+
+    #[tokio::test]
+    async fn emergency_key_rotation_reports_failed_on_nonzero_exit() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("sgx-pa-cli");
+        make_executable(&script, "#!/bin/sh\necho boom 1>&2\nexit 1\n");
+
+        std::env::set_var("SGX_PA_CLI_PATH", &script);
+        let report = emergency_key_rotation("node-1").await;
+        std::env::remove_var("SGX_PA_CLI_PATH");
+
+        assert_eq!(report.outcome, "failed");
+        assert_eq!(report.message, "boom");
+    }
+
+    #[tokio::test]
+    async fn emergency_key_rotation_reports_failed_when_cli_not_found() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("SGX_PA_CLI_PATH");
+        // This assumes the sandbox has no real `sgx-pa-cli` on PATH or in the
+        // hardcoded fallback directories, which holds for standard dev/CI images.
+        let report = emergency_key_rotation("node-1").await;
+        assert_eq!(report.outcome, "failed");
+        assert_eq!(report.message, "sgx-pa-cli not found");
+    }
+
+    #[tokio::test]
+    async fn execute_action_dispatches_every_variant_via_safe_paths() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("SGX_PA_CLI_PATH");
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = test_config(dir.path());
+        let rule = test_rule();
+        // No source IP and no target DID, so BlockIp/RevokeDid take their safe
+        // early-return branches instead of touching a real firewall or CRL signer.
+        let event = RuleEvent::GeofenceEntry {
+            node_id: "n".to_string(),
+            device_id: "d".to_string(),
+            zone: "z".to_string(),
+        };
+
+        let raise = execute_action(
+            &config,
+            "node-1",
+            &rule,
+            &event,
+            &RuleAction::RaiseAlert {
+                severity: "high".to_string(),
+            },
+        )
+        .await;
+        assert_eq!(raise.outcome, "executed");
+
+        let notify_report = execute_action(
+            &config,
+            "node-1",
+            &rule,
+            &event,
+            &RuleAction::Notify {
+                severity: "info".to_string(),
+            },
+        )
+        .await;
+        assert_eq!(notify_report.outcome, "executed");
+
+        let block = execute_action(
+            &config,
+            "node-1",
+            &rule,
+            &event,
+            &RuleAction::BlockIp { ttl_secs: None },
+        )
+        .await;
+        assert_eq!(block.outcome, "failed");
+
+        let scan = execute_action(
+            &config,
+            "node-1",
+            &rule,
+            &event,
+            &RuleAction::RunScan {
+                intensity: "invalid".to_string(),
+            },
+        )
+        .await;
+        assert_eq!(scan.outcome, "failed");
+
+        let revoke = execute_action(&config, "node-1", &rule, &event, &RuleAction::RevokeDid).await;
+        assert_eq!(revoke.outcome, "failed");
+
+        let lock =
+            execute_action(&config, "node-1", &rule, &event, &RuleAction::LockTransport).await;
+        assert_eq!(lock.outcome, "failed");
+
+        let rotation = execute_action(
+            &config,
+            "node-1",
+            &rule,
+            &event,
+            &RuleAction::EmergencyKeyRotation,
+        )
+        .await;
+        assert_eq!(rotation.outcome, "failed");
     }
 }

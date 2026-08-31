@@ -567,7 +567,7 @@ fn set_relay_enabled_in_node_config(node_id: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::ensure_local_membership_vc;
+    use super::*;
     use crate::did::document::Proof;
     use crate::vc::credential::{
         CredentialRole, CredentialStatus, CredentialSubject, MembershipStatus,
@@ -627,5 +627,78 @@ mod tests {
         } else {
             std::env::remove_var(crate::vc::persistence::VC_BASE_ENV);
         }
+    }
+
+    #[test]
+    fn lan_ip_and_host_port_parsers_cover_defaults_and_boundaries() {
+        assert!(!valid_lan_ip(""));
+        assert!(!valid_lan_ip("0.0.0.0"));
+        assert!(!valid_lan_ip("127.0.0.1"));
+        assert!(valid_lan_ip("192.168.1.20"));
+
+        assert_eq!(split_host_port("node-a.example:50070"), ("node-a.example".into(), 50070));
+        assert_eq!(split_host_port("node-a.example"), ("node-a.example".into(), 50061));
+        assert_eq!(split_host_port("node-a.example:invalid"), ("node-a.example:invalid".into(), 50061));
+        assert_eq!(split_host_port("10.0.0.1:0"), ("10.0.0.1".into(), 0));
+    }
+
+    #[test]
+    fn role_marker_create_remove_and_missing_remove_are_idempotent() {
+        let temp = TempDir::new().expect("tempdir");
+        let marker = temp.path().join("roles").join("relay.enabled");
+        std::fs::create_dir_all(marker.parent().expect("marker parent")).expect("create parent");
+        let marker = marker.to_str().expect("utf-8 marker path");
+
+        sync_role_marker(marker, true);
+        assert_eq!(std::fs::read_to_string(marker).expect("read marker"), "true");
+        sync_role_marker(marker, false);
+        assert!(!Path::new(marker).exists());
+        sync_role_marker(marker, false);
+        assert!(!Path::new(marker).exists());
+    }
+
+    #[tokio::test]
+    async fn write_file_creates_parents_replaces_content_and_secures_keys() {
+        let temp = TempDir::new().expect("tempdir");
+        let path = temp.path().join("nested").join("node.key");
+        let path = path.to_str().expect("utf-8 path");
+
+        write_file(path, "first").await.expect("initial write");
+        write_file(path, "second").await.expect("replacement write");
+        assert_eq!(tokio::fs::read_to_string(path).await.expect("read key"), "second");
+        assert!(!Path::new(&format!("{path}.tmp")).exists());
+
+        #[cfg(unix)]
+        {
+            let mode = std::fs::metadata(path).expect("key metadata").permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+    }
+
+    #[test]
+    fn membership_vc_rejects_empty_or_malformed_payload_without_local_state() {
+        let _guard = TEST_ENV_LOCK.lock().expect("test env lock");
+        let temp = TempDir::new().expect("tempdir");
+        let previous = std::env::var_os(crate::vc::persistence::VC_BASE_ENV);
+        std::env::set_var(crate::vc::persistence::VC_BASE_ENV, temp.path());
+
+        let empty = ensure_local_membership_vc("").expect_err("missing VC must fail");
+        assert!(empty.contains("membership VC missing"));
+        let malformed = ensure_local_membership_vc("not-json").expect_err("malformed VC must fail");
+        assert!(malformed.contains("VC parse failed"));
+
+        if let Some(previous) = previous {
+            std::env::set_var(crate::vc::persistence::VC_BASE_ENV, previous);
+        } else {
+            std::env::remove_var(crate::vc::persistence::VC_BASE_ENV);
+        }
+    }
+
+    #[tokio::test]
+    async fn try_request_rejects_an_invalid_ca_uri_before_network_io() {
+        let error = try_request("nodeB", "[invalid", "10.0.0.2", "public-key", false, false, None)
+            .await
+            .expect_err("invalid URI must fail");
+        assert!(error.contains("Invalid CA address"));
     }
 }

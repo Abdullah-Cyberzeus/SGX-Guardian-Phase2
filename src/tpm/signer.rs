@@ -49,3 +49,22 @@ fn normalize_signature(sig: Vec<u8>) -> Result<Vec<u8>, TpmError> {
         sig.len()
     )))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_signature_accepts_64_byte_raw() {
+        let raw = vec![0u8; 64];
+        let out = normalize_signature(raw).expect("should accept 64-byte raw");
+        assert_eq!(out.len(), 64);
+    }
+
+    #[test]
+    fn normalize_signature_rejects_unknown_framing() {
+        let bad = vec![0u8; 10];
+        let res = normalize_signature(bad);
+        assert!(res.is_err());
+    }
+}

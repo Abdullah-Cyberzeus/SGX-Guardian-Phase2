@@ -338,6 +338,35 @@ fn parse_permissions(raw: &str) -> Result<Vec<String>, String> {
     Ok(permissions)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{parse_permissions, parse_role};
+
+    #[test]
+    fn parse_role_accepts_owner_and_member() {
+        assert!(matches!(parse_role("owner"), Ok(_)));
+        assert!(matches!(parse_role("member"), Ok(_)));
+        assert!(matches!(parse_role(" OWNER  "), Ok(_)));
+    }
+
+    #[test]
+    fn parse_role_rejects_unknown() {
+        assert!(parse_role("invalid").is_err());
+    }
+
+    #[test]
+    fn parse_permissions_splits_and_trims() {
+        let p = parse_permissions("read, write,admin").expect("permissions");
+        assert_eq!(p, vec!["read", "write", "admin"]);
+    }
+
+    #[test]
+    fn parse_permissions_rejects_empty_list() {
+        assert!(parse_permissions("").is_err());
+        assert!(parse_permissions(", ,").is_err());
+    }
+}
+
 fn load_runtime_issuer_and_km() -> (
     sgx_guardian_client::did::DidRecord,
     std::sync::Arc<sgx_guardian_client::key_manager::KeyManager>,

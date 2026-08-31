@@ -469,6 +469,96 @@ fn did_to_device_id(revoked_did: &str) -> Option<String> {
 #[cfg(test)]
 mod unit_tests {
     use super::*;
+    use crate::did::doc_persistence;
+    use crate::did::document::{DidDocument, DocBuildInput};
+    use crate::did::persistence::DerivationProof;
+    use crate::crl::entry::{RevocationReason, RevokerRole, CRL_CONTEXT_CORE, CRL_CONTEXT_SGX};
+    use crate::did::document::Proof;
+    use tempfile::TempDir;
+
+    /// Restores whatever value (if any) preceded an `env::set_var` call on
+    /// `key`, even if the test body panics. Mirrors the `CrlBaseGuard`
+    /// pattern already used in `crl::offline::sync` and `crl::gossip::store`.
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(previous) => std::env::set_var(self.key, previous),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    /// A syntactically valid (but not curve-checked) uncompressed P-256
+    /// public key, matching the fixture already used by
+    /// `did::document::unit_tests`. `primary_public_key_bytes` only decodes
+    /// coordinates; it does not validate the point is on-curve.
+    const SAMPLE_PUBKEY: [u8; 65] = {
+        let mut bytes = [0u8; 65];
+        bytes[0] = 0x04;
+        let mut i = 1;
+        while i < 65 {
+            bytes[i] = i as u8;
+            i += 1;
+        }
+        bytes
+    };
+
+    fn sample_entry(sev: Severity) -> CrlEntry {
+        CrlEntry {
+            context: vec![CRL_CONTEXT_CORE.into(), CRL_CONTEXT_SGX.into()],
+            id: "urn:uuid:emergunit".to_string(),
+            r#type: vec!["VerifiableCredential".into(), "RevocationCredential".into()],
+            revoked_did: "did:guardian:target".to_string(),
+            device_id: None,
+            user_id: None,
+            circle_id: "guardian-circle-alpha".to_string(),
+            reason: RevocationReason::Compromised,
+            severity: sev,
+            timestamp: "2026-01-01T00:00:00Z".to_string(),
+            revoker_did: "did:guardian:owner".to_string(),
+            revoker_role: RevokerRole::Owner,
+            evidence: None,
+            proof: Proof::default(),
+            peers_notified: Vec::new(),
+            propagated: false,
+        }
+    }
+
+    fn make_did_record(did: &str) -> DidRecord {
+        DidRecord {
+            did: did.to_string(),
+            method: "guardian".to_string(),
+            method_version: "1.0".to_string(),
+            did_id_b58: format!("b58-{}", did.replace(':', "_")),
+            did_id_hex: hex::encode(did.as_bytes()),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            deactivated_at: None,
+            derivation: DerivationProof {
+                se050_uid: "se050-test-uid".to_string(),
+                se050_uid_source: "test".to_string(),
+                dkp_v1_pubkey_sha256_b16: "00".repeat(32),
+                dkp_v1_pubkey_path: "device.key".to_string(),
+                dkp_v1_pubkey_der_b64: None,
+                dik_pubkey_sha256_b16: "11".repeat(32),
+                dik_pubkey_der_b64: None,
+            },
+            current_dkp_version: 1,
+            deriv_signature_b64: "signature".to_string(),
+        }
+    }
 
     #[test]
     fn seen_set_insert_new_dedups_fingerprints() {
@@ -490,5 +580,189 @@ mod unit_tests {
         // The set never grows past its capacity.
         assert_eq!(seen.set.len(), SEEN_CAPACITY);
         assert_eq!(seen.order.len(), SEEN_CAPACITY);
+    }
+
+    // --- seen_is_new (global dedup wrapper) --------------------------------
+
+    #[test]
+    fn seen_is_new_dedups_across_calls_via_global_seen_set() {
+        let fp_a = format!("emergency-unit-test-fp-a-{}", uuid::Uuid::new_v4());
+        let fp_b = format!("emergency-unit-test-fp-b-{}", uuid::Uuid::new_v4());
+        assert!(seen_is_new(&fp_a));
+        assert!(!seen_is_new(&fp_a));
+        assert!(seen_is_new(&fp_b));
+        assert!(!seen_is_new(&fp_b));
+        // Unrelated fingerprints remain independent.
+        assert!(seen_is_new(&format!("{fp_a}-suffix")));
+    }
+
+    // --- did_to_device_id ----------------------------------------------
+
+    #[test]
+    fn did_to_device_id_resolves_via_cached_peer_doc() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let peers_dir = TempDir::new().expect("peers tempdir");
+        let _peers_guard = EnvGuard::set(doc_persistence::PEERS_DOC_DIR_ENV, peers_dir.path());
+
+        let target_did = "did:guardian:target-device0000";
+        let doc = DidDocument::build(DocBuildInput {
+            did: target_did,
+            node_name: Some("node-target"),
+            current_dkp_version: 1,
+            current_dkp_pubkey_der: &SAMPLE_PUBKEY,
+            overlay_ip_cidr: None,
+            attestation_bind: None,
+            cert_bootstrap_bind: None,
+            revoked: vec![],
+            previous_version_id: 0,
+            created_at: None,
+            status: None,
+        })
+        .expect("build doc");
+
+        std::fs::write(
+            peers_dir.path().join("did_doc_target.json"),
+            serde_json::to_vec(&doc).expect("serialize doc"),
+        )
+        .expect("write doc");
+
+        let device_id = did_to_device_id(target_did);
+        assert!(device_id.is_some());
+
+        let expected = crate::cot::identity::DeviceIdentity::from_public_key(&SAMPLE_PUBKEY)
+            .expect("device identity")
+            .device_id()
+            .to_string();
+        assert_eq!(device_id.unwrap(), expected);
+    }
+
+    #[test]
+    fn did_to_device_id_returns_none_when_doc_missing() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let peers_dir = TempDir::new().expect("peers tempdir");
+        let _peers_guard = EnvGuard::set(doc_persistence::PEERS_DOC_DIR_ENV, peers_dir.path());
+        assert!(did_to_device_id("did:guardian:does-not-exist0000").is_none());
+    }
+
+    #[test]
+    fn did_to_device_id_returns_none_when_peer_dir_missing() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let peers_dir = TempDir::new().expect("peers tempdir");
+        let missing = peers_dir.path().join("nope");
+        let _peers_guard = EnvGuard::set(doc_persistence::PEERS_DOC_DIR_ENV, &missing);
+        assert!(did_to_device_id("did:guardian:whoever").is_none());
+    }
+
+    // --- load_identity ----------------------------------------------------
+
+    #[test]
+    fn load_identity_succeeds_with_fixture_record_and_software_keys() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let tmp = TempDir::new().expect("tempdir");
+        let did_path = tmp.path().join("did.json");
+        let key_dir = tmp.path().join("keys");
+
+        let record = make_did_record("did:guardian:loadtest0000");
+        record
+            .save(did_path.to_str().expect("utf8 path"))
+            .expect("save did record");
+
+        let _did_guard = EnvGuard::set("SGX_GUARDIAN_DID_PATH", &did_path);
+        let _keys_guard = EnvGuard::set(crate::vc::issue::DEVICE_KEY_DIR_ENV, &key_dir);
+        let _force_guard = EnvGuard::set("SGX_FORCE_SOFTWARE_KEYS", "1");
+
+        let result = load_identity("emergency-load-identity-ok");
+        assert!(result.is_ok(), "expected Ok, got {:?}", result.err());
+        let (loaded_record, _km, circle_id) = result.expect("identity loaded");
+        assert_eq!(loaded_record.did, "did:guardian:loadtest0000");
+        assert!(!circle_id.is_empty());
+    }
+
+    #[test]
+    fn load_identity_fails_when_did_record_missing() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let tmp = TempDir::new().expect("tempdir");
+        let missing_path = tmp.path().join("does-not-exist.json");
+        let _did_guard = EnvGuard::set("SGX_GUARDIAN_DID_PATH", &missing_path);
+
+        let result = load_identity("emergency-load-identity-missing");
+        match result {
+            Ok(_) => panic!("missing did record must fail"),
+            Err(error) => assert!(error.contains("did record"), "unexpected error: {error}"),
+        }
+    }
+
+    // --- counters and last notice ------------------------------------------
+
+    static EMERGENCY_STATE_TEST_LOCK: Lazy<std::sync::Mutex<()>> =
+        Lazy::new(|| std::sync::Mutex::new(()));
+
+    #[test]
+    fn notice_counters_reflect_recorded_increments() {
+        let _guard = EMERGENCY_STATE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let before_sent = notices_sent();
+        let before_received = notices_received();
+        let before_merged = notices_merged();
+        let before_rebroadcast = notices_rebroadcast();
+        let before_terminated = sessions_terminated_total();
+
+        NOTICES_SENT.fetch_add(1, Ordering::Relaxed);
+        NOTICES_RECEIVED.fetch_add(2, Ordering::Relaxed);
+        NOTICES_MERGED.fetch_add(3, Ordering::Relaxed);
+        NOTICES_REBROADCAST.fetch_add(4, Ordering::Relaxed);
+        SESSIONS_TERMINATED.fetch_add(5, Ordering::Relaxed);
+
+        assert_eq!(notices_sent(), before_sent + 1);
+        assert_eq!(notices_received(), before_received + 2);
+        assert_eq!(notices_merged(), before_merged + 3);
+        assert_eq!(notices_rebroadcast(), before_rebroadcast + 4);
+        assert_eq!(sessions_terminated_total(), before_terminated + 5);
+    }
+
+    #[test]
+    fn record_last_and_last_notice_roundtrip() {
+        let _guard = EMERGENCY_STATE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let notice = LastNotice {
+            direction: "sent".into(),
+            revoked_did: "did:guardian:target".into(),
+            origin_did: "did:guardian:origin".into(),
+            peers: 3,
+            merged: true,
+            at: "2026-01-01T00:00:00Z".into(),
+        };
+        record_last(notice.clone());
+        let got = last_notice().expect("last notice recorded");
+        assert_eq!(got.direction, "sent");
+        assert_eq!(got.revoked_did, "did:guardian:target");
+        assert_eq!(got.origin_did, "did:guardian:origin");
+        assert_eq!(got.peers, 3);
+        assert!(got.merged);
+    }
+
+    // --- broadcast_for_entry (pure gate branches only; the network path is
+    // out of scope — no live UDP peers in a unit test) ----------------------
+
+    #[test]
+    fn broadcast_for_entry_returns_before_spawning_when_emergency_disabled() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let _guard = EnvGuard::set("SGX_CRL_EMERGENCY_ENABLED", "0");
+        let entry = sample_entry(Severity::Critical);
+        // If this reached `tokio::spawn` it would panic ("no reactor
+        // running") since this is a plain `#[test]`, not `#[tokio::test]`.
+        // Reaching the end of the function without panicking proves the
+        // `!config.emergency_enabled` early return fired.
+        broadcast_for_entry("node-x".to_string(), entry);
+    }
+
+    #[test]
+    fn broadcast_for_entry_returns_before_spawning_when_entry_not_critical() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let _guard = EnvGuard::set("SGX_CRL_EMERGENCY_ENABLED", "1");
+        let entry = sample_entry(Severity::Low);
+        broadcast_for_entry("node-x".to_string(), entry);
     }
 }

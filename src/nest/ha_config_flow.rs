@@ -467,4 +467,210 @@ mod tests {
         let parsed_step: FlowStepResponse = serde_json::from_str(json_step).unwrap();
         assert_eq!(parsed_step.result.unwrap().entry_id, "nest_entry_456");
     }
+
+    fn sample_creds() -> NestCredentials {
+        NestCredentials::new(
+            Some("client_id_x".to_string()),
+            Some("client_secret_x".to_string()),
+            Some("project_x".to_string()),
+            Some("access_x".to_string()),
+            Some("refresh_x".to_string()),
+        )
+    }
+
+    /// Spawns a tiny loopback HTTP server that answers each accepted connection with the
+    /// next queued (status, body) pair, in order. Purely local (127.0.0.1, ephemeral port) —
+    /// no real network, no external process.
+    async fn spawn_queue_server(responses: Vec<(u16, String)>) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            for (status, body) in responses {
+                if let Ok((mut socket, _)) = listener.accept().await {
+                    let mut buf = [0u8; 8192];
+                    let _ = socket.read(&mut buf).await;
+                    let reason = match status {
+                        200 => "OK",
+                        400 => "Bad Request",
+                        404 => "Not Found",
+                        _ => "Error",
+                    };
+                    let response = format!(
+                        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        status,
+                        reason,
+                        body.len(),
+                        body
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                    let _ = socket.shutdown().await;
+                }
+            }
+        });
+        format!("http://{}", addr)
+    }
+
+    #[tokio::test]
+    async fn test_inject_direct_storage_entry_none_without_storage_volume() {
+        // Sandbox has none of the hardcoded HA storage directories mounted, so the direct
+        // injection fast-path must decline and let the caller fall back to the config flow.
+        let client = NestHaConfigFlowClient::new("http://127.0.0.1:1".to_string(), "tok".to_string());
+        let result = client.inject_direct_storage_entry(&sample_creds()).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_setup_nest_config_entry_success() {
+        let base_url = spawn_queue_server(vec![
+            (200, r#"{"flow_id":"flow_nest_ok"}"#.to_string()),
+            (
+                200,
+                r#"{"result":{"entry_id":"nest_entry_ok_1"}}"#.to_string(),
+            ),
+        ])
+        .await;
+
+        let client = NestHaConfigFlowClient::new(base_url, "tok".to_string());
+        let result = client.setup_nest_config_entry(&sample_creds()).await;
+        assert!(result.is_ok());
+        let (entry_id, restarted) = result.unwrap();
+        assert_eq!(entry_id, "nest_entry_ok_1");
+        assert!(!restarted);
+    }
+
+    #[tokio::test]
+    async fn test_setup_nest_config_entry_initiate_rejected() {
+        let base_url = spawn_queue_server(vec![(
+            400,
+            r#"{"message":"unknown handler"}"#.to_string(),
+        )])
+        .await;
+
+        let client = NestHaConfigFlowClient::new(base_url, "tok".to_string());
+        let result = client.setup_nest_config_entry(&sample_creds()).await;
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("HA config flow initiate failed for Nest"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_setup_nest_config_entry_missing_project_id() {
+        let base_url = spawn_queue_server(vec![(
+            200,
+            r#"{"flow_id":"flow_nest_missing_project"}"#.to_string(),
+        )])
+        .await;
+
+        let mut creds = sample_creds();
+        creds.project_id = None;
+        std::env::remove_var("SGX_NEST_PROJECT_ID");
+
+        let client = NestHaConfigFlowClient::new(base_url, "tok".to_string());
+        let result = client.setup_nest_config_entry(&creds).await;
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("project_id is required"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_setup_nest_config_entry_missing_client_credentials() {
+        let base_url = spawn_queue_server(vec![(
+            200,
+            r#"{"flow_id":"flow_nest_missing_client"}"#.to_string(),
+        )])
+        .await;
+
+        let mut creds = sample_creds();
+        creds.client_id = None;
+        std::env::remove_var("SGX_NEST_CLIENT_ID");
+
+        let client = NestHaConfigFlowClient::new(base_url, "tok".to_string());
+        let result = client.setup_nest_config_entry(&creds).await;
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("client_id is required"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_setup_nest_config_entry_step_rejected() {
+        let base_url = spawn_queue_server(vec![
+            (200, r#"{"flow_id":"flow_nest_step_fail"}"#.to_string()),
+            (400, r#"{"message":"invalid credentials"}"#.to_string()),
+        ])
+        .await;
+
+        let client = NestHaConfigFlowClient::new(base_url, "tok".to_string());
+        let result = client.setup_nest_config_entry(&sample_creds()).await;
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("HA config flow submission failed for Nest"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_setup_nest_config_entry_no_entry_id_in_response() {
+        let base_url = spawn_queue_server(vec![
+            (200, r#"{"flow_id":"flow_nest_no_entry"}"#.to_string()),
+            (200, r#"{"type":"form"}"#.to_string()),
+        ])
+        .await;
+
+        let client = NestHaConfigFlowClient::new(base_url, "tok".to_string());
+        let result = client.setup_nest_config_entry(&sample_creds()).await;
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("no entry_id was returned"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_setup_nest_config_entry_unreachable_ha() {
+        // Port 1 on loopback: nothing is listening, so the connection is refused immediately.
+        // This is local-only (never leaves the loopback interface) and requires no privileges.
+        let client =
+            NestHaConfigFlowClient::new("http://127.0.0.1:1".to_string(), "tok".to_string());
+        let result = client.setup_nest_config_entry(&sample_creds()).await;
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("Failed to send Nest config flow request to HA"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_remove_nest_config_entry_success() {
+        let base_url = spawn_queue_server(vec![(200, "{}".to_string())]).await;
+        let client = NestHaConfigFlowClient::new(base_url, "tok".to_string());
+        let result = client.remove_nest_config_entry("nest_entry_1").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_remove_nest_config_entry_failure() {
+        let base_url = spawn_queue_server(vec![(404, r#"{"message":"not found"}"#.to_string())]).await;
+        let client = NestHaConfigFlowClient::new(base_url, "tok".to_string());
+        let result = client.remove_nest_config_entry("nest_entry_missing").await;
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("Failed to remove HA Nest config entry"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_remove_nest_config_entry_unreachable_ha() {
+        let client =
+            NestHaConfigFlowClient::new("http://127.0.0.1:1".to_string(), "tok".to_string());
+        let result = client.remove_nest_config_entry("nest_entry_1").await;
+        assert!(result.is_err());
+    }
 }

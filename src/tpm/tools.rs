@@ -376,3 +376,38 @@ impl Tpm2Cli {
         Err(TpmError::Tool(tool.to_string(), detail))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg() -> super::TpmConfig {
+        super::TpmConfig {
+            device: "/dev/tpm0".into(),
+            tcti: "tabrmd:bus_name=com.example.tpm".into(),
+            explicit_backend: false,
+            dik_handle: 0x81020000,
+            dkp_handle_base: 0x81010000,
+            ek_handle: 0x81010001,
+            pcr_selection: "0:0,1,2".into(),
+            owner_auth: None,
+            key_auth: None,
+        }
+    }
+
+    #[test]
+    fn create_args_includes_auth_when_provided() {
+        let t = Tpm2Cli::new(cfg());
+        let args = t.create_args("/tmp/ctx", "/tmp/pub", "/tmp/priv", "attr", "ecc256", Some("p@ss"));
+        assert!(args.contains(&"-p".to_string()) || args.contains(&"-p".to_string()));
+        assert!(args.iter().any(|s| s == "attr"));
+        assert!(args.iter().any(|s| s == "ecc256"));
+    }
+
+    #[test]
+    fn create_args_without_auth_has_no_p_flag() {
+        let t = Tpm2Cli::new(cfg());
+        let args = t.create_args("/tmp/ctx", "/tmp/pub", "/tmp/priv", "attrs", "ecc", None);
+        assert!(!args.contains(&"-p".to_string()));
+    }
+}

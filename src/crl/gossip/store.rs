@@ -394,12 +394,89 @@ pub fn entries_matching(
 }
 
 #[cfg(test)]
-mod unit_tests {
+mod tests {
     use super::*;
     use crate::crl::entry::{
         RevocationReason, RevokerRole, Severity, CRL_CONTEXT_CORE, CRL_CONTEXT_SGX,
+        CRL_UNREVOKE_TOMBSTONE_TYPE,
     };
     use crate::did::document::Proof;
+    use crate::did::persistence::DerivationProof;
+    use tempfile::TempDir;
+
+    /// Serializes `SGX_GUARDIAN_CRL_BASE` mutation across tests in this
+    /// module, restoring whatever value (if any) preceded the test.
+    struct CrlBaseGuard(Option<std::ffi::OsString>);
+
+    impl CrlBaseGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let previous = std::env::var_os(persistence::CRL_BASE_ENV);
+            std::env::set_var(persistence::CRL_BASE_ENV, path);
+            Self(previous)
+        }
+    }
+
+    impl Drop for CrlBaseGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.0.take() {
+                std::env::set_var(persistence::CRL_BASE_ENV, previous);
+            } else {
+                std::env::remove_var(persistence::CRL_BASE_ENV);
+            }
+        }
+    }
+
+    fn make_key_manager(dir: &std::path::Path) -> KeyManager {
+        let path = dir.join("device.key");
+        KeyManager::load_or_generate(path.to_str().expect("utf8 key path")).expect("key manager")
+    }
+
+    fn make_did_record(did: &str) -> DidRecord {
+        DidRecord {
+            did: did.to_string(),
+            method: "guardian".to_string(),
+            method_version: "1.0".to_string(),
+            did_id_b58: format!("b58-{}", did.replace(':', "_")),
+            did_id_hex: hex::encode(did.as_bytes()),
+            created_at: Utc::now().to_rfc3339(),
+            deactivated_at: None,
+            derivation: DerivationProof {
+                se050_uid: "se050-test-uid".to_string(),
+                se050_uid_source: "test".to_string(),
+                dkp_v1_pubkey_sha256_b16: "00".repeat(32),
+                dkp_v1_pubkey_path: "device.key".to_string(),
+                dkp_v1_pubkey_der_b64: None,
+                dik_pubkey_sha256_b16: "11".repeat(32),
+                dik_pubkey_der_b64: None,
+            },
+            current_dkp_version: 1,
+            deriv_signature_b64: "signature".to_string(),
+        }
+    }
+
+    fn sample_tombstone(
+        id: &str,
+        revoked_did: &str,
+        original_entry_id: &str,
+        timestamp: &str,
+    ) -> UnrevokeTombstone {
+        UnrevokeTombstone {
+            context: vec![CRL_CONTEXT_CORE.into(), CRL_CONTEXT_SGX.into()],
+            id: id.to_string(),
+            r#type: vec![
+                "VerifiableCredential".into(),
+                CRL_UNREVOKE_TOMBSTONE_TYPE.into(),
+            ],
+            revoked_did: revoked_did.to_string(),
+            original_entry_id: original_entry_id.to_string(),
+            owner_did: "did:guardian:owner".to_string(),
+            sequence: 0,
+            timestamp: timestamp.to_string(),
+            proof: Proof::default(),
+            peers_notified: vec![],
+            propagated: false,
+        }
+    }
 
     fn sample_entry(id: &str, revoked_did: &str, timestamp: &str) -> CrlEntry {
         CrlEntry {
@@ -466,5 +543,577 @@ mod unit_tests {
         assert_eq!(cleaned.id, entry.id);
         assert_eq!(cleaned.revoked_did, entry.revoked_did);
         assert_eq!(cleaned.fingerprint(), entry.fingerprint());
+    }
+
+    #[test]
+    fn normalized_tombstone_clears_gossip_bookkeeping_fields() {
+        let mut tombstone =
+            sample_tombstone("urn:uuid:t1", "did:guardian:x", "urn:uuid:orig", "2026-01-01T00:00:00Z");
+        tombstone.peers_notified.push("did:guardian:peerA".into());
+        tombstone.propagated = true;
+
+        let cleaned = normalized_tombstone(&tombstone);
+        assert!(cleaned.peers_notified.is_empty());
+        assert!(!cleaned.propagated);
+        assert_eq!(cleaned.id, tombstone.id);
+        assert_eq!(cleaned.revoked_did, tombstone.revoked_did);
+        assert_eq!(cleaned.fingerprint(), tombstone.fingerprint());
+    }
+
+    #[test]
+    fn merge_new_entry_is_added_normalized_and_persisted() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        let record = make_did_record("did:guardian:owner");
+        let km = make_key_manager(temp.path());
+
+        let entry = sample_entry("urn:uuid:e1", "did:guardian:target", "2026-01-01T00:00:00Z");
+        assert!(!entry.peers_notified.is_empty());
+        assert!(entry.propagated);
+
+        let outcome =
+            merge_verified_records(&record, &km, "circle-1", std::slice::from_ref(&entry), &[])
+                .expect("merge new entry");
+        assert_eq!(outcome.added, 1);
+        assert_eq!(outcome.replaced, 0);
+        assert_eq!(outcome.skipped, 0);
+        assert_eq!(outcome.sequence, 1);
+        assert!(!outcome.merkle_root.is_empty());
+
+        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        assert!(crl.contains("did:guardian:target"));
+        let stored = crl
+            .entries
+            .iter()
+            .find(|e| e.revoked_did == "did:guardian:target")
+            .expect("stored entry");
+        // Gossip bookkeeping must be reset on ingest, never inherited.
+        assert!(stored.peers_notified.is_empty());
+        assert!(!stored.propagated);
+
+        let persisted_files = persistence::list_entries().expect("list entries");
+        assert_eq!(persisted_files.len(), 1);
+    }
+
+    #[test]
+    fn merge_duplicate_entry_by_fingerprint_is_skipped() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        let record = make_did_record("did:guardian:owner");
+        let km = make_key_manager(temp.path());
+
+        let entry = sample_entry("urn:uuid:e1", "did:guardian:target", "2026-01-01T00:00:00Z");
+        let first =
+            merge_verified_records(&record, &km, "circle-1", std::slice::from_ref(&entry), &[])
+                .expect("first merge");
+        assert_eq!(first.added, 1);
+
+        let second =
+            merge_verified_records(&record, &km, "circle-1", std::slice::from_ref(&entry), &[])
+                .expect("second merge");
+        assert_eq!(second.added, 0);
+        assert_eq!(second.replaced, 0);
+        assert_eq!(second.skipped, 1);
+
+        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        assert_eq!(crl.entries.len(), 1);
+    }
+
+    #[test]
+    fn merge_conflicting_entry_incoming_wins_replaces_stale_record() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        let record = make_did_record("did:guardian:owner");
+        let km = make_key_manager(temp.path());
+
+        let stale = sample_entry("urn:uuid:old", "did:guardian:x", "2026-01-01T00:00:00Z");
+        merge_verified_records(&record, &km, "circle-1", std::slice::from_ref(&stale), &[])
+            .expect("merge stale");
+
+        let fresh = sample_entry("urn:uuid:new", "did:guardian:x", "2026-06-01T00:00:00Z");
+        let outcome =
+            merge_verified_records(&record, &km, "circle-1", std::slice::from_ref(&fresh), &[])
+                .expect("merge fresh");
+        assert_eq!(outcome.added, 0);
+        assert_eq!(outcome.replaced, 1);
+        assert_eq!(outcome.skipped, 0);
+
+        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        assert_eq!(crl.entries.len(), 1);
+        assert_eq!(crl.entries[0].id, fresh.id);
+    }
+
+    #[test]
+    fn merge_conflicting_entry_incoming_loses_is_skipped() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        let record = make_did_record("did:guardian:owner");
+        let km = make_key_manager(temp.path());
+
+        let fresh = sample_entry("urn:uuid:new", "did:guardian:x", "2026-06-01T00:00:00Z");
+        merge_verified_records(&record, &km, "circle-1", std::slice::from_ref(&fresh), &[])
+            .expect("merge fresh");
+
+        let stale = sample_entry("urn:uuid:old", "did:guardian:x", "2026-01-01T00:00:00Z");
+        let outcome =
+            merge_verified_records(&record, &km, "circle-1", std::slice::from_ref(&stale), &[])
+                .expect("merge stale");
+        assert_eq!(outcome.added, 0);
+        assert_eq!(outcome.replaced, 0);
+        assert_eq!(outcome.skipped, 1);
+
+        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        assert_eq!(crl.entries.len(), 1);
+        assert_eq!(crl.entries[0].id, fresh.id);
+    }
+
+    #[test]
+    fn merge_entry_replaces_existing_tombstone_when_incoming_newer() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        let record = make_did_record("did:guardian:owner");
+        let km = make_key_manager(temp.path());
+
+        let tombstone = sample_tombstone(
+            "urn:uuid:t1",
+            "did:guardian:x",
+            "urn:uuid:orig",
+            "2026-01-01T00:00:00Z",
+        );
+        let outcome1 = merge_verified_records(
+            &record,
+            &km,
+            "circle-1",
+            &[],
+            std::slice::from_ref(&tombstone),
+        )
+        .expect("merge tombstone");
+        assert_eq!(outcome1.added, 1);
+
+        let entry = sample_entry("urn:uuid:e1", "did:guardian:x", "2026-06-01T00:00:00Z");
+        let outcome2 =
+            merge_verified_records(&record, &km, "circle-1", std::slice::from_ref(&entry), &[])
+                .expect("merge entry");
+        assert_eq!(outcome2.replaced, 1);
+        assert_eq!(outcome2.skipped, 0);
+
+        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        assert!(crl.contains("did:guardian:x"));
+        assert!(crl.tombstone("did:guardian:x").is_none());
+    }
+
+    #[test]
+    fn merge_entry_skipped_when_existing_tombstone_is_newer() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        let record = make_did_record("did:guardian:owner");
+        let km = make_key_manager(temp.path());
+
+        let tombstone = sample_tombstone(
+            "urn:uuid:t1",
+            "did:guardian:x",
+            "urn:uuid:orig",
+            "2026-06-01T00:00:00Z",
+        );
+        merge_verified_records(
+            &record,
+            &km,
+            "circle-1",
+            &[],
+            std::slice::from_ref(&tombstone),
+        )
+        .expect("merge tombstone");
+
+        let entry = sample_entry("urn:uuid:e1", "did:guardian:x", "2026-01-01T00:00:00Z");
+        let outcome =
+            merge_verified_records(&record, &km, "circle-1", std::slice::from_ref(&entry), &[])
+                .expect("merge entry");
+        assert_eq!(outcome.added, 0);
+        assert_eq!(outcome.replaced, 0);
+        assert_eq!(outcome.skipped, 1);
+
+        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        assert!(!crl.contains("did:guardian:x"));
+        assert!(crl.tombstone("did:guardian:x").is_some());
+    }
+
+    #[test]
+    fn merge_tombstone_replaces_active_entry_when_incoming_newer() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        let record = make_did_record("did:guardian:owner");
+        let km = make_key_manager(temp.path());
+
+        let entry = sample_entry("urn:uuid:e1", "did:guardian:y", "2026-01-01T00:00:00Z");
+        merge_verified_records(&record, &km, "circle-1", std::slice::from_ref(&entry), &[])
+            .expect("merge entry");
+
+        let tombstone = sample_tombstone(
+            "urn:uuid:t1",
+            "did:guardian:y",
+            &entry.id,
+            "2026-06-01T00:00:00Z",
+        );
+        let outcome = merge_verified_records(
+            &record,
+            &km,
+            "circle-1",
+            &[],
+            std::slice::from_ref(&tombstone),
+        )
+        .expect("merge tombstone");
+        assert_eq!(outcome.replaced, 1);
+        assert_eq!(outcome.skipped, 0);
+
+        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        assert!(!crl.contains("did:guardian:y"));
+        assert!(crl.tombstone("did:guardian:y").is_some());
+    }
+
+    #[test]
+    fn merge_tombstone_skipped_when_active_entry_is_newer() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        let record = make_did_record("did:guardian:owner");
+        let km = make_key_manager(temp.path());
+
+        let entry = sample_entry("urn:uuid:e1", "did:guardian:y", "2026-06-01T00:00:00Z");
+        merge_verified_records(&record, &km, "circle-1", std::slice::from_ref(&entry), &[])
+            .expect("merge entry");
+
+        let tombstone = sample_tombstone(
+            "urn:uuid:t1",
+            "did:guardian:y",
+            &entry.id,
+            "2026-01-01T00:00:00Z",
+        );
+        let outcome = merge_verified_records(
+            &record,
+            &km,
+            "circle-1",
+            &[],
+            std::slice::from_ref(&tombstone),
+        )
+        .expect("merge tombstone");
+        assert_eq!(outcome.added, 0);
+        assert_eq!(outcome.replaced, 0);
+        assert_eq!(outcome.skipped, 1);
+
+        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        assert!(crl.contains("did:guardian:y"));
+        assert!(crl.tombstone("did:guardian:y").is_none());
+    }
+
+    #[test]
+    fn merge_duplicate_tombstone_by_fingerprint_is_skipped() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        let record = make_did_record("did:guardian:owner");
+        let km = make_key_manager(temp.path());
+
+        let tombstone = sample_tombstone(
+            "urn:uuid:t1",
+            "did:guardian:z",
+            "urn:uuid:orig",
+            "2026-01-01T00:00:00Z",
+        );
+        let first = merge_verified_records(
+            &record,
+            &km,
+            "circle-1",
+            &[],
+            std::slice::from_ref(&tombstone),
+        )
+        .expect("first merge");
+        assert_eq!(first.added, 1);
+
+        let second = merge_verified_records(
+            &record,
+            &km,
+            "circle-1",
+            &[],
+            std::slice::from_ref(&tombstone),
+        )
+        .expect("second merge");
+        assert_eq!(second.added, 0);
+        assert_eq!(second.skipped, 1);
+
+        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        assert_eq!(crl.tombstones.len(), 1);
+    }
+
+    #[test]
+    fn merge_tombstone_replaces_existing_tombstone_when_incoming_newer() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        let record = make_did_record("did:guardian:owner");
+        let km = make_key_manager(temp.path());
+
+        let tombstone1 = sample_tombstone(
+            "urn:uuid:t1",
+            "did:guardian:w",
+            "urn:uuid:orig",
+            "2026-01-01T00:00:00Z",
+        );
+        merge_verified_records(
+            &record,
+            &km,
+            "circle-1",
+            &[],
+            std::slice::from_ref(&tombstone1),
+        )
+        .expect("merge first tombstone");
+
+        let tombstone2 = sample_tombstone(
+            "urn:uuid:t2",
+            "did:guardian:w",
+            "urn:uuid:orig",
+            "2026-06-01T00:00:00Z",
+        );
+        let outcome = merge_verified_records(
+            &record,
+            &km,
+            "circle-1",
+            &[],
+            std::slice::from_ref(&tombstone2),
+        )
+        .expect("merge second tombstone");
+        assert_eq!(outcome.replaced, 1);
+        assert_eq!(outcome.skipped, 0);
+
+        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        assert_eq!(crl.tombstones.len(), 1);
+        assert_eq!(crl.tombstones[0].id, tombstone2.id);
+    }
+
+    #[test]
+    fn merge_with_nothing_added_or_replaced_leaves_sequence_and_root_untouched() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        let record = make_did_record("did:guardian:owner");
+        let km = make_key_manager(temp.path());
+
+        let entry = sample_entry("urn:uuid:e1", "did:guardian:x", "2026-01-01T00:00:00Z");
+        let first =
+            merge_verified_records(&record, &km, "circle-1", std::slice::from_ref(&entry), &[])
+                .expect("first merge");
+        assert_eq!(first.sequence, 1);
+
+        // A duplicate-only merge should not resign / bump sequence.
+        let second =
+            merge_verified_records(&record, &km, "circle-1", std::slice::from_ref(&entry), &[])
+                .expect("second merge");
+        assert_eq!(second.sequence, first.sequence);
+        assert_eq!(second.merkle_root, first.merkle_root);
+    }
+
+    #[test]
+    fn mark_peer_notified_flips_propagated_at_threshold() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        let record = make_did_record("did:guardian:owner");
+        let km = make_key_manager(temp.path());
+
+        let entry = sample_entry("urn:uuid:e1", "did:guardian:a", "2026-01-01T00:00:00Z");
+        merge_verified_records(&record, &km, "circle-1", std::slice::from_ref(&entry), &[])
+            .expect("merge entry");
+
+        let outcome = mark_peer_notified(&record, &km, "circle-1", "did:guardian:peerX", 1)
+            .expect("mark peer notified");
+        assert_eq!(outcome.newly_propagated, vec![entry.id.clone()]);
+
+        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        let stored = &crl.entries[0];
+        assert!(stored.peers_notified.iter().any(|d| d == "did:guardian:peerX"));
+        assert!(stored.propagated);
+    }
+
+    #[test]
+    fn mark_peer_notified_excludes_the_revoked_did_itself() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        let record = make_did_record("did:guardian:owner");
+        let km = make_key_manager(temp.path());
+
+        let entry = sample_entry(
+            "urn:uuid:e1",
+            "did:guardian:selfpeer",
+            "2026-01-01T00:00:00Z",
+        );
+        merge_verified_records(&record, &km, "circle-1", std::slice::from_ref(&entry), &[])
+            .expect("merge entry");
+
+        let outcome = mark_peer_notified(&record, &km, "circle-1", "did:guardian:selfpeer", 1)
+            .expect("mark peer notified");
+        assert!(outcome.newly_propagated.is_empty());
+
+        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        assert!(crl.entries[0].peers_notified.is_empty());
+        assert!(!crl.entries[0].propagated);
+    }
+
+    #[test]
+    fn mark_peer_notified_is_idempotent_and_skips_resave_when_unchanged() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        let record = make_did_record("did:guardian:owner");
+        let km = make_key_manager(temp.path());
+
+        let entry = sample_entry("urn:uuid:e1", "did:guardian:b", "2026-01-01T00:00:00Z");
+        merge_verified_records(&record, &km, "circle-1", std::slice::from_ref(&entry), &[])
+            .expect("merge entry");
+
+        // Threshold of 5 is never reached by a single ack, so the entry
+        // never propagates but the first ack still records an unseen peer.
+        let first = mark_peer_notified(&record, &km, "circle-1", "did:guardian:peerY", 5)
+            .expect("first ack");
+        // Repeating the same ack must be a true no-op: no new peer recorded,
+        // no resign, no sequence bump.
+        let second = mark_peer_notified(&record, &km, "circle-1", "did:guardian:peerY", 5)
+            .expect("second ack");
+        assert_eq!(second.sequence, first.sequence);
+        assert_eq!(second.merkle_root, first.merkle_root);
+
+        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        let notified_count = crl.entries[0]
+            .peers_notified
+            .iter()
+            .filter(|d| d.as_str() == "did:guardian:peerY")
+            .count();
+        assert_eq!(notified_count, 1);
+    }
+
+    #[test]
+    fn snapshot_returns_zero_defaults_when_no_crl_persisted() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+
+        let (sequence, root, fingerprints) = snapshot().expect("snapshot");
+        assert_eq!(sequence, 0);
+        assert!(root.is_empty());
+        assert!(fingerprints.is_empty());
+    }
+
+    #[test]
+    fn snapshot_reports_local_sequence_root_and_fingerprints() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        let record = make_did_record("did:guardian:owner");
+        let km = make_key_manager(temp.path());
+
+        let entry = sample_entry("urn:uuid:e1", "did:guardian:a", "2026-01-01T00:00:00Z");
+        let tombstone = sample_tombstone(
+            "urn:uuid:t1",
+            "did:guardian:b",
+            "urn:uuid:orig",
+            "2026-01-01T00:00:00Z",
+        );
+        merge_verified_records(
+            &record,
+            &km,
+            "circle-1",
+            std::slice::from_ref(&entry),
+            std::slice::from_ref(&tombstone),
+        )
+        .expect("merge entry and tombstone");
+
+        let (sequence, root, fingerprints) = snapshot().expect("snapshot");
+        assert_eq!(sequence, 1);
+        assert!(!root.is_empty());
+        assert_eq!(fingerprints.len(), 2);
+        assert!(fingerprints.iter().any(|f| f.starts_with("revoke:")));
+        assert!(fingerprints.iter().any(|f| f.starts_with("tombstone:")));
+    }
+
+    #[test]
+    fn entries_not_in_and_entries_matching_partition_by_known_fingerprints() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        let record = make_did_record("did:guardian:owner");
+        let km = make_key_manager(temp.path());
+
+        let entry_a = sample_entry("urn:uuid:a", "did:guardian:a", "2026-01-01T00:00:00Z");
+        let entry_b = sample_entry("urn:uuid:b", "did:guardian:b", "2026-01-01T00:00:00Z");
+        let tombstone_c = sample_tombstone(
+            "urn:uuid:c",
+            "did:guardian:c",
+            "urn:uuid:orig",
+            "2026-01-01T00:00:00Z",
+        );
+        merge_verified_records(
+            &record,
+            &km,
+            "circle-1",
+            &[entry_a.clone(), entry_b.clone()],
+            std::slice::from_ref(&tombstone_c),
+        )
+        .expect("merge entries and tombstone");
+
+        let mut known = HashSet::new();
+        known.insert(entry_a.state_fingerprint());
+
+        let (not_in_entries, not_in_tombstones) = entries_not_in(&known).expect("entries not in");
+        assert_eq!(not_in_entries.len(), 1);
+        assert_eq!(not_in_entries[0].revoked_did, "did:guardian:b");
+        assert_eq!(not_in_tombstones.len(), 1);
+        assert_eq!(not_in_tombstones[0].revoked_did, "did:guardian:c");
+
+        let (matching_entries, matching_tombstones) =
+            entries_matching(&known).expect("entries matching");
+        assert_eq!(matching_entries.len(), 1);
+        assert_eq!(matching_entries[0].revoked_did, "did:guardian:a");
+        assert!(matching_tombstones.is_empty());
+    }
+
+    #[test]
+    fn entries_not_in_and_entries_matching_return_empty_when_no_crl_persisted() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+
+        let known = HashSet::new();
+        let (entries, tombstones) = entries_not_in(&known).expect("entries not in");
+        assert!(entries.is_empty());
+        assert!(tombstones.is_empty());
+
+        let (entries, tombstones) = entries_matching(&known).expect("entries matching");
+        assert!(entries.is_empty());
+        assert!(tombstones.is_empty());
+    }
+
+    #[test]
+    fn corrupted_crl_file_surfaces_as_error_instead_of_panicking() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        std::fs::write(persistence::crl_path(), b"not-json-at-all").expect("write malformed crl");
+
+        assert!(snapshot().is_err());
+        assert!(entries_not_in(&HashSet::new()).is_err());
+        assert!(entries_matching(&HashSet::new()).is_err());
+
+        let record = make_did_record("did:guardian:owner");
+        let km = make_key_manager(temp.path());
+        let entry = sample_entry("urn:uuid:e1", "did:guardian:a", "2026-01-01T00:00:00Z");
+        assert!(merge_verified_records(&record, &km, "circle-1", std::slice::from_ref(&entry), &[])
+            .is_err());
+        assert!(mark_peer_notified(&record, &km, "circle-1", "did:guardian:peer", 1).is_err());
     }
 }

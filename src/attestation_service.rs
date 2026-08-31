@@ -3446,6 +3446,166 @@ mod tests {
         assert_ne!(attestation_listener_port_for_node("nodeC"), 50053);
     }
 
+    #[test]
+    fn helper_parsers_cover_addresses_ports_booleans_digests_and_node_inference() {
+        assert_eq!(parse_peer_addr("10.0.0.2:50152"), Some(("10.0.0.2".into(), 50152)));
+        assert_eq!(parse_peer_addr("missing-port"), None);
+        assert_eq!(parse_peer_addr("10.0.0.2:not-a-port"), None);
+        assert_eq!(parse_peer_addr("2001:db8::1:50152"), None);
+
+        assert_eq!(peer_ip_hint_from_addr("10.0.0.2:50152"), "10.0.0.2");
+        assert_eq!(peer_ip_hint_from_addr("[2001:db8::1]:50152"), "2001:db8::1");
+        assert_eq!(peer_ip_hint_from_addr("host-without-port"), "host-without-port");
+
+        assert!(is_hex_digest_64(&"a".repeat(64)));
+        assert!(is_hex_digest_64(&"F".repeat(64)));
+        assert!(!is_hex_digest_64(&"a".repeat(63)));
+        assert!(!is_hex_digest_64(&"z".repeat(64)));
+
+        assert_eq!(infer_node_id_from_base_port(50051), Some("nodeA"));
+        assert_eq!(infer_node_id_from_base_port(50052), Some("nodeB"));
+        assert_eq!(infer_node_id_from_base_port(50053), Some("nodeC"));
+        assert_eq!(infer_node_id_from_base_port(50099), None);
+        assert_eq!(infer_node_id_from_peer("203.0.113.1", 50051).as_deref(), Some("nodeA"));
+    }
+
+    #[test]
+    fn fallback_file_and_path_helpers_prefer_primary_and_create_parents() {
+        let temp = temp_test_dir("fallback-paths");
+        let primary = temp.join("primary");
+        let fallback = temp.join("fallback");
+        let (node_primary, node_fallback) =
+            trusted_peer_node_paths("nodeB", &primary, &fallback);
+        assert!(node_primary.ends_with("trusted_peers_nodeB.json"));
+        assert!(node_fallback.ends_with("trusted_peers_nodeB.json"));
+        let (global_primary, global_fallback) = trusted_peer_global_paths(&primary, &fallback);
+        assert!(global_primary.ends_with("trusted_peers.json"));
+        assert!(global_fallback.ends_with("trusted_peers.json"));
+        let (last_primary, last_fallback) = last_attestation_paths(&primary, &fallback);
+        assert!(last_primary.ends_with("last_attestation.json"));
+        assert!(last_fallback.ends_with("last_attestation.json"));
+
+        write_string(&node_fallback, "fallback");
+        assert_eq!(
+            read_to_string_first([node_primary.as_path(), node_fallback.as_path()])
+                .expect("read fallback"),
+            "fallback"
+        );
+        write_string(&node_primary, "primary");
+        assert_eq!(
+            read_to_string_first([node_primary.as_path(), node_fallback.as_path()])
+                .expect("read primary"),
+            "primary"
+        );
+        fs::remove_dir_all(temp).expect("remove temp tree");
+    }
+
+    #[test]
+    fn public_key_and_signing_message_helpers_cover_modern_legacy_and_invalid_shapes() {
+        let raw = vec![4u8; 65];
+        assert_eq!(normalize_p256_pubkey(raw.clone()), Some(raw.clone()));
+        let mut der = vec![9u8; 26];
+        der.extend_from_slice(&raw);
+        assert_eq!(normalize_p256_pubkey(der), Some(raw));
+        assert!(normalize_p256_pubkey(vec![4u8; 64]).is_none());
+
+        let encoded = general_purpose::STANDARD.encode(b"public-key");
+        assert_eq!(
+            decode_dkp_pubkey_fingerprint(&encoded),
+            Some(hex::encode(Sha256::digest(b"public-key")))
+        );
+        assert!(decode_dkp_pubkey_fingerprint("not-base64***").is_none());
+
+        let nonce = hex::encode(Sha256::digest(b"message-helper-nonce"));
+        let mut evidence = make_test_evidence("allow: helpers", &nonce);
+        let modern = build_evidence_signing_message_from_evidence(&evidence);
+        assert_eq!(
+            modern,
+            build_evidence_signing_message(
+                attestation_nonce_i(&evidence),
+                attestation_nonce_r(&evidence),
+                &evidence.policy_digest,
+                evidence.baseline_status.as_ref(),
+                &evidence.virtual_id,
+            )
+        );
+        evidence.nonce_i = None;
+        evidence.nonce_r = None;
+        let legacy = build_evidence_signing_message_from_evidence(&evidence);
+        assert_eq!(
+            legacy,
+            build_evidence_signing_message_legacy(
+                &evidence.nonce,
+                &evidence.policy_digest,
+                evidence.baseline_status.as_ref(),
+                &evidence.virtual_id,
+            )
+        );
+        assert_ne!(modern, legacy);
+    }
+
+    #[test]
+    fn persisted_peer_selection_rejects_local_stale_unroutable_and_unapproved_targets() {
+        let now = Utc::now().to_rfc3339();
+        let peer = TrustedPeer {
+            peer_id: "10.0.0.2:50152".into(),
+            ip: "10.0.0.2".into(),
+            status: "verified".into(),
+            timestamp: now,
+            did: Some("did:guardian:peer".into()),
+            virtual_id: None,
+            last_attested_at: None,
+            dkp_pubkey_sha256_b16: None,
+            pcr_composite_digest: None,
+            policy_digest: None,
+            rotation_reason: None,
+            nonce_i: None,
+            nonce_r: None,
+        };
+        assert_eq!(
+            should_attempt_persisted_peer(&peer, "10.0.0.1", 50151, &HashSet::new()),
+            Some(("10.0.0.2".into(), 50152))
+        );
+        assert!(should_attempt_persisted_peer(&peer, "10.0.0.2", 50152, &HashSet::new()).is_none());
+
+        let mut allowed = HashSet::new();
+        allowed.insert("10.0.0.3:50153".into());
+        assert!(should_attempt_persisted_peer(&peer, "10.0.0.1", 50151, &allowed).is_none());
+        allowed.insert(peer.peer_id.clone());
+        assert!(should_attempt_persisted_peer(&peer, "10.0.0.1", 50151, &allowed).is_some());
+
+        let mut stale = peer.clone();
+        stale.timestamp = (Utc::now() - chrono::Duration::hours(MAX_TRUSTED_PEER_AGE_HOURS + 1))
+            .to_rfc3339();
+        assert!(!trusted_peer_is_recent(&stale.timestamp));
+        assert!(should_attempt_persisted_peer(&stale, "10.0.0.1", 50151, &HashSet::new()).is_none());
+        assert!(!trusted_peer_is_recent("invalid timestamp"));
+
+        let mut unroutable = peer;
+        unroutable.peer_id = "127.0.0.1:50152".into();
+        assert!(should_attempt_persisted_peer(
+            &unroutable,
+            "10.0.0.1",
+            50151,
+            &HashSet::new()
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn legacy_last_attestation_defaults_count_to_one() {
+        let value = serde_json::json!({
+            "peer_id": "10.0.0.2:50152",
+            "policy_digest": "digest",
+            "result": "verified",
+            "timestamp": "2026-08-31T00:00:00Z"
+        });
+        let parsed: LastAttestation = serde_json::from_value(value).expect("legacy record");
+        assert_eq!(parsed.count, default_attestation_count());
+        assert!(parsed.peer_did.is_none());
+        assert!(parsed.virtual_id.is_none());
+    }
+
     #[tokio::test]
     async fn test_framed_reader_rejects_grpc_preface_length_cleanly() {
         use tokio::io::AsyncWriteExt;
@@ -3467,5 +3627,307 @@ mod tests {
             .to_string()
             .contains("Invalid attestation payload length"));
         server.await.unwrap();
+    }
+
+    // ── SignedQuote::verify / AttestationQuote::sign coverage ──────────
+
+    fn test_key_manager(dir: &Path, label: &str) -> KeyManager {
+        let path = dir.join(format!("{label}.key"));
+        KeyManager::load_or_generate(path.to_str().expect("valid utf8 temp path"))
+            .expect("create software-backed test key manager")
+    }
+
+    fn make_test_quote(node_id: &str) -> AttestationQuote {
+        AttestationQuote {
+            version: 1,
+            challenge_nonce: "aa".repeat(32),
+            device_nonce: "bb".repeat(16),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            node_id: node_id.to_string(),
+            device_uid: "test-device-uid".to_string(),
+            key_version: 1,
+            pubkey_b64: String::new(),
+            pcr_values: vec!["cc".repeat(32); 5],
+            composite_digest: "dd".repeat(32),
+            integrity_status: "PASS".to_string(),
+            boot_chain: BootChainSummary {
+                hab_enabled: true,
+                device_closed: true,
+                hab_events_found: false,
+                boot_chain_intact: true,
+            },
+            firmware_version: "1.0.0".to_string(),
+            active_policy_digest: "ee".repeat(32),
+        }
+    }
+
+    fn make_test_baseline(pcr_values: Vec<String>) -> crate::secure_element::pcr::PcrBaseline {
+        crate::secure_element::pcr::PcrBaseline {
+            pcr_values,
+            composite_digest: "dd".repeat(32),
+            baseline_signature: String::new(),
+            signing_backend: None,
+            signing_public_key_sha256: None,
+            signature_format: None,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            device_uid: "test-device-uid".to_string(),
+            key_version: 1,
+            schema_version: 1,
+        }
+    }
+
+    #[test]
+    fn signed_quote_verify_happy_path_passes_all_checks() {
+        let dir = temp_test_dir("quote-verify-happy");
+        let km = test_key_manager(&dir, "prover");
+        let quote = make_test_quote("nodeA");
+
+        let signed = quote.sign(&km).expect("sign quote");
+        let peer_pubkey = km.pubkey_der().expect("pubkey der");
+
+        let result = signed.verify(&peer_pubkey, &quote.challenge_nonce, None, 300);
+
+        assert!(result.verified, "reason: {}", result.reason);
+        assert!(result.signature_valid);
+        assert!(result.nonce_valid);
+        assert!(result.freshness_ok);
+        assert!(result.boot_chain_ok);
+        assert!(result.pcr_match);
+        assert_eq!(result.reason, "All checks passed");
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn signed_quote_verify_rejects_invalid_signature_base64() {
+        let dir = temp_test_dir("quote-verify-bad-b64");
+        let km = test_key_manager(&dir, "prover");
+        let quote = make_test_quote("nodeA");
+        let peer_pubkey = km.pubkey_der().expect("pubkey der");
+
+        let signed = SignedQuote {
+            quote_json: serde_json::to_string(&quote).unwrap(),
+            signature_b64: "not-valid-base64-@@@@".to_string(),
+            signing_backend: "Software".to_string(),
+        };
+
+        let result = signed.verify(&peer_pubkey, &quote.challenge_nonce, None, 300);
+
+        assert!(!result.verified);
+        assert!(!result.signature_valid);
+        assert!(result.reason.contains("Invalid signature base64"));
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn signed_quote_verify_rejects_signature_from_wrong_key() {
+        let dir = temp_test_dir("quote-verify-wrong-key");
+        let km_a = test_key_manager(&dir, "prover-a");
+        let km_b = test_key_manager(&dir, "prover-b");
+        let quote = make_test_quote("nodeA");
+
+        // Sign with key A but verify against key B's public key.
+        let signed = quote.sign(&km_a).expect("sign quote");
+        let wrong_pubkey = km_b.pubkey_der().expect("pubkey der");
+
+        let result = signed.verify(&wrong_pubkey, &quote.challenge_nonce, None, 300);
+
+        assert!(!result.verified);
+        assert!(!result.signature_valid);
+        assert!(result.reason.contains("Signature verification failed"));
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn signed_quote_verify_detects_nonce_mismatch() {
+        let dir = temp_test_dir("quote-verify-nonce-mismatch");
+        let km = test_key_manager(&dir, "prover");
+        let quote = make_test_quote("nodeA");
+        let peer_pubkey = km.pubkey_der().expect("pubkey der");
+
+        let signed = quote.sign(&km).expect("sign quote");
+
+        let result = signed.verify(&peer_pubkey, "ff".repeat(32).as_str(), None, 300);
+
+        assert!(!result.verified);
+        assert!(result.signature_valid);
+        assert!(!result.nonce_valid);
+        assert!(result.reason.contains("Nonce mismatch"));
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn signed_quote_verify_rejects_stale_quote_beyond_max_age() {
+        let dir = temp_test_dir("quote-verify-stale");
+        let km = test_key_manager(&dir, "prover");
+        let mut quote = make_test_quote("nodeA");
+        // Backdate the timestamp BEFORE signing so the signature stays valid.
+        quote.timestamp = (chrono::Utc::now() - chrono::Duration::hours(2)).to_rfc3339();
+        let peer_pubkey = km.pubkey_der().expect("pubkey der");
+
+        let signed = quote.sign(&km).expect("sign quote");
+
+        // max_age_secs much smaller than the 2-hour backdate.
+        let result = signed.verify(&peer_pubkey, &quote.challenge_nonce, None, 60);
+
+        assert!(!result.verified);
+        assert!(result.signature_valid);
+        assert!(result.nonce_valid);
+        assert!(!result.freshness_ok);
+        assert!(result.reason.contains("Quote too old"));
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn signed_quote_verify_detects_pcr_mismatch_against_baseline() {
+        let dir = temp_test_dir("quote-verify-pcr-mismatch");
+        let km = test_key_manager(&dir, "prover");
+        let quote = make_test_quote("nodeA");
+        let peer_pubkey = km.pubkey_der().expect("pubkey der");
+
+        let signed = quote.sign(&km).expect("sign quote");
+
+        // Baseline has same length but different PCR values.
+        let baseline = make_test_baseline(vec!["11".repeat(32); 5]);
+
+        let result = signed.verify(&peer_pubkey, &quote.challenge_nonce, Some(&baseline), 300);
+
+        assert!(!result.verified);
+        assert!(result.signature_valid);
+        assert!(result.nonce_valid);
+        assert!(!result.pcr_match);
+        assert!(result.reason.contains("PCR mismatch"));
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn signed_quote_verify_matching_baseline_passes_pcr_check() {
+        let dir = temp_test_dir("quote-verify-pcr-match");
+        let km = test_key_manager(&dir, "prover");
+        let quote = make_test_quote("nodeA");
+        let peer_pubkey = km.pubkey_der().expect("pubkey der");
+
+        let signed = quote.sign(&km).expect("sign quote");
+
+        let baseline = make_test_baseline(quote.pcr_values.clone());
+
+        let result = signed.verify(&peer_pubkey, &quote.challenge_nonce, Some(&baseline), 300);
+
+        assert!(result.verified, "reason: {}", result.reason);
+        assert!(result.pcr_match);
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn signed_quote_verify_detects_boot_chain_failure_via_hab_events() {
+        let dir = temp_test_dir("quote-verify-boot-chain-hab");
+        let km = test_key_manager(&dir, "prover");
+        let mut quote = make_test_quote("nodeA");
+        quote.boot_chain.hab_events_found = true;
+        let peer_pubkey = km.pubkey_der().expect("pubkey der");
+
+        let signed = quote.sign(&km).expect("sign quote");
+
+        let result = signed.verify(&peer_pubkey, &quote.challenge_nonce, None, 300);
+
+        assert!(!result.verified);
+        assert!(result.signature_valid);
+        assert!(result.nonce_valid);
+        assert!(result.freshness_ok);
+        assert!(!result.boot_chain_ok);
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn signed_quote_verify_detects_boot_chain_failure_via_integrity_status() {
+        let dir = temp_test_dir("quote-verify-boot-chain-integrity");
+        let km = test_key_manager(&dir, "prover");
+        let mut quote = make_test_quote("nodeA");
+        quote.integrity_status = "FAIL".to_string();
+        let peer_pubkey = km.pubkey_der().expect("pubkey der");
+
+        let signed = quote.sign(&km).expect("sign quote");
+
+        let result = signed.verify(&peer_pubkey, &quote.challenge_nonce, None, 300);
+
+        assert!(!result.verified);
+        assert!(!result.boot_chain_ok);
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn signed_quote_verify_reports_malformed_quote_json_parse_failure() {
+        let dir = temp_test_dir("quote-verify-malformed-json");
+        let km = test_key_manager(&dir, "prover");
+        let peer_pubkey = km.pubkey_der().expect("pubkey der");
+
+        // Sign arbitrary bytes that are not valid AttestationQuote JSON, so the
+        // signature check (step 1) succeeds and the JSON parse (step 2) fails.
+        let garbage = "not attestation quote json";
+        let hash = Sha256::digest(garbage.as_bytes());
+        let sig = km.sign(&hash).expect("sign garbage bytes");
+        let signed = SignedQuote {
+            quote_json: garbage.to_string(),
+            signature_b64: general_purpose::STANDARD.encode(&sig),
+            signing_backend: km.backend_name().to_string(),
+        };
+
+        let result = signed.verify(&peer_pubkey, "irrelevant-nonce", None, 300);
+
+        assert!(!result.verified);
+        assert!(result.signature_valid);
+        assert!(result.reason.starts_with("Quote parse:"));
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn attestation_quote_sign_and_verify_round_trip_via_public_api() {
+        let dir = temp_test_dir("quote-sign-verify-roundtrip");
+        let km = test_key_manager(&dir, "prover");
+        let quote = make_test_quote("nodeB");
+
+        let signed_quote = quote.sign(&km).expect("AttestationQuote::sign");
+        assert_eq!(signed_quote.signing_backend, km.backend_name());
+        assert!(!signed_quote.signature_b64.is_empty());
+
+        let peer_pubkey = km.pubkey_der().expect("pubkey der");
+        let result = AttestationService::verify_quote(
+            &signed_quote,
+            &quote.challenge_nonce,
+            &peer_pubkey,
+            None,
+        );
+
+        assert!(result.verified, "reason: {}", result.reason);
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn attestation_quote_generate_does_not_panic_without_hardware_paths() {
+        // `generate` reads optional hardware/filesystem state via unwrap_or_else
+        // fallbacks (PCR snapshot file, boot chain status), so it must succeed
+        // even when those real system paths are absent (as in this sandbox).
+        let dir = temp_test_dir("quote-generate-smoke");
+        let km = test_key_manager(&dir, "prover");
+
+        let nonce = "ab".repeat(32);
+        let quote = AttestationQuote::generate(&nonce, "nodeA", &km)
+            .expect("generate should fall back gracefully when hardware paths are absent");
+
+        assert_eq!(quote.challenge_nonce, nonce);
+        assert_eq!(quote.node_id, "nodeA");
+        assert_eq!(quote.version, 1);
+
+        fs::remove_dir_all(dir).ok();
     }
 }

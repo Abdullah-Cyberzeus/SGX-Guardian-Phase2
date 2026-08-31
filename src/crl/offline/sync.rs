@@ -330,3 +330,150 @@ pub struct CycleReport {
     pub delivered: usize,
     pub pending_remaining: usize,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crl::entry::{
+        CrlEntry, RevocationReason, RevokerRole, Severity, CRL_CONTEXT_CORE, CRL_CONTEXT_SGX,
+    };
+    use crate::crl::list::CertificateRevocationList;
+    use crate::did::document::Proof;
+    use tempfile::TempDir;
+
+    struct CrlBaseGuard(Option<std::ffi::OsString>);
+
+    impl CrlBaseGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let previous = std::env::var_os(persistence::CRL_BASE_ENV);
+            std::env::set_var(persistence::CRL_BASE_ENV, path);
+            Self(previous)
+        }
+    }
+
+    impl Drop for CrlBaseGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.0.take() {
+                std::env::set_var(persistence::CRL_BASE_ENV, previous);
+            } else {
+                std::env::remove_var(persistence::CRL_BASE_ENV);
+            }
+        }
+    }
+
+    fn sample_entry(id: &str, propagated: bool) -> CrlEntry {
+        CrlEntry {
+            context: vec![CRL_CONTEXT_CORE.into(), CRL_CONTEXT_SGX.into()],
+            id: id.into(),
+            r#type: vec!["VerifiableCredential".into(), "RevocationCredential".into()],
+            revoked_did: format!("did:guardian:{id}"),
+            device_id: None,
+            user_id: None,
+            circle_id: "circle-alpha".into(),
+            reason: RevocationReason::Compromised,
+            severity: Severity::Critical,
+            timestamp: "2026-08-31T00:00:00Z".into(),
+            revoker_did: "did:guardian:self".into(),
+            revoker_role: RevokerRole::Owner,
+            evidence: None,
+            proof: Proof::default(),
+            peers_notified: vec![],
+            propagated,
+        }
+    }
+
+    fn config(max_retries: u32) -> OfflineConfig {
+        OfflineConfig {
+            enabled: true,
+            sync_interval_secs: 20,
+            max_retries,
+            flush_rounds: 1,
+            probe_timeout_ms: 200,
+        }
+    }
+
+    #[test]
+    fn sync_state_persistence_round_trips_and_ignores_missing_or_malformed_files() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        SYNC_STATE.write().expect("sync state write").clear();
+
+        load_sync_state();
+        assert!(sync_state_snapshot().is_empty());
+
+        SYNC_STATE.write().expect("sync state write").insert(
+            "did:guardian:peer".into(),
+            PeerSyncState {
+                last_seen_merkle_root: "root-1".into(),
+                last_seen_sequence: 7,
+                last_sync_at: "2026-08-31T00:00:00Z".into(),
+            },
+        );
+        persist_sync_state();
+        SYNC_STATE.write().expect("sync state write").clear();
+        load_sync_state();
+        assert_eq!(
+            sync_state_snapshot()["did:guardian:peer"].last_seen_sequence,
+            7
+        );
+
+        std::fs::write(sync_state_path(), b"not-json").expect("write malformed state");
+        SYNC_STATE.write().expect("sync state write").clear();
+        load_sync_state();
+        assert!(sync_state_snapshot().is_empty());
+    }
+
+    #[test]
+    fn pending_fingerprints_and_settlement_deliver_propagated_and_park_exhausted_entries() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let temp = TempDir::new().expect("tempdir");
+        let _base = CrlBaseGuard::set(temp.path());
+        let delivered = sample_entry("delivered", true);
+        let retry = sample_entry("retry", false);
+        let already_parked = sample_entry("parked", false);
+        queue::enqueue(&delivered).expect("queue delivered");
+        queue::enqueue(&retry).expect("queue retry");
+        queue::enqueue(&already_parked).expect("queue parked");
+        queue::record_attempt(&already_parked.id, Some("offline".into()), 1)
+            .expect("park pending entry");
+
+        let fingerprints = pending_fingerprints();
+        assert_eq!(fingerprints.len(), 3);
+
+        let mut crl = CertificateRevocationList::new("did:guardian:self", "circle-alpha");
+        crl.entries.push(delivered.clone());
+        crl.recompute_root();
+        persistence::save_crl(&crl).expect("save local CRL");
+
+        assert_eq!(
+            settle_pending("nodeA", &config(1), &fingerprints).expect("settle queue"),
+            1
+        );
+        let remaining = queue::list().expect("remaining queue");
+        assert_eq!(remaining.len(), 2);
+        assert!(remaining.iter().all(|item| item.parked));
+        assert!(remaining.iter().any(|item| item.entry.id == retry.id));
+        assert!(remaining.iter().any(|item| item.entry.id == already_parked.id));
+    }
+
+    #[test]
+    fn cycle_report_and_observability_accessors_have_stable_public_shapes() {
+        let report = CycleReport {
+            online: false,
+            reachable_peers: 0,
+            reconciled: 2,
+            fetched: 3,
+            delivered: 4,
+            pending_remaining: 5,
+        };
+        let json = serde_json::to_value(report).expect("serialize cycle report");
+        assert_eq!(json["online"], false);
+        assert_eq!(json["reconciled"], 2);
+        let _ = sync_cycles();
+        let _ = reconnects();
+        let _ = entries_delivered();
+        let _ = entries_fetched();
+        let _ = is_online();
+    }
+}

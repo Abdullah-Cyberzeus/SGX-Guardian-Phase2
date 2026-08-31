@@ -144,3 +144,249 @@ impl TokenRefreshWorker {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::integration::provider::OAuthCredentials;
+
+    fn new_manager() -> Arc<IntegrationManager> {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let int_file = temp_dir.path().join("integrations_refresh_worker.json");
+        // Leak the TempDir so the backing file survives for the life of the test — cheap and
+        // fine for a short-lived unit test.
+        std::mem::forget(temp_dir);
+        IntegrationManager::new(int_file.to_str().unwrap())
+    }
+
+    fn oauth_creds(refresh_token: Option<&str>, expires_in_secs: i64) -> OAuthCredentials {
+        OAuthCredentials {
+            access_token: "initial_access_token".to_string(),
+            refresh_token: refresh_token.map(|s| s.to_string()),
+            expires_at: Some(Utc::now() + chrono::Duration::seconds(expires_in_secs)),
+            token_type: "Bearer".to_string(),
+            scope: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_refresh_provider_token_no_credentials_at_all() {
+        let manager = new_manager();
+        let worker = TokenRefreshWorker::new(manager);
+
+        let err = worker
+            .refresh_provider_token(VendorProvider::GoogleNest)
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("No credentials available for refresh"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_refresh_provider_token_missing_refresh_token() {
+        let manager = new_manager();
+        manager
+            .connect_integration(VendorProvider::GoogleNest, oauth_creds(None, 3600))
+            .await
+            .unwrap();
+
+        let worker = TokenRefreshWorker::new(manager);
+        let err = worker
+            .refresh_provider_token(VendorProvider::GoogleNest)
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("No refresh_token present for provider"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_refresh_provider_token_invalid_token_fails() {
+        let manager = new_manager();
+        manager
+            .connect_integration(
+                VendorProvider::GoogleNest,
+                oauth_creds(Some("this_refresh_token_is_invalid"), 3600),
+            )
+            .await
+            .unwrap();
+
+        let worker = TokenRefreshWorker::new(manager.clone());
+        let err = worker
+            .refresh_provider_token(VendorProvider::GoogleNest)
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("401 Unauthorized"),
+            "unexpected error: {err}"
+        );
+
+        // A failed refresh must not silently rewrite the stored access token.
+        let meta = manager
+            .get_integration(VendorProvider::GoogleNest)
+            .await
+            .unwrap();
+        assert_eq!(
+            meta.credentials.unwrap().access_token,
+            "initial_access_token"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_refresh_provider_token_success_renews_credentials() {
+        let manager = new_manager();
+        manager
+            .connect_integration(
+                VendorProvider::TpLinkKasa,
+                oauth_creds(Some("good_refresh_token"), 100),
+            )
+            .await
+            .unwrap();
+
+        let worker = TokenRefreshWorker::new(manager.clone());
+        worker
+            .refresh_provider_token(VendorProvider::TpLinkKasa)
+            .await
+            .unwrap();
+
+        let meta = manager
+            .get_integration(VendorProvider::TpLinkKasa)
+            .await
+            .unwrap();
+        let creds = meta.credentials.unwrap();
+        assert!(creds.access_token.starts_with("renewed_access_token_"));
+        assert!(creds.expires_at.unwrap() > Utc::now() + chrono::Duration::minutes(30));
+    }
+
+    #[tokio::test]
+    async fn test_check_and_refresh_tokens_skips_disconnected_integrations() {
+        // Fresh manager: both providers start Disconnected with no credentials, so the sweep
+        // must not touch (or panic on) either of them.
+        let manager = new_manager();
+        let worker = TokenRefreshWorker::new(manager.clone());
+
+        worker.check_and_refresh_tokens().await;
+
+        let nest = manager
+            .get_integration(VendorProvider::GoogleNest)
+            .await
+            .unwrap();
+        let kasa = manager
+            .get_integration(VendorProvider::TpLinkKasa)
+            .await
+            .unwrap();
+        assert_eq!(nest.status, IntegrationStatus::Disconnected);
+        assert_eq!(kasa.status, IntegrationStatus::Disconnected);
+    }
+
+    #[tokio::test]
+    async fn test_check_and_refresh_tokens_refreshes_expiring_token() {
+        let manager = new_manager();
+        // Expires in 100s, well within the worker's 300s expiry window -> must be refreshed.
+        manager
+            .connect_integration(
+                VendorProvider::TpLinkKasa,
+                oauth_creds(Some("good_refresh_token"), 100),
+            )
+            .await
+            .unwrap();
+
+        let worker = TokenRefreshWorker::new(manager.clone());
+        worker.check_and_refresh_tokens().await;
+
+        let meta = manager
+            .get_integration(VendorProvider::TpLinkKasa)
+            .await
+            .unwrap();
+        assert_eq!(meta.status, IntegrationStatus::Connected);
+        assert!(meta
+            .credentials
+            .unwrap()
+            .access_token
+            .starts_with("renewed_access_token_"));
+    }
+
+    #[tokio::test]
+    async fn test_check_and_refresh_tokens_marks_expired_on_failed_refresh() {
+        let manager = new_manager();
+        manager
+            .connect_integration(
+                VendorProvider::TpLinkKasa,
+                oauth_creds(Some("this_will_fail_refresh"), 100),
+            )
+            .await
+            .unwrap();
+
+        let worker = TokenRefreshWorker::new(manager.clone());
+        worker.check_and_refresh_tokens().await;
+
+        let meta = manager
+            .get_integration(VendorProvider::TpLinkKasa)
+            .await
+            .unwrap();
+        assert_eq!(meta.status, IntegrationStatus::Expired);
+        assert!(meta.error_message.is_some());
+        assert!(meta
+            .error_message
+            .as_ref()
+            .unwrap()
+            .contains("OAuth token expired & refresh failed"));
+    }
+
+    #[tokio::test]
+    async fn test_check_and_refresh_tokens_ignores_token_not_yet_expiring() {
+        let manager = new_manager();
+        // Expires in a full hour: well outside the 300s expiry window, so no refresh should fire.
+        manager
+            .connect_integration(
+                VendorProvider::TpLinkKasa,
+                oauth_creds(Some("good_refresh_token"), 3600),
+            )
+            .await
+            .unwrap();
+
+        let worker = TokenRefreshWorker::new(manager.clone());
+        worker.check_and_refresh_tokens().await;
+
+        let meta = manager
+            .get_integration(VendorProvider::TpLinkKasa)
+            .await
+            .unwrap();
+        assert_eq!(meta.status, IntegrationStatus::Connected);
+        assert_eq!(meta.credentials.unwrap().access_token, "initial_access_token");
+    }
+
+    #[tokio::test]
+    async fn test_check_and_refresh_tokens_nest_credentials_not_expiring_skips_refresh() {
+        // Nest credentials route through a *real* Google OAuth HTTP call when a refresh is
+        // due, which this suite must never trigger. Using a token that is not yet expiring
+        // (NestCredentials::new sets expires_at ~1h out) exercises the decision branch
+        // without ever reaching the network call.
+        let manager = new_manager();
+        let nest_creds = crate::nest::NestCredentials::new(
+            Some("client".to_string()),
+            Some("secret".to_string()),
+            Some("project".to_string()),
+            Some("access_token_fresh".to_string()),
+            Some("refresh_token_fresh".to_string()),
+        );
+        manager.connect_nest(nest_creds, None, None).await.unwrap();
+
+        let worker = TokenRefreshWorker::new(manager.clone());
+        worker.check_and_refresh_tokens().await;
+
+        let meta = manager
+            .get_integration(VendorProvider::GoogleNest)
+            .await
+            .unwrap();
+        assert_eq!(meta.status, IntegrationStatus::Connected);
+        assert_eq!(
+            meta.nest_credentials.unwrap().access_token.as_deref(),
+            Some("access_token_fresh"),
+            "credentials must be untouched when not expiring soon"
+        );
+    }
+}

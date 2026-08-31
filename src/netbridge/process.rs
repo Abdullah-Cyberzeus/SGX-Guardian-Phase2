@@ -326,7 +326,9 @@ impl ProcessRunner {
 
 #[cfg(test)]
 mod tests {
-    use super::{status_after_exit, ProcessStatus};
+    use super::*;
+    use std::sync::Arc;
+    use tempfile::TempDir;
 
     #[test]
     fn unexpected_clean_exit_is_a_crash_for_managed_daemons() {
@@ -336,5 +338,219 @@ mod tests {
     #[test]
     fn intentional_stop_remains_stopped() {
         assert_eq!(status_after_exit(true), ProcessStatus::Stopped);
+    }
+
+    /// Waits (bounded by a real 5s timeout, driven by the watch channel rather
+    /// than a polling sleep) until the runner's status matches `expected`.
+    async fn wait_for_status(rx: &mut watch::Receiver<ProcessStatus>, expected: ProcessStatus) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if *rx.borrow() == expected {
+                    return;
+                }
+                rx.changed().await.expect("status watch channel closed unexpectedly");
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for status {:?}", expected));
+    }
+
+    #[tokio::test]
+    async fn start_success_reports_running_then_stop_reports_stopped() {
+        let runner = ProcessRunner::new("sleep".to_string(), vec!["30".to_string()]);
+
+        runner.start().await.expect("spawning sleep must succeed");
+        assert_eq!(runner.get_status(), ProcessStatus::Running);
+
+        runner.stop().await.expect("stop must succeed");
+        assert_eq!(runner.get_status(), ProcessStatus::Stopped);
+    }
+
+    #[tokio::test]
+    async fn start_missing_binary_returns_error_and_marks_crashed() {
+        let runner = ProcessRunner::new(
+            "definitely-not-a-real-sgx-guardian-binary".to_string(),
+            vec![],
+        );
+
+        let err = runner
+            .start()
+            .await
+            .expect_err("spawning a missing binary must fail");
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(runner.get_status(), ProcessStatus::Crashed);
+    }
+
+    #[tokio::test]
+    async fn duplicate_start_is_idempotent_and_does_not_respawn() {
+        let dir = TempDir::new().expect("tempdir");
+        let marker = dir.path().join("marker.txt");
+        let script = format!("echo run >> {} ; sleep 5", marker.display());
+        let runner = ProcessRunner::new("sh".to_string(), vec!["-c".to_string(), script]);
+
+        runner.start().await.expect("first start succeeds");
+        assert_eq!(runner.get_status(), ProcessStatus::Running);
+
+        // A second call while already running must be a pure no-op: Ok(()), no new spawn.
+        runner.start().await.expect("duplicate start remains Ok");
+        assert_eq!(runner.get_status(), ProcessStatus::Running);
+
+        runner.stop().await.expect("stop succeeds");
+
+        let contents = std::fs::read_to_string(&marker).unwrap_or_default();
+        assert_eq!(
+            contents.lines().count(),
+            1,
+            "duplicate start must not spawn a second process"
+        );
+    }
+
+    #[tokio::test]
+    async fn duplicate_stop_and_stop_without_start_are_safe_noops() {
+        let runner = ProcessRunner::new("sleep".to_string(), vec!["30".to_string()]);
+
+        // Stopping before ever starting must not panic or error.
+        runner.stop().await.expect("stop without start is a noop");
+        assert_eq!(runner.get_status(), ProcessStatus::Stopped);
+
+        runner.start().await.expect("start succeeds");
+        assert_eq!(runner.get_status(), ProcessStatus::Running);
+
+        runner.stop().await.expect("first stop succeeds");
+        assert_eq!(runner.get_status(), ProcessStatus::Stopped);
+
+        // A second stop call on an already-stopped runner must also be a safe noop.
+        runner.stop().await.expect("duplicate stop remains Ok");
+        assert_eq!(runner.get_status(), ProcessStatus::Stopped);
+    }
+
+    #[tokio::test]
+    async fn unexpected_nonzero_exit_without_stop_is_reported_crashed() {
+        let runner = ProcessRunner::new("sh".to_string(), vec!["-c".to_string(), "exit 7".to_string()]);
+        let mut rx = runner.subscribe();
+
+        runner.start().await.expect("start succeeds");
+        wait_for_status(&mut rx, ProcessStatus::Crashed).await;
+        assert_eq!(runner.get_status(), ProcessStatus::Crashed);
+    }
+
+    #[tokio::test]
+    async fn unexpected_clean_exit_without_stop_is_still_reported_crashed() {
+        // Exit code 0 does not matter: an exit that Guardian did not request
+        // (stopping == false) is always treated as a crash for managed daemons.
+        let runner = ProcessRunner::new("sh".to_string(), vec!["-c".to_string(), "exit 0".to_string()]);
+        let mut rx = runner.subscribe();
+
+        runner.start().await.expect("start succeeds");
+        wait_for_status(&mut rx, ProcessStatus::Crashed).await;
+        assert_eq!(runner.get_status(), ProcessStatus::Crashed);
+    }
+
+    #[tokio::test]
+    async fn send_sighup_to_unhandled_process_terminates_it_and_marks_crashed() {
+        let runner = ProcessRunner::new("sleep".to_string(), vec!["30".to_string()]);
+        let mut rx = runner.subscribe();
+
+        runner.start().await.expect("start succeeds");
+        assert_eq!(runner.get_status(), ProcessStatus::Running);
+
+        // `sleep` installs no SIGHUP handler, so the default disposition (terminate)
+        // applies; the exit is unexpected from Guardian's point of view since stop()
+        // was never called, so it must surface as Crashed, not Stopped.
+        runner
+            .send_sighup()
+            .await
+            .expect("SIGHUP delivery to a live process must succeed");
+
+        wait_for_status(&mut rx, ProcessStatus::Crashed).await;
+    }
+
+    #[tokio::test]
+    async fn send_sighup_when_not_running_is_a_noop_ok() {
+        let runner = ProcessRunner::new("sleep".to_string(), vec!["30".to_string()]);
+        runner
+            .send_sighup()
+            .await
+            .expect("SIGHUP against a never-started runner is a harmless noop");
+    }
+
+    #[tokio::test]
+    async fn send_signal_errors_when_process_is_not_running() {
+        let runner = ProcessRunner::new("sleep".to_string(), vec!["30".to_string()]);
+        let err = runner
+            .send_signal("TERM")
+            .await
+            .expect_err("signaling a never-started runner must fail");
+        assert!(err.to_string().contains("is not running"));
+    }
+
+    #[tokio::test]
+    async fn send_signal_reports_failure_for_an_invalid_signal_name() {
+        let runner = ProcessRunner::new("sleep".to_string(), vec!["30".to_string()]);
+        runner.start().await.expect("start succeeds");
+
+        let err = runner
+            .send_signal("NOT_A_REAL_SIGNAL")
+            .await
+            .expect_err("kill must reject an unknown signal name");
+        assert!(err.to_string().contains("failed to send"));
+
+        // The process itself must still be alive/unaffected by the rejected signal.
+        assert_eq!(runner.get_status(), ProcessStatus::Running);
+        runner.stop().await.expect("cleanup stop succeeds");
+    }
+
+    #[tokio::test]
+    async fn send_signal_success_leads_to_unexpected_crash() {
+        let runner = ProcessRunner::new("sleep".to_string(), vec!["30".to_string()]);
+        let mut rx = runner.subscribe();
+        runner.start().await.expect("start succeeds");
+
+        runner
+            .send_signal("TERM")
+            .await
+            .expect("sending TERM to a live process must succeed");
+
+        wait_for_status(&mut rx, ProcessStatus::Crashed).await;
+    }
+
+    #[tokio::test]
+    async fn restart_stops_then_starts_the_process_again() {
+        let runner = ProcessRunner::new("sleep".to_string(), vec!["30".to_string()]);
+        runner.start().await.expect("initial start succeeds");
+        assert_eq!(runner.get_status(), ProcessStatus::Running);
+
+        runner.restart().await.expect("restart succeeds");
+        assert_eq!(runner.get_status(), ProcessStatus::Running);
+
+        runner.stop().await.expect("cleanup stop succeeds");
+    }
+
+    #[tokio::test]
+    async fn auto_restart_recovers_after_a_single_crash() {
+        let dir = TempDir::new().expect("tempdir");
+        let flag = dir.path().join("started_once");
+        // First invocation: touch the flag and exit nonzero (a crash).
+        // Second invocation (the auto-restart retry): the flag now exists, so
+        // it execs into a long-lived process instead of exiting.
+        let script = format!(
+            "if [ -f {flag} ]; then exec sleep 30; else touch {flag}; exit 1; fi",
+            flag = flag.display()
+        );
+        let runner = Arc::new(ProcessRunner::new(
+            "sh".to_string(),
+            vec!["-c".to_string(), script],
+        ));
+        let mut rx = runner.subscribe();
+        runner.clone().enable_auto_restart();
+
+        runner.start().await.expect("first start succeeds");
+        wait_for_status(&mut rx, ProcessStatus::Crashed).await;
+
+        // The supervisor task waits out its backoff (2s) and retries; the retry
+        // succeeds this time, bringing the runner back to Running.
+        wait_for_status(&mut rx, ProcessStatus::Running).await;
+
+        runner.stop().await.expect("cleanup stop succeeds");
     }
 }

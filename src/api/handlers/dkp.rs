@@ -132,7 +132,7 @@ pub struct EmergencyBody {
     pub reason: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct ActionResponse {
     pub success: bool,
     pub stdout: String,

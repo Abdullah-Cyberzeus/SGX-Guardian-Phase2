@@ -829,4 +829,523 @@ mod tests {
             load_block_records(&state_dir.join("blocked_ips.json")).expect("load records");
         assert!(!records.iter().any(|r| r.ip == "203.0.113.12"));
     }
+
+    // ── should_block (pure decision function) ────────────────────────────────
+
+    fn test_alert(src_ip: &str, severity: Severity) -> ThreatAlert {
+        ThreatAlert {
+            alert_id: format!("test-{}-{:?}", src_ip, severity),
+            timestamp: Utc::now(),
+            src_ip: src_ip.to_string(),
+            src_port: 4444,
+            dst_ip: "192.0.2.1".to_string(),
+            dst_port: 502,
+            protocol: "TCP".to_string(),
+            signature_id: 1,
+            signature: "test signature".to_string(),
+            category: crate::threat::threat_alert::ThreatCategory::Other,
+            severity,
+            rev: 1,
+            gid: 1,
+            event_type: "alert".to_string(),
+            blocked: false,
+        }
+    }
+
+    fn inline_block_cfg() -> SuricataConfig {
+        SuricataConfig {
+            enabled: true,
+            block_mode: BlockMode::InlineBlock,
+            block_ttl_secs: 60,
+            block_exempt: vec!["198.51.100.0/24".to_string(), "203.0.113.99".to_string()],
+            ..SuricataConfig::default()
+        }
+    }
+
+    #[test]
+    fn should_block_false_when_integration_disabled() {
+        let mut cfg = inline_block_cfg();
+        cfg.enabled = false;
+        let alert = test_alert("203.0.113.10", Severity::Critical);
+        assert!(!Blocker::should_block(&cfg, &alert));
+    }
+
+    #[test]
+    fn should_block_false_in_alert_only_mode() {
+        let mut cfg = inline_block_cfg();
+        cfg.block_mode = BlockMode::AlertOnly;
+        let alert = test_alert("203.0.113.10", Severity::Critical);
+        assert!(!Blocker::should_block(&cfg, &alert));
+    }
+
+    #[test]
+    fn should_block_false_for_low_and_medium_severity() {
+        let cfg = inline_block_cfg();
+        assert!(!Blocker::should_block(
+            &cfg,
+            &test_alert("203.0.113.10", Severity::Low)
+        ));
+        assert!(!Blocker::should_block(
+            &cfg,
+            &test_alert("203.0.113.10", Severity::Medium)
+        ));
+        assert!(!Blocker::should_block(
+            &cfg,
+            &test_alert("203.0.113.10", Severity::Info)
+        ));
+    }
+
+    #[test]
+    fn should_block_true_for_high_and_critical_when_not_exempt() {
+        let cfg = inline_block_cfg();
+        assert!(Blocker::should_block(
+            &cfg,
+            &test_alert("203.0.113.10", Severity::High)
+        ));
+        assert!(Blocker::should_block(
+            &cfg,
+            &test_alert("203.0.113.10", Severity::Critical)
+        ));
+    }
+
+    #[test]
+    fn should_block_false_when_src_ip_matches_exempt_cidr() {
+        let cfg = inline_block_cfg();
+        let alert = test_alert("198.51.100.42", Severity::Critical);
+        assert!(!Blocker::should_block(&cfg, &alert));
+    }
+
+    #[test]
+    fn should_block_false_when_src_ip_matches_exempt_exact_address() {
+        let cfg = inline_block_cfg();
+        let alert = test_alert("203.0.113.99", Severity::High);
+        assert!(!Blocker::should_block(&cfg, &alert));
+    }
+
+    // ── config_exempts_ip ─────────────────────────────────────────────────────
+
+    #[test]
+    fn config_exempts_ip_matches_cidr_and_exact_address() {
+        let cfg = inline_block_cfg();
+        assert!(config_exempts_ip(&cfg, "198.51.100.5"));
+        assert!(config_exempts_ip(&cfg, "203.0.113.99"));
+        assert!(!config_exempts_ip(&cfg, "203.0.113.10"));
+    }
+
+    // ── maybe_block ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn maybe_block_ignores_alert_only_mode_without_touching_nft() {
+        let _guard = async_env_lock().await;
+        let _nft_mock = ScopedEnvStrVar::set("SGX_THREAT_MOCK_NFT", "1");
+        let td = tempdir().expect("tempdir");
+
+        let cfg = SuricataConfig {
+            enabled: true,
+            block_mode: BlockMode::AlertOnly,
+            block_ttl_secs: 60,
+            block_exempt: Vec::new(),
+            ..SuricataConfig::default()
+        };
+        let cfg_shared = Arc::new(tokio::sync::Mutex::new(cfg));
+        let blocker = Blocker::new(cfg_shared, "nodeA".into(), td.path().to_path_buf());
+        let _ = take_mock_nft_calls();
+
+        let alert = test_alert("203.0.113.30", Severity::Critical);
+        let blocked = blocker.maybe_block(&alert).await.expect("maybe_block");
+        assert!(!blocked);
+        assert!(take_mock_nft_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn maybe_block_ignores_ipv6_link_local_source() {
+        let _guard = async_env_lock().await;
+        let _nft_mock = ScopedEnvStrVar::set("SGX_THREAT_MOCK_NFT", "1");
+        let td = tempdir().expect("tempdir");
+
+        let cfg = SuricataConfig {
+            enabled: true,
+            block_mode: BlockMode::InlineBlock,
+            block_ttl_secs: 60,
+            block_exempt: Vec::new(),
+            ..SuricataConfig::default()
+        };
+        let cfg_shared = Arc::new(tokio::sync::Mutex::new(cfg));
+        let blocker = Blocker::new(cfg_shared, "nodeA".into(), td.path().to_path_buf());
+        let _ = take_mock_nft_calls();
+
+        let alert = test_alert("fe80::1", Severity::Critical);
+        let blocked = blocker.maybe_block(&alert).await.expect("maybe_block");
+        assert!(!blocked);
+        assert!(take_mock_nft_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn maybe_block_blocks_once_then_treats_repeat_alert_as_duplicate() {
+        let _guard = async_env_lock().await;
+        let _nft_mock = ScopedEnvStrVar::set("SGX_THREAT_MOCK_NFT", "1");
+        let td = tempdir().expect("tempdir");
+
+        let cfg = SuricataConfig {
+            enabled: true,
+            block_mode: BlockMode::InlineBlock,
+            block_ttl_secs: 60,
+            block_exempt: Vec::new(),
+            ..SuricataConfig::default()
+        };
+        let cfg_shared = Arc::new(tokio::sync::Mutex::new(cfg));
+        let blocker = Blocker::new(cfg_shared, "nodeA".into(), td.path().to_path_buf());
+        let _ = take_mock_nft_calls();
+
+        let alert = test_alert("203.0.113.31", Severity::High);
+        let first = blocker.maybe_block(&alert).await.expect("first maybe_block");
+        assert!(first, "first alert for a new IP should be blocked");
+        let calls_after_first = take_mock_nft_calls();
+        assert!(calls_after_first.iter().any(|c| c.contains(&"drop".to_string())));
+
+        let second = blocker.maybe_block(&alert).await.expect("second maybe_block");
+        assert!(!second, "duplicate alert for an already-blocked IP is a no-op");
+        assert!(
+            take_mock_nft_calls().is_empty(),
+            "duplicate block must not issue new nft commands"
+        );
+
+        let records = load_block_records(&td.path().join("blocked_ips.json"))
+            .expect("load records");
+        assert_eq!(records.iter().filter(|r| r.ip == "203.0.113.31").count(), 1);
+    }
+
+    // ── block_ip_for_rule ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn block_ip_for_rule_respects_config_exempt() {
+        let _guard = async_env_lock().await;
+        let _nft_mock = ScopedEnvStrVar::set("SGX_THREAT_MOCK_NFT", "1");
+        let td = tempdir().expect("tempdir");
+
+        let cfg = SuricataConfig {
+            enabled: false,
+            block_mode: BlockMode::AlertOnly,
+            block_ttl_secs: 60,
+            block_exempt: vec!["203.0.113.0/24".to_string()],
+            ..SuricataConfig::default()
+        };
+        let cfg_shared = Arc::new(tokio::sync::Mutex::new(cfg));
+        let blocker = Blocker::new(cfg_shared, "nodeA".into(), td.path().to_path_buf());
+
+        let result = blocker
+            .block_ip_for_rule("203.0.113.40", None)
+            .await
+            .expect("block_ip_for_rule");
+        assert!(!result.blocked);
+        assert!(result.reason.unwrap().contains("block_exempt"));
+        assert!(take_mock_nft_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn block_ip_for_rule_rejects_invalid_ip() {
+        let _guard = async_env_lock().await;
+        let td = tempdir().expect("tempdir");
+        let cfg_shared = Arc::new(tokio::sync::Mutex::new(SuricataConfig::default()));
+        let blocker = Blocker::new(cfg_shared, "nodeA".into(), td.path().to_path_buf());
+
+        let err = blocker
+            .block_ip_for_rule("not-an-ip", None)
+            .await
+            .expect_err("invalid ip must error");
+        assert!(matches!(err, ThreatError::InvalidCidr(_)));
+    }
+
+    #[tokio::test]
+    async fn block_ip_for_rule_skips_ipv6_link_local() {
+        let _guard = async_env_lock().await;
+        let _nft_mock = ScopedEnvStrVar::set("SGX_THREAT_MOCK_NFT", "1");
+        let td = tempdir().expect("tempdir");
+        let cfg_shared = Arc::new(tokio::sync::Mutex::new(SuricataConfig::default()));
+        let blocker = Blocker::new(cfg_shared, "nodeA".into(), td.path().to_path_buf());
+
+        let result = blocker
+            .block_ip_for_rule("fe80::42", None)
+            .await
+            .expect("block_ip_for_rule");
+        assert!(!result.blocked);
+        assert!(result.reason.unwrap().contains("link-local"));
+    }
+
+    #[tokio::test]
+    async fn block_ip_for_rule_blocks_with_custom_ttl_then_flags_duplicate() {
+        let _guard = async_env_lock().await;
+        let _nft_mock = ScopedEnvStrVar::set("SGX_THREAT_MOCK_NFT", "1");
+        let td = tempdir().expect("tempdir");
+        let cfg_shared = Arc::new(tokio::sync::Mutex::new(SuricataConfig::default()));
+        let blocker = Blocker::new(cfg_shared, "nodeA".into(), td.path().to_path_buf());
+
+        let before = Utc::now().timestamp();
+        let result = blocker
+            .block_ip_for_rule("203.0.113.41", Some(120))
+            .await
+            .expect("block_ip_for_rule");
+        assert!(result.blocked);
+        assert!(result.reason.is_none());
+
+        let records =
+            load_block_records(&td.path().join("blocked_ips.json")).expect("load records");
+        let record = records
+            .iter()
+            .find(|r| r.ip == "203.0.113.41")
+            .expect("record present");
+        assert!(record.expires_at >= before + 120);
+        assert!(record.expires_at <= before + 121);
+
+        let dup = blocker
+            .block_ip_for_rule("203.0.113.41", Some(120))
+            .await
+            .expect("block_ip_for_rule duplicate");
+        assert!(!dup.blocked);
+        assert!(dup.reason.unwrap().contains("already blocked"));
+    }
+
+    // ── sweep_expired ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn sweep_expired_removes_only_expired_entries() {
+        let _guard = async_env_lock().await;
+        let _nft_mock = ScopedEnvStrVar::set("SGX_THREAT_MOCK_NFT", "1");
+        let td = tempdir().expect("tempdir");
+        let cfg_shared = Arc::new(tokio::sync::Mutex::new(SuricataConfig::default()));
+        let blocker = Blocker::new(cfg_shared, "nodeA".into(), td.path().to_path_buf());
+
+        blocker
+            .block_ip_for_rule("203.0.113.50", Some(0))
+            .await
+            .expect("block expiring entry");
+        blocker
+            .block_ip_for_rule("203.0.113.51", Some(3600))
+            .await
+            .expect("block long-lived entry");
+        let _ = take_mock_nft_calls();
+
+        let expired = blocker.sweep_expired().await.expect("sweep_expired");
+        assert_eq!(expired, 1);
+
+        let records =
+            load_block_records(&td.path().join("blocked_ips.json")).expect("load records");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].ip, "203.0.113.51");
+
+        let calls = take_mock_nft_calls();
+        assert!(calls.iter().any(|c| c.contains(&"flush".to_string())));
+        assert!(calls.iter().any(|c| c.contains(&"203.0.113.51".to_string())));
+    }
+
+    #[tokio::test]
+    async fn sweep_expired_is_a_noop_when_nothing_has_expired() {
+        let _guard = async_env_lock().await;
+        let _nft_mock = ScopedEnvStrVar::set("SGX_THREAT_MOCK_NFT", "1");
+        let td = tempdir().expect("tempdir");
+        let cfg_shared = Arc::new(tokio::sync::Mutex::new(SuricataConfig::default()));
+        let blocker = Blocker::new(cfg_shared, "nodeA".into(), td.path().to_path_buf());
+
+        blocker
+            .block_ip_for_rule("203.0.113.52", Some(3600))
+            .await
+            .expect("block long-lived entry");
+        let _ = take_mock_nft_calls();
+
+        let expired = blocker.sweep_expired().await.expect("sweep_expired");
+        assert_eq!(expired, 0);
+        assert!(
+            take_mock_nft_calls().is_empty(),
+            "a no-op sweep must not issue any nft commands"
+        );
+    }
+
+    // ── unblock_ip ────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn unblock_ip_removes_existing_entry_and_returns_true() {
+        let _guard = async_env_lock().await;
+        let _nft_mock = ScopedEnvStrVar::set("SGX_THREAT_MOCK_NFT", "1");
+        let td = tempdir().expect("tempdir");
+        let cfg_shared = Arc::new(tokio::sync::Mutex::new(SuricataConfig::default()));
+        let blocker = Blocker::new(cfg_shared, "nodeA".into(), td.path().to_path_buf());
+
+        blocker
+            .block_ip_for_rule("203.0.113.60", Some(3600))
+            .await
+            .expect("block entry");
+
+        let removed = blocker.unblock_ip("203.0.113.60").await.expect("unblock_ip");
+        assert!(removed);
+
+        let records =
+            load_block_records(&td.path().join("blocked_ips.json")).expect("load records");
+        assert!(records.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unblock_ip_on_ip_not_currently_blocked_returns_false_but_still_succeeds() {
+        let _guard = async_env_lock().await;
+        let _nft_mock = ScopedEnvStrVar::set("SGX_THREAT_MOCK_NFT", "1");
+        let td = tempdir().expect("tempdir");
+        let cfg_shared = Arc::new(tokio::sync::Mutex::new(SuricataConfig::default()));
+        let blocker = Blocker::new(cfg_shared, "nodeA".into(), td.path().to_path_buf());
+
+        let removed = blocker
+            .unblock_ip("203.0.113.61")
+            .await
+            .expect("unblock_ip on absent record");
+        assert!(!removed);
+    }
+
+    #[tokio::test]
+    async fn unblock_ip_rejects_invalid_ip() {
+        let _guard = async_env_lock().await;
+        let td = tempdir().expect("tempdir");
+        let cfg_shared = Arc::new(tokio::sync::Mutex::new(SuricataConfig::default()));
+        let blocker = Blocker::new(cfg_shared, "nodeA".into(), td.path().to_path_buf());
+
+        let err = blocker
+            .unblock_ip("not-an-ip")
+            .await
+            .expect_err("invalid ip must error");
+        assert!(matches!(err, ThreatError::InvalidCidr(_)));
+    }
+
+    // ── restore_state ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn restore_state_drops_only_expired_records_from_disk() {
+        let _guard = async_env_lock().await;
+        let _nft_mock = ScopedEnvStrVar::set("SGX_THREAT_MOCK_NFT", "1");
+        let td = tempdir().expect("tempdir");
+        let state_path = td.path().join("blocked_ips.json");
+        let now = Utc::now().timestamp();
+        std::fs::write(
+            &state_path,
+            serde_json::to_vec(&vec![
+                BlockRecord {
+                    ip: "203.0.113.70".to_string(),
+                    expires_at: now - 100,
+                },
+                BlockRecord {
+                    ip: "203.0.113.71".to_string(),
+                    expires_at: now + 3600,
+                },
+            ])
+            .unwrap(),
+        )
+        .expect("seed blocked_ips.json");
+
+        let cfg_shared = Arc::new(tokio::sync::Mutex::new(SuricataConfig::default()));
+        let blocker = Blocker::new(cfg_shared, "nodeA".into(), td.path().to_path_buf());
+
+        let restored = blocker.restore_state().await.expect("restore_state");
+        assert_eq!(restored, 1);
+
+        let records = load_block_records(&state_path).expect("load records");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].ip, "203.0.113.71");
+    }
+
+    #[tokio::test]
+    async fn restore_state_with_nothing_unexpired_touches_no_nft_commands() {
+        let _guard = async_env_lock().await;
+        let _nft_mock = ScopedEnvStrVar::set("SGX_THREAT_MOCK_NFT", "1");
+        let td = tempdir().expect("tempdir");
+        let state_path = td.path().join("blocked_ips.json");
+        let now = Utc::now().timestamp();
+        std::fs::write(
+            &state_path,
+            serde_json::to_vec(&vec![BlockRecord {
+                ip: "203.0.113.72".to_string(),
+                expires_at: now - 5,
+            }])
+            .unwrap(),
+        )
+        .expect("seed blocked_ips.json");
+
+        let cfg_shared = Arc::new(tokio::sync::Mutex::new(SuricataConfig::default()));
+        let blocker = Blocker::new(cfg_shared, "nodeA".into(), td.path().to_path_buf());
+        let _ = take_mock_nft_calls();
+
+        let restored = blocker.restore_state().await.expect("restore_state");
+        assert_eq!(restored, 0);
+        assert!(take_mock_nft_calls().is_empty());
+
+        let records = load_block_records(&state_path).expect("load records");
+        assert!(records.is_empty());
+    }
+
+    // ── load_block_records ────────────────────────────────────────────────────
+
+    #[test]
+    fn load_block_records_returns_empty_when_file_missing() {
+        let td = tempdir().expect("tempdir");
+        let records =
+            load_block_records(&td.path().join("nope.json")).expect("missing file is ok");
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn load_block_records_returns_empty_for_blank_file() {
+        let td = tempdir().expect("tempdir");
+        let path = td.path().join("blank.json");
+        std::fs::write(&path, "   \n").expect("write blank file");
+        let records = load_block_records(&path).expect("blank file is ok");
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn load_block_records_errors_on_invalid_json() {
+        let td = tempdir().expect("tempdir");
+        let path = td.path().join("bad.json");
+        std::fs::write(&path, "{ not json").expect("write invalid json");
+        let err = load_block_records(&path).expect_err("invalid json must error");
+        assert!(matches!(err, ThreatError::Json(_)));
+    }
+
+    // ── run_nft mock failure-on-match path ───────────────────────────────────
+
+    #[tokio::test]
+    async fn block_ip_for_rule_fails_and_persists_nothing_when_nft_insert_fails() {
+        let _guard = async_env_lock().await;
+        let _nft_mock = ScopedEnvStrVar::set("SGX_THREAT_MOCK_NFT", "1");
+        let _fail_match = ScopedEnvStrVar::set("SGX_THREAT_MOCK_NFT_FAIL_MATCH", "203.0.113.80");
+        let td = tempdir().expect("tempdir");
+        let cfg_shared = Arc::new(tokio::sync::Mutex::new(SuricataConfig::default()));
+        let blocker = Blocker::new(cfg_shared, "nodeA".into(), td.path().to_path_buf());
+        let _ = take_mock_nft_calls();
+
+        let err = blocker
+            .block_ip_for_rule("203.0.113.80", Some(60))
+            .await
+            .expect_err("mocked nft failure for this ip should propagate");
+        assert!(matches!(err, ThreatError::NftFailed(_, _)));
+
+        let records =
+            load_block_records(&td.path().join("blocked_ips.json")).expect("load records");
+        assert!(!records.iter().any(|r| r.ip == "203.0.113.80"));
+    }
+
+    #[tokio::test]
+    async fn sweep_expired_propagates_nft_failure_and_leaves_state_untouched() {
+        let _guard = async_env_lock().await;
+        let _nft_mock = ScopedEnvStrVar::set("SGX_THREAT_MOCK_NFT", "1");
+        let td = tempdir().expect("tempdir");
+        let cfg_shared = Arc::new(tokio::sync::Mutex::new(SuricataConfig::default()));
+        let blocker = Blocker::new(cfg_shared, "nodeA".into(), td.path().to_path_buf());
+
+        blocker
+            .block_ip_for_rule("203.0.113.90", Some(0))
+            .await
+            .expect("seed an already-expired entry");
+
+        let _fail_match = ScopedEnvStrVar::set("SGX_THREAT_MOCK_NFT_FAIL_MATCH", "flush");
+        let err = blocker
+            .sweep_expired()
+            .await
+            .expect_err("mocked flush failure should propagate");
+        assert!(matches!(err, ThreatError::NftFailed(_, _)));
+    }
 }

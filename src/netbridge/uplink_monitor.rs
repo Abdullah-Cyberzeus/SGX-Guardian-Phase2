@@ -429,3 +429,140 @@ impl UplinkMonitor {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An interface name guaranteed not to exist on any host. Every helper
+    /// below queries the kernel/wpa_supplicant control socket about this
+    /// specific interface only (never a real one), so `ip`/`iw`/`wpa_cli`
+    /// deterministically report "not found" without any real network I/O,
+    /// without touching real routing/firewall/Wi-Fi state, and without root.
+    /// This is the "bypass the actual reachability check" approach the task
+    /// calls for in place of a mocked process seam (none exists here — these
+    /// one-off `Command` calls, unlike `ProcessRunner`, have no injectable
+    /// runner). `try_tcp_connect` is the one helper intentionally left
+    /// untested: it opens a real outbound TCP socket and is only reachable
+    /// through `check_internet_reachability`'s fallback path, which this
+    /// suite never enters (see below).
+    const BOGUS_IFACE: &str = "sgxtest-bogus0";
+
+    #[test]
+    fn reachability_status_equality() {
+        assert_eq!(
+            ReachabilityStatus::InternetAvailable,
+            ReachabilityStatus::InternetAvailable
+        );
+        assert_ne!(
+            ReachabilityStatus::InternetAvailable,
+            ReachabilityStatus::NoInternet
+        );
+        assert_ne!(
+            ReachabilityStatus::NoInternet,
+            ReachabilityStatus::NetworkNotReady
+        );
+    }
+
+    #[test]
+    fn new_monitor_starts_unknown_with_no_failures() {
+        let monitor = UplinkMonitor::new(BOGUS_IFACE.to_string());
+        assert_eq!(monitor.interface, BOGUS_IFACE);
+        assert_eq!(monitor.state, UplinkState::Unknown);
+        assert_eq!(monitor.consecutive_failures, 0);
+        assert!(monitor.last_reconnect_attempt.is_none());
+        assert_eq!(monitor.current_state(), UplinkState::Unknown);
+    }
+
+    #[tokio::test]
+    async fn check_link_connected_false_for_missing_interface() {
+        let monitor = UplinkMonitor::new(BOGUS_IFACE.to_string());
+        assert!(!monitor.check_link_connected().await);
+    }
+
+    #[tokio::test]
+    async fn check_internet_reachability_reports_network_not_ready_without_ip() {
+        // With no IPv4 address on the (nonexistent) interface, the function
+        // must short-circuit to NetworkNotReady before attempting any ping,
+        // TCP probe, or DNS/route mutation.
+        let monitor = UplinkMonitor::new(BOGUS_IFACE.to_string());
+        let status = monitor.check_internet_reachability().await;
+        assert_eq!(status, ReachabilityStatus::NetworkNotReady);
+    }
+
+    #[tokio::test]
+    async fn is_interface_reconnecting_false_for_missing_interface() {
+        let monitor = UplinkMonitor::new(BOGUS_IFACE.to_string());
+        assert!(!monitor.is_interface_reconnecting().await);
+    }
+
+    #[tokio::test]
+    async fn check_gateway_reachable_false_without_a_route() {
+        let monitor = UplinkMonitor::new(BOGUS_IFACE.to_string());
+        assert!(!monitor.check_gateway_reachable().await);
+    }
+
+    #[tokio::test]
+    async fn get_interface_ipv4_none_for_missing_interface() {
+        let monitor = UplinkMonitor::new(BOGUS_IFACE.to_string());
+        assert!(monitor.get_interface_ipv4().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn evaluate_health_debounces_before_declaring_loss() {
+        let mut monitor = UplinkMonitor::new(BOGUS_IFACE.to_string());
+
+        // LOSS_DEBOUNCE_THRESHOLD == 3: the first two consecutive failures
+        // must hold the prior (Unknown) state rather than flipping to a loss
+        // state immediately.
+        let first = monitor.evaluate_health().await;
+        assert_eq!(first, UplinkState::Unknown);
+        assert_eq!(monitor.consecutive_failures, 1);
+
+        let second = monitor.evaluate_health().await;
+        assert_eq!(second, UplinkState::Unknown);
+        assert_eq!(monitor.consecutive_failures, 2);
+
+        // The third consecutive failure crosses the threshold. Since the
+        // link itself never came up, the terminal state is Disconnected
+        // (as opposed to NoInternet, which requires link_up == true).
+        let third = monitor.evaluate_health().await;
+        assert_eq!(third, UplinkState::Disconnected);
+        assert_eq!(monitor.consecutive_failures, 3);
+        assert_eq!(monitor.current_state(), UplinkState::Disconnected);
+    }
+
+    #[tokio::test]
+    async fn evaluate_health_honors_a_preexisting_failure_count() {
+        // Seeds the debounce counter as if two prior checks already failed
+        // (e.g. resumed mid-cycle) and confirms the very next failure is the
+        // one that crosses LOSS_DEBOUNCE_THRESHOLD and flips state.
+        // Note: the InternetAvailable recovery branch (resets
+        // consecutive_failures to 0, state to Connected) cannot be exercised
+        // without a real reachable uplink, so it is intentionally left
+        // uncovered here.
+        let mut monitor = UplinkMonitor::new(BOGUS_IFACE.to_string());
+        monitor.consecutive_failures = 2;
+        monitor.state = UplinkState::Unknown;
+
+        let result = monitor.evaluate_health().await;
+        assert_eq!(result, UplinkState::Disconnected);
+        assert_eq!(monitor.consecutive_failures, 3);
+    }
+
+    #[tokio::test]
+    async fn trigger_reconnect_debounces_within_30_seconds() {
+        let mut monitor = UplinkMonitor::new(BOGUS_IFACE.to_string());
+        assert!(monitor.last_reconnect_attempt.is_none());
+
+        monitor.trigger_reconnect(None);
+        let first_attempt = monitor.last_reconnect_attempt;
+        assert!(first_attempt.is_some());
+
+        // A second call within the 30s debounce window must not update the
+        // recorded timestamp (and, per the implementation, returns before
+        // spawning another reconnect task at all).
+        monitor.trigger_reconnect(None);
+        assert_eq!(monitor.last_reconnect_attempt, first_attempt);
+    }
+}
