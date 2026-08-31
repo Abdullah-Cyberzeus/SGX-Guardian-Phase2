@@ -96,3 +96,100 @@ pub fn spawn(node_id: String) {
 pub fn publish(event: RuleEvent) {
     bus::publish(event);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
+
+    impl EnvGuard {
+        fn capture(keys: &[&'static str]) -> Self {
+            Self(
+                keys.iter()
+                    .map(|key| (*key, std::env::var_os(key)))
+                    .collect(),
+            )
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, previous) in self.0.drain(..) {
+                if let Some(previous) = previous {
+                    std::env::set_var(key, previous);
+                } else {
+                    std::env::remove_var(key);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rules_config_parses_overrides_defaults_invalid_limits_and_empty_interface() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let keys = [
+            persistence::RULES_BASE_ENV,
+            persistence::RULES_DRYRUN_ENV,
+            persistence::RULES_MAX_EXECUTIONS_ENV,
+            "SGX_RULES_THREAT_CONFIG",
+            "SGX_RULES_THREAT_STATE_DIR",
+            "SGX_RULES_DISCOVERY_CONFIG",
+            "SGX_GUARDIAN_COT_LOCK_DIR",
+            "SGX_RULES_LOCK_INTERFACE",
+        ];
+        let _guard = EnvGuard::capture(&keys);
+        for key in keys {
+            std::env::remove_var(key);
+        }
+
+        let defaults = RulesConfig::from_env();
+        assert!(defaults.dry_run);
+        assert_eq!(defaults.max_executions, 2000);
+        assert!(defaults.transport_lock_interface.is_none());
+
+        std::env::set_var(persistence::RULES_BASE_ENV, "/tmp/rules-test");
+        std::env::set_var(persistence::RULES_DRYRUN_ENV, "0");
+        std::env::set_var(persistence::RULES_MAX_EXECUTIONS_ENV, "25");
+        std::env::set_var("SGX_RULES_THREAT_CONFIG", "/tmp/threat.yaml");
+        std::env::set_var("SGX_RULES_THREAT_STATE_DIR", "/tmp/threat-state");
+        std::env::set_var("SGX_RULES_DISCOVERY_CONFIG", "/tmp/discovery.yaml");
+        std::env::set_var("SGX_GUARDIAN_COT_LOCK_DIR", "/tmp/cot-lock");
+        std::env::set_var("SGX_RULES_LOCK_INTERFACE", "eth9");
+        let configured = RulesConfig::from_env();
+        assert!(!configured.dry_run);
+        assert_eq!(configured.max_executions, 25);
+        assert_eq!(configured.paths.base, PathBuf::from("/tmp/rules-test"));
+        assert_eq!(
+            configured.threat_config_path,
+            PathBuf::from("/tmp/threat.yaml")
+        );
+        assert_eq!(
+            configured.threat_state_dir,
+            PathBuf::from("/tmp/threat-state")
+        );
+        assert_eq!(
+            configured.discovery_config_path,
+            PathBuf::from("/tmp/discovery.yaml")
+        );
+        assert_eq!(
+            configured.transport_lock_dir,
+            PathBuf::from("/tmp/cot-lock")
+        );
+        assert_eq!(configured.transport_lock_interface.as_deref(), Some("eth9"));
+
+        std::env::set_var(persistence::RULES_DRYRUN_ENV, "FALSE");
+        std::env::set_var(persistence::RULES_MAX_EXECUTIONS_ENV, "0");
+        std::env::set_var("SGX_RULES_LOCK_INTERFACE", "   ");
+        let invalid = RulesConfig::from_env();
+        assert!(!invalid.dry_run);
+        assert_eq!(invalid.max_executions, 2000);
+        assert!(invalid.transport_lock_interface.is_none());
+
+        std::env::set_var(persistence::RULES_DRYRUN_ENV, "yes");
+        std::env::set_var(persistence::RULES_MAX_EXECUTIONS_ENV, "invalid");
+        let enabled = RulesConfig::from_env();
+        assert!(enabled.dry_run);
+        assert_eq!(enabled.max_executions, 2000);
+    }
+}

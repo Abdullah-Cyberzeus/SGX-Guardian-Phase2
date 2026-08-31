@@ -156,4 +156,49 @@ mod tests {
         assert_eq!(record.state, "on");
         assert_eq!(record.attributes["friendly_name"], "Toggle 1");
     }
+
+    #[tokio::test]
+    async fn telemetry_handlers_cover_empty_logs_filters_and_missing_device_manager() {
+        let temp = tempfile::tempdir().expect("state directory");
+        let state = AppState::for_tests(temp.path(), "nodeA", temp.path().to_string_lossy());
+        let query = || TelemetryQueryParams {
+            device_id: Some("missing.entity".into()),
+            from: Some("2026-01-01T00:00:00Z".into()),
+            to: Some("2026-12-31T00:00:00Z".into()),
+            pagination: PaginationParams {
+                page: Some(99),
+                per_page: Some(1),
+            },
+        };
+
+        assert_eq!(
+            list_telemetry(State(state.clone()), Query(query()))
+                .await
+                .expect("list telemetry")
+                .into_response()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            get_device_telemetry(
+                State(state.clone()),
+                Path("missing.entity".into()),
+                Query(query()),
+            )
+            .await
+            .expect("device telemetry")
+            .into_response()
+            .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            get_device_health(State(state))
+                .await
+                .err()
+                .expect("health without manager")
+                .0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert!(read_telemetry_logs(Some("definitely.missing")).is_empty());
+    }
 }

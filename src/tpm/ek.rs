@@ -61,3 +61,32 @@ pub fn node_uid(cfg: &TpmConfig, dkp_pub_path: &str) -> Result<Vec<u8>, TpmError
 pub fn node_uid_hex(cfg: &TpmConfig, dkp_pub_path: &str) -> Result<String, TpmError> {
     Ok(hex::encode(node_uid(cfg, dkp_pub_path)?))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unavailable_config() -> TpmConfig {
+        TpmConfig {
+            device: "/definitely/missing/tpm-ek".into(),
+            tcti: "device:/definitely/missing/tpm-ek".into(),
+            explicit_backend: false,
+            ..TpmConfig::default()
+        }
+    }
+
+    #[test]
+    fn uid_helpers_reject_missing_implicit_device_before_filesystem_access() {
+        let cfg = unavailable_config();
+        assert!(matches!(ensure_uid(&cfg), Err(TpmError::NotAvailable(_))));
+        assert!(matches!(uid_hex(&cfg), Err(TpmError::NotAvailable(_))));
+        assert!(matches!(
+            node_uid(&cfg, "/missing/dkp.der"),
+            Err(TpmError::NotAvailable(_))
+        ));
+        assert!(matches!(
+            node_uid_hex(&cfg, "/missing/dkp.der"),
+            Err(TpmError::NotAvailable(_))
+        ));
+    }
+}

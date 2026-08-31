@@ -21,6 +21,52 @@ pub fn selected_indices(selection: &str) -> Vec<u32> {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    struct PathGuard(Option<std::ffi::OsString>);
+
+    #[cfg(unix)]
+    impl Drop for PathGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(path) => std::env::set_var("PATH", path),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+    }
+
+    fn config(selection: &str) -> TpmConfig {
+        TpmConfig {
+            device: "/missing/tpm".into(),
+            tcti: "device:/missing/tpm".into(),
+            explicit_backend: true,
+            dik_handle: 0x8100_0100,
+            dkp_handle_base: 0x8100_0010,
+            ek_handle: 0x8101_0001,
+            pcr_selection: selection.into(),
+            owner_auth: None,
+            key_auth: None,
+        }
+    }
+
+    #[cfg(unix)]
+    fn with_pcr_tool(output: &str, test: impl FnOnce()) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _lock = crate::test_support::blocking_env_lock();
+        let dir = tempfile::tempdir().expect("tool directory");
+        let tool = dir.path().join("tpm2_pcrread");
+        let escaped = output.replace('\\', "\\\\").replace('"', "\\\"");
+        std::fs::write(&tool, format!("#!/bin/sh\nprintf \"%s\" \"{escaped}\"\n"))
+            .expect("write fake PCR tool");
+        let mut permissions = std::fs::metadata(&tool).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&tool, permissions).expect("make executable");
+        let old_path = std::env::var_os("PATH");
+        std::env::set_var("PATH", dir.path());
+        let _guard = PathGuard(old_path);
+        test();
+    }
+
     #[test]
     fn selected_indices_parses_single_range() {
         let v = selected_indices("sha1:0,1,2");
@@ -31,6 +77,58 @@ mod tests {
     fn selected_indices_returns_empty_on_invalid() {
         let v = selected_indices("invalid-format");
         assert!(v.is_empty());
+    }
+
+    #[test]
+    fn selected_indices_skips_whitespace_and_invalid_members() {
+        assert_eq!(selected_indices("sha256: 0, bad, 7, ,24"), vec![0, 7, 24]);
+        assert!(selected_indices(":none").is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_pcr_values_orders_expected_indices_and_normalizes_hex() {
+        let a = "A".repeat(64);
+        let b = "b".repeat(64);
+        with_pcr_tool(&format!("sha256:\n  7 : 0x{b}\n  0 : 0x{a}\n"), || {
+            assert_eq!(
+                read_pcr_values(&config("sha256:0,7")).expect("PCR values"),
+                vec![(0, "a".repeat(64)), (7, b)]
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_pcr_values_rejects_invalid_selection_and_missing_values() {
+        with_pcr_tool("noise\n", || {
+            let invalid = read_pcr_values(&config("sha256"))
+                .expect_err("selection without indices must fail");
+            assert!(
+                matches!(invalid, TpmError::Parse(message) if message.contains("invalid PCR selection"))
+            );
+
+            let missing =
+                read_pcr_values(&config("sha256:0")).expect_err("missing selected PCR must fail");
+            assert!(
+                matches!(missing, TpmError::Parse(message) if message.contains("missing PCR0"))
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_pcr_values_ignores_short_hex_and_unparseable_lines() {
+        let valid = "c".repeat(64);
+        with_pcr_tool(
+            &format!("not-a-pcr\n  bad: 0x{valid}\n  0: 0x1234\n  PCR0: 0x{valid} trailing\n"),
+            || {
+                assert_eq!(
+                    read_pcr_values(&config("sha256:0")).expect("valid PCR remains"),
+                    vec![(0, valid)]
+                );
+            },
+        );
     }
 }
 

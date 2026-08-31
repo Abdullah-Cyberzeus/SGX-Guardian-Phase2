@@ -510,3 +510,22 @@ cargo tarpaulin \
 - [x] `device::manager`: Nest/Ecobee entity classification, state reconciliation, command dispatch against a mocked HA server, unit-system caching/fallback.
 - [x] `discovery::scheduler`: nmap run success/failure/parse-failure via a fixture-XML hook (no real scans), schedule period/name mapping, config/whitelist seeding.
 - Verified with the full narrow-module `cargo test` run across all six module groups — 216 passed, 0 failed.
+
+### Wave H — long-tail batch 1 added
+
+- [x] `src/chat/crypto.rs`: valid P-256 encryption output plus invalid Base64, coordinate-length and curve-point paths.
+- [x] `src/backup/model.rs`: every component string/serde variant and all backup/report model contracts.
+- [x] `src/rules/mod.rs`: default, overridden and invalid environment configuration branches.
+- [x] `src/policy_authority.rs`: fixed-signature length errors, DER conversion/verification, atomic replacement and permission behavior.
+- [x] `src/telemetry/collector.rs`: malformed events, sampling, JSONL output, unknown states, base-file selection and rotation suffixes.
+- [x] `src/vault/reaper.rs`: expired record/blob deletion, future preservation, repeated sweep and metadata-list failure.
+- [x] `src/cloud/mock_server.rs`: uplink acknowledgement contract for object, array and null payloads.
+- [x] `src/node_listener.rs`: default, valid override and invalid broadcast-port parsing.
+- [ ] Continue Wave H after regenerating coverage; the checked-in `coverage.txt` still predates Waves C and D.
+
+### Wave I — closure tooling added, final measurement pending
+
+- [x] Added `scripts/coverage-rank.sh` to rank files by newly covered lines required for a configurable target.
+- [ ] Regenerate `coverage.txt` after all current tests have been validated.
+- [ ] Run `bash scripts/coverage-rank.sh coverage.txt 90 100` and implement the newly ranked residual targets.
+- [ ] Confirm at least 90%, preferably 91–92%, before marking Wave I complete.

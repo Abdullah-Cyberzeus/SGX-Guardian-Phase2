@@ -371,4 +371,67 @@ mod tests {
         };
         assert_eq!(dev.ha_entity_id, "light.living_room_light");
     }
+
+    #[tokio::test]
+    async fn every_device_handler_reports_service_unavailable_without_manager() {
+        let temp = tempfile::tempdir().expect("state directory");
+        let state = AppState::for_tests(temp.path(), "nodeA", temp.path().to_string_lossy());
+        let query = DeviceFilterParams {
+            room: Some("Kitchen".into()),
+            device_type: Some("light".into()),
+            search: Some("lamp".into()),
+            pagination: PaginationParams {
+                page: Some(1),
+                per_page: Some(10),
+            },
+        };
+        assert_eq!(
+            list_devices(State(state.clone()), Query(query))
+                .await
+                .err()
+                .expect("list without manager")
+                .0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+
+        let id = || Path("missing-device".to_string());
+        let statuses = [
+            get_device(State(state.clone()), id())
+                .await
+                .err()
+                .expect("get without manager")
+                .0,
+            get_device_state(State(state.clone()), id())
+                .await
+                .err()
+                .expect("state without manager")
+                .0,
+            get_device_capabilities(State(state.clone()), id())
+                .await
+                .err()
+                .expect("capabilities without manager")
+                .0,
+            execute_device_command(
+                State(state.clone()),
+                id(),
+                Json(DeviceCommandPayload {
+                    command: "turn_on".into(),
+                    domain: None,
+                    params: None,
+                }),
+            )
+            .await
+            .err()
+            .expect("command without manager")
+            .0,
+            sync_devices(State(state))
+                .await
+                .err()
+                .expect("sync without manager")
+                .0,
+        ];
+        assert!(statuses
+            .into_iter()
+            .all(|status| status == StatusCode::SERVICE_UNAVAILABLE));
+    }
 }

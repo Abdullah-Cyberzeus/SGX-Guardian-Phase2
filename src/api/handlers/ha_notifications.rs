@@ -188,4 +188,53 @@ mod tests {
         assert_eq!(unread_after.len(), 1);
         assert_eq!(unread_after[0].id, "notif_002");
     }
+
+    #[tokio::test]
+    async fn handlers_use_global_fallback_with_filtering_pagination_and_marking() {
+        let temp = tempfile::tempdir().expect("state directory");
+        let state = AppState::for_tests(temp.path(), "nodeA", temp.path().to_string_lossy());
+        let unique = format!("notif_{}", uuid::Uuid::new_v4().simple());
+        GLOBAL_NOTIFICATIONS
+            .add_notification(NotificationRecord {
+                id: unique.clone(),
+                title: "Critical test".into(),
+                message: "handler fallback".into(),
+                severity: "critical".into(),
+                read: false,
+                created_at: Utc::now(),
+            })
+            .await;
+
+        let response = list_notifications(
+            State(state.clone()),
+            Query(NotificationQueryParams {
+                unread: Some(true),
+                severity: Some("critical".into()),
+                pagination: PaginationParams {
+                    page: Some(1),
+                    per_page: Some(1),
+                },
+            }),
+        )
+        .await
+        .expect("list notifications")
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = mark_notifications_read(
+            State(state),
+            Json(MarkReadPayload {
+                notification_ids: vec![unique.clone(), "missing".into()],
+            }),
+        )
+        .await
+        .expect("mark read")
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(GLOBAL_NOTIFICATIONS
+            .get_notifications(true, Some("critical"))
+            .await
+            .iter()
+            .all(|record| record.id != unique));
+    }
 }

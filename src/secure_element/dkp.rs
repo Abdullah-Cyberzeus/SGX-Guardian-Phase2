@@ -377,6 +377,31 @@ impl DkpManager {
 mod tests {
     use super::*;
 
+    fn config() -> SeConfig {
+        SeConfig {
+            enabled: true,
+            scp_key_path: "/keys/scp.txt".into(),
+            interface: "t1oi2c".into(),
+            auth_type: "PlatformSCP".into(),
+            connection_type: "se05x".into(),
+            dkp_key_id_base: DKP_BASE_KEY_ID,
+            dik_key_id: 0x2000_0001,
+        }
+    }
+
+    fn manager(
+        history: DkpKeyHistory,
+        metadata_path: String,
+        public_key_path: String,
+    ) -> DkpManager {
+        DkpManager {
+            history,
+            metadata_path,
+            public_key_path,
+            config: config(),
+        }
+    }
+
     #[test]
     fn test_dkp_base_key_id() {
         assert_eq!(DKP_BASE_KEY_ID, 0x20000010);
@@ -415,5 +440,94 @@ mod tests {
         let v = 3;
         assert_eq!(format!("dkp-v{}", v), "dkp-v3");
         assert_eq!(DKP_BASE_KEY_ID + v - 1, 0x20000012);
+    }
+
+    #[test]
+    fn active_key_id_accepts_prefixes_and_falls_back_for_invalid_metadata() {
+        let base = tempfile::tempdir().expect("manager directory");
+        for (key_id, expected) in [
+            ("0x20000010", 0x2000_0010),
+            ("0X20000011", 0x2000_0011),
+            ("20000012", 0x2000_0012),
+            ("invalid", DKP_BASE_KEY_ID),
+        ] {
+            let manager = manager(
+                DkpKeyHistory::new(KeyMetadata::new(key_id, "dkp", "ECDSA-P256", 1)),
+                base.path().join("meta.json").to_string_lossy().into_owned(),
+                base.path().join("pub.der").to_string_lossy().into_owned(),
+            );
+            assert_eq!(manager.active_key_id(), expected);
+        }
+    }
+
+    #[test]
+    fn public_key_read_and_no_rotation_path_are_filesystem_only() {
+        let base = tempfile::tempdir().expect("manager directory");
+        let public = base.path().join("pub.der");
+        std::fs::write(&public, b"DER public key").expect("write public key");
+        let mut manager = manager(
+            DkpKeyHistory::new(KeyMetadata::new("0x20000010", "dkp", "ECDSA-P256", 1)),
+            base.path().join("meta.json").to_string_lossy().into_owned(),
+            public.to_string_lossy().into_owned(),
+        );
+        assert_eq!(
+            manager.public_key_der().expect("read key"),
+            b"DER public key"
+        );
+        assert!(!manager.needs_rotation());
+        assert!(manager
+            .check_and_auto_rotate()
+            .expect("rotation check")
+            .is_none());
+
+        std::fs::remove_file(public).expect("remove key");
+        assert!(
+            matches!(manager.public_key_der(), Err(SeError::KeyError(message)) if message.contains("Read pubkey"))
+        );
+    }
+
+    #[test]
+    fn revoke_validates_state_and_persists_full_history() {
+        let base = tempfile::tempdir().expect("manager directory");
+        let metadata = base.path().join("keys/history.json");
+        let mut first = KeyMetadata::new("0x20000010", "dkp", "ECDSA-P256", 1);
+        first.deprecate();
+        let second = KeyMetadata::new("0x20000011", "dkp-v2", "ECDSA-P256", 2);
+        let mut history = DkpKeyHistory::new(first);
+        history.add(second);
+        let mut manager = manager(
+            history,
+            metadata.to_string_lossy().into_owned(),
+            base.path().join("pub.der").to_string_lossy().into_owned(),
+        );
+
+        manager
+            .revoke(1, "compromised")
+            .expect("revoke deprecated key");
+        let loaded =
+            DkpKeyHistory::load(metadata.to_str().expect("UTF-8 path")).expect("persisted history");
+        assert_eq!(
+            loaded.get(1).and_then(|key| key.revoke_reason.as_deref()),
+            Some("compromised")
+        );
+        assert!(
+            matches!(manager.revoke(2, "active"), Err(SeError::KeyError(message)) if message.contains("Cannot revoke active"))
+        );
+        assert!(
+            matches!(manager.revoke(99, "missing"), Err(SeError::KeyError(message)) if message.contains("not found"))
+        );
+    }
+
+    #[test]
+    fn rotate_rejects_history_without_an_active_key_before_connecting() {
+        let base = tempfile::tempdir().expect("manager directory");
+        let mut manager = manager(
+            DkpKeyHistory { keys: vec![] },
+            base.path().join("meta.json").to_string_lossy().into_owned(),
+            base.path().join("pub.der").to_string_lossy().into_owned(),
+        );
+        assert!(
+            matches!(manager.rotate(), Err(SeError::KeyError(message)) if message.contains("No active key"))
+        );
     }
 }

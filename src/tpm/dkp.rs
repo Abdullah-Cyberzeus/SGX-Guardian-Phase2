@@ -177,3 +177,98 @@ fn parse_handle(value: &str) -> Option<u32> {
         .unwrap_or(value);
     u32::from_str_radix(value, 16).ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config() -> TpmConfig {
+        TpmConfig {
+            device: "/definitely/missing/tpm".into(),
+            tcti: "device:/definitely/missing/tpm".into(),
+            explicit_backend: false,
+            dik_handle: 0x8100_0100,
+            dkp_handle_base: 0x8100_0010,
+            ek_handle: 0x8101_0001,
+            pcr_selection: "sha256:0,2,4,7".into(),
+            owner_auth: None,
+            key_auth: None,
+        }
+    }
+
+    fn manager(history: DkpKeyHistory, public_key_path: String) -> TpmDkpManager {
+        TpmDkpManager {
+            history,
+            metadata_path: "/unused/metadata.json".into(),
+            public_key_path,
+            config: config(),
+        }
+    }
+
+    #[test]
+    fn handle_parser_accepts_prefixed_plain_and_rejects_invalid_values() {
+        assert_eq!(parse_handle("0x81000010"), Some(0x8100_0010));
+        assert_eq!(parse_handle(" 0X81000011 "), Some(0x8100_0011));
+        assert_eq!(parse_handle("81000012"), Some(0x8100_0012));
+        assert_eq!(parse_handle(""), None);
+        assert_eq!(parse_handle("0xnot-hex"), None);
+    }
+
+    #[test]
+    fn inactive_or_malformed_history_uses_safe_fallbacks() {
+        let mut key = KeyMetadata::new("invalid", "dkp", "ECDSA-P256", 4);
+        key.deprecate();
+        let mut empty = manager(DkpKeyHistory { keys: vec![] }, "/missing".into());
+        assert_eq!(empty.active_version(), 1);
+        assert_eq!(empty.active_handle(), config().dkp_handle_base);
+        assert!(!empty.needs_rotation());
+        assert!(empty
+            .check_and_auto_rotate()
+            .expect("no rotation")
+            .is_none());
+
+        let malformed = manager(
+            DkpKeyHistory::new(KeyMetadata::new("bad", "dkp", "ECDSA-P256", 9)),
+            "/missing".into(),
+        );
+        assert_eq!(malformed.active_version(), 9);
+        assert_eq!(malformed.active_handle(), config().dkp_handle_base);
+        assert!(!key.can_sign());
+    }
+
+    #[test]
+    fn manager_reads_public_export_and_reports_missing_files() {
+        let dir = tempfile::tempdir().expect("temporary key directory");
+        let path = dir.path().join("dkp.der");
+        std::fs::write(&path, b"public-key").expect("write public key");
+        let manager = manager(
+            DkpKeyHistory::new(KeyMetadata::new("0x81000022", "dkp", "ECDSA-P256", 2)),
+            path.to_string_lossy().into_owned(),
+        );
+        assert_eq!(manager.active_handle(), 0x8100_0022);
+        assert_eq!(
+            manager.public_key_export().expect("public export"),
+            b"public-key"
+        );
+
+        std::fs::remove_file(path).expect("remove public key");
+        assert!(matches!(manager.public_key_export(), Err(TpmError::Io(_))));
+    }
+
+    #[test]
+    fn init_rejects_an_unconfigured_missing_tpm_without_invoking_tools() {
+        let error = TpmDkpManager::init(&config(), "/unused")
+            .err()
+            .expect("missing TPM must be rejected");
+        assert!(
+            matches!(error, TpmError::NotAvailable(message) if message.contains("not present"))
+        );
+    }
+
+    #[test]
+    fn rotation_requires_an_active_key_before_hardware_access() {
+        let mut manager = manager(DkpKeyHistory { keys: vec![] }, "/missing".into());
+        let error = manager.rotate().expect_err("empty history must fail");
+        assert!(matches!(error, TpmError::Key(message) if message.contains("no active TPM DKP")));
+    }
+}

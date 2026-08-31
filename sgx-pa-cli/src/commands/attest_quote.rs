@@ -508,6 +508,15 @@ mod tests {
         assert_eq!(out.len(), 65);
         assert_eq!(out[0], 1u8);
     }
+
+    #[test]
+    fn normalize_preserves_empty_short_and_long_non_spki_inputs() {
+        for size in [0, 1, 64, 65, 90, 92, 128] {
+            let input = vec![size as u8; size];
+            let output = normalize_p256_pubkey(&input);
+            assert_eq!(output, input.as_slice());
+        }
+    }
 }
 
 fn sign_quote_hash(hash: &[u8], key_version: u32) -> Option<String> {

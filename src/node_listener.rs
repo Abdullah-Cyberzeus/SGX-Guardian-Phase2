@@ -15,6 +15,33 @@ fn listen_port() -> u16 {
         .unwrap_or(9000)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn listener_port_uses_default_valid_override_and_invalid_fallback() {
+        let _lock = crate::test_support::blocking_env_lock();
+        const KEY: &str = "SGX_BROADCAST_PORT";
+        let previous = std::env::var_os(KEY);
+
+        std::env::remove_var(KEY);
+        assert_eq!(listen_port(), 9000);
+        std::env::set_var(KEY, "12345");
+        assert_eq!(listen_port(), 12345);
+        for value in ["", "invalid", "65536", "-1"] {
+            std::env::set_var(KEY, value);
+            assert_eq!(listen_port(), 9000);
+        }
+
+        if let Some(previous) = previous {
+            std::env::set_var(KEY, previous);
+        } else {
+            std::env::remove_var(KEY);
+        }
+    }
+}
+
 pub async fn start_listener(local_node_id: String) {
     let port = listen_port();
     let bind_addr = format!("0.0.0.0:{}", port);

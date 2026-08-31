@@ -250,13 +250,57 @@ mod tests {
         let td = TempDir::new().expect("tempdir");
         let p = td.path().join("blocked_ips.json");
         let records = vec![
-            BlockRecord { ip: "192.0.2.5".into(), expires_at: 2 },
-            BlockRecord { ip: "198.51.100.1".into(), expires_at: 1 },
+            BlockRecord {
+                ip: "192.0.2.5".into(),
+                expires_at: 2,
+            },
+            BlockRecord {
+                ip: "198.51.100.1".into(),
+                expires_at: 1,
+            },
         ];
         save_block_records(&p, &records).expect("save blocks");
         let text = fs::read_to_string(&p).expect("read blocks");
-        // ensure sorted by ip (198.51.100.1 comes before 192.0.2.5 alphabetically?)
-        assert!(text.contains("198.51.100.1") && text.contains("192.0.2.5"));
+        assert!(
+            text.find("192.0.2.5").expect("first IP")
+                < text.find("198.51.100.1").expect("second IP")
+        );
+        assert!(!p.with_extension("json.tmp").exists());
+    }
+
+    #[test]
+    fn alert_loading_covers_empty_missing_and_malformed_files() {
+        let td = TempDir::new().expect("tempdir");
+        let empty = td.path().join("empty.jsonl");
+        fs::write(&empty, "\n  \n").expect("empty alert file");
+        assert!(load_alerts(empty.to_str().unwrap())
+            .expect("empty alerts")
+            .is_empty());
+        assert_eq!(
+            count_alerts(empty.to_str().unwrap()).expect("empty count"),
+            0
+        );
+
+        let malformed = td.path().join("malformed.jsonl");
+        fs::write(&malformed, "{bad json}\n").expect("malformed alerts");
+        assert!(load_alerts(malformed.to_str().unwrap()).is_err());
+        assert!(load_alerts(td.path().join("missing").to_str().unwrap()).is_err());
+    }
+
+    #[test]
+    fn invalid_drop_address_fails_before_invoking_nft() {
+        let error = insert_drop("not-an-ip").expect_err("invalid address");
+        assert!(error.to_string().to_ascii_lowercase().contains("invalid"));
+    }
+
+    #[test]
+    fn saving_empty_block_list_creates_parent_and_valid_json() {
+        let td = TempDir::new().expect("tempdir");
+        let path = td.path().join("nested/blocks.json");
+        save_block_records(&path, &[]).expect("save empty records");
+        let parsed: Vec<BlockRecord> =
+            serde_json::from_slice(&fs::read(path).expect("saved file")).expect("valid JSON");
+        assert!(parsed.is_empty());
     }
 }
 

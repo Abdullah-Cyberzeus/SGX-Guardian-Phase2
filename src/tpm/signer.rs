@@ -67,4 +67,18 @@ mod tests {
         let res = normalize_signature(bad);
         assert!(res.is_err());
     }
+
+    #[test]
+    fn normalize_signature_converts_valid_der_to_fixed_width() {
+        let signature = Signature::from_scalars([1u8; 32], [2u8; 32]).expect("valid scalars");
+        let normalized = normalize_signature(signature.to_der().as_bytes().to_vec())
+            .expect("DER signature should normalize");
+        assert_eq!(normalized, signature.to_bytes().to_vec());
+    }
+
+    #[test]
+    fn normalize_signature_error_includes_input_length() {
+        let error = normalize_signature(vec![0xff; 17]).expect_err("invalid framing");
+        assert!(matches!(error, TpmError::Key(message) if message.contains("17 bytes")));
+    }
 }

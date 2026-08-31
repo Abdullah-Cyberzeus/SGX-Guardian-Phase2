@@ -450,6 +450,26 @@ mod tests {
         .unwrap()
     }
 
+    struct InvalidSigner;
+
+    impl BaselineSigner for InvalidSigner {
+        fn sign(&self, _payload: &[u8]) -> anyhow::Result<Vec<u8>> {
+            Ok(vec![0; 64])
+        }
+
+        fn public_key(&self) -> &[u8] {
+            &[4; 65]
+        }
+
+        fn dkp_version(&self) -> u32 {
+            99
+        }
+
+        fn backend_display(&self) -> &str {
+            "invalid-test"
+        }
+    }
+
     #[test]
     fn software_container_baseline_signs_verifies_and_rejects_wrong_key() {
         let signer = RingTestSigner::new("software", 1);
@@ -488,5 +508,57 @@ mod tests {
         assert_eq!(baseline.key_version, 2);
         assert!(baseline.verify_signature(signer.public_key()));
         assert!(!baseline.verify_signature(wrong.public_key()));
+    }
+
+    #[test]
+    fn baseline_and_device_paths_handle_node_ids_and_trailing_slashes() {
+        assert_eq!(
+            baseline_path_for("node-7"),
+            "/etc/sgx-guardian/pcr_node-7_baseline.json"
+        );
+
+        let old = std::env::var_os(KEY_DIR_ENV);
+        std::env::set_var(KEY_DIR_ENV, "/tmp/device-keys///");
+        assert_eq!(
+            device_key_path("node_A"),
+            "/tmp/device-keys/device_node_A.key"
+        );
+        match old {
+            Some(value) => std::env::set_var(KEY_DIR_ENV, value),
+            None => std::env::remove_var(KEY_DIR_ENV),
+        }
+    }
+
+    #[test]
+    fn environment_boolean_accepts_only_documented_true_values() {
+        let key = "SGX_TEST_PCR_BOOLEAN";
+        let old = std::env::var_os(key);
+        for value in ["1", "true", "TRUE", "yes", "on"] {
+            std::env::set_var(key, value);
+            assert!(env_true(key), "{value}");
+        }
+        for value in ["0", "false", "True", "YES", "off", ""] {
+            std::env::set_var(key, value);
+            assert!(!env_true(key), "{value}");
+        }
+        match old {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+    }
+
+    #[test]
+    fn baseline_creation_rejects_a_signature_that_fails_self_check() {
+        let error = create_signed_baseline(
+            vec!["a".repeat(64)],
+            "b".repeat(64),
+            "2026-08-31T00:00:00Z".into(),
+            "device".into(),
+            1,
+            &InvalidSigner,
+        )
+        .expect_err("invalid signature");
+        assert!(error.to_string().contains("signature self-check failed"));
+        assert!(error.to_string().contains("invalid-test DKP v99"));
     }
 }

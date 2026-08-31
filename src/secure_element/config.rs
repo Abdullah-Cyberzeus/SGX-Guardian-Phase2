@@ -94,4 +94,18 @@ mod tests {
         assert!(!cfg.enabled);
         assert_eq!(cfg.interface, "t1oi2c");
     }
+
+    #[test]
+    fn key_id_parser_accepts_prefixed_plain_and_falls_back_on_invalid_values() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let key = "SGX_TEST_SE_KEY_ID";
+        std::env::set_var(key, " 0X200000AA ");
+        assert_eq!(parse_key_id(key, 1), 0x2000_00aa);
+        std::env::set_var(key, "200000BB");
+        assert_eq!(parse_key_id(key, 1), 0x2000_00bb);
+        std::env::set_var(key, "invalid");
+        assert_eq!(parse_key_id(key, 7), 7);
+        std::env::remove_var(key);
+        assert_eq!(parse_key_id(key, 9), 9);
+    }
 }

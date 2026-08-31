@@ -287,3 +287,40 @@ pub fn run(args: AuditLogsArgs) {
 
     println!("{}", table);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn category_matching_is_case_insensitive_but_exact() {
+        assert!(category_matches("Attestation", "attestation"));
+        assert!(category_matches("NETWORK", "network"));
+        assert!(!category_matches("NetworkPolicy", "network"));
+        assert!(!category_matches("", "network"));
+    }
+
+    #[test]
+    fn severity_matching_covers_aliases_case_and_unknown_values() {
+        for (severity, query) in [
+            ("INFO", "info"),
+            ("warning", "warn"),
+            ("WARN", "WARNING"),
+            ("critical", "error"),
+            ("ERROR", "CRITICAL"),
+        ] {
+            assert!(severity_matches(severity, query), "{severity} vs {query}");
+        }
+        assert!(!severity_matches("debug", "debug"));
+        assert!(!severity_matches("info", "warning"));
+        assert!(!severity_matches("error", "warn"));
+    }
+
+    #[test]
+    fn raw_line_fallback_preserves_message_and_node_contract() {
+        let value = json_line_fallback("not-json", "nodeZ");
+        assert_eq!(value["message"], "not-json");
+        assert_eq!(value["node_id"], "nodeZ");
+        assert!(value.get("event").is_none());
+    }
+}

@@ -33,3 +33,20 @@ pub fn ensure(cfg: &TpmConfig) -> Result<Vec<u8>, TpmError> {
 
     Ok(std::fs::read(DIK_PUB_PATH)?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ensure_rejects_missing_implicit_device_before_running_tools() {
+        let cfg = TpmConfig {
+            device: "/definitely/missing/tpm-dik".into(),
+            tcti: "device:/definitely/missing/tpm-dik".into(),
+            explicit_backend: false,
+            ..TpmConfig::default()
+        };
+        let error = ensure(&cfg).expect_err("missing TPM should fail");
+        assert!(matches!(error, TpmError::NotAvailable(message) if message.contains("tpm-dik")));
+    }
+}

@@ -203,11 +203,11 @@ pub async fn disable_automation(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::automation::schema::{AutomationRule, RuleAction, RuleTrigger};
 
-    #[test]
-    fn test_automation_rule_json_roundtrip() {
-        let rule = AutomationRule {
+    fn rule() -> AutomationRule {
+        AutomationRule {
             id: "rule_test_001".to_string(),
             name: "Test Rule".to_string(),
             priority: 100,
@@ -224,7 +224,12 @@ mod tests {
                 service_data: None,
                 on_failure: Default::default(),
             }],
-        };
+        }
+    }
+
+    #[test]
+    fn test_automation_rule_json_roundtrip() {
+        let rule = rule();
 
         let json_str = serde_json::to_string(&rule).unwrap();
         let deserialized: AutomationRule = serde_json::from_str(&json_str).unwrap();
@@ -232,5 +237,53 @@ mod tests {
         assert_eq!(deserialized.id, "rule_test_001");
         assert_eq!(deserialized.priority, 100);
         assert!(deserialized.enabled);
+    }
+
+    #[tokio::test]
+    async fn every_handler_reports_service_unavailable_without_an_engine() {
+        let temp = tempfile::tempdir().expect("state directory");
+        let state = AppState::for_tests(temp.path(), "nodeA", temp.path().to_string_lossy());
+        let pagination = PaginationParams {
+            page: None,
+            per_page: None,
+        };
+
+        let list_error =
+            list_automations(State(state.clone()), Query(RuleQueryParams { pagination }))
+                .await
+                .err()
+                .expect("missing engine");
+        assert_eq!(list_error.0, StatusCode::SERVICE_UNAVAILABLE);
+
+        let calls = [
+            create_automation(State(state.clone()), Json(rule()))
+                .await
+                .err()
+                .expect("create without engine")
+                .0,
+            update_automation(State(state.clone()), Path("other".into()), Json(rule()))
+                .await
+                .err()
+                .expect("update without engine")
+                .0,
+            delete_automation(State(state.clone()), Path("rule".into()))
+                .await
+                .err()
+                .expect("delete without engine")
+                .0,
+            enable_automation(State(state.clone()), Path("rule".into()))
+                .await
+                .err()
+                .expect("enable without engine")
+                .0,
+            disable_automation(State(state), Path("rule".into()))
+                .await
+                .err()
+                .expect("disable without engine")
+                .0,
+        ];
+        assert!(calls
+            .into_iter()
+            .all(|status| status == StatusCode::SERVICE_UNAVAILABLE));
     }
 }

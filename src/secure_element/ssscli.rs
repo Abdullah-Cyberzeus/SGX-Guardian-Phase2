@@ -292,6 +292,59 @@ fn expand_tilde(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
+    struct EnvGuard {
+        path: Option<std::ffi::OsString>,
+        log: Option<std::ffi::OsString>,
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.path.take() {
+                Some(value) => std::env::set_var("PATH", value),
+                None => std::env::remove_var("PATH"),
+            }
+            match self.log.take() {
+                Some(value) => std::env::set_var("SGX_TEST_SSSCLI_LOG", value),
+                None => std::env::remove_var("SGX_TEST_SSSCLI_LOG"),
+            }
+        }
+    }
+
+    fn config() -> SeConfig {
+        SeConfig {
+            enabled: true,
+            scp_key_path: "/keys/scp.txt".into(),
+            interface: "t1oi2c".into(),
+            auth_type: "PlatformSCP".into(),
+            connection_type: "se05x".into(),
+            dkp_key_id_base: 0x2000_0010,
+            dik_key_id: 0x2000_0001,
+        }
+    }
+
+    #[cfg(unix)]
+    fn install_ssscli(dir: &Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = dir.join("ssscli");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write fake ssscli");
+        let mut permissions = std::fs::metadata(&path).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(path, permissions).expect("make executable");
+    }
+
+    #[cfg(unix)]
+    fn use_fake_ssscli(dir: &Path, log: &Path) -> EnvGuard {
+        let guard = EnvGuard {
+            path: std::env::var_os("PATH"),
+            log: std::env::var_os("SGX_TEST_SSSCLI_LOG"),
+        };
+        std::env::set_var("PATH", dir);
+        std::env::set_var("SGX_TEST_SSSCLI_LOG", log);
+        guard
+    }
 
     const REAL_UID_OUTPUT: &str = "\
 sss   :INFO :atr (Len=35)
@@ -356,5 +409,114 @@ Random number: 495b0ade5249153dbcac";
     #[test]
     fn test_parse_returns_none_for_empty_string() {
         assert!(SssCli::parse_value("", "Unique ID:").is_none());
+    }
+
+    #[test]
+    fn parse_value_trims_direct_values_and_uses_first_python_value() {
+        assert_eq!(
+            SssCli::parse_value("  Cert UID:   abc123  ", "Cert UID:").as_deref(),
+            Some("abc123")
+        );
+        assert_eq!(
+            SssCli::parse_value(
+                "noise\nINFO:sss.se05x:first\nINFO:sss.se05x:second",
+                "missing:"
+            )
+            .as_deref(),
+            Some("first")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wrapper_methods_emit_exact_positional_arguments_and_parse_ids() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let dir = tempfile::tempdir().expect("fake tool directory");
+        let log = dir.path().join("calls.log");
+        install_ssscli(
+            dir.path(),
+            "printf '%s\\n' \"$*\" >> \"$SGX_TEST_SSSCLI_LOG\"\ncase \"$*\" in\n  'se05x uid') echo 'Unique ID: uid-value';;\n  'se05x certuid') echo 'Cert UID: cert-value';;\n  *) echo ok;;\nesac",
+        );
+        let _guard = use_fake_ssscli(dir.path(), &log);
+        let cli = SssCli::new(config());
+
+        assert!(cli.connect().expect("connect").contains("ok"));
+        assert!(cli.reset().expect("reset").contains("ok"));
+        assert_eq!(cli.get_uid().expect("UID"), "uid-value");
+        assert_eq!(cli.get_certuid().expect("cert UID"), "cert-value");
+        cli.get_rng().expect("random");
+        cli.read_id_list().expect("IDs");
+        cli.generate_ecc_key("0x20", "NIST_P256").expect("ECC");
+        cli.generate_rsa_key("0x21", 2048).expect("RSA");
+        cli.get_ecc_pub("0x20", "/tmp/public.der")
+            .expect("public key");
+        cli.erase("0x20").expect("erase");
+        cli.sign("0x20", "/tmp/in", "/tmp/sig").expect("sign");
+        cli.verify("0x20", "/tmp/in", "/tmp/sig").expect("verify");
+        cli.encrypt("0x20", "plain", "/tmp/cipher", "oaep")
+            .expect("encrypt");
+        cli.decrypt("0x20", "cipher", "/tmp/plain", "AES_CTR")
+            .expect("decrypt");
+
+        let calls = std::fs::read_to_string(log).expect("command log");
+        for expected in [
+            "connect --auth_type PlatformSCP --scpkey /keys/scp.txt se05x t1oi2c none",
+            "se05x reset",
+            "generate ecc 0x20 NIST_P256",
+            "generate rsa 0x21 2048",
+            "get ecc pub 0x20 /tmp/public.der",
+            "erase 0x20",
+            "sign 0x20 /tmp/in /tmp/sig",
+            "verify 0x20 /tmp/in /tmp/sig",
+            "encrypt 0x20 plain /tmp/cipher --algo oaep",
+            "decrypt 0x20 cipher /tmp/plain --algo AES_CTR",
+        ] {
+            assert!(
+                calls.lines().any(|line| line == expected),
+                "missing {expected}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_retries_then_succeeds_and_reports_final_failure() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let dir = tempfile::tempdir().expect("fake tool directory");
+        let marker = dir.path().join("marker");
+        install_ssscli(
+            dir.path(),
+            "if [ ! -e \"$SGX_TEST_SSSCLI_LOG\" ]; then : > \"$SGX_TEST_SSSCLI_LOG\"; echo first-failure >&2; exit 2; fi\necho recovered",
+        );
+        let _guard = use_fake_ssscli(dir.path(), &marker);
+        assert!(SssCli::new(config())
+            .reset()
+            .expect("second attempt succeeds")
+            .contains("recovered"));
+
+        install_ssscli(dir.path(), "echo permanent-failure >&2; exit 9");
+        let error = SssCli::new(config())
+            .reset()
+            .expect_err("all attempts fail");
+        assert!(
+            matches!(error, SeError::CommandFailed { cmd, stderr } if cmd == "ssscli se05x reset" && stderr.contains("permanent-failure"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn missing_or_malformed_uid_output_maps_to_command_failure() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let dir = tempfile::tempdir().expect("fake tool directory");
+        let log = dir.path().join("unused");
+        install_ssscli(dir.path(), "echo unrelated-output");
+        let _guard = use_fake_ssscli(dir.path(), &log);
+        let cli = SssCli::new(config());
+        assert!(
+            matches!(cli.get_uid(), Err(SeError::CommandFailed { cmd, .. }) if cmd == "se05x uid")
+        );
+        assert!(
+            matches!(cli.get_certuid(), Err(SeError::CommandFailed { cmd, .. }) if cmd == "se05x certuid")
+        );
     }
 }

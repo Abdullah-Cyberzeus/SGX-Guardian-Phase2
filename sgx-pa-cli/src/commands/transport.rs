@@ -424,4 +424,78 @@ mod tests {
         let active = resolve_active_interface(&interfaces, None);
         assert_eq!(active.map(|v| v.name.as_str()), Some("wlan0"));
     }
+
+    #[test]
+    fn every_transport_has_stable_priority_and_display() {
+        let cases = [
+            (TransportType::Cellular, 5, "Cellular"),
+            (TransportType::Ethernet, 10, "Ethernet"),
+            (TransportType::WiFi, 20, "WiFi"),
+            (TransportType::Bluetooth, 40, "Bluetooth"),
+            (TransportType::Satellite, 50, "Satellite"),
+        ];
+        for (transport, priority, display) in cases {
+            assert_eq!(transport.default_priority(), priority);
+            assert_eq!(transport.to_string(), display);
+        }
+    }
+
+    #[test]
+    fn interface_classifier_covers_prefixes_case_and_unknown_names() {
+        for (name, expected) in [
+            ("sat0", TransportType::Satellite),
+            ("ppp9", TransportType::Satellite),
+            ("eth0", TransportType::Ethernet),
+            ("ENP2S0", TransportType::Ethernet),
+            ("wlan0", TransportType::WiFi),
+            ("wlp3s0", TransportType::WiFi),
+            ("bnep0", TransportType::Bluetooth),
+            ("hci0", TransportType::Bluetooth),
+            ("wwan0", TransportType::Cellular),
+            ("rmnet0", TransportType::Cellular),
+            ("usb0", TransportType::Cellular),
+        ] {
+            assert_eq!(classify(name), Some(expected), "classification for {name}");
+        }
+        assert_eq!(classify("lo"), None);
+        assert_eq!(classify("nebula1"), None);
+        assert_eq!(classify(""), None);
+    }
+
+    #[test]
+    fn availability_requires_both_up_state_and_ip_address() {
+        assert!(is_interface_available(&iface(
+            "eth0",
+            TransportType::Ethernet,
+            true,
+            Some("192.0.2.1")
+        )));
+        assert!(!is_interface_available(&iface(
+            "eth0",
+            TransportType::Ethernet,
+            true,
+            None
+        )));
+        assert!(!is_interface_available(&iface(
+            "eth0",
+            TransportType::Ethernet,
+            false,
+            Some("192.0.2.1")
+        )));
+    }
+
+    #[test]
+    fn locks_are_exact_and_auto_selection_uses_first_available_record() {
+        let interfaces = vec![
+            iface("eth0", TransportType::Ethernet, true, Some("192.0.2.1")),
+            iface("wlan0", TransportType::WiFi, true, Some("192.0.2.2")),
+        ];
+        assert!(resolve_active_interface(&interfaces, Some("ETH0")).is_none());
+        assert!(resolve_active_interface(&interfaces, Some("missing")).is_none());
+        assert_eq!(
+            resolve_active_interface(&interfaces, None).map(|record| record.name.as_str()),
+            Some("eth0")
+        );
+        assert!(resolve_active_interface(&[], None).is_none());
+    }
 }

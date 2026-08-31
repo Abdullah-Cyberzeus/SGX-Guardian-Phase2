@@ -184,6 +184,29 @@ impl Se050 {
 mod tests {
     use super::*;
 
+    fn config() -> SeConfig {
+        SeConfig {
+            enabled: true,
+            scp_key_path: "/keys/scp.txt".into(),
+            interface: "t1oi2c".into(),
+            auth_type: "PlatformSCP".into(),
+            connection_type: "se05x".into(),
+            dkp_key_id_base: 0x2000_0010,
+            dik_key_id: 0x2000_0001,
+        }
+    }
+
+    fn se(status: SeStatus) -> Se050 {
+        let config = config();
+        Se050 {
+            cli: SssCli::new(config.clone()),
+            config,
+            uid: None,
+            cert_uid: None,
+            status,
+        }
+    }
+
     #[test]
     fn test_status_active_string() {
         assert_eq!(
@@ -218,5 +241,42 @@ mod tests {
             _ => "other".into(),
         };
         assert!(msg.contains("I2C timeout"));
+    }
+
+    #[test]
+    fn public_status_methods_cover_all_states() {
+        let cases = [
+            (SeStatus::Active, true, "Active, Ready"),
+            (SeStatus::Inactive, false, "Inactive"),
+            (SeStatus::Error("I2C timeout".into()), false, "I2C timeout"),
+            (SeStatus::Tampered, false, "TAMPER DETECTED"),
+        ];
+        for (status, active, fragment) in cases {
+            let se = se(status);
+            assert_eq!(se.is_active(), active);
+            assert!(se.status_string().contains(fragment));
+        }
+    }
+
+    #[test]
+    fn status_detail_uses_ids_when_present_and_na_when_absent() {
+        let mut active = se(SeStatus::Active);
+        let missing = active.status_detail();
+        assert!(missing.contains("Unique ID: N/A"));
+        assert!(missing.contains("Cert UID: N/A"));
+
+        active.uid = Some("uid-123".into());
+        active.cert_uid = Some("cert-456".into());
+        let populated = active.status_detail();
+        assert!(populated.contains("Unique ID: uid-123"));
+        assert!(populated.contains("Cert UID: cert-456"));
+        assert!(populated.contains("PlatformSCP"));
+    }
+
+    #[test]
+    fn init_rejects_disabled_configuration_without_invoking_ssscli() {
+        let mut config = config();
+        config.enabled = false;
+        assert!(matches!(Se050::init(&config), Err(SeError::NotAvailable)));
     }
 }

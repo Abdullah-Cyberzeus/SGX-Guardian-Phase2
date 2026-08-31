@@ -8,6 +8,7 @@ use crate::did::document::{DidDocument, DocBuildInput};
 use crate::did::{Did, DidRecord};
 use crate::key_manager::KeyManager;
 use crate::notify::NotifyConfig;
+use crate::threat::threat_alert::{Severity, ThreatAlert, ThreatCategory};
 use crate::vc::issue::DEVICE_KEY_DIR_ENV;
 use chrono::Utc;
 use std::sync::{Mutex, OnceLock};
@@ -240,6 +241,16 @@ async fn publish_circle_helpers_broadcast_the_right_kind() {
     );
     let event = recv_by_ref_id(&mut rx, "urn:uuid:publish-helpers-vault-1").await;
     assert_eq!(event.kind, NotificationKind::CircleFileShared);
+
+    super::publish_circle_member_pending_approval(
+        "did:guardian:dave",
+        "Dave",
+        "Family",
+        "publish-helpers-pending-1",
+    );
+    let event = recv_by_ref_id(&mut rx, "publish-helpers-pending-1").await;
+    assert_eq!(event.kind, NotificationKind::CircleMemberPendingApproval);
+    assert_eq!(event.actor_did.as_deref(), Some("did:guardian:dave"));
 }
 
 #[test]
@@ -313,6 +324,158 @@ fn mark_read_and_mark_all_read_update_counts() {
     store.save_atomic(&path).expect("save read state");
     let loaded = NotificationStore::load_from_path(&path, 10).expect("reload read state");
     assert_eq!(loaded.unread_count(), 0);
+}
+
+#[test]
+fn config_paths_build_event_and_device_labels_are_stable() {
+    let env = NotifyEnv::new("nodeA", 44);
+    let config = NotifyConfig::from_env();
+    assert!(config.events_path().ends_with("notify/events.jsonl"));
+    assert!(config.prefs_path().ends_with("notify/prefs.json"));
+
+    let event = super::build_event(
+        NotificationKind::AlertMedium,
+        "Title",
+        "Body",
+        "medium",
+        Some("ref-1".into()),
+    );
+    assert_eq!(event.title, "Title");
+    assert_eq!(event.body, "Body");
+    assert_eq!(event.severity, "medium");
+    assert_eq!(event.ref_id.as_deref(), Some("ref-1"));
+    assert!(!event.read);
+    assert!(chrono::DateTime::parse_from_rfc3339(&event.created_at).is_ok());
+
+    let mut device = sample_device();
+    assert_eq!(super::device_label(&device), "host.local");
+    device.hostname = None;
+    assert_eq!(super::device_label(&device), "Vendor");
+    device.vendor = None;
+    assert_eq!(super::device_label(&device), device.device_id);
+    drop(env);
+}
+
+#[tokio::test]
+async fn alert_publisher_maps_actionable_severities_and_suppresses_info() {
+    let mut rx = bus::subscribe();
+    for (severity, expected) in [
+        (Severity::Critical, NotificationKind::AlertHigh),
+        (Severity::High, NotificationKind::AlertHigh),
+        (Severity::Medium, NotificationKind::AlertMedium),
+        (Severity::Low, NotificationKind::AlertLow),
+    ] {
+        let mut alert = sample_alert(severity);
+        alert.alert_id = format!("alert-{severity:?}");
+        super::publish_alert("nodeA", &alert);
+        let event = recv_by_ref_id(&mut rx, &alert.alert_id).await;
+        assert_eq!(event.kind, expected);
+        assert!(event.title.contains("nodeA"));
+        assert!(event.body.contains("test signature"));
+    }
+
+    let info = sample_alert(Severity::Info);
+    super::publish_alert("nodeA", &info);
+    assert!(timeout(Duration::from_millis(50), rx.recv()).await.is_err());
+}
+
+#[tokio::test]
+async fn device_publishers_emit_expected_kinds_labels_and_references() {
+    let mut rx = bus::subscribe();
+    let device = sample_device();
+    super::publish_device_discovered(&device);
+    assert_eq!(
+        recv_by_ref_id(&mut rx, &device.device_id).await.kind,
+        NotificationKind::DeviceDiscovered
+    );
+    super::publish_device_pending_approval(&device);
+    assert_eq!(
+        recv_by_ref_id(&mut rx, &device.device_id).await.kind,
+        NotificationKind::DevicePendingApproval
+    );
+    super::publish_guardian_offline(&device);
+    let event = recv_by_ref_id(&mut rx, &device.device_id).await;
+    assert_eq!(event.kind, NotificationKind::GuardianOffline);
+    assert!(event.body.contains("host.local"));
+    assert!(event.body.contains(&device.last_seen));
+}
+
+#[tokio::test]
+async fn async_history_replay_and_read_helpers_round_trip_files() {
+    let _env = NotifyEnv::new("nodeA", 45);
+    let config = NotifyConfig::from_env();
+    let mut store = NotificationStore::default();
+    store.append(sample_event("async-1", NotificationKind::AlertLow), 10);
+    store.append(sample_event("async-2", NotificationKind::AlertHigh), 10);
+    store
+        .save_atomic(&config.events_path())
+        .expect("save notifications");
+
+    assert_eq!(
+        super::history(Some(1)).await.expect("history")[0].id,
+        "async-2"
+    );
+    assert_eq!(super::unread_count().await.expect("unread"), 2);
+    assert_eq!(
+        super::replay_after(None).await.expect("empty replay"),
+        Vec::<NotificationEvent>::new()
+    );
+    assert_eq!(
+        super::replay_after(Some("async-1"))
+            .await
+            .expect("replay")
+            .len(),
+        1
+    );
+    assert_eq!(
+        super::mark_read("missing").await.expect("missing mark"),
+        (false, 2)
+    );
+    assert_eq!(
+        super::mark_read("async-1").await.expect("mark one"),
+        (true, 1)
+    );
+    assert_eq!(super::mark_all_read().await.expect("mark all"), (1, 0));
+    assert_eq!(super::mark_all_read().await.expect("mark none"), (0, 0));
+}
+
+fn sample_device() -> crate::discovery::ConnectedDevice {
+    crate::discovery::ConnectedDevice {
+        device_id: "device-1".into(),
+        ip: "192.0.2.10".into(),
+        mac: Some("AA:BB:CC:DD:EE:FF".into()),
+        vendor: Some("Vendor".into()),
+        hostname: Some("host.local".into()),
+        os_fingerprint: None,
+        os_cpe: vec![],
+        open_ports: vec![],
+        host_scripts: vec![],
+        status: crate::discovery::DeviceStatus::Approved,
+        first_seen: "2026-08-31T00:00:00Z".into(),
+        last_seen: "2026-08-31T01:00:00Z".into(),
+        vuln_triaged: false,
+        last_scan_intensity: None,
+    }
+}
+
+fn sample_alert(severity: Severity) -> ThreatAlert {
+    ThreatAlert {
+        alert_id: format!("alert-{severity:?}"),
+        timestamp: Utc::now(),
+        src_ip: "192.0.2.1".into(),
+        src_port: 1234,
+        dst_ip: "198.51.100.2".into(),
+        dst_port: 443,
+        protocol: "tcp".into(),
+        signature_id: 1,
+        signature: "test signature".into(),
+        category: ThreatCategory::Reconnaissance,
+        severity,
+        rev: 1,
+        gid: 1,
+        event_type: "alert".into(),
+        blocked: false,
+    }
 }
 
 fn sample_event(id: &str, kind: NotificationKind) -> NotificationEvent {

@@ -380,6 +380,37 @@ impl Tpm2Cli {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
+    struct PathGuard(Option<std::ffi::OsString>);
+
+    impl Drop for PathGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(path) => std::env::set_var("PATH", path),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn install_tool(dir: &Path, name: &str, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write fake TPM tool");
+        let mut permissions = std::fs::metadata(&path)
+            .expect("tool metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(path, permissions).expect("make fake TPM tool executable");
+    }
+
+    fn use_tool_dir(dir: &Path) -> PathGuard {
+        let previous = std::env::var_os("PATH");
+        std::env::set_var("PATH", dir);
+        PathGuard(previous)
+    }
 
     fn cfg() -> super::TpmConfig {
         super::TpmConfig {
@@ -398,8 +429,16 @@ mod tests {
     #[test]
     fn create_args_includes_auth_when_provided() {
         let t = Tpm2Cli::new(cfg());
-        let args = t.create_args("/tmp/ctx", "/tmp/pub", "/tmp/priv", "attr", "ecc256", Some("p@ss"));
-        assert!(args.contains(&"-p".to_string()) || args.contains(&"-p".to_string()));
+        let args = t.create_args(
+            "/tmp/ctx",
+            "/tmp/pub",
+            "/tmp/priv",
+            "attr",
+            "ecc256",
+            Some("p@ss"),
+        );
+        assert!(args.contains(&"-p".to_string()));
+        assert_eq!(args.last().map(String::as_str), Some("p@ss"));
         assert!(args.iter().any(|s| s == "attr"));
         assert!(args.iter().any(|s| s == "ecc256"));
     }
@@ -409,5 +448,117 @@ mod tests {
         let t = Tpm2Cli::new(cfg());
         let args = t.create_args("/tmp/ctx", "/tmp/pub", "/tmp/priv", "attrs", "ecc", None);
         assert!(!args.contains(&"-p".to_string()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn availability_handles_success_failure_and_missing_tools() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let dir = tempfile::tempdir().expect("tool directory");
+        install_tool(
+            dir.path(),
+            "tpm2_getcap",
+            "[ \"$TPM2TOOLS_TCTI\" = \"tabrmd:bus_name=com.example.tpm\" ]",
+        );
+        let _path = use_tool_dir(dir.path());
+        assert!(Tpm2Cli::new(cfg()).available());
+
+        install_tool(dir.path(), "tpm2_getcap", "echo probe-failed >&2; exit 7");
+        assert!(!Tpm2Cli::new(cfg()).available());
+        std::fs::remove_file(dir.path().join("tpm2_getcap")).expect("remove fake tool");
+        assert!(!Tpm2Cli::new(cfg()).available());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persistent_handle_matching_is_case_insensitive_and_failure_safe() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let dir = tempfile::tempdir().expect("tool directory");
+        install_tool(
+            dir.path(),
+            "tpm2_getcap",
+            "printf '%s\\n' '- 0X81020000' '- 0x81020001'",
+        );
+        let _path = use_tool_dir(dir.path());
+        let cli = Tpm2Cli::new(cfg());
+        assert!(cli.handle_exists(0x8102_0000));
+        assert!(cli.handle_exists(0x8102_0001));
+        assert!(!cli.handle_exists(0x8102_0002));
+
+        install_tool(dir.path(), "tpm2_getcap", "exit 1");
+        assert!(!cli.handle_exists(0x8102_0000));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn readpublic_creates_parent_and_passes_uppercase_handle() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let tools = tempfile::tempdir().expect("tool directory");
+        install_tool(
+            tools.path(),
+            "tpm2_readpublic",
+            "[ \"$1\" = '-c' ] && [ \"$2\" = '0x8102ABCD' ] && [ \"$3\" = '-f' ] && [ \"$4\" = 'der' ] && [ \"$5\" = '-o' ] || exit 8\nprintf DER > \"$6\"",
+        );
+        let _path = use_tool_dir(tools.path());
+        let output = tempfile::tempdir()
+            .expect("output root")
+            .path()
+            .join("nested/public.der");
+
+        Tpm2Cli::new(cfg())
+            .readpublic_der(0x8102_abcd, output.to_str().expect("UTF-8 path"))
+            .expect("read public key");
+        assert_eq!(std::fs::read(output).expect("public key"), b"DER");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn candidate_commands_fall_back_and_empty_candidates_report_tool_error() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let tools = tempfile::tempdir().expect("tool directory");
+        install_tool(
+            tools.path(),
+            "tpm2_createek",
+            "case \"$*\" in *ecc:nist_p256*|*ecc256*) exit 0;; *) exit 4;; esac",
+        );
+        let _path = use_tool_dir(tools.path());
+        let cli = Tpm2Cli::new(cfg());
+        cli.create_ek(0x8101_0001).expect("candidate succeeds");
+
+        let error = cli
+            .run_candidates("never-run", &[], None)
+            .expect_err("empty candidate list must fail");
+        assert!(
+            matches!(error, TpmError::Tool(tool, detail) if tool == "never-run" && detail.contains("no runnable"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_error_combines_stderr_and_stdout_and_pcr_output_round_trips() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let tools = tempfile::tempdir().expect("tool directory");
+        install_tool(
+            tools.path(),
+            "failing-tool",
+            "printf stdout-detail; printf stderr-detail >&2; exit 3",
+        );
+        install_tool(
+            tools.path(),
+            "tpm2_pcrread",
+            "[ \"$1\" = 'sha256:0,2' ] || exit 9\nprintf '  0: 0xabc\\n'",
+        );
+        let _path = use_tool_dir(tools.path());
+        let cli = Tpm2Cli::new(cfg());
+        let error = cli
+            .run_strings("failing-tool", &[], None)
+            .expect_err("command must fail");
+        assert!(
+            matches!(error, TpmError::Tool(_, detail) if detail == "stderr-detail | stdout-detail")
+        );
+        assert_eq!(
+            cli.pcr_read_text("sha256:0,2").expect("PCR output"),
+            "  0: 0xabc\n"
+        );
     }
 }

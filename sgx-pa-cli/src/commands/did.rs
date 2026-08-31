@@ -394,7 +394,10 @@ fn cmd_remint(args: DidRemintArgs) {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_ca_host_from_sources, CA_HOST_MISSING_MSG};
+    use super::{
+        ca_host_config_candidates, normalize_configured_host, normalize_host,
+        resolve_ca_host_from_sources, CA_HOST_MISSING_MSG,
+    };
     use std::fs;
     use std::path::PathBuf;
     use tempfile::TempDir;
@@ -464,5 +467,38 @@ public_key: test-pubkey
             CA_HOST_MISSING_MSG,
             "CA registry host is not configured; set SGX_CA_HOST or pass --ca-host."
         );
+    }
+
+    #[test]
+    fn host_normalizers_distinguish_cli_values_from_config_placeholders() {
+        assert_eq!(
+            normalize_host(Some(" 0.0.0.0 ")).as_deref(),
+            Some("0.0.0.0")
+        );
+        assert_eq!(
+            normalize_host(Some(" 10.0.0.4 ")).as_deref(),
+            Some("10.0.0.4")
+        );
+        assert!(normalize_host(Some("  ")).is_none());
+        assert!(normalize_host(None).is_none());
+
+        assert!(normalize_configured_host("0.0.0.0").is_none());
+        assert!(normalize_configured_host("  ").is_none());
+        assert_eq!(
+            normalize_configured_host(" ca.local ").as_deref(),
+            Some("ca.local")
+        );
+    }
+
+    #[test]
+    fn malformed_config_is_skipped_and_candidate_paths_are_node_specific() {
+        let td = TempDir::new().expect("tempdir");
+        let malformed = td.path().join("bad.yaml");
+        fs::write(&malformed, "not: [valid").expect("malformed config");
+        assert!(resolve_ca_host_from_sources(None, None, &[malformed]).is_none());
+
+        let candidates = ca_host_config_candidates();
+        assert!(candidates.len() >= 2);
+        assert!(candidates.iter().all(|path| path.ends_with("nodeA.yaml")));
     }
 }

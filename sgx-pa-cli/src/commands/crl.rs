@@ -400,25 +400,68 @@ fn normalize_token(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{normalize_token, parse_reason, parse_severity};
+    use sgx_guardian_client::crl::entry::{RevocationReason, Severity};
 
     #[test]
     fn normalize_token_converts_spaces_and_dashes() {
         assert_eq!(normalize_token("Policy Violation"), "policy_violation");
-        assert_eq!(normalize_token("administrative-removal"), "administrative_removal");
+        assert_eq!(
+            normalize_token("administrative-removal"),
+            "administrative_removal"
+        );
     }
 
     #[test]
     fn parse_reason_maps_known_values() {
-        assert!(matches!(parse_reason("compromised"), Ok(_)));
-        assert!(matches!(parse_reason("lost"), Ok(_)));
-        assert!(parse_reason("Policy Violation").is_ok());
-        assert!(parse_reason("unknown-reason").is_err());
+        let cases = [
+            ("compromised", RevocationReason::Compromised),
+            ("lost", RevocationReason::Lost),
+            ("stolen", RevocationReason::Stolen),
+            ("Policy Violation", RevocationReason::PolicyViolation),
+            (
+                "administrative-removal",
+                RevocationReason::AdministrativeRemoval,
+            ),
+            ("voluntary departure", RevocationReason::VoluntaryDeparture),
+        ];
+        for (raw, expected) in cases {
+            assert_eq!(
+                parse_reason(raw).expect("known reason").as_str(),
+                expected.as_str()
+            );
+        }
+        assert_eq!(
+            parse_reason("unknown-reason").unwrap_err(),
+            "unsupported revocation reason 'unknown_reason'"
+        );
     }
 
     #[test]
     fn parse_severity_maps_known_values() {
-        assert!(parse_severity("critical").is_ok());
-        assert!(parse_severity("High").is_ok());
-        assert!(parse_severity("bogus").is_err());
+        for (raw, expected) in [
+            ("critical", Severity::Critical),
+            ("High", Severity::High),
+            (" medium ", Severity::Medium),
+            ("LOW", Severity::Low),
+        ] {
+            assert_eq!(
+                parse_severity(raw).expect("known severity").as_str(),
+                expected.as_str()
+            );
+        }
+        assert_eq!(
+            parse_severity("bogus").unwrap_err(),
+            "unsupported severity 'bogus'"
+        );
+    }
+
+    #[test]
+    fn normalize_token_handles_whitespace_case_and_repeated_separators() {
+        assert_eq!(
+            normalize_token("  VOLUNTARY  Departure "),
+            "voluntary__departure"
+        );
+        assert_eq!(normalize_token("HIGH"), "high");
+        assert_eq!(normalize_token(""), "");
     }
 }

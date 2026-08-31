@@ -154,3 +154,61 @@ fn encode_ecdsa_sig_fixed_to_der(fixed: &[u8]) -> Result<Vec<u8>> {
         P256Sig::try_from(fixed).map_err(|e| anyhow!("Build P256 signature from r||s: {:?}", e))?;
     Ok(sig.to_der().as_bytes().to_vec())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use p256::ecdsa::{signature::Signer, signature::Verifier, Signature, SigningKey};
+
+    #[test]
+    fn fixed_signature_conversion_rejects_lengths_and_produces_verifiable_der() {
+        for length in [0, 1, 63, 65, 128] {
+            let error = encode_ecdsa_sig_fixed_to_der(&vec![0u8; length])
+                .expect_err("invalid fixed signature length");
+            assert!(error
+                .to_string()
+                .contains("Unexpected fixed signature length"));
+        }
+
+        let signing_key = SigningKey::from_bytes((&[9u8; 32]).into()).expect("signing key");
+        let signature: Signature = signing_key.sign(b"policy digest material");
+        let der = encode_ecdsa_sig_fixed_to_der(signature.to_bytes().as_ref())
+            .expect("convert fixed signature");
+        let parsed = Signature::from_der(&der).expect("parse DER signature");
+        signing_key
+            .verifying_key()
+            .verify(b"policy digest material", &parsed)
+            .expect("verify converted signature");
+        assert!(signing_key
+            .verifying_key()
+            .verify(b"different material", &parsed)
+            .is_err());
+    }
+
+    #[test]
+    fn atomic_write_replaces_content_removes_temp_and_applies_permissions() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("policy.sig");
+        let path_str = path.to_str().expect("utf-8 path");
+        atomic_write(path_str, b"first", 0o600).expect("initial atomic write");
+        atomic_write(path_str, b"second", 0o640).expect("replacement atomic write");
+        assert_eq!(std::fs::read(&path).expect("read final file"), b"second");
+        assert!(!path.with_extension("sig.tmp").exists());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path)
+                    .expect("metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o640
+            );
+        }
+
+        let missing_parent = temp.path().join("missing").join("policy.sig");
+        assert!(atomic_write(missing_parent.to_str().unwrap(), b"data", 0o600).is_err());
+    }
+}

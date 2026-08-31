@@ -390,4 +390,98 @@ mod tests {
         assert!(Cli::try_parse_from(["sgx-pa-cli", "threat", "alerts", "--limit", "10"]).is_ok());
         assert!(Cli::try_parse_from(["sgx-pa-cli", "threat", "rules-update"]).is_ok());
     }
+
+    #[test]
+    fn first_priority_coverage_commands_accept_complete_arguments() {
+        let commands = [
+            vec!["sgx-pa-cli", "attest-generate", "--nonce", "abc"],
+            vec![
+                "sgx-pa-cli",
+                "attest-verify",
+                "--quote",
+                "/tmp/quote.json",
+                "--nonce",
+                "abc",
+            ],
+            vec!["sgx-pa-cli", "vc", "issue", "--to", "did:guardian:peer"],
+            vec!["sgx-pa-cli", "vc", "verify", "--path", "/tmp/vc.json"],
+            vec!["sgx-pa-cli", "vc", "revoke", "--id", "vc-1"],
+            vec!["sgx-pa-cli", "vc", "status", "--id", "vc-1"],
+            vec!["sgx-pa-cli", "vc", "pull-status-list"],
+            vec!["sgx-pa-cli", "crl", "revoke", "--did", "did:guardian:peer"],
+            vec![
+                "sgx-pa-cli",
+                "crl",
+                "unrevoke",
+                "--did",
+                "did:guardian:peer",
+            ],
+            vec!["sgx-pa-cli", "crl", "list"],
+            vec!["sgx-pa-cli", "crl", "show", "--id", "entry-1"],
+            vec!["sgx-pa-cli", "crl", "check", "--did", "did:guardian:peer"],
+            vec!["sgx-pa-cli", "crl", "verify"],
+            vec!["sgx-pa-cli", "crl", "root"],
+            vec!["sgx-pa-cli", "did", "show"],
+            vec!["sgx-pa-cli", "did", "resolve", "did:guardian:peer"],
+            vec!["sgx-pa-cli", "did", "deactivate", "--yes"],
+            vec!["sgx-pa-cli", "did", "remint", "--yes"],
+            vec!["sgx-pa-cli", "emergency-rotate"],
+            vec!["sgx-pa-cli", "pcr-baseline-create"],
+            vec!["sgx-pa-cli", "pcr-baseline-verify"],
+            vec!["sgx-pa-cli", "transport", "show"],
+            vec!["sgx-pa-cli", "threat", "validate"],
+            vec!["sgx-pa-cli", "threat", "block", "192.0.2.4"],
+            vec!["sgx-pa-cli", "threat", "unblock", "192.0.2.4"],
+        ];
+        for command in commands {
+            assert!(Cli::try_parse_from(&command).is_ok(), "failed: {command:?}");
+        }
+    }
+
+    #[test]
+    fn second_priority_commands_and_global_help_parse() {
+        for command in [
+            vec!["sgx-pa-cli", "audit-logs"],
+            vec!["sgx-pa-cli", "audit-verify"],
+            vec!["sgx-pa-cli", "did-doc", "show"],
+            vec!["sgx-pa-cli", "did-doc", "verify", "/tmp/doc.json"],
+            vec!["sgx-pa-cli", "did-doc", "peer", "did:guardian:peer"],
+            vec![
+                "sgx-pa-cli",
+                "did-doc",
+                "publish",
+                "--ca-host",
+                "127.0.0.1",
+                "--node-name",
+                "nodeA",
+            ],
+            vec!["sgx-pa-cli", "dkp-rotate"],
+            vec!["sgx-pa-cli", "dkp-revoke", "--version", "1"],
+            vec!["sgx-pa-cli", "boot-status"],
+            vec!["sgx-pa-cli", "pcr-status"],
+        ] {
+            assert!(Cli::try_parse_from(&command).is_ok(), "failed: {command:?}");
+        }
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "--help"]).is_err());
+        assert!(Cli::try_parse_from(["sgx-pa-cli", "--version"]).is_err());
+    }
+
+    #[test]
+    fn parser_rejects_missing_unknown_and_malformed_arguments() {
+        for command in [
+            vec!["sgx-pa-cli"],
+            vec!["sgx-pa-cli", "unknown"],
+            vec!["sgx-pa-cli", "vc", "issue"],
+            vec!["sgx-pa-cli", "crl", "revoke"],
+            vec!["sgx-pa-cli", "transport-lock"],
+            vec!["sgx-pa-cli", "threat", "block"],
+            vec!["sgx-pa-cli", "audit-logs", "--tail", "not-a-number"],
+            vec!["sgx-pa-cli", "relay", "toggle", "nodeA"],
+        ] {
+            assert!(
+                Cli::try_parse_from(&command).is_err(),
+                "unexpected success: {command:?}"
+            );
+        }
+    }
 }

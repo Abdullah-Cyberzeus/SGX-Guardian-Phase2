@@ -100,6 +100,57 @@ impl SeKeyStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::secure_element::ssscli::SssCli;
+    use std::path::Path;
+
+    struct PathGuard(Option<std::ffi::OsString>);
+
+    impl Drop for PathGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(path) => std::env::set_var("PATH", path),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+    }
+
+    fn config() -> SeConfig {
+        SeConfig {
+            enabled: true,
+            scp_key_path: "/keys/scp.txt".into(),
+            interface: "t1oi2c".into(),
+            auth_type: "PlatformSCP".into(),
+            connection_type: "se05x".into(),
+            dkp_key_id_base: 0x2000_0010,
+            dik_key_id: 0x2000_0001,
+        }
+    }
+
+    #[cfg(unix)]
+    fn storage_with_script(dir: &Path, log: &Path) -> (SeKeyStorage, PathGuard) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tool = dir.join("ssscli");
+        std::fs::write(
+            &tool,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\necho slots-ok\n",
+                log.display()
+            ),
+        )
+        .expect("write fake ssscli");
+        let mut permissions = std::fs::metadata(&tool).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(tool, permissions).expect("make executable");
+        let old_path = std::env::var_os("PATH");
+        std::env::set_var("PATH", dir);
+        (
+            SeKeyStorage {
+                cli: SssCli::new(config()),
+            },
+            PathGuard(old_path),
+        )
+    }
 
     #[test]
     fn test_key_id_calculation() {
@@ -160,5 +211,58 @@ mod tests {
             assert!(hex_id.starts_with("0x2000"));
             assert_eq!(hex_id.len(), 10); // "0x" + 8 hex digits
         }
+    }
+
+    #[test]
+    fn slot_info_masks_label_and_exposes_safe_contract() {
+        let storage = SeKeyStorage {
+            cli: SssCli::new(config()),
+        };
+        let slot = storage.slot_info(0x2000_01ab);
+        assert_eq!(slot.key_id, 0x2000_01ab);
+        assert_eq!(slot.label, "slot171");
+        assert_eq!(slot.algorithm, "ECDSA-P256");
+        assert!(!slot.exportable);
+        assert_eq!(slot.access, "Secure Element Only");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn storage_operations_map_ids_curves_and_positional_commands() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let dir = tempfile::tempdir().expect("fake tool directory");
+        let log = dir.path().join("calls.log");
+        let (storage, _guard) = storage_with_script(dir.path(), &log);
+
+        for (offset, algorithm, curve) in [
+            (1, "ecdsa", "NIST_P256"),
+            (2, "nist_p384", "NIST_P384"),
+            (3, "ed25519", "ED_25519"),
+            (4, "unknown", "NIST_P256"),
+        ] {
+            let slot = storage
+                .create_key_slot(offset, "label", algorithm)
+                .expect("create slot");
+            assert_eq!(slot.key_id, 0x2000_0000 + offset);
+            assert_eq!(slot.algorithm, algorithm);
+            let expected = format!("generate ecc 0x{:08X} {curve}", slot.key_id);
+            assert!(std::fs::read_to_string(&log)
+                .expect("command log")
+                .lines()
+                .any(|line| line == expected));
+        }
+
+        storage
+            .export_public_key(0x2000_0010, "/tmp/key.der")
+            .expect("export public key");
+        assert!(storage
+            .list_slots()
+            .expect("slot list")
+            .contains("slots-ok"));
+        storage.delete_key(0x2000_0010).expect("delete key");
+        let calls = std::fs::read_to_string(log).expect("command log");
+        assert!(calls.contains("get ecc pub 0x20000010 /tmp/key.der"));
+        assert!(calls.contains("se05x readidlist"));
+        assert!(calls.contains("erase 0x20000010"));
     }
 }

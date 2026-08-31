@@ -340,18 +340,23 @@ fn parse_permissions(raw: &str) -> Result<Vec<String>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_permissions, parse_role};
+    use super::{ca_host_config_candidates, parse_permissions, parse_role};
+    use sgx_guardian_client::vc::credential::CredentialRole;
 
     #[test]
     fn parse_role_accepts_owner_and_member() {
-        assert!(matches!(parse_role("owner"), Ok(_)));
-        assert!(matches!(parse_role("member"), Ok(_)));
-        assert!(matches!(parse_role(" OWNER  "), Ok(_)));
+        assert!(matches!(parse_role("owner"), Ok(CredentialRole::Owner)));
+        assert!(matches!(parse_role("member"), Ok(CredentialRole::Member)));
+        assert!(matches!(parse_role(" OWNER  "), Ok(CredentialRole::Owner)));
     }
 
     #[test]
     fn parse_role_rejects_unknown() {
-        assert!(parse_role("invalid").is_err());
+        assert_eq!(
+            parse_role(" Invalid ").unwrap_err(),
+            "unsupported role 'invalid'"
+        );
+        assert_eq!(parse_role("").unwrap_err(), "unsupported role ''");
     }
 
     #[test]
@@ -364,6 +369,29 @@ mod tests {
     fn parse_permissions_rejects_empty_list() {
         assert!(parse_permissions("").is_err());
         assert!(parse_permissions(", ,").is_err());
+    }
+
+    #[test]
+    fn permissions_preserve_order_case_and_duplicates() {
+        assert_eq!(
+            parse_permissions(" Read ,write,Read,, ADMIN ").expect("permissions"),
+            vec!["Read", "write", "Read", "ADMIN"]
+        );
+    }
+
+    #[test]
+    fn ca_host_candidates_keep_system_paths_before_workspace_fallback() {
+        let candidates = ca_host_config_candidates();
+        assert_eq!(candidates.len(), 3);
+        assert_eq!(
+            candidates[0].to_string_lossy(),
+            "/etc/sgx-guardian/config/nodeA.yaml"
+        );
+        assert_eq!(
+            candidates[1].to_string_lossy(),
+            "/etc/sgx-guardian/nodeA.yaml"
+        );
+        assert_eq!(candidates[2].to_string_lossy(), "config/nodeA.yaml");
     }
 }
 

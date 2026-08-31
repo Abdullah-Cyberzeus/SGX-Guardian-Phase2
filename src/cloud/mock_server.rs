@@ -31,3 +31,20 @@ async fn handle_uplink(Json(body): Json<Value>) -> Json<Value> {
         "status": "ok"
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn uplink_handler_accepts_any_json_shape_and_returns_stable_acknowledgement() {
+        for payload in [
+            serde_json::json!({"node":"nodeA","events":[1,2]}),
+            serde_json::json!(["batch"]),
+            Value::Null,
+        ] {
+            let Json(response) = handle_uplink(Json(payload)).await;
+            assert_eq!(response, serde_json::json!({"status":"ok"}));
+        }
+    }
+}

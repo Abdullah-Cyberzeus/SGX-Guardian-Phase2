@@ -84,3 +84,99 @@ impl SeSigner {
         result
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::secure_element::ssscli::SssCli;
+    use std::path::Path;
+
+    struct EnvGuard(Option<std::ffi::OsString>);
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(path) => std::env::set_var("PATH", path),
+                None => std::env::remove_var("PATH"),
+            }
+            crate::secure_element::tamper::clear_tamper();
+        }
+    }
+
+    fn config() -> SeConfig {
+        SeConfig {
+            enabled: true,
+            scp_key_path: "/keys/scp.txt".into(),
+            interface: "t1oi2c".into(),
+            auth_type: "PlatformSCP".into(),
+            connection_type: "se05x".into(),
+            dkp_key_id_base: 0x2000_0010,
+            dik_key_id: 0x2000_0001,
+        }
+    }
+
+    #[cfg(unix)]
+    fn signer_with_script(dir: &Path, body: &str) -> (SeSigner, EnvGuard) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tool = dir.join("ssscli");
+        std::fs::write(&tool, format!("#!/bin/sh\n{body}\n")).expect("write fake ssscli");
+        let mut permissions = std::fs::metadata(&tool).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(tool, permissions).expect("make executable");
+        let old_path = std::env::var_os("PATH");
+        std::env::set_var("PATH", dir);
+        (
+            SeSigner {
+                cli: SssCli::new(config()),
+            },
+            EnvGuard(old_path),
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sign_round_trips_fake_signature_and_verify_maps_success_or_failure() {
+        let _lock = crate::test_support::blocking_env_lock();
+        crate::secure_element::tamper::clear_tamper();
+        let dir = tempfile::tempdir().expect("fake tool directory");
+        let (signer, _guard) = signer_with_script(
+            dir.path(),
+            "case \"$1\" in\n sign) /bin/cp \"$3\" \"$4\";;\n verify) exit 0;;\n *) exit 8;;\nesac",
+        );
+        assert_eq!(
+            signer.sign(0x2000_0010, b"payload").expect("signature"),
+            b"payload"
+        );
+        assert!(signer
+            .verify(0x2000_0010, b"payload", b"signature")
+            .expect("verification result"));
+
+        std::fs::write(
+            dir.path().join("ssscli"),
+            "#!/bin/sh\n[ \"$1\" = verify ] && exit 3\nexit 0\n",
+        )
+        .expect("replace fake verifier");
+        assert!(!signer
+            .verify(0x2000_0010, b"payload", b"bad")
+            .expect("invalid signature maps to false"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tamper_flag_blocks_sign_and_verify_before_creating_temp_files() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let dir = tempfile::tempdir().expect("fake tool directory");
+        let (signer, _guard) = signer_with_script(dir.path(), "exit 0");
+        crate::secure_element::tamper::TAMPER_DETECTED
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(matches!(
+            signer.sign(1, b"data"),
+            Err(SeError::TamperDetected)
+        ));
+        assert!(matches!(
+            signer.verify(1, b"data", b"sig"),
+            Err(SeError::TamperDetected)
+        ));
+    }
+}
