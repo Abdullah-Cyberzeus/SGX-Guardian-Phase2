@@ -3694,4 +3694,159 @@ relay:
             .expect_err("protected address should fail");
         assert!(matches!(error, ApiError::Forbidden(message) if message.contains("protected")));
     }
+
+    #[tokio::test]
+    async fn add_manual_edit_and_remove_round_trip() {
+        let _guard = async_env_lock().await;
+        let td = TempDir::new().expect("tempdir");
+        let devices_base = td.path().join("devices");
+        let _devices_env =
+            ScopedEnvVar::set(crate::devices::DEVICES_BASE_ENV, devices_base.as_path());
+        let state = AppState::for_tests(
+            td.path(),
+            "nodeC",
+            td.path().join("config").to_string_lossy().to_string(),
+        );
+
+        let created = add_manual(
+            State(state.clone()),
+            Json(crate::devices::registry::AddManualDevice {
+                display_name: Some("Kitchen Printer".into()),
+                ip: Some("203.0.113.9".into()),
+                mac: None,
+                manufacturer: Some("Acme".into()),
+                notes: None,
+            }),
+        )
+        .await
+        .expect("add_manual succeeds");
+        assert_eq!(created.0.display_name.as_deref(), Some("Kitchen Printer"));
+        let device_id = created.0.device_id.clone();
+
+        let edited = edit(
+            State(state.clone()),
+            Path(device_id.clone()),
+            Json(crate::devices::registry::DevicePatch {
+                display_name: Some(Some("Office Printer".into())),
+                monitoring_enabled: Some(true),
+                notes: None,
+            }),
+        )
+        .await
+        .expect("edit succeeds");
+        assert_eq!(edited.0.display_name.as_deref(), Some("Office Printer"));
+        assert!(edited.0.monitoring_enabled);
+
+        let listed = list(State(state.clone()))
+            .await
+            .expect("list succeeds");
+        assert!(listed.0.iter().any(|device| device.device_id == device_id));
+
+        let removed = remove(State(state.clone()), Path(device_id.clone()))
+            .await
+            .expect("remove succeeds");
+        assert!(removed.0.success);
+
+        let after = detail(State(state), Path(device_id))
+            .await
+            .expect_err("removed device is gone");
+        assert!(matches!(after, ApiError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn add_manual_rejects_missing_ip_and_mac() {
+        let _guard = async_env_lock().await;
+        let td = TempDir::new().expect("tempdir");
+        let devices_base = td.path().join("devices");
+        let _devices_env =
+            ScopedEnvVar::set(crate::devices::DEVICES_BASE_ENV, devices_base.as_path());
+        let state = AppState::for_tests(
+            td.path(),
+            "nodeC",
+            td.path().join("config").to_string_lossy().to_string(),
+        );
+
+        let error = add_manual(
+            State(state),
+            Json(crate::devices::registry::AddManualDevice {
+                display_name: Some("Nothing".into()),
+                ip: None,
+                mac: None,
+                manufacturer: None,
+                notes: None,
+            }),
+        )
+        .await
+        .expect_err("requires ip or mac");
+        assert!(matches!(error, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn edit_backfills_a_record_for_an_unknown_device_id_and_remove_is_a_no_op() {
+        let _guard = async_env_lock().await;
+        let td = TempDir::new().expect("tempdir");
+        let devices_base = td.path().join("devices");
+        let _devices_env =
+            ScopedEnvVar::set(crate::devices::DEVICES_BASE_ENV, devices_base.as_path());
+        let state = AppState::for_tests(
+            td.path(),
+            "nodeC",
+            td.path().join("config").to_string_lossy().to_string(),
+        );
+
+        // `ensure_record_exists` backfills a synthetic registry record rather
+        // than 404ing, so a patch against a device_id this Guardian has never
+        // seen still succeeds.
+        let edited = edit(
+            State(state.clone()),
+            Path("does-not-exist".into()),
+            Json(crate::devices::registry::DevicePatch {
+                display_name: None,
+                monitoring_enabled: Some(true),
+                notes: None,
+            }),
+        )
+        .await
+        .expect("edit backfills and succeeds");
+        assert!(edited.0.monitoring_enabled);
+
+        // `remove` on a device with no registry record is not an error --
+        // it's a successful no-op, reported via `success: false`.
+        let remove_result = remove(State(state), Path("still-unknown".into()))
+            .await
+            .expect("remove of unknown device does not error");
+        assert!(!remove_result.0.success);
+    }
+
+    #[tokio::test]
+    async fn summary_counts_manual_and_blocked_devices() {
+        let _guard = async_env_lock().await;
+        let td = TempDir::new().expect("tempdir");
+        let devices_base = td.path().join("devices");
+        let _devices_env =
+            ScopedEnvVar::set(crate::devices::DEVICES_BASE_ENV, devices_base.as_path());
+        let state = AppState::for_tests(
+            td.path(),
+            "nodeC",
+            td.path().join("config").to_string_lossy().to_string(),
+        );
+
+        let _ = add_manual(
+            State(state.clone()),
+            Json(crate::devices::registry::AddManualDevice {
+                display_name: Some("Manual Device".into()),
+                ip: Some("203.0.113.10".into()),
+                mac: None,
+                manufacturer: None,
+                notes: None,
+            }),
+        )
+        .await
+        .expect("add_manual succeeds");
+
+        let summary_result = summary(State(state)).await.expect("summary succeeds");
+        assert_eq!(summary_result.0.total, 1);
+        assert_eq!(summary_result.0.manual, 1);
+        assert_eq!(summary_result.0.blocked, 0);
+    }
 }

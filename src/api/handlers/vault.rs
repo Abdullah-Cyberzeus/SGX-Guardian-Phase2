@@ -1892,4 +1892,545 @@ mod tests {
         // Different key returns None
         assert_eq!(idempotency_lookup("namespace", "other-key"), None);
     }
+
+    /// `folders::create_folder`/`update_folder` sign the folder index with
+    /// `vc::issue::load_runtime_key_manager`, which reads its key directory
+    /// from `SGX_GUARDIAN_DEVICE_KEY_DIR` (defaulting to a hardcoded
+    /// `/var/lib` path) and only generates a software key if
+    /// `SGX_FORCE_SOFTWARE_KEYS` is set. Points both at a temp directory for
+    /// the duration of one test, restoring the previous values on drop.
+    struct TestDeviceKeyDir {
+        previous_dir: Option<String>,
+        previous_force: Option<String>,
+    }
+
+    impl TestDeviceKeyDir {
+        fn set(path: &std::path::Path) -> Self {
+            let previous_dir = std::env::var("SGX_GUARDIAN_DEVICE_KEY_DIR").ok();
+            let previous_force = std::env::var("SGX_FORCE_SOFTWARE_KEYS").ok();
+            std::env::set_var("SGX_GUARDIAN_DEVICE_KEY_DIR", path);
+            std::env::set_var("SGX_FORCE_SOFTWARE_KEYS", "1");
+            Self {
+                previous_dir,
+                previous_force,
+            }
+        }
+    }
+
+    impl Drop for TestDeviceKeyDir {
+        fn drop(&mut self) {
+            match &self.previous_dir {
+                Some(value) => std::env::set_var("SGX_GUARDIAN_DEVICE_KEY_DIR", value),
+                None => std::env::remove_var("SGX_GUARDIAN_DEVICE_KEY_DIR"),
+            }
+            match &self.previous_force {
+                Some(value) => std::env::set_var("SGX_FORCE_SOFTWARE_KEYS", value),
+                None => std::env::remove_var("SGX_FORCE_SOFTWARE_KEYS"),
+            }
+        }
+    }
+
+    fn test_state(temp: &TempDir) -> Arc<AppState> {
+        crate::api::state::AppState::for_tests(
+            temp.path(),
+            "nodeA",
+            temp.path().join("config").to_string_lossy().to_string(),
+        )
+    }
+
+    #[tokio::test]
+    async fn list_filters_by_authorization_folder_and_starred() {
+        let _env_lock = crate::vault::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = TestVaultBase::set(temp.path());
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let owner_reg = "list-owner";
+        let owner_did = member_did(owner_reg);
+        let mine = ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "mine.txt").await;
+        let _other = ingest_test_file(
+            &temp,
+            VaultNamespace::Personal,
+            "did:guardian:someone-else",
+            "not-mine.txt",
+        )
+        .await;
+        let state = test_state(&temp);
+
+        let owner_session = member_session(vec![], owner_reg);
+        let result = list(
+            State(state.clone()),
+            owner_session.clone(),
+            Query(VaultListQuery {
+                circle_id: None,
+                namespace: None,
+                folder_id: None,
+                starred: None,
+            }),
+        )
+        .await
+        .expect("list succeeds");
+        assert_eq!(result.0.count, 1);
+        assert_eq!(result.0.files[0].vault_id, mine.vault_id);
+
+        let starred_only = list(
+            State(state),
+            owner_session,
+            Query(VaultListQuery {
+                circle_id: None,
+                namespace: None,
+                folder_id: None,
+                starred: Some(true),
+            }),
+        )
+        .await
+        .expect("list succeeds");
+        assert_eq!(starred_only.0.count, 0, "the file was never starred");
+    }
+
+    #[tokio::test]
+    async fn overview_reports_file_count_and_used_bytes() {
+        let _env_lock = crate::vault::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = TestVaultBase::set(temp.path());
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let owner_reg = "overview-owner";
+        let owner_did = member_did(owner_reg);
+        ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "a.txt").await;
+        let state = test_state(&temp);
+
+        let result = overview(State(state), member_session(vec![], owner_reg))
+            .await
+            .expect("overview succeeds");
+        assert_eq!(result.0.file_count, 1);
+        assert!(result.0.used_bytes > 0);
+        assert!(result.0
+            .namespaces
+            .iter()
+            .any(|namespace| namespace.namespace == VaultNamespace::PERSONAL_STORAGE_KEY));
+    }
+
+    #[tokio::test]
+    async fn quota_status_reports_used_and_remaining_bytes() {
+        let _env_lock = crate::vault::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = TestVaultBase::set(temp.path());
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let owner_reg = "quota-owner";
+        let owner_did = member_did(owner_reg);
+        ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "a.txt").await;
+        let state = test_state(&temp);
+
+        let result = quota_status(
+            State(state),
+            member_session(vec![], owner_reg),
+            Query(VaultQuotaQuery {
+                ns: None,
+                circle_id: None,
+            }),
+        )
+        .await
+        .expect("quota_status succeeds");
+        assert!(result.0.used_bytes > 0);
+        assert_eq!(
+            result.0.remaining_bytes,
+            result.0.quota_bytes - result.0.used_bytes
+        );
+    }
+
+    #[tokio::test]
+    async fn tree_hides_folders_from_members_in_personal_namespace_and_404s_unknown_folder() {
+        let _env_lock = crate::vault::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = TestVaultBase::set(temp.path());
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let owner_reg = "tree-owner";
+        let owner_did = member_did(owner_reg);
+        ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "a.txt").await;
+        let state = test_state(&temp);
+
+        let result = tree(
+            State(state.clone()),
+            member_session(vec![], owner_reg),
+            Query(VaultTreeQuery {
+                ns: Some("personal".into()),
+                folder: None,
+            }),
+        )
+        .await
+        .expect("tree succeeds");
+        assert_eq!(result.0.file_count, 1);
+        assert_eq!(
+            result.0.folder_count, 0,
+            "members never see personal-namespace subfolders"
+        );
+
+        let not_found = tree(
+            State(state),
+            member_session(vec![], owner_reg),
+            Query(VaultTreeQuery {
+                ns: Some("personal".into()),
+                folder: Some("does-not-exist".into()),
+            }),
+        )
+        .await;
+        assert!(matches!(not_found, Err(ApiError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn search_requires_query_and_filters_by_filename() {
+        let _env_lock = crate::vault::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = TestVaultBase::set(temp.path());
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let owner_reg = "search-owner";
+        let owner_did = member_did(owner_reg);
+        ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "budget-2026.txt").await;
+        ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "recipe.txt").await;
+        let state = test_state(&temp);
+
+        let empty_query = search(
+            State(state.clone()),
+            member_session(vec![], owner_reg),
+            Query(VaultSearchQuery {
+                q: "   ".into(),
+                limit: None,
+            }),
+        )
+        .await;
+        assert!(matches!(empty_query, Err(ApiError::BadRequest(_))));
+
+        let result = search(
+            State(state),
+            member_session(vec![], owner_reg),
+            Query(VaultSearchQuery {
+                q: "budget".into(),
+                limit: None,
+            }),
+        )
+        .await
+        .expect("search succeeds");
+        assert_eq!(result.0.results.len(), 1);
+        assert_eq!(result.0.results[0].file.filename, "budget-2026.txt");
+    }
+
+    #[tokio::test]
+    async fn create_list_rename_and_delete_folder_round_trip() {
+        let _env_lock = crate::vault::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = TestVaultBase::set(temp.path());
+        let _keys = TestDeviceKeyDir::set(&temp.path().join("device-keys"));
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let state = test_state(&temp);
+
+        let folder = create_folder(
+            State(state.clone()),
+            Json(CreateFolderRequest {
+                namespace: Some("personal".into()),
+                parent_id: None,
+                name: "Photos".into(),
+            }),
+        )
+        .await
+        .expect("create_folder succeeds");
+        assert_eq!(folder.0.name, "Photos");
+
+        let listed = list_folders(
+            State(state.clone()),
+            None,
+            Query(VaultFolderListQuery {
+                namespace: Some("personal".into()),
+                circle_id: None,
+                parent_id: None,
+            }),
+        )
+        .await
+        .expect("list_folders succeeds");
+        assert!(listed.0.folders.iter().any(|entry| entry.folder_id == folder.0.folder_id));
+
+        let renamed = rename_or_move_folder(
+            State(state.clone()),
+            Path(folder.0.folder_id.clone()),
+            Json(UpdateFolderRequest {
+                namespace: Some("personal".into()),
+                name: Some("Pictures".into()),
+                parent_id: None,
+            }),
+        )
+        .await
+        .expect("rename_or_move_folder succeeds");
+        assert_eq!(renamed.0.name, "Pictures");
+
+        let deleted = delete_folder(
+            State(state),
+            Path(renamed.0.folder_id),
+            Query(VaultDeleteFolderQuery {
+                ns: Some("personal".into()),
+                recursive: Some(false),
+            }),
+        )
+        .await
+        .expect("delete_folder succeeds");
+        assert!(deleted.0.success);
+    }
+
+    #[tokio::test]
+    async fn delete_folder_conflicts_when_not_empty_and_not_recursive() {
+        let _env_lock = crate::vault::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = TestVaultBase::set(temp.path());
+        let _keys = TestDeviceKeyDir::set(&temp.path().join("device-keys"));
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let state = test_state(&temp);
+        let folder = create_folder(
+            State(state.clone()),
+            Json(CreateFolderRequest {
+                namespace: Some("personal".into()),
+                parent_id: None,
+                name: "Docs".into(),
+            }),
+        )
+        .await
+        .expect("create_folder succeeds");
+        let owner_did = resolve_caller_did(&state, &None);
+        let mut record =
+            ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "inside.txt").await;
+        record.folder_id = folder.0.folder_id.clone();
+        let config = VaultConfig::from_env();
+        persistence::save_record(&config, &record)
+            .await
+            .expect("save record into folder");
+
+        let conflict = delete_folder(
+            State(state.clone()),
+            Path(folder.0.folder_id.clone()),
+            Query(VaultDeleteFolderQuery {
+                ns: Some("personal".into()),
+                recursive: Some(false),
+            }),
+        )
+        .await;
+        assert!(matches!(conflict, Err(ApiError::Conflict(_))));
+
+        let removed = delete_folder(
+            State(state),
+            Path(folder.0.folder_id),
+            Query(VaultDeleteFolderQuery {
+                ns: Some("personal".into()),
+                recursive: Some(true),
+            }),
+        )
+        .await
+        .expect("recursive delete succeeds");
+        assert!(removed.0.success);
+    }
+
+    #[tokio::test]
+    async fn rename_or_move_file_updates_filename_and_rejects_empty_update() {
+        let _env_lock = crate::vault::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = TestVaultBase::set(temp.path());
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let owner_did = resolve_caller_did(&test_state(&temp), &None);
+        let record =
+            ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "old-name.txt").await;
+        let state = test_state(&temp);
+
+        let renamed = rename_or_move_file(
+            State(state.clone()),
+            None,
+            Path(record.vault_id.clone()),
+            Json(UpdateFileRequest {
+                filename: Some("new-name.txt".into()),
+                folder_id: None,
+            }),
+        )
+        .await
+        .expect("rename succeeds");
+        assert_eq!(renamed.0.filename, "new-name.txt");
+
+        let no_op = rename_or_move_file(
+            State(state),
+            None,
+            Path(record.vault_id),
+            Json(UpdateFileRequest {
+                filename: None,
+                folder_id: None,
+            }),
+        )
+        .await;
+        assert!(matches!(no_op, Err(ApiError::BadRequest(_))));
+    }
+
+    #[tokio::test]
+    async fn delete_file_removes_record_from_listing() {
+        let _env_lock = crate::vault::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = TestVaultBase::set(temp.path());
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let owner_did = resolve_caller_did(&test_state(&temp), &None);
+        let record =
+            ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "delete-me.txt").await;
+        let state = test_state(&temp);
+
+        let deleted = delete_file(State(state.clone()), None, Path(record.vault_id.clone()))
+            .await
+            .expect("delete_file succeeds");
+        assert!(deleted.0.success);
+
+        let after = detail(State(state), None, Path(record.vault_id)).await;
+        assert!(matches!(after, Err(ApiError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn toggle_star_flips_by_default_and_accepts_explicit_value() {
+        let _env_lock = crate::vault::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = TestVaultBase::set(temp.path());
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let owner_did = resolve_caller_did(&test_state(&temp), &None);
+        let record =
+            ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "star-me.txt").await;
+        let state = test_state(&temp);
+
+        let starred = toggle_star(State(state.clone()), None, Path(record.vault_id.clone()), None)
+            .await
+            .expect("toggle_star succeeds");
+        assert!(starred.0.starred);
+
+        let unstarred = toggle_star(
+            State(state),
+            None,
+            Path(record.vault_id),
+            Some(Json(ToggleStarRequest {
+                starred: Some(false),
+            })),
+        )
+        .await
+        .expect("toggle_star succeeds");
+        assert!(!unstarred.0.starred);
+    }
+
+    #[tokio::test]
+    async fn preview_reports_not_previewable_for_unsupported_mime() {
+        let _env_lock = crate::vault::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = TestVaultBase::set(temp.path());
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let owner_did = resolve_caller_did(&test_state(&temp), &None);
+        let mut record =
+            ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "archive.zip").await;
+        record.mime = "application/zip".to_string();
+        let config = VaultConfig::from_env();
+        persistence::save_record(&config, &record)
+            .await
+            .expect("save record with unsupported mime");
+        let state = test_state(&temp);
+
+        let response = preview(State(state), None, Path(record.vault_id))
+            .await
+            .expect("preview succeeds")
+            .into_response();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        let body: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("preview metadata JSON");
+        assert_eq!(body["previewable"], false);
+    }
+
+    #[tokio::test]
+    async fn revoke_then_restore_round_trip() {
+        let _env_lock = crate::vault::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = TestVaultBase::set(temp.path());
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let owner_did = resolve_caller_did(&test_state(&temp), &None);
+        let record =
+            ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "sensitive.txt").await;
+        let state = test_state(&temp);
+
+        let revoked = revoke(State(state.clone()), None, Path(record.vault_id.clone()))
+            .await
+            .expect("revoke succeeds");
+        assert!(revoked.0.revoked);
+
+        let restored = restore(State(state), None, Path(record.vault_id))
+            .await
+            .expect("restore succeeds");
+        assert!(!restored.0.revoked);
+        assert!(restored.0.revoked_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn set_expiry_updates_and_rejects_past_or_malformed_timestamps() {
+        let _env_lock = crate::vault::lock_test_env().await;
+        let temp = TempDir::new().expect("tempdir");
+        let _base = TestVaultBase::set(temp.path());
+        let _profile = crate::vault::wrapper::test_force_runtime_profile(
+            crate::vault::wrapper::RuntimeProfile::Docker,
+        );
+        let owner_did = resolve_caller_did(&test_state(&temp), &None);
+        let record =
+            ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "expiring.txt").await;
+        let state = test_state(&temp);
+
+        let malformed = set_expiry(
+            State(state.clone()),
+            None,
+            Path(record.vault_id.clone()),
+            Json(SetExpiryRequest {
+                expires_at: Some("not-a-timestamp".into()),
+            }),
+        )
+        .await;
+        assert!(matches!(malformed, Err(ApiError::BadRequest(_))));
+
+        let in_the_past = set_expiry(
+            State(state.clone()),
+            None,
+            Path(record.vault_id.clone()),
+            Json(SetExpiryRequest {
+                expires_at: Some((chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339()),
+            }),
+        )
+        .await;
+        assert!(matches!(in_the_past, Err(ApiError::BadRequest(_))));
+
+        let future = (chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339();
+        let updated = set_expiry(
+            State(state),
+            None,
+            Path(record.vault_id),
+            Json(SetExpiryRequest {
+                expires_at: Some(future.clone()),
+            }),
+        )
+        .await
+        .expect("set_expiry succeeds");
+        assert_eq!(updated.0.expires_at, Some(future));
+    }
 }

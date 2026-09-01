@@ -806,4 +806,171 @@ mod tests {
         };
         assert!(message.contains("unsupported transport"));
     }
+
+    fn test_state(temp: &tempfile::TempDir) -> Arc<crate::api::state::AppState> {
+        crate::api::state::AppState::for_tests(
+            temp.path(),
+            "nodeA",
+            temp.path().join("config").to_string_lossy().to_string(),
+        )
+    }
+
+    #[tokio::test]
+    async fn gossip_status_reports_defaults_with_no_local_crl() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let response = gossip_status(State(test_state(&temp)))
+            .await
+            .expect("gossip_status succeeds");
+        assert_eq!(response.0.entries, 0);
+        assert_eq!(response.0.propagated, 0);
+        assert_eq!(response.0.sequence, 0);
+    }
+
+    #[tokio::test]
+    async fn emergency_status_reports_defaults() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let response = emergency_status(State(test_state(&temp)))
+            .await
+            .expect("emergency_status succeeds");
+        assert!(response.0.last_notice.is_none());
+    }
+
+    #[tokio::test]
+    async fn emergency_notifications_returns_empty_feed() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let response = emergency_notifications(State(test_state(&temp)))
+            .await
+            .expect("emergency_notifications succeeds");
+        assert!(response.0.is_empty());
+    }
+
+    #[tokio::test]
+    async fn offline_status_reports_defaults() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let response = offline_status(State(test_state(&temp)))
+            .await
+            .expect("offline_status succeeds");
+        assert_eq!(response.0.pending, 0);
+    }
+
+    #[tokio::test]
+    async fn offline_pending_returns_empty_list_with_no_queue() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let response = offline_pending(State(test_state(&temp)))
+            .await
+            .expect("offline_pending succeeds");
+        assert_eq!(response.0["count"], 0);
+    }
+
+    #[tokio::test]
+    async fn emergency_broadcast_rejects_empty_did() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let error = emergency_broadcast(
+            State(test_state(&temp)),
+            axum::extract::Query(EmergencyBroadcastQuery { did: "  ".into() }),
+        )
+        .await
+        .expect_err("empty did is rejected");
+        assert!(matches!(error, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn emergency_broadcast_returns_404_with_no_local_crl() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let error = emergency_broadcast(
+            State(test_state(&temp)),
+            axum::extract::Query(EmergencyBroadcastQuery {
+                did: "did:guardian:someone".into(),
+            }),
+        )
+        .await
+        .expect_err("no local CRL yet");
+        assert!(matches!(error, ApiError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn entry_and_check_reject_empty_query_values() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let entry_error = entry(
+            State(test_state(&temp)),
+            Query(EntryQuery { id: "  ".into() }),
+        )
+        .await
+        .expect_err("empty id is rejected");
+        assert!(matches!(entry_error, ApiError::BadRequest(_)));
+
+        let check_error = check(
+            State(test_state(&temp)),
+            Query(CheckQuery { did: "  ".into() }),
+        )
+        .await
+        .expect_err("empty did is rejected");
+        assert!(matches!(check_error, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn revoke_and_unrevoke_reject_empty_did_before_shelling_out() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let revoke_error = revoke(
+            State(test_state(&temp)),
+            Json(RevokeCrlRequest {
+                did: "   ".into(),
+                reason: "test".into(),
+                severity: "low".into(),
+                device_id: None,
+                user_id: None,
+                note: None,
+                audit_ref: None,
+                attestation_ref: None,
+                evidence_digest: None,
+            }),
+        )
+        .await
+        .expect_err("empty did is rejected");
+        assert!(matches!(revoke_error, ApiError::BadRequest(_)));
+
+        let unrevoke_error = unrevoke(
+            State(test_state(&temp)),
+            Json(UnrevokeCrlRequest { did: "   ".into() }),
+        )
+        .await
+        .expect_err("empty did is rejected");
+        assert!(matches!(unrevoke_error, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn list_entry_check_verify_and_root_surface_missing_cli_as_internal_error() {
+        // No `sgx-pa-cli` binary is built/reachable in this sandbox (and no
+        // `SGX_PA_CLI_PATH` override is set), so every handler that shells
+        // out to it deterministically fails the same way
+        // (`ApiError::Internal`) rather than ever reaching CRL logic.
+        let temp = tempfile::TempDir::new().expect("tempdir");
+
+        let list_error = list(State(test_state(&temp))).await.expect_err("no CLI");
+        assert!(matches!(list_error, ApiError::Internal(_)));
+
+        let entry_error = entry(
+            State(test_state(&temp)),
+            Query(EntryQuery { id: "abc".into() }),
+        )
+        .await
+        .expect_err("no CLI");
+        assert!(matches!(entry_error, ApiError::Internal(_)));
+
+        let check_error = check(
+            State(test_state(&temp)),
+            Query(CheckQuery {
+                did: "did:guardian:someone".into(),
+            }),
+        )
+        .await
+        .expect_err("no CLI");
+        assert!(matches!(check_error, ApiError::Internal(_)));
+
+        let verify_error = verify(State(test_state(&temp))).await.expect_err("no CLI");
+        assert!(matches!(verify_error, ApiError::Internal(_)));
+
+        let root_error = root(State(test_state(&temp))).await.expect_err("no CLI");
+        assert!(matches!(root_error, ApiError::Internal(_)));
+    }
 }
