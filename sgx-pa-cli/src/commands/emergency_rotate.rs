@@ -354,3 +354,38 @@ fn write_audit_log(entries: &[String]) {
         Err(e) => eprintln!("\n  Failed to write audit log: {}", e),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{rotate_dkp, rotate_software_key, rotate_tls_cert, run, write_audit_log};
+
+    #[test]
+    fn run_completes_without_panicking_when_every_resource_is_absent() {
+        // None of METADATA_PATH/AGENT_DIR/AUDIT_LOG_PATH exist in this sandbox (all under
+        // /var/lib or /var/log, unwritable without root), so this exercises the full "nothing
+        // found, skip everything, still print a summary" path deterministically and safely —
+        // `run()` never calls `std::process::exit`, so it's safe to call in-process.
+        run();
+    }
+
+    #[test]
+    fn rotate_dkp_returns_false_when_metadata_file_is_absent() {
+        assert!(!rotate_dkp(true));
+        assert!(!rotate_dkp(false));
+    }
+
+    #[test]
+    fn rotate_software_key_returns_false_when_agent_dir_is_absent() {
+        assert!(!rotate_software_key());
+    }
+
+    #[test]
+    fn rotate_tls_cert_returns_false_when_agent_dir_is_absent() {
+        assert!(!rotate_tls_cert());
+    }
+
+    #[test]
+    fn write_audit_log_does_not_panic_when_the_log_directory_cannot_be_created() {
+        write_audit_log(&["entry one".to_string(), "entry two".to_string()]);
+    }
+}

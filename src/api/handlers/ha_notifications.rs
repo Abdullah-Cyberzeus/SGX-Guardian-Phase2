@@ -237,4 +237,67 @@ mod tests {
             .iter()
             .all(|record| record.id != unique));
     }
+
+    #[tokio::test]
+    async fn handlers_use_a_real_notification_manager_when_one_is_installed() {
+        let temp = tempfile::tempdir().expect("state directory");
+        let state = AppState::for_tests(temp.path(), "nodeA", temp.path().to_string_lossy());
+
+        let manager = std::sync::Arc::new(crate::notification::manager::NotificationManager::load_or_create(
+            temp.path().join("notifications.json"),
+            None,
+        ));
+        let record = manager
+            .create_notification("Real manager", "installed", "warning")
+            .await;
+        state.notification_manager.write().await.replace(manager);
+
+        let response = list_notifications(
+            State(state.clone()),
+            Query(NotificationQueryParams {
+                unread: None,
+                severity: None,
+                pagination: PaginationParams {
+                    page: None,
+                    per_page: None,
+                },
+            }),
+        )
+        .await
+        .expect("list notifications")
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["id"] == record.id));
+
+        let response = mark_notifications_read(
+            State(state.clone()),
+            Json(MarkReadPayload {
+                notification_ids: vec![record.id.clone()],
+            }),
+        )
+        .await
+        .expect("mark read")
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["marked_read_count"], 1);
+
+        let mgr = state.get_notification_manager().await.expect("manager");
+        assert!(mgr
+            .list_notifications(true, None)
+            .await
+            .iter()
+            .all(|n| n.id != record.id));
+    }
 }

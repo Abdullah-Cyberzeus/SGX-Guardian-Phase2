@@ -250,4 +250,52 @@ rules:
             sgx_guardian_client::policy::canonical_policy_digest(&parsed)
         );
     }
+
+    // ── cmd_recompute: pure, no network ──────────────────────────────────
+
+    #[test]
+    fn cmd_recompute_computes_a_deterministic_vid_from_valid_hex_inputs() {
+        super::cmd_recompute(super::VidRecomputeArgs {
+            did: "did:guardian:test".to_string(),
+            dkp_pub_hex: "04".to_string() + &"11".repeat(64),
+            pcr_digest_hex: "22".repeat(32),
+            policy_digest_hex: "33".repeat(32),
+            nonce_i_hex: "44".repeat(16),
+            nonce_r_hex: "55".repeat(16),
+        })
+        .expect("well-formed hex inputs must compute a VID");
+    }
+
+    #[test]
+    fn cmd_recompute_rejects_invalid_hex() {
+        super::cmd_recompute(super::VidRecomputeArgs {
+            did: "did:guardian:test".to_string(),
+            dkp_pub_hex: "not-hex".to_string(),
+            pcr_digest_hex: "22".repeat(32),
+            policy_digest_hex: "33".repeat(32),
+            nonce_i_hex: String::new(),
+            nonce_r_hex: String::new(),
+        })
+        .expect_err("invalid hex must fail");
+    }
+
+    // ── cmd_show / cmd_peers: real reqwest calls against a port nothing listens on, so
+    // the connection is refused immediately — no real network dependency, no hang risk.
+
+    #[test]
+    fn cmd_show_fails_fast_when_the_api_is_unreachable() {
+        let result = super::cmd_show(super::VidShowArgs {
+            node: "nodeA".to_string(),
+            api: "http://127.0.0.1:1".to_string(),
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cmd_peers_fails_fast_when_the_api_is_unreachable() {
+        let result = super::cmd_peers(super::VidPeersArgs {
+            api: "http://127.0.0.1:1".to_string(),
+        });
+        assert!(result.is_err());
+    }
 }

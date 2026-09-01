@@ -232,3 +232,16 @@ pub fn run() {
     println!("\n  DID Document will be re-signed on the daemon's next refresh tick");
     println!("  (within ~30 s). Restart only required if no daemon is running.");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::run;
+
+    #[test]
+    fn run_reports_missing_dkp_metadata_and_does_not_panic() {
+        // /var/lib/sgx-guardian/keys/dkp_metadata.json genuinely doesn't exist in this
+        // sandbox and has no override, so this deterministically exercises the very first
+        // guard clause. run() never calls std::process::exit, so this is safe in-process.
+        run();
+    }
+}

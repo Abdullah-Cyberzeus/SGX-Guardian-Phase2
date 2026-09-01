@@ -498,4 +498,49 @@ mod tests {
         );
         assert!(resolve_active_interface(&[], None).is_none());
     }
+
+    // ── run_list / run_show / run_stats: real /sys/class/net, no exit() calls ──
+
+    #[test]
+    fn run_list_against_real_interfaces_does_not_panic() {
+        run_list(TransportListArgs {
+            node: "nodeA".to_string(),
+        });
+    }
+
+    #[test]
+    fn run_show_against_real_interfaces_does_not_panic() {
+        run_show(TransportListArgs {
+            node: "nodeA".to_string(),
+        });
+    }
+
+    #[test]
+    fn run_stats_against_real_interfaces_does_not_panic() {
+        run_stats(TransportListArgs {
+            node: "nodeA".to_string(),
+        });
+    }
+
+    #[test]
+    fn run_unlock_reports_no_lock_present_for_a_valid_node_when_absent() {
+        // /var/lib/sgx-guardian/cot genuinely doesn't exist in this sandbox, so the lock
+        // file can't exist either — run_unlock's "nothing to do" branch never calls exit().
+        run_unlock(TransportUnlockArgs {
+            node: "node-test-transport".to_string(),
+        });
+    }
+
+    #[test]
+    fn detect_interfaces_reads_the_real_sys_class_net_tree_without_panicking() {
+        // Whatever real interfaces this sandbox has (at least loopback), this must not panic,
+        // and "lo" must always be filtered out.
+        let interfaces = detect_interfaces();
+        assert!(!interfaces.iter().any(|i| i.name == "lo"));
+    }
+
+    #[test]
+    fn read_transport_lock_is_none_when_the_lock_dir_is_absent() {
+        assert_eq!(read_transport_lock("node-test-transport-2"), None);
+    }
 }

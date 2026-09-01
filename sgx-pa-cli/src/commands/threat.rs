@@ -302,6 +302,81 @@ mod tests {
             serde_json::from_slice(&fs::read(path).expect("saved file")).expect("valid JSON");
         assert!(parsed.is_empty());
     }
+
+    // ── cmd_* : none of these call std::process::exit, so all are safe in-process.
+    // Every hardcoded path (THREAT_CFG_PATH/ALERTS_PATH/BLOCKS_PATH) genuinely doesn't exist
+    // in this sandbox, giving real, deterministic "absent" branches.
+
+    #[test]
+    fn cmd_status_succeeds_with_defaults_when_nothing_is_configured() {
+        cmd_status().expect("status always succeeds, falling back to defaults");
+    }
+
+    #[test]
+    fn cmd_alerts_errors_when_alerts_file_is_absent() {
+        let err = cmd_alerts(AlertsArgs {
+            limit: 50,
+            severity: None,
+        })
+        .expect_err("no alerts.jsonl in this sandbox");
+        assert!(err.to_string().contains("no alerts.jsonl yet"));
+    }
+
+    #[test]
+    fn cmd_blocks_reports_no_active_blocks_when_absent() {
+        cmd_blocks().expect("blocks always succeeds, falling back to empty");
+    }
+
+    #[test]
+    fn cmd_block_rejects_an_invalid_ip_before_any_file_access() {
+        let err = cmd_block(BlockArgs {
+            ip: "not-an-ip".to_string(),
+        })
+        .expect_err("invalid IP");
+        assert!(err.to_string().contains("not a valid IP address"));
+    }
+
+    #[test]
+    fn cmd_block_with_a_valid_ip_fails_on_the_unwritable_state_directory() {
+        // /var/lib/sgx-guardian/threat can't be created without root, so save_block_records
+        // fails deterministically after the (successful) validation step.
+        let result = cmd_block(BlockArgs {
+            ip: "203.0.113.77".to_string(),
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cmd_unblock_reports_not_currently_blocked_when_the_block_list_is_absent() {
+        let err = cmd_unblock(UnblockArgs {
+            ip: "203.0.113.78".to_string(),
+        })
+        .expect_err("nothing is blocked in this sandbox");
+        assert!(err.to_string().contains("is not currently blocked"));
+    }
+
+    #[test]
+    fn cmd_rules_update_fails_deterministically_without_suricata_update_installed() {
+        assert!(cmd_rules_update().is_err());
+    }
+
+    #[test]
+    fn cmd_validate_fails_deterministically_without_suricata_installed() {
+        assert!(cmd_validate().is_err());
+    }
+
+    #[test]
+    fn flush_threat_chain_fails_deterministically_when_nft_is_not_installed() {
+        // `nft` genuinely doesn't exist in this sandbox (confirmed separately), so this
+        // reaches the `ErrorKind::NotFound` mapping rather than a real firewall mutation.
+        let err = flush_threat_chain().expect_err("nft is not installed");
+        assert!(err.to_string().contains("nft binary not found"));
+    }
+
+    #[test]
+    fn ensure_threat_table_does_not_panic_when_nft_is_not_installed() {
+        ensure_threat_table().expect("ensure_threat_table swallows nft errors");
+    }
 }
 
 fn ensure_threat_table() -> Result<()> {

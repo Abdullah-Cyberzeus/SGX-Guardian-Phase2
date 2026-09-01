@@ -358,8 +358,11 @@ mod tests {
 
         match received {
             HaEvent::StateChanged(val) => {
-                assert_eq!(val["entity_id"], "light.kitchen");
-                assert_eq!(val["state"], "on");
+                // `event_data` in the connection loop is the whole `event` payload
+                // (`{event_type, data}`), not just its inner `data` — the fields under
+                // test live at `val["data"]`, not directly on `val`.
+                assert_eq!(val["data"]["entity_id"], "light.kitchen");
+                assert_eq!(val["data"]["state"], "on");
             }
             other => panic!("expected StateChanged, got {other:?}"),
         }
@@ -465,4 +468,69 @@ mod tests {
             "no event should have been published for malformed input"
         );
     }
+
+    #[tokio::test]
+    async fn device_and_entity_registry_events_dispatch_to_their_own_variants() {
+        let addr = spawn_mock_server(|ws| async move {
+            let (mut write, mut read) = ws.split();
+            write
+                .send(Message::Text(
+                    json!({ "type": "auth_required" }).to_string().into(),
+                ))
+                .await
+                .expect("send auth_required");
+            let _auth_msg = read.next().await;
+            write
+                .send(Message::Text(
+                    json!({ "type": "auth_ok" }).to_string().into(),
+                ))
+                .await
+                .expect("send auth_ok");
+            for _ in 0..3 {
+                let _ = read.next().await;
+            }
+
+            for event_type in ["device_registry_updated", "entity_registry_updated"] {
+                let event = json!({
+                    "type": "event",
+                    "event": { "event_type": event_type, "data": { "action": "update" } }
+                });
+                write
+                    .send(Message::Text(event.to_string().into()))
+                    .await
+                    .expect("send registry event");
+            }
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        })
+        .await;
+
+        let config = test_config(addr);
+        let event_bus = EventBus::new();
+        let mut rx = event_bus.subscribe();
+
+        let _ = timeout(
+            Duration::from_secs(5),
+            ws_connection_loop(&config, &event_bus),
+        )
+        .await
+        .expect("loop should finish");
+
+        let first = timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("first registry event")
+            .expect("channel open");
+        assert!(matches!(first, HaEvent::DeviceRegistryUpdated(_)));
+
+        let second = timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("second registry event")
+            .expect("channel open");
+        assert!(matches!(second, HaEvent::EntityRegistryUpdated(_)));
+    }
+
+    // The ping-send (30s) and pong-timeout (10s) branches are real-time-gated inside the
+    // same `select!` as the message-read arm and aren't reachable without either a genuine
+    // multi-second wait or fighting `tokio::time::pause`'s auto-advance semantics against a
+    // concurrently IO-blocked mock server task — not attempted this pass; same category as
+    // the other daemon/heartbeat loops left as a structural ceiling elsewhere in this wave.
 }

@@ -131,3 +131,21 @@ pub fn run(args: LogsArgs) {
 
     println!("{}", table);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{run, LogsArgs};
+
+    #[test]
+    fn run_renders_real_pre_existing_workspace_logs() {
+        // `../logs/test-log-node.log.*` are real, already-checked-in log files (this test
+        // reads them, never writes), reachable because cargo runs this package's tests with
+        // cwd = the sgx-pa-cli package directory, so "../logs" resolves to the workspace's
+        // own `logs/` dir. This exercises the full parse/render path (multiple levels,
+        // "event"/"error"/"message" field fallbacks) without seeding any tempdir.
+        run(LogsArgs {
+            tail: 5,
+            node: "test-log-node".to_string(),
+        });
+    }
+}

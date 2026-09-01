@@ -488,7 +488,112 @@ fn normalize_p256_pubkey(pubkey_der_or_raw: &[u8]) -> &[u8] {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_p256_pubkey;
+    use super::{run_generate, run_verify, GenerateQuoteArgs, VerifyQuoteArgs};
+    use super::{find_pcr_snapshot, has_ssscli, normalize_p256_pubkey, read_signing_pubkey_b64};
+
+    // ── argument validation (safe: returns before any file I/O) ─────────────
+
+    #[test]
+    fn run_generate_rejects_a_too_short_nonce() {
+        run_generate(GenerateQuoteArgs {
+            nonce: "deadbeef".to_string(),
+        });
+    }
+
+    #[test]
+    fn run_generate_rejects_a_non_hex_nonce() {
+        run_generate(GenerateQuoteArgs {
+            nonce: "z".repeat(64),
+        });
+    }
+
+    #[test]
+    fn run_generate_with_a_valid_nonce_reports_missing_pcr_snapshot() {
+        // /var/lib/sgx-guardian/pcr genuinely doesn't exist in this sandbox (unwritable
+        // without root), so find_pcr_snapshot() deterministically returns None here.
+        run_generate(GenerateQuoteArgs {
+            nonce: "a".repeat(64),
+        });
+    }
+
+    #[test]
+    fn run_verify_rejects_a_too_short_nonce() {
+        run_verify(VerifyQuoteArgs {
+            quote: "irrelevant.json".to_string(),
+            nonce: "abc".to_string(),
+            baseline: None,
+            no_baseline: false,
+        });
+    }
+
+    #[test]
+    fn run_verify_rejects_a_non_hex_nonce() {
+        run_verify(VerifyQuoteArgs {
+            quote: "irrelevant.json".to_string(),
+            nonce: "g".repeat(64),
+            baseline: None,
+            no_baseline: false,
+        });
+    }
+
+    #[test]
+    fn run_verify_reports_a_missing_quote_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        run_verify(VerifyQuoteArgs {
+            quote: temp
+                .path()
+                .join("does-not-exist.json")
+                .to_string_lossy()
+                .to_string(),
+            nonce: "a".repeat(64),
+            baseline: None,
+            no_baseline: false,
+        });
+    }
+
+    #[test]
+    fn run_verify_reports_invalid_quote_json() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("quote.json");
+        std::fs::write(&path, "not valid json").expect("write");
+        run_verify(VerifyQuoteArgs {
+            quote: path.to_string_lossy().to_string(),
+            nonce: "a".repeat(64),
+            baseline: None,
+            no_baseline: false,
+        });
+    }
+
+    #[test]
+    fn run_verify_reports_invalid_inner_quote_json() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("quote.json");
+        std::fs::write(&path, r#"{"quote_json": "not json", "signature_b64": ""}"#)
+            .expect("write");
+        run_verify(VerifyQuoteArgs {
+            quote: path.to_string_lossy().to_string(),
+            nonce: "a".repeat(64),
+            baseline: None,
+            no_baseline: false,
+        });
+    }
+
+    // ── pure/deterministic helpers ────────────────────────────────────────────
+
+    #[test]
+    fn find_pcr_snapshot_returns_none_when_pcr_dir_is_absent() {
+        assert_eq!(find_pcr_snapshot(), None);
+    }
+
+    #[test]
+    fn has_ssscli_is_false_when_the_binary_is_not_installed() {
+        assert!(!has_ssscli());
+    }
+
+    #[test]
+    fn read_signing_pubkey_b64_is_empty_when_no_key_is_present() {
+        assert_eq!(read_signing_pubkey_b64(), "");
+    }
 
     #[test]
     fn normalize_strips_spki_header_when_91_bytes() {

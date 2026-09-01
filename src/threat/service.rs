@@ -433,4 +433,13 @@ mod tests {
             .expect_err("invalid ttl must fail validation");
         assert!(matches!(err, crate::threat::ThreatError::BadConfig(_)));
     }
+
+    #[tokio::test]
+    async fn stop_suricata_when_disabled_is_a_safe_noop_when_the_service_is_not_active() {
+        // `systemctl is-active --quiet suricata` genuinely returns "not
+        // active" in this sandbox (no such service installed), so this
+        // exercises the real query without ever reaching the destructive
+        // "systemctl stop" branch -- safe to run directly, no mocking.
+        stop_suricata_when_disabled().await;
+    }
 }

@@ -405,15 +405,19 @@ async fn async_history_replay_and_read_helpers_round_trip_files() {
     let _env = NotifyEnv::new("nodeA", 45);
     let config = NotifyConfig::from_env();
     let mut store = NotificationStore::default();
-    store.append(sample_event("async-1", NotificationKind::AlertLow), 10);
-    store.append(sample_event("async-2", NotificationKind::AlertHigh), 10);
+    // `replay_after`'s cursor only works against numeric ids (its own id space, produced by
+    // `next_event_id()`) — a non-numeric id falls back to "replay everything" by design, so
+    // this must use numeric-looking ids to actually exercise the cursor-filtering behavior
+    // rather than always hitting that fallback.
+    store.append(sample_event("9001", NotificationKind::AlertLow), 10);
+    store.append(sample_event("9002", NotificationKind::AlertHigh), 10);
     store
         .save_atomic(&config.events_path())
         .expect("save notifications");
 
     assert_eq!(
         super::history(Some(1)).await.expect("history")[0].id,
-        "async-2"
+        "9002"
     );
     assert_eq!(super::unread_count().await.expect("unread"), 2);
     assert_eq!(
@@ -421,7 +425,7 @@ async fn async_history_replay_and_read_helpers_round_trip_files() {
         Vec::<NotificationEvent>::new()
     );
     assert_eq!(
-        super::replay_after(Some("async-1"))
+        super::replay_after(Some("9001"))
             .await
             .expect("replay")
             .len(),
@@ -432,11 +436,47 @@ async fn async_history_replay_and_read_helpers_round_trip_files() {
         (false, 2)
     );
     assert_eq!(
-        super::mark_read("async-1").await.expect("mark one"),
+        super::mark_read("9001").await.expect("mark one"),
         (true, 1)
     );
     assert_eq!(super::mark_all_read().await.expect("mark all"), (1, 0));
     assert_eq!(super::mark_all_read().await.expect("mark none"), (0, 0));
+}
+
+#[tokio::test]
+async fn spawn_persists_published_events_to_disk() {
+    let env = NotifyEnv::new("nodeA", 46);
+    let config = NotifyConfig::from_env();
+
+    super::spawn(env.node_id.clone());
+    // `spawn` only schedules its listener task; give it a turn to reach `bus::subscribe()`
+    // before publishing, since a broadcast receiver only sees events sent after it subscribes.
+    tokio::task::yield_now().await;
+
+    let ref_id = "spawn-persist-test-1";
+    bus::publish(NotificationEvent {
+        ref_id: Some(ref_id.to_string()),
+        ..sample_event("9101", NotificationKind::AlertLow)
+    });
+
+    // The persistence loop writes asynchronously (via spawn_blocking off the broadcast
+    // receiver), so poll briefly rather than assuming it has landed immediately.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let store = NotificationStore::load_from_path(&config.events_path(), config.max_events)
+            .expect("load persisted store");
+        if store
+            .history(100)
+            .iter()
+            .any(|event| event.ref_id.as_deref() == Some(ref_id))
+        {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!("event was never persisted to disk by notify::spawn's listener");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
 
 fn sample_device() -> crate::discovery::ConnectedDevice {

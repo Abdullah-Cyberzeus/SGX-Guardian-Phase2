@@ -187,3 +187,93 @@ pub fn run(args: AuditVerifyArgs) {
         std::process::exit(1);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_audit_log_path, run, AuditVerifyArgs};
+    use sgx_guardian_client::audit::event::{AuditAction, AuditCategory, AuditEvent, AuditSeverity};
+    use sgx_guardian_client::audit::hasher::AuditHashChain;
+
+    // Only the fully-valid (non-tampered) scenario avoids run()'s std::process::exit(1), so
+    // that's the one case tested in-process; every tamper/error scenario is exercised via
+    // `sgx-pa-cli/tests/audit_verify_cli_test.rs` instead.
+    const AUDIT_LOG_ENV: &str = "SGX_GUARDIAN_AUDIT_LOG_PATH";
+
+    fn genuine_chain_log() -> String {
+        let mut chain = AuditHashChain::new();
+        let mut lines = Vec::new();
+        for i in 0..3u64 {
+            let event = AuditEvent::new(
+                "nodeA".to_string(),
+                AuditCategory::Node,
+                AuditSeverity::Info,
+                AuditAction::Succeeded,
+                format!("test event {i}"),
+            );
+            let payload = serde_json::to_string(&event).unwrap();
+            let prev = chain.last_hash().to_string();
+            let hash = chain.next_hash(&payload);
+            lines.push(
+                serde_json::json!({
+                    "event": event,
+                    "previous_hash": prev,
+                    "hash": hash,
+                })
+                .to_string(),
+            );
+        }
+        lines.join("\n")
+    }
+
+    #[test]
+    fn run_verifies_a_genuinely_valid_hash_chain() {
+        let _guard = crate::test_support::AUDIT_LOG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("audit.log");
+        std::fs::write(&path, genuine_chain_log()).expect("write audit log");
+        let old = std::env::var_os(AUDIT_LOG_ENV);
+        std::env::set_var(AUDIT_LOG_ENV, &path);
+
+        run(AuditVerifyArgs {
+            node: "nodeA".to_string(),
+        });
+
+        match old {
+            Some(value) => std::env::set_var(AUDIT_LOG_ENV, value),
+            None => std::env::remove_var(AUDIT_LOG_ENV),
+        }
+    }
+
+    #[test]
+    fn resolve_audit_log_path_uses_the_env_override_when_present() {
+        let _guard = crate::test_support::AUDIT_LOG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("audit.log");
+        std::fs::write(&path, "{}").expect("write");
+        let old = std::env::var_os(AUDIT_LOG_ENV);
+        std::env::set_var(AUDIT_LOG_ENV, &path);
+
+        let resolved = resolve_audit_log_path("nodeA").expect("resolved via env override");
+        assert_eq!(resolved, path);
+
+        match old {
+            Some(value) => std::env::set_var(AUDIT_LOG_ENV, value),
+            None => std::env::remove_var(AUDIT_LOG_ENV),
+        }
+    }
+
+    #[test]
+    fn resolve_audit_log_path_errors_when_nothing_is_found() {
+        let _guard = crate::test_support::AUDIT_LOG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let old = std::env::var_os(AUDIT_LOG_ENV);
+        std::env::remove_var(AUDIT_LOG_ENV);
+
+        let err = resolve_audit_log_path("node-truly-nonexistent")
+            .expect_err("no log file exists in this sandbox");
+        assert!(err.contains("No audit log file found"));
+
+        if let Some(value) = old {
+            std::env::set_var(AUDIT_LOG_ENV, value);
+        }
+    }
+}

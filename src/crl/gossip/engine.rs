@@ -1356,7 +1356,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn run_round_once_fails_when_identity_missing() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let tmp = TempDir::new().expect("tempdir");
         let missing_path = tmp.path().join("no-did.json");
         let _did_guard = EnvGuard::set("SGX_GUARDIAN_DID_PATH", &missing_path);
@@ -1372,7 +1372,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn run_round_once_fails_when_no_active_peers() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let _fx = setup_identity_fixture(
             "engine-round-nopeers",
             "did:guardian:round-local-nopeers0000",
@@ -1392,7 +1392,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn run_round_once_fails_when_chosen_peer_is_unreachable() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let fx = setup_identity_fixture(
             "engine-round-unreachable",
             "did:guardian:round-local-unreachable0000",
@@ -1432,7 +1432,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn exchange_with_peer_fails_when_peer_unreachable() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let fx = setup_identity_fixture(
             "engine-exchange-unreachable",
             "did:guardian:exchange-local-unreachable0000",
@@ -1468,7 +1468,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn exchange_with_peer_fails_when_peer_response_has_error() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let fx = setup_identity_fixture(
             "engine-exchange-resperr",
             "did:guardian:exchange-local-resperr0000",
@@ -1522,7 +1522,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn exchange_with_peer_fails_on_unexpected_response_kind() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let fx = setup_identity_fixture(
             "engine-exchange-badkind",
             "did:guardian:exchange-local-badkind0000",
@@ -1576,7 +1576,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn exchange_with_peer_fails_on_circle_mismatch() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let fx = setup_identity_fixture(
             "engine-exchange-circle",
             "did:guardian:exchange-local-circle0000",
@@ -1629,7 +1629,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn exchange_with_peer_fails_on_sender_identity_mismatch() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let fx = setup_identity_fixture(
             "engine-exchange-identity",
             "did:guardian:exchange-local-identity0000",
@@ -1684,7 +1684,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn exchange_with_peer_fails_when_ack_has_error() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let fx = setup_identity_fixture(
             "engine-exchange-ackerr",
             "did:guardian:exchange-local-ackerr0000",
@@ -1751,7 +1751,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn exchange_with_peer_succeeds_full_round_trip() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let fx = setup_identity_fixture(
             "engine-exchange-happy",
             "did:guardian:exchange-local-happy0000",
@@ -1831,7 +1831,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn handle_inbound_rejects_wrong_message_kind() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let fx = setup_identity_fixture(
             "engine-inbound-kind",
             "did:guardian:inbound-local-kind0000",
@@ -1875,7 +1875,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn handle_inbound_rejects_circle_mismatch() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let fx = setup_identity_fixture(
             "engine-inbound-circle",
             "did:guardian:inbound-local-circle0000",
@@ -1919,7 +1919,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn handle_inbound_rejects_sender_equal_to_local_did() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let fx = setup_identity_fixture(
             "engine-inbound-self",
             "did:guardian:inbound-local-self0000",
@@ -1962,7 +1962,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn handle_inbound_rejects_revoked_sender() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let fx = setup_identity_fixture(
             "engine-inbound-revoked",
             "did:guardian:inbound-local-revoked0000",
@@ -2014,7 +2014,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn handle_inbound_rejects_sender_not_in_peer_directory() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let fx = setup_identity_fixture(
             "engine-inbound-unknown",
             "did:guardian:inbound-local-unknown0000",
@@ -2057,7 +2057,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn handle_inbound_rejects_push_with_wrong_kind() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let fx = setup_identity_fixture(
             "engine-inbound-pushkind",
             "did:guardian:inbound-local-pushkind0000",
@@ -2117,7 +2117,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn handle_inbound_succeeds_full_round_trip() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let fx = setup_identity_fixture(
             "engine-inbound-happy",
             "did:guardian:inbound-local-happy0000",

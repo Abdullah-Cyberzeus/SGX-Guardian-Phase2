@@ -230,6 +230,151 @@ fn cmd_publish(args: PublishArgs) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sgx_guardian_client::did::document::DocBuildInput;
+    use sgx_guardian_client::key_manager::KeyManager;
+
+    // doc_persistence's configured_* helpers read these env vars unconditionally (not gated
+    // behind #[cfg(test)] in the main crate), so sgx-pa-cli's own tests can redirect them to
+    // a tempdir. Process-global, so serialize access via the shared lock in `test_support`
+    // (also used by `pairing.rs`, which touches the same `SGX_GUARDIAN_DID_DOC_PATH`).
+
+    struct DidDocEnv {
+        _guard: std::sync::MutexGuard<'static, ()>,
+        _td: tempfile::TempDir,
+        restore: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
+
+    impl DidDocEnv {
+        fn new() -> (Self, DidDocument) {
+            let guard = crate::test_support::DID_ENV_LOCK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let td = tempfile::tempdir().expect("tempdir");
+            let self_doc_path = td.path().join("did_doc.json");
+            let peers_dir = td.path().join("peers");
+            std::fs::create_dir_all(&peers_dir).expect("peers dir");
+
+            let restore = vec![
+                (
+                    doc_persistence::SELF_DOC_PATH_ENV,
+                    std::env::var_os(doc_persistence::SELF_DOC_PATH_ENV),
+                ),
+                (
+                    doc_persistence::PEERS_DOC_DIR_ENV,
+                    std::env::var_os(doc_persistence::PEERS_DOC_DIR_ENV),
+                ),
+            ];
+            std::env::set_var(doc_persistence::SELF_DOC_PATH_ENV, &self_doc_path);
+            std::env::set_var(doc_persistence::PEERS_DOC_DIR_ENV, &peers_dir);
+
+            let key_path = td.path().join("device.key");
+            let km =
+                KeyManager::load_or_generate(key_path.to_str().expect("key path")).expect("key");
+            let pubkey = km.pubkey_der().expect("pubkey");
+            let did = Did::from_id_bytes(&[7u8; 32]);
+            let did_str = did.to_string();
+            let now = chrono::Utc::now().to_rfc3339();
+            let mut doc = DidDocument::build(DocBuildInput {
+                did: &did_str,
+                node_name: Some("nodeTestDidDoc"),
+                current_dkp_version: 1,
+                current_dkp_pubkey_der: &pubkey,
+                overlay_ip_cidr: Some("127.0.0.1/32"),
+                attestation_bind: None,
+                cert_bootstrap_bind: None,
+                revoked: vec![],
+                previous_version_id: 0,
+                created_at: Some(now),
+                status: Some("active".into()),
+            })
+            .expect("build did doc");
+            let vm_ref = doc.verification_method.first().expect("vm").id.clone();
+            sgx_guardian_client::did::doc_sign::sign_in_place(&mut doc, &km, &vm_ref)
+                .expect("sign did doc");
+
+            (
+                Self {
+                    _guard: guard,
+                    _td: td,
+                    restore,
+                },
+                doc,
+            )
+        }
+    }
+
+    impl Drop for DidDocEnv {
+        fn drop(&mut self) {
+            for (key, value) in self.restore.drain(..) {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cmd_show_prints_a_summary_for_a_real_self_document() {
+        let (_env, doc) = DidDocEnv::new();
+        doc_persistence::save_self(&doc).expect("save self doc");
+        cmd_show();
+    }
+
+    #[test]
+    fn cmd_dump_prints_json_for_a_real_self_document() {
+        let (_env, doc) = DidDocEnv::new();
+        doc_persistence::save_self(&doc).expect("save self doc");
+        cmd_dump();
+    }
+
+    #[test]
+    fn cmd_peers_lists_a_real_cached_peer_document() {
+        let (_env, doc) = DidDocEnv::new();
+        doc_persistence::save_peer(&doc).expect("save peer doc");
+        cmd_peers();
+    }
+
+    #[test]
+    fn cmd_peers_reports_empty_when_no_peers_cached() {
+        let (_env, _doc) = DidDocEnv::new();
+        cmd_peers();
+    }
+
+    #[test]
+    fn cmd_peer_prints_a_summary_for_a_cached_peer() {
+        let (_env, doc) = DidDocEnv::new();
+        doc_persistence::save_peer(&doc).expect("save peer doc");
+        cmd_peer(PeerArgs {
+            did: doc.id.clone(),
+        });
+    }
+
+    #[test]
+    fn cmd_verify_confirms_a_genuinely_signed_self_document() {
+        let (_env, doc) = DidDocEnv::new();
+        doc_persistence::save_self(&doc).expect("save self doc");
+        cmd_verify(VerifyArgs { path: None });
+    }
+
+    #[test]
+    fn cmd_verify_confirms_a_genuinely_signed_document_from_a_file() {
+        let (_env, doc) = DidDocEnv::new();
+        let path = std::env::temp_dir().join(format!(
+            "diddoc-verify-file-test-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, serde_json::to_vec_pretty(&doc).unwrap()).unwrap();
+        cmd_verify(VerifyArgs {
+            path: Some(path.to_string_lossy().to_string()),
+        });
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
 fn print_summary(d: &DidDocument) {
     let mut t = Table::new();
     t.set_header(vec!["Field", "Value"]);

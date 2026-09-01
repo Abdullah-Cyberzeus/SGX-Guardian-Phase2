@@ -389,6 +389,11 @@ mod tests {
     use super::*;
     use ring::rand::SystemRandom;
     use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
+    use std::sync::Mutex;
+
+    // KEY_DIR_ENV is process-global; serialize every test that mutates it so they don't race
+    // under the default multi-threaded test runner.
+    static KEY_DIR_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     struct RingTestSigner {
         keypair: EcdsaKeyPair,
@@ -512,6 +517,7 @@ mod tests {
 
     #[test]
     fn baseline_and_device_paths_handle_node_ids_and_trailing_slashes() {
+        let _guard = KEY_DIR_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(
             baseline_path_for("node-7"),
             "/etc/sgx-guardian/pcr_node-7_baseline.json"
@@ -544,6 +550,47 @@ mod tests {
         match old {
             Some(value) => std::env::set_var(key, value),
             None => std::env::remove_var(key),
+        }
+    }
+
+    #[test]
+    fn run_create_reports_missing_snapshot_and_does_not_panic() {
+        // /var/lib/sgx-guardian/pcr genuinely doesn't exist in this sandbox, so
+        // find_pcr_snapshot() deterministically returns None and run_create() returns early
+        // (it never calls std::process::exit, so this is safe to call in-process).
+        run_create();
+    }
+
+    #[test]
+    fn run_verify_reports_missing_snapshot_and_does_not_panic() {
+        run_verify();
+    }
+
+    #[test]
+    fn find_pcr_snapshot_returns_none_when_the_pcr_dir_is_absent() {
+        assert_eq!(find_pcr_snapshot(), None);
+    }
+
+    #[test]
+    fn load_active_baseline_signer_uses_a_software_key_when_forced() {
+        let _guard = KEY_DIR_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let key_dir = tempfile::tempdir().expect("tempdir");
+        let key_dir_old = std::env::var_os(KEY_DIR_ENV);
+        let force_old = std::env::var_os("SGX_FORCE_SOFTWARE_KEYS");
+        std::env::set_var(KEY_DIR_ENV, key_dir.path());
+        std::env::set_var("SGX_FORCE_SOFTWARE_KEYS", "1");
+
+        let signer = load_active_baseline_signer("node-test-pcr").expect("software signer");
+        assert!(!signer.public_key().is_empty());
+        assert!(signer.dkp_version() >= 1);
+
+        match key_dir_old {
+            Some(value) => std::env::set_var(KEY_DIR_ENV, value),
+            None => std::env::remove_var(KEY_DIR_ENV),
+        }
+        match force_old {
+            Some(value) => std::env::set_var("SGX_FORCE_SOFTWARE_KEYS", value),
+            None => std::env::remove_var("SGX_FORCE_SOFTWARE_KEYS"),
         }
     }
 

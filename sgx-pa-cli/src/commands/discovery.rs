@@ -844,4 +844,177 @@ exclude: []
         let cfg: NmapConfig = serde_yaml::from_str(yaml).expect("legacy config should parse");
         assert_eq!(cfg.ad_hoc_intensity(), ScanIntensity::Aggressive);
     }
+
+    use super::{
+        approve_mac, atomic_write, intensity_name, list_devices, list_runs, load_inventory_file,
+        load_whitelist_file, normalize_mac, normalize_optional_label, parse_intensity,
+        save_whitelist_file, schedule_set, schedule_show, show_whitelist, ApproveArgs, RunsArgs,
+        ScheduleSetArgs, WhitelistFile,
+    };
+    use sgx_guardian_client::discovery::whitelist::WhitelistEntry;
+
+    #[test]
+    fn normalize_mac_trims_and_uppercases() {
+        assert_eq!(normalize_mac("  aa:bb:cc:11:22:33 "), "AA:BB:CC:11:22:33");
+    }
+
+    #[test]
+    fn normalize_optional_label_trims_and_treats_blank_as_none() {
+        assert_eq!(
+            normalize_optional_label(Some("  Office  ".to_string())),
+            Some("Office".to_string())
+        );
+        assert_eq!(normalize_optional_label(Some("   ".to_string())), None);
+        assert_eq!(normalize_optional_label(None), None);
+    }
+
+    #[test]
+    fn parse_intensity_accepts_known_values_and_rejects_unknown() {
+        assert_eq!(parse_intensity("stealth").unwrap(), ScanIntensity::Stealth);
+        assert_eq!(
+            parse_intensity("STANDARD").unwrap(),
+            ScanIntensity::Standard
+        );
+        assert_eq!(
+            parse_intensity(" aggressive ").unwrap(),
+            ScanIntensity::Aggressive
+        );
+        assert!(parse_intensity("bogus").is_err());
+    }
+
+    #[test]
+    fn intensity_name_covers_every_variant() {
+        assert_eq!(intensity_name(ScanIntensity::Stealth), "stealth");
+        assert_eq!(intensity_name(ScanIntensity::Standard), "standard");
+        assert_eq!(intensity_name(ScanIntensity::Aggressive), "aggressive");
+    }
+
+    #[test]
+    fn normalize_excludes_rejects_mixing_clear_with_concrete_values() {
+        let err = normalize_excludes(vec!["none,192.168.1.1".to_string()])
+            .expect_err("mixing clear and concrete values must fail");
+        assert!(err.to_string().contains("cannot mix clear tokens"));
+    }
+
+    #[test]
+    fn normalize_excludes_splits_and_trims_comma_separated_values() {
+        let parsed = normalize_excludes(vec![" 10.0.0.1 , 10.0.0.2".to_string()])
+            .expect("comma-separated values should parse");
+        assert_eq!(parsed, vec!["10.0.0.1", "10.0.0.2"]);
+    }
+
+    #[test]
+    fn load_whitelist_file_defaults_when_absent_or_blank() {
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("missing.yaml");
+        let file = load_whitelist_file(&missing).expect("missing whitelist defaults");
+        assert_eq!(file.version, "1.0");
+        assert!(file.devices.is_empty());
+
+        let blank = temp.path().join("blank.yaml");
+        std::fs::write(&blank, "   \n").unwrap();
+        let file = load_whitelist_file(&blank).expect("blank whitelist defaults");
+        assert!(file.devices.is_empty());
+    }
+
+    #[test]
+    fn whitelist_file_round_trips_through_save_and_load() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("nested").join("whitelist.yaml");
+        let whitelist = WhitelistFile {
+            version: "1.0".to_string(),
+            devices: vec![WhitelistEntry {
+                mac: "AA:BB:CC:11:22:33".to_string(),
+                label: Some("Office printer".to_string()),
+                expected_os: None,
+                expected_ports: Vec::new(),
+                expected_ips: Vec::new(),
+            }],
+        };
+        save_whitelist_file(&path, &whitelist).expect("save whitelist");
+        assert!(!path.with_extension("yaml.tmp").exists());
+
+        let loaded = load_whitelist_file(&path).expect("load saved whitelist");
+        assert_eq!(loaded.devices.len(), 1);
+        assert_eq!(loaded.devices[0].mac, "AA:BB:CC:11:22:33");
+    }
+
+    #[test]
+    fn load_inventory_file_returns_empty_when_absent_or_blank() {
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("missing.json");
+        assert!(load_inventory_file(&missing).unwrap().is_empty());
+
+        let blank = temp.path().join("blank.json");
+        std::fs::write(&blank, "  \n").unwrap();
+        assert!(load_inventory_file(&blank).unwrap().is_empty());
+    }
+
+    #[test]
+    fn atomic_write_creates_parent_dirs_and_leaves_no_tmp_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("a").join("b").join("file.yaml");
+        atomic_write(&path, b"hello").expect("atomic write");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello");
+        assert!(!path.with_extension("yaml.tmp").exists());
+    }
+
+    // ── top-level command entry points: none call std::process::exit, and the hardcoded
+    // /etc/sgx-guardian and /var/lib/sgx-guardian paths genuinely don't exist in this
+    // sandbox, giving real, deterministic branches without any writes outside a tempdir.
+
+    #[test]
+    fn list_devices_reports_no_inventory_when_absent() {
+        list_devices(false).expect("no inventory found is not an error");
+        list_devices(true).expect("no inventory found is not an error (unauthorized-only)");
+    }
+
+    #[test]
+    fn list_runs_reports_no_history_when_absent() {
+        list_runs(RunsArgs { limit: 20 }).expect("no run history is not an error");
+    }
+
+    #[test]
+    fn show_whitelist_succeeds_with_defaults_when_nothing_configured() {
+        show_whitelist().expect("show_whitelist succeeds with defaults");
+    }
+
+    #[test]
+    fn schedule_show_succeeds_with_defaults_when_config_absent() {
+        schedule_show().expect("schedule_show succeeds with defaults");
+    }
+
+    #[test]
+    fn approve_mac_fails_on_the_unwritable_state_directory() {
+        // ensure_dirs() tries /etc/sgx-guardian/discovery first, which can't be created
+        // without root, so this fails deterministically before any real I/O.
+        let result = approve_mac(ApproveArgs {
+            mac: "AA:BB:CC:11:22:33".to_string(),
+            label: None,
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn schedule_set_fails_on_the_unwritable_state_directory() {
+        let result = schedule_set(ScheduleSetArgs {
+            enabled: Some(true),
+            target: None,
+            hourly: None,
+            daily: None,
+            timeout: None,
+            exclude: Vec::new(),
+        });
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn scan_now_fails_on_the_unwritable_state_directory() {
+        let result = super::scan_now(super::ScanArgs {
+            target: None,
+            intensity: None,
+        })
+        .await;
+        assert!(result.is_err());
+    }
 }

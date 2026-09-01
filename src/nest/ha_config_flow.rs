@@ -673,4 +673,81 @@ mod tests {
         let result = client.remove_nest_config_entry("nest_entry_1").await;
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn test_setup_nest_config_entry_missing_client_secret() {
+        let base_url = spawn_queue_server(vec![(
+            200,
+            r#"{"flow_id":"flow_nest_missing_secret"}"#.to_string(),
+        )])
+        .await;
+
+        let mut creds = sample_creds();
+        creds.client_secret = None;
+        std::env::remove_var("SGX_NEST_CLIENT_SECRET");
+
+        let client = NestHaConfigFlowClient::new(base_url, "tok".to_string());
+        let result = client.setup_nest_config_entry(&creds).await;
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("client_secret is required"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_setup_nest_config_entry_top_level_entry_id() {
+        let base_url = spawn_queue_server(vec![
+            (200, r#"{"flow_id":"flow_nest_top_level"}"#.to_string()),
+            (200, r#"{"entry_id":"nest_entry_top_level"}"#.to_string()),
+        ])
+        .await;
+
+        let client = NestHaConfigFlowClient::new(base_url, "tok".to_string());
+        let result = client.setup_nest_config_entry(&sample_creds()).await;
+        let (entry_id, restarted) = result.expect("setup should succeed");
+        assert_eq!(entry_id, "nest_entry_top_level");
+        assert!(!restarted);
+    }
+
+    #[tokio::test]
+    async fn test_wait_for_entry_loaded_returns_true_once_ha_reports_loaded() {
+        let base_url = spawn_queue_server(vec![(
+            200,
+            r#"[{"entry_id":"nest_entry_1","state":"loaded"}]"#.to_string(),
+        )])
+        .await;
+        let client = NestHaConfigFlowClient::new(base_url, "tok".to_string());
+        let ready = client
+            .wait_for_entry_loaded("nest_entry_1", Duration::from_secs(10))
+            .await;
+        assert!(ready);
+    }
+
+    #[tokio::test]
+    async fn test_wait_for_entry_loaded_returns_false_on_terminal_error_state() {
+        let base_url = spawn_queue_server(vec![(
+            200,
+            r#"[{"entry_id":"nest_entry_1","state":"setup_error"}]"#.to_string(),
+        )])
+        .await;
+        let client = NestHaConfigFlowClient::new(base_url, "tok".to_string());
+        let ready = client
+            .wait_for_entry_loaded("nest_entry_1", Duration::from_secs(10))
+            .await;
+        assert!(!ready);
+    }
+
+    #[tokio::test]
+    async fn test_wait_for_entry_loaded_times_out_when_ha_never_responds() {
+        // Port 1 on loopback: nothing listens there, so every poll fails immediately and the
+        // deadline (shorter than the mandatory initial 3s settle sleep) is already passed by
+        // the time the loop would run, so this returns false without a real hang.
+        let client =
+            NestHaConfigFlowClient::new("http://127.0.0.1:1".to_string(), "tok".to_string());
+        let ready = client
+            .wait_for_entry_loaded("nest_entry_1", Duration::from_millis(100))
+            .await;
+        assert!(!ready);
+    }
 }

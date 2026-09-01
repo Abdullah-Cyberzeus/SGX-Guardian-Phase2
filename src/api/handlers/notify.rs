@@ -599,7 +599,13 @@ mod tests {
     #[tokio::test]
     async fn unread_count_route_reflects_store_state() {
         let env = NotifyApiEnv::new("nodeA", 4);
-        notify::publish_device_pending_approval(&sample_device("dev-unread-1", None, None));
+        // `notify::publish_*` only broadcasts to the in-process bus; nothing in this test
+        // environment runs `notify::spawn`'s persistence subscriber, so a bus publish alone
+        // never reaches disk. Seed the store directly, like every other test in this file.
+        seed_persisted_event(
+            "dev-unread-1",
+            notify::model::NotificationKind::DevicePendingApproval,
+        );
 
         let response = env
             .router()
@@ -835,29 +841,6 @@ mod tests {
         assert!(content_type.contains("text/event-stream"));
     }
 
-    fn sample_device(
-        device_id: &str,
-        hostname: Option<&str>,
-        vendor: Option<&str>,
-    ) -> crate::discovery::ConnectedDevice {
-        crate::discovery::ConnectedDevice {
-            device_id: device_id.to_string(),
-            ip: "10.0.0.5".to_string(),
-            mac: None,
-            vendor: vendor.map(str::to_string),
-            hostname: hostname.map(str::to_string),
-            os_fingerprint: None,
-            os_cpe: Vec::new(),
-            open_ports: Vec::new(),
-            host_scripts: Vec::new(),
-            status: crate::discovery::connected_device::DeviceStatus::Unauthorized,
-            first_seen: chrono::Utc::now().to_rfc3339(),
-            last_seen: chrono::Utc::now().to_rfc3339(),
-            vuln_triaged: false,
-            last_scan_intensity: None,
-        }
-    }
-
     #[test]
     fn apply_patch_updates_only_provided_fields() {
         let mut prefs = NotificationPrefs::default();
@@ -1004,5 +987,163 @@ mod tests {
             read: false,
             actor_did: None,
         }
+    }
+
+    fn member_session(sub: &str) -> crate::api::auth::middleware::AuthenticatedSession {
+        crate::api::auth::middleware::AuthenticatedSession {
+            claims: crate::api::auth::session::Claims {
+                sub: sub.to_string(),
+                role: "member".to_string(),
+                scopes: vec![],
+                circle_ids: vec![],
+                browser_registration_id: None,
+                guardian_fingerprint: None,
+                iss: "test".into(),
+                iat: 0,
+                exp: 0,
+                jti: "jti".into(),
+            },
+            token: "test-token".into(),
+        }
+    }
+
+    fn request_as_member(builder: axum::http::request::Builder, sub: &str) -> Request<Body> {
+        let mut request = builder.body(Body::empty()).unwrap();
+        request.extensions_mut().insert(member_session(sub));
+        request
+    }
+
+    #[tokio::test]
+    async fn history_route_filters_out_non_circle_events_for_a_member_session() {
+        let env = NotifyApiEnv::new("nodeA", 14);
+        seed_persisted_event("mem-hist-alert", notify::model::NotificationKind::AlertHigh);
+        seed_persisted_event(
+            "mem-hist-circle",
+            notify::model::NotificationKind::CircleNewMessage,
+        );
+
+        let response = env
+            .router()
+            .oneshot(request_as_member(
+                Request::builder().uri("/api/v1/notifications"),
+                "member-1",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let events: Vec<notify::model::NotificationEvent> =
+            serde_json::from_slice(&body).unwrap();
+        assert!(events.iter().any(|event| event.id == "mem-hist-circle"));
+        assert!(!events.iter().any(|event| event.id == "mem-hist-alert"));
+    }
+
+    #[tokio::test]
+    async fn unread_count_route_counts_only_circle_events_for_a_member_session() {
+        let env = NotifyApiEnv::new("nodeA", 15);
+        seed_persisted_event(
+            "mem-unread-alert",
+            notify::model::NotificationKind::AlertHigh,
+        );
+        seed_persisted_event(
+            "mem-unread-circle",
+            notify::model::NotificationKind::CircleNewMessage,
+        );
+
+        let response = env
+            .router()
+            .oneshot(request_as_member(
+                Request::builder().uri("/api/v1/notifications/unread-count"),
+                "member-1",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let parsed: UnreadCountResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(parsed.unread, 1);
+    }
+
+    #[tokio::test]
+    async fn mark_read_route_forbids_a_member_from_marking_an_out_of_scope_event() {
+        let env = NotifyApiEnv::new("nodeA", 16);
+        seed_persisted_event(
+            "mem-mark-alert",
+            notify::model::NotificationKind::AlertHigh,
+        );
+
+        let response = env
+            .router()
+            .oneshot(request_as_member(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/notifications/mem-mark-alert/read"),
+                "member-1",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn mark_read_route_allows_a_member_to_mark_an_in_scope_event() {
+        let env = NotifyApiEnv::new("nodeA", 17);
+        seed_persisted_event(
+            "mem-mark-circle",
+            notify::model::NotificationKind::CircleNewMessage,
+        );
+
+        let response = env
+            .router()
+            .oneshot(request_as_member(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/notifications/mem-mark-circle/read"),
+                "member-1",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let parsed: MarkReadResponse = serde_json::from_slice(&body).unwrap();
+        assert!(parsed.updated);
+        assert_eq!(parsed.unread, 0);
+    }
+
+    #[tokio::test]
+    async fn mark_all_read_route_only_marks_in_scope_events_for_a_member_session() {
+        let env = NotifyApiEnv::new("nodeA", 18);
+        seed_persisted_event(
+            "mem-all-alert",
+            notify::model::NotificationKind::AlertHigh,
+        );
+        seed_persisted_event(
+            "mem-all-circle",
+            notify::model::NotificationKind::CircleNewMessage,
+        );
+
+        let response = env
+            .router()
+            .oneshot(request_as_member(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/notifications/read-all"),
+                "member-1",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let parsed: MarkAllReadResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(parsed.marked, 1, "only the circle event was in scope");
+        assert_eq!(parsed.unread, 0);
     }
 }

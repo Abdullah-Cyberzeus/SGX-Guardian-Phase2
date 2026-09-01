@@ -229,7 +229,11 @@ fn map_spawn_error(err: std::io::Error) -> ThreatError {
 
 #[cfg(test)]
 mod tests {
-    use super::{command_failure_detail, discover_python_paths};
+    use super::{
+        command_failure_detail, discover_python_paths, map_spawn_error,
+        reload_or_restart_suricata, summarized_output, RuleManager,
+    };
+    use crate::threat::error::ThreatError;
     use tempfile::tempdir;
 
     #[test]
@@ -276,5 +280,74 @@ mod tests {
                 lib.join("python3.11").to_string_lossy().to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn discover_python_paths_falls_back_to_the_default_dist_packages_path_when_nothing_exists() {
+        let dir = tempdir().expect("tempdir");
+        // No `lib/` directory created at all -- every candidate misses, so
+        // the function falls back to a single synthesized default path.
+        let paths = discover_python_paths(dir.path());
+        assert_eq!(
+            paths,
+            vec![dir
+                .path()
+                .join("lib")
+                .join("python3")
+                .join("dist-packages")
+                .to_string_lossy()
+                .to_string()]
+        );
+    }
+
+    #[test]
+    fn summarized_output_trims_blank_lines_and_caps_at_three() {
+        let text = "\n  first  \nsecond\n\nthird\nfourth\n";
+        assert_eq!(summarized_output(text.as_bytes()), "first | second | third");
+        assert_eq!(summarized_output(b""), "");
+        assert_eq!(summarized_output(b"\n\n  \n"), "");
+    }
+
+    #[test]
+    fn map_spawn_error_distinguishes_missing_binary_from_other_io_errors() {
+        let not_found = std::io::Error::new(std::io::ErrorKind::NotFound, "no such file");
+        assert!(matches!(
+            map_spawn_error(not_found),
+            ThreatError::BinaryMissing
+        ));
+
+        let denied = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        assert!(matches!(map_spawn_error(denied), ThreatError::Io(_)));
+    }
+
+    #[tokio::test]
+    async fn update_rules_returns_binary_missing_when_suricata_update_is_not_installed() {
+        // `/opt/suricata` genuinely does not exist in this sandbox, so this
+        // exercises the real, deterministic "not installed" branch rather
+        // than a mocked one.
+        let err = RuleManager::update_rules("nodeA")
+            .await
+            .expect_err("suricata-update is not installed here");
+        assert!(matches!(err, ThreatError::BinaryMissing));
+    }
+
+    #[tokio::test]
+    async fn validate_config_returns_binary_missing_when_suricata_is_not_installed() {
+        let err = RuleManager::validate_config("/etc/suricata/suricata.yaml")
+            .await
+            .expect_err("suricata binary is not installed here");
+        assert!(matches!(err, ThreatError::BinaryMissing));
+    }
+
+    #[tokio::test]
+    async fn reload_or_restart_suricata_surfaces_a_real_systemctl_failure() {
+        // `systemctl` itself is present in this sandbox, but there is no
+        // running systemd/D-Bus session to authenticate against, so both the
+        // "reload" and "restart" attempts fail deterministically and fast --
+        // a real command-execution failure, not a mock.
+        let err = reload_or_restart_suricata()
+            .await
+            .expect_err("no systemd session is available in this sandbox");
+        assert!(matches!(err, ThreatError::ServiceStart(_)));
     }
 }

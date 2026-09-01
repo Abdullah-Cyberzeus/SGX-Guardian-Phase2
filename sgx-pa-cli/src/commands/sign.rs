@@ -133,3 +133,27 @@ pub fn execute(args: SignArgs) -> bool {
 
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{execute, SignArgs};
+
+    #[test]
+    fn execute_reports_missing_policy_file() {
+        assert!(!execute(SignArgs {
+            file: "/nonexistent/policy.yaml".to_string(),
+        }));
+    }
+
+    #[test]
+    fn execute_reports_missing_private_key_for_a_real_policy_file() {
+        // /etc/sgx-guardian/guardian_private.key genuinely doesn't exist in this sandbox and
+        // has no override, so this deterministically fails at the key-load step.
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("policy.yaml");
+        std::fs::write(&path, "rules: []").unwrap();
+        assert!(!execute(SignArgs {
+            file: path.to_string_lossy().to_string(),
+        }));
+    }
+}

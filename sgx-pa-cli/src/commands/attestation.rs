@@ -158,3 +158,25 @@ pub fn run(args: AttestationArgs) -> Result<()> {
     println!("{}", table);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{run, AttestationArgs};
+
+    #[test]
+    fn run_reports_no_results_when_no_attestation_log_is_present() {
+        // Neither "../logs/last_attestation.json" nor "logs/last_attestation.json" (relative
+        // to the test binary's cwd) contain this file in this checkout, so both reads fail
+        // and run() deterministically falls back to the empty-list branch. run() never calls
+        // std::process::exit, so this is safe in-process. (Seeding a real file at either
+        // relative path was intentionally not attempted — this command has no env/argument
+        // override, and writing into the real checked-out `logs/` directory as a test side
+        // effect would be exactly the kind of real-filesystem mutation this wave avoids.)
+        run(AttestationArgs {
+            peer_did: None,
+            result: None,
+            tail: None,
+        })
+        .expect("run always succeeds, falling back to an empty result set");
+    }
+}

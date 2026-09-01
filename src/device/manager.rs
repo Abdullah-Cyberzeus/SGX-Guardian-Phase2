@@ -1403,4 +1403,72 @@ mod tests {
             .unwrap_err();
         assert!(err.contains("Failed to get state"));
     }
+
+    #[tokio::test]
+    async fn test_handle_state_changed_tags_unknown_vendor_on_update_and_labels_reconnect() {
+        let dir = tempdir().unwrap();
+        let dev_file = dir.path().join("devices.json");
+        let notif_file = dir.path().join("notifications.json");
+        let event_bus = EventBus::new();
+        let registry = Arc::new(DeviceRegistry::new(dev_file.to_str().unwrap()));
+        // Seed the device directly with vendor "Unknown", as if it had been
+        // discovered before vendor detection ran -- this is the "existing
+        // device, still Unknown" branch inside `handle_state_changed`,
+        // distinct from the "brand-new device" branch already covered by
+        // `test_device_health_transition_notification`.
+        registry
+            .upsert_device(make_device(
+                "dev_nest_retag",
+                "climate.nest_thermostat",
+                "heat",
+            ))
+            .await
+            .unwrap();
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url: DEAD_URL.to_string(),
+            token: "t".into(),
+        }));
+        let notif_mgr = Arc::new(
+            crate::notification::manager::NotificationManager::load_or_create(
+                notif_file,
+                Some(event_bus.clone()),
+            ),
+        );
+        let dm = DeviceManager::new(
+            registry.clone(),
+            ha_rest,
+            event_bus,
+            Some(notif_mgr.clone()),
+        );
+
+        // Offline: retags the pre-existing "Unknown" vendor to "google_nest"
+        // and fires the "Nest Device Offline" notification.
+        dm.handle_state_changed(serde_json::json!({
+            "data": {
+                "entity_id": "climate.nest_thermostat",
+                "new_state": {"state": "unavailable", "attributes": {"friendly_name": "Thermostat"}}
+            }
+        }))
+        .await;
+        let tagged = registry
+            .get_device_by_entity_id("climate.nest_thermostat")
+            .await
+            .expect("device present");
+        assert_eq!(tagged.vendor, "google_nest");
+
+        // Back online: exercises the reconnect branch's vendor-prefix logic
+        // (previously untested -- prior tests only went online -> offline).
+        dm.handle_state_changed(serde_json::json!({
+            "data": {
+                "entity_id": "climate.nest_thermostat",
+                "new_state": {"state": "heat", "attributes": {"friendly_name": "Thermostat"}}
+            }
+        }))
+        .await;
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let notifs = notif_mgr.list_notifications(false, None).await;
+        assert!(notifs.iter().any(|n| n.title == "Nest Device Offline"));
+        assert!(notifs.iter().any(|n| n.title == "Nest Device Online"));
+    }
 }

@@ -1051,4 +1051,103 @@ mod tests {
         .expect_err("missing sgx-pa-cli must surface as an error");
         assert!(matches!(err, ApiError::Internal(_)));
     }
+
+    // ── status / start (real systemctl) ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn status_reports_real_systemctl_state_and_file_backed_counts() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = test_state(&temp);
+        write_alerts_jsonl(
+            &state,
+            &[
+                alert_at(Severity::High, false, Utc::now()),
+                alert_at(Severity::Low, false, Utc::now()),
+            ],
+        );
+        write_block_records(
+            &state,
+            &[crate::threat::blocker::BlockRecord {
+                ip: "203.0.113.99".into(),
+                expires_at: Utc::now().timestamp() + 3600,
+            }],
+        );
+
+        let axum::Json(response) = status(State(state)).await.expect("status");
+        // Suricata genuinely isn't installed in this sandbox, so systemctl deterministically
+        // reports "inactive" rather than hanging or requiring a real service.
+        assert_eq!(response.suricata, "inactive");
+        assert!(!response.enabled, "no config file written -> defaults");
+        assert_eq!(response.alert_count, 2);
+        assert_eq!(response.block_count, 1);
+    }
+
+    #[tokio::test]
+    async fn start_reports_failure_when_systemctl_cannot_start_the_service() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = test_state(&temp);
+
+        let axum::Json(action) = start(State(state)).await.expect("start");
+        // There is no real suricata service (and no interactive systemd session) in this
+        // sandbox, so the real `systemctl start` call fails deterministically rather than
+        // ever actually starting anything.
+        assert!(!action.success);
+        assert!(!action.stderr.is_empty());
+    }
+
+    // ── load_alerts real I/O error (non-NotFound) ────────────────────────────
+
+    #[tokio::test]
+    async fn load_alerts_surfaces_a_real_io_error_that_is_not_file_not_found() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = test_state(&temp);
+        // A directory where a file is expected produces a real "Is a directory" error, not
+        // NotFound, exercising `load_alerts`'s generic-error branch deterministically.
+        let path = PathBuf::from(&state.threat_state_dir).join("alerts.jsonl");
+        std::fs::create_dir_all(&path).expect("create directory in place of alerts.jsonl");
+
+        let err = load_alerts(&state)
+            .await
+            .expect_err("a directory can't be read as a file");
+        assert!(matches!(err, ApiError::Internal(_)));
+
+        let list_err = list_alerts(
+            State(state),
+            Query(AlertsQuery {
+                limit: None,
+                severity: None,
+            }),
+        )
+        .await
+        .expect_err("list_alerts must propagate the same error");
+        assert!(matches!(list_err, ApiError::Internal(_)));
+    }
+
+    // ── summarize_threat_intel penalty matrix ────────────────────────────────
+
+    #[test]
+    fn summarize_threat_intel_covers_every_severity_and_blocked_combination() {
+        let now = Utc::now();
+        let cases = [
+            (Severity::Critical, false, 25u32),
+            (Severity::High, false, 15),
+            (Severity::Medium, false, 8),
+            (Severity::Low, false, 3),
+            (Severity::Info, false, 1),
+            (Severity::Critical, true, 5),
+            (Severity::High, true, 3),
+            (Severity::Medium, true, 2),
+            (Severity::Low, true, 1),
+            (Severity::Info, true, 0),
+        ];
+        for (severity, blocked, expected_penalty) in cases {
+            let alerts = vec![alert_at(severity, blocked, now)];
+            let summary = summarize_threat_intel(&alerts, 0, now);
+            assert_eq!(
+                summary.score,
+                100u8.saturating_sub(expected_penalty as u8),
+                "severity={severity:?} blocked={blocked}"
+            );
+        }
+    }
 }

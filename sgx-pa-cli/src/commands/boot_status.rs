@@ -90,3 +90,19 @@ fn find_boot_status() -> Option<String> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{find_boot_status, run};
+
+    #[test]
+    fn find_boot_status_returns_none_when_boot_dir_is_absent() {
+        // /var/lib/sgx-guardian/boot genuinely doesn't exist here and has no override.
+        assert_eq!(find_boot_status(), None);
+    }
+
+    #[test]
+    fn run_reports_no_boot_chain_status_and_does_not_panic() {
+        run();
+    }
+}

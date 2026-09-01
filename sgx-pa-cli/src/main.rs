@@ -3,6 +3,8 @@
 //! checking node status, and inspecting attested peers.
 mod commands;
 mod config;
+#[cfg(test)]
+mod test_support;
 use clap::{Parser, Subcommand};
 use commands::{
     audit_logs::AuditLogsArgs, audit_verify::AuditVerifyArgs, logs::LogsArgs, sign::SignArgs,

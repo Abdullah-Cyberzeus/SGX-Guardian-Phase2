@@ -869,7 +869,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn broadcast_once_returns_err_when_no_active_peers() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let tmp = TempDir::new().expect("tempdir");
         let did_path = tmp.path().join("did.json");
         let key_dir = tmp.path().join("keys");
@@ -893,7 +893,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn broadcast_once_sends_signed_notice_to_active_peer_over_loopback() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let tmp = TempDir::new().expect("tempdir");
         let did_path = tmp.path().join("did.json");
         let key_dir = tmp.path().join("keys");
@@ -944,7 +944,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn broadcast_once_rejects_notice_exceeding_datagram_cap() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let tmp = TempDir::new().expect("tempdir");
         let did_path = tmp.path().join("did.json");
         let key_dir = tmp.path().join("keys");
@@ -1009,7 +1009,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn handle_notice_rejects_circle_mismatch() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let tmp = TempDir::new().expect("tempdir");
         let did_path = tmp.path().join("did.json");
         let key_dir = tmp.path().join("keys");
@@ -1045,7 +1045,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn handle_notice_dedups_already_seen_fingerprint() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let tmp = TempDir::new().expect("tempdir");
         let did_path = tmp.path().join("did.json");
         let key_dir = tmp.path().join("keys");
@@ -1086,7 +1086,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn handle_notice_rejects_when_revoker_is_unresolvable() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let tmp = TempDir::new().expect("tempdir");
         let did_path = tmp.path().join("did.json");
         let key_dir = tmp.path().join("keys");
@@ -1130,7 +1130,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn handle_notice_merges_verified_critical_entry_and_skips_rebroadcast_with_no_peers() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let tmp = TempDir::new().expect("tempdir");
         let did_path = tmp.path().join("did.json");
         let key_dir = tmp.path().join("keys");
@@ -1219,7 +1219,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn rebroadcast_returns_early_when_no_active_peers() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let tmp = TempDir::new().expect("tempdir");
         let peers_dir = tmp.path().join("peers"); // never created
         let _peers_guard = EnvGuard::set(doc_persistence::PEERS_DOC_DIR_ENV, &peers_dir);
@@ -1243,7 +1243,7 @@ mod unit_tests {
 
     #[tokio::test]
     async fn rebroadcast_relays_to_peers_except_origin_over_loopback() {
-        let _lock = crate::test_support::blocking_env_lock();
+        let _lock = crate::test_support::async_env_lock().await;
         let tmp = TempDir::new().expect("tempdir");
         let peers_dir = tmp.path().join("peers");
         std::fs::create_dir_all(&peers_dir).expect("peers dir");

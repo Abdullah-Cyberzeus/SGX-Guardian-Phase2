@@ -86,3 +86,18 @@ pub fn run() {
     );
     println!("  Baseline:     use `sgx-pa-cli pcr-baseline verify` to check baseline status");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{find_pcr_snapshot, run};
+
+    #[test]
+    fn find_pcr_snapshot_returns_none_when_pcr_dir_is_absent() {
+        assert_eq!(find_pcr_snapshot(), None);
+    }
+
+    #[test]
+    fn run_reports_no_snapshot_and_does_not_panic() {
+        run();
+    }
+}

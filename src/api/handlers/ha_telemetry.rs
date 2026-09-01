@@ -201,4 +201,94 @@ mod tests {
         );
         assert!(read_telemetry_logs(Some("definitely.missing")).is_empty());
     }
+
+    #[tokio::test]
+    async fn read_telemetry_logs_parses_filters_and_reverses_real_log_lines() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let temp = tempfile::tempdir().expect("log dir");
+        std::env::set_var("SGX_LOG_DIR", temp.path());
+
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let log_path = temp.path().join(format!("ha_telemetry_{}.log", today));
+        let lines = [
+            r#"{"entity_id":"input_boolean.1","state":"on","attributes":{},"timestamp":"2026-07-25T10:00:00Z"}"#,
+            "",
+            "not json at all",
+            r#"{"entity_id":"input_boolean.2","state":"off","attributes":{},"timestamp":"2026-07-25T10:01:00Z"}"#,
+        ]
+        .join("\n");
+        std::fs::write(&log_path, lines).expect("write telemetry log");
+
+        let all = read_telemetry_logs(None);
+        assert_eq!(all.len(), 2);
+        // Newest (last valid line) first.
+        assert_eq!(all[0].entity_id, "input_boolean.2");
+        assert_eq!(all[1].entity_id, "input_boolean.1");
+
+        let filtered = read_telemetry_logs(Some("input_boolean.1"));
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].state, "on");
+
+        std::env::remove_var("SGX_LOG_DIR");
+    }
+
+    #[tokio::test]
+    async fn get_device_health_reports_counts_and_percentage_with_a_real_manager() {
+        use crate::device::manager::DeviceManager;
+        use crate::device::registry::DeviceRegistry;
+        use crate::homeassistant::events::EventBus;
+        use crate::homeassistant::rest::HaRestClient;
+        use crate::homeassistant::HomeAssistantConfig;
+
+        let temp = tempfile::tempdir().expect("state directory");
+        let state = AppState::for_tests(temp.path(), "nodeA", temp.path().to_string_lossy());
+
+        fn device(id: &str, entity_id: &str, health: DeviceHealth) -> crate::device::state::Device {
+            crate::device::state::Device {
+                id: id.to_string(),
+                ha_entity_id: entity_id.to_string(),
+                vendor: "Home Assistant".to_string(),
+                device_type: "light".to_string(),
+                room: None,
+                friendly_name: entity_id.to_string(),
+                current_state: "on".to_string(),
+                health_status: health,
+                last_seen: chrono::Utc::now(),
+                attributes: Default::default(),
+            }
+        }
+
+        let registry = Arc::new(DeviceRegistry::new(
+            temp.path().join("devices.json").to_str().unwrap(),
+        ));
+        registry
+            .upsert_device(device("dev_online", "light.online", DeviceHealth::Online))
+            .await
+            .unwrap();
+        registry
+            .upsert_device(device("dev_offline", "light.offline", DeviceHealth::Offline))
+            .await
+            .unwrap();
+
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url: "http://127.0.0.1:1".to_string(),
+            token: "t".into(),
+        }));
+        let dm = DeviceManager::new(registry, ha_rest, EventBus::new(), None);
+        state.device_manager.write().await.replace(dm);
+
+        let response = get_device_health(State(state))
+            .await
+            .expect("device health")
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["total_devices"], 2);
+        assert_eq!(body["online_devices"], 1);
+        assert_eq!(body["offline_devices"], 1);
+        assert_eq!(body["healthy_percentage"], 50.0);
+    }
 }

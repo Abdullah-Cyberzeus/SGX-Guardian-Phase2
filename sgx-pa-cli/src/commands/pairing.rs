@@ -143,3 +143,66 @@ where
 {
     Ok(f())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{build_runtime_pairing_proof, emit_pairing_proof_to_stdout, ProofArgs};
+
+    // `build_runtime_pairing_proof` never reaches its real network call (`build_pairing_proof`)
+    // unless node-id resolution, DID loading, and key-manager loading all succeed first — all
+    // of which fail deterministically here (no node-id source configured, no DID file), so
+    // these tests never touch the network.
+
+    #[test]
+    fn build_runtime_pairing_proof_requires_a_node_id() {
+        // SGX_GUARDIAN_DID_DOC_PATH is also mutated by diddoc.rs's tests; share its lock so
+        // the two files' tests can't race on the same process-global env var.
+        let _guard = crate::test_support::DID_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("SGX_NODE_ID");
+        std::env::remove_var("SGX_GUARDIAN_DID_DOC_PATH");
+        let err = build_runtime_pairing_proof(ProofArgs {
+            pairing_code: "code123".to_string(),
+            node_id: None,
+        })
+        .expect_err("no node-id source is configured in this sandbox");
+        assert!(err.contains("node-id is required"));
+    }
+
+    #[test]
+    fn build_runtime_pairing_proof_reports_missing_did_file() {
+        let _guard = crate::test_support::DID_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let temp = tempfile::tempdir().unwrap();
+        let did_path = temp.path().join("does-not-exist.json");
+        let old = std::env::var_os("SGX_GUARDIAN_DID_PATH");
+        std::env::set_var("SGX_GUARDIAN_DID_PATH", &did_path);
+
+        let err = build_runtime_pairing_proof(ProofArgs {
+            pairing_code: "code123".to_string(),
+            node_id: Some("nodeTest".to_string()),
+        })
+        .expect_err("missing DID file");
+        assert!(err.contains("failed to load device DID"));
+
+        match old {
+            Some(value) => std::env::set_var("SGX_GUARDIAN_DID_PATH", value),
+            None => std::env::remove_var("SGX_GUARDIAN_DID_PATH"),
+        }
+    }
+
+    #[test]
+    fn emit_pairing_proof_to_stdout_propagates_the_closures_error() {
+        let err = emit_pairing_proof_to_stdout(|| Err::<String, _>("boom".to_string()))
+            .expect_err("closure error must propagate");
+        assert_eq!(err, "boom");
+    }
+
+    #[test]
+    fn emit_pairing_proof_to_stdout_writes_a_successful_proof() {
+        emit_pairing_proof_to_stdout(|| Ok("fake-proof-json".to_string()))
+            .expect("writing a successful proof must succeed");
+    }
+}

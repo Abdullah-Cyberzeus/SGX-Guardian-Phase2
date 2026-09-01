@@ -51,3 +51,16 @@ pub fn run() -> Result<()> {
     println!("{table}");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::run;
+
+    #[test]
+    fn run_renders_the_real_checked_in_trusted_peers_file() {
+        // `logs/trusted_peers.json` (relative to the sgx-pa-cli package dir, which is cargo's
+        // cwd for this package's tests) is a real, already-checked-in file with one peer
+        // entry — read-only, exercises the full success/render path.
+        run().expect("run always succeeds");
+    }
+}

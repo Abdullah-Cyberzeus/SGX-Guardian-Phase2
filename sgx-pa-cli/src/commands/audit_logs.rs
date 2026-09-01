@@ -323,4 +323,140 @@ mod tests {
         assert_eq!(value["node_id"], "nodeZ");
         assert!(value.get("event").is_none());
     }
+
+    // ── run() / resolve_audit_log_path(): SGX_GUARDIAN_AUDIT_LOG_PATH is a real,
+    // unconditional override (unlike several other CLI files' hardcoded paths), so most of
+    // run()'s body is reachable in-process. It's process-global, so serialize access.
+
+    const AUDIT_LOG_ENV: &str = "SGX_GUARDIAN_AUDIT_LOG_PATH";
+
+    fn with_audit_log<F: FnOnce()>(content: &str, f: F) {
+        let _guard = crate::test_support::AUDIT_LOG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("audit.log");
+        std::fs::write(&path, content).expect("write audit log");
+        let old = std::env::var_os(AUDIT_LOG_ENV);
+        std::env::set_var(AUDIT_LOG_ENV, &path);
+        f();
+        match old {
+            Some(value) => std::env::set_var(AUDIT_LOG_ENV, value),
+            None => std::env::remove_var(AUDIT_LOG_ENV),
+        }
+    }
+
+    fn sample_log_lines() -> String {
+        [
+            serde_json::json!({
+                "event": {
+                    "timestamp": 1_800_000_000u64,
+                    "node_id": "nodeA",
+                    "category": "Attestation",
+                    "action": "FAILED",
+                    "severity": "critical",
+                    "message": "quote rejected"
+                },
+                "hash": "aaaaaaaaaaaaaaaa",
+                "previous_hash": "bbbbbbbbbbbbbbbb"
+            }),
+            serde_json::json!({
+                "event": {
+                    "timestamp": 1_800_000_100u64,
+                    "node_id": "nodeA",
+                    "category": "Network",
+                    "action": "SUCCEEDED",
+                    "severity": "info",
+                    "message": "peer connected"
+                },
+                "hash": "cccc",
+                "previous_hash": "dddd"
+            }),
+            serde_json::json!({
+                "event": {
+                    "timestamp": 0u64,
+                    "node_id": "nodeA",
+                    "category": "Tls",
+                    "action": "STARTED",
+                    "severity": "warning",
+                    "message": "cert rotation started"
+                }
+            }),
+        ]
+        .iter()
+        .map(|v| v.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+            + "\nnot-json-at-all\n\n"
+    }
+
+    #[test]
+    fn run_renders_a_table_from_a_real_seeded_log_without_filters() {
+        with_audit_log(&sample_log_lines(), || {
+            run(AuditLogsArgs {
+                tail: 20,
+                node: "nodeA".to_string(),
+                category: None,
+                severity: None,
+                search: None,
+            });
+        });
+    }
+
+    #[test]
+    fn run_applies_category_severity_and_search_filters() {
+        with_audit_log(&sample_log_lines(), || {
+            run(AuditLogsArgs {
+                tail: 20,
+                node: "nodeA".to_string(),
+                category: Some("Network".to_string()),
+                severity: Some("info".to_string()),
+                search: Some("connected".to_string()),
+            });
+        });
+    }
+
+    #[test]
+    fn run_honors_severity_all_and_a_small_tail_limit() {
+        with_audit_log(&sample_log_lines(), || {
+            run(AuditLogsArgs {
+                tail: 1,
+                node: "nodeA".to_string(),
+                category: None,
+                severity: Some("all".to_string()),
+                search: None,
+            });
+        });
+    }
+
+    #[test]
+    fn resolve_audit_log_path_uses_the_env_override_when_present() {
+        let _guard = crate::test_support::AUDIT_LOG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("audit.log");
+        std::fs::write(&path, "{}").expect("write");
+        let old = std::env::var_os(AUDIT_LOG_ENV);
+        std::env::set_var(AUDIT_LOG_ENV, &path);
+
+        let resolved = resolve_audit_log_path("nodeA").expect("resolved via env override");
+        assert_eq!(resolved, path);
+
+        match old {
+            Some(value) => std::env::set_var(AUDIT_LOG_ENV, value),
+            None => std::env::remove_var(AUDIT_LOG_ENV),
+        }
+    }
+
+    #[test]
+    fn resolve_audit_log_path_errors_when_nothing_is_found() {
+        let _guard = crate::test_support::AUDIT_LOG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let old = std::env::var_os(AUDIT_LOG_ENV);
+        std::env::remove_var(AUDIT_LOG_ENV);
+
+        let err = resolve_audit_log_path("node-truly-nonexistent")
+            .expect_err("no log file exists in this sandbox");
+        assert!(err.contains("No audit log file found"));
+
+        if let Some(value) = old {
+            std::env::set_var(AUDIT_LOG_ENV, value);
+        }
+    }
 }

@@ -464,4 +464,20 @@ mod tests {
         assert_eq!(normalize_token("HIGH"), "high");
         assert_eq!(normalize_token(""), "");
     }
+
+    #[test]
+    fn parse_reason_rejects_empty_string() {
+        assert_eq!(
+            parse_reason("").unwrap_err(),
+            "unsupported revocation reason ''"
+        );
+    }
+
+    #[test]
+    fn parse_severity_rejects_empty_string() {
+        assert_eq!(
+            parse_severity("").unwrap_err(),
+            "unsupported severity ''"
+        );
+    }
 }

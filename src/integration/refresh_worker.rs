@@ -389,4 +389,41 @@ mod tests {
             "credentials must be untouched when not expiring soon"
         );
     }
+
+    #[tokio::test]
+    async fn test_check_and_refresh_tokens_nest_credentials_expiring_but_unrefreshable_marks_error(
+    ) {
+        // `refresh_access_token` validates required fields (refresh_token first) before ever
+        // making the real Google OAuth network call, so a token with no refresh_token exercises
+        // the "expiring soon -> attempt refresh -> fails" branch deterministically, with no
+        // network access.
+        let manager = new_manager();
+        let mut nest_creds = crate::nest::NestCredentials::new(
+            Some("client".to_string()),
+            Some("secret".to_string()),
+            Some("project".to_string()),
+            Some("access_token_expiring".to_string()),
+            None,
+        );
+        nest_creds.expires_at = Some(Utc::now() + chrono::Duration::seconds(10));
+        manager.connect_nest(nest_creds, None, None).await.unwrap();
+
+        let worker = TokenRefreshWorker::new(manager.clone());
+        worker.check_and_refresh_tokens().await;
+
+        let meta = manager
+            .get_integration(VendorProvider::GoogleNest)
+            .await
+            .unwrap();
+        assert!(
+            matches!(meta.status, IntegrationStatus::Error(_)),
+            "unexpected status: {:?}",
+            meta.status
+        );
+        assert!(meta
+            .error_message
+            .as_ref()
+            .unwrap()
+            .contains("Token refresh failed"));
+    }
 }

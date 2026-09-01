@@ -286,4 +286,179 @@ mod tests {
             .into_iter()
             .all(|status| status == StatusCode::SERVICE_UNAVAILABLE));
     }
+
+    async fn state_with_engine(temp: &std::path::Path) -> Arc<AppState> {
+        use crate::automation::engine::AutomationEngine;
+        use crate::automation::presence::PresenceTracker;
+        use crate::automation::timer_store::PendingActionStore;
+        use crate::device::manager::DeviceManager;
+        use crate::device::registry::DeviceRegistry;
+        use crate::homeassistant::events::EventBus;
+        use crate::homeassistant::rest::HaRestClient;
+        use crate::homeassistant::HomeAssistantConfig;
+
+        let registry = Arc::new(DeviceRegistry::new(
+            temp.join("devices.json").to_str().unwrap(),
+        ));
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url: "http://127.0.0.1:1".to_string(),
+            token: "t".into(),
+        }));
+        let event_bus = EventBus::new();
+        let dm = DeviceManager::new(registry, ha_rest, event_bus.clone(), None);
+        let engine = AutomationEngine::new(
+            temp.join("automations.json").to_str().unwrap(),
+            dm,
+            PresenceTracker::new(),
+            PendingActionStore::new(temp.join("timers.json").to_str().unwrap()),
+            event_bus,
+        );
+        let state = AppState::for_tests(temp, "nodeA", temp.to_string_lossy());
+        state.automation_engine.write().await.replace(engine);
+        state
+    }
+
+    async fn response_status(
+        result: Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)>,
+    ) -> (StatusCode, serde_json::Value) {
+        let response = match result {
+            Ok(ok) => ok.into_response(),
+            Err(err) => err.into_response(),
+        };
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        let body = if bytes.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_slice(&bytes).expect("JSON body")
+        };
+        (status, body)
+    }
+
+    #[tokio::test]
+    async fn create_list_update_enable_disable_and_delete_round_trip() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = state_with_engine(temp.path()).await;
+
+        let (status, body) =
+            response_status(create_automation(State(state.clone()), Json(rule())).await).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["rule_id"], "rule_test_001");
+
+        let (status, body) = response_status(
+            list_automations(
+                State(state.clone()),
+                Query(RuleQueryParams {
+                    pagination: PaginationParams {
+                        page: None,
+                        per_page: None,
+                    },
+                }),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        // The engine seeds one default rule on first run, plus the one just created.
+        assert_eq!(body["items"].as_array().unwrap().len(), 2);
+
+        let mut updated = rule();
+        updated.name = "Renamed Rule".into();
+        let (status, body) = response_status(
+            update_automation(
+                State(state.clone()),
+                Path("rule_test_001".into()),
+                Json(updated),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(body["message"].as_str().unwrap().contains("Renamed Rule"));
+
+        let (status, _) = response_status(
+            disable_automation(State(state.clone()), Path("rule_test_001".into())).await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, _) = response_status(
+            enable_automation(State(state.clone()), Path("rule_test_001".into())).await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, _) = response_status(
+            delete_automation(State(state.clone()), Path("rule_test_001".into())).await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Deleted: further operations on it 404.
+        let (status, _) = response_status(
+            update_automation(State(state), Path("rule_test_001".into()), Json(rule())).await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn create_replaces_an_existing_rule_with_the_same_id() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = state_with_engine(temp.path()).await;
+        let (status, _) =
+            response_status(create_automation(State(state.clone()), Json(rule())).await).await;
+        assert_eq!(status, StatusCode::CREATED);
+
+        let mut replacement = rule();
+        replacement.name = "Replaced Rule".into();
+        let (status, body) =
+            response_status(create_automation(State(state.clone()), Json(replacement)).await)
+                .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+
+        let (status, body) = response_status(
+            list_automations(
+                State(state),
+                Query(RuleQueryParams {
+                    pagination: PaginationParams {
+                        page: None,
+                        per_page: None,
+                    },
+                }),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let items = body["items"].as_array().unwrap();
+        // Still one default rule plus one "rule_test_001" (replaced, not duplicated).
+        assert_eq!(items.len(), 2);
+        assert!(items
+            .iter()
+            .any(|r| r["id"] == "rule_test_001" && r["name"] == "Replaced Rule"));
+    }
+
+    #[tokio::test]
+    async fn enable_disable_and_delete_404_for_unknown_rule() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = state_with_engine(temp.path()).await;
+
+        let (status, _) =
+            response_status(enable_automation(State(state.clone()), Path("missing".into())).await)
+                .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _) = response_status(
+            disable_automation(State(state.clone()), Path("missing".into())).await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _) =
+            response_status(delete_automation(State(state), Path("missing".into())).await).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
 }

@@ -896,4 +896,164 @@ relay:
         assert_eq!(doc.relays.len(), 1);
         assert!(doc.relays.contains_key("nodeB"));
     }
+
+    fn empty_env_guard(tmp: &std::path::Path) -> EnvGuard {
+        let cfg_dir = tmp.join("config");
+        let nebula_dir = tmp.join("nebula");
+        fs::create_dir_all(&cfg_dir).expect("cfg dir");
+        fs::create_dir_all(&nebula_dir).expect("nebula dir");
+        EnvGuard::new(
+            cfg_dir.to_string_lossy().as_ref(),
+            nebula_dir.join("relay_registry.json").to_string_lossy().as_ref(),
+            nebula_dir.join("relay_stats.json").to_string_lossy().as_ref(),
+            nebula_dir.join("overlay_registry.json").to_string_lossy().as_ref(),
+            nebula_dir.join("lighthouse_registry.json").to_string_lossy().as_ref(),
+        )
+    }
+
+    #[test]
+    fn run_list_reports_no_relay_nodes_when_registry_is_absent() {
+        let _guard = env_lock().lock().expect("env lock");
+        let tmp = tempdir().expect("tempdir");
+        let _env = empty_env_guard(tmp.path());
+        run_list().expect("run_list always succeeds on an absent registry");
+    }
+
+    #[test]
+    fn run_list_renders_a_populated_registry_with_matching_stats() {
+        let _guard = env_lock().lock().expect("env lock");
+        let tmp = tempdir().expect("tempdir");
+        let _env = empty_env_guard(tmp.path());
+
+        let mut relays = HashMap::new();
+        relays.insert(
+            "nodeB".to_string(),
+            RelayEntry {
+                node_name: "nodeB".to_string(),
+                overlay_ip: "192.168.100.2".to_string(),
+                physical_endpoint: "10.20.30.40:4242".to_string(),
+                is_active: true,
+                is_lighthouse: false,
+                max_peers: 5,
+                max_bandwidth_mbps: 0,
+                last_seen: 123,
+            },
+        );
+        let reg = RelayRegistryDoc {
+            circle_id: "guardian-circle-alpha".to_string(),
+            relays,
+        };
+        save_registry(&reg).expect("save registry");
+
+        let stats = RelayStatsDoc {
+            node_id: "nodeB".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            active_peers: 2,
+            total_bytes_relayed: 1000,
+            current_mbps: 1.5,
+            direct_tunnels: 1,
+            relay_tunnels: 1,
+        };
+        fs::write(
+            relay_stats_path(),
+            serde_json::to_string_pretty(&stats).unwrap(),
+        )
+        .expect("write stats");
+
+        run_list().expect("run_list renders a populated registry");
+    }
+
+    #[test]
+    fn run_stats_reports_zeroed_values_for_an_unknown_node() {
+        let _guard = env_lock().lock().expect("env lock");
+        let tmp = tempdir().expect("tempdir");
+        let _env = empty_env_guard(tmp.path());
+        run_stats(RelayStatsArgs {
+            node: "node-with-no-data".to_string(),
+        })
+        .expect("run_stats always succeeds, falling back to defaults");
+    }
+
+    #[test]
+    fn run_stats_rejects_an_invalid_node_name() {
+        let _guard = env_lock().lock().expect("env lock");
+        let err = run_stats(RelayStatsArgs {
+            node: "bad name!".to_string(),
+        })
+        .expect_err("invalid node name");
+        assert!(err.to_string().contains("invalid node name"));
+    }
+
+    #[test]
+    fn run_set_limit_requires_at_least_one_limit() {
+        let _guard = env_lock().lock().expect("env lock");
+        let err = run_set_limit(RelaySetLimitArgs {
+            node: "nodeB".to_string(),
+            max_peers: None,
+            max_bandwidth_mbps: None,
+        })
+        .expect_err("must specify a limit");
+        assert!(err.to_string().contains("requires at least one of"));
+    }
+
+    #[test]
+    fn run_set_limit_updates_yaml_and_registry_entry() {
+        let _guard = env_lock().lock().expect("env lock");
+        let tmp = tempdir().expect("tempdir");
+        let cfg_dir = tmp.path().join("config");
+        let nebula_dir = tmp.path().join("nebula");
+        fs::create_dir_all(&cfg_dir).expect("cfg dir");
+        fs::create_dir_all(&nebula_dir).expect("nebula dir");
+        write_node_yaml(&cfg_dir.join("nodeB.yaml"), "nodeB", "10.20.30.40", true, 5, 10);
+
+        let relay_registry_path = nebula_dir.join("relay_registry.json");
+        let mut relays = HashMap::new();
+        relays.insert(
+            "nodeB".to_string(),
+            RelayEntry {
+                node_name: "nodeB".to_string(),
+                overlay_ip: "192.168.100.2".to_string(),
+                physical_endpoint: "10.20.30.40:4242".to_string(),
+                is_active: true,
+                is_lighthouse: false,
+                max_peers: 5,
+                max_bandwidth_mbps: 10,
+                last_seen: 1,
+            },
+        );
+        fs::write(
+            &relay_registry_path,
+            serde_json::to_string_pretty(&RelayRegistryDoc {
+                circle_id: "guardian-circle-alpha".to_string(),
+                relays,
+            })
+            .unwrap(),
+        )
+        .expect("write registry");
+
+        let _env = EnvGuard::new(
+            cfg_dir.to_string_lossy().as_ref(),
+            relay_registry_path.to_string_lossy().as_ref(),
+            nebula_dir.join("relay_stats.json").to_string_lossy().as_ref(),
+            nebula_dir.join("overlay_registry.json").to_string_lossy().as_ref(),
+            nebula_dir.join("lighthouse_registry.json").to_string_lossy().as_ref(),
+        );
+
+        run_set_limit(RelaySetLimitArgs {
+            node: "nodeB".to_string(),
+            max_peers: Some(20),
+            max_bandwidth_mbps: Some(30),
+        })
+        .expect("set limit");
+
+        let node_yaml = fs::read_to_string(cfg_dir.join("nodeB.yaml")).expect("read node yaml");
+        assert!(node_yaml.contains("max_peers: 20"));
+        assert!(node_yaml.contains("max_bandwidth_mbps: 30"));
+
+        let updated = fs::read_to_string(&relay_registry_path).expect("read registry");
+        let doc: RelayRegistryDoc = serde_json::from_str(&updated).expect("parse registry");
+        let entry = doc.relays.get("nodeB").expect("nodeB entry");
+        assert_eq!(entry.max_peers, 20);
+        assert_eq!(entry.max_bandwidth_mbps, 30);
+    }
 }

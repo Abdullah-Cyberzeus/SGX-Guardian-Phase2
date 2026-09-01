@@ -225,6 +225,35 @@ mod tests {
         assert!(output.contains("SE050: Not available (software-only mode)"));
     }
 
+    #[test]
+    fn run_reports_no_dkp_found_and_does_not_panic() {
+        // /var/lib/sgx-guardian/keys/dkp_metadata.json genuinely doesn't exist here and has
+        // no override; run() never calls std::process::exit, so this is safe in-process.
+        run();
+    }
+
+    #[test]
+    fn ssscli_available_is_false_when_the_binary_is_not_installed() {
+        assert!(!ssscli_available());
+    }
+
+    #[cfg(not(feature = "tpm"))]
+    #[test]
+    fn detect_backend_falls_back_to_software_without_ssscli_or_tpm() {
+        let keys = vec![serde_json::json!({
+            "key_id": "0x20000010",
+            "algorithm": "ECDSA-P256",
+            "version": 1,
+            "status": "Active"
+        })];
+        assert_eq!(
+            detect_backend(&keys),
+            ActiveBackend::Software {
+                algorithm: "ECDSA-P256".to_string(),
+            }
+        );
+    }
+
     #[cfg(feature = "tpm")]
     #[test]
     fn detects_tpm_active_key_from_persistent_handle_metadata() {

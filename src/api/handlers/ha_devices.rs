@@ -434,4 +434,238 @@ mod tests {
             .into_iter()
             .all(|status| status == StatusCode::SERVICE_UNAVAILABLE));
     }
+
+    /// A URL nothing listens on. Connection is refused immediately (loopback,
+    /// no real network) -- safe for paths that must not actually reach HA.
+    const DEAD_URL: &str = "http://127.0.0.1:1";
+
+    async fn state_with_devices(
+        temp: &std::path::Path,
+        devices: Vec<Device>,
+    ) -> Arc<AppState> {
+        use crate::device::manager::DeviceManager;
+        use crate::device::registry::DeviceRegistry;
+        use crate::homeassistant::rest::HaRestClient;
+        use crate::homeassistant::HomeAssistantConfig;
+        use crate::homeassistant::events::EventBus;
+
+        let registry = Arc::new(DeviceRegistry::new(
+            temp.join("devices.json").to_str().unwrap(),
+        ));
+        for device in devices {
+            registry.upsert_device(device).await.expect("seed device");
+        }
+        let ha_rest = Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url: DEAD_URL.to_string(),
+            token: "t".into(),
+        }));
+        let dm = DeviceManager::new(registry, ha_rest, EventBus::new(), None);
+        let state = AppState::for_tests(temp, "nodeA", temp.to_string_lossy());
+        state.device_manager.write().await.replace(dm);
+        state
+    }
+
+    fn sample_light(id: &str, entity_id: &str, room: &str, state: &str) -> Device {
+        Device {
+            id: id.to_string(),
+            ha_entity_id: entity_id.to_string(),
+            vendor: "Home Assistant".to_string(),
+            device_type: "light".to_string(),
+            room: Some(room.to_string()),
+            friendly_name: entity_id.to_string(),
+            current_state: state.to_string(),
+            health_status: crate::device::state::DeviceHealth::Online,
+            last_seen: chrono::Utc::now(),
+            attributes: Default::default(),
+        }
+    }
+
+    fn empty_filter() -> DeviceFilterParams {
+        DeviceFilterParams {
+            room: None,
+            device_type: None,
+            search: None,
+            pagination: PaginationParams {
+                page: None,
+                per_page: None,
+            },
+        }
+    }
+
+    async fn response_json(
+        result: Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)>,
+    ) -> (StatusCode, serde_json::Value) {
+        let response = match result {
+            Ok(ok) => ok.into_response(),
+            Err(err) => err.into_response(),
+        };
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        let body = if bytes.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_slice(&bytes).expect("JSON body")
+        };
+        (status, body)
+    }
+
+    #[tokio::test]
+    async fn list_devices_filters_by_room_type_and_search() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = state_with_devices(
+            temp.path(),
+            vec![
+                sample_light("dev_a", "light.kitchen_lamp", "Kitchen", "on"),
+                sample_light("dev_b", "light.bedroom_lamp", "Bedroom", "off"),
+            ],
+        )
+        .await;
+
+        let mut query = empty_filter();
+        query.room = Some("Kitchen".into());
+        let (status, body) = response_json(list_devices(State(state.clone()), Query(query)).await).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["items"].as_array().unwrap().len(), 1);
+        assert_eq!(body["items"][0]["id"], "dev_a");
+
+        let mut query = empty_filter();
+        query.search = Some("bedroom".into());
+        let (status, body) = response_json(list_devices(State(state.clone()), Query(query)).await).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["items"].as_array().unwrap().len(), 1);
+        assert_eq!(body["items"][0]["id"], "dev_b");
+
+        let mut query = empty_filter();
+        query.device_type = Some("thermostat".into());
+        let (status, body) = response_json(list_devices(State(state.clone()), Query(query)).await).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(body["items"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_device_and_state_and_capabilities_succeed_and_404_for_unknown() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = state_with_devices(
+            temp.path(),
+            vec![sample_light("dev_a", "light.kitchen_lamp", "Kitchen", "on")],
+        )
+        .await;
+
+        let (status, body) =
+            response_json(get_device(State(state.clone()), Path("dev_a".into())).await).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["id"], "dev_a");
+
+        // Lookup also works by ha_entity_id, not just internal id.
+        let (status, body) = response_json(
+            get_device(State(state.clone()), Path("light.kitchen_lamp".into())).await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["id"], "dev_a");
+
+        let (status, _) =
+            response_json(get_device(State(state.clone()), Path("missing".into())).await).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, body) = response_json(
+            get_device_state(State(state.clone()), Path("dev_a".into())).await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["current_state"], "on");
+
+        let (status, body) = response_json(
+            get_device_capabilities(State(state.clone()), Path("dev_a".into())).await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(body.is_object());
+    }
+
+    #[tokio::test]
+    async fn execute_device_command_returns_404_for_unknown_device_and_400_for_bad_command() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = state_with_devices(
+            temp.path(),
+            vec![sample_light("dev_a", "light.kitchen_lamp", "Kitchen", "on")],
+        )
+        .await;
+
+        let (status, _) = response_json(
+            execute_device_command(
+                State(state.clone()),
+                Path("missing".into()),
+                Json(DeviceCommandPayload {
+                    command: "turn_on".into(),
+                    domain: None,
+                    params: None,
+                }),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // A command not supported by this device's derived capabilities fails
+        // schema validation before any network call is made.
+        let (status, body) = response_json(
+            execute_device_command(
+                State(state.clone()),
+                Path("dev_a".into()),
+                Json(DeviceCommandPayload {
+                    command: "set_hvac_mode".into(),
+                    domain: None,
+                    params: None,
+                }),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    }
+
+    #[tokio::test]
+    async fn execute_device_command_reports_bad_gateway_when_ha_is_unreachable() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = state_with_devices(
+            temp.path(),
+            vec![sample_light("dev_a", "light.kitchen_lamp", "Kitchen", "off")],
+        )
+        .await;
+
+        let (status, body) = response_json(
+            execute_device_command(
+                State(state.clone()),
+                Path("dev_a".into()),
+                Json(DeviceCommandPayload {
+                    command: "turn_on".into(),
+                    domain: None,
+                    params: None,
+                }),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    }
+
+    #[tokio::test]
+    async fn sync_devices_reports_total_after_reconciling() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = state_with_devices(
+            temp.path(),
+            vec![sample_light("dev_a", "light.kitchen_lamp", "Kitchen", "on")],
+        )
+        .await;
+
+        // HA is unreachable, so reconciliation itself fails and logs -- but the
+        // handler still reports success against whatever the registry holds.
+        let (status, body) = response_json(sync_devices(State(state.clone())).await).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["status"], "synced");
+        assert_eq!(body["total_devices"], 1);
+    }
 }
