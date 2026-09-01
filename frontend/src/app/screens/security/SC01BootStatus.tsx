@@ -22,7 +22,6 @@ import {
   Loader2,
 } from "lucide-react";
 import { useBootStatus } from "../../hooks/useApiData";
-import { nodeService } from "../../services/nodeService";
 import { toast } from "sonner";
 
 // Trust Chain Step Component
@@ -182,11 +181,10 @@ function HashDisplay({ hash, label }: { hash: string; label?: string }) {
 export function SC01BootStatus() {
   const navigate = useNavigate();
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [manualBootStatus, setManualBootStatus] = useState<Awaited<ReturnType<typeof nodeService.getBootStatus>> | null>(null);
 
   // Fetch data from backend API
-  const { data: bootStatusData, loading, error, source } = useBootStatus();
-  const bootStatus = useMemo(() => manualBootStatus || bootStatusData || {
+  const { data: bootStatusData, loading, error, source, refetch } = useBootStatus();
+  const bootStatus = useMemo(() => bootStatusData || {
     bootChain: 'UNKNOWN' as const,
     habEnabled: false,
     deviceClosed: false,
@@ -196,7 +194,7 @@ export function SC01BootStatus() {
     lastChecked: new Date().toISOString(),
     binaryHash: 'N/A',
     trustChain: [],
-  }, [bootStatusData, manualBootStatus]);
+  }, [bootStatusData]);
 
   const hasHabEvents = bootStatus.habEvents === "Found";
   const isSecure = bootStatus.bootChain === "INTACT" && bootStatus.habEnabled && bootStatus.deviceClosed && !hasHabEvents;
@@ -230,8 +228,10 @@ export function SC01BootStatus() {
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      const latest = await nodeService.getBootStatus();
-      setManualBootStatus(latest);
+      const latest = await refetch();
+      if (!latest) {
+        throw new Error("Boot status refresh returned no data");
+      }
       const latestSecure = latest.bootChain === "INTACT" && latest.habEnabled && latest.deviceClosed && latest.habEvents !== "Found";
       toast[latestSecure ? "success" : "warning"]("Boot status refreshed", {
         description: latestSecure ? "All checks passed" : latest.habDescription || "Boot status still needs attention",

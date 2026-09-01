@@ -50,6 +50,14 @@ export interface PCRHistoryEntry {
   mismatches?: number;
   matchCount?: number;
   totalCount?: number;
+  reason?: string;
+  peer?: string;
+  verified?: boolean;
+  nonceValid?: boolean;
+  signatureValid?: boolean;
+  pcrMatch?: boolean;
+  bootChainOk?: boolean;
+  freshnessOk?: boolean;
 }
 
 export type PCRVerificationResult = PCRHistoryEntry;
@@ -106,11 +114,20 @@ export const pcrService = {
   getBaseline: () => api.get<PCRBaseline>('/pcr/baseline'),
 
   // POST /api/pcr/verify - sgx-guardian pcr verify
-  verify: () => api.post<{ success: boolean; message: string; stdout: string; stderr: string; restartRequired: boolean; timestamp: string }>('/pcr/verify'),
+  verify: () =>
+    api.post<{ success: boolean; message: string; stdout: string; stderr: string; restartRequired: boolean; timestamp: string }>(
+      '/pcr/baseline/verify',
+      undefined,
+      { timeoutMs: 120_000 },
+    ),
 
   // POST /api/pcr/baseline/update
   updateBaseline: () =>
-    api.post<{ success: boolean; message: string; timestamp: string }>('/pcr/baseline/update'),
+    api.post<{ success: boolean; message: string; timestamp: string }>(
+      '/pcr/baseline/create',
+      undefined,
+      { timeoutMs: 120_000 },
+    ),
 
   // GET /api/pcr/history
   getHistory: () => api.get<PCRHistoryEntry[]>('/pcr/history'),

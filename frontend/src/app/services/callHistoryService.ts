@@ -20,11 +20,37 @@ export interface CallHistoryRecord {
 }
 
 const EVENT_NAME = "sgx:call-history-changed";
+const DEPLOYMENT_KEY_STORAGE = "sgx-call-history-deployment-key";
+const DEPLOYMENT_RESET_AT_STORAGE = "sgx-call-history-reset-at";
 let records: CallHistoryRecord[] = [];
 let revision = 0;
 
+function storage() {
+  return typeof window !== "undefined" ? window.localStorage : null;
+}
+
+function currentResetAt() {
+  const value = storage()?.getItem(DEPLOYMENT_RESET_AT_STORAGE);
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function normalizeDeploymentKey(value?: string | null) {
+  const key = value?.trim();
+  return key && key !== "N/A" && key !== "Unknown" ? key : null;
+}
+
+function isVisible(record: CallHistoryRecord) {
+  const cutoff = currentResetAt();
+  return !cutoff || new Date(record.endedAt).getTime() >= cutoff;
+}
+
+function visible(records: CallHistoryRecord[]) {
+  return records.filter(isVisible);
+}
+
 function read(): CallHistoryRecord[] {
-  return [...records];
+  return [...visible(records)];
 }
 
 function write(record: CallHistoryRecord) {
@@ -45,7 +71,9 @@ function write(record: CallHistoryRecord) {
 
 async function replaceFromGuardian(nextRecords: CallHistoryRecord[]) {
   revision += 1;
-  records = [...nextRecords].sort((a, b) => new Date(b.endedAt).getTime() - new Date(a.endedAt).getTime()).slice(0, 500);
+  records = visible([...nextRecords])
+    .sort((a, b) => new Date(b.endedAt).getTime() - new Date(a.endedAt).getTime())
+    .slice(0, 500);
   await callRepository.replaceAll(records.map((record) => ({
     ...record,
     media: record.media,
@@ -58,10 +86,23 @@ async function resetLocal() {
   await replaceFromGuardian([]);
 }
 
+async function resetForDeployment(deploymentKey?: string | null) {
+  const normalized = normalizeDeploymentKey(deploymentKey);
+  const store = storage();
+  const storedKey = store?.getItem(DEPLOYMENT_KEY_STORAGE);
+
+  if (normalized && storedKey !== normalized) {
+    store?.setItem(DEPLOYMENT_KEY_STORAGE, normalized);
+    store?.setItem(DEPLOYMENT_RESET_AT_STORAGE, String(Date.now()));
+  }
+
+  await resetLocal();
+}
+
 const initialRevision = revision;
 void callRepository.list().then((cached) => {
   if (revision !== initialRevision) return;
-  records = cached.map((record) => ({ ...record, media: record.media as MediaType[], startedAt: new Date(record.startedAt).toISOString() })) as CallHistoryRecord[];
+  records = visible(cached.map((record) => ({ ...record, media: record.media as MediaType[], startedAt: new Date(record.startedAt).toISOString() })) as CallHistoryRecord[]);
   window.dispatchEvent(new CustomEvent(EVENT_NAME));
 }).catch(() => {});
 
@@ -75,6 +116,7 @@ export const callHistoryService = {
   eventName: EVENT_NAME,
   list: read,
   resetLocal,
+  resetForDeployment,
   async syncFromGuardian() {
     const response = await callsApi.history();
     await replaceFromGuardian(response.calls.map((item) => ({

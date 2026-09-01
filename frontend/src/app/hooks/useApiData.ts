@@ -31,7 +31,7 @@ interface UseApiDataResult<T> {
   loading: boolean;
   error: Error | null;
   source: 'api' | 'error';
-  refetch: () => Promise<void>;
+  refetch: () => Promise<T | null>;
 }
 
 /**
@@ -47,7 +47,7 @@ export function useApiData<T>(
   const [source, setSource] = useState<'api' | 'error'>('api');
   const hasFetchedRef = useRef(false);
 
-  const fetchData = useCallback(async (silent = false) => {
+  const fetchData = useCallback(async (silent = false): Promise<T | null> => {
     if (!silent) {
       setLoading(true);
       setError(null);
@@ -58,6 +58,7 @@ export function useApiData<T>(
       setData(result);
       setSource('api');
       if (silent) setError(null);
+      return result;
     } catch (err) {
       // On silent polls, keep last good data visible so the user doesn't
       // see a flash of error state when a single poll blips.
@@ -65,6 +66,7 @@ export function useApiData<T>(
         setError(err instanceof Error ? err : new Error('Unknown error'));
         setSource('error');
       }
+      return null;
     } finally {
       if (!silent) setLoading(false);
       hasFetchedRef.current = true;

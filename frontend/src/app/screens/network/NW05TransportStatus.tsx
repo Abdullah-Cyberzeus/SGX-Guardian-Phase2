@@ -135,6 +135,19 @@ export function NW05TransportStatus() {
   const { data: statusData, loading: statusLoading, refetch: refetchStatus } = useTransportStatus();
   const [pendingLockIface, setPendingLockIface] = useState<string | null>(null);
   const [unlocking, setUnlocking] = useState(false);
+  const groupedInterfaces = useMemo(() => {
+    const groups: Record<InterfaceGroup, TransportInterface[]> = {
+      "WIRELESS CONNECTIONS": [],
+      "GUARDIAN NETWORK": [],
+      INFRASTRUCTURE: [],
+    };
+
+    const interfaces = listData?.interfaces ?? [];
+    for (const iface of [...interfaces].sort((a, b) => a.priority - b.priority)) {
+      groups[networkInterfaceDisplay(iface.name).group].push(iface);
+    }
+    return groups;
+  }, [listData?.interfaces]);
 
   const node = listData?.node ?? statusData?.node ?? "";
 
@@ -199,17 +212,6 @@ export function NW05TransportStatus() {
   const activeInterface = statusData?.active ?? listData?.active;
   const activeMeta = activeInterface ? networkInterfaceDisplay(activeInterface.name) : null;
   const lock = statusData?.lock ?? listData?.lock;
-  const groupedInterfaces = useMemo(() => {
-    const groups: Record<InterfaceGroup, TransportInterface[]> = {
-      "WIRELESS CONNECTIONS": [],
-      "GUARDIAN NETWORK": [],
-      INFRASTRUCTURE: [],
-    };
-    for (const iface of [...interfaces].sort((a, b) => a.priority - b.priority)) {
-      groups[networkInterfaceDisplay(iface.name).group].push(iface);
-    }
-    return groups;
-  }, [interfaces]);
 
   return (
     <div className="flex flex-col h-full">

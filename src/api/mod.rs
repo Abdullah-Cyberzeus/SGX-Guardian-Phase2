@@ -222,6 +222,7 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             "/api/v1/pcr/baseline/create",
             post(handlers::pcr::baseline_create),
         )
+        .route("/api/v1/pcr/baseline", get(handlers::pcr::baseline_read))
         // alias expected by frontend service
         .route(
             "/api/v1/pcr/baseline/update",
@@ -231,6 +232,7 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             "/api/v1/pcr/baseline/verify",
             post(handlers::pcr::baseline_verify),
         )
+        .route("/api/v1/pcr/history", get(handlers::pcr::history_read))
         // alias expected by frontend service
         .route("/api/v1/pcr/verify", post(handlers::pcr::baseline_verify))
         .route("/api/v1/policy/sign", post(handlers::policy::sign))

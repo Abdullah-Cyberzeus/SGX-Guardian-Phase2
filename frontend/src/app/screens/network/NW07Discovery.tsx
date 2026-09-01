@@ -1548,6 +1548,22 @@ function createDefaultScheduleTask(): ScanScheduleProfile {
   };
 }
 
+function hasMeaningfulLegacySchedule(cfg: DiscoverySchedule): boolean {
+  if (cfg.legacy_schedule_mode) return true;
+  const hourly = cfg.schedules?.hourly;
+  const daily = cfg.schedules?.daily;
+  const defaultHourly = DEFAULT_SCHEDULE.schedules.hourly;
+  const defaultDaily = DEFAULT_SCHEDULE.schedules.daily;
+  return Boolean(
+    hourly && hourly.intensity !== defaultHourly.intensity
+      || daily && (
+        daily.intensity !== defaultDaily.intensity
+        || (daily.days?.length ?? 0) > 0
+        || daily.time !== defaultDaily.time
+      ),
+  );
+}
+
 function normalizeScheduleTask(task: Partial<ScanScheduleProfile> = {}): ScanScheduleProfile {
   const frequency = task.frequency ?? "weekly";
   const base = createDefaultScheduleTask();
@@ -1585,8 +1601,8 @@ const DEFAULT_SCHEDULE: DiscoverySchedule = {
 
 function normalizeScheduleForm(cfg: DiscoverySchedule): DiscoverySchedule {
   const legacyDays = cfg.schedules?.daily?.days?.length ? cfg.schedules.daily.days : DEFAULT_SCAN_DAYS;
-  const legacyDerivedTask: ScanScheduleProfile =
-    cfg.scan_schedules === undefined
+  const legacyDerivedTask: ScanScheduleProfile | null =
+    cfg.scan_schedules === undefined && (cfg.enabled || hasMeaningfulLegacySchedule(cfg))
       ? normalizeScheduleTask({
           frequency: "weekly",
           intensity: cfg.schedules?.daily?.intensity ?? DEFAULT_SCHEDULE.schedules.daily.intensity,
@@ -1595,10 +1611,10 @@ function normalizeScheduleForm(cfg: DiscoverySchedule): DiscoverySchedule {
           time: cfg.schedules?.daily?.time || DEFAULT_SCAN_TIME,
           timezone: DEFAULT_SCAN_TIMEZONE,
         })
-      : createDefaultScheduleTask();
+      : null;
   return {
     ...cfg,
-    scan_schedules: (cfg.scan_schedules === undefined ? [legacyDerivedTask] : cfg.scan_schedules).map((task) =>
+    scan_schedules: (cfg.scan_schedules ?? (legacyDerivedTask ? [legacyDerivedTask] : [])).map((task) =>
       normalizeScheduleTask({
         ...task,
         days: task.frequency === "once" ? [] : task.frequency === "daily" ? [...EVERY_DAY] : task.days?.length ? task.days : legacyDays,
@@ -1767,27 +1783,15 @@ function ScheduleTab() {
     }
   }, [data, dirty]);
 
-  const update = (patch: Partial<DiscoverySchedule>) => {
-    setForm((current) => ({ ...current, ...patch }));
-    setDirty(true);
-  };
-
-  const handleSave = async () => {
+  const persistSchedule = async (nextForm: DiscoverySchedule) => {
     setSaving(true);
     try {
-      const currentTasks = form.scan_schedules ?? [];
-      const pendingTask = normalizeScheduleTask(draftTask);
-      const tasksToSave = !draftChanged
-        ? currentTasks
-        : editingIndex === null
-          ? [...currentTasks, pendingTask]
-          : currentTasks.map((task, index) => index === editingIndex ? pendingTask : task);
-      const normalized = normalizeScheduleForm({ ...form, scan_schedules: tasksToSave });
+      const normalized = normalizeScheduleForm(nextForm);
       const updated = await discoveryService.putSchedule({
-        enabled: form.enabled,
-        target_cidr: form.target_cidr && form.target_cidr.trim() ? form.target_cidr.trim() : null,
-        timeout_secs: Number(form.timeout_secs),
-        exclude: form.exclude,
+        enabled: nextForm.enabled,
+        target_cidr: nextForm.target_cidr && nextForm.target_cidr.trim() ? nextForm.target_cidr.trim() : null,
+        timeout_secs: Number(nextForm.timeout_secs),
+        exclude: nextForm.exclude,
         scan_schedules: normalized.scan_schedules,
         schedules: normalized.schedules,
       });
@@ -1803,6 +1807,22 @@ function ScheduleTab() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const update = (patch: Partial<DiscoverySchedule>) => {
+    setForm((current) => ({ ...current, ...patch }));
+    setDirty(true);
+  };
+
+  const handleSave = async () => {
+    const currentTasks = form.scan_schedules ?? [];
+    const pendingTask = normalizeScheduleTask(draftTask);
+    const tasksToSave = !draftChanged
+      ? currentTasks
+      : editingIndex === null
+        ? [...currentTasks, pendingTask]
+        : currentTasks.map((task, index) => index === editingIndex ? pendingTask : task);
+    await persistSchedule({ ...form, scan_schedules: tasksToSave });
   };
 
   const labelStyle = { fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", fontWeight: "var(--font-weight-medium)" } as const;
@@ -1845,17 +1865,19 @@ function ScheduleTab() {
     setEditingIndex(index);
     setDraftChanged(false);
   };
-  const removeTask = (index: number) => {
-    setForm((current) => ({
-      ...current,
-      scan_schedules: (current.scan_schedules ?? []).filter((_, taskIndex) => taskIndex !== index),
-    }));
+  const removeTask = async (index: number) => {
+    const nextForm = {
+      ...form,
+      scan_schedules: (form.scan_schedules ?? []).filter((_, taskIndex) => taskIndex !== index),
+    };
+    setForm(nextForm);
+    setDirty(true);
     if (editingIndex === index) {
       setDraftTask(createDefaultScheduleTask());
       setEditingIndex(null);
       setDraftChanged(false);
     }
-    setDirty(true);
+    await persistSchedule(nextForm);
   };
 
   return (
@@ -1953,7 +1975,7 @@ function ScheduleTab() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => removeTask(index)}
+                        onClick={() => { void removeTask(index); }}
                         className="px-2 py-1 rounded-md"
                         style={{ backgroundColor: "var(--muted)", border: "1px solid var(--border)", color: "var(--destructive)", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)" }}
                       >
@@ -2659,7 +2681,9 @@ function RunsTab({ onEditSchedule }: { onEditSchedule: () => void }) {
                   </p>
                 ))
               ) : (
-                <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--foreground)" }}>—</p>
+                <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
+                  No scheduled scans saved
+                </p>
               )}
             </div>
           </div>

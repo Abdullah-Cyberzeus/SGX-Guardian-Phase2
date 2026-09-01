@@ -394,7 +394,7 @@ function VerificationCard({ result }: { result: PCRVerificationResult }) {
             color: "var(--muted-foreground)",
           }}
         >
-          PCR Registers
+          PCR Verification
         </span>
         <span
           style={{
@@ -404,11 +404,23 @@ function VerificationCard({ result }: { result: PCRVerificationResult }) {
             color: result.status === "pass" ? "var(--chart-2)" : "var(--destructive)",
           }}
         >
-          {result.matchCount}/{result.totalCount} Match
+          {result.matchCount != null && result.totalCount != null
+            ? `${result.matchCount}/${result.totalCount} Match`
+            : result.reason || (result.status === "pass" ? "Verified" : "Verification failed")}
         </span>
       </div>
 
-      {result.mismatches.length > 0 && (
+      {(result.nonceValid != null || result.signatureValid != null || result.pcrMatch != null || result.bootChainOk != null || result.freshnessOk != null) && (
+        <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+          {result.nonceValid != null && <div>Nonce: {result.nonceValid ? "valid" : "invalid"}</div>}
+          {result.signatureValid != null && <div>Signature: {result.signatureValid ? "valid" : "invalid"}</div>}
+          {result.pcrMatch != null && <div>PCR match: {result.pcrMatch ? "yes" : "no"}</div>}
+          {result.bootChainOk != null && <div>Boot chain: {result.bootChainOk ? "ok" : "failed"}</div>}
+          {result.freshnessOk != null && <div>Freshness: {result.freshnessOk ? "ok" : "failed"}</div>}
+        </div>
+      )}
+
+      {(result.mismatches?.length ?? 0) > 0 && (
         <div className="mt-3 pt-3 border-t" style={{ borderColor: "var(--border)" }}>
           <p
             style={{
@@ -421,7 +433,7 @@ function VerificationCard({ result }: { result: PCRVerificationResult }) {
           >
             Mismatches Detected:
           </p>
-          {result.mismatches.map((m) => (
+          {(result.mismatches ?? []).map((m) => (
             <div
               key={m.index}
               className="p-2 rounded mb-2"
@@ -451,6 +463,7 @@ function ConfirmDialog({
   title,
   description,
   confirmLabel,
+  confirmLoading = false,
   onConfirm,
   onCancel,
 }: {
@@ -458,6 +471,7 @@ function ConfirmDialog({
   title: string;
   description: string;
   confirmLabel: string;
+  confirmLoading?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -525,18 +539,23 @@ function ConfirmDialog({
           </button>
           <button
             onClick={onConfirm}
+            disabled={confirmLoading}
             className="flex-1 px-4 py-2.5 rounded-lg transition-opacity active:opacity-80"
             style={{
               backgroundColor: "var(--primary)",
               color: "white",
               border: "none",
-              cursor: "pointer",
+              cursor: confirmLoading ? "wait" : "pointer",
               fontFamily: "Inter, sans-serif",
               fontSize: "var(--text-sm)",
               fontWeight: "var(--font-weight-semibold)",
+              opacity: confirmLoading ? 0.8 : 1,
             }}
           >
-            {confirmLabel}
+            <span className="inline-flex items-center gap-2">
+              {confirmLoading && <Loader2 size={14} className="animate-spin" />}
+              {confirmLoading ? "Creating..." : confirmLabel}
+            </span>
           </button>
         </div>
       </div>
@@ -552,12 +571,13 @@ export function IN01IntegrityDashboard() {
   const isAdmin = isAdminRole(session?.user.role);
   const [activeTab, setActiveTab] = useState<TabId>("status");
   const [showCreateBaselineDialog, setShowCreateBaselineDialog] = useState(false);
+  const [isCreatingBaseline, setIsCreatingBaseline] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
 
   // Fetch data from backend API
   const { data: pcrData, loading, error, source, refetch } = usePCRStatus();
-  const { data: baselineData } = usePCRBaseline();
-  const { data: historyData } = usePCRHistory();
+  const { data: baselineData, refetch: refetchBaseline } = usePCRBaseline();
+  const { data: historyData, refetch: refetchHistory } = usePCRHistory();
   const pcrRegisters = useMemo(() => {
     if (!pcrData || !pcrData.registers || !Array.isArray(pcrData.registers)) {
       return [];
@@ -595,9 +615,10 @@ export function IN01IntegrityDashboard() {
   };
 
   const handleCreateBaseline = async () => {
+    setIsCreatingBaseline(true);
     try {
       const res = await pcrService.updateBaseline();
-      console.log("[PCR Baseline Create] POST /pcr/baseline/update →", res);
+      console.log("[PCR Baseline Create] POST /pcr/baseline/create →", res);
       setShowCreateBaselineDialog(false);
       if (res.success) {
         const verifiedAt = res.timestamp ? new Date(res.timestamp) : new Date();
@@ -627,11 +648,13 @@ export function IN01IntegrityDashboard() {
           description: res.stderr || res.stdout || "Check logs for details",
         });
       }
-      await refetch();
+      await Promise.all([refetch(), refetchBaseline(), refetchHistory()]);
     } catch (err) {
       toast.error("Baseline creation failed", {
         description: err instanceof Error ? err.message : "Unknown error",
       });
+    } finally {
+      setIsCreatingBaseline(false);
     }
   };
 
@@ -639,7 +662,7 @@ export function IN01IntegrityDashboard() {
     setIsVerifying(true);
     try {
       const res = await pcrService.verify();
-      console.log("[PCR Verify] POST /pcr/verify →", res);
+      console.log("[PCR Verify] POST /pcr/baseline/verify →", res);
       if (res.success) {
         toast.success(res.message || "Integrity verified", {
           description: res.stdout || `All ${pcrRegisters.length} PCR registers verified`,
@@ -649,7 +672,7 @@ export function IN01IntegrityDashboard() {
           description: res.stderr || res.stdout || "Check PCR registers for details",
         });
       }
-      await refetch();
+      await Promise.all([refetch(), refetchBaseline(), refetchHistory()]);
     } catch (err) {
       toast.error("Verification failed", {
         description: err instanceof Error ? err.message : "Unknown error",
@@ -1236,6 +1259,7 @@ export function IN01IntegrityDashboard() {
         title="Create Golden Baseline?"
         description="This will capture the current PCR measurements as the known-good state. Future verifications will compare against this baseline. The baseline will be signed by the active DKP key."
         confirmLabel="Create Baseline"
+        confirmLoading={isCreatingBaseline}
         onConfirm={handleCreateBaseline}
         onCancel={() => setShowCreateBaselineDialog(false)}
       />
