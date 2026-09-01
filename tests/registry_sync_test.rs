@@ -301,3 +301,85 @@ fn test_registry_response_default() {
     assert!(resp.error.is_none());
     assert!(resp.registry_summary.is_none());
 }
+
+#[test]
+fn registry_sync_port_is_stable() {
+    assert_eq!(REGISTRY_SYNC_PORT, 50062);
+}
+
+#[test]
+fn registry_paths_point_under_nebula_dir() {
+    assert!(REGISTRY_PATH.contains("/nebula/"));
+    assert!(LIGHTHOUSE_REGISTRY_PATH.contains("/nebula/"));
+    assert!(RELAY_REGISTRY_PATH.contains("/nebula/"));
+}
+
+#[test]
+fn cache_path_is_json_file() {
+    assert!(CACHE_PATH.ends_with("local_ip_cache.json"));
+}
+
+#[test]
+fn registry_request_minimal_serializes_required_fields() {
+    let req = RegistryRequest {
+        action: "query".into(),
+        node_name: "nodeA".into(),
+        pubkey_prefix: None,
+        did_doc_json: None,
+        did_query: None,
+        status_list_body: None,
+    };
+    let json = serde_json::to_string(&req).unwrap();
+    assert!(json.contains("\"action\":\"query\""));
+    assert!(!json.contains("did_doc_json"));
+}
+
+#[test]
+fn registry_response_error_serializes_without_optional_success_payloads() {
+    let resp = RegistryResponse {
+        success: false,
+        error: Some("nope".into()),
+        ..Default::default()
+    };
+    let json = serde_json::to_string(&resp).unwrap();
+    assert!(json.contains("\"error\":\"nope\""));
+    assert!(json.contains("\"ip_cidr\":null"));
+}
+
+#[test]
+fn registry_response_deserializes_empty_optionals() {
+    let resp: RegistryResponse = serde_json::from_str(r#"{"success":false}"#).unwrap();
+    assert!(!resp.success);
+    assert!(resp.did_doc_json.is_none());
+}
+
+#[test]
+fn registry_request_deserializes_optional_status_body() {
+    let req: RegistryRequest = serde_json::from_str(
+        r#"{"action":"status_list_snapshot","node_name":"nodeA","status_list_body":"body"}"#,
+    )
+    .unwrap();
+    assert_eq!(req.status_list_body.as_deref(), Some("body"));
+}
+
+#[test]
+fn overlay_snapshot_invalid_schema_errors() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    assert!(apply_overlay_snapshot(r#"{"not":"overlay"}"#, tmp.path().to_str().unwrap())
+        .unwrap_err()
+        .contains("invalid overlay snapshot schema"));
+}
+
+#[test]
+fn lighthouse_snapshot_invalid_schema_errors() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    assert!(apply_lighthouse_snapshot(r#"{"not":"lighthouse"}"#, tmp.path().to_str().unwrap())
+        .unwrap_err()
+        .contains("invalid lighthouse snapshot schema"));
+}
+
+#[test]
+fn relay_snapshot_invalid_schema_errors() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    assert!(apply_relay_snapshot(r#"{"relays":[]}"#, tmp.path().to_str().unwrap()).is_err());
+}

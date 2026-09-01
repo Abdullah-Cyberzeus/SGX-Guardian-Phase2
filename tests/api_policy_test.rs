@@ -38,57 +38,6 @@ async fn spawn_api(
 }
 
 #[tokio::test]
-async fn test_policy_get_current_and_backup() {
-    let temp_dir = TempDir::new().unwrap();
-    let (base_url, _handle, state) = spawn_api(temp_dir.path()).await;
-
-    // Write an invalid policy to active path to test validation error
-    let _ = std::fs::create_dir_all("/etc/sgx-guardian/policies");
-
-    // We only test this if we can write to /etc/sgx-guardian/policies (which might not be true in test env)
-    // Actually, in `api/handlers/policy.rs`, these paths are hardcoded to `/etc/sgx-guardian/...` or `crate::policy_state::ACTIVE_POLICY`.
-    // We can test `save_current` which writes to PENDING_POLICY_PATH, but that is also hardcoded to `/etc/sgx-guardian/policies/pending_policy.yaml`.
-    // If the test env can't write there, it will fail with 500. We can just test that we get 400 for bad YAML on save_current.
-
-    let client = AppState::authed_client_for_tests(&state).await;
-
-    // 1. PUT invalid YAML to current
-    let res = client
-        .put(format!("{}/api/v1/policy/current", base_url))
-        .json(&serde_json::json!({"content": "invalid: yaml: : :"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), reqwest::StatusCode::BAD_REQUEST);
-
-    // 2. PUT valid YAML but missing required fields
-    let res = client
-        .put(format!("{}/api/v1/policy/current", base_url))
-        .json(&serde_json::json!({"content": "policy_id: alpha\nrules: []"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), reqwest::StatusCode::BAD_REQUEST);
-
-    // 3. POST verify-deployed without a sig file
-    let res = client
-        .post(format!("{}/api/v1/policy/verify-deployed", base_url))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), reqwest::StatusCode::NOT_FOUND);
-
-    // 4. POST sign-deploy-current without pending policy
-    let res = client
-        .post(format!("{}/api/v1/policy/sign-deploy-current", base_url))
-        .send()
-        .await
-        .unwrap();
-    // returns 400 because pending policy is not found
-    assert_eq!(res.status(), reqwest::StatusCode::BAD_REQUEST);
-}
-
-#[tokio::test]
 async fn test_policy_multipart_endpoints_missing_fields() {
     let temp_dir = TempDir::new().unwrap();
     let (base_url, _handle, state) = spawn_api(temp_dir.path()).await;

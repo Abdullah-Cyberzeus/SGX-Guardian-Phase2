@@ -1,0 +1,5 @@
+[build]
+jobs = 1
+
+[env]
+CARGO_BUILD_JOBS = "1"

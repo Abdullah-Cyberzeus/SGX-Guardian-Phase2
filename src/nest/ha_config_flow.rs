@@ -428,4 +428,65 @@ mod tests {
         let parsed_step: FlowStepResponse = serde_json::from_str(json_step).unwrap();
         assert_eq!(parsed_step.result.unwrap().entry_id, "nest_entry_456");
     }
+
+    #[test]
+    fn flow_step_response_parses_direct_entry_id() {
+        let parsed: FlowStepResponse = serde_json::from_str(
+            r#"{"type":"create_entry","entry_id":"entry-direct"}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.r#type.as_deref(), Some("create_entry"));
+        assert_eq!(parsed.entry_id.as_deref(), Some("entry-direct"));
+        assert!(parsed.result.is_none());
+    }
+
+    #[test]
+    fn flow_step_response_parses_abort_reason_and_errors() {
+        let parsed: FlowStepResponse = serde_json::from_str(
+            r#"{"type":"abort","reason":"already_configured","errors":{"base":"bad"}}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.reason.as_deref(), Some("already_configured"));
+        assert_eq!(parsed.errors.unwrap()["base"], "bad");
+    }
+
+    #[test]
+    fn flow_step_response_defaults_missing_optional_fields() {
+        let parsed: FlowStepResponse = serde_json::from_str("{}").unwrap();
+        assert!(parsed.r#type.is_none());
+        assert!(parsed.reason.is_none());
+        assert!(parsed.result.is_none());
+        assert!(parsed.entry_id.is_none());
+        assert!(parsed.errors.is_none());
+    }
+
+    #[test]
+    fn flow_initiate_response_rejects_missing_flow_id() {
+        assert!(serde_json::from_str::<FlowInitiateResponse>("{}").is_err());
+    }
+
+    #[test]
+    fn flow_result_rejects_missing_entry_id() {
+        assert!(serde_json::from_str::<FlowStepResponse>(r#"{"result":{}}"#).is_err());
+    }
+
+    #[test]
+    fn client_new_trims_nothing_and_stores_fields_without_network() {
+        let client = NestHaConfigFlowClient::new("http://ha.local/".into(), "token".into());
+        assert_eq!(client.ha_url, "http://ha.local/");
+        assert_eq!(client.ha_token, "token");
+    }
+
+    #[tokio::test]
+    async fn direct_injection_returns_none_when_storage_dirs_absent() {
+        let client = NestHaConfigFlowClient::new("http://127.0.0.1:1".into(), "token".into());
+        let creds = NestCredentials::new(
+            Some("client".into()),
+            Some("secret".into()),
+            Some("project".into()),
+            Some("access".into()),
+            Some("refresh".into()),
+        );
+        assert!(client.inject_direct_storage_entry(&creds).await.is_none());
+    }
 }

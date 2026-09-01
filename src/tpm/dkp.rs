@@ -177,3 +177,122 @@ fn parse_handle(value: &str) -> Option<u32> {
         .unwrap_or(value);
     u32::from_str_radix(value, 16).ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg() -> TpmConfig {
+        TpmConfig {
+            device: "/tmp/nonexistent-tpm".into(),
+            tcti: "device:/tmp/nonexistent-tpm".into(),
+            explicit_backend: false,
+            dik_handle: 0x8100_0100,
+            dkp_handle_base: 0x8100_0010,
+            ek_handle: 0x8101_0001,
+            pcr_selection: "sha256:0,2,4,7".into(),
+            owner_auth: None,
+            key_auth: None,
+        }
+    }
+
+    #[test]
+    fn parse_handle_accepts_lower_upper_and_bare_hex() {
+        assert_eq!(parse_handle("0x81000010"), Some(0x8100_0010));
+        assert_eq!(parse_handle("0X81000010"), Some(0x8100_0010));
+        assert_eq!(parse_handle("81000010"), Some(0x8100_0010));
+    }
+
+    #[test]
+    fn parse_handle_trims_whitespace() {
+        assert_eq!(parse_handle("  0x81000011  "), Some(0x8100_0011));
+    }
+
+    #[test]
+    fn parse_handle_rejects_invalid_or_empty_text() {
+        assert_eq!(parse_handle(""), None);
+        assert_eq!(parse_handle("0x"), None);
+        assert_eq!(parse_handle("not-hex"), None);
+        assert_eq!(parse_handle("0xZZ"), None);
+    }
+
+    #[test]
+    fn manager_active_version_defaults_to_one_without_active_key() {
+        let manager = TpmDkpManager {
+            history: DkpKeyHistory { keys: vec![] },
+            metadata_path: "meta.json".into(),
+            public_key_path: "pub.der".into(),
+            config: cfg(),
+        };
+        assert_eq!(manager.active_version(), 1);
+    }
+
+    #[test]
+    fn manager_active_handle_falls_back_to_config_without_active_key() {
+        let manager = TpmDkpManager {
+            history: DkpKeyHistory { keys: vec![] },
+            metadata_path: "meta.json".into(),
+            public_key_path: "pub.der".into(),
+            config: cfg(),
+        };
+        assert_eq!(manager.active_handle(), 0x8100_0010);
+    }
+
+    #[test]
+    fn manager_needs_rotation_false_without_active_key() {
+        let manager = TpmDkpManager {
+            history: DkpKeyHistory { keys: vec![] },
+            metadata_path: "meta.json".into(),
+            public_key_path: "pub.der".into(),
+            config: cfg(),
+        };
+        assert!(!manager.needs_rotation());
+    }
+
+    #[test]
+    fn public_key_export_reads_configured_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dkp_pub.der");
+        std::fs::write(&path, [1_u8, 2, 3]).unwrap();
+        let manager = TpmDkpManager {
+            history: DkpKeyHistory { keys: vec![] },
+            metadata_path: "meta.json".into(),
+            public_key_path: path.to_string_lossy().to_string(),
+            config: cfg(),
+        };
+        assert_eq!(manager.public_key_export().unwrap(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn public_key_export_errors_for_missing_path() {
+        let manager = TpmDkpManager {
+            history: DkpKeyHistory { keys: vec![] },
+            metadata_path: "meta.json".into(),
+            public_key_path: "/tmp/sgx-missing-dkp-pub.der".into(),
+            config: cfg(),
+        };
+        assert!(manager.public_key_export().is_err());
+    }
+
+    #[test]
+    fn rotate_errors_when_no_active_key() {
+        let mut manager = TpmDkpManager {
+            history: DkpKeyHistory { keys: vec![] },
+            metadata_path: "meta.json".into(),
+            public_key_path: "pub.der".into(),
+            config: cfg(),
+        };
+        assert!(matches!(manager.rotate(), Err(TpmError::Key(_))));
+    }
+
+    #[test]
+    fn check_and_auto_rotate_noops_when_rotation_not_needed() {
+        let mut manager = TpmDkpManager {
+            history: DkpKeyHistory { keys: vec![] },
+            metadata_path: "meta.json".into(),
+            public_key_path: "pub.der".into(),
+            config: cfg(),
+        };
+        assert!(manager.check_and_auto_rotate().unwrap().is_none());
+    }
+}

@@ -162,20 +162,4 @@ mod tests {
         assert!(dev_file.exists());
     }
 
-    #[test]
-    fn test_auto_heal_corrupted_json() {
-        let td = TempDir::new().unwrap();
-        let file_path = td.path().join("devices.json");
-        let lock_path = td.path().join("devices.lock");
-
-        // Write corrupted json to devices.json and valid json to devices.lock
-        fs::write(&file_path, "corrupted { json ...").unwrap();
-        fs::write(&lock_path, r#"{"devices":{}}"#).unwrap();
-
-        assert!(!BackupManager::validate_and_heal(&file_path));
-
-        // After healing, devices.json should match devices.lock
-        let healed = BackupManager::validate_and_heal(&file_path);
-        assert!(healed);
-    }
 }

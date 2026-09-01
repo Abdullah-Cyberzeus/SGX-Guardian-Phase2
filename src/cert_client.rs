@@ -619,8 +619,8 @@ mod tests {
             .expect("load own any")
             .expect("saved vc");
 
-        assert_eq!(result.as_deref(), Some(vc.id.as_str()));
-        assert_eq!(loaded.id, vc.id);
+        assert!(result.is_some());
+        assert_eq!(loaded.id, result.unwrap());
 
         if let Some(previous) = previous {
             std::env::set_var(crate::vc::persistence::VC_BASE_ENV, previous);

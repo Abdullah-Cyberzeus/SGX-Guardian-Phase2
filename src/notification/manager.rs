@@ -225,4 +225,268 @@ mod tests {
         let unread_after = manager.list_notifications(true, None).await;
         assert!(!unread_after.iter().any(|n| n.id == notif.id));
     }
+
+    fn record(id: &str, severity: &str, read: bool) -> NotificationRecord {
+        NotificationRecord {
+            id: id.to_string(),
+            title: format!("title-{id}"),
+            message: format!("message-{id}"),
+            severity: severity.to_string(),
+            read,
+            created_at: DateTime::parse_from_rfc3339("2026-01-02T03:04:05Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        }
+    }
+
+    #[test]
+    fn load_or_create_loads_existing_valid_json_without_boot_defaults() {
+        let td = TempDir::new().unwrap();
+        let path = td.path().join("notifications.json");
+        let existing = vec![record("existing-1", "warning", true)];
+        NotificationManager::write_to_disk_internal(&path, &existing).unwrap();
+
+        let manager = NotificationManager::load_or_create(path, None);
+        let loaded = manager.notifications.read().unwrap().clone();
+
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, "existing-1");
+        assert!(loaded[0].read);
+    }
+
+    #[tokio::test]
+    async fn load_or_create_starts_empty_for_malformed_existing_json() {
+        let td = TempDir::new().unwrap();
+        let path = td.path().join("notifications.json");
+        std::fs::write(&path, "{not valid json").unwrap();
+
+        let manager = NotificationManager::load_or_create(path.clone(), None);
+
+        assert!(manager.list_notifications(false, None).await.is_empty());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "{not valid json");
+    }
+
+    #[tokio::test]
+    async fn list_notifications_filters_by_unread_and_exact_severity() {
+        let td = TempDir::new().unwrap();
+        let path = td.path().join("notifications.json");
+        let manager = NotificationManager {
+            storage_path: path,
+            notifications: Arc::new(RwLock::new(vec![
+                record("info-unread", "info", false),
+                record("warning-read", "warning", true),
+                record("warning-unread", "warning", false),
+                record("critical-unread", "critical", false),
+            ])),
+            event_bus: None,
+        };
+
+        let all = manager.list_notifications(false, None).await;
+        assert_eq!(all.len(), 4);
+
+        let unread = manager.list_notifications(true, None).await;
+        assert_eq!(unread.len(), 3);
+        assert!(unread.iter().all(|n| !n.read));
+
+        let warnings = manager.list_notifications(false, Some("warning")).await;
+        assert_eq!(warnings.len(), 2);
+        assert!(warnings.iter().all(|n| n.severity == "warning"));
+
+        let unread_warnings = manager.list_notifications(true, Some("warning")).await;
+        assert_eq!(unread_warnings.len(), 1);
+        assert_eq!(unread_warnings[0].id, "warning-unread");
+
+        assert!(manager
+            .list_notifications(false, Some("WARNING"))
+            .await
+            .is_empty());
+        assert!(manager
+            .list_notifications(false, Some(""))
+            .await
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_notification_accepts_empty_and_unknown_severity_values() {
+        let td = TempDir::new().unwrap();
+        let path = td.path().join("notifications.json");
+        let manager = NotificationManager {
+            storage_path: path.clone(),
+            notifications: Arc::new(RwLock::new(Vec::new())),
+            event_bus: None,
+        };
+
+        let empty = manager.create_notification("", "", "").await;
+        let custom = manager
+            .create_notification("Custom", "Custom message", "debug")
+            .await;
+
+        assert!(empty.id.starts_with("notif_"));
+        assert_eq!(empty.title, "");
+        assert_eq!(empty.message, "");
+        assert_eq!(empty.severity, "");
+        assert!(!empty.read);
+        assert_eq!(custom.severity, "debug");
+
+        let persisted = NotificationManager::read_from_disk_internal(&path).unwrap();
+        assert_eq!(persisted.len(), 2);
+        assert_eq!(persisted[1].title, "Custom");
+    }
+
+    #[tokio::test]
+    async fn mark_as_read_counts_only_unread_matching_records() {
+        let td = TempDir::new().unwrap();
+        let path = td.path().join("notifications.json");
+        let manager = NotificationManager {
+            storage_path: path.clone(),
+            notifications: Arc::new(RwLock::new(vec![
+                record("a", "info", false),
+                record("b", "warning", true),
+                record("c", "critical", false),
+            ])),
+            event_bus: None,
+        };
+
+        let updated = manager
+            .mark_as_read(&[
+                "a".to_string(),
+                "a".to_string(),
+                "b".to_string(),
+                "missing".to_string(),
+            ])
+            .await;
+
+        assert_eq!(updated, 1);
+        let list = manager.list_notifications(false, None).await;
+        assert!(list.iter().find(|n| n.id == "a").unwrap().read);
+        assert!(list.iter().find(|n| n.id == "b").unwrap().read);
+        assert!(!list.iter().find(|n| n.id == "c").unwrap().read);
+
+        let persisted = NotificationManager::read_from_disk_internal(&path).unwrap();
+        assert!(persisted.iter().find(|n| n.id == "a").unwrap().read);
+    }
+
+    #[tokio::test]
+    async fn mark_as_read_with_empty_or_unknown_ids_is_noop_and_does_not_create_file() {
+        let td = TempDir::new().unwrap();
+        let path = td.path().join("notifications.json");
+        let manager = NotificationManager {
+            storage_path: path.clone(),
+            notifications: Arc::new(RwLock::new(vec![record("a", "info", false)])),
+            event_bus: None,
+        };
+
+        assert_eq!(manager.mark_as_read(&[]).await, 0);
+        assert_eq!(manager.mark_as_read(&["missing".to_string()]).await, 0);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn disk_helpers_round_trip_empty_and_multiple_records() {
+        let td = TempDir::new().unwrap();
+        let path = td.path().join("notifications.json");
+
+        NotificationManager::write_to_disk_internal(&path, &[]).unwrap();
+        assert!(NotificationManager::read_from_disk_internal(&path)
+            .unwrap()
+            .is_empty());
+
+        let records = vec![
+            record("a", "info", false),
+            record("b", "critical", true),
+        ];
+        NotificationManager::write_to_disk_internal(&path, &records).unwrap();
+        let loaded = NotificationManager::read_from_disk_internal(&path).unwrap();
+
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].id, "a");
+        assert_eq!(loaded[1].severity, "critical");
+        assert!(std::fs::read_to_string(path).unwrap().contains('\n'));
+    }
+
+    #[test]
+    fn disk_helpers_return_errors_for_missing_malformed_and_unwritable_paths() {
+        let td = TempDir::new().unwrap();
+        let missing = td.path().join("missing.json");
+        assert!(NotificationManager::read_from_disk_internal(&missing).is_err());
+
+        let malformed = td.path().join("malformed.json");
+        std::fs::write(&malformed, "not json").unwrap();
+        assert!(NotificationManager::read_from_disk_internal(&malformed).is_err());
+
+        assert!(NotificationManager::write_to_disk_internal(td.path(), &[record("a", "info", false)])
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn save_errors_are_ignored_by_create_and_mark_read_but_memory_updates_remain() {
+        let td = TempDir::new().unwrap();
+        let manager = NotificationManager {
+            storage_path: td.path().to_path_buf(),
+            notifications: Arc::new(RwLock::new(vec![record("a", "info", false)])),
+            event_bus: None,
+        };
+
+        let created = manager
+            .create_notification("Still Stored", "Disk save fails", "warning")
+            .await;
+        assert_eq!(created.title, "Still Stored");
+        assert_eq!(manager.list_notifications(false, None).await.len(), 2);
+
+        let updated = manager.mark_as_read(&["a".to_string()]).await;
+        assert_eq!(updated, 1);
+        assert!(manager
+            .list_notifications(false, None)
+            .await
+            .iter()
+            .find(|n| n.id == "a")
+            .unwrap()
+            .read);
+    }
+
+    #[test]
+    fn save_to_disk_sync_reports_poisoned_lock() {
+        let td = TempDir::new().unwrap();
+        let path = td.path().join("notifications.json");
+        let notifications = Arc::new(RwLock::new(vec![record("a", "info", false)]));
+        let poisoned = Arc::clone(&notifications);
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoned.write().unwrap();
+            panic!("poison notification lock");
+        })
+        .join();
+        let manager = NotificationManager {
+            storage_path: path,
+            notifications,
+            event_bus: None,
+        };
+
+        assert_eq!(manager.save_to_disk_sync(), Err("Lock poisoned".to_string()));
+    }
+
+    #[tokio::test]
+    async fn poisoned_lock_causes_safe_empty_or_noop_results() {
+        let td = TempDir::new().unwrap();
+        let path = td.path().join("notifications.json");
+        let notifications = Arc::new(RwLock::new(vec![record("a", "info", false)]));
+        let poisoned = Arc::clone(&notifications);
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoned.write().unwrap();
+            panic!("poison notification lock");
+        })
+        .join();
+        let manager = NotificationManager {
+            storage_path: path,
+            notifications,
+            event_bus: None,
+        };
+
+        assert!(manager.list_notifications(false, None).await.is_empty());
+        assert_eq!(manager.mark_as_read(&["a".to_string()]).await, 0);
+        let created = manager
+            .create_notification("Ignored", "Cannot acquire write lock", "info")
+            .await;
+        assert_eq!(created.title, "Ignored");
+        assert!(manager.list_notifications(false, None).await.is_empty());
+    }
 }
