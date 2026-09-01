@@ -210,6 +210,74 @@ impl P2PDiscovery {
                     );
                 }
 
+                // 2. Scan overlay registry allocations (for mesh peers)
+                if let Ok(reg) = crate::nebula::overlay_registry::OverlayRegistry::load(
+                    crate::nebula::registry_sync::REGISTRY_PATH,
+                ) {
+                    for (peer_node, ip_rec) in reg.allocations {
+                        if peer_node == node_id_cfg {
+                            continue;
+                        }
+                        let base_port = match peer_node.as_str() {
+                            "nodeA" => 50051,
+                            "nodeB" => 50052,
+                            "nodeC" => 50053,
+                            _ => 50051,
+                        };
+                        let attest_port = crate::attestation_service::attestation_listener_port_for_base(base_port);
+
+                        // Check if peer is reachable over overlay (either on gRPC base port or attestation port)
+                        if !peer_is_reachable(&ip_rec.overlay_ip, attest_port).await
+                            && !peer_is_reachable(&ip_rec.overlay_ip, base_port).await
+                        {
+                            continue;
+                        }
+
+                        let full_addr = format!("{}:{}", ip_rec.overlay_ip, base_port);
+                        let now = std::time::Instant::now();
+                        let should_send = match last_sent.get(&full_addr) {
+                            Some(last) => now.duration_since(*last).as_secs() >= 30,
+                            None => true,
+                        };
+                        if !should_send {
+                            continue;
+                        }
+
+                        last_sent.insert(full_addr.clone(), now);
+                        let queue_entry = format!("{}|{}", peer_node, full_addr);
+                        if let Err(e) = tx_clone_cfg.send(queue_entry).await {
+                            eprintln!("⚠️ Failed to queue overlay peer for attestation: {:?}", e);
+                            return;
+                        }
+                        tracing::debug!(
+                            "🔐 Queued discovered overlay peer for attestation: {} ({})",
+                            peer_node,
+                            full_addr
+                        );
+                    }
+                }
+
+                // 3. Scan SGX_LIGHTHOUSE_IP for nodeA if this node is not nodeA
+                if node_id_cfg != "nodeA" {
+                    if let Ok(lh_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
+                        if crate::dynamic_config::is_routable_ip(&lh_ip) {
+                            if peer_is_reachable(&lh_ip, 50151).await || peer_is_reachable(&lh_ip, 50051).await {
+                                let full_addr = format!("{}:50051", lh_ip);
+                                let now = std::time::Instant::now();
+                                let should_send = match last_sent.get(&full_addr) {
+                                    Some(last) => now.duration_since(*last).as_secs() >= 30,
+                                    None => true,
+                                };
+                                if should_send {
+                                    last_sent.insert(full_addr.clone(), now);
+                                    let queue_entry = format!("nodeA|{}", full_addr);
+                                    let _ = tx_clone_cfg.send(queue_entry).await;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 sleep(Duration::from_secs(15)).await;
             }
         });

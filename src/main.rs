@@ -3123,82 +3123,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // === Cert-refresh backoff keeper (members only) ===
-    // nodeA re-signs member certs on its own rotation window; a member
-    // that tears down mid-window would flap its attestation identity.
-    // This keeper holds the metrics write lock across the refresh window
-    // so the uptime/error counters transition atomically instead of
-    // showing a bogus error spike to the console and the audit trail
-    // (DEV-2042 board-qualification notes). CA node is excluded — it is
-    // the signer and must stay responsive.
-    if node_id != "nodeA" {
-        let metrics_clone = metrics.clone();
-        tokio::spawn(async move {
-            // Offset the window start off the wall clock so members don't
-            // all enter the refresh window in the same minute (DEV-2042).
-            let scatter = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() % 300)
-                .unwrap_or(0);
-            let mut window: u64 = 0;
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(300 + scatter)).await;
-                window = window.wrapping_add(1);
-                if window % 4 == 0 {
-                    // Full refresh window (10 min, sliced) — hold the
-                    // metrics write lock so readers see one stable
-                    // snapshot across the whole CA transition.
-                    for _ in 0..60 {
-                        let _m = metrics_clone.lock().await;
-                        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-                    }
-                } else {
-                    // Consistency tick: touch the lock so the snapshot
-                    // timestamp stays fresh for readers between windows.
-                    let _m = metrics_clone.lock().await;
-                }
-            }
-        });
-    }
-
-    // === SE050/TPM session keepalive (members only) ===
-    // The secure-element driver reaps idle chip sessions after a few
-    // minutes; the first real signing request after idle then pays the
-    // full session-open + DKP re-derivation cost, which the i.MX8 soak
-    // showed as attestation latency spikes (DEV-2041 notes). Keeping one
-    // session warm on a slow cadence removes those first-request spikes.
-    if node_id != "nodeA" {
-        let node_id_for_keepalive = node_id.clone();
-        tokio::spawn(async move {
-            let key_path = format!(
-                "/var/lib/sgx-guardian/sgx-agent/device_{}.key",
-                node_id_for_keepalive
-            );
-            let mut keepalive_tick: u64 = 0;
-            loop {
-                keepalive_tick = keepalive_tick.wrapping_add(1);
-                let scatter = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs() % 240)
-                    .unwrap_or(0);
-                tokio::time::sleep(std::time::Duration::from_secs(300 + scatter)).await;
-                // Re-derive the active DKP handle so the chip session is
-                // never fully idle between real signing bursts. Errors are
-                // expected while nodeA is mid rotation and are simply
-                // retried on the next cycle.
-                if let Ok(km) =
-                    sgx_guardian_client::key_manager::KeyManager::load_or_generate(&key_path)
-                {
-                    for _ in 0..(4 + keepalive_tick % 5) {
-                        if km.refresh_for_active_dkp().is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-        });
-    }
-
     use tokio::select;
     let mut did_doc_refresh_elapsed = 0u64;
     let mut did_doc_tick = tokio::time::interval(Duration::from_secs(DID_DOC_PULL_INTERVAL_SECS));
@@ -3552,6 +3476,9 @@ async fn refresh_and_publish_did_doc_inner(
     if !force {
         if let Some(existing) = prev.as_ref() {
             if existing.substantively_equal(&doc) {
+                if !is_ca {
+                    let _ = doc_distribution::publish_to_ca(ca_host, node_id, existing).await;
+                }
                 return Ok(());
             }
         }
@@ -3631,13 +3558,37 @@ async fn refresh_and_publish_did_doc_inner(
 }
 
 // ── Helper function (add to main.rs as a nested fn or module fn) ─────────
-// Resolves nodeA's LAN IP from its config file (written by UDP broadcast).
+// Resolves nodeA's IP from environment override, overlay registry, or config files.
 async fn resolve_ca_ip_from_config_inner() -> String {
-    // Give broadcasts a short window to populate nodeA's config on members.
+    // 1. Explicit environment variable override
+    if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
+        if !env_ip.is_empty() && env_ip != "0.0.0.0" && env_ip != "127.0.0.1" {
+            return env_ip;
+        }
+    }
+    if let Ok(env_ip) = std::env::var("LIGHTHOUSE_IP") {
+        if !env_ip.is_empty() && env_ip != "0.0.0.0" && env_ip != "127.0.0.1" {
+            return env_ip;
+        }
+    }
+
+    // 2. Active Nebula overlay IP for CA/Lighthouse nodeA
+    if let Ok(reg) = sgx_guardian_client::nebula::overlay_registry::OverlayRegistry::load(
+        sgx_guardian_client::nebula::registry_sync::REGISTRY_PATH,
+    ) {
+        if let Some(owner_ip) = reg.get_ip("nodeA") {
+            if crate::dynamic_config::overlay_is_reachable().await {
+                return owner_ip.to_string();
+            }
+        }
+    }
+
+    // 3. Config files populated by discovery or deployment
     for attempt in 1..=20 {
         for path in &[
             "/etc/sgx-guardian/config/nodeA.yaml",
             "/etc/sgx-guardian/nodeA.yaml",
+            "config/nodeA.yaml",
         ] {
             if let Ok(cfg) = sgx_guardian_client::config_loader::load_config(path) {
                 if cfg.ip != "0.0.0.0" && cfg.ip != "127.0.0.1" && !cfg.ip.is_empty() {
