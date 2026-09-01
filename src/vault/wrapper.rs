@@ -997,4 +997,336 @@ mod tests {
         let err = normalize_se050_unwrap_output(&sample).unwrap_err();
         assert!(err.to_string().contains("unsupported code point"));
     }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::remove_var(key);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.take() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct CountingBackend {
+        slot_exists: bool,
+        slot_probe_count: Mutex<usize>,
+        provision_count: Mutex<usize>,
+        wrap_count: Mutex<usize>,
+        unwrap_count: Mutex<usize>,
+    }
+
+    impl Se050WrapBackend for CountingBackend {
+        fn slot_exists(&self, _key_id: &str) -> Result<bool, VaultError> {
+            *self
+                .slot_probe_count
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) += 1;
+            Ok(self.slot_exists)
+        }
+
+        fn provision_key(&self, _key_id: &str) -> Result<(), VaultError> {
+            *self
+                .provision_count
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) += 1;
+            Ok(())
+        }
+
+        fn wrap(&self, _key_id: &str, plain: &[u8]) -> Result<Vec<u8>, VaultError> {
+            *self
+                .wrap_count
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) += 1;
+            Ok(plain.to_vec())
+        }
+
+        fn unwrap(&self, _key_id: &str, wrapped: &[u8]) -> Result<Vec<u8>, VaultError> {
+            *self
+                .unwrap_count
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) += 1;
+            Ok(wrapped.to_vec())
+        }
+    }
+
+    fn temp_config() -> (tempfile::TempDir, VaultConfig) {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let config = VaultConfig {
+            base_dir: temp.path().join("vault"),
+        };
+        (temp, config)
+    }
+
+    #[tokio::test]
+    async fn env_true_accepts_truthy_values_and_rejects_falsey_or_missing_values() {
+        let _guard = crate::vault::lock_test_env().await;
+        let _missing = EnvVarGuard::remove("SGX_WRAPPER_TEST_ENV_TRUE");
+        assert!(!env_true("SGX_WRAPPER_TEST_ENV_TRUE"));
+
+        for value in ["", "0", "false", "False", " OFF "] {
+            let _env = EnvVarGuard::set("SGX_WRAPPER_TEST_ENV_TRUE", value);
+            assert!(!env_true("SGX_WRAPPER_TEST_ENV_TRUE"), "{value:?}");
+        }
+
+        for value in ["1", "true", "yes", "on", "anything"] {
+            let _env = EnvVarGuard::set("SGX_WRAPPER_TEST_ENV_TRUE", value);
+            assert!(env_true("SGX_WRAPPER_TEST_ENV_TRUE"), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn software_wrapper_creates_persists_and_round_trips_deks() {
+        let (_temp, config) = temp_config();
+        let wrapper = SoftwareWrapper::from_config(&config).expect("create software wrapper");
+        let master_path = persistence::master_key_path(&config);
+        assert_eq!(std::fs::read(&master_path).expect("read master").len(), 32);
+        assert_eq!(wrapper.scheme(), SOFTWARE_WRAP_SCHEME);
+        assert_eq!(wrapper.key_id(), SOFTWARE_WRAP_KEY_ID);
+
+        let dek = [0x42_u8; 32];
+        let first = wrapper.wrap(&dek).expect("first wrap");
+        let second = wrapper.wrap(&dek).expect("second wrap");
+        assert_ne!(first, second, "random nonces should produce different wraps");
+        assert_eq!(wrapper.unwrap(&first).expect("unwrap first"), dek);
+
+        let restarted = SoftwareWrapper::from_config(&config).expect("restart wrapper");
+        assert_eq!(restarted.unwrap(&second).expect("unwrap after restart"), dek);
+    }
+
+    #[test]
+    fn software_wrapper_rejects_malformed_master_key_and_wrapped_dek_inputs() {
+        let (_temp, config) = temp_config();
+        let master_path = persistence::master_key_path(&config);
+        std::fs::create_dir_all(master_path.parent().expect("parent")).expect("wrap dir");
+
+        for len in [0_usize, 31, 33] {
+            std::fs::write(&master_path, vec![0xA5; len]).expect("write bad master");
+            let err = SoftwareWrapper::from_config(&config).expect_err("bad master length");
+            assert!(err.to_string().contains("master key must be 32 bytes"));
+            assert!(err.to_string().contains(&len.to_string()));
+        }
+
+        std::fs::write(&master_path, [0x11_u8; 32]).expect("write valid master");
+        let wrapper = SoftwareWrapper::from_config(&config).expect("software wrapper");
+        let short = wrapper.unwrap(&[0_u8; 27]).expect_err("short wrapped DEK");
+        assert!(short.to_string().contains("wrapped DEK too short"));
+
+        let mut wrapped = wrapper.wrap(&[0x22_u8; 32]).expect("wrap");
+        let last = wrapped.len() - 1;
+        wrapped[last] ^= 0x55;
+        let tampered = wrapper.unwrap(&wrapped).expect_err("tampered wrapped DEK");
+        assert!(tampered.to_string().contains("software wrap open failed"));
+    }
+
+    #[tokio::test]
+    async fn wrapper_for_metadata_handles_software_legacy_key_ids_and_unknown_schemes() {
+        let _guard = crate::vault::lock_test_env().await;
+        let (_temp, config) = temp_config();
+        let _profile = test_force_runtime_profile(RuntimeProfile::Docker);
+
+        let blank = wrapper_for_metadata(&config, SOFTWARE_WRAP_SCHEME, "")
+            .expect("blank legacy software key id");
+        assert_eq!(blank.scheme(), SOFTWARE_WRAP_SCHEME);
+
+        let expected = wrapper_for_metadata(&config, SOFTWARE_WRAP_SCHEME, SOFTWARE_WRAP_KEY_ID)
+            .expect("current software key id");
+        assert_eq!(expected.key_id(), SOFTWARE_WRAP_KEY_ID);
+
+        let mismatch = match wrapper_for_metadata(&config, SOFTWARE_WRAP_SCHEME, "other") {
+            Ok(_) => panic!("mismatched software key id should fail"),
+            Err(error) => error,
+        };
+        assert!(mismatch.to_string().contains("software wrap key id mismatch"));
+
+        let missing_se050_key = match wrapper_for_metadata(&config, SE050_WRAP_SCHEME, " ") {
+            Ok(_) => panic!("blank SE050 key id should fail"),
+            Err(error) => error,
+        };
+        assert!(missing_se050_key.to_string().contains("require wrap_key_id"));
+
+        let unknown = match wrapper_for_metadata(&config, "made-up", "key") {
+            Ok(_) => panic!("unknown scheme should fail"),
+            Err(error) => error,
+        };
+        assert!(unknown.to_string().contains("unsupported wrap scheme"));
+    }
+
+    #[tokio::test]
+    async fn se050_wrapper_validates_envelopes_before_backend_unwrap() {
+        let _guard = crate::vault::lock_test_env().await;
+        let (_temp, config) = temp_config();
+        let _profile = test_force_runtime_profile(RuntimeProfile::Production);
+        let backend = Arc::new(CountingBackend {
+            slot_exists: true,
+            ..Default::default()
+        });
+        let _backend = test_override_se050_wrap_backend(backend.clone());
+        let wrapper = default_wrapper(&config).expect("SE050 wrapper");
+
+        for envelope in [
+            serde_json::json!({
+                "version": 2,
+                "oaep_hash": "backend-default",
+                "oaep_mgf1_hash": "backend-default",
+                "oaep_label_b64": "",
+                "payload_format": "raw-dek-32",
+                "ciphertext_b64": "AA=="
+            }),
+            serde_json::json!({
+                "version": 1,
+                "oaep_hash": "sha256",
+                "oaep_mgf1_hash": "backend-default",
+                "oaep_label_b64": "",
+                "payload_format": "raw-dek-32",
+                "ciphertext_b64": "AA=="
+            }),
+            serde_json::json!({
+                "version": 1,
+                "oaep_hash": "backend-default",
+                "oaep_mgf1_hash": "backend-default",
+                "oaep_label_b64": "bGFiZWw=",
+                "payload_format": "raw-dek-32",
+                "ciphertext_b64": "AA=="
+            }),
+            serde_json::json!({
+                "version": 1,
+                "oaep_hash": "backend-default",
+                "oaep_mgf1_hash": "backend-default",
+                "oaep_label_b64": "",
+                "payload_format": "not-raw",
+                "ciphertext_b64": "AA=="
+            }),
+        ] {
+            assert!(wrapper.unwrap(envelope.to_string().as_bytes()).is_err());
+        }
+
+        let malformed_json = wrapper.unwrap(br#"{"version":"#).unwrap_err();
+        assert!(malformed_json
+            .to_string()
+            .contains("invalid SE050 wrapped DEK envelope"));
+
+        let invalid_ciphertext_b64 = serde_json::json!({
+            "version": 1,
+            "oaep_hash": "backend-default",
+            "oaep_mgf1_hash": "backend-default",
+            "oaep_label_b64": "",
+            "payload_format": "raw-dek-32",
+            "ciphertext_b64": "@@@"
+        });
+        assert!(wrapper
+            .unwrap(invalid_ciphertext_b64.to_string().as_bytes())
+            .is_err());
+
+        assert_eq!(
+            *backend
+                .unwrap_count
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn se050_wrapper_uses_existing_or_provisioned_key_metadata_paths() {
+        let _guard = crate::vault::lock_test_env().await;
+
+        let (_temp_existing, config_existing) = temp_config();
+        let _profile = test_force_runtime_profile(RuntimeProfile::Production);
+        let existing_backend = Arc::new(CountingBackend {
+            slot_exists: true,
+            ..Default::default()
+        });
+        let _existing_backend = test_override_se050_wrap_backend(existing_backend.clone());
+        let existing = default_wrapper(&config_existing).expect("existing key wrapper");
+        assert_eq!(existing.key_id(), DEFAULT_SE050_WRAP_KEY_ID);
+        assert_eq!(
+            *existing_backend
+                .provision_count
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()),
+            0
+        );
+        assert!(persistence::wrap_dir(&config_existing)
+            .join("se050-wrap-key.json")
+            .exists());
+        drop(_existing_backend);
+
+        let (_temp_new, config_new) = temp_config();
+        let provision_backend = Arc::new(CountingBackend {
+            slot_exists: false,
+            ..Default::default()
+        });
+        let _provision_backend = test_override_se050_wrap_backend(provision_backend.clone());
+        let provisioned = default_wrapper(&config_new).expect("provisioned key wrapper");
+        assert_eq!(provisioned.key_id(), DEFAULT_SE050_WRAP_KEY_ID);
+        assert_eq!(
+            *provision_backend
+                .provision_count
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()),
+            1
+        );
+    }
+
+    #[test]
+    fn with_temp_io_returns_output_and_cleans_up_success_and_error_paths() {
+        let paths = Arc::new(Mutex::new(None::<(String, String)>));
+        let success_paths = Arc::clone(&paths);
+        let output = with_temp_io("unit_success", b"input", move |input, output| {
+            assert_eq!(std::fs::read(input)?, b"input");
+            *success_paths
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) =
+                Some((input.to_string(), output.to_string()));
+            std::fs::write(output, b"output")?;
+            Ok(())
+        })
+        .expect("temp io success");
+        assert_eq!(output, b"output");
+        let (input_path, output_path) = paths
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+            .expect("captured paths");
+        assert!(!std::path::Path::new(&input_path).exists());
+        assert!(!std::path::Path::new(&output_path).exists());
+
+        let error_paths = Arc::new(Mutex::new(None::<(String, String)>));
+        let captured = Arc::clone(&error_paths);
+        let err = with_temp_io("unit_error", b"input", move |input, output| {
+            *captured.lock().unwrap_or_else(|error| error.into_inner()) =
+                Some((input.to_string(), output.to_string()));
+            Err(VaultError::Crypto("forced failure".to_string()))
+        })
+        .expect_err("callback failure should propagate");
+        assert!(err.to_string().contains("forced failure"));
+        let (input_path, output_path) = error_paths
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+            .expect("captured error paths");
+        assert!(!std::path::Path::new(&input_path).exists());
+        assert!(!std::path::Path::new(&output_path).exists());
+    }
 }

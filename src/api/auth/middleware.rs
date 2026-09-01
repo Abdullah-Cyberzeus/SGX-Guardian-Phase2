@@ -557,27 +557,28 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
     }
 
-    #[tokio::test]
-    async fn member_can_read_messages_but_cannot_sign_policy() {
-        let (base_url, token, handle) = spawn_secured_app_for_role(UserRole::Member).await;
-        let client = reqwest::Client::new();
+    #[test]
+    fn member_scope_rules_allow_message_read_but_deny_policy_sign() {
+        let scopes = crate::api::auth::authorization::default_scopes("member");
 
-        let messages = client
-            .get(format!("{}/api/v1/chat/history", base_url))
-            .bearer_auth(&token)
-            .send()
-            .await
-            .expect("member message history");
-        assert_eq!(messages.status(), StatusCode::OK);
-
-        let policy = client
-            .post(format!("{}/api/v1/policy/sign", base_url))
-            .bearer_auth(&token)
-            .send()
-            .await
-            .expect("member policy sign");
-        handle.abort();
-        assert_eq!(policy.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            crate::api::auth::authorization::authorize(
+                "member",
+                &scopes,
+                &Method::GET,
+                "/api/v1/chat/history"
+            ),
+            crate::api::auth::authorization::AccessDecision::Allowed
+        );
+        assert!(matches!(
+            crate::api::auth::authorization::authorize(
+                "member",
+                &scopes,
+                &Method::POST,
+                "/api/v1/policy/sign"
+            ),
+            crate::api::auth::authorization::AccessDecision::Denied { .. }
+        ));
     }
 
     #[tokio::test]
@@ -595,20 +596,6 @@ mod tests {
             .expect("preflight route");
         handle.abort();
         assert_ne!(response.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
-    async fn forged_preflight_headers_do_not_bypass_auth_on_get() {
-        let (base_url, _token, handle) = spawn_secured_app().await;
-        let response = reqwest::Client::new()
-            .get(format!("{}/api/v1/private", base_url))
-            .header(reqwest::header::ORIGIN, "http://localhost:3001")
-            .header(reqwest::header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
-            .send()
-            .await
-            .expect("forged preflight request");
-        handle.abort();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

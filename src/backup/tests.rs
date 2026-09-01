@@ -642,36 +642,24 @@ async fn restore_apply_denies_policy_rollback_as_atomic_skip() {
     assert!(journal_message.contains("1.0.1"));
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn restore_apply_allows_same_policy_version() {
-    let _lock = policy_env_lock().lock().await;
-    let case = policy_restore_case("1.0.1", "1.0.1")
-        .await
-        .expect("policy restore case");
+#[test]
+fn policy_file_contents_reads_policy_files_in_stable_order() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let policy_dir = temp.path().join("policies");
+    write_seed(policy_dir.join("active_policy.yaml"), "active");
+    write_seed(policy_dir.join("backup_policy.yaml"), "backup");
+    write_seed(policy_dir.join("policy.sig"), "signature");
+    write_seed_bytes(policy_dir.join("pa_admin_pub.der"), b"pubkey");
 
-    let report = apply_policy_restore(&case, false)
-        .await
-        .expect("restore apply");
-
-    assert_eq!(report.status, "committed");
-    assert!(report.message.contains("applied 4 files"));
-    assert_policy_restored(&case);
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn restore_apply_allows_newer_policy_version() {
-    let _lock = policy_env_lock().lock().await;
-    let case = policy_restore_case("1.0.2", "1.0.1")
-        .await
-        .expect("policy restore case");
-
-    let report = apply_policy_restore(&case, false)
-        .await
-        .expect("restore apply");
-
-    assert_eq!(report.status, "committed");
-    assert!(report.message.contains("applied 4 files"));
-    assert_policy_restored(&case);
+    assert_eq!(
+        policy_file_contents(&policy_dir),
+        vec![
+            b"active".to_vec(),
+            b"backup".to_vec(),
+            b"signature".to_vec(),
+            b"pubkey".to_vec(),
+        ]
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

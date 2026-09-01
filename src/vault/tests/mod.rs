@@ -1502,3 +1502,529 @@ async fn production_hardware_wrapper_encrypts_decrypts_and_persists_across_resta
     assert!(final_state.wrap_count >= 1);
     assert!(final_state.unwrap_count >= 1);
 }
+
+struct EnvUnsetRestore {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl EnvUnsetRestore {
+    fn unset(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::remove_var(key);
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvUnsetRestore {
+    fn drop(&mut self) {
+        if let Some(value) = &self.previous {
+            std::env::set_var(self.key, value);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
+
+#[tokio::test]
+async fn vault_config_from_env_uses_default_base_when_env_is_missing() {
+    let _env_lock = crate::vault::lock_test_env().await;
+    let _base = EnvUnsetRestore::unset(crate::vault::VAULT_BASE_ENV);
+
+    let config = VaultConfig::from_env();
+
+    assert_eq!(config.base_dir, std::path::PathBuf::from(crate::vault::VAULT_BASE));
+    assert_eq!(
+        VaultConfig::DEFAULT_CHUNK_BYTES,
+        crate::xfer::XferConfig::DEFAULT_CHUNK_BYTES
+    );
+    assert_eq!(config.clone().base_dir, config.base_dir);
+    assert!(format!("{config:?}").contains("base_dir"));
+}
+
+#[tokio::test]
+async fn vault_config_from_env_preserves_custom_values_without_normalizing() {
+    let _env_lock = crate::vault::lock_test_env().await;
+
+    for raw in [
+        "",
+        ".",
+        "relative/vault",
+        "/tmp/guardian vault/custom",
+        "/tmp/guardian-vault/../vault",
+    ] {
+        let _base = EnvRestore::set_value(crate::vault::VAULT_BASE_ENV, raw);
+        let config = VaultConfig::from_env();
+        assert_eq!(config.base_dir, std::path::PathBuf::from(raw));
+    }
+}
+
+#[test]
+fn download_path_formats_vault_ids_without_validation_or_encoding() {
+    assert_eq!(
+        crate::vault::download_path("urn:uuid:abc-123"),
+        "/api/v1/vault/files/urn:uuid:abc-123/download"
+    );
+    assert_eq!(
+        crate::vault::download_path(""),
+        "/api/v1/vault/files//download"
+    );
+    assert_eq!(
+        crate::vault::download_path("folder/name with spaces?x=1#frag"),
+        "/api/v1/vault/files/folder/name with spaces?x=1#frag/download"
+    );
+}
+
+#[tokio::test]
+async fn write_lock_is_singleton_and_exclusive() {
+    let first = crate::vault::write_lock();
+    let second = crate::vault::write_lock();
+    assert!(std::ptr::eq(first, second));
+
+    let guard = first.lock().await;
+    assert!(second.try_lock().is_err());
+    drop(guard);
+
+    let reacquired = second.try_lock().expect("lock should be available after guard drops");
+    drop(reacquired);
+}
+
+fn test_record(
+    vault_id: &str,
+    namespace: VaultNamespace,
+    received_at: &str,
+    size_cipher: u64,
+) -> VaultRecord {
+    VaultRecord {
+        vault_id: vault_id.to_string(),
+        namespace: if namespace.is_personal() {
+            VaultNamespace::PERSONAL_STORAGE_KEY.to_string()
+        } else {
+            String::new()
+        },
+        circle_id: match namespace {
+            VaultNamespace::Personal => String::new(),
+            VaultNamespace::Circle(circle_id) => circle_id,
+        },
+        filename: "fixture.bin".into(),
+        mime: "application/octet-stream".into(),
+        size_plain: 32,
+        size_cipher,
+        sha256_plain: "00".repeat(32),
+        sender_did: "did:guardian:sender".into(),
+        received_at: received_at.to_string(),
+        source: VaultSource::FileTransfer,
+        folder_id: String::new(),
+        starred: false,
+        description: String::new(),
+        owner_did: String::new(),
+        revoked: false,
+        revoked_at: None,
+        expires_at: None,
+        conversation_recipient_did: None,
+        message_id: None,
+        enc: EncMeta {
+            algo: "AES-256-GCM/STREAM-BE32".into(),
+            chunk_bytes: VaultConfig::DEFAULT_CHUNK_BYTES,
+            base_nonce_b64: "AAAAAAAAAA==".into(),
+            wrapped_dek_b64: "d3JhcHBlZA==".into(),
+            wrap_scheme: crate::vault::wrapper::SOFTWARE_WRAP_SCHEME.into(),
+            wrap_key_id: crate::vault::wrapper::SOFTWARE_WRAP_KEY_ID.into(),
+        },
+    }
+}
+
+#[test]
+fn persistence_safe_id_replaces_only_path_sensitive_characters() {
+    assert_eq!(
+        persistence::safe_id("urn:uuid/a\\b\0c"),
+        "urn_uuid_a_b_c"
+    );
+    assert_eq!(
+        persistence::safe_id("spaces and unicode \u{2603} stay"),
+        "spaces and unicode \u{2603} stay"
+    );
+}
+
+#[tokio::test]
+async fn persistence_read_json_if_exists_and_write_atomic_cover_missing_and_malformed_files() {
+    let temp = TempDir::new().expect("tempdir");
+    let path = temp.path().join("nested").join("value.json");
+
+    let missing = persistence::read_json_if_exists::<serde_json::Value>(&path)
+        .await
+        .expect("missing read should succeed");
+    assert!(missing.is_none());
+
+    persistence::write_atomic(&path, br#"{"ready":true}"#)
+        .await
+        .expect("write atomic");
+    assert_eq!(
+        persistence::read_json::<serde_json::Value>(&path)
+            .await
+            .expect("read json"),
+        serde_json::json!({ "ready": true })
+    );
+    assert!(!path.with_extension("tmp").exists());
+
+    persistence::write_atomic(&path, b"{not-json")
+        .await
+        .expect("write malformed json");
+    assert!(persistence::read_json::<serde_json::Value>(&path)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn persistence_lists_sorted_valid_records_and_ignores_unreadable_entries() {
+    let temp = TempDir::new().expect("tempdir");
+    let config = VaultConfig {
+        base_dir: temp.path().join("vault"),
+    };
+    let namespace = VaultNamespace::Circle("circle-alpha".to_string());
+    let older = test_record(
+        "urn:uuid:older",
+        namespace.clone(),
+        "2026-01-01T00:00:00Z",
+        101,
+    );
+    let newer = test_record(
+        "urn:uuid:newer",
+        namespace.clone(),
+        "2026-01-02T00:00:00Z",
+        202,
+    );
+
+    persistence::save_record(&config, &older)
+        .await
+        .expect("save older");
+    persistence::save_record(&config, &newer)
+        .await
+        .expect("save newer");
+    tokio::fs::write(
+        persistence::meta_namespace_dir(&config, &namespace).join("broken.json"),
+        b"{bad-json",
+    )
+    .await
+    .expect("write malformed record");
+    tokio::fs::write(persistence::meta_dir(&config).join("not-a-namespace"), b"ignored")
+        .await
+        .expect("write non-dir entry");
+
+    let listed = persistence::list_records(&config, None)
+        .await
+        .expect("list all records");
+    assert_eq!(
+        listed
+            .iter()
+            .map(|record| record.vault_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["urn:uuid:newer", "urn:uuid:older"]
+    );
+    assert!(persistence::find_record(&config, "missing")
+        .await
+        .expect("find missing")
+        .is_none());
+}
+
+#[tokio::test]
+async fn delete_record_removes_blob_and_metadata_and_is_idempotent() {
+    let temp = TempDir::new().expect("tempdir");
+    let config = VaultConfig {
+        base_dir: temp.path().join("vault"),
+    };
+    let record = test_record(
+        "urn:uuid:delete-me",
+        VaultNamespace::Circle("circle-delete".to_string()),
+        "2026-01-01T00:00:00Z",
+        64,
+    );
+    let blob_path = persistence::record_blob_path(&config, &record);
+    let meta_path = persistence::record_meta_path(&config, &record);
+
+    persistence::save_record(&config, &record)
+        .await
+        .expect("save metadata");
+    persistence::write_atomic(&blob_path, b"encrypted")
+        .await
+        .expect("save blob");
+
+    persistence::delete_record(&config, &record)
+        .await
+        .expect("delete existing record");
+    assert!(!blob_path.exists());
+    assert!(!meta_path.exists());
+
+    persistence::delete_record(&config, &record)
+        .await
+        .expect("delete missing record is ok");
+}
+
+#[tokio::test]
+async fn move_to_namespace_moves_blob_metadata_and_updates_namespace_fields() {
+    let temp = TempDir::new().expect("tempdir");
+    let config = VaultConfig {
+        base_dir: temp.path().join("vault"),
+    };
+    let record = test_record(
+        "urn:uuid:move-me",
+        VaultNamespace::Personal,
+        "2026-01-01T00:00:00Z",
+        64,
+    );
+    let old_blob = persistence::record_blob_path(&config, &record);
+    let old_meta = persistence::record_meta_path(&config, &record);
+    persistence::save_record(&config, &record)
+        .await
+        .expect("save metadata");
+    persistence::write_atomic(&old_blob, b"encrypted")
+        .await
+        .expect("save blob");
+
+    let _guard = crate::vault::write_lock().lock().await;
+    let moved = persistence::move_to_namespace(
+        &config,
+        record,
+        &VaultNamespace::Circle("circle-moved".to_string()),
+    )
+    .await
+    .expect("move namespace");
+    drop(_guard);
+
+    assert_eq!(moved.namespace, "");
+    assert_eq!(moved.circle_id, "circle-moved");
+    assert!(!old_blob.exists());
+    assert!(!old_meta.exists());
+    assert_eq!(
+        tokio::fs::read(persistence::record_blob_path(&config, &moved))
+            .await
+            .expect("read moved blob"),
+        b"encrypted"
+    );
+    assert!(persistence::load_record(&config, "circle-moved", &moved.vault_id)
+        .await
+        .expect("load moved")
+        .is_some());
+}
+
+#[tokio::test]
+async fn upload_invalid_folder_id_returns_before_ingest_and_preserves_staging_file() {
+    let temp = TempDir::new().expect("tempdir");
+    let config = VaultConfig {
+        base_dir: temp.path().join("vault"),
+    };
+    let staging_path = temp.path().join("invalid-folder.part");
+    tokio::fs::write(&staging_path, b"payload")
+        .await
+        .expect("write staging payload");
+
+    let error = upload::ingest_staged_upload(
+        &config,
+        upload::StagedUpload {
+            namespace: VaultNamespace::Personal,
+            folder_id: "../bad".into(),
+            filename: "payload.txt".into(),
+            mime: "text/plain".into(),
+            sender_did: "did:guardian:sender".into(),
+            staging_path: staging_path.clone(),
+            size_plain: 7,
+            sha256_plain: hex::encode(sha2::Sha256::digest(b"payload")),
+            chunk_bytes: VaultConfig::DEFAULT_CHUNK_BYTES,
+            description: String::new(),
+        },
+    )
+    .await
+    .expect_err("invalid folder id should fail");
+
+    assert!(error.to_string().contains("folder id"));
+    assert!(staging_path.exists());
+}
+
+#[tokio::test]
+async fn software_wrapper_rejects_malformed_master_key_lengths() {
+    let temp = TempDir::new().expect("tempdir");
+    let config = VaultConfig {
+        base_dir: temp.path().join("vault"),
+    };
+    let master_key = persistence::master_key_path(&config);
+    tokio::fs::create_dir_all(master_key.parent().expect("parent"))
+        .await
+        .expect("create wrap dir");
+
+    for len in [0_usize, 31, 33] {
+        tokio::fs::write(&master_key, vec![0xA5; len])
+            .await
+            .expect("write malformed master key");
+        let error = crate::vault::wrapper::SoftwareWrapper::from_config(&config)
+            .expect_err("bad master key length must fail");
+        assert!(error.to_string().contains("master key must be 32 bytes"));
+        assert!(error.to_string().contains(&len.to_string()));
+    }
+}
+
+#[tokio::test]
+async fn software_wrapper_rejects_short_and_tampered_wrapped_deks() {
+    let temp = TempDir::new().expect("tempdir");
+    let config = VaultConfig {
+        base_dir: temp.path().join("vault"),
+    };
+    let wrapper =
+        crate::vault::wrapper::SoftwareWrapper::from_config(&config).expect("software wrapper");
+
+    for len in [0_usize, 11, 27] {
+        let error = wrapper
+            .unwrap(&vec![0xA5; len])
+            .expect_err("short wrapped DEK must fail");
+        assert!(error.to_string().contains("wrapped DEK too short"));
+    }
+
+    let mut wrapped = wrapper.wrap(&[0x11; 32]).expect("wrap DEK");
+    let last = wrapped.len() - 1;
+    wrapped[last] ^= 0x01;
+    let error = wrapper
+        .unwrap(&wrapped)
+        .expect_err("tampered wrapped DEK must fail");
+    assert!(error.to_string().contains("software wrap open failed"));
+}
+
+#[tokio::test]
+async fn wrapper_for_metadata_rejects_mismatched_empty_and_unknown_metadata() {
+    let _env_lock = crate::vault::lock_test_env().await;
+    let temp = TempDir::new().expect("tempdir");
+    let _base = EnvRestore::set(crate::vault::VAULT_BASE_ENV, temp.path());
+    let config = VaultConfig::from_env();
+    let _profile = crate::vault::wrapper::test_force_runtime_profile(
+        crate::vault::wrapper::RuntimeProfile::Docker,
+    );
+
+    let software = crate::vault::wrapper::wrapper_for_metadata(
+        &config,
+        crate::vault::wrapper::SOFTWARE_WRAP_SCHEME,
+        "",
+    )
+    .expect("blank software key id is accepted for legacy metadata");
+    assert_eq!(software.scheme(), crate::vault::wrapper::SOFTWARE_WRAP_SCHEME);
+
+    let mismatch = match crate::vault::wrapper::wrapper_for_metadata(
+        &config,
+        crate::vault::wrapper::SOFTWARE_WRAP_SCHEME,
+        "other-key",
+    ) {
+        Ok(_) => panic!("software key mismatch should fail"),
+        Err(error) => error,
+    };
+    assert!(mismatch.to_string().contains("software wrap key id mismatch"));
+
+    let empty_se050 = match crate::vault::wrapper::wrapper_for_metadata(
+        &config,
+        crate::vault::wrapper::SE050_WRAP_SCHEME,
+        "  ",
+    ) {
+        Ok(_) => panic!("SE050 metadata requires key id"),
+        Err(error) => error,
+    };
+    assert!(empty_se050.to_string().contains("require wrap_key_id"));
+
+    let unknown = match crate::vault::wrapper::wrapper_for_metadata(
+        &config,
+        "unknown-scheme",
+        "key",
+    ) {
+        Ok(_) => panic!("unknown scheme should fail"),
+        Err(error) => error,
+    };
+    assert!(unknown.to_string().contains("unsupported wrap scheme"));
+}
+
+#[tokio::test]
+async fn se050_wrapper_rejects_malformed_envelope_metadata_before_unwrap() {
+    let _env_lock = crate::vault::lock_test_env().await;
+    let temp = TempDir::new().expect("tempdir");
+    let _base = EnvRestore::set(crate::vault::VAULT_BASE_ENV, temp.path());
+    let _profile = crate::vault::wrapper::test_force_runtime_profile(
+        crate::vault::wrapper::RuntimeProfile::Production,
+    );
+    let (backend, state) = MockSe050Backend::available_with_delays(0, 0);
+    let _backend = crate::vault::wrapper::test_override_se050_wrap_backend(backend);
+    let config = VaultConfig::from_env();
+    let wrapper = crate::vault::wrapper::default_wrapper(&config).expect("SE050 wrapper");
+
+    for (name, envelope) in [
+        (
+            "version",
+            serde_json::json!({
+                "version": 2,
+                "oaep_hash": "backend-default",
+                "oaep_mgf1_hash": "backend-default",
+                "oaep_label_b64": "",
+                "payload_format": "raw-dek-32",
+                "ciphertext_b64": "AA=="
+            }),
+        ),
+        (
+            "hash",
+            serde_json::json!({
+                "version": 1,
+                "oaep_hash": "sha256",
+                "oaep_mgf1_hash": "backend-default",
+                "oaep_label_b64": "",
+                "payload_format": "raw-dek-32",
+                "ciphertext_b64": "AA=="
+            }),
+        ),
+        (
+            "label",
+            serde_json::json!({
+                "version": 1,
+                "oaep_hash": "backend-default",
+                "oaep_mgf1_hash": "backend-default",
+                "oaep_label_b64": "bGFiZWw=",
+                "payload_format": "raw-dek-32",
+                "ciphertext_b64": "AA=="
+            }),
+        ),
+        (
+            "payload",
+            serde_json::json!({
+                "version": 1,
+                "oaep_hash": "backend-default",
+                "oaep_mgf1_hash": "backend-default",
+                "oaep_label_b64": "",
+                "payload_format": "raw-dek-48",
+                "ciphertext_b64": "AA=="
+            }),
+        ),
+    ] {
+        let error = match wrapper.unwrap(envelope.to_string().as_bytes()) {
+            Ok(_) => panic!("bad {name} envelope should fail"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("SE050"));
+    }
+
+    let malformed_json = wrapper
+        .unwrap(br#"{"version":"#)
+        .expect_err("malformed JSON envelope should fail");
+    assert!(malformed_json
+        .to_string()
+        .contains("invalid SE050 wrapped DEK envelope"));
+
+    let invalid_base64 = wrapper
+        .unwrap(
+            serde_json::json!({
+                "version": 1,
+                "oaep_hash": "backend-default",
+                "oaep_mgf1_hash": "backend-default",
+                "oaep_label_b64": "",
+                "payload_format": "raw-dek-32",
+                "ciphertext_b64": "@@@"
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .expect_err("invalid ciphertext base64 should fail");
+    assert!(invalid_base64.to_string().contains("Invalid"));
+
+    let final_state = state.lock().unwrap_or_else(|error| error.into_inner());
+    assert_eq!(final_state.unwrap_count, 0);
+}

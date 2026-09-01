@@ -291,7 +291,7 @@ fn cidr_or_ip_contains(cidr_or_ip: &str, target_ip: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{enrich_entries, infer_label_for_mac, WhitelistEntry};
+    use super::*;
     use crate::discovery::{ConnectedDevice, DeviceStatus, OpenPort};
 
     fn device() -> ConnectedDevice {
@@ -346,5 +346,275 @@ mod tests {
             infer_label_for_mac("AA:BB:CC:11:22:33", &[device()]),
             Some("Acme".into())
         );
+    }
+
+    fn entry() -> WhitelistEntry {
+        WhitelistEntry {
+            mac: "AA:BB:CC:11:22:33".into(),
+            label: Some("Printer".into()),
+            expected_os: None,
+            expected_ports: Vec::new(),
+            expected_ips: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn load_missing_and_empty_files_return_empty_whitelist() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(Whitelist::load(&dir.path().join("missing.yaml"))
+            .expect("missing")
+            .entries
+            .is_empty());
+
+        let path = dir.path().join("empty.yaml");
+        std::fs::write(&path, " \n\t").expect("write empty");
+        assert!(Whitelist::load(&path).expect("empty").entries.is_empty());
+    }
+
+    #[test]
+    fn load_yaml_applies_defaults_and_normalizes_mac_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("whitelist.yaml");
+        std::fs::write(
+            &path,
+            r#"
+devices:
+  - mac: " aa:bb:cc:11:22:33 "
+    label: Printer
+"#,
+        )
+        .expect("write yaml");
+        let whitelist = Whitelist::load(&path).expect("load whitelist");
+        let loaded = whitelist
+            .entries
+            .get("AA:BB:CC:11:22:33")
+            .expect("normalized key");
+        assert_eq!(loaded.label.as_deref(), Some("Printer"));
+        assert!(loaded.expected_ports.is_empty());
+        assert!(loaded.expected_ips.is_empty());
+    }
+
+    #[test]
+    fn load_malformed_yaml_returns_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("whitelist.yaml");
+        std::fs::write(&path, "devices: [").expect("write malformed");
+        assert!(Whitelist::load(&path).is_err());
+    }
+
+    #[test]
+    fn duplicate_mac_entries_last_entry_wins() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("whitelist.yaml");
+        std::fs::write(
+            &path,
+            r#"
+devices:
+  - mac: "AA:BB:CC:11:22:33"
+    label: Old
+  - mac: "aa:bb:cc:11:22:33"
+    label: New
+"#,
+        )
+        .expect("write yaml");
+        let whitelist = Whitelist::load(&path).expect("load");
+        assert_eq!(whitelist.entries.len(), 1);
+        assert_eq!(
+            whitelist
+                .entries
+                .get("AA:BB:CC:11:22:33")
+                .unwrap()
+                .label
+                .as_deref(),
+            Some("New")
+        );
+    }
+
+    #[test]
+    fn classify_without_matching_mac_marks_unauthorized() {
+        let whitelist = Whitelist {
+            entries: HashMap::new(),
+        };
+        let mut dev = device();
+        whitelist.classify(&mut dev);
+        assert_eq!(dev.status, DeviceStatus::Unauthorized);
+
+        let mut no_mac = device();
+        no_mac.mac = None;
+        whitelist.classify(&mut no_mac);
+        assert_eq!(no_mac.status, DeviceStatus::Unauthorized);
+    }
+
+    #[test]
+    fn classify_matching_mac_without_expectations_approves() {
+        let mut whitelist = Whitelist::default();
+        whitelist.entries.insert(normalize_mac(&entry().mac), entry());
+        let mut dev = device();
+        dev.status = DeviceStatus::Unauthorized;
+        whitelist.classify(&mut dev);
+        assert_eq!(dev.status, DeviceStatus::Approved);
+    }
+
+    #[test]
+    fn classify_expected_os_mismatch_marks_drifted() {
+        let mut whitelist = Whitelist::default();
+        let mut wl = entry();
+        wl.expected_os = Some("Windows".into());
+        whitelist.entries.insert(normalize_mac(&wl.mac), wl);
+        let mut dev = device();
+        whitelist.classify(&mut dev);
+        assert_eq!(dev.status, DeviceStatus::Drifted);
+    }
+
+    #[test]
+    fn classify_expected_os_substring_match_approves() {
+        let mut whitelist = Whitelist::default();
+        let mut wl = entry();
+        wl.expected_os = Some("Linux".into());
+        whitelist.entries.insert(normalize_mac(&wl.mac), wl);
+        let mut dev = device();
+        whitelist.classify(&mut dev);
+        assert_eq!(dev.status, DeviceStatus::Approved);
+    }
+
+    #[test]
+    fn classify_missing_expected_port_marks_drifted() {
+        let mut whitelist = Whitelist::default();
+        let mut wl = entry();
+        wl.expected_ports = vec![22, 443];
+        whitelist.entries.insert(normalize_mac(&wl.mac), wl);
+        let mut dev = device();
+        whitelist.classify(&mut dev);
+        assert_eq!(dev.status, DeviceStatus::Drifted);
+    }
+
+    #[test]
+    fn classify_expected_ports_all_present_approves() {
+        let mut whitelist = Whitelist::default();
+        let mut wl = entry();
+        wl.expected_ports = vec![22];
+        whitelist.entries.insert(normalize_mac(&wl.mac), wl);
+        let mut dev = device();
+        whitelist.classify(&mut dev);
+        assert_eq!(dev.status, DeviceStatus::Approved);
+    }
+
+    #[test]
+    fn classify_expected_exact_ip_and_cidr_are_enforced() {
+        let mut whitelist = Whitelist::default();
+        let mut wl = entry();
+        wl.expected_ips = vec!["10.0.0.1".into(), "192.168.50.0/24".into()];
+        whitelist.entries.insert(normalize_mac(&wl.mac), wl);
+        let mut dev = device();
+        whitelist.classify(&mut dev);
+        assert_eq!(dev.status, DeviceStatus::Approved);
+    }
+
+    #[test]
+    fn classify_expected_ip_mismatch_marks_unauthorized_before_drift_checks() {
+        let mut whitelist = Whitelist::default();
+        let mut wl = entry();
+        wl.expected_os = Some("Windows".into());
+        wl.expected_ips = vec!["10.0.0.1".into()];
+        whitelist.entries.insert(normalize_mac(&wl.mac), wl);
+        let mut dev = device();
+        whitelist.classify(&mut dev);
+        assert_eq!(dev.status, DeviceStatus::Unauthorized);
+    }
+
+    #[test]
+    fn cidr_or_ip_contains_handles_boundaries_and_invalid_inputs() {
+        assert!(cidr_or_ip_contains("0.0.0.0/0", "192.168.50.103"));
+        assert!(cidr_or_ip_contains("192.168.50.103/32", "192.168.50.103"));
+        assert!(!cidr_or_ip_contains("192.168.50.103/32", "192.168.50.104"));
+        assert!(!cidr_or_ip_contains("192.168.50.0/33", "192.168.50.103"));
+        assert!(!cidr_or_ip_contains("bad-cidr", "192.168.50.103"));
+        assert!(!cidr_or_ip_contains("192.168.50.0/24", "not-an-ip"));
+        assert!(!cidr_or_ip_contains("2001:db8::/32", "2001:db8::1"));
+    }
+
+    #[test]
+    fn enrich_entries_marks_no_match_and_preserves_entry() {
+        let views = enrich_entries(
+            &[WhitelistEntry {
+                mac: "00:11:22:33:44:55".into(),
+                label: Some("Unknown".into()),
+                expected_os: None,
+                expected_ports: Vec::new(),
+                expected_ips: Vec::new(),
+            }],
+            &[device()],
+        );
+        assert!(!views[0].inventory_match);
+        assert!(views[0].current_devices.is_empty());
+        assert_eq!(views[0].entry.label.as_deref(), Some("Unknown"));
+    }
+
+    #[test]
+    fn enrich_entries_sorts_matching_devices_by_last_seen_desc_then_ip() {
+        let mut older = device();
+        older.device_id = "older".into();
+        older.ip = "192.168.50.200".into();
+        older.last_seen = "2026-06-12T00:00:00Z".into();
+        let mut newest_a = device();
+        newest_a.device_id = "newest-a".into();
+        newest_a.ip = "192.168.50.20".into();
+        newest_a.last_seen = "2026-06-12T02:00:00Z".into();
+        let mut newest_b = device();
+        newest_b.device_id = "newest-b".into();
+        newest_b.ip = "192.168.50.10".into();
+        newest_b.last_seen = "2026-06-12T02:00:00Z".into();
+
+        let views = enrich_entries(&[entry()], &[older, newest_a, newest_b]);
+        assert_eq!(
+            views[0]
+                .current_devices
+                .iter()
+                .map(|device| device.device_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["newest-b", "newest-a", "older"]
+        );
+    }
+
+    #[test]
+    fn infer_label_prefers_non_stale_newest_then_vendor_hostname_ip() {
+        let mut stale = device();
+        stale.status = DeviceStatus::Stale;
+        stale.vendor = Some("Stale Vendor".into());
+        stale.last_seen = "2026-06-12T05:00:00Z".into();
+        let mut current = device();
+        current.status = DeviceStatus::Unauthorized;
+        current.vendor = Some(" ".into());
+        current.hostname = Some(" current-host ".into());
+        current.last_seen = "2026-06-12T01:00:00Z".into();
+        assert_eq!(
+            infer_label_for_mac("aa:bb:cc:11:22:33", &[stale, current]),
+            Some("current-host".into())
+        );
+    }
+
+    #[test]
+    fn infer_label_falls_back_to_ip_and_returns_none_without_match() {
+        let mut dev = device();
+        dev.vendor = None;
+        dev.hostname = Some(" ".into());
+        assert_eq!(
+            infer_label_for_mac("AA:BB:CC:11:22:33", &[dev.clone()]),
+            Some("192.168.50.103".into())
+        );
+        assert_eq!(infer_label_for_mac("00:11:22:33:44:55", &[dev]), None);
+    }
+
+    #[test]
+    fn format_open_port_omits_blank_service_and_version() {
+        let port = OpenPort {
+            port: 443,
+            protocol: "tcp".into(),
+            service: Some(" ".into()),
+            product_version: Some("\t".into()),
+            cpe: Vec::new(),
+            scripts: Vec::new(),
+        };
+        assert_eq!(format_open_port(&port), "443/tcp");
     }
 }

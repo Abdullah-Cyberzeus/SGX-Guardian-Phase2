@@ -562,4 +562,411 @@ mod tests {
 
         assert_eq!(best.interface_name, "ens37");
     }
+
+    fn candidate_with_transport(
+        name: &str,
+        transport_type: TransportType,
+        route_metric: Option<u32>,
+        oper_up: bool,
+        carrier_up: bool,
+        has_default_route: bool,
+    ) -> NetworkCandidate {
+        let estimated_latency_ms = estimate_latency_ms(transport_type, route_metric);
+        let estimated_bandwidth_kbps = estimate_bandwidth_kbps(transport_type, None);
+        let quality_score = compute_quality_score(
+            transport_type.default_priority(),
+            estimated_latency_ms,
+            estimated_bandwidth_kbps,
+            has_default_route,
+            route_metric,
+            oper_up,
+            carrier_up,
+        );
+
+        NetworkCandidate {
+            interface_name: name.to_string(),
+            ip: Ipv4Addr::new(10, 0, 0, 1),
+            transport_type,
+            default_priority: transport_type.default_priority(),
+            oper_up,
+            carrier_up,
+            has_default_route,
+            route_metric,
+            estimated_latency_ms,
+            estimated_bandwidth_kbps,
+            observed_latency_ms: estimated_latency_ms,
+            observed_bandwidth_kbps: estimated_bandwidth_kbps,
+            observed_is_up: oper_up && carrier_up,
+            consecutive_failures: 0,
+            consecutive_successes: 0,
+            last_probed: None,
+            using_live_metrics: false,
+            quality_score,
+        }
+    }
+
+    fn live(
+        is_up: bool,
+        latency_ms: u64,
+        bandwidth_kbps: u64,
+        consecutive_failures: u32,
+        consecutive_successes: u32,
+    ) -> LiveNetworkMetrics {
+        LiveNetworkMetrics {
+            is_up,
+            latency_ms,
+            bandwidth_kbps,
+            consecutive_failures,
+            consecutive_successes,
+            last_probed: 123,
+        }
+    }
+
+    #[test]
+    fn classify_transport_covers_known_prefixes_and_unknown_names() {
+        assert_eq!(classify_transport("sat0"), Some(TransportType::Satellite));
+        assert_eq!(classify_transport("PPP0"), Some(TransportType::Satellite));
+        assert_eq!(classify_transport("eth0"), Some(TransportType::Ethernet));
+        assert_eq!(classify_transport("en0"), Some(TransportType::Ethernet));
+        assert_eq!(classify_transport("eno1"), Some(TransportType::Ethernet));
+        assert_eq!(classify_transport("enp3s0"), Some(TransportType::Ethernet));
+        assert_eq!(classify_transport("wlan0"), Some(TransportType::WiFi));
+        assert_eq!(classify_transport("wlx123"), Some(TransportType::WiFi));
+        assert_eq!(classify_transport("wlp2s0"), Some(TransportType::WiFi));
+        assert_eq!(classify_transport("bnep0"), Some(TransportType::Bluetooth));
+        assert_eq!(classify_transport("bt-pan"), Some(TransportType::Bluetooth));
+        assert_eq!(classify_transport("hci0"), Some(TransportType::Bluetooth));
+        assert_eq!(classify_transport("wwan0"), Some(TransportType::Cellular));
+        assert_eq!(classify_transport("rmnet_data0"), Some(TransportType::Cellular));
+        assert_eq!(classify_transport("usb0"), Some(TransportType::Cellular));
+        assert_eq!(classify_transport("tun0"), None);
+        assert_eq!(classify_transport(""), None);
+    }
+
+    #[test]
+    fn should_skip_interface_covers_virtual_and_ap_prefixes() {
+        for name in [
+            "lo",
+            "lo0",
+            "nebula1",
+            "docker0",
+            "vethabcd",
+            "br-test",
+            "virbr0",
+            "vnet0",
+            "flannel.1",
+            "cni0",
+            "cali123",
+            "defined0",
+            "armia0",
+            "uap0",
+            "wfd0",
+            "ap0",
+        ] {
+            assert!(should_skip_interface(name), "{name} should be skipped");
+        }
+
+        assert!(!should_skip_interface("eth0"));
+        assert!(!should_skip_interface("wlan0"));
+        assert!(!should_skip_interface("wwan0"));
+    }
+
+    #[test]
+    fn is_routable_ipv4_filters_loopback_link_local_and_unspecified() {
+        assert!(!is_routable_ipv4(Ipv4Addr::new(127, 0, 0, 1)));
+        assert!(!is_routable_ipv4(Ipv4Addr::new(169, 254, 1, 1)));
+        assert!(!is_routable_ipv4(Ipv4Addr::new(0, 0, 0, 0)));
+        assert!(is_routable_ipv4(Ipv4Addr::new(10, 0, 0, 1)));
+        assert!(is_routable_ipv4(Ipv4Addr::new(192, 168, 1, 10)));
+    }
+
+    #[test]
+    fn estimate_bandwidth_uses_speed_when_available_and_static_fallbacks_otherwise() {
+        assert_eq!(estimate_bandwidth_kbps(TransportType::Ethernet, Some(1)), 1_000);
+        assert_eq!(
+            estimate_bandwidth_kbps(TransportType::WiFi, Some(u64::MAX)),
+            u64::MAX
+        );
+        assert_eq!(estimate_bandwidth_kbps(TransportType::Ethernet, None), 100_000);
+        assert_eq!(estimate_bandwidth_kbps(TransportType::WiFi, None), 60_000);
+        assert_eq!(estimate_bandwidth_kbps(TransportType::Cellular, None), 8_000);
+        assert_eq!(estimate_bandwidth_kbps(TransportType::Bluetooth, None), 1_500);
+        assert_eq!(estimate_bandwidth_kbps(TransportType::Satellite, None), 512);
+    }
+
+    #[test]
+    fn estimate_latency_combines_transport_base_and_route_metric_penalty() {
+        assert_eq!(estimate_latency_ms(TransportType::Ethernet, Some(0)), 3);
+        assert_eq!(estimate_latency_ms(TransportType::WiFi, Some(25)), 13);
+        assert_eq!(estimate_latency_ms(TransportType::Cellular, Some(50)), 40);
+        assert_eq!(estimate_latency_ms(TransportType::Bluetooth, Some(100)), 60);
+        assert_eq!(estimate_latency_ms(TransportType::Satellite, Some(500)), 800);
+        assert_eq!(estimate_latency_ms(TransportType::Ethernet, None), 43);
+    }
+
+    #[test]
+    fn compute_quality_score_accounts_for_penalties_and_boundaries() {
+        let baseline = compute_quality_score(10, 10, 100_000, true, Some(5), true, true);
+        assert_eq!(baseline, 200 + 30 + 150 + 10);
+
+        let missing_route_down = compute_quality_score(10, 10, 0, false, None, false, false);
+        assert_eq!(missing_route_down, 200 + 30 + 249 + 300 + 400 + 500 + 500);
+
+        let saturated_bandwidth = compute_quality_score(1, 1, 999_999, true, Some(0), true, true);
+        assert_eq!(saturated_bandwidth, 20 + 3);
+    }
+
+    #[test]
+    fn apply_live_metrics_clamps_zero_values_and_applies_health_penalties() {
+        let base =
+            candidate_with_transport("ens33", TransportType::Ethernet, Some(10), true, true, true);
+        let live_metrics = live(false, 0, 0, 2, 99);
+        let updated = apply_live_metrics(base.clone(), Some(&live_metrics));
+        let mut expected_score = compute_quality_score(
+            base.default_priority,
+            1,
+            1,
+            base.has_default_route,
+            base.route_metric,
+            base.oper_up,
+            base.carrier_up,
+        );
+        expected_score += 2_000;
+        expected_score += 400;
+        expected_score -= 24;
+
+        assert!(updated.using_live_metrics);
+        assert_eq!(updated.observed_latency_ms, 1);
+        assert_eq!(updated.observed_bandwidth_kbps, 1);
+        assert!(!updated.observed_is_up);
+        assert_eq!(updated.consecutive_failures, 2);
+        assert_eq!(updated.consecutive_successes, 99);
+        assert_eq!(updated.last_probed, Some(123));
+        assert_eq!(updated.quality_score, expected_score);
+
+        let unchanged = apply_live_metrics(base.clone(), None);
+        assert!(!unchanged.using_live_metrics);
+        assert_eq!(unchanged.quality_score, base.quality_score);
+    }
+
+    #[test]
+    fn network_candidate_reachability_requires_oper_carrier_and_default_route() {
+        assert!(candidate_with_transport(
+            "ens33",
+            TransportType::Ethernet,
+            Some(10),
+            true,
+            true,
+            true
+        )
+        .is_reachable());
+        assert!(!candidate_with_transport(
+            "ens33",
+            TransportType::Ethernet,
+            Some(10),
+            false,
+            true,
+            true
+        )
+        .is_reachable());
+        assert!(!candidate_with_transport(
+            "ens33",
+            TransportType::Ethernet,
+            Some(10),
+            true,
+            false,
+            true
+        )
+        .is_reachable());
+        assert!(!candidate_with_transport(
+            "ens33",
+            TransportType::Ethernet,
+            None,
+            true,
+            true,
+            false
+        )
+        .is_reachable());
+    }
+
+    #[test]
+    fn rank_candidates_filters_allowed_reachable_live_up_and_failures() {
+        let candidates = vec![
+            candidate_with_transport("ens33", TransportType::Ethernet, Some(10), true, true, true),
+            candidate_with_transport("wlan0", TransportType::WiFi, Some(20), true, true, true),
+            candidate_with_transport("wwan0", TransportType::Cellular, Some(30), true, true, true),
+            candidate_with_transport("bt0", TransportType::Bluetooth, Some(40), false, true, true),
+        ];
+        let live = HashMap::from([
+            ("wlan0".to_string(), live(true, 5, 100_000, 1, 3)),
+            ("wwan0".to_string(), live(false, 3, 200_000, 0, 3)),
+            ("bt0".to_string(), live(true, 1, 200_000, 0, 3)),
+        ]);
+
+        let ranked = rank_candidates(
+            &candidates,
+            &live,
+            &SelectionPolicy {
+                allowed_interfaces: Some(HashSet::from([
+                    "wlan0".to_string(),
+                    "wwan0".to_string(),
+                    "bt0".to_string(),
+                ])),
+                prefer_live_metrics: true,
+                require_reachable: true,
+                require_live_up: true,
+                max_consecutive_failures: Some(1),
+                ..SelectionPolicy::default()
+            },
+        );
+
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].interface_name, "wlan0");
+        assert!(ranked[0].using_live_metrics);
+    }
+
+    #[test]
+    fn rank_candidates_prefer_live_metrics_only_when_live_candidates_exist() {
+        let candidates = vec![
+            candidate_with_transport("ens33", TransportType::Ethernet, Some(10), true, true, true),
+            candidate_with_transport("wlan0", TransportType::WiFi, Some(20), true, true, true),
+        ];
+
+        let no_live_ranked = rank_candidates(
+            &candidates,
+            &HashMap::new(),
+            &SelectionPolicy {
+                prefer_live_metrics: true,
+                require_reachable: true,
+                ..SelectionPolicy::default()
+            },
+        );
+        assert_eq!(no_live_ranked.len(), 2);
+        assert!(no_live_ranked.iter().all(|c| !c.using_live_metrics));
+
+        let live_ranked = rank_candidates(
+            &candidates,
+            &HashMap::from([("wlan0".to_string(), live(true, 1, 200_000, 0, 3))]),
+            &SelectionPolicy {
+                prefer_live_metrics: true,
+                require_reachable: true,
+                ..SelectionPolicy::default()
+            },
+        );
+        assert_eq!(live_ranked.len(), 1);
+        assert_eq!(live_ranked[0].interface_name, "wlan0");
+    }
+
+    #[test]
+    fn rank_candidates_orders_by_score_health_route_priority_and_name() {
+        let mut alpha =
+            candidate_with_transport("alpha", TransportType::Ethernet, Some(30), true, true, true);
+        let mut beta =
+            candidate_with_transport("beta", TransportType::WiFi, Some(20), true, true, true);
+        let mut gamma =
+            candidate_with_transport("gamma", TransportType::Cellular, Some(10), true, true, true);
+
+        alpha.quality_score = 100;
+        beta.quality_score = 100;
+        gamma.quality_score = 90;
+
+        let ranked = rank_candidates(
+            &[alpha.clone(), beta.clone(), gamma.clone()],
+            &HashMap::new(),
+            &SelectionPolicy::default(),
+        );
+        assert_eq!(ranked[0].interface_name, "gamma");
+
+        alpha.quality_score = 100;
+        beta.quality_score = 100;
+        gamma.quality_score = 100;
+        alpha.observed_is_up = false;
+        beta.has_default_route = false;
+        gamma.route_metric = Some(50);
+
+        let ranked = rank_candidates(
+            &[beta, gamma, alpha],
+            &HashMap::new(),
+            &SelectionPolicy::default(),
+        );
+        assert_eq!(
+            ranked
+                .iter()
+                .map(|c| c.interface_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["gamma", "beta", "alpha"]
+        );
+    }
+
+    #[test]
+    fn best_candidate_handles_empty_inputs_and_selected_interface_override() {
+        set_live_metrics([]);
+        set_selected_interface(None);
+        assert!(best_candidate(&[]).is_none());
+
+        let ens33 = candidate_with_transport("ens33", TransportType::Ethernet, Some(10), true, true, true);
+        let wlan0 = candidate_with_transport("wlan0", TransportType::WiFi, Some(20), true, true, true);
+        set_selected_interface(Some("wlan0".to_string()));
+        set_live_metrics([("wlan0".to_string(), live(true, 2, 150_000, 0, 3))]);
+
+        let best = best_candidate(&[ens33, wlan0]).expect("selected interface should win");
+
+        assert_eq!(best.interface_name, "wlan0");
+        assert!(best.using_live_metrics);
+
+        set_selected_interface(None);
+        set_live_metrics([]);
+    }
+
+    #[test]
+    fn selected_interface_override_ignores_missing_selected_name() {
+        set_live_metrics([]);
+        set_selected_interface(Some("missing0".to_string()));
+        let ens33 =
+            candidate_with_transport("ens33", TransportType::Ethernet, Some(10), true, true, true);
+
+        let best = best_candidate(&[ens33]).expect("fallback candidate should be selected");
+
+        assert_eq!(best.interface_name, "ens33");
+        set_selected_interface(None);
+    }
+
+    #[test]
+    fn live_metrics_store_replaces_previous_snapshot() {
+        set_live_metrics([("ens33".to_string(), live(true, 10, 10_000, 0, 1))]);
+        let first = live_metrics_snapshot();
+        assert_eq!(first.len(), 1);
+        assert!(first.contains_key("ens33"));
+
+        set_live_metrics([("wlan0".to_string(), live(false, 20, 20_000, 3, 0))]);
+        let second = live_metrics_snapshot();
+        assert_eq!(second.len(), 1);
+        assert!(!second.contains_key("ens33"));
+        assert_eq!(second["wlan0"].consecutive_failures, 3);
+
+        set_live_metrics([]);
+    }
+
+    #[test]
+    fn best_candidate_with_live_metrics_returns_none_when_policy_filters_everything() {
+        let candidates = vec![candidate_with_transport(
+            "ens33",
+            TransportType::Ethernet,
+            Some(10),
+            true,
+            true,
+            true,
+        )];
+        let ranked = best_candidate_with_live_metrics(
+            &candidates,
+            &HashMap::new(),
+            &SelectionPolicy {
+                allowed_interfaces: Some(HashSet::from(["wlan0".to_string()])),
+                require_live_metrics: true,
+                ..SelectionPolicy::default()
+            },
+        );
+
+        assert!(ranked.is_none());
+    }
 }

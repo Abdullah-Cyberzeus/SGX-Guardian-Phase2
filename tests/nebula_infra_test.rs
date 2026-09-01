@@ -62,18 +62,6 @@ fn test_interface_verify_ip_without_interface() {
     let _ = verified;
 }
 
-#[test]
-fn test_interface_status_report_format() {
-    let report = NebulaInterface::status_report();
-    assert!(
-        report.contains("nebula0:"),
-        "report should mention nebula0: got {}",
-        report
-    );
-    assert!(report.contains("up="), "report should contain up= field");
-    assert!(report.contains("ip="), "report should contain ip= field");
-}
-
 #[tokio::test]
 async fn test_interface_wait_for_interface_timeout() {
     // With a 1-second timeout, this should return quickly

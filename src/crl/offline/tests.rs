@@ -87,3 +87,78 @@ fn parked_when_retry_budget_exhausted() {
     let parked_unlimited = unlimited > 0 && attempts >= unlimited;
     assert!(!parked_unlimited);
 }
+
+#[test]
+fn parse_enabled_accepts_truthy_and_unknown_values() {
+    assert!(parse_enabled(Some("1".into())));
+    assert!(parse_enabled(Some("true".into())));
+    assert!(parse_enabled(Some("on".into())));
+    assert!(parse_enabled(Some("yes".into())));
+    assert!(parse_enabled(Some("unexpected".into())));
+}
+
+#[test]
+fn parse_enabled_rejects_falsey_values_case_and_space_insensitive() {
+    assert!(!parse_enabled(Some(" 0 ".into())));
+    assert!(!parse_enabled(Some(" FALSE ".into())));
+    assert!(!parse_enabled(Some("Off".into())));
+}
+
+#[test]
+fn parse_interval_accepts_midrange_and_defaults_bad_values() {
+    assert_eq!(parse_interval(Some("5".into())), 5);
+    assert_eq!(parse_interval(Some("300".into())), 300);
+    assert_eq!(parse_interval(Some("bad".into())), 20);
+}
+
+#[test]
+fn parse_max_retries_accepts_zero_midrange_and_defaults_bad_values() {
+    assert_eq!(parse_max_retries(Some("0".into())), 0);
+    assert_eq!(parse_max_retries(Some("7".into())), 7);
+    assert_eq!(parse_max_retries(Some("bad".into())), 0);
+}
+
+#[test]
+fn parse_flush_rounds_accepts_bounds_and_defaults_bad_values() {
+    assert_eq!(parse_flush_rounds(Some("1".into())), 1);
+    assert_eq!(parse_flush_rounds(Some("20".into())), 20);
+    assert_eq!(parse_flush_rounds(Some("bad".into())), 3);
+}
+
+#[test]
+fn parse_probe_timeout_accepts_bounds_and_defaults_bad_values() {
+    assert_eq!(parse_probe_timeout(None), 1500);
+    assert_eq!(parse_probe_timeout(Some("200".into())), 200);
+    assert_eq!(parse_probe_timeout(Some("10000".into())), 10_000);
+    assert_eq!(parse_probe_timeout(Some("bad".into())), 1500);
+}
+
+#[test]
+fn pending_revocation_default_parked_field_deserializes_false() {
+    let json = serde_json::json!({
+        "entry": sample_entry("urn:uuid:p2", "did:guardian:self", false),
+        "attempts": 0,
+        "queued_at": "2026-07-06T00:00:00Z",
+        "last_attempt_at": null,
+        "last_error": null
+    });
+    let parsed: PendingRevocation = serde_json::from_value(json).unwrap();
+    assert!(!parsed.parked);
+}
+
+#[test]
+fn pending_revocation_preserves_last_error_and_attempt_time() {
+    let pending = PendingRevocation {
+        entry: sample_entry("urn:uuid:p3", "did:guardian:self", false),
+        attempts: 9,
+        queued_at: "2026-07-06T00:00:00Z".into(),
+        last_attempt_at: Some("2026-07-06T00:02:00Z".into()),
+        last_error: Some("offline".into()),
+        parked: true,
+    };
+    let parsed: PendingRevocation =
+        serde_json::from_str(&serde_json::to_string(&pending).unwrap()).unwrap();
+    assert_eq!(parsed.last_error.as_deref(), Some("offline"));
+    assert_eq!(parsed.last_attempt_at.as_deref(), Some("2026-07-06T00:02:00Z"));
+    assert!(parsed.parked);
+}

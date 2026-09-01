@@ -572,3 +572,160 @@ fn is_transient_backup_path(path: &Path) -> bool {
         .map(|ext| matches!(ext, "tmp" | "lock"))
         .unwrap_or(false)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn all_components_includes_every_manifest_variant_in_order() {
+        assert_eq!(
+            all_components(),
+            [
+                Component::Policy,
+                Component::Config,
+                Component::Nebula,
+                Component::Nftables,
+                Component::IdentityMeta,
+                Component::Tls,
+                Component::Credentials,
+                Component::Crl,
+                Component::State,
+                Component::FeatureState,
+                Component::Vault,
+            ]
+        );
+    }
+
+    #[test]
+    fn add_file_records_non_recursive_component_path() {
+        let mut paths = Vec::new();
+        add_file(&mut paths, Component::Config, "/tmp/a.yaml", "config/a.yaml");
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].component, Component::Config);
+        assert_eq!(paths[0].source, PathBuf::from("/tmp/a.yaml"));
+        assert_eq!(paths[0].archive_path, "config/a.yaml");
+        assert!(!paths[0].recursive);
+    }
+
+    #[test]
+    fn add_tree_records_recursive_component_path() {
+        let mut paths = Vec::new();
+        add_tree(&mut paths, Component::State, "/tmp/state", "state");
+        assert_eq!(paths[0].component, Component::State);
+        assert_eq!(paths[0].source, PathBuf::from("/tmp/state"));
+        assert_eq!(paths[0].archive_path, "state");
+        assert!(paths[0].recursive);
+    }
+
+    #[test]
+    fn component_manifest_sorts_paths_and_includes_identity_meta_when_empty() {
+        let files = vec![
+            GatheredFile {
+                component: Component::Config,
+                archive_path: "config/z.yaml".into(),
+                source_path: PathBuf::from("/tmp/z"),
+                bytes: vec![1],
+            },
+            GatheredFile {
+                component: Component::Config,
+                archive_path: "config/a.yaml".into(),
+                source_path: PathBuf::from("/tmp/a"),
+                bytes: vec![2],
+            },
+        ];
+        let manifest = component_manifest(&files);
+        let config = manifest.iter().find(|item| item.component == Component::Config).unwrap();
+        assert_eq!(config.paths, vec!["config/a.yaml", "config/z.yaml"]);
+        assert!(manifest
+            .iter()
+            .any(|item| item.component == Component::IdentityMeta && item.paths.is_empty()));
+    }
+
+    #[test]
+    fn component_manifest_omits_empty_non_identity_components() {
+        let manifest = component_manifest(&[]);
+        assert_eq!(manifest.len(), 1);
+        assert_eq!(manifest[0].component, Component::IdentityMeta);
+    }
+
+    #[test]
+    fn public_key_allowlist_is_not_sensitive() {
+        assert!(!is_sensitive_backup_path(Path::new("/x/guardian_public.key")));
+        assert!(!is_sensitive_backup_path(Path::new("/x/pa_admin_pub.der")));
+    }
+
+    #[test]
+    fn exact_private_key_names_are_sensitive() {
+        for name in [
+            "identity.key",
+            "guardian_private.key",
+            "pa_admin_priv.der",
+            "ca.key",
+            "dkp.key",
+            "dik.key",
+        ] {
+            assert!(is_sensitive_backup_path(Path::new(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn private_name_fragments_are_sensitive_case_insensitively() {
+        assert!(is_sensitive_backup_path(Path::new("/tmp/MyPrivate.pem")));
+        assert!(is_sensitive_backup_path(Path::new("/tmp/node_priv.der")));
+        assert!(is_sensitive_backup_path(Path::new("/tmp/node-priv.der")));
+    }
+
+    #[test]
+    fn nebula_ca_and_node_key_paths_are_sensitive() {
+        assert!(is_sensitive_backup_path(Path::new("/data/nebula/ca/ca.key")));
+        assert!(is_sensitive_backup_path(Path::new("/data/nebula/nodes/node.key")));
+        assert!(!is_sensitive_backup_path(Path::new("/data/nebula/nodes/node.crt")));
+    }
+
+    #[test]
+    fn se050_paths_are_sensitive() {
+        assert!(is_sensitive_backup_path(Path::new("/etc/sgx/se050/config.yaml")));
+        assert!(is_sensitive_backup_path(Path::new("/etc/sgx/se050_scp_keys.yaml")));
+    }
+
+    #[test]
+    fn ordinary_certificate_and_config_paths_are_not_sensitive() {
+        assert!(!is_sensitive_backup_path(Path::new("/tmp/node.crt")));
+        assert!(!is_sensitive_backup_path(Path::new("/tmp/config.yaml")));
+        assert!(!is_sensitive_backup_path(Path::new("/tmp/dkp_pub.der")));
+    }
+
+    #[test]
+    fn transient_backup_extensions_are_filtered() {
+        assert!(is_transient_backup_path(Path::new("/tmp/a.tmp")));
+        assert!(is_transient_backup_path(Path::new("/tmp/a.lock")));
+        assert!(!is_transient_backup_path(Path::new("/tmp/a.json")));
+        assert!(!is_transient_backup_path(Path::new("/tmp/no_extension")));
+    }
+
+    #[test]
+    fn assert_no_private_identity_paths_allows_tls_private_material() {
+        let paths = vec![ComponentPath {
+            component: Component::Tls,
+            source: PathBuf::from("/tmp/device.key"),
+            archive_path: "tls/device.key".into(),
+            recursive: false,
+        }];
+        assert!(assert_no_private_identity_paths(&paths).is_ok());
+    }
+
+    #[test]
+    fn assert_no_private_identity_paths_rejects_non_tls_private_material() {
+        let paths = vec![ComponentPath {
+            component: Component::Credentials,
+            source: PathBuf::from("/tmp/device_private.key"),
+            archive_path: "credentials/device_private.key".into(),
+            recursive: false,
+        }];
+        assert!(matches!(
+            assert_no_private_identity_paths(&paths),
+            Err(BackupError::InvalidRequest(_))
+        ));
+    }
+}

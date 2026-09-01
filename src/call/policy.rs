@@ -154,4 +154,121 @@ rules:
             None => env::remove_var("SGX_CALL_SIGNALING_PORT"),
         }
     }
+
+    fn participant() -> CallParticipant {
+        CallParticipant {
+            device_id: "device-A".into(),
+            virtual_id: "virtual-A".into(),
+            accepted: false,
+            requested_media: vec![MediaType::Audio],
+            dtls_fingerprint_signaled: None,
+            dtls_fingerprint_confirmed: None,
+        }
+    }
+
+    fn session() -> CallSession {
+        CallSession::new(
+            "device-A".into(),
+            "virtual-A".into(),
+            "device-B".into(),
+            "virtual-B".into(),
+            vec![MediaType::Audio],
+            "nonce".into(),
+        )
+        .unwrap()
+    }
+
+    fn deny_rule(src: &str, dst: &str, protocol: &str, port: Option<u16>) -> crate::policy::Rule {
+        crate::policy::Rule {
+            id: "rule".into(),
+            action: "DENY".into(),
+            src: src.into(),
+            dst: dst.into(),
+            protocol: protocol.into(),
+            port,
+        }
+    }
+
+    #[test]
+    fn call_signaling_port_defaults_when_env_missing_invalid_or_zero() {
+        env::remove_var("SGX_CALL_SIGNALING_PORT");
+        assert_eq!(call_signaling_port(), 50065);
+        env::set_var("SGX_CALL_SIGNALING_PORT", "bad");
+        assert_eq!(call_signaling_port(), 50065);
+        env::set_var("SGX_CALL_SIGNALING_PORT", "0");
+        assert_eq!(call_signaling_port(), 50065);
+        env::remove_var("SGX_CALL_SIGNALING_PORT");
+    }
+
+    #[test]
+    fn call_signaling_port_uses_positive_env_value() {
+        env::set_var("SGX_CALL_SIGNALING_PORT", "4444");
+        assert_eq!(call_signaling_port(), 4444);
+        env::remove_var("SGX_CALL_SIGNALING_PORT");
+    }
+
+    #[test]
+    fn endpoint_matches_wildcard_and_any_patterns() {
+        let participant = participant();
+        for pattern in ["", " ", "*", "any", "0.0.0.0/0", "0.0.0.0"] {
+            assert!(endpoint_matches(pattern, &participant), "{pattern}");
+        }
+    }
+
+    #[test]
+    fn endpoint_matches_device_and_virtual_ids_case_insensitively() {
+        let participant = participant();
+        assert!(endpoint_matches("DEVICE-a", &participant));
+        assert!(endpoint_matches("Virtual-A", &participant));
+        assert!(endpoint_matches("device:DEVICE-a", &participant));
+        assert!(endpoint_matches("virtual:Virtual-A", &participant));
+    }
+
+    #[test]
+    fn endpoint_rejects_non_matching_patterns() {
+        let participant = participant();
+        assert!(!endpoint_matches("device:other", &participant));
+        assert!(!endpoint_matches("virtual:other", &participant));
+        assert!(!endpoint_matches("10.0.0.1", &participant));
+    }
+
+    #[test]
+    fn rule_applies_to_session_rejects_non_tcp_protocol() {
+        let rule = deny_rule("*", "*", "UDP", Some(50065));
+        assert!(!rule_applies_to_session(&rule, &session()));
+    }
+
+    #[test]
+    fn rule_applies_to_session_rejects_wrong_port() {
+        env::set_var("SGX_CALL_SIGNALING_PORT", "50065");
+        let rule = deny_rule("*", "*", "TCP", Some(1234));
+        assert!(!rule_applies_to_session(&rule, &session()));
+        env::remove_var("SGX_CALL_SIGNALING_PORT");
+    }
+
+    #[test]
+    fn rule_applies_to_session_accepts_matching_custom_port() {
+        env::set_var("SGX_CALL_SIGNALING_PORT", "4444");
+        let rule = deny_rule("device:device-a", "virtual:virtual-b", "tcp", Some(4444));
+        assert!(rule_applies_to_session(&rule, &session()));
+        env::remove_var("SGX_CALL_SIGNALING_PORT");
+    }
+
+    #[test]
+    fn rule_applies_to_session_accepts_missing_port_when_endpoints_match() {
+        let rule = deny_rule("device-A", "device-B", "TCP", None);
+        assert!(rule_applies_to_session(&rule, &session()));
+    }
+
+    #[test]
+    fn rule_applies_to_session_rejects_source_or_destination_mismatch() {
+        assert!(!rule_applies_to_session(
+            &deny_rule("other", "device-B", "TCP", Some(50065)),
+            &session()
+        ));
+        assert!(!rule_applies_to_session(
+            &deny_rule("device-A", "other", "TCP", Some(50065)),
+            &session()
+        ));
+    }
 }

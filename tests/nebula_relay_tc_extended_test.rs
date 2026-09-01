@@ -124,3 +124,155 @@ fn test_apply_bandwidth_limit_nonzero_fails_without_nebula0() {
     // We just check it doesn't panic
     let _ = result;
 }
+
+#[test]
+fn test_parse_stats_sent_line_with_zero_values_returns_none() {
+    let parsed = RelayTrafficControl::parse_stats(
+        "Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0)",
+    );
+    assert!(parsed.is_none());
+}
+
+#[test]
+fn test_parse_stats_sent_line_with_invalid_bytes_defaults_bytes_to_zero() {
+    let parsed = RelayTrafficControl::parse_stats(
+        "Sent nope bytes 42 pkt (dropped 0, overlimits 0 requeues 0)",
+    )
+    .unwrap();
+    assert_eq!(parsed.bytes_sent, 0);
+    assert_eq!(parsed.packets_sent, 42);
+}
+
+#[test]
+fn test_parse_stats_sent_line_with_invalid_packets_defaults_packets_to_zero() {
+    let parsed = RelayTrafficControl::parse_stats(
+        "Sent 42 bytes nope pkt (dropped 0, overlimits 0 requeues 0)",
+    )
+    .unwrap();
+    assert_eq!(parsed.bytes_sent, 42);
+    assert_eq!(parsed.packets_sent, 0);
+}
+
+#[test]
+fn test_parse_stats_sent_line_requires_enough_tokens() {
+    assert!(RelayTrafficControl::parse_stats("Sent 42 bytes").is_none());
+}
+
+#[test]
+fn test_parse_stats_sent_prefix_is_case_sensitive() {
+    assert!(RelayTrafficControl::parse_stats("sent 42 bytes 7 pkt").is_none());
+}
+
+#[test]
+fn test_parse_stats_rate_prefix_is_case_sensitive() {
+    let parsed = RelayTrafficControl::parse_stats(
+        "class htb 1:1 root RATE 5Mbit ceil 5Mbit\nSent 1 bytes 1 pkt",
+    )
+    .unwrap();
+    assert_eq!(parsed.current_mbps, 0.0);
+}
+
+#[test]
+fn test_parse_stats_rate_token_must_follow_rate_word() {
+    let parsed = RelayTrafficControl::parse_stats(
+        "class htb 1:1 root rate ceil 5Mbit\nSent 1 bytes 1 pkt",
+    )
+    .unwrap();
+    assert_eq!(parsed.current_mbps, 0.0);
+}
+
+#[test]
+fn test_parse_stats_unknown_rate_unit_defaults_to_zero() {
+    let parsed = RelayTrafficControl::parse_stats(
+        "class htb 1:1 root rate 10bit ceil 10bit\nSent 1 bytes 1 pkt",
+    )
+    .unwrap();
+    assert_eq!(parsed.current_mbps, 0.0);
+}
+
+#[test]
+fn test_parse_stats_invalid_rate_number_defaults_to_zero() {
+    let parsed = RelayTrafficControl::parse_stats(
+        "class htb 1:1 root rate fastMbit ceil fastMbit\nSent 1 bytes 1 pkt",
+    )
+    .unwrap();
+    assert_eq!(parsed.current_mbps, 0.0);
+}
+
+#[test]
+fn test_parse_stats_decimal_mbit_rate() {
+    let parsed = RelayTrafficControl::parse_stats(
+        "class htb 1:1 root rate 1.25Mbit ceil 1.25Mbit\nSent 1 bytes 1 pkt",
+    )
+    .unwrap();
+    assert!((parsed.current_mbps - 1.25).abs() < 0.001);
+}
+
+#[test]
+fn test_parse_stats_decimal_kbit_rate() {
+    let parsed = RelayTrafficControl::parse_stats(
+        "class htb 1:1 root rate 1250Kbit ceil 1250Kbit\nSent 1 bytes 1 pkt",
+    )
+    .unwrap();
+    assert!((parsed.current_mbps - 1.25).abs() < 0.001);
+}
+
+#[test]
+fn test_parse_stats_decimal_gbit_rate() {
+    let parsed = RelayTrafficControl::parse_stats(
+        "class htb 1:1 root rate 0.5Gbit ceil 0.5Gbit\nSent 1 bytes 1 pkt",
+    )
+    .unwrap();
+    assert!((parsed.current_mbps - 500.0).abs() < 0.001);
+}
+
+#[test]
+fn test_parse_stats_lowercase_rate_units() {
+    let parsed = RelayTrafficControl::parse_stats(
+        "class htb 1:1 root rate 2mbit ceil 2mbit\nSent 1 bytes 1 pkt",
+    )
+    .unwrap();
+    assert!((parsed.current_mbps - 2.0).abs() < 0.001);
+}
+
+#[test]
+fn test_parse_stats_last_sent_line_wins() {
+    let parsed = RelayTrafficControl::parse_stats(
+        "Sent 10 bytes 1 pkt\nSent 20 bytes 2 pkt",
+    )
+    .unwrap();
+    assert_eq!(parsed.bytes_sent, 20);
+    assert_eq!(parsed.packets_sent, 2);
+}
+
+#[test]
+fn test_parse_stats_last_rate_line_wins() {
+    let parsed = RelayTrafficControl::parse_stats(
+        "class htb rate 1Mbit\nclass htb rate 2Mbit\nSent 1 bytes 1 pkt",
+    )
+    .unwrap();
+    assert!((parsed.current_mbps - 2.0).abs() < 0.001);
+}
+
+#[test]
+fn test_parse_stats_large_u64_values() {
+    let parsed = RelayTrafficControl::parse_stats(&format!(
+        "Sent {} bytes {} pkt",
+        u64::MAX,
+        u64::MAX - 1
+    ))
+    .unwrap();
+    assert_eq!(parsed.bytes_sent, u64::MAX);
+    assert_eq!(parsed.packets_sent, u64::MAX - 1);
+}
+
+#[test]
+fn test_parse_stats_partial_fields_are_preserved() {
+    let parsed = RelayTrafficControl::parse_stats(
+        "class htb 1:1 root rate 3Mbit ceil 3Mbit\nSent nope bytes 0 pkt",
+    )
+    .unwrap();
+    assert_eq!(parsed.bytes_sent, 0);
+    assert_eq!(parsed.packets_sent, 0);
+    assert!((parsed.current_mbps - 3.0).abs() < 0.001);
+}

@@ -511,6 +511,8 @@ pub fn sanitize_config_ip_if_invalid(config_path: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tokio::net::TcpListener;
 
     #[test]
     fn test_routable_ip() {
@@ -535,5 +537,297 @@ mod tests {
             extract_ip_from_yaml("ip: 127.0.0.1\n"),
             Some("127.0.0.1".to_string())
         );
+    }
+
+    #[test]
+    fn extract_ip_from_yaml_handles_quotes_whitespace_and_first_match() {
+        assert_eq!(
+            extract_ip_from_yaml("node_id: n\n  ip: '10.1.2.3'\n"),
+            Some("10.1.2.3".to_string())
+        );
+        assert_eq!(
+            extract_ip_from_yaml("ip: \"192.168.4.5\"\nip: \"10.0.0.1\"\n"),
+            Some("192.168.4.5".to_string())
+        );
+        assert_eq!(
+            extract_ip_from_yaml("ip:    172.18.0.2   \n"),
+            Some("172.18.0.2".to_string())
+        );
+        assert_eq!(extract_ip_from_yaml("ip:\n"), None);
+        assert_eq!(extract_ip_from_yaml("node_id: test\nport: 50070\n"), None);
+        assert_eq!(extract_ip_from_yaml("# ip: 192.168.1.1\n"), None);
+    }
+
+    #[test]
+    fn replace_ip_in_yaml_updates_first_ip_preserves_indent_and_trailing_newline() {
+        let content = "node_id: \"test\"\n  ip: '127.0.0.1'\npeers:\n  - ip: \"10.0.0.2\"\n";
+
+        let updated = replace_ip_in_yaml(content, "192.168.1.20").unwrap();
+
+        assert_eq!(
+            updated,
+            "node_id: \"test\"\n  ip: \"192.168.1.20\"\npeers:\n  - ip: \"10.0.0.2\"\n"
+        );
+    }
+
+    #[test]
+    fn replace_ip_in_yaml_handles_no_trailing_newline_and_missing_ip_error() {
+        let updated = replace_ip_in_yaml("node_id: test\nip: 0.0.0.0", "10.0.0.9").unwrap();
+        assert_eq!(updated, "node_id: test\nip: \"10.0.0.9\"");
+
+        let err = replace_ip_in_yaml("node_id: test\nport: 50070\n", "10.0.0.9")
+            .expect_err("missing ip field should fail");
+        assert!(err.to_string().contains("'ip:' field not found"));
+    }
+
+    #[test]
+    fn update_config_ip_if_changed_updates_file_and_reports_old_new_values() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let path = file.path().to_str().unwrap();
+        fs::write(path, "node_id: test\n  ip: \"127.0.0.1\"\nport: 50070\n").unwrap();
+
+        let (old_ip, new_ip, changed) =
+            update_config_ip_if_changed(path, "192.168.1.100").unwrap();
+
+        assert_eq!(old_ip, "127.0.0.1");
+        assert_eq!(new_ip, "192.168.1.100");
+        assert!(changed);
+        assert_eq!(
+            fs::read_to_string(path).unwrap(),
+            "node_id: test\n  ip: \"192.168.1.100\"\nport: 50070\n"
+        );
+    }
+
+    #[test]
+    fn update_config_ip_if_changed_noops_when_ip_matches() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let path = file.path().to_str().unwrap();
+        let content = "node_id: test\nip: \"10.0.0.7\"\nport: 50070\n";
+        fs::write(path, content).unwrap();
+
+        let (old_ip, new_ip, changed) = update_config_ip_if_changed(path, "10.0.0.7").unwrap();
+
+        assert_eq!(old_ip, "10.0.0.7");
+        assert_eq!(new_ip, "10.0.0.7");
+        assert!(!changed);
+        assert_eq!(fs::read_to_string(path).unwrap(), content);
+    }
+
+    #[test]
+    fn update_config_ip_if_changed_returns_errors_for_missing_file_and_missing_ip_field() {
+        let missing = update_config_ip_if_changed("/tmp/sgx-dynamic-config-missing.yaml", "1.2.3.4")
+            .expect_err("missing file should fail");
+        assert!(missing.to_string().contains("Cannot read"));
+
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let path = file.path().to_str().unwrap();
+        let content = "node_id: test\nport: 50070\n";
+        fs::write(path, content).unwrap();
+
+        let err = update_config_ip_if_changed(path, "1.2.3.4")
+            .expect_err("missing ip field should fail");
+        assert!(err.to_string().contains("'ip:' field not found"));
+        assert_eq!(fs::read_to_string(path).unwrap(), content);
+    }
+
+    #[test]
+    fn sanitize_config_ip_if_invalid_preserves_valid_ips_and_resets_invalid_ips() {
+        let valid = tempfile::NamedTempFile::new().unwrap();
+        let valid_path = valid.path().to_str().unwrap();
+        let valid_content = "node_id: test\nip: \"192.168.1.77\"\n";
+        fs::write(valid_path, valid_content).unwrap();
+
+        sanitize_config_ip_if_invalid(valid_path).unwrap();
+        assert_eq!(fs::read_to_string(valid_path).unwrap(), valid_content);
+
+        let invalid = tempfile::NamedTempFile::new().unwrap();
+        let invalid_path = invalid.path().to_str().unwrap();
+        fs::write(invalid_path, "node_id: test\n  ip: \"not-an-ip\"\n").unwrap();
+
+        sanitize_config_ip_if_invalid(invalid_path).unwrap();
+        assert_eq!(
+            fs::read_to_string(invalid_path).unwrap(),
+            "node_id: test\n  ip: \"0.0.0.0\"\n"
+        );
+    }
+
+    #[test]
+    fn sanitize_config_ip_if_invalid_handles_missing_ip_as_valid_default() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let path = file.path().to_str().unwrap();
+        let content = "node_id: test\nport: 50070\n";
+        fs::write(path, content).unwrap();
+
+        sanitize_config_ip_if_invalid(path).unwrap();
+
+        assert_eq!(fs::read_to_string(path).unwrap(), content);
+    }
+
+    #[test]
+    fn sanitize_config_ip_if_invalid_errors_when_invalid_ip_cannot_be_replaced() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let path = file.path().to_str().unwrap();
+        fs::write(path, "node_id: test\n").unwrap();
+
+        sanitize_config_ip_if_invalid(path).unwrap();
+
+        fs::write(path, "node_id: test\nip: \"300.1.1.1\"\n").unwrap();
+        sanitize_config_ip_if_invalid(path).unwrap();
+        assert!(fs::read_to_string(path).unwrap().contains("ip: \"0.0.0.0\""));
+    }
+
+    #[test]
+    fn is_routable_ip_covers_ipv4_boundaries_and_invalid_formats() {
+        assert!(is_routable_ip("1.1.1.1"));
+        assert!(is_routable_ip("172.16.255.255"));
+        assert!(!is_routable_ip("172.17.0.1"));
+        assert!(!is_routable_ip("172.17.255.255"));
+        assert!(is_routable_ip("172.18.0.1"));
+        assert!(!is_routable_ip("127.255.255.255"));
+        assert!(!is_routable_ip("169.254.0.0"));
+        assert!(!is_routable_ip("169.254.255.255"));
+        assert!(!is_routable_ip("256.1.1.1"));
+        assert!(!is_routable_ip("192.168.1"));
+        assert!(!is_routable_ip("::1"));
+        assert!(!is_routable_ip(" 192.168.1.1 "));
+    }
+
+    #[test]
+    fn host_from_endpoint_extracts_host_using_last_colon() {
+        assert_eq!(
+            host_from_endpoint("example.com:50070"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(
+            host_from_endpoint("10.0.0.5:4242"),
+            Some("10.0.0.5".to_string())
+        );
+        assert_eq!(
+            host_from_endpoint("[::1]:50070"),
+            Some("[::1]".to_string())
+        );
+        assert_eq!(
+            host_from_endpoint("host:with:colons:123"),
+            Some("host:with:colons".to_string())
+        );
+        assert_eq!(host_from_endpoint(":50070"), None);
+        assert_eq!(host_from_endpoint("missing-port"), None);
+    }
+
+    #[test]
+    fn node_config_broadcast_serializes_round_trips_and_clones() {
+        let config = NodeConfigBroadcast {
+            node_id: "node-A_1".to_string(),
+            hostname: "node-a.local".to_string(),
+            ip: "192.168.1.50".to_string(),
+            port: CONFIG_SYNC_PORT,
+            public_key: "public-key".to_string(),
+        };
+
+        let cloned = config.clone();
+        let json = serde_json::to_string(&cloned).unwrap();
+        let decoded: NodeConfigBroadcast = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(decoded.node_id, "node-A_1");
+        assert_eq!(decoded.hostname, "node-a.local");
+        assert_eq!(decoded.ip, "192.168.1.50");
+        assert_eq!(decoded.port, CONFIG_SYNC_PORT);
+        assert_eq!(decoded.public_key, "public-key");
+        assert!(format!("{:?}", decoded).contains("node-A_1"));
+    }
+
+    #[tokio::test]
+    async fn tcp_port_open_reports_open_and_closed_loopback_ports() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accept_task = tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+
+        assert!(tcp_port_open(&addr.to_string()).await);
+        accept_task.await.unwrap();
+
+        let closed_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let closed_addr = closed_listener.local_addr().unwrap();
+        drop(closed_listener);
+
+        assert!(!tcp_port_open(&closed_addr.to_string()).await);
+    }
+
+    #[tokio::test]
+    async fn send_config_tcp_writes_payload_and_accepts_ack() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let payload = b"{\"node_id\":\"node-a\"}".to_vec();
+        let expected = payload.clone();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut received = vec![0; expected.len()];
+            socket.read_exact(&mut received).await.unwrap();
+            socket.write_all(b"ack").await.unwrap();
+            received
+        });
+
+        send_config_tcp(&addr.to_string(), &payload).await.unwrap();
+
+        assert_eq!(server.await.unwrap(), payload);
+    }
+
+    #[tokio::test]
+    async fn send_config_tcp_returns_error_for_unreachable_loopback_port() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let err = send_config_tcp(&addr.to_string(), b"payload")
+            .await
+            .expect_err("closed listener should refuse connection");
+
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[tokio::test]
+    async fn lighthouse_runtime_reachable_tries_overlay_then_endpoint_host() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+
+        assert!(lighthouse_runtime_reachable("", &format!("127.0.0.1:{}", port), port).await);
+        server.await.unwrap();
+
+        let closed_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let closed_port = closed_listener.local_addr().unwrap().port();
+        drop(closed_listener);
+
+        assert!(
+            !lighthouse_runtime_reachable("", &format!("127.0.0.1:{}", closed_port), closed_port)
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn overlay_and_broadcast_empty_paths_do_not_require_network_or_config() {
+        let config = NodeConfigBroadcast {
+            node_id: "node-a".to_string(),
+            hostname: "node-a.local".to_string(),
+            ip: "192.168.1.50".to_string(),
+            port: CONFIG_SYNC_PORT,
+            public_key: "public-key".to_string(),
+        };
+
+        broadcast_own_config_to_peers(
+            &config,
+            &[
+                "127.0.0.1".to_string(),
+                "0.0.0.0".to_string(),
+                "169.254.1.1".to_string(),
+                "172.17.0.2".to_string(),
+                "invalid".to_string(),
+            ],
+        )
+        .await;
     }
 }

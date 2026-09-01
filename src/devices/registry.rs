@@ -280,4 +280,270 @@ mod tests {
             Err(DevicesError::TamperedRegistry)
         ));
     }
+
+    #[tokio::test]
+    async fn load_missing_registry_returns_version_one_empty_registry() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = DeviceRegistry::load(&dir.path().join("missing.json"))
+            .await
+            .expect("load missing");
+        assert_eq!(registry.version, 1);
+        assert!(registry.devices.is_empty());
+        assert!(registry.signature.is_none());
+    }
+
+    #[tokio::test]
+    async fn save_atomic_creates_parent_sets_version_and_signature_and_removes_tmp() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("nested").join("registry.json");
+        let mut registry = DeviceRegistry::default();
+        registry
+            .insert_manual(AddManualDevice {
+                ip: Some("192.168.1.2".into()),
+                ..Default::default()
+            })
+            .expect("insert");
+
+        registry.save_atomic(&path).await.expect("save");
+        assert_eq!(registry.version, 1);
+        assert!(registry.signature.is_some());
+        assert!(path.exists());
+        assert!(!path.with_extension("json.tmp").exists());
+        assert!(DeviceRegistry::load(&path).await.expect("reload").verify_signature());
+    }
+
+    #[tokio::test]
+    async fn load_malformed_json_returns_json_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("registry.json");
+        tokio::fs::write(&path, b"{broken").await.expect("write");
+        assert!(matches!(
+            DeviceRegistry::load(&path).await,
+            Err(DevicesError::Json(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn unsigned_empty_registry_loads_but_unsigned_nonempty_registry_is_tampered() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let empty_path = dir.path().join("empty.json");
+        tokio::fs::write(&empty_path, br#"{"version":1,"devices":{}}"#)
+            .await
+            .expect("write empty");
+        assert!(DeviceRegistry::load(&empty_path).await.is_ok());
+
+        let full_path = dir.path().join("full.json");
+        tokio::fs::write(
+            &full_path,
+            br#"{"version":1,"devices":{"dev":{"device_id":"dev","manual":true,"created_at":"now","updated_at":"now"}}}"#,
+        )
+        .await
+        .expect("write nonempty");
+        assert!(matches!(
+            DeviceRegistry::load(&full_path).await,
+            Err(DevicesError::TamperedRegistry)
+        ));
+    }
+
+    #[test]
+    fn insert_manual_requires_ip_or_mac() {
+        let mut registry = DeviceRegistry::default();
+        let err = registry
+            .insert_manual(AddManualDevice {
+                ip: Some(" ".into()),
+                mac: Some("\t".into()),
+                ..Default::default()
+            })
+            .unwrap_err();
+        assert!(matches!(err, DevicesError::Invalid(_)));
+        assert!(registry.devices.is_empty());
+    }
+
+    #[test]
+    fn insert_manual_trims_optional_fields_and_uppercases_mac() {
+        let mut registry = DeviceRegistry::default();
+        let record = registry
+            .insert_manual(AddManualDevice {
+                display_name: Some("  Printer  ".into()),
+                ip: Some(" 192.168.1.9 ".into()),
+                mac: Some(" aa:bb:cc:dd:ee:ff ".into()),
+                manufacturer: Some("  Acme  ".into()),
+                notes: Some("  Lab  ".into()),
+            })
+            .expect("insert");
+        assert_eq!(record.display_name.as_deref(), Some("Printer"));
+        assert_eq!(record.ip.as_deref(), Some("192.168.1.9"));
+        assert_eq!(record.mac.as_deref(), Some("AA:BB:CC:DD:EE:FF"));
+        assert_eq!(record.manufacturer.as_deref(), Some("Acme"));
+        assert_eq!(record.notes.as_deref(), Some("Lab"));
+        assert!(record.manual);
+        assert!(record.monitoring_enabled);
+    }
+
+    #[test]
+    fn insert_manual_empty_optional_strings_are_removed() {
+        let mut registry = DeviceRegistry::default();
+        let record = registry
+            .insert_manual(AddManualDevice {
+                ip: Some("10.0.0.8".into()),
+                display_name: Some(" ".into()),
+                manufacturer: Some("\n".into()),
+                notes: Some("\t".into()),
+                ..Default::default()
+            })
+            .expect("insert");
+        assert!(record.display_name.is_none());
+        assert!(record.manufacturer.is_none());
+        assert!(record.notes.is_none());
+    }
+
+    #[test]
+    fn manual_device_id_prefers_mac_over_ip_and_is_case_normalized() {
+        let upper = manual_device_id(Some("192.168.1.9"), Some("AA:BB"));
+        let lower = manual_device_id(Some("10.0.0.1"), Some("aa:bb"));
+        assert_eq!(upper, lower);
+        assert!(upper.starts_with("manual-"));
+    }
+
+    #[test]
+    fn manual_device_id_uses_trimmed_ip_when_mac_is_missing() {
+        assert_eq!(
+            manual_device_id(Some(" 192.168.1.9 "), None),
+            manual_device_id(Some("192.168.1.9"), Some(" "))
+        );
+    }
+
+    #[test]
+    fn manual_device_id_generates_uuid_identity_when_ip_and_mac_are_absent() {
+        let first = manual_device_id(None, None);
+        let second = manual_device_id(Some(" "), Some(""));
+        assert!(first.starts_with("manual-"));
+        assert!(second.starts_with("manual-"));
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn patch_updates_only_present_fields_and_can_clear_optional_values() {
+        let mut registry = DeviceRegistry::default();
+        let record = registry
+            .insert_manual(AddManualDevice {
+                ip: Some("10.0.0.2".into()),
+                display_name: Some("Old".into()),
+                notes: Some("old notes".into()),
+                ..Default::default()
+            })
+            .expect("insert");
+        let patched = registry
+            .patch(
+                &record.device_id,
+                DevicePatch {
+                    display_name: Some(Some(" New ".into())),
+                    monitoring_enabled: Some(false),
+                    notes: Some(None),
+                },
+            )
+            .expect("patch");
+        assert_eq!(patched.display_name.as_deref(), Some("New"));
+        assert!(!patched.monitoring_enabled);
+        assert!(patched.notes.is_none());
+    }
+
+    #[test]
+    fn patch_missing_device_returns_not_found() {
+        let mut registry = DeviceRegistry::default();
+        assert!(matches!(
+            registry.patch("missing", DevicePatch::default()),
+            Err(DevicesError::NotFound)
+        ));
+    }
+
+    #[test]
+    fn mark_blocked_sets_and_clears_blocked_flag() {
+        let mut registry = DeviceRegistry::default();
+        let record = registry
+            .insert_manual(AddManualDevice {
+                mac: Some("AA:BB".into()),
+                ..Default::default()
+            })
+            .expect("insert");
+        assert!(registry.mark_blocked(&record.device_id, true).unwrap().blocked);
+        assert!(!registry
+            .mark_blocked(&record.device_id, false)
+            .unwrap()
+            .blocked);
+    }
+
+    #[test]
+    fn mark_blocked_missing_device_returns_not_found() {
+        let mut registry = DeviceRegistry::default();
+        assert!(matches!(
+            registry.mark_blocked("missing", true),
+            Err(DevicesError::NotFound)
+        ));
+    }
+
+    #[test]
+    fn reject_sets_rejected_reason_and_blocks_device() {
+        let mut registry = DeviceRegistry::default();
+        let record = registry
+            .insert_manual(AddManualDevice {
+                mac: Some("AA:BB:CC".into()),
+                ..Default::default()
+            })
+            .expect("insert");
+        let rejected = registry
+            .reject(&record.device_id, Some("  unknown device  ".into()))
+            .expect("reject");
+        assert!(rejected.rejected);
+        assert!(rejected.blocked);
+        assert_eq!(rejected.rejection_reason.as_deref(), Some("unknown device"));
+    }
+
+    #[test]
+    fn reject_missing_device_returns_not_found() {
+        let mut registry = DeviceRegistry::default();
+        assert!(matches!(
+            registry.reject("missing", None),
+            Err(DevicesError::NotFound)
+        ));
+    }
+
+    #[test]
+    fn clear_rejection_for_mac_matches_punctuation_and_case() {
+        let mut registry = DeviceRegistry::default();
+        let record = registry
+            .insert_manual(AddManualDevice {
+                mac: Some("aa:bb:cc:dd:ee:ff".into()),
+                ..Default::default()
+            })
+            .expect("insert");
+        registry
+            .reject(&record.device_id, Some("blocked".into()))
+            .expect("reject");
+        let cleared = registry
+            .clear_rejection_for_mac("AA-BB-CC-DD-EE-FF")
+            .expect("clear");
+        assert!(!cleared.rejected);
+        assert!(!cleared.blocked);
+        assert!(cleared.rejection_reason.is_none());
+    }
+
+    #[test]
+    fn clear_rejection_for_missing_mac_returns_none() {
+        let mut registry = DeviceRegistry::default();
+        assert!(registry.clear_rejection_for_mac("AA:BB").is_none());
+    }
+
+    #[test]
+    fn remove_returns_true_once_and_false_after_device_is_gone() {
+        let mut registry = DeviceRegistry::default();
+        let record = registry
+            .insert_manual(AddManualDevice {
+                ip: Some("10.0.0.3".into()),
+                ..Default::default()
+            })
+            .expect("insert");
+        assert!(registry.remove(&record.device_id));
+        assert!(!registry.remove(&record.device_id));
+    }
 }

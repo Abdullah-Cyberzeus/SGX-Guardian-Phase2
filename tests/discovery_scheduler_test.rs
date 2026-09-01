@@ -103,3 +103,132 @@ async fn scheduler_run_one_is_timeout_bounded() {
     assert_eq!(device.open_ports.len(), 1);
     assert_eq!(device.open_ports[0].port, 443);
 }
+
+fn scheduler_fixture() -> (tempfile::TempDir, DiscoveryScheduler) {
+    let dir = tempdir().expect("tempdir should be created");
+    let scheduler = DiscoveryScheduler {
+        node_id: "node-test".to_string(),
+        config_path: dir.path().join("nmap.yaml"),
+        whitelist_path: dir.path().join("whitelist.yaml"),
+        inventory_path: dir.path().join("inventory.json"),
+        state: Arc::new(Mutex::new(Inventory::default())),
+    };
+    (dir, scheduler)
+}
+
+#[test]
+fn scheduler_preserves_node_id() {
+    let (_dir, scheduler) = scheduler_fixture();
+    assert_eq!(scheduler.node_id, "node-test");
+}
+
+#[test]
+fn scheduler_clone_preserves_paths() {
+    let (_dir, scheduler) = scheduler_fixture();
+    let cloned = scheduler.clone();
+    assert_eq!(cloned.config_path, scheduler.config_path);
+    assert_eq!(cloned.whitelist_path, scheduler.whitelist_path);
+    assert_eq!(cloned.inventory_path, scheduler.inventory_path);
+}
+
+#[tokio::test]
+async fn scheduler_state_starts_empty() {
+    let (_dir, scheduler) = scheduler_fixture();
+    assert!(scheduler.state.lock().await.by_id.is_empty());
+}
+
+#[tokio::test]
+async fn scheduler_start_seeds_config_file() {
+    let (_dir, scheduler) = scheduler_fixture();
+    let config_path = scheduler.config_path.clone();
+    scheduler.start();
+    assert!(config_path.exists());
+}
+
+#[tokio::test]
+async fn scheduler_start_seeds_whitelist_file() {
+    let (_dir, scheduler) = scheduler_fixture();
+    let whitelist_path = scheduler.whitelist_path.clone();
+    scheduler.start();
+    assert!(whitelist_path.exists());
+}
+
+#[tokio::test]
+async fn scheduler_start_preserves_existing_config() {
+    let (_dir, scheduler) = scheduler_fixture();
+    std::fs::write(&scheduler.config_path, "enabled: false\n").unwrap();
+    scheduler.clone().start();
+    assert_eq!(std::fs::read_to_string(&scheduler.config_path).unwrap(), "enabled: false\n");
+}
+
+#[tokio::test]
+async fn scheduler_start_preserves_existing_whitelist() {
+    let (_dir, scheduler) = scheduler_fixture();
+    std::fs::write(&scheduler.whitelist_path, "version: \"1.0\"\ndevices: []\n").unwrap();
+    scheduler.clone().start();
+    assert!(std::fs::read_to_string(&scheduler.whitelist_path).unwrap().contains("devices"));
+}
+
+#[tokio::test]
+async fn scheduler_start_creates_parent_directories() {
+    let dir = tempdir().unwrap();
+    let scheduler = DiscoveryScheduler {
+        node_id: "node".into(),
+        config_path: dir.path().join("a").join("nmap.yaml"),
+        whitelist_path: dir.path().join("b").join("whitelist.yaml"),
+        inventory_path: dir.path().join("c").join("inventory.json"),
+        state: Arc::new(Mutex::new(Inventory::default())),
+    };
+    let config_path = scheduler.config_path.clone();
+    let whitelist_path = scheduler.whitelist_path.clone();
+    scheduler.start();
+    assert!(config_path.exists());
+    assert!(whitelist_path.exists());
+}
+
+macro_rules! scheduler_path_tests {
+    ($($name:ident => $file:expr),+ $(,)?) => {$(
+        #[test]
+        fn $name() {
+            let dir = tempdir().unwrap();
+            let scheduler = DiscoveryScheduler {
+                node_id: "node".into(),
+                config_path: dir.path().join(format!("{}.yaml", $file)),
+                whitelist_path: dir.path().join(format!("{}_whitelist.yaml", $file)),
+                inventory_path: dir.path().join(format!("{}.json", $file)),
+                state: Arc::new(Mutex::new(Inventory::default())),
+            };
+            assert!(scheduler.config_path.to_string_lossy().contains($file));
+            assert!(scheduler.inventory_path.to_string_lossy().ends_with(".json"));
+        }
+    )+};
+}
+
+scheduler_path_tests! {
+    scheduler_paths_case_01 => "one",
+    scheduler_paths_case_02 => "two",
+    scheduler_paths_case_03 => "three",
+    scheduler_paths_case_04 => "four",
+    scheduler_paths_case_05 => "five",
+    scheduler_paths_case_06 => "six",
+    scheduler_paths_case_07 => "seven",
+    scheduler_paths_case_08 => "eight",
+    scheduler_paths_case_09 => "nine",
+    scheduler_paths_case_10 => "ten",
+    scheduler_paths_case_11 => "eleven",
+    scheduler_paths_case_12 => "twelve",
+    scheduler_paths_case_13 => "thirteen",
+    scheduler_paths_case_14 => "fourteen",
+    scheduler_paths_case_15 => "fifteen",
+    scheduler_paths_case_16 => "sixteen",
+}
+
+#[test]
+fn scheduler_fixture_accepts_daily_standard_values() {
+    let (_dir, scheduler) = scheduler_fixture();
+    let mut cfg = NmapConfig::default();
+    cfg.enabled = false;
+    cfg.target_cidr = Some("127.0.0.1/32".to_string());
+    assert_eq!(scheduler.node_id, "node-test");
+    assert_eq!(cfg.scheduled_intensity(ScheduledScanKind::Daily), Some(ScanIntensity::Aggressive));
+}

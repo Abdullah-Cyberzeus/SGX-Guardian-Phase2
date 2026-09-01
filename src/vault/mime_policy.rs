@@ -67,4 +67,51 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn normalizes_case_and_surrounding_whitespace() {
+        for mime in [
+            " IMAGE/PNG ",
+            "\tText/Plain\n",
+            "Video/MP4",
+            "AUDIO/MPEG",
+            " Application/PDF ",
+            "APPLICATION/VND.OPENXMLFORMATS-OFFICEDOCUMENT.WORDPROCESSINGML.DOCUMENT",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/msword",
+            "application/xml",
+        ] {
+            assert!(ensure_mime_allowed(mime).is_ok(), "expected {mime:?} allowed");
+        }
+    }
+
+    #[test]
+    fn prefix_types_allow_parameters_but_exact_application_types_do_not() {
+        assert!(ensure_mime_allowed("text/plain; charset=utf-8").is_ok());
+        assert!(ensure_mime_allowed("image/svg+xml; charset=utf-8").is_ok());
+        assert!(ensure_mime_allowed("application/pdf; charset=utf-8").is_err());
+        assert!(ensure_mime_allowed("application/json-patch+json").is_err());
+    }
+
+    #[test]
+    fn rejects_empty_boundary_and_near_miss_values() {
+        for mime in [
+            "",
+            "   ",
+            "image",
+            "text",
+            "video",
+            "audio",
+            "application/",
+            "application/pdfx",
+            "x-image/png",
+            "multipart/form-data",
+            "message/rfc822",
+        ] {
+            let error = ensure_mime_allowed(mime).expect_err("mime should be rejected");
+            assert!(error.to_string().contains("content type not allowed"));
+            assert!(error.to_string().contains(mime));
+        }
+    }
 }
