@@ -427,7 +427,7 @@ export function HM01Dashboard() {
 
   // Map API data to expected format (backend: /node/status)
   const guardian = useMemo(() => {
-    const defaults = { name: 'SGX Guardian', connectionType: 'Ethernet', ip: '—', signal: 100, peerCount: 0 };
+    const defaults = { name: 'SGX Guardian', connectionType: 'Ethernet', ip: '—', signal: 0, peerCount: 0 };
     if (!guardianData) return defaults;
     return {
       ...defaults,

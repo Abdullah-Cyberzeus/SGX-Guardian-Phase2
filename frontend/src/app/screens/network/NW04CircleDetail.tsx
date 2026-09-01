@@ -3,7 +3,7 @@ import { useParams, useSearchParams, useNavigate } from "react-router";
 import { PageHeader } from "../../components/PageHeader";
 import { useCircles, useGuardianInfo, usePeers } from "../../hooks/useApiData";
 import {
-  Send, Phone, Video, UserPlus, Copy, Check, X, ChevronRight,
+  Send, Phone, Video, UserPlus, Copy, Check, X, ChevronLeft, ChevronRight,
   Link, QrCode, Search, MessageSquare, Users, PhoneCall, Mail, MessageCircle,
   Trash2, AlertTriangle, FolderOpen, Settings, Loader2, ArrowLeft, Download
 } from "lucide-react";
@@ -75,6 +75,8 @@ export function NW04CircleDetail() {
   const [directMessages, setDirectMessages] = useState<any[]>([]);
   const [directLoading, setDirectLoading] = useState(false);
   const [sendingDirect, setSendingDirect] = useState(false);
+  const membersPageSize = 8;
+  const [membersPage, setMembersPage] = useState(1);
 
   const baseMembers = localMembers || circle?.members || [];
   const members = useMemo(() => {
@@ -93,6 +95,12 @@ export function NW04CircleDetail() {
       }));
     return [...baseMembers, ...pending];
   }, [baseMembers, pendingInvites]);
+  const membersTotalPages = Math.max(1, Math.ceil(members.length / membersPageSize));
+  const membersCurrentPage = Math.min(membersPage, membersTotalPages);
+  const visibleMembers = useMemo(
+    () => members.slice((membersCurrentPage - 1) * membersPageSize, membersCurrentPage * membersPageSize),
+    [members, membersCurrentPage],
+  );
   const callHistory = useCallHistory();
   const selectedMember = members.find((m: any) => String(m.did || m.id) === memberDetailOpen);
   const memberToRemove = members.find((m: any) => String(m.did || m.id) === removeDialogOpen);
@@ -105,6 +113,10 @@ export function NW04CircleDetail() {
 
   useEffect(() => {
     setLocalMembers(null);
+  }, [circleId]);
+
+  useEffect(() => {
+    setMembersPage(1);
   }, [circleId]);
 
   const setTab = (tab: Tab) => {
@@ -762,7 +774,7 @@ export function NW04CircleDetail() {
                     <p className="mt-1 text-xs text-muted-foreground">This list comes directly from the Circle members API.</p>
                   </div>
                 )}
-                {members.map((member, i) => {
+                {visibleMembers.map((member, i) => {
                   const trustedPeer = peerForMember(member);
                   const busy = !!startingCall;
                   const isBrowserMember = String(member?.memberType || member?.member_type || "").toLowerCase() === "browser";
@@ -789,7 +801,7 @@ export function NW04CircleDetail() {
                   <div
                     key={memberKey}
                     className="w-full flex items-center gap-3 px-4 py-3.5 text-left transition-opacity active:opacity-70"
-                    style={{ backgroundColor: "transparent", borderBottom: i < members.length - 1 ? "1px solid var(--border)" : undefined }}
+                    style={{ backgroundColor: "transparent", borderBottom: i < visibleMembers.length - 1 ? "1px solid var(--border)" : undefined }}
                   >
                     <div
                       className="rounded-full flex items-center justify-center flex-shrink-0"
@@ -826,6 +838,36 @@ export function NW04CircleDetail() {
                     </div>
                   </div>
                 );})}
+                {membersTotalPages > 1 && (
+                  <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3" style={{ backgroundColor: "var(--card)" }}>
+                    <p className="text-xs text-muted-foreground">
+                      Showing {(membersCurrentPage - 1) * membersPageSize + 1}-{Math.min(members.length, membersCurrentPage * membersPageSize)} of {members.length}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setMembersPage((current) => Math.max(1, current - 1))}
+                        disabled={membersCurrentPage === 1}
+                        className="grid h-8 w-8 place-items-center rounded-full border border-border disabled:cursor-not-allowed disabled:opacity-40"
+                        aria-label="Previous member page"
+                      >
+                        <ChevronLeft size={16} />
+                      </button>
+                      <span className="min-w-16 text-center text-xs text-muted-foreground">
+                        {membersCurrentPage} / {membersTotalPages}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setMembersPage((current) => Math.min(membersTotalPages, current + 1))}
+                        disabled={membersCurrentPage === membersTotalPages}
+                        className="grid h-8 w-8 place-items-center rounded-full border border-border disabled:cursor-not-allowed disabled:opacity-40"
+                        aria-label="Next member page"
+                      >
+                        <ChevronRight size={16} />
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
               </div>
             </div>

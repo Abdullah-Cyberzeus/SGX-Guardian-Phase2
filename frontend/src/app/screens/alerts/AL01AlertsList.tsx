@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import {
-  Clock, ChevronRight, ChevronDown, Trash2, Search, Shield, Archive,
+  Clock, ChevronLeft, ChevronRight, ChevronDown, Trash2, Search, Shield, Archive,
   CheckSquare, Square, X, AlertTriangle, Brain, Loader2, Network,
 } from "lucide-react";
 import { useAlerts, useThreatStatus } from "../../hooks/useApiData";
@@ -436,6 +436,20 @@ function AlertListPanel({
   onDelete: (ids: string[]) => Promise<void>;
 }) {
   const navigate = useNavigate();
+  const pageSize = 10;
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = filtered.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const pageEnd = Math.min(filtered.length, currentPage * pageSize);
+  const pageAlerts = useMemo(
+    () => filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    [currentPage, filtered],
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [mode, search, severityFilter, statusFilter]);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -570,7 +584,7 @@ function AlertListPanel({
             : <EmptyState icon={Shield} heading="Your network looks clean" subtext="No active security events detected." />
         ) : (
           <div className="pb-4">
-            {filtered.map((alert) => {
+            {pageAlerts.map((alert) => {
               const isExpanded = expandedId === alert.id;
               const isSelected = selectedIds.has(alert.id);
               const isHighlighted = selectedAlertId === alert.id;
@@ -651,6 +665,36 @@ function AlertListPanel({
                 </div>
               );
             })}
+            {totalPages > 1 && (
+              <div className={`flex items-center justify-between gap-3 border-t border-border px-4 py-3 ${isPanel ? "px-5" : "px-4"}`} style={{ backgroundColor: "var(--card)" }}>
+                <p className="text-xs text-muted-foreground">
+                  Showing {pageStart}-{pageEnd} of {filtered.length}
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPage((current) => Math.max(1, current - 1))}
+                    disabled={currentPage === 1}
+                    className="grid h-8 w-8 place-items-center rounded-full border border-border disabled:cursor-not-allowed disabled:opacity-40"
+                    aria-label="Previous alert page"
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                  <span className="min-w-16 text-center text-xs text-muted-foreground">
+                    {currentPage} / {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                    disabled={currentPage === totalPages}
+                    className="grid h-8 w-8 place-items-center rounded-full border border-border disabled:cursor-not-allowed disabled:opacity-40"
+                    aria-label="Next alert page"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

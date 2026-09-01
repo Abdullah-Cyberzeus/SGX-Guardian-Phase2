@@ -81,7 +81,14 @@ export function ChatsListScreen({ compact = false }: { compact?: boolean } = {})
     .filter((peer: Peer) => peer.status === "verified" && Boolean(peer.did))
     .filter((peer: Peer) => !memberSession || memberCanDirectChatWithPeer(peer, session?.guardianDid))), [data, cachedPeers, memberSession, session?.guardianDid]);
 
-  const [tab, setTab] = useState<"individual" | "groups">(() => searchParams.get("tab") === "groups" ? "groups" : "individual");
+  const tab: "individual" | "groups" = searchParams.get("tab") === "groups" ? "groups" : "individual";
+
+  const setTab = (next: "individual" | "groups") => {
+    const params = new URLSearchParams(searchParams);
+    if (next === "individual") params.delete("tab");
+    else params.set("tab", next);
+    setSearchParams(params, { replace: true });
+  };
 
   const { peerRows, circleRows } = useMemo(() => {
     const needle = query.trim().toLowerCase();

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import {
   User, Users, BarChart2, Database, Link, Shield, Settings2,
   Wifi, Bell, SlidersHorizontal, BookOpen, Info, LogOut, ChevronRight, Key, ShieldCheck, FileCheck, FileText, Radio, Fingerprint, Cable, Award, Radar, ShieldX, ClipboardCheck,
@@ -149,17 +149,21 @@ function SettingContent({ settingKey }: { settingKey: string }) {
 
 export function ST01SettingsRoot() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { signOut } = useAuth();
   const { name, email, initials, role } = useCurrentUser();
   const { data: guardianData } = useGuardianInfo();
   const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const selectedKey = searchParams.get("section");
+  const openPanel = (key: string) => {
+    setSearchParams({ section: key });
+  };
 
   const GuardianCard = ({ onClick }: { onClick: () => void }) => (
-    <button
-      onClick={onClick}
-      className="w-full flex items-center gap-3 rounded-lg border border-border p-4 text-left transition-opacity active:opacity-80"
-      style={{
+      <button
+        onClick={onClick}
+        className="w-full flex items-center gap-3 rounded-lg border border-border p-4 text-left transition-opacity active:opacity-80"
+        style={{
         backgroundColor: selectedKey === "guardian" ? "color-mix(in srgb, var(--primary) 8%, var(--card))" : "var(--card)",
         cursor: "pointer", borderRadius: "var(--radius-card)",
         borderColor: selectedKey === "guardian" ? "var(--primary)" : undefined,
@@ -200,7 +204,7 @@ export function ST01SettingsRoot() {
             {group.items.map(({ icon: Icon, label, path, key }, i) => (
               <button
                 key={path}
-                onClick={() => { if (isPanel) setSelectedKey(key); else navigate(path); }}
+                onClick={() => { if (isPanel) openPanel(key); else navigate(path); }}
                 className="w-full flex items-center gap-3 px-4 py-4 text-left transition-colors"
                 style={{
                   backgroundColor: isPanel && selectedKey === key ? "color-mix(in srgb, var(--primary) 8%, transparent)" : "transparent",
@@ -275,7 +279,7 @@ export function ST01SettingsRoot() {
       </div>
 
       {/* ── Tablet: two-panel ── */}
-      <div className="hidden md:flex lg:hidden" style={{ height: "100%", overflow: "hidden" }}>
+        <div className="hidden md:flex lg:hidden" style={{ height: "100%", overflow: "hidden" }}>
         {/* Left settings menu */}
         <div style={{ width: "45%", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <div className="flex items-center flex-shrink-0 px-5 pt-5 pb-3 md:h-[72px] md:py-0 border-b border-border">
@@ -283,7 +287,7 @@ export function ST01SettingsRoot() {
           </div>
           <div className="flex-1 overflow-y-auto px-5 pt-4">
             <div className="mb-4">
-              <GuardianCard onClick={() => setSelectedKey("guardian")} />
+              <GuardianCard onClick={() => openPanel("guardian")} />
             </div>
             <SettingsGroups isPanel />
           </div>

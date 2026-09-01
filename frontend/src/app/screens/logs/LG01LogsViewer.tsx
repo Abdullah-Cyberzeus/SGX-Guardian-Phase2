@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router";
 import { PageHeader } from "../../components/PageHeader";
 import {
@@ -11,6 +11,8 @@ import {
   AlertTriangle,
   XCircle,
   Bug,
+  ChevronLeft,
+  ChevronRight,
   ChevronDown,
   ChevronUp,
   X,
@@ -689,8 +691,10 @@ function AuditLogsPanel() {
   const [selectedSeverities, setSelectedSeverities] = useState<string[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [selectedNode, setSelectedNode] = useState<string>("all");
-  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const [expandedHash, setExpandedHash] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   const { data, loading } = useAuditLogs();
   const entries = useMemo(() => data?.items ?? [], [data]);
@@ -724,6 +728,14 @@ function AuditLogsPanel() {
       return true;
     });
   }, [entries, searchQuery, selectedSeverities, selectedCategories, selectedNode]);
+  const totalPages = Math.max(1, Math.ceil(filteredEntries.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = filteredEntries.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const pageEnd = Math.min(filteredEntries.length, currentPage * pageSize);
+  const visibleEntries = useMemo(
+    () => filteredEntries.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    [currentPage, filteredEntries],
+  );
 
   const severityCounts = useMemo(() => {
     const counts: Record<string, number> = { Info: 0, Warning: 0, Critical: 0 };
@@ -751,6 +763,11 @@ function AuditLogsPanel() {
     setSelectedCategories([]);
     setSelectedNode("all");
   };
+
+  useEffect(() => {
+    setPage(1);
+    setExpandedHash(null);
+  }, [searchQuery, selectedSeverities, selectedCategories, selectedNode]);
 
   const handleExport = () => {
     const text = filteredEntries
@@ -950,12 +967,12 @@ function AuditLogsPanel() {
       {/* Entries */}
       <div className="flex-1 overflow-y-auto" style={{ backgroundColor: "var(--card)" }}>
         {filteredEntries.length > 0 ? (
-          filteredEntries.map((entry, i) => (
+          visibleEntries.map((entry) => (
             <AuditLogRow
-              key={`${entry.hash}_${i}`}
+              key={entry.hash}
               entry={entry}
-              isExpanded={expandedIdx === i}
-              onToggle={() => setExpandedIdx(expandedIdx === i ? null : i)}
+              isExpanded={expandedHash === entry.hash}
+              onToggle={() => setExpandedHash(expandedHash === entry.hash ? null : entry.hash)}
             />
           ))
         ) : (
@@ -988,6 +1005,36 @@ function AuditLogsPanel() {
             )}
           </div>
         )}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3" style={{ backgroundColor: "var(--card)" }}>
+            <p className="text-xs text-muted-foreground">
+              Showing {pageStart}-{pageEnd} of {filteredEntries.length}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
+                disabled={currentPage === 1}
+                className="grid h-8 w-8 place-items-center rounded-full border border-border disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label="Previous audit page"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <span className="min-w-16 text-center text-xs text-muted-foreground">
+                {currentPage} / {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                disabled={currentPage === totalPages}
+                className="grid h-8 w-8 place-items-center rounded-full border border-border disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label="Next audit page"
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Info Footer */}
@@ -1017,6 +1064,8 @@ export function LG01LogsViewer() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   // Fetch data from backend API
   const { data: logsData, loading, error, source } = useLogs();
@@ -1072,6 +1121,14 @@ export function LG01LogsViewer() {
       return true;
     });
   }, [logEntries, searchQuery, selectedLevels, selectedCategories, selectedNode]);
+  const totalPages = Math.max(1, Math.ceil(filteredLogs.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = filteredLogs.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const pageEnd = Math.min(filteredLogs.length, currentPage * pageSize);
+  const visibleLogs = useMemo(
+    () => filteredLogs.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    [currentPage, filteredLogs],
+  );
 
   // Count by level
   const levelCounts = useMemo(() => {
@@ -1100,6 +1157,11 @@ export function LG01LogsViewer() {
     setSelectedCategories([]);
     setSelectedNode("all");
   };
+
+  useEffect(() => {
+    setPage(1);
+    setExpandedId(null);
+  }, [searchQuery, selectedLevels, selectedCategories, selectedNode]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
@@ -1428,7 +1490,7 @@ export function LG01LogsViewer() {
         {/* Log Entries */}
         <div className="flex-1 overflow-y-auto" style={{ backgroundColor: "var(--card)" }}>
           {filteredLogs.length > 0 ? (
-            filteredLogs.map((entry) => (
+            visibleLogs.map((entry) => (
               <LogRow
                 key={entry.id}
                 entry={entry}
@@ -1487,6 +1549,36 @@ export function LG01LogsViewer() {
             </div>
           )}
         </div>
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3" style={{ backgroundColor: "var(--card)" }}>
+            <p className="text-xs text-muted-foreground">
+              Showing {pageStart}-{pageEnd} of {filteredLogs.length}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
+                disabled={currentPage === 1}
+                className="grid h-8 w-8 place-items-center rounded-full border border-border disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label="Previous log page"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <span className="min-w-16 text-center text-xs text-muted-foreground">
+                {currentPage} / {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                disabled={currentPage === totalPages}
+                className="grid h-8 w-8 place-items-center rounded-full border border-border disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label="Next log page"
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Info Footer */}
         <div

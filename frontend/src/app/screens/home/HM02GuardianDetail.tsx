@@ -249,7 +249,7 @@ export function HM02GuardianDetail() {
           firmware: (data as any).firmware || 'v1.0.0',
           uptime: (data as any).uptime || 'Running',
           connectionType: (data as any).connectionType || 'Ethernet',
-          signal: (data as any).signal ?? 100,
+          signal: (data as any).signal ?? 0,
           status: (data as any).status || 'online',
           lastSeen: (data as any).lastSeen || 'Just now',
           ip: (data as any).ip || '—',

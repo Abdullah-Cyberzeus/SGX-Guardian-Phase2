@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Info, Loader2, MessageSquare, Phone, RefreshCw, RotateCcw, Search, Send, UserPlus, Video, X, XCircle } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -251,8 +251,10 @@ export function ChatConversationScreen() {
   const [queuedMessageIds, setQueuedMessageIds] = useState<Set<string>>(new Set());
   const [queuedMessages, setQueuedMessages] = useState<Map<string, { state: string; lastError?: string }>>(new Map());
   const bottomRef = useRef<HTMLDivElement>(null);
+  const messageInputRef = useRef<HTMLInputElement>(null);
   const recordsRef = useRef<ChatMessageRecord[]>(records);
   const loadRequestRef = useRef(0);
+  const focusComposerOnLoadRef = useRef(true);
   // Messages the server has already accepted (a real message_id came back
   // from POST /chat/send) but that a subsequent GET /chat/history has not
   // yet reflected — e.g. a receiving/reading node whose peer-identity
@@ -318,6 +320,10 @@ export function ChatConversationScreen() {
       if (contact) setCachedPeer({ peerId: contact.displayName, did: contact.did, online: false, callAvailable: false });
     });
   }, [peerDid, peersError]);
+
+  useEffect(() => {
+    focusComposerOnLoadRef.current = true;
+  }, [circleId, peerDid]);
 
   const loadHistory = useCallback(async () => {
     if ((isGroup && !circleId) || (!isGroup && !peerDid)) return;
@@ -397,6 +403,12 @@ export function ChatConversationScreen() {
     }
     void chatService.sync().catch(() => {}).finally(() => void loadHistory());
   }, [loadHistory, session?.user.role]);
+
+  useEffect(() => {
+    if (loading || !focusComposerOnLoadRef.current) return;
+    focusComposerOnLoadRef.current = false;
+    window.requestAnimationFrame(() => messageInputRef.current?.focus());
+  }, [loading, circleId, peerDid]);
   const refreshQueuedMessages = useCallback(() => {
     void pendingRepository.list()
       .then((pending) => {
@@ -460,7 +472,9 @@ export function ChatConversationScreen() {
       close();
     };
   }, [loadHistory, isGroup, circleId, peerDid, localDid]);
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [records]);
+  useLayoutEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "auto", block: "end", inline: "nearest" });
+  }, [records, circleId, peerDid]);
 
   useEffect(() => { recordsRef.current = records; }, [records]);
 
@@ -625,6 +639,7 @@ export function ChatConversationScreen() {
       toast.error("Message was not sent", { description: cause instanceof Error ? cause.message : undefined });
     } finally {
       setSending(false);
+      window.requestAnimationFrame(() => messageInputRef.current?.focus());
     }
   };
 
@@ -854,7 +869,7 @@ export function ChatConversationScreen() {
         {uploadProgress !== null && <div className="mx-auto mb-2 max-w-2xl text-xs text-muted-foreground">Uploading file… {uploadProgress}%</div>}
         <div className="mx-auto flex max-w-2xl items-center gap-2">
           <AttachmentMenu onPick={(file) => void attach(file)} disabled={sending} />
-          <input value={message} onChange={(event) => handleComposerChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void send(message); }} disabled={sending} placeholder={isGroup ? "Secure Circle message…" : `Message ${peerComposerName}…`} className="h-11 flex-1 rounded-full border border-border bg-input-background px-4 text-sm outline-none" />
+          <input ref={messageInputRef} value={message} onChange={(event) => handleComposerChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void send(message); }} disabled={sending} placeholder={isGroup ? "Secure Circle message…" : `Message ${peerComposerName}…`} className="h-11 flex-1 rounded-full border border-border bg-input-background px-4 text-sm outline-none" />
           <button type="button" aria-label="Send message" onClick={() => void send(message)} disabled={sending || !message.trim()} className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground disabled:opacity-40">{sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}</button>
         </div>
       </div>
