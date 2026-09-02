@@ -6,6 +6,7 @@
 
 pub mod alert;
 pub mod baseline;
+pub mod edge_acceptance;
 pub mod engine;
 pub mod features;
 pub mod model;

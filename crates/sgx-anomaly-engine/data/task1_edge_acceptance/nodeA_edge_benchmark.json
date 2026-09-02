@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "issue": "Task1 Issue #10 - embedded/edge acceptance benchmark",
+  "node_id": "nodeA",
+  "target": {
+    "profile_name": "desktop-dev",
+    "os": "linux",
+    "arch": "x86_64",
+    "family": "unix",
+    "build_profile": "debug",
+    "target_board_validated": false
+  },
+  "model": {
+    "artifact_path": "data/nodeA_forest.json",
+    "size_bytes": 1584363,
+    "size_mib": 1.5109663009643555,
+    "max_allowed_bytes": 10485760,
+    "pass": true
+  },
+  "latency": {
+    "samples": 5000,
+    "min_ms": 0.090444,
+    "avg_ms": 0.13238999740000035,
+    "p50_ms": 0.106413,
+    "p95_ms": 0.24078200000000002,
+    "p99_ms": 0.318548,
+    "max_ms": 1.838852,
+    "p95_limit_ms": 100.0,
+    "pass": true
+  },
+  "memory": {
+    "rss_measured": false,
+    "status": "pending_target_board_measurement",
+    "note": "Portable demo records model footprint and latency. Real RSS must be captured by running this same command on the target board OS."
+  },
+  "checks": {
+    "model_size_pass": true,
+    "p95_latency_pass": true,
+    "target_board_validated": false
+  },
+  "final_verdict": "pass_for_current_machine_pending_target_board"
+}
