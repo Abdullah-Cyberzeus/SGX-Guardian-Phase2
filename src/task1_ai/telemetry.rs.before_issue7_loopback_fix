@@ -56,12 +56,10 @@ impl SgxTelemetrySource {
         // ----------------------------------------------------
         match read_interface_counters(&self.sys_class_net).await {
             Ok(interfaces) => {
-                let network_interfaces = interfaces.iter().filter(|x| x.iface != "lo");
-
-                sample.net_rx_bytes_total = network_interfaces.clone().map(|x| x.rx_bytes).sum();
-                sample.net_tx_bytes_total = network_interfaces.clone().map(|x| x.tx_bytes).sum();
-                sample.net_rx_pkts_total = network_interfaces.clone().map(|x| x.rx_packets).sum();
-                sample.net_tx_pkts_total = network_interfaces.map(|x| x.tx_packets).sum();
+                sample.net_rx_bytes_total = interfaces.iter().map(|x| x.rx_bytes).sum();
+                sample.net_tx_bytes_total = interfaces.iter().map(|x| x.tx_bytes).sum();
+                sample.net_rx_pkts_total = interfaces.iter().map(|x| x.rx_packets).sum();
+                sample.net_tx_pkts_total = interfaces.iter().map(|x| x.tx_packets).sum();
             }
             Err(error) => {
                 tracing::warn!(

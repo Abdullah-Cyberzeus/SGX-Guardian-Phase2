@@ -257,6 +257,14 @@ pub fn full_ml_runtime_status_path(state_dir: impl AsRef<Path>) -> PathBuf {
     state_dir.as_ref().join(RUNTIME_STATUS_FILE)
 }
 
+/// Read the already-persisted full ML runtime snapshot without reloading or
+/// validating the Isolation Forest model. Intended for read-only API status.
+pub fn load_full_ml_runtime_status(state_dir: impl AsRef<Path>) -> Option<AnomalyScoringRuntime> {
+    let path = full_ml_runtime_status_path(state_dir);
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
 pub fn write_runtime_status(
     state_dir: impl AsRef<Path>,
     runtime: &AnomalyScoringRuntime,

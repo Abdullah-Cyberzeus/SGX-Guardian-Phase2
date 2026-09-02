@@ -57,6 +57,16 @@ pub async fn get_config(
 pub async fn get_runtime(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<AnomalyScoringRuntime>, ApiError> {
+    // Fast path: the full ML runtime continuously persists this snapshot.
+    // Reading it avoids reloading/validating the Isolation Forest model on
+    // every status request.
+    if let Some(runtime) =
+        crate::task1_ai::baseline::load_full_ml_runtime_status(&state.threat_state_dir)
+    {
+        return Ok(Json(runtime));
+    }
+
+    // Compatibility fallback when the runtime snapshot does not exist yet.
     let runtime = Task1RuntimeTracker::for_state_dir(&state.node_id, &state.threat_state_dir);
     Ok(Json(runtime.current_runtime()))
 }
