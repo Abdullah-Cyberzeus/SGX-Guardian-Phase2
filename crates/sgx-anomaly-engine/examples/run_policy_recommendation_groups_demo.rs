@@ -16,11 +16,12 @@ use sgx_anomaly_engine::virtual_shift::{
     aggregate_recommendations, anomaly_event_from_task1_record,
     attestation_recommendation_from_policy, firewall_recommendations_from_event,
     justification_from_aggregate, logging_recommendation_from_policy,
-    quarantine_recommendation_from_policy, recommendation_from_event, AdminNetworkRuleTemplates,
-    AttestationProposalResult, AttestationRecommendation, FirewallProposalResult,
-    FirewallRecommendation, LoggingProposalResult, LoggingRecommendation, PolicyRecommendation,
-    ProposalStageNote, QuarantineProposalResult, QuarantineRecommendation, RecommendedAction,
-    ReviewQueue, ReviewRecord, TriggerDecision, VirtualShiftTriggerConfig,
+    quarantine_recommendation_from_policy, recommendation_from_event,
+    task1_virtual_shift_handoff_record, AdminNetworkRuleTemplates, AttestationProposalResult,
+    AttestationRecommendation, FirewallProposalResult, FirewallRecommendation,
+    LoggingProposalResult, LoggingRecommendation, PolicyRecommendation, ProposalStageNote,
+    QuarantineProposalResult, QuarantineRecommendation, RecommendedAction, ReviewQueue,
+    ReviewRecord, Task1VirtualShiftHandoff, TriggerDecision, VirtualShiftTriggerConfig,
     VirtualShiftTriggerManager, VS01_TO_VS09_PROPOSALS, VS10_VS11_REVIEWS,
 };
 
@@ -29,6 +30,7 @@ struct RowOutcome {
     vs1: String,
     vs2: String,
     event: Option<sgx_anomaly_engine::virtual_shift::AnomalyEvent>,
+    handoff: Option<Task1VirtualShiftHandoff>,
 }
 
 /// VS4-VS7 evaluation plus the exact JSON records written for senior review.
@@ -337,11 +339,13 @@ fn save_proposal_evidence(
     source_task1_json: &str,
     source_rows: &[usize],
     gate_summary: serde_json::Value,
+    issue8_handoff: &Task1VirtualShiftHandoff,
 ) -> Result<PathBuf> {
     let recommendation_id = &evaluation.recommendation.recommendation_id;
     if recommendation_id.trim().is_empty()
         || matches!(recommendation_id.as_str(), "." | "..")
-        || recommendation_id.contains(['/', '\\'])
+        || recommendation_id.contains('/')
+        || recommendation_id.contains('\\')
     {
         anyhow::bail!("recommendation_id must be a non-empty file-name-safe identifier");
     }
@@ -369,6 +373,7 @@ fn save_proposal_evidence(
                 "grouped_anomaly_rows": source_rows.len(),
                 "gate_result": gate_summary
             },
+            "issue8_task1_to_virtual_shift_handoff": issue8_handoff,
             "policy_for_owner_approval": evaluation.network_policy_draft,
             "vs3": evaluation.recommendation,
             "vs8": vs8,
@@ -424,13 +429,15 @@ fn main() -> Result<()> {
                             vs1: format!("STOP - invalid saved event: {error}"),
                             vs2: "not evaluated".into(),
                             event: None,
+                            handoff: None,
                         },
                     );
                     continue;
                 }
             };
         event.anomaly_id = format!("{source_run}-{}", event.anomaly_id);
-        let vs2 = match trigger.consider(&event)? {
+        let decision = trigger.consider(&event)?;
+        let vs2 = match &decision {
             TriggerDecision::Triggered => "TRIGGERED".into(),
             TriggerDecision::BelowThreshold { .. } => "STOP - below score/confidence gate".into(),
             TriggerDecision::DuplicateAnomalyId => "STOP - duplicate anomaly ID".into(),
@@ -438,12 +445,20 @@ fn main() -> Result<()> {
                 format!("WAIT - cooldown ({retry_after_ms} ms remaining)")
             }
         };
+        let handoff = task1_virtual_shift_handoff_record(
+            source,
+            &event,
+            record.display_row,
+            &config,
+            &decision,
+        );
         outcomes.insert(
             record.display_row,
             RowOutcome {
                 vs1: "VALID".into(),
                 vs2,
                 event: Some(event),
+                handoff: Some(handoff),
             },
         );
     }
@@ -495,6 +510,7 @@ fn main() -> Result<()> {
                     "task1_row": record.display_row,
                     "vs1": outcome.vs1,
                     "vs2": outcome.vs2,
+                    "issue8_handoff_status": outcome.handoff.as_ref().map(|handoff| handoff.trigger_status.clone()),
                 })
             })
             .collect::<Vec<_>>();
@@ -545,6 +561,12 @@ fn main() -> Result<()> {
 
         if let Some(first_row) = triggered.first() {
             let outcome = &outcomes[first_row];
+            if outcome.handoff.is_some() {
+                table_row(
+                    "Issue 8 handoff",
+                    "Task1 threshold crossing created a Virtual Shift trigger record.",
+                );
+            }
             if let Some(event) = &outcome.event {
                 let evaluation = proposal_evaluation(
                     event,
@@ -680,9 +702,19 @@ fn main() -> Result<()> {
                     "waiting_rows": waiting.len(),
                     "stopped_rows": stopped.len(),
                     "trigger_row": triggered.first(),
+                    "row_level_decisions": _row_decisions,
                 });
-                let evidence_file =
-                    save_proposal_evidence(&evaluation, source, &rows, gate_summary)?;
+                let issue8_handoff = outcome
+                    .handoff
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("triggered row is missing Issue 8 handoff"))?;
+                let evidence_file = save_proposal_evidence(
+                    &evaluation,
+                    source,
+                    &rows,
+                    gate_summary,
+                    issue8_handoff,
+                )?;
                 table_row("Pending policy JSON", &evidence_file.display().to_string());
                 let proposed_id = evaluation.recommendation.recommendation_id.clone();
                 let review_path = Path::new("data/virtual_shift")

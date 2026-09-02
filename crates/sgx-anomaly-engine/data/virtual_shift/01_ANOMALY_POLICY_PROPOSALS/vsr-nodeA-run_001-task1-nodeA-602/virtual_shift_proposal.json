@@ -1,0 +1,1674 @@
+{
+  "advisory_only": true,
+  "approval_status": "pending_review",
+  "issue8_task1_to_virtual_shift_handoff": {
+    "anomaly_id": "run_001-task1-nodeA-602",
+    "anomaly_score": 0.8803083363909175,
+    "approval_required": true,
+    "evidence_features": [
+      "relay_ratio",
+      "cot_switches_rate",
+      "active_peers"
+    ],
+    "model_confidence": 0.4597298547082488,
+    "next_step": "create_pending_owner_review",
+    "proposed_action": "inspect_overlay_peers",
+    "record_type": "task1_to_virtual_shift_trigger_handoff",
+    "schema_version": 1,
+    "source_node": "nodeA",
+    "source_row": 602,
+    "source_task1_json": "data/recommendation_records/nodeA/run_001/recommendations.json",
+    "threshold_gate": {
+      "cooldown_ms": 60000,
+      "min_confidence": 0.4,
+      "min_score": 0.85
+    },
+    "trigger_reason": "Task 1 anomaly crossed the Virtual Shift trigger gate.",
+    "trigger_status": "triggered"
+  },
+  "policy_for_owner_approval": {
+    "auto_apply": false,
+    "reason": "This anomaly is handled by non-network actions such as attestation or logging.",
+    "status": "not_needed"
+  },
+  "review_summary": {
+    "gate_result": {
+      "row_level_decisions": [
+        {
+          "issue8_handoff_status": "triggered",
+          "task1_row": 602,
+          "vs1": "VALID",
+          "vs2": "TRIGGERED"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 606,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 607,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (55000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 700,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "triggered",
+          "task1_row": 705,
+          "vs1": "VALID",
+          "vs2": "TRIGGERED"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 7149,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 7150,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 7151,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9088,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9089,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9090,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9091,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9092,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9093,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9094,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9095,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9096,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9097,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9098,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9099,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9100,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9101,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9102,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9103,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9104,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9105,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9106,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9107,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9108,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9198,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9199,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9200,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9201,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9202,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9203,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9204,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9205,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9206,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9207,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "triggered",
+          "task1_row": 9208,
+          "vs1": "VALID",
+          "vs2": "TRIGGERED"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9209,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9210,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9211,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9212,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9213,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 9214,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 11548,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 11549,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 11550,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 11551,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20064,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20065,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20066,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20067,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20068,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20069,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20070,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20071,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20072,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20073,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20074,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20075,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20076,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20077,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20078,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20079,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20080,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20081,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20082,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20083,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20084,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20085,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20086,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20087,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20088,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20089,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20090,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20091,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20092,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20093,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20094,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20095,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20096,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20097,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20098,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20315,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20316,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20317,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20318,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 20319,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 26075,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 26076,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 26077,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 26078,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 26079,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 26080,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 26081,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 26082,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 26083,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 26084,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 26085,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 26086,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 26087,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 26088,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 26089,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 26090,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 26091,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 26092,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 26093,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 28849,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (52000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 28853,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (48000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 28872,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (29000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 28873,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (28000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 28875,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (26000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 28897,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (4000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 28899,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (2000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "triggered",
+          "task1_row": 28975,
+          "vs1": "VALID",
+          "vs2": "TRIGGERED"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 28977,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (58000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 28981,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (54000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 28997,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (38000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 29006,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (29000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 29041,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (56000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 29047,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (50000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 32640,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 32641,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 32642,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 32643,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 32644,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 32645,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 32646,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 32647,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 32648,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 32649,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 32650,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 32651,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 32652,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 32653,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 32654,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 32655,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 32656,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 32657,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 32658,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 32659,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "triggered",
+          "task1_row": 32660,
+          "vs1": "VALID",
+          "vs2": "TRIGGERED"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 32661,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (59000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 32662,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (58000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 32663,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (57000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 32664,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (56000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 32665,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (55000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 32666,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (54000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 32667,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (53000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 32668,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (52000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 35286,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 35287,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 35288,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 35289,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 35290,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 35291,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 35292,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 35293,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 35294,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 35295,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 35296,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 35297,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 35298,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 35299,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 35300,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37650,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37651,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37652,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37653,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37654,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37655,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37656,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37657,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37658,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37659,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37660,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37661,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37662,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37711,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37712,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37713,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37714,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37715,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37716,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37717,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37718,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37719,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37720,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 37721,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 42073,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 42074,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 42075,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 42076,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 42077,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 47643,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (58000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 47645,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (56000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 56901,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 57051,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 57052,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 57055,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 57056,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 57057,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 57058,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 57059,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 57060,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 57070,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 57071,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 57072,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 57073,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 57074,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 57908,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (20000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 58028,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (24000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "triggered",
+          "task1_row": 58114,
+          "vs1": "VALID",
+          "vs2": "TRIGGERED"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 58116,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (58000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 58164,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (10000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 58184,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (50000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "waiting",
+          "task1_row": 58187,
+          "vs1": "VALID",
+          "vs2": "WAIT - cooldown (47000 ms remaining)"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 58716,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 58719,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 59831,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 59832,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 59833,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 59834,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 59835,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 59836,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 59837,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 71751,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 71752,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 71753,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 71754,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 71755,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 71756,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 71757,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 71758,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 71759,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 71760,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 71761,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 71767,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 71768,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 71769,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 71770,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 71771,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 71772,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 71773,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 74138,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 74139,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 74140,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 74141,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        },
+        {
+          "issue8_handoff_status": "stopped",
+          "task1_row": 74142,
+          "vs1": "VALID",
+          "vs2": "STOP - below score/confidence gate"
+        }
+      ],
+      "stopped_rows": 215,
+      "trigger_row": 602,
+      "triggered_rows": 6,
+      "waiting_rows": 30
+    },
+    "grouped_anomaly_rows": 251,
+    "source_task1_recommendations_json": "data/recommendation_records/nodeA/run_001/recommendations.json",
+    "trigger_row": 602
+  },
+  "schema_version": 1,
+  "vs3": {
+    "affected_peers": [
+      "nodeC"
+    ],
+    "anomaly_id": "run_001-task1-nodeA-602",
+    "anomaly_score": 0.8803083363909175,
+    "anomaly_type": "peer_anomaly",
+    "candidate_actions": [
+      "increase_attestation",
+      "enable_logging"
+    ],
+    "confidence": 0.4597298547082488,
+    "created_at_ms": 602000,
+    "evidence": [
+      {
+        "feature": "relay_ratio"
+      },
+      {
+        "feature": "cot_switches_rate"
+      },
+      {
+        "feature": "active_peers"
+      }
+    ],
+    "recommendation_id": "vsr-nodeA-run_001-task1-nodeA-602",
+    "risk_level": "high",
+    "source_action": {
+      "kind": "inspect_overlay_peers",
+      "params": {}
+    },
+    "source_node": "nodeA",
+    "source_reason": "Task 1 anomaly on display row 602",
+    "source_recommendation": "Node nodeA: unusual peer or relay activity. Evidence: relay usage ratio, context-switch activity, active peer count. Check peer membership and relay connectivity. Verify whether this coincides with approved administration or maintenance.",
+    "status": "pending_review"
+  },
+  "vs8": {
+    "actions": [
+      {
+        "action_type": "attestation",
+        "proposal": {
+          "advisory_only": true,
+          "immediate_reattest": true,
+          "interval_seconds": 120,
+          "policy_action": "increase_attestation_frequency",
+          "reason": "High risk: request immediate re-attestation and a shorter recurring interval.",
+          "target_node": "nodeA"
+        }
+      },
+      {
+        "action_type": "logging",
+        "proposal": {
+          "advisory_only": true,
+          "duration_seconds": 900,
+          "expires_at_ms": 1502000,
+          "logging_level": "detailed",
+          "policy_action": "enable_additional_logging",
+          "reason": "High risk: temporarily enable detailed incident logging.",
+          "scopes": [
+            "security_events",
+            "policy_enforcement_results",
+            "peer_interaction_metadata"
+          ],
+          "starts_at_ms": 602000,
+          "target_node": "nodeA"
+        }
+      }
+    ],
+    "advisory_only": true,
+    "anomaly_id": "run_001-task1-nodeA-602",
+    "conflict_resolution": [],
+    "recommendation_id": "vsr-nodeA-run_001-task1-nodeA-602",
+    "source_node": "nodeA"
+  },
+  "vs9": {
+    "anomaly_id": "run_001-task1-nodeA-602",
+    "anomaly_score": 0.8803083363909175,
+    "anomaly_type": "PeerAnomaly",
+    "confidence": 0.4597298547082488,
+    "evidence_features": [
+      "relay_ratio",
+      "cot_switches_rate",
+      "active_peers"
+    ],
+    "human_summary": "High risk anomaly on nodeA (score 0.880, confidence 46.0%) produced 2 final advisory action(s).",
+    "machine_summary": "risk=High; actions=2; evidence_features=3",
+    "recommendation_id": "vsr-nodeA-run_001-task1-nodeA-602",
+    "risk_level": "High",
+    "schema_version": 1,
+    "selected_action_reasons": [
+      {
+        "action_type": "attestation",
+        "reason": "High risk: request immediate re-attestation and a shorter recurring interval."
+      },
+      {
+        "action_type": "logging",
+        "reason": "High risk: temporarily enable detailed incident logging."
+      }
+    ],
+    "source_node": "nodeA",
+    "source_reason": "Task 1 anomaly on display row 602",
+    "source_recommendation": "Node nodeA: unusual peer or relay activity. Evidence: relay usage ratio, context-switch activity, active peer count. Check peer membership and relay connectivity. Verify whether this coincides with approved administration or maintenance.",
+    "stage_notes": [
+      {
+        "result": "This anomaly type has no bounded firewall proposal in VS4.",
+        "stage": "VS4"
+      },
+      {
+        "result": "attest nodeA every 120 sec",
+        "stage": "VS5"
+      },
+      {
+        "result": "Detailed logging for 900 sec; scopes: [SecurityEvents, PolicyEnforcementResults, PeerInteractionMetadata]",
+        "stage": "VS6"
+      },
+      {
+        "result": "Quarantine is reserved for Critical risk after later owner approval.",
+        "stage": "VS7"
+      }
+    ]
+  }
+}

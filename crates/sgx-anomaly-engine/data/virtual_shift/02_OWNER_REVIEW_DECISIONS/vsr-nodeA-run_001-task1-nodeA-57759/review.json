@@ -1,0 +1,267 @@
+{
+  "schema_version": 1,
+  "recommendation_id": "vsr-nodeA-run_001-task1-nodeA-57759",
+  "anomaly_id": "run_001-task1-nodeA-57759",
+  "source_node": "nodeA",
+  "status": "pending_review",
+  "owner_decision": null,
+  "created_at_ms": 57759000,
+  "source_proposal_path": "data/virtual_shift/01_ANOMALY_POLICY_PROPOSALS/vsr-nodeA-run_001-task1-nodeA-57759/virtual_shift_proposal.json",
+  "proposal": {
+    "advisory_only": true,
+    "approval_status": "pending_review",
+    "issue8_task1_to_virtual_shift_handoff": {
+      "anomaly_id": "run_001-task1-nodeA-57759",
+      "anomaly_score": 0.8950216675974826,
+      "approval_required": true,
+      "evidence_features": [
+        "load1",
+        "net_rx_pkts_rate",
+        "net_rx_bytes_rate"
+      ],
+      "model_confidence": 1.0,
+      "next_step": "create_pending_owner_review",
+      "proposed_action": "rate_limit_traffic",
+      "record_type": "task1_to_virtual_shift_trigger_handoff",
+      "schema_version": 1,
+      "source_node": "nodeA",
+      "source_row": 57759,
+      "source_task1_json": "data/recommendation_records/nodeA/run_001/recommendations.json",
+      "threshold_gate": {
+        "cooldown_ms": 60000,
+        "min_confidence": 0.4,
+        "min_score": 0.85
+      },
+      "trigger_reason": "Task 1 anomaly crossed the Virtual Shift trigger gate.",
+      "trigger_status": "triggered"
+    },
+    "policy_for_owner_approval": {
+      "anomaly_type": "traffic_flood",
+      "auto_apply": false,
+      "owner_options": [
+        "select_approved_template",
+        "enter_manual_rule",
+        "reject_suggestion"
+      ],
+      "proposed_rules": [
+        {
+          "action": "ALLOW",
+          "dst": "10.0.0.0/24",
+          "id": "rule-allow-nebula-overlay",
+          "port": 4242,
+          "protocol": "UDP",
+          "reason": "Allow approved Nebula overlay peer transport inside the circle network.",
+          "src": "10.0.0.0/24"
+        }
+      ],
+      "reason": "The system matched these owner-approved rules to the anomaly type. The owner reviews the exact rule preview and may approve, reject, or choose different approved templates.",
+      "status": "pending_admin_review",
+      "suggested_action": "DENY_OR_RATE_LIMIT",
+      "suggested_rule_ids": [
+        "rule-allow-nebula-overlay"
+      ],
+      "suggested_target_peer": "nodeC"
+    },
+    "review_summary": {
+      "gate_result": {
+        "row_level_decisions": [
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 57759,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57771,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (48000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57774,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (45000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 57824,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57828,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (56000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57863,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (21000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 58037,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 58103,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          }
+        ],
+        "stopped_rows": 0,
+        "trigger_row": 57759,
+        "triggered_rows": 4,
+        "waiting_rows": 4
+      },
+      "grouped_anomaly_rows": 8,
+      "source_task1_recommendations_json": "data/recommendation_records/nodeA/run_001/recommendations.json",
+      "trigger_row": 57759
+    },
+    "schema_version": 1,
+    "vs3": {
+      "affected_peers": [
+        "nodeC"
+      ],
+      "anomaly_id": "run_001-task1-nodeA-57759",
+      "anomaly_score": 0.8950216675974826,
+      "anomaly_type": "traffic_flood",
+      "candidate_actions": [
+        "tighten_firewall",
+        "increase_attestation",
+        "enable_logging"
+      ],
+      "confidence": 1.0,
+      "created_at_ms": 57759000,
+      "evidence": [
+        {
+          "feature": "load1"
+        },
+        {
+          "feature": "net_rx_pkts_rate"
+        },
+        {
+          "feature": "net_rx_bytes_rate"
+        }
+      ],
+      "recommendation_id": "vsr-nodeA-run_001-task1-nodeA-57759",
+      "risk_level": "high",
+      "source_action": {
+        "kind": "rate_limit_traffic",
+        "params": {
+          "review_window_minutes": 5
+        }
+      },
+      "source_node": "nodeA",
+      "source_reason": "Task 1 anomaly on display row 57759",
+      "source_recommendation": "Node nodeA: possible traffic flood. Evidence: system workload, incoming packet rate, incoming traffic volume. Check traffic source and node load; apply a temporary traffic limit if the burst is not expected. Verify whether this coincides with approved administration or maintenance.",
+      "status": "pending_review"
+    },
+    "vs8": {
+      "actions": [
+        {
+          "action_type": "firewall",
+          "proposal": {
+            "advisory_only": true,
+            "duration_seconds": 300,
+            "firewall_mode": "rate_limit",
+            "policy_action": "tighten_firewall",
+            "rate_limit_per_second": 20,
+            "reason": "Traffic-flood evidence supports a temporary, peer-scoped rate limit.",
+            "target_peer": "nodeC"
+          }
+        },
+        {
+          "action_type": "attestation",
+          "proposal": {
+            "advisory_only": true,
+            "immediate_reattest": true,
+            "interval_seconds": 120,
+            "policy_action": "increase_attestation_frequency",
+            "reason": "High risk: request immediate re-attestation and a shorter recurring interval.",
+            "target_node": "nodeA"
+          }
+        },
+        {
+          "action_type": "logging",
+          "proposal": {
+            "advisory_only": true,
+            "duration_seconds": 900,
+            "expires_at_ms": 58659000,
+            "logging_level": "detailed",
+            "policy_action": "enable_additional_logging",
+            "reason": "High risk: temporarily enable detailed incident logging.",
+            "scopes": [
+              "security_events",
+              "policy_enforcement_results",
+              "network_flow_metadata"
+            ],
+            "starts_at_ms": 57759000,
+            "target_node": "nodeA"
+          }
+        }
+      ],
+      "advisory_only": true,
+      "anomaly_id": "run_001-task1-nodeA-57759",
+      "conflict_resolution": [],
+      "recommendation_id": "vsr-nodeA-run_001-task1-nodeA-57759",
+      "source_node": "nodeA"
+    },
+    "vs9": {
+      "anomaly_id": "run_001-task1-nodeA-57759",
+      "anomaly_score": 0.8950216675974826,
+      "anomaly_type": "TrafficFlood",
+      "confidence": 1.0,
+      "evidence_features": [
+        "load1",
+        "net_rx_pkts_rate",
+        "net_rx_bytes_rate"
+      ],
+      "human_summary": "High risk anomaly on nodeA (score 0.895, confidence 100.0%) produced 3 final advisory action(s).",
+      "machine_summary": "risk=High; actions=3; evidence_features=3",
+      "recommendation_id": "vsr-nodeA-run_001-task1-nodeA-57759",
+      "risk_level": "High",
+      "schema_version": 1,
+      "selected_action_reasons": [
+        {
+          "action_type": "firewall",
+          "reason": "Traffic-flood evidence supports a temporary, peer-scoped rate limit."
+        },
+        {
+          "action_type": "attestation",
+          "reason": "High risk: request immediate re-attestation and a shorter recurring interval."
+        },
+        {
+          "action_type": "logging",
+          "reason": "High risk: temporarily enable detailed incident logging."
+        }
+      ],
+      "source_node": "nodeA",
+      "source_reason": "Task 1 anomaly on display row 57759",
+      "source_recommendation": "Node nodeA: possible traffic flood. Evidence: system workload, incoming packet rate, incoming traffic volume. Check traffic source and node load; apply a temporary traffic limit if the burst is not expected. Verify whether this coincides with approved administration or maintenance.",
+      "stage_notes": [
+        {
+          "result": "RateLimit 20 for 300 sec on 1 peer(s)",
+          "stage": "VS4"
+        },
+        {
+          "result": "attest nodeA every 120 sec",
+          "stage": "VS5"
+        },
+        {
+          "result": "Detailed logging for 900 sec; scopes: [SecurityEvents, PolicyEnforcementResults, NetworkFlowMetadata]",
+          "stage": "VS6"
+        },
+        {
+          "result": "Quarantine is reserved for Critical risk after later owner approval.",
+          "stage": "VS7"
+        }
+      ]
+    }
+  }
+}

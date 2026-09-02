@@ -1,0 +1,3263 @@
+{
+  "schema_version": 1,
+  "recommendation_id": "vsr-nodeA-run_001-task1-nodeA-1566",
+  "anomaly_id": "run_001-task1-nodeA-1566",
+  "source_node": "nodeA",
+  "status": "pending_review",
+  "owner_decision": null,
+  "created_at_ms": 1566000,
+  "source_proposal_path": "data/virtual_shift/01_ANOMALY_POLICY_PROPOSALS/vsr-nodeA-run_001-task1-nodeA-1566/virtual_shift_proposal.json",
+  "proposal": {
+    "advisory_only": true,
+    "approval_status": "pending_review",
+    "issue8_task1_to_virtual_shift_handoff": {
+      "anomaly_id": "run_001-task1-nodeA-1566",
+      "anomaly_score": 0.8513268608093331,
+      "approval_required": true,
+      "evidence_features": [
+        "relay_ratio",
+        "attest_rate",
+        "cot_latency_avg_ms"
+      ],
+      "model_confidence": 0.5208975357191398,
+      "next_step": "create_pending_owner_review",
+      "proposed_action": "investigate_anomaly",
+      "record_type": "task1_to_virtual_shift_trigger_handoff",
+      "schema_version": 1,
+      "source_node": "nodeA",
+      "source_row": 1566,
+      "source_task1_json": "data/recommendation_records/nodeA/run_001/recommendations.json",
+      "threshold_gate": {
+        "cooldown_ms": 60000,
+        "min_confidence": 0.4,
+        "min_score": 0.85
+      },
+      "trigger_reason": "Task 1 anomaly crossed the Virtual Shift trigger gate.",
+      "trigger_status": "triggered"
+    },
+    "policy_for_owner_approval": {
+      "anomaly_type": "protocol_violation",
+      "auto_apply": false,
+      "owner_options": [
+        "select_approved_template",
+        "enter_manual_rule",
+        "reject_suggestion"
+      ],
+      "proposed_rules": [
+        {
+          "action": "DENY",
+          "dst": "10.0.0.10",
+          "id": "rule-deny-public-smb",
+          "port": 445,
+          "protocol": "TCP",
+          "reason": "Block public SMB exposure to reduce lateral-movement and ransomware risk.",
+          "src": "0.0.0.0/0"
+        },
+        {
+          "action": "DENY",
+          "dst": "10.0.0.10",
+          "id": "rule-deny-telnet",
+          "port": 23,
+          "protocol": "TCP",
+          "reason": "Block unencrypted Telnet. Use an approved encrypted administration channel instead.",
+          "src": "0.0.0.0/0"
+        },
+        {
+          "action": "DENY",
+          "dst": "10.0.0.10",
+          "id": "rule-deny-untrusted-udp",
+          "port": 161,
+          "protocol": "UDP",
+          "reason": "Example owner-approved restriction for public SNMP. Replace addresses for the real circle.",
+          "src": "0.0.0.0/0"
+        }
+      ],
+      "reason": "The system matched these owner-approved rules to the anomaly type. The owner reviews the exact rule preview and may approve, reject, or choose different approved templates.",
+      "status": "pending_admin_review",
+      "suggested_action": "DENY_OR_RATE_LIMIT",
+      "suggested_rule_ids": [
+        "rule-deny-public-smb",
+        "rule-deny-telnet",
+        "rule-deny-untrusted-udp"
+      ],
+      "suggested_target_peer": "nodeC"
+    },
+    "review_summary": {
+      "gate_result": {
+        "row_level_decisions": [
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 608,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (54000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "stopped",
+            "task1_row": 704,
+            "vs1": "VALID",
+            "vs2": "STOP - below score/confidence gate"
+          },
+          {
+            "issue8_handoff_status": "stopped",
+            "task1_row": 712,
+            "vs1": "VALID",
+            "vs2": "STOP - below score/confidence gate"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 713,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (52000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 716,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (49000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "stopped",
+            "task1_row": 720,
+            "vs1": "VALID",
+            "vs2": "STOP - below score/confidence gate"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 1566,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 3667,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "stopped",
+            "task1_row": 8679,
+            "vs1": "VALID",
+            "vs2": "STOP - below score/confidence gate"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 10109,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 11556,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 28841,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 28843,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (58000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 28844,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (57000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 28845,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (56000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 28846,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (55000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 28852,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (49000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 28858,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (43000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 28859,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (42000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 28861,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (40000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 28864,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (37000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 28865,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (36000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 28877,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (24000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 28881,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (20000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 28883,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (18000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 28887,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (14000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 28896,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (5000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 28900,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 28903,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 28907,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (56000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 28923,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (40000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 28945,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (18000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 29023,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (12000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 29037,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 29038,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (59000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 33586,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 34462,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 38040,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "stopped",
+            "task1_row": 38381,
+            "vs1": "VALID",
+            "vs2": "STOP - below score/confidence gate"
+          },
+          {
+            "issue8_handoff_status": "stopped",
+            "task1_row": 41146,
+            "vs1": "VALID",
+            "vs2": "STOP - below score/confidence gate"
+          },
+          {
+            "issue8_handoff_status": "stopped",
+            "task1_row": 41164,
+            "vs1": "VALID",
+            "vs2": "STOP - below score/confidence gate"
+          },
+          {
+            "issue8_handoff_status": "stopped",
+            "task1_row": 45249,
+            "vs1": "VALID",
+            "vs2": "STOP - below score/confidence gate"
+          },
+          {
+            "issue8_handoff_status": "stopped",
+            "task1_row": 45526,
+            "vs1": "VALID",
+            "vs2": "STOP - below score/confidence gate"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 47641,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 56486,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 57602,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 57603,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57604,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (58000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57605,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (58000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57606,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (57000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57607,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (55000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57608,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (55000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57609,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (54000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57610,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (53000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57611,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (52000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57612,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (51000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57613,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (50000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57614,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (49000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57615,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (47000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57616,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (47000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57617,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (46000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57618,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (45000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57619,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (44000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57620,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (43000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57621,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (42000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57622,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (41000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57623,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (40000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57624,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (38000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57625,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (38000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57626,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (36000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57627,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (36000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57628,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (35000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57629,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (34000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57630,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (33000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57631,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (32000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57633,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (29000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57634,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (29000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57635,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (28000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57636,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (27000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57638,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (25000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57640,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (22000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57641,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (21000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57642,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (20000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57644,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (18000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57646,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (17000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57649,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (14000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57651,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (12000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57652,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (11000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57653,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (10000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57654,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (9000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57655,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (8000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57656,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (7000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57657,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (6000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57658,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (4000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57659,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (3000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57660,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (3000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57661,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (2000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 57663,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 57664,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57665,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (58000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57666,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (57000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57667,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (56000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57668,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (55000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57669,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (54000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57670,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (53000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57671,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (52000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57673,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (50000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57674,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (49000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57677,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (46000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57678,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (45000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57679,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (44000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57680,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (43000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57681,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (42000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57682,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (41000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57683,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (40000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57684,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (39000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57685,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (38000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57686,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (37000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57687,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (36000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57688,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (35000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57690,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (33000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57691,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (32000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57692,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (31000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57693,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (30000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57694,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (29000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57696,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (27000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57697,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (26000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57698,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (25000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57700,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (23000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57701,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (22000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57702,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (21000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57703,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (20000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 57704,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57705,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (19000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57706,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (18000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57707,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (16000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57708,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (16000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57710,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (13000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57713,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (10000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57714,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (9000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57715,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (8000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57716,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (7000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57717,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (7000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57719,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (4000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57720,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (44000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57721,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (43000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57722,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (1000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 57723,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 57724,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57727,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (57000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57728,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (56000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57729,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (55000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57731,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (52000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57732,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (51000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57733,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (50000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57734,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (50000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57735,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (49000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57736,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (48000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57737,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (46000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57738,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (46000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57740,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (24000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57741,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (43000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57742,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (42000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57743,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (41000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57744,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (40000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57745,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (39000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57746,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (38000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57747,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (37000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57749,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (34000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57750,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (33000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57751,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (33000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57752,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (31000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57753,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (31000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57754,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (29000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57755,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (28000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57756,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (27000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57757,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (27000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57758,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (25000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57760,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (24000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57761,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (23000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57762,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (21000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57763,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (21000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57765,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (18000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57767,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (17000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 57768,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57770,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (14000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57775,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (8000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57776,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (7000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57777,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (7000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57778,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (5000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57779,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (4000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57780,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (3000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57781,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (3000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57782,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (1000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57783,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (1000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 57785,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57786,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (59000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57787,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (58000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57788,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (57000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57789,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (56000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57790,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (55000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57791,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (54000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57792,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (53000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57793,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (52000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57794,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (51000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57795,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (50000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57796,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (49000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 57798,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57799,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (46000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57800,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (58000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57801,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (57000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57802,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (43000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57803,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (55000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57804,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (41000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57805,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (53000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57806,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (39000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57807,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (51000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57808,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (20000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57809,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (36000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57810,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (48000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57811,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (47000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57813,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (32000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57814,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (31000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57815,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (30000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57816,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (42000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57817,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (41000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57819,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (26000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57822,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (23000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57825,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (20000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57826,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (32000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57827,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (31000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57829,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (16000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57830,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (28000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57831,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (27000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57834,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (24000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57835,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (23000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57836,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (9000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57837,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (8000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57838,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (7000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57839,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (6000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57840,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (5000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57842,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (3000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57844,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (1000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 57846,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57847,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (59000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57848,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (10000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57849,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (57000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57850,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (56000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57851,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (7000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57852,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (6000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57853,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (5000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57854,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (52000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57855,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (51000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57857,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (49000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57859,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (47000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57860,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (46000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 57861,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57862,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (59000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57864,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (42000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57865,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (56000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57866,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (40000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57867,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (54000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 57868,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57869,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (52000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57870,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (51000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57871,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (35000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57872,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (49000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57873,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (55000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57874,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (32000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57875,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (31000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57876,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (30000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57877,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (51000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57879,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (42000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57880,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (26000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57882,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (24000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57884,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (44000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57885,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (43000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57886,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (42000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57887,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (41000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57888,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (18000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57889,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (17000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57891,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (15000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57894,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (34000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57895,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (33000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57898,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (30000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57899,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (29000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57901,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (5000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57907,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (21000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 57909,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57910,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (18000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57911,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (58000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57912,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (16000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57913,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (15000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57915,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (13000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57916,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (12000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57918,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (51000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57919,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (9000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57920,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (8000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57921,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (48000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57922,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (6000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57924,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (4000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57925,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (44000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57927,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (1000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 57929,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57931,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (38000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57946,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (43000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57947,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (42000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57953,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (16000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57955,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (14000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57956,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (33000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57960,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (29000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57967,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (2000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57968,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (21000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57969,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (20000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 57970,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57971,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (18000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57972,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (17000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57973,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (57000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57974,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (15000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57975,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (55000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57976,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (54000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57977,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (12000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57978,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (11000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57979,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (10000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57980,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (9000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57981,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (49000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57982,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (7000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57983,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (6000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57984,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (5000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57985,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (4000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57987,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (2000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57988,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (1000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57989,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (41000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57991,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (39000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 57992,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57993,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (59000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57994,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (58000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57995,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (57000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57997,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (55000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57998,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (54000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58000,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (52000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58003,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (49000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58004,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (48000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58005,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (47000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58006,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (24000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58007,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (23000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58008,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (44000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58009,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (21000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58010,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (42000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58011,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (19000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58012,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (40000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58013,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (17000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58015,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (37000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58016,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (36000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58019,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (11000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58020,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (10000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58021,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (9000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58023,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (7000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58024,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (6000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58027,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (25000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58029,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (23000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 58030,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58033,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (57000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58034,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (56000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58035,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (55000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58036,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (54000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58038,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (14000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58039,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (13000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58040,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (50000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58041,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (49000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58042,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (48000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58043,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (9000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58044,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (46000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58045,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (45000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58046,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (44000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 58047,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58048,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (59000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58049,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (41000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58050,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (57000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58051,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (56000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58052,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (55000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58053,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (54000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 58054,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58055,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (59000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58056,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (51000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58057,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (50000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58058,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (56000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58059,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (55000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58060,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (54000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58061,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (53000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58063,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (27000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58064,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (50000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58065,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (49000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58066,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (48000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58067,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (47000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58068,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (46000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58069,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (45000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58070,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (44000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58071,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (43000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58072,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (18000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58073,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (34000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58075,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (39000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58076,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (14000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58077,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (13000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58078,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (12000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58079,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (11000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58080,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (10000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58081,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (9000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58082,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (32000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58083,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (7000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58084,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (6000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58085,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (22000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58086,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (28000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58088,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (26000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 58090,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58092,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (58000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58093,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (57000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58095,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (19000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58096,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (18000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58097,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (17000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58098,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (16000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58099,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (15000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58100,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (14000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58101,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (13000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58102,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (48000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58105,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (9000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58106,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (8000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58108,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (6000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58109,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (41000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58110,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (40000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58112,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (2000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58113,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (1000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58115,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (59000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58117,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (57000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58118,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (56000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58119,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (55000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58120,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (30000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58121,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (53000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58122,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (28000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58123,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (51000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58124,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (26000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58125,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (49000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58126,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (48000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58127,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (23000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58128,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (22000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58129,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (45000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58130,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (20000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58131,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (43000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58132,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (42000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58133,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (41000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58134,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (40000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58135,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (39000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58136,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (38000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58137,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (37000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58138,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (36000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58139,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (35000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58140,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (34000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58141,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (33000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58142,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (32000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58143,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (31000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58144,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (30000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58145,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (29000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58146,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (28000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58148,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (26000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58150,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (24000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58151,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (23000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58152,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (22000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58153,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (21000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58154,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (20000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58155,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (19000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58156,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (18000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58158,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (16000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58160,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (14000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58162,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (12000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58163,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (11000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58165,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (9000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "stopped",
+            "task1_row": 58166,
+            "vs1": "VALID",
+            "vs2": "STOP - below score/confidence gate"
+          },
+          {
+            "issue8_handoff_status": "stopped",
+            "task1_row": 58167,
+            "vs1": "VALID",
+            "vs2": "STOP - below score/confidence gate"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58168,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (6000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58169,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (5000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58173,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (1000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 58174,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58175,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (59000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58176,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (58000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58177,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (57000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58178,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (56000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58179,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (55000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58180,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (54000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58181,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (53000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58182,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (52000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58183,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (51000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58185,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (49000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58186,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (48000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58188,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (46000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 58191,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58192,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (42000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 58194,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (40000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "stopped",
+            "task1_row": 58195,
+            "vs1": "VALID",
+            "vs2": "STOP - below score/confidence gate"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 58197,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "stopped",
+            "task1_row": 58720,
+            "vs1": "VALID",
+            "vs2": "STOP - below score/confidence gate"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 59631,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "stopped",
+            "task1_row": 69555,
+            "vs1": "VALID",
+            "vs2": "STOP - below score/confidence gate"
+          },
+          {
+            "issue8_handoff_status": "stopped",
+            "task1_row": 75681,
+            "vs1": "VALID",
+            "vs2": "STOP - below score/confidence gate"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 81405,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "stopped",
+            "task1_row": 81856,
+            "vs1": "VALID",
+            "vs2": "STOP - below score/confidence gate"
+          }
+        ],
+        "stopped_rows": 16,
+        "trigger_row": 1566,
+        "triggered_rows": 39,
+        "waiting_rows": 450
+      },
+      "grouped_anomaly_rows": 505,
+      "source_task1_recommendations_json": "data/recommendation_records/nodeA/run_001/recommendations.json",
+      "trigger_row": 608
+    },
+    "schema_version": 1,
+    "vs3": {
+      "affected_peers": [
+        "nodeC"
+      ],
+      "anomaly_id": "run_001-task1-nodeA-1566",
+      "anomaly_score": 0.8513268608093331,
+      "anomaly_type": "protocol_violation",
+      "candidate_actions": [
+        "tighten_firewall",
+        "increase_attestation",
+        "enable_logging"
+      ],
+      "confidence": 0.5208975357191398,
+      "created_at_ms": 1566000,
+      "evidence": [
+        {
+          "feature": "relay_ratio"
+        },
+        {
+          "feature": "attest_rate"
+        },
+        {
+          "feature": "cot_latency_avg_ms"
+        }
+      ],
+      "recommendation_id": "vsr-nodeA-run_001-task1-nodeA-1566",
+      "risk_level": "high",
+      "source_action": {
+        "kind": "investigate_anomaly",
+        "params": {
+          "automatic_execution": false,
+          "candidate_actions": [
+            "inspect_overlay_peers",
+            "inspect_node_resources",
+            "review_audit_logs"
+          ],
+          "evidence_features": [
+            "relay_ratio",
+            "attest_rate",
+            "cot_latency_avg_ms"
+          ]
+        }
+      },
+      "source_node": "nodeA",
+      "source_reason": "Task 1 anomaly on display row 1566",
+      "source_recommendation": "What happened: unusual peer or relay activity, system resource activity and security or protocol activity. Evidence: relay usage ratio, attestation activity, operation latency. Recommended action: check overlay peer status and relay connectivity; then check running processes, open connections, and node resource usage; then review policy, attestation, and protocol/audit logs for the same time window. If this coincides with approved administration, verify the change ticket and audit record.",
+      "status": "pending_review"
+    },
+    "vs8": {
+      "actions": [
+        {
+          "action_type": "attestation",
+          "proposal": {
+            "advisory_only": true,
+            "immediate_reattest": true,
+            "interval_seconds": 120,
+            "policy_action": "increase_attestation_frequency",
+            "reason": "High risk: request immediate re-attestation and a shorter recurring interval.",
+            "target_node": "nodeA"
+          }
+        },
+        {
+          "action_type": "logging",
+          "proposal": {
+            "advisory_only": true,
+            "duration_seconds": 900,
+            "expires_at_ms": 2466000,
+            "logging_level": "detailed",
+            "policy_action": "enable_additional_logging",
+            "reason": "High risk: temporarily enable detailed incident logging.",
+            "scopes": [
+              "security_events",
+              "policy_enforcement_results",
+              "protocol_violation_details"
+            ],
+            "starts_at_ms": 1566000,
+            "target_node": "nodeA"
+          }
+        }
+      ],
+      "advisory_only": true,
+      "anomaly_id": "run_001-task1-nodeA-1566",
+      "conflict_resolution": [],
+      "recommendation_id": "vsr-nodeA-run_001-task1-nodeA-1566",
+      "source_node": "nodeA"
+    },
+    "vs9": {
+      "anomaly_id": "run_001-task1-nodeA-1566",
+      "anomaly_score": 0.8513268608093331,
+      "anomaly_type": "ProtocolViolation",
+      "confidence": 0.5208975357191398,
+      "evidence_features": [
+        "relay_ratio",
+        "attest_rate",
+        "cot_latency_avg_ms"
+      ],
+      "human_summary": "High risk anomaly on nodeA (score 0.851, confidence 52.1%) produced 2 final advisory action(s).",
+      "machine_summary": "risk=High; actions=2; evidence_features=3",
+      "recommendation_id": "vsr-nodeA-run_001-task1-nodeA-1566",
+      "risk_level": "High",
+      "schema_version": 1,
+      "selected_action_reasons": [
+        {
+          "action_type": "attestation",
+          "reason": "High risk: request immediate re-attestation and a shorter recurring interval."
+        },
+        {
+          "action_type": "logging",
+          "reason": "High risk: temporarily enable detailed incident logging."
+        }
+      ],
+      "source_node": "nodeA",
+      "source_reason": "Task 1 anomaly on display row 1566",
+      "source_recommendation": "What happened: unusual peer or relay activity, system resource activity and security or protocol activity. Evidence: relay usage ratio, attestation activity, operation latency. Recommended action: check overlay peer status and relay connectivity; then check running processes, open connections, and node resource usage; then review policy, attestation, and protocol/audit logs for the same time window. If this coincides with approved administration, verify the change ticket and audit record.",
+      "stage_notes": [
+        {
+          "result": "This anomaly type has no bounded firewall proposal in VS4.",
+          "stage": "VS4"
+        },
+        {
+          "result": "attest nodeA every 120 sec",
+          "stage": "VS5"
+        },
+        {
+          "result": "Detailed logging for 900 sec; scopes: [SecurityEvents, PolicyEnforcementResults, ProtocolViolationDetails]",
+          "stage": "VS6"
+        },
+        {
+          "result": "Quarantine is reserved for Critical risk after later owner approval.",
+          "stage": "VS7"
+        }
+      ]
+    }
+  }
+}

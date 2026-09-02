@@ -22,6 +22,7 @@ pub mod model;
 pub mod policy_builder;
 pub mod recommendation;
 pub mod review;
+pub mod routing_trust;
 pub mod signing;
 pub mod trigger;
 pub mod verify;
@@ -52,7 +53,10 @@ pub use identity::{
     AttestationState, IdentityRotationResult, IdentityRotationStatus, MemberIdentityRotator,
     VirtualIdentityState,
 };
-pub use integration::{anomaly_event_from_alert, anomaly_event_from_task1_record};
+pub use integration::{
+    anomaly_event_from_alert, anomaly_event_from_task1_record, task1_virtual_shift_handoff_record,
+    Task1VirtualShiftHandoff, TriggerGateSnapshot,
+};
 pub use justification::{
     justification_from_aggregate, JustificationPackage, ProposalStageNote, SelectedActionReason,
     MAX_JUSTIFICATION_BYTES,
@@ -78,6 +82,9 @@ pub use recommendation::{
     RecommendedAction, RiskLevel, TrustedFirewallContext,
 };
 pub use review::{OwnerDecision, ReviewQueue, ReviewRecord, ReviewStatus};
+pub use routing_trust::{
+    RoutingTrustSources, RoutingTrustStatus, RoutingTrustSummary, RoutingTrustSummaryWriter,
+};
 pub use signing::{
     sign_approved_policy, verify_signed_policy, write_signed_policy, GuardianKeyManager,
     GuardianSignerConfig, SignedVirtualShiftPolicy,

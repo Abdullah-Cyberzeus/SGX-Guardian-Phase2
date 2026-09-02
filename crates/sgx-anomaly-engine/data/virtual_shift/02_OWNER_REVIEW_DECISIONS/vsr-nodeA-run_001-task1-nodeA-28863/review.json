@@ -1,0 +1,232 @@
+{
+  "schema_version": 1,
+  "recommendation_id": "vsr-nodeA-run_001-task1-nodeA-28863",
+  "anomaly_id": "run_001-task1-nodeA-28863",
+  "source_node": "nodeA",
+  "status": "pending_review",
+  "owner_decision": null,
+  "created_at_ms": 28863000,
+  "source_proposal_path": "data/virtual_shift/01_ANOMALY_POLICY_PROPOSALS/vsr-nodeA-run_001-task1-nodeA-28863/virtual_shift_proposal.json",
+  "proposal": {
+    "advisory_only": true,
+    "approval_status": "pending_review",
+    "issue8_task1_to_virtual_shift_handoff": {
+      "anomaly_id": "run_001-task1-nodeA-28863",
+      "anomaly_score": 1.0,
+      "approval_required": true,
+      "evidence_features": [
+        "cot_switches_rate",
+        "cpu_util_pct",
+        "mem_used_pct"
+      ],
+      "model_confidence": 0.46013913501888504,
+      "next_step": "create_pending_owner_review",
+      "proposed_action": "inspect_node_resources",
+      "record_type": "task1_to_virtual_shift_trigger_handoff",
+      "schema_version": 1,
+      "source_node": "nodeA",
+      "source_row": 28863,
+      "source_task1_json": "data/recommendation_records/nodeA/run_001/recommendations.json",
+      "threshold_gate": {
+        "cooldown_ms": 60000,
+        "min_confidence": 0.4,
+        "min_score": 0.85
+      },
+      "trigger_reason": "Task 1 anomaly crossed the Virtual Shift trigger gate.",
+      "trigger_status": "triggered"
+    },
+    "policy_for_owner_approval": {
+      "auto_apply": false,
+      "reason": "This anomaly is handled by non-network actions such as attestation or logging.",
+      "status": "not_needed"
+    },
+    "review_summary": {
+      "gate_result": {
+        "row_level_decisions": [
+          {
+            "issue8_handoff_status": "stopped",
+            "task1_row": 699,
+            "vs1": "VALID",
+            "vs2": "STOP - below score/confidence gate"
+          },
+          {
+            "issue8_handoff_status": "triggered",
+            "task1_row": 28863,
+            "vs1": "VALID",
+            "vs2": "TRIGGERED"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57709,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (55000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57712,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (52000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57718,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (46000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57725,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (39000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "waiting",
+            "task1_row": 57726,
+            "vs1": "VALID",
+            "vs2": "WAIT - cooldown (38000 ms remaining)"
+          },
+          {
+            "issue8_handoff_status": "stopped",
+            "task1_row": 64622,
+            "vs1": "VALID",
+            "vs2": "STOP - below score/confidence gate"
+          },
+          {
+            "issue8_handoff_status": "stopped",
+            "task1_row": 64623,
+            "vs1": "VALID",
+            "vs2": "STOP - below score/confidence gate"
+          }
+        ],
+        "stopped_rows": 3,
+        "trigger_row": 28863,
+        "triggered_rows": 1,
+        "waiting_rows": 5
+      },
+      "grouped_anomaly_rows": 9,
+      "source_task1_recommendations_json": "data/recommendation_records/nodeA/run_001/recommendations.json",
+      "trigger_row": 699
+    },
+    "schema_version": 1,
+    "vs3": {
+      "affected_peers": [
+        "nodeC"
+      ],
+      "anomaly_id": "run_001-task1-nodeA-28863",
+      "anomaly_score": 1.0,
+      "anomaly_type": "resource_exhaustion",
+      "candidate_actions": [
+        "increase_attestation",
+        "enable_logging"
+      ],
+      "confidence": 0.46013913501888504,
+      "created_at_ms": 28863000,
+      "evidence": [
+        {
+          "feature": "cot_switches_rate"
+        },
+        {
+          "feature": "cpu_util_pct"
+        },
+        {
+          "feature": "mem_used_pct"
+        }
+      ],
+      "recommendation_id": "vsr-nodeA-run_001-task1-nodeA-28863",
+      "risk_level": "high",
+      "source_action": {
+        "kind": "inspect_node_resources",
+        "params": {}
+      },
+      "source_node": "nodeA",
+      "source_reason": "Task 1 anomaly on display row 28863",
+      "source_recommendation": "Node nodeA: possible resource exhaustion. Evidence: context-switch activity, CPU usage, memory usage. Check processes, open connections, memory, and CPU before taking action. Verify whether this coincides with approved administration or maintenance.",
+      "status": "pending_review"
+    },
+    "vs8": {
+      "actions": [
+        {
+          "action_type": "attestation",
+          "proposal": {
+            "advisory_only": true,
+            "immediate_reattest": true,
+            "interval_seconds": 120,
+            "policy_action": "increase_attestation_frequency",
+            "reason": "High risk: request immediate re-attestation and a shorter recurring interval.",
+            "target_node": "nodeA"
+          }
+        },
+        {
+          "action_type": "logging",
+          "proposal": {
+            "advisory_only": true,
+            "duration_seconds": 900,
+            "expires_at_ms": 29763000,
+            "logging_level": "detailed",
+            "policy_action": "enable_additional_logging",
+            "reason": "High risk: temporarily enable detailed incident logging.",
+            "scopes": [
+              "security_events",
+              "policy_enforcement_results",
+              "resource_metrics"
+            ],
+            "starts_at_ms": 28863000,
+            "target_node": "nodeA"
+          }
+        }
+      ],
+      "advisory_only": true,
+      "anomaly_id": "run_001-task1-nodeA-28863",
+      "conflict_resolution": [],
+      "recommendation_id": "vsr-nodeA-run_001-task1-nodeA-28863",
+      "source_node": "nodeA"
+    },
+    "vs9": {
+      "anomaly_id": "run_001-task1-nodeA-28863",
+      "anomaly_score": 1.0,
+      "anomaly_type": "ResourceExhaustion",
+      "confidence": 0.46013913501888504,
+      "evidence_features": [
+        "cot_switches_rate",
+        "cpu_util_pct",
+        "mem_used_pct"
+      ],
+      "human_summary": "High risk anomaly on nodeA (score 1.000, confidence 46.0%) produced 2 final advisory action(s).",
+      "machine_summary": "risk=High; actions=2; evidence_features=3",
+      "recommendation_id": "vsr-nodeA-run_001-task1-nodeA-28863",
+      "risk_level": "High",
+      "schema_version": 1,
+      "selected_action_reasons": [
+        {
+          "action_type": "attestation",
+          "reason": "High risk: request immediate re-attestation and a shorter recurring interval."
+        },
+        {
+          "action_type": "logging",
+          "reason": "High risk: temporarily enable detailed incident logging."
+        }
+      ],
+      "source_node": "nodeA",
+      "source_reason": "Task 1 anomaly on display row 28863",
+      "source_recommendation": "Node nodeA: possible resource exhaustion. Evidence: context-switch activity, CPU usage, memory usage. Check processes, open connections, memory, and CPU before taking action. Verify whether this coincides with approved administration or maintenance.",
+      "stage_notes": [
+        {
+          "result": "This anomaly type has no bounded firewall proposal in VS4.",
+          "stage": "VS4"
+        },
+        {
+          "result": "attest nodeA every 120 sec",
+          "stage": "VS5"
+        },
+        {
+          "result": "Detailed logging for 900 sec; scopes: [SecurityEvents, PolicyEnforcementResults, ResourceMetrics]",
+          "stage": "VS6"
+        },
+        {
+          "result": "Quarantine is reserved for Critical risk after later owner approval.",
+          "stage": "VS7"
+        }
+      ]
+    }
+  }
+}

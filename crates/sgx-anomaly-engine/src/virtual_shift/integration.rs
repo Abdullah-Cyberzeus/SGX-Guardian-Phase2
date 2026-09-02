@@ -5,6 +5,9 @@ use crate::policy_candidate::Task1RecommendationRecord;
 
 use super::errors::VirtualShiftError;
 use super::model::{AnomalyEvent, AnomalyEvidence, AnomalyType};
+use super::{TriggerDecision, VirtualShiftTriggerConfig};
+
+use serde::{Deserialize, Serialize};
 
 /// Convert an existing Task 1 alert into a validated Virtual Shift event.
 ///
@@ -93,6 +96,106 @@ pub fn anomaly_event_from_task1_record(
     Ok(event)
 }
 
+/// Durable, client-facing proof that a Task 1 threshold-crossing anomaly was
+/// handed to Virtual Shift instead of staying as a local/log-only remediation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Task1VirtualShiftHandoff {
+    pub schema_version: u32,
+    pub record_type: String,
+    pub source_task1_json: String,
+    pub source_node: String,
+    pub source_row: usize,
+    pub anomaly_id: String,
+    pub anomaly_score: f64,
+    pub model_confidence: f64,
+    pub threshold_gate: TriggerGateSnapshot,
+    pub trigger_status: String,
+    pub trigger_reason: String,
+    pub evidence_features: Vec<String>,
+    pub proposed_action: Option<String>,
+    pub approval_required: bool,
+    pub next_step: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TriggerGateSnapshot {
+    pub min_score: f64,
+    pub min_confidence: f64,
+    pub cooldown_ms: u64,
+}
+
+/// Build the Issue #8 handoff/status record from VS2's real decision.
+/// `Triggered` means the record is allowed to enter the owner-review/policy
+/// workflow. Every other result is persisted as a stopped/waiting state.
+pub fn task1_virtual_shift_handoff_record(
+    source_task1_json: impl Into<String>,
+    event: &AnomalyEvent,
+    source_row: usize,
+    trigger_config: &VirtualShiftTriggerConfig,
+    decision: &TriggerDecision,
+) -> Task1VirtualShiftHandoff {
+    let (status, reason, next_step) = match decision {
+        TriggerDecision::Triggered => (
+            "triggered",
+            "Task 1 anomaly crossed the Virtual Shift trigger gate.",
+            "create_pending_owner_review",
+        ),
+        TriggerDecision::BelowThreshold {
+            min_score,
+            min_confidence,
+        } => (
+            "stopped",
+            if event.score < *min_score {
+                "Task 1 anomaly score is below the Virtual Shift trigger score."
+            } else if event.confidence < *min_confidence {
+                "Task 1 model confidence is below the Virtual Shift trigger confidence."
+            } else {
+                "Task 1 anomaly did not satisfy the Virtual Shift trigger gate."
+            },
+            "no_policy_workflow_started",
+        ),
+        TriggerDecision::DuplicateAnomalyId => (
+            "stopped",
+            "The same Task 1 anomaly ID was already processed.",
+            "no_duplicate_policy_workflow_started",
+        ),
+        TriggerDecision::Debounced { .. } => (
+            "waiting",
+            "Same node/anomaly type is inside the Virtual Shift cooldown window.",
+            "retry_after_cooldown",
+        ),
+    };
+
+    Task1VirtualShiftHandoff {
+        schema_version: 1,
+        record_type: "task1_to_virtual_shift_trigger_handoff".into(),
+        source_task1_json: source_task1_json.into(),
+        source_node: event.source_node.clone(),
+        source_row,
+        anomaly_id: event.anomaly_id.clone(),
+        anomaly_score: event.score,
+        model_confidence: event.confidence,
+        threshold_gate: TriggerGateSnapshot {
+            min_score: trigger_config.min_score,
+            min_confidence: trigger_config.min_confidence,
+            cooldown_ms: trigger_config.cooldown_ms,
+        },
+        trigger_status: status.into(),
+        trigger_reason: reason.into(),
+        evidence_features: event
+            .evidence
+            .iter()
+            .map(|item| item.feature.clone())
+            .collect(),
+        proposed_action: event
+            .proposed_action
+            .as_ref()
+            .map(|action| action.kind.clone()),
+        approval_required: matches!(decision, TriggerDecision::Triggered),
+        next_step: next_step.into(),
+    }
+}
+
 fn anomaly_type_for(action_kind: Option<&str>) -> AnomalyType {
     match action_kind {
         Some("rate_limit_peer") => AnomalyType::ConnectionScan,
@@ -149,7 +252,10 @@ mod tests {
     use crate::rules::ActionDefinition;
 
     use super::*;
-    use crate::virtual_shift::{AnomalyEventRegistration, AnomalyEventRegistry, VirtualShiftError};
+    use crate::virtual_shift::{
+        AnomalyEventRegistration, AnomalyEventRegistry, TriggerDecision, VirtualShiftError,
+        VirtualShiftTriggerConfig, VirtualShiftTriggerManager,
+    };
 
     fn persisted_record(confidence: Option<f64>) -> Task1RecommendationRecord {
         Task1RecommendationRecord {
@@ -280,5 +386,69 @@ mod tests {
     #[test]
     fn old_persisted_record_without_confidence_is_refused() {
         assert!(anomaly_event_from_task1_record("nodeA", &persisted_record(None), vec![]).is_err());
+    }
+
+    #[test]
+    fn issue8_threshold_crossing_creates_virtual_shift_trigger_handoff() {
+        let config = VirtualShiftTriggerConfig {
+            min_score: 0.85,
+            min_confidence: 0.80,
+            cooldown_ms: 60_000,
+        };
+        let mut manager = VirtualShiftTriggerManager::new(config.clone()).unwrap();
+        let event = anomaly_event_from_task1_record("nodeA", &persisted_record(Some(0.91)), vec![])
+            .unwrap();
+        let decision = manager.consider(&event).unwrap();
+
+        assert_eq!(decision, TriggerDecision::Triggered);
+        let handoff = task1_virtual_shift_handoff_record(
+            "data/recommendation_records/nodeA/run_001/recommendations.json",
+            &event,
+            42,
+            &config,
+            &decision,
+        );
+
+        assert_eq!(
+            handoff.record_type,
+            "task1_to_virtual_shift_trigger_handoff"
+        );
+        assert_eq!(handoff.trigger_status, "triggered");
+        assert!(handoff.approval_required);
+        assert_eq!(handoff.next_step, "create_pending_owner_review");
+        assert_eq!(handoff.anomaly_score, 0.93);
+        assert_eq!(handoff.model_confidence, 0.91);
+        assert_eq!(handoff.threshold_gate.min_score, 0.85);
+        assert_eq!(handoff.evidence_features, vec!["conn_rate"]);
+    }
+
+    #[test]
+    fn issue8_below_gate_is_persistable_without_starting_policy_workflow() {
+        let config = VirtualShiftTriggerConfig {
+            min_score: 0.95,
+            min_confidence: 0.80,
+            cooldown_ms: 60_000,
+        };
+        let mut manager = VirtualShiftTriggerManager::new(config.clone()).unwrap();
+        let event = anomaly_event_from_task1_record("nodeA", &persisted_record(Some(0.91)), vec![])
+            .unwrap();
+        let decision = manager.consider(&event).unwrap();
+
+        assert!(matches!(decision, TriggerDecision::BelowThreshold { .. }));
+        let handoff = task1_virtual_shift_handoff_record(
+            "recommendations.json",
+            &event,
+            42,
+            &config,
+            &decision,
+        );
+
+        assert_eq!(handoff.trigger_status, "stopped");
+        assert!(!handoff.approval_required);
+        assert_eq!(handoff.next_step, "no_policy_workflow_started");
+        assert_eq!(
+            handoff.trigger_reason,
+            "Task 1 anomaly score is below the Virtual Shift trigger score."
+        );
     }
 }
