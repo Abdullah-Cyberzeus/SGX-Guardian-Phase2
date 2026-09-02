@@ -759,6 +759,76 @@ impl AnomalyModel for IsolationForestModel {
     }
 }
 
+// =============================================================================
+// TIER 3 SHADOW - One-Class SVM reference scorer
+// =============================================================================
+//
+// Issue #9: One-Class SVM is intentionally added as a shadow/reference tier.
+// It emits a comparable score for review, but it is not used by the production
+// anomaly gate yet. Tier-1/Tier-2 continue to decide alerts.
+
+pub struct OneClassSvmShadowModel {
+    center: [f64; 19],
+    scale: [f64; 19],
+    gamma: f64,
+    threshold: f64,
+}
+
+impl OneClassSvmShadowModel {
+    pub fn reference() -> Self {
+        Self {
+            center: [
+                1_200.0, 950.0, 8.0, 7.0, 0.01, 4.0, 0.2, 0.18, 12.0, 0.7, 2.0, 1.0, 1.5, 35.0,
+                22.0, 128.0, 0.95, 0.02, 1.0,
+            ],
+            scale: [
+                900.0, 800.0, 7.0, 6.0, 0.05, 5.0, 0.5, 0.5, 15.0, 1.0, 5.0, 3.0, 2.0, 25.0, 20.0,
+                128.0, 0.2, 0.05, 2.0,
+            ],
+            gamma: 0.08,
+            threshold: 0.65,
+        }
+    }
+
+    pub fn threshold(&self) -> f64 {
+        self.threshold
+    }
+}
+
+impl AnomalyModel for OneClassSvmShadowModel {
+    fn score(&self, _node: &str, vector: &[f64; 19]) -> Score {
+        let mut distances: Vec<(usize, f64)> = (0..19)
+            .map(|idx| {
+                let scale = self.scale[idx].abs().max(1e-9);
+                let distance = ((vector[idx] - self.center[idx]) / scale).abs();
+                (idx, distance)
+            })
+            .collect();
+        let mean_squared_distance = distances
+            .iter()
+            .map(|(_, value)| value.powi(2))
+            .sum::<f64>()
+            / 19.0;
+        let raw_score = 1.0 - (-self.gamma * mean_squared_distance).exp();
+        let value = raw_score.clamp(0.0, 1.0);
+        let confidence = ((value - 0.5).abs() * 2.0).clamp(0.0, 1.0);
+
+        distances.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let topk = distances
+            .into_iter()
+            .take(3)
+            .map(|(idx, _)| FEATURE_NAMES[idx].to_string())
+            .collect();
+
+        Score {
+            value,
+            confidence,
+            topk,
+            raw_value: Some(raw_score),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1089,6 +1159,26 @@ mod tests {
         );
         assert!(extreme_score.value > normal_score.value);
         assert!(extreme_score.topk.contains(&"cpu_util_pct".to_string()));
+    }
+
+    #[test]
+    fn one_class_svm_shadow_scores_reference_distance_without_deciding_alerts() {
+        let model = OneClassSvmShadowModel::reference();
+        let normal = [
+            1_200.0, 950.0, 8.0, 7.0, 0.01, 4.0, 0.2, 0.18, 12.0, 0.7, 2.0, 1.0, 1.5, 35.0, 22.0,
+            128.0, 0.95, 0.02, 1.0,
+        ];
+        let mut unusual = normal;
+        unusual[5] = 90.0;
+        unusual[15] = 98.0;
+
+        let normal_score = model.score("nodeA", &normal);
+        let unusual_score = model.score("nodeA", &unusual);
+
+        assert!(normal_score.value < model.threshold());
+        assert!(unusual_score.value > normal_score.value);
+        assert_eq!(unusual_score.topk.len(), 3);
+        assert!(unusual_score.raw_value.is_some());
     }
 
     #[test]
