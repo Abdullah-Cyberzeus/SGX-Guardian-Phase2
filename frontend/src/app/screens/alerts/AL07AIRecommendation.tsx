@@ -13,6 +13,12 @@ type RecommendationState =
   | { status: "available"; recommendation: RemediationRecommendation }
   | { status: "unavailable"; message: string };
 
+function confidencePercent(confidence: number | undefined | null): number {
+  const raw = Number(confidence ?? 0);
+  const percent = raw <= 1 ? raw * 100 : raw;
+  return Math.max(0, Math.min(100, Math.round(percent)));
+}
+
 export function AL07AIRecommendation() {
   const { id } = useParams<{ id: string }>();
 
@@ -90,6 +96,37 @@ export function AL07AIRecommendation() {
 
           {state.status === "available" && (
             <>
+              <div className="rounded-lg border border-border p-4" style={{ backgroundColor: "var(--card)" }}>
+                <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--chart-2)", letterSpacing: "0.08em", marginBottom: "10px" }}>
+                  Confidence
+                </p>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div className="rounded-md p-3" style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }}>
+                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                      Recommendation Confidence
+                    </p>
+                    <p className="mt-1" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-sm)", color: "var(--foreground)" }}>
+                      {confidencePercent(state.recommendation.advisory_confidence ?? state.recommendation.confidence)}%
+                    </p>
+                  </div>
+                  <div className="rounded-md p-3" style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }}>
+                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                      Model Confidence
+                    </p>
+                    <p className="mt-1" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-sm)", color: "var(--foreground)" }}>
+                      {state.recommendation.anomaly?.confidence != null
+                        ? `${confidencePercent(state.recommendation.anomaly.confidence)}%`
+                        : "Unavailable"}
+                    </p>
+                  </div>
+                </div>
+                {state.recommendation.advisory_basis && (
+                  <p className="mt-3" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.6 }}>
+                    {state.recommendation.advisory_basis}
+                  </p>
+                )}
+              </div>
+
               {/* Summary */}
               <div className="rounded-lg border border-border p-4" style={{ backgroundColor: "var(--card)" }}>
                 <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--primary)", letterSpacing: "0.08em", marginBottom: "10px" }}>

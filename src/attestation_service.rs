@@ -109,6 +109,16 @@ fn record_attestation_success(peer_addr: &str, peer_did: &str) {
     }
 }
 
+/// Return the cumulative number of verified peer attestations observed
+/// during this boot. Task 1 converts this total into `attest_rate`.
+pub fn verified_attestations_total() -> u64 {
+    let health = match peer_health().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    health.verified_total
+}
+
 /// Compute-headroom sweep. Re-hashes the active policy digest a bounded
 /// number of times so the measurement path the listener uses on every
 /// inbound attestation stays warm. Runs on a dedicated OS thread because the

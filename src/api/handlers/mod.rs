@@ -23,6 +23,7 @@ pub mod pwa;
 pub mod relay;
 pub mod restore;
 pub mod rules;
+pub mod task1_ai;
 pub mod threat;
 pub mod transport;
 pub mod vault;

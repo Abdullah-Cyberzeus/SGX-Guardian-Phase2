@@ -1,8 +1,10 @@
-/* Self-hosted (no CDN) — see docs/Guardian_PWA_Complete_Implementation_Plan.md Phase 10 notes. */
-@import '@fontsource/inter/400.css';
-@import '@fontsource/inter/500.css';
-@import '@fontsource/inter/600.css';
-@import '@fontsource/inter/700.css';
-@import '@fontsource/jetbrains-mono/400.css';
-@import '@fontsource/jetbrains-mono/500.css';
-@import '@fontsource/jetbrains-mono/600.css';
+/*
+ * Keep frontend builds independent from optional local font packages.
+ * If @fontsource packages are installed, the app will use them via the
+ * family names already referenced across the UI; otherwise it falls back
+ * to the platform sans/mono stacks below without breaking Vite.
+ */
+:root {
+  --font-sans-fallback: Inter, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-mono-fallback: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}

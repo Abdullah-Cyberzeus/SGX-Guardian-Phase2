@@ -73,6 +73,22 @@ pub fn advisory_router() -> Router<Arc<AppState>> {
         )
 }
 
+pub fn task1_ai_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route(
+            "/api/v1/task1-ai/config",
+            get(handlers::task1_ai::get_config).put(handlers::task1_ai::put_config),
+        )
+        .route(
+            "/api/v1/task1-ai/runtime",
+            get(handlers::task1_ai::get_runtime),
+        )
+        .route(
+            "/api/v1/task1-ai/alerts",
+            get(handlers::task1_ai::list_full_ml_alerts),
+        )
+}
+
 pub fn geofence_router() -> Router<Arc<AppState>> {
     Router::new()
         .route(

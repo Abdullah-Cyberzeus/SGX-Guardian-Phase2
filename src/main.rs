@@ -2588,10 +2588,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     log_event(&node_id, &format!("Starting server at {}", this_addr));
     use sgx_guardian_client::policy::load_policy_runtime;
     use sgx_guardian_client::policy_manager::load_and_activate_policy;
+    use sgx_guardian_client::policy_state::current_active_policy_digest;
 
     let signed_policy_path = "/etc/sgx-guardian/policies/policy.sig";
 
     if std::path::Path::new(signed_policy_path).exists() {
+        let policy_digest_before_activation = current_active_policy_digest().ok().flatten();
+
         match load_and_activate_policy(signed_policy_path) {
             Ok(verified) => {
                 println!("📜 Verified policy loaded (digest={})", verified.digest_hex);
@@ -2614,6 +2617,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 {
                     let mut m = metrics.lock().await;
                     m.set_policy_active(true);
+
+                    let is_new_policy = policy_digest_before_activation
+                        .as_deref()
+                        .map(|digest| !digest.eq_ignore_ascii_case(&verified.digest_hex))
+                        .unwrap_or(true);
+
+                    if is_new_policy {
+                        m.record_policy_event();
+                    }
                 }
             }
             Err(e) => {
@@ -2909,12 +2921,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state_dir = PathBuf::from("/var/lib/sgx-guardian/threat");
         let _ = std::fs::create_dir_all(&state_dir);
         let _ = std::fs::create_dir_all("/etc/sgx-guardian/threat");
+        if let Err(error) = sgx_guardian_client::task1_ai::spawn_full_ml_runtime(
+            node_id.clone(),
+            metrics.clone(),
+            state_dir.clone(),
+        ) {
+            tracing::warn!(
+                node_id = %node_id,
+                %error,
+                "failed to spawn Task 1 full ML runtime; heuristic threat scorer remains available"
+            );
+        } else {
+            println!("✅ Task 1 full ML runtime spawned");
+        }
 
         let service = ThreatService {
             node_id: node_id.clone(),
             config_path: cfg_path,
             state_dir,
             inventory: std::sync::Arc::new(tokio::sync::Mutex::new(AlertInventory::default())),
+            metrics: metrics.clone(),
         };
         service.start();
         println!("✅ Threat service spawned (SUR-series, Sprint 8)");

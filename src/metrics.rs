@@ -13,6 +13,11 @@ pub struct Metrics {
     pub connections_total: u64,
     pub errors_total: u64,
 
+    // Task 1 AI cumulative security-event counters.
+    // The anomaly engine converts these totals into per-second rates.
+    pub policy_events_total: u64,
+    pub proto_violations_total: u64,
+
     // Gauges
     #[allow(dead_code)]
     pub policy_active: bool,
@@ -44,6 +49,8 @@ impl Default for Metrics {
             start_time: Instant::now(),
             connections_total: 0,
             errors_total: 0,
+            policy_events_total: 0,
+            proto_violations_total: 0,
             policy_active: false,
             enforcement_failures_total: 0,
             relay_active_peers: 0,
@@ -88,6 +95,19 @@ impl Metrics {
             &format!("Error count increased. Total: {}", self.errors_total),
         );
     }
+    /// Counter: successfully applied/activated policy events.
+    pub fn record_policy_event(&mut self) {
+        self.policy_events_total = self.policy_events_total.saturating_add(1);
+    }
+
+    /// Counter: threat events classified as policy/protocol violations.
+    ///
+    /// Task 1 maps `ThreatCategory::PolicyViolation` to the historical
+    /// `proto_violation_rate` telemetry feature.
+    pub fn record_proto_violation(&mut self) {
+        self.proto_violations_total = self.proto_violations_total.saturating_add(1);
+    }
+
     /// Gauge: policy active state
     #[allow(dead_code)]
     pub fn set_policy_active(&mut self, active: bool) {
@@ -181,6 +201,8 @@ impl Metrics {
             uptime_seconds: self.uptime().as_secs(),
             connections_total: self.connections_total,
             errors_total: self.errors_total,
+            policy_events_total: self.policy_events_total,
+            proto_violations_total: self.proto_violations_total,
             enforcement_failures_total: self.enforcement_failures_total,
             policy_active: self.policy_active,
             relay_active_peers: self.relay_active_peers,
@@ -224,6 +246,8 @@ pub struct MetricsSnapshot {
     pub uptime_seconds: u64,
     pub connections_total: u64,
     pub errors_total: u64,
+    pub policy_events_total: u64,
+    pub proto_violations_total: u64,
     pub enforcement_failures_total: u64,
     pub policy_active: bool,
     pub relay_active_peers: u32,
@@ -265,6 +289,20 @@ impl MetricsSnapshot {
         out.push_str("# HELP sgx_errors_total Total error events\n");
         out.push_str("# TYPE sgx_errors_total counter\n");
         out.push_str(&format!("sgx_errors_total {}\n", self.errors_total));
+
+        out.push_str("# HELP sgx_policy_events_total Successfully applied policy events\n");
+        out.push_str("# TYPE sgx_policy_events_total counter\n");
+        out.push_str(&format!(
+            "sgx_policy_events_total {}\n",
+            self.policy_events_total
+        ));
+
+        out.push_str("# HELP sgx_proto_violations_total Policy/protocol violation threat events\n");
+        out.push_str("# TYPE sgx_proto_violations_total counter\n");
+        out.push_str(&format!(
+            "sgx_proto_violations_total {}\n",
+            self.proto_violations_total
+        ));
 
         out.push_str("# HELP sgx_enforcement_failures_total Policy enforcement failures\n");
         out.push_str("# TYPE sgx_enforcement_failures_total counter\n");

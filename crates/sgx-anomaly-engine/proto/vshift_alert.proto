@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package sgx.guardian.virtual_shift.v1;
+
+// VS14 wire contract. VS15 will carry this message over existing gossip.
+message VShiftAlert {
+  string alert_id = 1;
+  string circle_id = 2;
+  uint64 policy_version = 3;
+  bytes policy_blob = 4;
+  bytes guardian_signature = 5;
+  bytes policy_hash = 6;
+  string anomaly_id = 7;
+  string recommendation_id = 8;
+  double anomaly_score = 9;
+  double confidence = 10;
+  string ai_justification = 11;
+  uint64 issued_at_ms = 12;
+  uint64 expires_at_ms = 13;
+  string signer_id = 14;
+  bytes guardian_public_key = 15;
+  string signature_algorithm = 16;
+  uint32 schema_version = 17;
+}

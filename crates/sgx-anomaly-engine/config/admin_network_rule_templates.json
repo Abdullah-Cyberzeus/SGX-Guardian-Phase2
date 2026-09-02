@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "purpose": "Circle Owner editable network-rule templates. The engine may only use rules that the owner has placed here and approved.",
+  "matches": [
+    { "rule_id": "rule-deny-public-rdp", "anomaly_types": ["connection_scan"] },
+    { "rule_id": "rule-deny-public-smb", "anomaly_types": ["connection_scan", "protocol_violation"] },
+    { "rule_id": "rule-deny-telnet", "anomaly_types": ["connection_scan", "protocol_violation"] },
+    { "rule_id": "rule-deny-untrusted-udp", "anomaly_types": ["protocol_violation"] },
+    { "rule_id": "rule-allow-nebula-overlay", "anomaly_types": ["connection_scan", "traffic_flood"] }
+  ],
+  "rules": [
+    {
+      "id": "rule-allow-guardian-https",
+      "action": "ALLOW",
+      "src": "10.0.0.0/24",
+      "dst": "0.0.0.0/0",
+      "protocol": "TCP",
+      "port": 443,
+      "reason": "Example owner-approved outbound Guardian service rule. Replace addresses for the real circle."
+    },
+    {
+      "id": "rule-deny-untrusted-udp",
+      "action": "DENY",
+      "src": "0.0.0.0/0",
+      "dst": "10.0.0.10",
+      "protocol": "UDP",
+      "port": 161,
+      "reason": "Example owner-approved restriction for public SNMP. Replace addresses for the real circle."
+    },
+    {
+      "id": "rule-allow-admin-ssh",
+      "action": "ALLOW",
+      "src": "10.0.0.0/24",
+      "dst": "10.0.0.10",
+      "protocol": "TCP",
+      "port": 22,
+      "reason": "Allow SSH administration only from the approved internal management network."
+    },
+    {
+      "id": "rule-allow-nebula-overlay",
+      "action": "ALLOW",
+      "src": "10.0.0.0/24",
+      "dst": "10.0.0.0/24",
+      "protocol": "UDP",
+      "port": 4242,
+      "reason": "Allow approved Nebula overlay peer transport inside the circle network."
+    },
+    {
+      "id": "rule-deny-public-rdp",
+      "action": "DENY",
+      "src": "0.0.0.0/0",
+      "dst": "10.0.0.10",
+      "protocol": "TCP",
+      "port": 3389,
+      "reason": "Block public RDP exposure; permit only a separately approved management path if required."
+    },
+    {
+      "id": "rule-deny-public-smb",
+      "action": "DENY",
+      "src": "0.0.0.0/0",
+      "dst": "10.0.0.10",
+      "protocol": "TCP",
+      "port": 445,
+      "reason": "Block public SMB exposure to reduce lateral-movement and ransomware risk."
+    },
+    {
+      "id": "rule-deny-telnet",
+      "action": "DENY",
+      "src": "0.0.0.0/0",
+      "dst": "10.0.0.10",
+      "protocol": "TCP",
+      "port": 23,
+      "reason": "Block unencrypted Telnet. Use an approved encrypted administration channel instead."
+    }
+  ]
+}

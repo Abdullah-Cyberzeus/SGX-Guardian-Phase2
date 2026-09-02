@@ -1,5 +1,6 @@
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
+use crate::metrics::Metrics;
 use crate::task1_ai;
 use crate::threat::{
     ai_bridge,
@@ -20,6 +21,7 @@ pub struct ThreatService {
     pub config_path: PathBuf,
     pub state_dir: PathBuf,
     pub inventory: Arc<Mutex<AlertInventory>>,
+    pub metrics: Arc<Mutex<Metrics>>,
 }
 
 impl ThreatService {
@@ -87,6 +89,10 @@ impl ThreatService {
                 self.node_id.clone(),
                 self.state_dir.clone(),
             ));
+            let threshold_service =
+                task1_ai::Task1ThresholdSettingsService::for_state_dir(&self.state_dir);
+            let mut task1_runtime =
+                task1_ai::Task1RuntimeTracker::for_state_dir(&self.node_id, &self.state_dir);
 
             if let Err(err) = blocker.ensure_runtime_table().await {
                 tracing::warn!("failed to initialize threat nft table: {}", err);
@@ -165,15 +171,53 @@ impl ThreatService {
                             Err(err) => tracing::warn!("blocker error: {}", err),
                         }
 
-                        let mut inventory = self.inventory.lock().await;
-                        match inventory.ingest(alert.clone()) {
+                        let ingest_outcome = {
+                            let mut inventory = self.inventory.lock().await;
+                            inventory.ingest(alert.clone())
+                        };
+
+                        match ingest_outcome {
                             IngestOutcome::Inserted => {
                                 dirty = true;
+
+                                if matches!(
+                                    alert.category,
+                                    crate::threat::ThreatCategory::PolicyViolation
+                                ) {
+                                    let mut metrics = self.metrics.lock().await;
+                                    metrics.record_proto_violation();
+                                }
                                 let anomaly = {
                                     let feature = task1_ai::feature_from_alert(&alert);
-                                    match task1_ai::process_feature(&feature, &mut ai_state) {
+                                    if let Err(err) = task1_runtime.maybe_reload() {
+                                        tracing::warn!(
+                                            node_id = %self.node_id,
+                                            %err,
+                                            "failed to refresh Task 1 baseline lifecycle state"
+                                        );
+                                    }
+                                    let thresholds = match threshold_service.load_or_create() {
+                                        Ok(settings) => settings,
+                                        Err(err) => {
+                                            tracing::warn!(
+                                                node_id = %self.node_id,
+                                                %err,
+                                                "failed to load Task 1 threshold settings; using defaults"
+                                            );
+                                            task1_ai::Task1ThresholdSettings::default_settings()
+                                        }
+                                    };
+                                    match task1_ai::process_feature_with_runtime(
+                                        &feature,
+                                        &mut ai_state,
+                                        &thresholds,
+                                        task1_runtime.current_runtime(),
+                                    ) {
                                         Some(score) => {
-                                            if let Some(plan) = task1_ai::generate_plan(score.clone()) {
+                                            if let Some(plan) = task1_ai::generate_plan_with_thresholds(
+                                                score.clone(),
+                                                &thresholds,
+                                            ) {
                                                 tracing::info!(
                                                     node_id = %self.node_id,
                                                     target = %plan.target_ip,
@@ -181,7 +225,10 @@ impl ThreatService {
                                                     "task1 remediation plan generated"
                                                 );
                                             }
-                                            Some(task1_ai::anomaly_context_from_score(&score))
+                                            Some(task1_ai::anomaly_context_from_score_with_thresholds(
+                                                &score,
+                                                &thresholds,
+                                            ))
                                         }
                                         None => None,
                                     }

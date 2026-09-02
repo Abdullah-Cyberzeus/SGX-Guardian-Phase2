@@ -5,6 +5,7 @@
 //! so the scoring pipeline can be exercised end-to-end.
 
 use crate::task1_ai::scorer::AlertAnomalyScore;
+use crate::task1_ai::thresholds::Task1ThresholdSettings;
 use crate::threat::threat_alert::ThreatCategory;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -57,29 +58,40 @@ pub struct RemediationPlan {
 }
 
 /// Generates a `RemediationPlan` for a given `AlertAnomalyScore`.
-/// Returns `None` if the score is below the minimum threshold (0.50).
+/// Returns `None` if the score is below the active detection threshold.
 pub fn generate_plan(score: AlertAnomalyScore) -> Option<RemediationPlan> {
-    if score.score < 0.50 {
+    generate_plan_with_thresholds(score, &Task1ThresholdSettings::default_settings())
+}
+
+pub fn generate_plan_with_thresholds(
+    score: AlertAnomalyScore,
+    thresholds: &Task1ThresholdSettings,
+) -> Option<RemediationPlan> {
+    if score.score < thresholds.detection_threshold {
         return None;
     }
 
     let plan_id = Uuid::new_v4().to_string();
     let target_ip = score.contributing_ip.clone();
-    let justification = build_justification(&score);
+    let justification = build_justification_with_thresholds(&score, thresholds);
 
     let auto_execute = vec![ActionType::AlertOnly];
     let mut requires_approval = Vec::new();
 
     // The plan remains advisory-only. The administrator approves the actual
     // policy and quarantine actions through the existing API/CLI workflow.
-    if score.score >= 0.50 && score.score < 0.75 {
+    if score.score >= thresholds.detection_threshold && score.score < thresholds.high_threshold {
         requires_approval.push(ActionType::EnableDebugLogging {
             interface: "eth0".to_string(),
         });
     } else {
         match score.category {
             ThreatCategory::Reconnaissance => {
-                let duration = if score.score >= 0.90 { 3600 } else { 1800 };
+                let duration = if score.score >= thresholds.critical_threshold {
+                    3600
+                } else {
+                    1800
+                };
                 requires_approval.push(ActionType::NftablesBlockIp {
                     duration_secs: duration,
                 });
@@ -89,7 +101,7 @@ pub fn generate_plan(score: AlertAnomalyScore) -> Option<RemediationPlan> {
                 requires_approval.push(ActionType::ProposePolicyUpdate {
                     rule_delta: format!("deny ip saddr {} drop;", target_ip),
                 });
-                if score.score >= 0.90 {
+                if score.score >= thresholds.critical_threshold {
                     requires_approval.push(ActionType::TightenAttestation { interval_secs: 30 });
                 }
             }
@@ -103,7 +115,7 @@ pub fn generate_plan(score: AlertAnomalyScore) -> Option<RemediationPlan> {
                 requires_approval.push(ActionType::ProposePolicyUpdate {
                     rule_delta: format!("deny ip saddr {} drop;", target_ip),
                 });
-                if score.score >= 0.90 {
+                if score.score >= thresholds.critical_threshold {
                     requires_approval.push(ActionType::TightenAttestation { interval_secs: 30 });
                 }
             }
@@ -155,9 +167,16 @@ pub fn generate_plan(score: AlertAnomalyScore) -> Option<RemediationPlan> {
 }
 
 pub fn build_justification(score: &AlertAnomalyScore) -> String {
-    let severity_label = if score.score >= 0.90 {
+    build_justification_with_thresholds(score, &Task1ThresholdSettings::default_settings())
+}
+
+pub fn build_justification_with_thresholds(
+    score: &AlertAnomalyScore,
+    thresholds: &Task1ThresholdSettings,
+) -> String {
+    let severity_label = if score.score >= thresholds.critical_threshold {
         "CRITICAL"
-    } else if score.score >= 0.75 {
+    } else if score.score >= thresholds.high_threshold {
         "ELEVATED"
     } else {
         "SUSPICIOUS"
@@ -182,6 +201,20 @@ mod tests {
     fn make_score(val: f32, cat: ThreatCategory) -> AlertAnomalyScore {
         AlertAnomalyScore {
             score: val,
+            model_confidence: 0.82,
+            scoring_runtime: crate::advisory::AnomalyScoringRuntime {
+                engine_source: "sgx-threat-service".to_string(),
+                scorer_source: "task1-alert-scorer".to_string(),
+                model_kind: crate::advisory::AnomalyScoringRuntimeModelKind::Heuristic,
+                model_artifact: None,
+                model_version: Some("task1-alert-scorer".to_string()),
+                fallback: true,
+                fallback_reason: Some(
+                    "Historical Task 1 ML runtime is not wired into this SGX path; the heuristic alert scorer remains active."
+                        .to_string(),
+                ),
+                baseline: None,
+            },
             contributing_ip: "192.168.1.105".to_string(),
             alert_count: 50,
             top_signature_id: 2009358,
@@ -260,6 +293,29 @@ mod tests {
     }
 
     #[test]
+    fn configurable_thresholds_shift_response_bands() {
+        let thresholds = Task1ThresholdSettings {
+            detection_threshold: 0.60,
+            high_threshold: 0.85,
+            critical_threshold: 0.97,
+            ..Task1ThresholdSettings::default_settings()
+        };
+        let score = make_score(0.80, ThreatCategory::Reconnaissance);
+        let plan = generate_plan_with_thresholds(score, &thresholds).expect("should generate plan");
+
+        assert!(plan
+            .requires_approval
+            .contains(&ActionType::EnableDebugLogging {
+                interface: "eth0".to_string()
+            }));
+        assert!(!plan
+            .requires_approval
+            .iter()
+            .any(|action| { matches!(action, ActionType::NftablesBlockIp { .. }) }));
+        assert!(plan.justification.contains("SUSPICIOUS"));
+    }
+
+    #[test]
     fn test_other_category_stays_local_only() {
         let score = make_score(0.78, ThreatCategory::Other);
         let plan = generate_plan(score).expect("should generate plan");
@@ -287,9 +343,11 @@ mod tests {
             .contains(&ActionType::NftablesBlockIp {
                 duration_secs: 86400
             }));
-        assert!(plan.requires_approval.contains(&ActionType::QuarantinePeer {
-            peer_id: "peer-192.168.1.105".to_string()
-        }));
+        assert!(plan
+            .requires_approval
+            .contains(&ActionType::QuarantinePeer {
+                peer_id: "peer-192.168.1.105".to_string()
+            }));
         assert!(plan.requires_approval.iter().any(|action| {
             matches!(
                 action,

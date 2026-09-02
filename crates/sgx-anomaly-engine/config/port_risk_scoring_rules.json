@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "base_scores": {"low": 20, "medium": 40, "high": 60, "critical": 80},
+  "rules": [
+    {"name":"internet_exposure","factor":"internet_exposed","when":"true","points":20,"reason":"The service is reachable from the internet."},
+    {"name":"no_authentication","factor":"authentication_enabled","when":"false","points":15,"reason":"Strong authentication is not enabled."},
+    {"name":"no_encryption","factor":"encryption_enabled","when":"false","points":15,"reason":"Transport encryption is not enabled."},
+    {"name":"no_firewall_restriction","factor":"firewall_restrictions","when":"false","points":10,"reason":"Firewall access is not restricted."},
+    {"name":"public_zone","factor":"network_zone","when":"public","points":10,"reason":"The asset is in a public network zone."},
+    {"name":"dmz_zone","factor":"network_zone","when":"dmz","points":5,"reason":"The asset is in a DMZ and requires controlled exposure."},
+    {"name":"outdated_configuration","factor":"configuration_status","when":"outdated","points":10,"reason":"Configuration or patch status is outdated."},
+    {"name":"misconfigured","factor":"configuration_status","when":"misconfigured","points":15,"reason":"The service is marked misconfigured."},
+    {"name":"high_business_impact","factor":"business_impact","when":"high","points":10,"reason":"The asset has high business impact."},
+    {"name":"critical_business_impact","factor":"business_impact","when":"critical","points":20,"reason":"The asset has critical business impact."},
+    {"name":"mfa_or_key_auth","factor":"authentication_enabled","when":"true","points":-8,"reason":"Authentication controls reduce account compromise risk."},
+    {"name":"encryption_enabled","factor":"encryption_enabled","when":"true","points":-6,"reason":"Encryption reduces interception risk."},
+    {"name":"firewall_restricted","factor":"firewall_restrictions","when":"true","points":-8,"reason":"Firewall restrictions reduce reachable attack surface."},
+    {"name":"internal_zone","factor":"network_zone","when":"internal","points":-8,"reason":"The asset is restricted to an internal network zone."}
+  ]
+}

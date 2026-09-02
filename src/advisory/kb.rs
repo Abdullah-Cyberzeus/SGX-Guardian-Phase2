@@ -369,6 +369,8 @@ mod tests {
         let err = tampered
             .validate_signature()
             .expect_err("tampered rules should fail validation");
-        assert!(matches!(err, AdvisoryError::InvalidRules(message) if message.contains("signature_sha256")));
+        assert!(
+            matches!(err, AdvisoryError::InvalidRules(message) if message.contains("signature_sha256"))
+        );
     }
 }

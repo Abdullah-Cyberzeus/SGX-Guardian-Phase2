@@ -49,6 +49,16 @@ pub fn trigger_reattestation_for(peer_did: &str) {
     }
 }
 
+/// Return the cumulative number of verified peer attestations observed by the
+/// current runtime. The overlay build does not carry the newer in-memory
+/// health tracker, so this derives the count from the persisted
+/// `last_attestation.json` record instead.
+pub fn verified_attestations_total() -> u64 {
+    load_last_attestation_record()
+        .map(|record| record.count)
+        .unwrap_or(0)
+}
+
 pub fn attestation_listener_port_for_base(base_port: u16) -> u16 {
     base_port.saturating_add(100)
 }
@@ -585,7 +595,7 @@ fn write_last_attestation(
         nonce,
         nonce_i,
         nonce_r,
-        count: 1,
+        count: next_verified_attestation_count(result),
     };
 
     if let Ok(json) = serde_json::to_string_pretty(&record) {
@@ -597,6 +607,23 @@ fn write_last_attestation(
         eprintln!("⚠️ Failed to write last_attestation.json");
     }
 }
+
+fn next_verified_attestation_count(result: &str) -> u64 {
+    let previous = load_last_attestation_record().map(|record| record.count).unwrap_or(0);
+    if result.eq_ignore_ascii_case("success") {
+        previous.saturating_add(1)
+    } else {
+        previous
+    }
+}
+
+fn load_last_attestation_record() -> Option<LastAttestation> {
+    let (primary_dir, fallback_dir) = current_log_dirs();
+    let (primary_file, fallback_file) = last_attestation_paths(&primary_dir, &fallback_dir);
+    let text = read_to_string_first([primary_file.as_path(), fallback_file.as_path()]).ok()?;
+    serde_json::from_str::<LastAttestation>(&text).ok()
+}
+
 fn merge_parent_peer_file_with_dirs(primary_dir: &Path, fallback_dir: &Path) {
     let mut merged: HashMap<String, TrustedPeer> = HashMap::new();
 

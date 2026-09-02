@@ -1,0 +1,184 @@
+[
+  {
+    "port_number": "20/21",
+    "service_name": "FTP",
+    "purpose": "File transfer",
+    "typical_risk": "HIGH",
+    "reason": "Port 21 is normally used for FTP control. Port 20 is used for data in active-mode FTP, while passive FTP uses dynamically selected ports. Classic FTP does not encrypt credentials or data, so exposed or untrusted connections can leak sensitive information."
+  },
+  {
+    "port_number": "22",
+    "service_name": "SSH",
+    "purpose": "Secure remote login / command line",
+    "typical_risk": "MEDIUM",
+    "reason": "SSH provides powerful remote access. Password-based login, weak credentials, outdated software, or unrestricted internet exposure increase risk. Key-based authentication, MFA, source-IP restrictions, and proper hardening can significantly reduce it."
+  },
+  {
+    "port_number": "23",
+    "service_name": "Telnet",
+    "purpose": "Remote login",
+    "typical_risk": "CRITICAL",
+    "reason": "Telnet does not encrypt traffic. Usernames, passwords, and session data can travel in plaintext and may be intercepted."
+  },
+  {
+    "port_number": "25",
+    "service_name": "SMTP",
+    "purpose": "Server-to-server email transfer",
+    "typical_risk": "MEDIUM",
+    "reason": "Port 25 is primarily used for mail transfer between servers. A misconfigured server may become an open relay and be abused for spam. Poor TLS or mail-server configuration can also increase risk."
+  },
+  {
+    "port_number": "53",
+    "service_name": "DNS",
+    "purpose": "Domain name resolution",
+    "typical_risk": "MEDIUM",
+    "reason": "DNS commonly uses both UDP and TCP port 53. Open recursion, vulnerable DNS software, or weak configuration can enable amplification attacks, information exposure, or other DNS-related attacks."
+  },
+  {
+    "port_number": "67/68",
+    "service_name": "DHCP",
+    "purpose": "Network IP configuration",
+    "typical_risk": "LOW",
+    "reason": "DHCP mainly uses UDP 67 on the server and UDP 68 on the client. It is normally limited to local networks. Rogue DHCP servers can provide malicious or incorrect gateway and DNS settings."
+  },
+  {
+    "port_number": "69",
+    "service_name": "TFTP",
+    "purpose": "Simple file transfer",
+    "typical_risk": "HIGH",
+    "reason": "TFTP uses UDP 69 and normally provides no authentication or encryption. Weak configuration may allow unauthorized file access."
+  },
+  {
+    "port_number": "80",
+    "service_name": "HTTP",
+    "purpose": "Unencrypted web traffic",
+    "typical_risk": "MEDIUM",
+    "reason": "HTTP does not encrypt traffic. Sensitive information transmitted over plain HTTP can be intercepted or modified. Web-application vulnerabilities can independently make the actual risk High or Critical."
+  },
+  {
+    "port_number": "110",
+    "service_name": "POP3",
+    "purpose": "Email retrieval",
+    "typical_risk": "MEDIUM",
+    "reason": "Plain POP3 does not provide transport encryption by itself. Credentials and messages can be exposed if plaintext authentication is used over an untrusted network. POP3S commonly uses port 995."
+  },
+  {
+    "port_number": "123",
+    "service_name": "NTP",
+    "purpose": "Time synchronization",
+    "typical_risk": "MEDIUM",
+    "reason": "NTP normally uses UDP 123. Poorly configured or vulnerable public NTP services can be abused in amplification attacks. In some environments, improper time control can also affect logging and authentication systems."
+  },
+  {
+    "port_number": "135",
+    "service_name": "MS RPC",
+    "purpose": "Windows remote services",
+    "typical_risk": "HIGH",
+    "reason": "Microsoft RPC services can expose a significant Windows management attack surface. Unnecessary internet exposure may aid reconnaissance or exploitation of vulnerable systems."
+  },
+  {
+    "port_number": "137-139",
+    "service_name": "NetBIOS",
+    "purpose": "Windows naming and legacy file-sharing functions",
+    "typical_risk": "HIGH",
+    "reason": "NetBIOS services can reveal hostnames, shares, and other network information. Direct public-internet exposure is generally unnecessary and risky."
+  },
+  {
+    "port_number": "143",
+    "service_name": "IMAP",
+    "purpose": "Email retrieval",
+    "typical_risk": "MEDIUM",
+    "reason": "Plain IMAP does not provide transport encryption by itself. Credentials and messages may be intercepted when insecure authentication is used. IMAPS commonly uses port 993."
+  },
+  {
+    "port_number": "161/162",
+    "service_name": "SNMP",
+    "purpose": "Network monitoring and management",
+    "typical_risk": "HIGH",
+    "reason": "UDP 161 is normally used for SNMP queries/management, while UDP 162 is commonly used for traps/notifications. Default community strings and SNMPv1/v2c can expose sensitive device information. SNMPv3 provides stronger authentication and encryption options."
+  },
+  {
+    "port_number": "389",
+    "service_name": "LDAP",
+    "purpose": "Directory services Encrypted web traffic",
+    "typical_risk": "MEDIUM",
+    "reason": "LDAP traffic may be unencrypted if TLS is not used. Port 389 can also use StartTLS, so the port number alone does not prove that traffic is plaintext. Weak access controls can expose directory information. HTTPS provides transport encryption with TLS, but it does not make the web application itself secure. Vulnerable applications, weak TLS configuration, expired certificates, or outdated server software can still create serious risk."
+  },
+  {
+    "port_number": "445",
+    "service_name": "SMB",
+    "purpose": "Windows file sharing",
+    "typical_risk": "CRITICAL",
+    "reason": "SMB provides access to file-sharing and Windows networking functionality. Unnecessary internet exposure creates a major attack surface for credential attacks, malware, ransomware, vulnerable SMB implementations, and sensitive file access. Port 445 itself is not automatically a Critical vulnerability."
+  },
+  {
+    "port_number": "465",
+    "service_name": "Message",
+    "purpose": "Encrypted email submission",
+    "typical_risk": "LOW",
+    "reason": "Port 465 is commonly used for email message submission over implicit TLS. Weak credentials, outdated TLS, or mail-server misconfiguration can still create risk."
+  },
+  {
+    "port_number": "587",
+    "service_name": "SMTP Submission",
+    "purpose": "Authenticated email submission LDAP over TLS IMAP over TLS POP3 over TLS",
+    "typical_risk": "LOW",
+    "reason": "Port 587 is commonly used by mail clients for authenticated message submission, often with STARTTLS. Encryption and authentication must still be correctly configured and enforced. TLS protects directory traffic in transit, but weak certificates, access controls, credentials, or directory configuration can still create significant risk. TLS protects email traffic in transit. Weak account security or vulnerable mail-server software can still lead to compromise. TLS protects POP3 traffic in transit, but account security, server configuration, and patching remain important."
+  },
+  {
+    "port_number": "1433",
+    "service_name": "Microsoft SQL",
+    "purpose": "Database access",
+    "typical_risk": "HIGH",
+    "reason": "Direct public exposure of a database increases the risk of credential attacks, exploitation of vulnerable software, and unauthorized access to sensitive data."
+  },
+  {
+    "port_number": "1521",
+    "service_name": "Oracle Database",
+    "purpose": "Database access",
+    "typical_risk": "HIGH",
+    "reason": "Weak credentials, unnecessary public exposure, default or legacy accounts, and outdated database software can lead to unauthorized access."
+  },
+  {
+    "port_number": "2049",
+    "service_name": "NFS",
+    "purpose": "Unix/Linux file sharing",
+    "typical_risk": "HIGH",
+    "reason": "Weak export permissions or inappropriate network exposure can allow unauthorized users to read or modify shared files. Public-internet exposure is generally unsafe."
+  },
+  {
+    "port_number": "3306",
+    "service_name": "MySQL",
+    "purpose": "Database access",
+    "typical_risk": "HIGH",
+    "reason": "Direct internet exposure increases the attack surface for credential attacks and database vulnerabilities. It should normally be restricted to trusted systems that require access."
+  },
+  {
+    "port_number": "3389",
+    "service_name": "RDP",
+    "purpose": "Windows Remote Desktop",
+    "typical_risk": "CRITICAL",
+    "reason": "RDP provides full remote desktop access. Internet-facing RDP is a common target for credential attacks and ransomware operations. MFA, gateways/VPNs, patching, and network restrictions greatly reduce risk."
+  },
+  {
+    "port_number": "5432",
+    "service_name": "PostgreSQL",
+    "purpose": "Database access",
+    "typical_risk": "HIGH",
+    "reason": "Public exposure increases the risk of credential attacks and unauthorized access to sensitive data. Strong authentication and network restrictions are important."
+  },
+  {
+    "port_number": "5900",
+    "service_name": "VNC",
+    "purpose": "Remote desktop/control In-memory database/cache",
+    "typical_risk": "HIGH",
+    "reason": "VNC provides remote screen and system control. Weak passwords, lack of appropriate encryption, outdated software, or unrestricted exposure can lead to system compromise. Redis has historically been found publicly exposed with weak or missing access controls. An improperly protected instance may allow unauthorized data access or dangerous operations."
+  },
+  {
+    "port_number": "8080",
+    "service_name": "Alternate HTTP",
+    "purpose": "Web applications, proxies, or admin interfaces Search/data API Database access ------------------- expected and may u hentication, and co a meaningful attack ext traffic, is unn ensitive capabiliti ccess, management f configuration or pu re configuration or , ransomware, major tive-data loss. exposure concerns** figuration × Vulne Business Impact** tched software → vice can be relativ vulnerable public on vulnerability**\\ d, but the actual v ls should investiga ystem from the port igh or Critical such as Telnet, cl tions can expose cr P, VNC, and SSH pro ls or poor access c * MySQL, PostgreSQL nd Oracle services hable from the inte MB, NFS, and legacy tials, or internal n:** Default passwo mmunity strings, or asy unauthorized ac ormally low-risk po ind it contains a s :** A service that l application shoul rnet. t a system has been ** accepting connectio heck: tening? running? ppropriate? authorization enab ies? the service were co r have explicit wri ith a firewall, res ep software updated enable MFA where s s.",
+    "typical_risk": "MEDIUM",
+    "reason": "Port 8080 is commonly used for web applications, proxies, development services, and management interfaces, but no specific service is guaranteed. Default credentials or vulnerable applications can increase risk. An Elasticsearch API exposed without appropriate authentication and access controls may allow unauthorized reading, modification, or deletion of indexed data. A misconfigured MongoDB instance with inadequate authentication or network controls can expose data to theft, deletion, or extortion. ----------------------- n re of tion → e e e an ."
+  }
+]

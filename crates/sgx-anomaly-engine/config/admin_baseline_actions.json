@@ -1,0 +1,10 @@
+{
+  "admin_only_actions": [
+    "device_block",
+    "device_unblock",
+    "circle_member_add",
+    "circle_member_remove",
+    "policy_change"
+  ],
+  "mode": "shadow_until_real_admin_audit_data_is_collected"
+}

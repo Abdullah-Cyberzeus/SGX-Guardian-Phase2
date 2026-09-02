@@ -45,6 +45,7 @@ p256 = { version = "0.13", features = ["ecdsa"] }
 once_cell = "1.19"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 async-trait = "0.1"
+sgx-anomaly-engine = { path = "crates/sgx-anomaly-engine" }
 dashmap = "5.5"
 network-interface = "2.0"
 libmdns = "0.9"
@@ -74,7 +75,7 @@ secure-element = []
 tpm = []
 
 [workspace]
-members = ["sgx-pa-cli"]
+members = ["sgx-pa-cli", "crates/sgx-anomaly-engine"]
 
 
 [lib]

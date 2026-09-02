@@ -1,5 +1,6 @@
 use crate::advisory::context::{
-    anomaly_context_lines, cve_references, device_context_lines, normalize_anomaly_score,
+    anomaly_context_lines, anomaly_decision, cve_references, device_context_lines,
+    normalize_anomaly_score,
 };
 use crate::advisory::kb::RecommendationRules;
 use crate::advisory::model::{AnomalyContext, DeviceContext, RemediationRecommendation};
@@ -65,10 +66,19 @@ pub fn generate(
         crate::threat::threat_alert::Severity::Low => 0.55,
         crate::threat::threat_alert::Severity::Info => 0.35,
     };
-    let confidence = anomaly
+    let advisory_confidence = anomaly
         .map(|score| (signature_confidence * 0.7) + (normalize_anomaly_score(score.score) * 0.3))
         .unwrap_or(signature_confidence)
         .clamp(0.0, 1.0);
+    let advisory_basis = anomaly
+        .map(|_| {
+            "Derived for remediation ranking from alert severity (70%) and normalized anomaly score (30%); this is separate from Task 1 model confidence."
+                .to_string()
+        })
+        .unwrap_or_else(|| {
+            "Derived from alert severity because no Task 1 anomaly model decision was attached."
+                .to_string()
+        });
 
     RemediationRecommendation {
         rec_id: recommendation_id(alert, &source),
@@ -76,11 +86,14 @@ pub fn generate(
         title,
         summary,
         severity: alert.severity.as_str().to_string(),
-        confidence,
+        confidence: advisory_confidence,
+        advisory_confidence,
+        advisory_basis,
         steps,
         context,
         references,
         source,
+        anomaly: anomaly_decision(anomaly),
         generated_at: alert.timestamp,
     }
 }
@@ -132,11 +145,33 @@ mod tests {
     #[test]
     fn task1_anomaly_context_uses_anomaly_kb_when_no_specific_rule_matches() {
         let rules = RecommendationRules::default_rules();
-        let alert = alert(ThreatCategory::Other, Severity::High, "Suspicious burst", 9100001);
+        let alert = alert(
+            ThreatCategory::Other,
+            Severity::High,
+            "Suspicious burst",
+            9100001,
+        );
         let anomaly = AnomalyContext {
             score: 0.81,
-            topk: vec![("burst_density".into(), 0.92), ("source_score".into(), 0.81)],
+            topk: vec![
+                ("burst_density".into(), 0.92),
+                ("source_score".into(), 0.81),
+            ],
             model_version: Some("task1-alert-scorer".into()),
+            scoring_runtime: None,
+            source: Some(crate::advisory::AnomalySource {
+                ip: "203.0.113.77".into(),
+                alert_count: 5,
+            }),
+            top_signature: Some(crate::advisory::AnomalyTopSignature {
+                id: 9100001,
+                count: 5,
+            }),
+            category: Some("anomaly".into()),
+            computed_at: Some(alert.timestamp),
+            window_secs: Some(300),
+            contributors: Vec::new(),
+            decision: None,
         };
 
         let rec = generate(&alert, Some(&anomaly), None, &rules);
@@ -145,6 +180,10 @@ mod tests {
         assert_eq!(rec.title, rules.fallback.title);
         assert_eq!(rec.summary, rules.fallback.summary);
         assert_eq!(rec.generated_at, alert.timestamp);
+        assert_eq!(rec.confidence, rec.advisory_confidence);
+        assert!(rec
+            .advisory_basis
+            .contains("separate from Task 1 model confidence"));
         assert!(rec
             .context
             .iter()
@@ -157,5 +196,22 @@ mod tests {
             .references
             .iter()
             .any(|reference| reference == "suricata:sid:9100001"));
+        let anomaly = rec.anomaly.expect("structured anomaly payload");
+        assert!(anomaly.detected);
+        assert_eq!(anomaly.detector, "task1-alert-scorer");
+        assert!(anomaly.confidence.is_none());
+        assert_eq!(
+            anomaly.threshold,
+            crate::task1_ai::DEFAULT_DETECTION_THRESHOLD
+        );
+        assert_eq!(
+            anomaly.high_threshold,
+            crate::task1_ai::DEFAULT_HIGH_THRESHOLD
+        );
+        assert_eq!(
+            anomaly.critical_threshold,
+            crate::task1_ai::DEFAULT_CRITICAL_THRESHOLD
+        );
+        assert_eq!(anomaly.category.as_deref(), Some("anomaly"));
     }
 }

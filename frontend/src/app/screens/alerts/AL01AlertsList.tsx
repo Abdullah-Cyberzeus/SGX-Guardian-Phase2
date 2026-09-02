@@ -110,7 +110,8 @@ function RecommendationCard({ state }: { state: RecommendationState }) {
   if (state.status !== "available" && state.status !== "fallback") return null;
 
   const rec = state.recommendation;
-  const confidence = confidencePercent(rec.confidence);
+  const advisoryConfidence = confidencePercent(rec.advisory_confidence ?? rec.confidence);
+  const modelConfidence = rec.anomaly?.confidence != null ? confidencePercent(rec.anomaly.confidence) : null;
   const isFallback = state.status === "fallback" || rec.source === "fallback";
 
   return (
@@ -130,13 +131,30 @@ function RecommendationCard({ state }: { state: RecommendationState }) {
 
       <div className="mt-4">
         <div className="flex items-center justify-between mb-1.5">
-          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>Confidence</span>
-          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--chart-2)", fontWeight: "var(--font-weight-semibold)" }}>{confidence}%</span>
+          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>Recommendation Confidence</span>
+          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--chart-2)", fontWeight: "var(--font-weight-semibold)" }}>{advisoryConfidence}%</span>
         </div>
         <div style={{ height: "7px", borderRadius: "999px", backgroundColor: "var(--muted)", overflow: "hidden" }}>
-          <div style={{ width: `${confidence}%`, height: "100%", backgroundColor: "var(--chart-2)", borderRadius: "999px" }} />
+          <div style={{ width: `${advisoryConfidence}%`, height: "100%", backgroundColor: "var(--chart-2)", borderRadius: "999px" }} />
         </div>
       </div>
+
+      {(modelConfidence !== null || rec.advisory_basis) && (
+        <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+          {modelConfidence !== null && (
+            <div className="rounded-md p-2.5" style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }}>
+              <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Model Confidence</p>
+              <p className="mt-1" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--foreground)" }}>{modelConfidence}%</p>
+            </div>
+          )}
+          {rec.advisory_basis && (
+            <div className="rounded-md p-2.5 md:col-span-1" style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }}>
+              <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Confidence Basis</p>
+              <p className="mt-1" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--foreground)", lineHeight: 1.5 }}>{rec.advisory_basis}</p>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="mt-3 flex items-center gap-2 flex-wrap">
         <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>Generated {formatDateTime(rec.generated_at)}</span>

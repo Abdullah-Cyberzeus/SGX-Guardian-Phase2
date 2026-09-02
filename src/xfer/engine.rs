@@ -1272,6 +1272,7 @@ async fn validate_cancel(manifest: &FileManifest, cancel: &XferCancel) -> Result
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 mod tests {
     use super::*;
     use crate::did::doc_sign;

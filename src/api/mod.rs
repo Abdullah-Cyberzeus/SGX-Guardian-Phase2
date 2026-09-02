@@ -308,6 +308,7 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         .route("/api/v1/threat/start", post(handlers::threat::start))
         .merge(routes::crl_router())
         .merge(routes::advisory_router())
+        .merge(routes::task1_ai_router())
         .merge(routes::dusage_router())
         .merge(routes::geofence_router())
         .merge(routes::backup_router())
@@ -655,6 +656,7 @@ async fn serve_tls_listener(
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 mod tests {
     use super::*;
     use crate::api::auth::password;
@@ -671,7 +673,7 @@ mod tests {
     use crate::key_manager::KeyManager;
     use crate::nebula::registry_sync::{RegistryRequest, RegistryResponse, REGISTRY_SYNC_PORT};
     use crate::threat::threat_alert::{Severity, ThreatAlert, ThreatCategory};
-    use crate::vc::{issue, persistence};
+    use crate::vc::persistence;
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
     use chrono::Utc;
     use reqwest::StatusCode;

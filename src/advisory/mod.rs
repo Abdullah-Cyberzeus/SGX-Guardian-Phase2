@@ -18,7 +18,10 @@ use std::path::{Path, PathBuf};
 pub use errors::{AdvisoryError, AdvisoryResult};
 pub use kb::RecommendationRules as AdvisoryRules;
 pub use model::{
-    AnomalyContext, CveFinding, DeviceContext, RemediationRecommendation, RemediationStep,
+    AnomalyBaselineProvenance, AnomalyBaselineSelectionMode, AnomalyContext, AnomalyContributor,
+    AnomalyDecision, AnomalyRiskLevel, AnomalyScoringRuntime, AnomalyScoringRuntimeModelKind,
+    AnomalySource, AnomalyTopSignature, CveFinding, DeviceContext, RemediationRecommendation,
+    RemediationStep,
 };
 
 const DEFAULT_MAX_RECOMMENDATIONS: usize = 2_000;

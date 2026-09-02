@@ -1,0 +1,21 @@
+[
+  "net_rx_bytes_rate",
+  "net_tx_bytes_rate",
+  "net_rx_pkts_rate",
+  "net_tx_pkts_rate",
+  "nebula_mbps",
+  "conn_rate",
+  "active_peers",
+  "relay_ratio",
+  "relay_bytes_rate",
+  "cot_switches_rate",
+  "cot_latency_avg_ms",
+  "policy_event_rate",
+  "attest_rate",
+  "proto_violation_rate",
+  "error_rate",
+  "cpu_util_pct",
+  "mem_used_pct",
+  "open_fds",
+  "load1"
+]

@@ -1,0 +1,8 @@
+{
+  "global_model": "data/global_forest.json",
+  "per_node_model_template": "data/{node}_forest.json",
+  "min_normal_days": 7,
+  "refresh_days": 30,
+  "reload_check_seconds": 90,
+  "evidence_dir": "data/baseline_evidence"
+}

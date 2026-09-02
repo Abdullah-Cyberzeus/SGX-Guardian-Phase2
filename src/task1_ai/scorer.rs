@@ -4,7 +4,11 @@
 //! we can feed anomaly context into the existing advisory system without
 //! changing the current REST storage shape.
 
-use crate::advisory::AnomalyContext;
+use crate::advisory::{
+    AnomalyContext, AnomalyContributor, AnomalyDecision, AnomalyScoringRuntime,
+    AnomalyScoringRuntimeModelKind, AnomalySource, AnomalyTopSignature,
+};
+use crate::task1_ai::thresholds::{Task1ThresholdSettings, DEFAULT_DETECTION_THRESHOLD};
 use crate::threat::{
     ai_bridge::AlertFeature,
     threat_alert::{Severity, ThreatAlert, ThreatCategory},
@@ -13,10 +17,16 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub const ALERT_SCORE_THRESHOLD: f32 = DEFAULT_DETECTION_THRESHOLD;
+const DETECTOR_NAME: &str = "task1-alert-scorer";
+const ENGINE_SOURCE: &str = "sgx-threat-service";
+
 /// Alert-level anomaly score for a rolling source-IP burst.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AlertAnomalyScore {
     pub score: f32,
+    pub model_confidence: f32,
+    pub scoring_runtime: AnomalyScoringRuntime,
     pub contributing_ip: String,
     pub alert_count: u32,
     pub top_signature_id: u32,
@@ -92,6 +102,28 @@ pub fn process_feature(
     feature: &AlertFeature,
     state: &mut AlertScorerState,
 ) -> Option<AlertAnomalyScore> {
+    process_feature_with_runtime(
+        feature,
+        state,
+        &Task1ThresholdSettings::default_settings(),
+        default_scoring_runtime(),
+    )
+}
+
+pub fn process_feature_with_thresholds(
+    feature: &AlertFeature,
+    state: &mut AlertScorerState,
+    thresholds: &Task1ThresholdSettings,
+) -> Option<AlertAnomalyScore> {
+    process_feature_with_runtime(feature, state, thresholds, default_scoring_runtime())
+}
+
+pub fn process_feature_with_runtime(
+    feature: &AlertFeature,
+    state: &mut AlertScorerState,
+    thresholds: &Task1ThresholdSettings,
+    scoring_runtime: AnomalyScoringRuntime,
+) -> Option<AlertAnomalyScore> {
     let window_duration = chrono::Duration::seconds(state.window_secs as i64);
     let cutoff = feature.ts - window_duration;
 
@@ -149,12 +181,15 @@ pub fn process_feature(
         + (category_weight * 0.15);
 
     let score = raw_score.clamp(0.0, 1.0);
-    if score < 0.50 {
+    if score < thresholds.detection_threshold {
         return None;
     }
+    let model_confidence = compute_model_confidence(count, sig_repeat_factor, sev_factor);
 
     Some(AlertAnomalyScore {
         score,
+        model_confidence,
+        scoring_runtime,
         contributing_ip: feature.src_ip.clone(),
         alert_count: count,
         top_signature_id,
@@ -168,22 +203,104 @@ pub fn process_feature(
 /// Convert an alert score into the `AnomalyContext` consumed by the existing
 /// advisory generator.
 pub fn anomaly_context_from_score(score: &AlertAnomalyScore) -> AnomalyContext {
+    anomaly_context_from_score_with_thresholds(score, &Task1ThresholdSettings::default_settings())
+}
+
+pub fn anomaly_context_from_score_with_thresholds(
+    score: &AlertAnomalyScore,
+    thresholds: &Task1ThresholdSettings,
+) -> AnomalyContext {
     let normalized_score = score.score.clamp(0.0, 1.0);
     let alert_pressure = (score.alert_count as f32 / 50.0).clamp(0.0, 1.0);
     let signature_repeat =
         (score.top_signature_count as f32 / score.alert_count.max(1) as f32).clamp(0.0, 1.0);
     let burst_density =
         (score.alert_count as f32 / (score.window_secs.max(1) as f32 / 6.0)).clamp(0.0, 1.0);
+    let contributors = vec![
+        AnomalyContributor {
+            feature: "alert_count".to_string(),
+            contribution: alert_pressure,
+            reason: "rolling alert volume for this source IP within the active scoring window"
+                .to_string(),
+        },
+        AnomalyContributor {
+            feature: "signature_repeat".to_string(),
+            contribution: signature_repeat,
+            reason: "repeat rate of the dominant signature within the active scoring window"
+                .to_string(),
+        },
+        AnomalyContributor {
+            feature: "burst_density".to_string(),
+            contribution: burst_density,
+            reason: "alert burst density relative to the active scoring window length".to_string(),
+        },
+        AnomalyContributor {
+            feature: "source_score".to_string(),
+            contribution: normalized_score,
+            reason: "normalized composite score produced by the Task 1 alert scorer".to_string(),
+        },
+    ];
 
     AnomalyContext {
         score: normalized_score,
-        topk: vec![
-            ("alert_count".to_string(), alert_pressure),
-            ("signature_repeat".to_string(), signature_repeat),
-            ("burst_density".to_string(), burst_density),
-            ("source_score".to_string(), normalized_score),
-        ],
-        model_version: Some("task1-alert-scorer".to_string()),
+        topk: contributors
+            .iter()
+            .map(|item| (item.feature.clone(), item.contribution))
+            .collect(),
+        model_version: Some(DETECTOR_NAME.to_string()),
+        scoring_runtime: Some(score.scoring_runtime.clone()),
+        source: Some(AnomalySource {
+            ip: score.contributing_ip.clone(),
+            alert_count: score.alert_count,
+        }),
+        top_signature: Some(AnomalyTopSignature {
+            id: score.top_signature_id,
+            count: score.top_signature_count,
+        }),
+        category: Some(score.category.as_str().to_string()),
+        computed_at: Some(score.computed_at),
+        window_secs: Some(score.window_secs),
+        contributors: contributors.clone(),
+        decision: Some(AnomalyDecision {
+            detected: normalized_score >= thresholds.detection_threshold,
+            score: normalized_score,
+            threshold: thresholds.detection_threshold,
+            high_threshold: thresholds.high_threshold,
+            critical_threshold: thresholds.critical_threshold,
+            risk_level: thresholds.risk_level(normalized_score),
+            normalized_score,
+            confidence: Some(score.model_confidence),
+            detector: DETECTOR_NAME.to_string(),
+            scoring_runtime: Some(score.scoring_runtime.clone()),
+            source: Some(AnomalySource {
+                ip: score.contributing_ip.clone(),
+                alert_count: score.alert_count,
+            }),
+            top_signature: Some(AnomalyTopSignature {
+                id: score.top_signature_id,
+                count: score.top_signature_count,
+            }),
+            category: Some(score.category.as_str().to_string()),
+            computed_at: Some(score.computed_at),
+            window_secs: Some(score.window_secs),
+            contributors,
+        }),
+    }
+}
+
+fn default_scoring_runtime() -> AnomalyScoringRuntime {
+    AnomalyScoringRuntime {
+        engine_source: ENGINE_SOURCE.to_string(),
+        scorer_source: DETECTOR_NAME.to_string(),
+        model_kind: AnomalyScoringRuntimeModelKind::Heuristic,
+        model_artifact: None,
+        model_version: Some(DETECTOR_NAME.to_string()),
+        fallback: true,
+        fallback_reason: Some(
+            "Historical Task 1 ML runtime is not wired into this SGX path; the heuristic alert scorer remains active."
+                .to_string(),
+        ),
+        baseline: None,
     }
 }
 
@@ -211,6 +328,11 @@ fn category_profile(
     }
 
     (best.0, best.2)
+}
+
+fn compute_model_confidence(alert_count: u32, signature_repeat: f32, severity_factor: f32) -> f32 {
+    let maturity = (((alert_count as f32) + 1.0).ln() / 10.0_f32.ln()).clamp(0.0, 1.0);
+    ((maturity * 0.70) + (signature_repeat * 0.15) + (severity_factor * 0.15)).clamp(0.0, 1.0)
 }
 
 #[cfg(test)]
@@ -271,6 +393,7 @@ mod tests {
 
         let score = last.expect("expected an anomaly score");
         assert!(score.score >= 0.90);
+        assert!(score.model_confidence > 0.0);
         assert_eq!(score.contributing_ip, "192.168.1.105");
         assert_eq!(score.alert_count, 60);
         assert_eq!(score.top_signature_id, 2009358);
@@ -279,6 +402,31 @@ mod tests {
         assert_eq!(ctx.model_version.as_deref(), Some("task1-alert-scorer"));
         assert!(ctx.score > 0.0);
         assert!(!ctx.topk.is_empty());
+        assert_eq!(
+            ctx.source.as_ref().map(|source| source.ip.as_str()),
+            Some("192.168.1.105")
+        );
+        assert_eq!(
+            ctx.top_signature.as_ref().map(|signature| signature.id),
+            Some(2009358)
+        );
+        assert_eq!(ctx.category.as_deref(), Some("reconnaissance"));
+        assert_eq!(ctx.window_secs, Some(300));
+        assert_eq!(ctx.contributors.len(), 4);
+        assert_eq!(
+            ctx.decision
+                .as_ref()
+                .expect("structured anomaly decision")
+                .threshold,
+            crate::task1_ai::DEFAULT_DETECTION_THRESHOLD
+        );
+        assert_eq!(
+            ctx.decision
+                .as_ref()
+                .expect("structured anomaly decision")
+                .confidence,
+            Some(score.model_confidence)
+        );
     }
 
     #[test]
@@ -336,6 +484,8 @@ mod tests {
         let ctx = anomaly_context_from_score(&score);
         assert_eq!(ctx.model_version.as_deref(), Some("task1-alert-scorer"));
         assert_eq!(ctx.topk.len(), 4);
+        assert_eq!(ctx.contributors.len(), 4);
+        assert_eq!(ctx.category.as_deref(), Some("exploit"));
         assert!(ctx
             .topk
             .iter()
@@ -346,6 +496,8 @@ mod tests {
     fn anomaly_context_from_score_clamps_and_reports_topk_metrics() {
         let score = AlertAnomalyScore {
             score: 1.4,
+            model_confidence: 0.88,
+            scoring_runtime: default_scoring_runtime(),
             contributing_ip: "172.16.0.7".to_string(),
             alert_count: 25,
             top_signature_id: 9001,
@@ -363,6 +515,31 @@ mod tests {
         assert_eq!(ctx.score, 1.0);
         assert_eq!(ctx.model_version.as_deref(), Some("task1-alert-scorer"));
         assert_eq!(ctx.topk.len(), 4);
+        assert_eq!(ctx.contributors.len(), 4);
+        assert_eq!(
+            ctx.source.as_ref().map(|source| source.alert_count),
+            Some(25)
+        );
+        assert!(
+            ctx.decision
+                .as_ref()
+                .expect("structured anomaly decision")
+                .detected
+        );
+        assert_eq!(
+            ctx.decision
+                .as_ref()
+                .expect("structured anomaly decision")
+                .critical_threshold,
+            crate::task1_ai::DEFAULT_CRITICAL_THRESHOLD
+        );
+        assert_eq!(
+            ctx.decision
+                .as_ref()
+                .expect("structured anomaly decision")
+                .confidence,
+            Some(0.88)
+        );
         assert!(ctx
             .topk
             .iter()
@@ -408,6 +585,7 @@ mod tests {
         assert_eq!(score.top_signature_id, 5001);
         assert_eq!(score.top_signature_count, 4);
         assert!(score.score >= 0.50);
+        assert!(score.model_confidence >= 0.0 && score.model_confidence <= 1.0);
     }
 
     #[test]
@@ -437,5 +615,34 @@ mod tests {
         assert_eq!(score.top_signature_id, 5002);
         assert_eq!(score.top_signature_count, 5);
         assert!(score.score >= 0.50);
+        assert!(score.model_confidence >= 0.0 && score.model_confidence <= 1.0);
+    }
+
+    #[test]
+    fn raised_threshold_suppresses_same_burst() {
+        let mut state = AlertScorerState::new(120);
+        let thresholds = Task1ThresholdSettings {
+            detection_threshold: 0.80,
+            ..Task1ThresholdSettings::default_settings()
+        };
+        let base = Utc
+            .with_ymd_and_hms(2026, 8, 24, 14, 0, 0)
+            .single()
+            .expect("fixed timestamp");
+        let mut last = None;
+
+        for offset in 0..5 {
+            let mut alert = make_alert(
+                ThreatCategory::PolicyViolation,
+                Severity::Critical,
+                "10.10.10.13",
+                5003,
+            );
+            alert.timestamp = base + chrono::Duration::seconds(offset);
+            let feature = feature_from_alert(&alert);
+            last = process_feature_with_thresholds(&feature, &mut state, &thresholds);
+        }
+
+        assert!(last.is_none());
     }
 }

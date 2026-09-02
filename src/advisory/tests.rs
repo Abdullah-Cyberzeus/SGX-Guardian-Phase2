@@ -65,6 +65,43 @@ fn anomaly_topk_and_device_cves_enrich_context() {
         score: 0.8,
         topk: vec![("flow_rate".into(), 0.42), ("cmd_entropy".into(), 0.31)],
         model_version: Some("test-model".into()),
+        scoring_runtime: None,
+        source: Some(crate::advisory::AnomalySource {
+            ip: "192.168.50.10".into(),
+            alert_count: 7,
+        }),
+        top_signature: Some(crate::advisory::AnomalyTopSignature {
+            id: 2024001,
+            count: 4,
+        }),
+        category: Some("malware".into()),
+        computed_at: Some(Utc::now()),
+        window_secs: Some(300),
+        contributors: Vec::new(),
+        decision: Some(crate::advisory::AnomalyDecision {
+            detected: true,
+            score: 0.8,
+            threshold: crate::task1_ai::DEFAULT_DETECTION_THRESHOLD,
+            high_threshold: crate::task1_ai::DEFAULT_HIGH_THRESHOLD,
+            critical_threshold: crate::task1_ai::DEFAULT_CRITICAL_THRESHOLD,
+            risk_level: crate::advisory::AnomalyRiskLevel::High,
+            normalized_score: 0.8,
+            confidence: Some(0.94),
+            detector: "test-model".into(),
+            scoring_runtime: None,
+            source: Some(crate::advisory::AnomalySource {
+                ip: "192.168.50.10".into(),
+                alert_count: 7,
+            }),
+            top_signature: Some(crate::advisory::AnomalyTopSignature {
+                id: 2024001,
+                count: 4,
+            }),
+            category: Some("malware".into()),
+            computed_at: None,
+            window_secs: Some(300),
+            contributors: Vec::new(),
+        }),
     };
     let device = device_context_from_connected_device(ConnectedDevice {
         device_id: "dev-1".into(),
@@ -113,6 +150,23 @@ fn anomaly_topk_and_device_cves_enrich_context() {
         .iter()
         .any(|reference| reference.ends_with("CVE-2023-38408")));
     assert!(rec.confidence > 0.8);
+    assert_eq!(rec.confidence, rec.advisory_confidence);
+    assert!(rec
+        .advisory_basis
+        .contains("separate from Task 1 model confidence"));
+    let anomaly = rec.anomaly.expect("structured anomaly payload");
+    assert!(anomaly.detected);
+    assert_eq!(anomaly.detector, "test-model");
+    assert_eq!(anomaly.confidence, Some(0.94));
+    assert_eq!(anomaly.contributors.len(), 2);
+    assert_eq!(
+        anomaly.source.as_ref().map(|source| source.alert_count),
+        Some(7)
+    );
+    assert_eq!(
+        anomaly.top_signature.as_ref().map(|top| top.id),
+        Some(2024001)
+    );
 }
 
 #[test]

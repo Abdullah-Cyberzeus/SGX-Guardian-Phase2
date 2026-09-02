@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "node": "nodeA",
+  "recommendations": [
+    {
+      "display_row": 28801,
+      "source_time_ms": 28801000,
+      "decision": "ANOMALY",
+      "score": 0.97,
+      "severity": "High",
+      "evidence_features": ["conn_rate", "net_rx_pkts_rate", "net_tx_pkts_rate"],
+      "recommendation": "Possible connection scan; rate-limit the suspicious peer after review.",
+      "proposed_action": {
+        "kind": "rate_limit_peer",
+        "params": {}
+      }
+    }
+  ]
+}

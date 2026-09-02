@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "name": "portscan-like",
+      "signature": ["conn_rate", "net_rx_pkts_rate", "net_tx_pkts_rate"],
+      "min_overlap": 2,
+      "severity_hint": "high",
+      "recommendation": "Node {node}: possible connection scan. Evidence: {features}. Review the source peer and rate-limit new connections only if this traffic is not expected.",
+      "action": { "kind": "rate_limit_peer", "params": { "new_conn_per_sec": 20 } }
+    },
+    {
+      "name": "dos_flood-like",
+      "signature": ["net_rx_bytes_rate", "net_tx_bytes_rate", "cpu_util_pct", "load1"],
+      "min_overlap": 2,
+      "severity_hint": "critical",
+      "recommendation": "Node {node}: possible traffic flood. Evidence: {features}. Check traffic source and node load; apply a temporary traffic limit if the burst is not expected.",
+      "action": { "kind": "rate_limit_traffic", "params": { "review_window_minutes": 5 } }
+    },
+    {
+      "name": "resource_exhaustion-like",
+      "signature": ["cpu_util_pct", "mem_used_pct", "open_fds", "load1"],
+      "min_overlap": 2,
+      "severity_hint": "high",
+      "recommendation": "Node {node}: possible resource exhaustion. Evidence: {features}. Check processes, open connections, memory, and CPU before taking action.",
+      "action": { "kind": "inspect_node_resources", "params": {} }
+    },
+    {
+      "name": "proto_violation-like",
+      "signature": ["proto_violation_rate", "error_rate"],
+      "min_overlap": 2,
+      "severity_hint": "high",
+      "recommendation": "Node {node}: unusual protocol or error activity. Evidence: {features}. Review protocol, policy, and audit logs for this time window.",
+      "action": { "kind": "review_audit_logs", "params": { "window_minutes": 5 } }
+    },
+    {
+      "name": "peer_anomaly-like",
+      "signature": ["active_peers", "relay_ratio", "relay_bytes_rate"],
+      "min_overlap": 2,
+      "severity_hint": "medium",
+      "recommendation": "Node {node}: unusual peer or relay activity. Evidence: {features}. Check peer membership and relay connectivity.",
+      "action": { "kind": "inspect_overlay_peers", "params": {} }
+    }
+  ]
+}

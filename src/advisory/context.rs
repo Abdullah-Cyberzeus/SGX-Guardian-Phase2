@@ -1,5 +1,7 @@
 use crate::advisory::errors::AdvisoryResult;
-use crate::advisory::model::{AnomalyContext, CveFinding, DeviceContext};
+use crate::advisory::model::{
+    AnomalyContext, AnomalyContributor, AnomalyDecision, CveFinding, DeviceContext,
+};
 use crate::discovery::connected_device::{ConnectedDevice, ScriptResult};
 use std::path::Path;
 
@@ -17,16 +19,69 @@ pub fn anomaly_context_lines(anomaly: Option<&AnomalyContext>) -> Vec<String> {
             .unwrap_or("deterministic local detector")
     )];
 
-    for (feature, contribution) in anomaly.topk.iter().take(5) {
+    if let Some(runtime) = anomaly.scoring_runtime.as_ref() {
+        let mode = if runtime.fallback {
+            "heuristic fallback"
+        } else {
+            "trained runtime"
+        };
+        lines.push(format!(
+            "Anomaly runtime: {} via {}",
+            mode, runtime.scorer_source
+        ));
+        if let Some(baseline) = runtime.baseline.as_ref() {
+            let baseline_mode = match baseline.selection_mode {
+                crate::advisory::AnomalyBaselineSelectionMode::Global => "global",
+                crate::advisory::AnomalyBaselineSelectionMode::PerNode => "per-node",
+            };
+            lines.push(format!(
+                "Baseline provenance: {} selection from {}",
+                baseline_mode, baseline.source
+            ));
+        }
+    }
+
+    for contributor in anomaly_contributors(anomaly).iter().take(5) {
         lines.push(format!(
             "Anomaly: {} contribution {:.2} ({})",
-            feature,
-            contribution,
-            feature_hint(feature)
+            contributor.feature, contributor.contribution, contributor.reason
         ));
     }
 
     lines
+}
+
+pub fn anomaly_decision(anomaly: Option<&AnomalyContext>) -> Option<AnomalyDecision> {
+    let anomaly = anomaly?;
+    if let Some(decision) = &anomaly.decision {
+        return Some(hydrate_anomaly_decision(decision.clone(), anomaly));
+    }
+
+    let normalized_score = normalize_anomaly_score(anomaly.score);
+    let thresholds = crate::task1_ai::Task1ThresholdSettings::default_settings();
+    let detector = anomaly
+        .model_version
+        .clone()
+        .unwrap_or_else(|| "deterministic local detector".to_string());
+
+    Some(AnomalyDecision {
+        detected: normalized_score >= thresholds.detection_threshold,
+        score: normalized_score,
+        threshold: thresholds.detection_threshold,
+        high_threshold: thresholds.high_threshold,
+        critical_threshold: thresholds.critical_threshold,
+        risk_level: thresholds.risk_level(normalized_score),
+        normalized_score,
+        confidence: None,
+        detector,
+        scoring_runtime: anomaly.scoring_runtime.clone(),
+        source: anomaly.source.clone(),
+        top_signature: anomaly.top_signature.clone(),
+        category: anomaly.category.clone(),
+        computed_at: anomaly.computed_at,
+        window_secs: anomaly.window_secs,
+        contributors: anomaly_contributors(anomaly),
+    })
 }
 
 pub fn device_context_lines(device: Option<&DeviceContext>) -> Vec<String> {
@@ -169,8 +224,56 @@ fn feature_hint(feature: &str) -> &'static str {
         "peer_diversity" => "unusual peer spread",
         "attest_jitter" => "attestation timing drift",
         "modbus_fc_mix" => "unusual Modbus function-code mix",
+        "alert_count" => "rolling alert volume",
+        "signature_repeat" => "dominant signature repeat rate",
+        "burst_density" => "alert burst density",
+        "source_score" => "normalized composite score",
         _ => "unusual local signal",
     }
+}
+
+fn anomaly_contributors(anomaly: &AnomalyContext) -> Vec<AnomalyContributor> {
+    if !anomaly.contributors.is_empty() {
+        return anomaly.contributors.clone();
+    }
+
+    anomaly
+        .topk
+        .iter()
+        .map(|(feature, contribution)| AnomalyContributor {
+            feature: feature.clone(),
+            contribution: *contribution,
+            reason: feature_hint(feature).to_string(),
+        })
+        .collect()
+}
+
+fn hydrate_anomaly_decision(
+    mut decision: AnomalyDecision,
+    anomaly: &AnomalyContext,
+) -> AnomalyDecision {
+    if decision.source.is_none() {
+        decision.source = anomaly.source.clone();
+    }
+    if decision.scoring_runtime.is_none() {
+        decision.scoring_runtime = anomaly.scoring_runtime.clone();
+    }
+    if decision.top_signature.is_none() {
+        decision.top_signature = anomaly.top_signature.clone();
+    }
+    if decision.category.is_none() {
+        decision.category = anomaly.category.clone();
+    }
+    if decision.computed_at.is_none() {
+        decision.computed_at = anomaly.computed_at;
+    }
+    if decision.window_secs.is_none() {
+        decision.window_secs = anomaly.window_secs;
+    }
+    if decision.contributors.is_empty() {
+        decision.contributors = anomaly_contributors(anomaly);
+    }
+    decision
 }
 
 fn device_label(device: &DeviceContext) -> String {
@@ -184,10 +287,13 @@ fn device_label(device: &DeviceContext) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::advisory::{AnomalySource, AnomalyTopSignature};
+
     use super::*;
     use crate::discovery::connected_device::{
         ConnectedDevice, DeviceStatus, OpenPort, ScriptResult,
     };
+    use chrono::TimeZone;
 
     #[test]
     fn normalize_anomaly_score_scales_and_clamps() {
@@ -211,6 +317,20 @@ mod tests {
                 ("mystery_signal".into(), 0.44),
             ],
             model_version: None,
+            scoring_runtime: None,
+            source: Some(AnomalySource {
+                ip: "203.0.113.10".into(),
+                alert_count: 8,
+            }),
+            top_signature: Some(AnomalyTopSignature {
+                id: 9100001,
+                count: 5,
+            }),
+            category: Some("anomaly".into()),
+            computed_at: None,
+            window_secs: Some(300),
+            contributors: Vec::new(),
+            decision: None,
         };
 
         let lines = anomaly_context_lines(Some(&anomaly));
@@ -218,10 +338,57 @@ mod tests {
         assert_eq!(lines.len(), 6);
         assert_eq!(lines[0], "Anomaly score 1.00: deterministic local detector");
         assert!(lines[1].contains("flow_rate contribution 0.91 (traffic spike)"));
-        assert!(lines[5].contains(
-            "modbus_fc_mix contribution 0.55 (unusual Modbus function-code mix)"
-        ));
+        assert!(
+            lines[5].contains("modbus_fc_mix contribution 0.55 (unusual Modbus function-code mix)")
+        );
         assert!(lines.iter().all(|line| !line.contains("mystery_signal")));
+    }
+
+    #[test]
+    fn anomaly_decision_falls_back_to_context_fields() {
+        let anomaly = AnomalyContext {
+            score: 0.72,
+            topk: vec![("flow_rate".into(), 0.42)],
+            model_version: Some("fallback-model".into()),
+            scoring_runtime: None,
+            source: Some(AnomalySource {
+                ip: "192.168.1.9".into(),
+                alert_count: 6,
+            }),
+            top_signature: Some(AnomalyTopSignature { id: 2201, count: 4 }),
+            category: Some("exploit".into()),
+            computed_at: Some(
+                chrono::Utc
+                    .with_ymd_and_hms(2026, 8, 28, 9, 30, 0)
+                    .single()
+                    .expect("fixed timestamp"),
+            ),
+            window_secs: Some(120),
+            contributors: Vec::new(),
+            decision: None,
+        };
+
+        let decision = anomaly_decision(Some(&anomaly)).expect("decision");
+
+        assert!(decision.detected);
+        assert_eq!(decision.detector, "fallback-model");
+        assert_eq!(
+            decision.threshold,
+            crate::task1_ai::DEFAULT_DETECTION_THRESHOLD
+        );
+        assert_eq!(decision.contributors.len(), 1);
+        assert_eq!(decision.contributors[0].feature, "flow_rate");
+        assert_eq!(
+            decision.source,
+            Some(AnomalySource {
+                ip: "192.168.1.9".into(),
+                alert_count: 6
+            })
+        );
+        assert_eq!(
+            decision.top_signature,
+            Some(AnomalyTopSignature { id: 2201, count: 4 })
+        );
     }
 
     #[test]
@@ -309,7 +476,10 @@ mod tests {
             risk_reasons: vec![],
             cves: vec![],
         };
-        assert_eq!(device_context_lines(Some(&bare))[0], "Device context: 10.0.0.4");
+        assert_eq!(
+            device_context_lines(Some(&bare))[0],
+            "Device context: 10.0.0.4"
+        );
     }
 
     #[test]

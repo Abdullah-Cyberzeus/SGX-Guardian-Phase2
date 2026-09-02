@@ -1,0 +1,3098 @@
+{
+  "features": [
+    "net_rx_bytes_rate",
+    "net_tx_bytes_rate",
+    "net_rx_pkts_rate",
+    "net_tx_pkts_rate",
+    "nebula_mbps",
+    "conn_rate",
+    "active_peers",
+    "relay_ratio",
+    "relay_bytes_rate",
+    "cot_switches_rate",
+    "cot_latency_avg_ms",
+    "policy_event_rate",
+    "attest_rate",
+    "proto_violation_rate",
+    "error_rate",
+    "cpu_util_pct",
+    "mem_used_pct",
+    "open_fds",
+    "load1"
+  ],
+  "log1p_features": [
+    "net_rx_bytes_rate",
+    "net_tx_bytes_rate",
+    "net_rx_pkts_rate",
+    "net_tx_pkts_rate",
+    "nebula_mbps",
+    "conn_rate",
+    "relay_bytes_rate",
+    "cot_switches_rate",
+    "policy_event_rate",
+    "attest_rate",
+    "proto_violation_rate",
+    "error_rate",
+    "open_fds"
+  ],
+  "n_samples": 256,
+  "scaler": {
+    "center": [
+      1434407.7286560948,
+      711371.5514421407,
+      1434.1211084721356,
+      711.9794991256371,
+      8.5729994655564,
+      1.0,
+      4.0,
+      0.335435013781863,
+      475819.1755888767,
+      1.1728494821426927,
+      21.462595824764968,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      35.88429178275166,
+      50.88779106911114,
+      266.0,
+      1.4365550117448964
+    ],
+    "scale": [
+      255729.89608383318,
+      188655.87434090453,
+      275.93701086062583,
+      197.19982298832474,
+      3.4672627236496556,
+      3.0,
+      3.0,
+      0.19291852449676686,
+      283695.00239504676,
+      1.3106868811939139,
+      10.22734037462228,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      10.154403904356613,
+      10.277707016028423,
+      30.0,
+      0.4545462844952972
+    ]
+  },
+  "score_hi": 0.7429623689889602,
+  "score_lo": 0.3531581157593902,
+  "threshold": 0.8692728885800968,
+  "threshold_raw": 0.692004384945066,
+  "trees": [
+    {
+      "feature": 5,
+      "left": {
+        "feature": 14,
+        "left": {
+          "feature": 10,
+          "left": {
+            "feature": 7,
+            "left": {
+              "feature": 16,
+              "left": {
+                "feature": 8,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "feature": 2,
+                  "left": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "right": {
+                    "feature": 7,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -1.2283275635598827
+                  },
+                  "type": "split",
+                  "value": -0.6369409966098218
+                },
+                "type": "split",
+                "value": -1.6502746043293832
+              },
+              "right": {
+                "feature": 18,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": -1.0878019252405875
+              },
+              "type": "split",
+              "value": 0.01908386443048926
+            },
+            "right": {
+              "feature": 9,
+              "left": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "right": {
+                "feature": 17,
+                "left": {
+                  "feature": 9,
+                  "left": {
+                    "feature": 6,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.23810831883163514
+                  },
+                  "right": {
+                    "feature": 16,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.14044076529915095
+                  },
+                  "type": "split",
+                  "value": 0.7240884840379772
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 0.9221921006604665
+              },
+              "type": "split",
+              "value": -0.0566882484827641
+            },
+            "type": "split",
+            "value": -0.24170599336968013
+          },
+          "right": {
+            "feature": 2,
+            "left": {
+              "feature": 12,
+              "left": {
+                "feature": 5,
+                "left": {
+                  "feature": 18,
+                  "left": {
+                    "feature": 10,
+                    "left": {
+                      "size": 87,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 1.4320542625002695
+                  },
+                  "right": {
+                    "feature": 17,
+                    "left": {
+                      "size": 43,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 15,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.29868989278530633
+                  },
+                  "type": "split",
+                  "value": 0.1378172283528718
+                },
+                "right": {
+                  "feature": 3,
+                  "left": {
+                    "feature": 8,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.6370775041695553
+                  },
+                  "right": {
+                    "feature": 7,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.7523166816797526
+                  },
+                  "type": "split",
+                  "value": -0.7149149361154278
+                },
+                "type": "split",
+                "value": 0.9147436382329597
+              },
+              "right": {
+                "feature": 12,
+                "left": {
+                  "feature": 4,
+                  "left": {
+                    "feature": 3,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.747770855602385
+                  },
+                  "right": {
+                    "feature": 9,
+                    "left": {
+                      "size": 5,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 22,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.47410970447445167
+                  },
+                  "type": "split",
+                  "value": -0.957202868657397
+                },
+                "right": {
+                  "feature": 18,
+                  "left": {
+                    "feature": 18,
+                    "left": {
+                      "size": 5,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.2286682971382903
+                  },
+                  "right": {
+                    "feature": 6,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.9959753130554441
+                  },
+                  "type": "split",
+                  "value": 0.37379491051305
+                },
+                "type": "split",
+                "value": 1.3031560970950666
+              },
+              "type": "split",
+              "value": 0.14862454130715902
+            },
+            "right": {
+              "feature": 3,
+              "left": {
+                "feature": 1,
+                "left": {
+                  "feature": 18,
+                  "left": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 1.0531099268892938
+                },
+                "right": {
+                  "feature": 4,
+                  "left": {
+                    "feature": 8,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.7508798392101461
+                  },
+                  "right": {
+                    "feature": 7,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.2630256460631982
+                  },
+                  "type": "split",
+                  "value": 0.4792563626330725
+                },
+                "type": "split",
+                "value": -0.030801156146553182
+              },
+              "right": {
+                "feature": 12,
+                "left": {
+                  "feature": 18,
+                  "left": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "right": {
+                    "feature": 18,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 8,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.5539320665744665
+                  },
+                  "type": "split",
+                  "value": -0.9704267205387842
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 0.11531615076368495
+              },
+              "type": "split",
+              "value": 0.4699873725085848
+            },
+            "type": "split",
+            "value": 0.925179616936143
+          },
+          "type": "split",
+          "value": -1.2264534765656412
+        },
+        "right": {
+          "feature": 0,
+          "left": {
+            "size": 1,
+            "type": "leaf"
+          },
+          "right": {
+            "feature": 4,
+            "left": {
+              "size": 1,
+              "type": "leaf"
+            },
+            "right": {
+              "size": 1,
+              "type": "leaf"
+            },
+            "type": "split",
+            "value": 0.7574758131812195
+          },
+          "type": "split",
+          "value": 1.0464729043585823
+        },
+        "type": "split",
+        "value": 1.6915006170475393
+      },
+      "right": {
+        "feature": 8,
+        "left": {
+          "size": 1,
+          "type": "leaf"
+        },
+        "right": {
+          "feature": 1,
+          "left": {
+            "feature": 15,
+            "left": {
+              "size": 1,
+              "type": "leaf"
+            },
+            "right": {
+              "feature": 9,
+              "left": {
+                "feature": 17,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "feature": 15,
+                  "left": {
+                    "feature": 3,
+                    "left": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.3021622815862023
+                  },
+                  "right": {
+                    "feature": 7,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.2067766541122002
+                  },
+                  "type": "split",
+                  "value": 0.0342261584715452
+                },
+                "type": "split",
+                "value": -1.1157788194812372
+              },
+              "right": {
+                "feature": 16,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 0.5370048082741821
+              },
+              "type": "split",
+              "value": -0.2200651470432191
+            },
+            "type": "split",
+            "value": -0.7434497387764907
+          },
+          "right": {
+            "feature": 2,
+            "left": {
+              "feature": 10,
+              "left": {
+                "feature": 1,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "feature": 10,
+                  "left": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": -0.6349988547518827
+                },
+                "type": "split",
+                "value": -0.009679255404115215
+              },
+              "right": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "type": "split",
+              "value": -0.07843143243051387
+            },
+            "right": {
+              "feature": 14,
+              "left": {
+                "feature": 16,
+                "left": {
+                  "feature": 3,
+                  "left": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "right": {
+                    "feature": 17,
+                    "left": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 7,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.47827236044472354
+                  },
+                  "type": "split",
+                  "value": -0.5711373482714114
+                },
+                "right": {
+                  "feature": 5,
+                  "left": {
+                    "feature": 15,
+                    "left": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 1.2375880571383124
+                  },
+                  "right": {
+                    "feature": 2,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.12946184499642624
+                  },
+                  "type": "split",
+                  "value": 2.457171241724514
+                },
+                "type": "split",
+                "value": 0.24861219712975124
+              },
+              "right": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "type": "split",
+              "value": 0.12783841282494293
+            },
+            "type": "split",
+            "value": -0.446499208969522
+          },
+          "type": "split",
+          "value": -0.41403860205354204
+        },
+        "type": "split",
+        "value": -1.4860096406863452
+      },
+      "type": "split",
+      "value": 1.5889980169917617
+    },
+    {
+      "feature": 2,
+      "left": {
+        "feature": 4,
+        "left": {
+          "feature": 4,
+          "left": {
+            "feature": 7,
+            "left": {
+              "feature": 18,
+              "left": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "right": {
+                "feature": 13,
+                "left": {
+                  "feature": 2,
+                  "left": {
+                    "feature": 18,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.5560157377978823
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": -0.4079114721811685
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 5.763207265996936
+              },
+              "type": "split",
+              "value": -1.1453020066332804
+            },
+            "right": {
+              "feature": 1,
+              "left": {
+                "feature": 4,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": -1.3374431242179825
+              },
+              "right": {
+                "feature": 4,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": -1.5934306966361906
+              },
+              "type": "split",
+              "value": -0.344000366407773
+            },
+            "type": "split",
+            "value": 0.2665117569630129
+          },
+          "right": {
+            "feature": 8,
+            "left": {
+              "feature": 18,
+              "left": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "right": {
+                "feature": 5,
+                "left": {
+                  "feature": 16,
+                  "left": {
+                    "feature": 2,
+                    "left": {
+                      "size": 6,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 12,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.9847017740036376
+                  },
+                  "right": {
+                    "feature": 2,
+                    "left": {
+                      "size": 13,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 7,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.13800970809940694
+                  },
+                  "type": "split",
+                  "value": -0.2059139107010537
+                },
+                "right": {
+                  "feature": 17,
+                  "left": {
+                    "feature": 6,
+                    "left": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.49857936875759634
+                  },
+                  "right": {
+                    "feature": 16,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.5687625472972069
+                  },
+                  "type": "split",
+                  "value": 0.2040557482759473
+                },
+                "type": "split",
+                "value": 0.8658242217298129
+              },
+              "type": "split",
+              "value": -1.492121056538485
+            },
+            "right": {
+              "feature": 18,
+              "left": {
+                "feature": 7,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 1.5056264460418998
+              },
+              "right": {
+                "feature": 3,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 0.45532652928862016
+              },
+              "type": "split",
+              "value": 0.4978795288288954
+            },
+            "type": "split",
+            "value": 0.9878842583823095
+          },
+          "type": "split",
+          "value": -1.2862964967273869
+        },
+        "right": {
+          "feature": 4,
+          "left": {
+            "feature": 12,
+            "left": {
+              "feature": 13,
+              "left": {
+                "feature": 5,
+                "left": {
+                  "feature": 12,
+                  "left": {
+                    "feature": 8,
+                    "left": {
+                      "size": 6,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 99,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -1.3354264924435575
+                  },
+                  "right": {
+                    "feature": 8,
+                    "left": {
+                      "size": 17,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 1.057704752804805
+                  },
+                  "type": "split",
+                  "value": 0.6538555895229129
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 3.27050588861851
+              },
+              "right": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "type": "split",
+              "value": 182.45643875350078
+            },
+            "right": {
+              "feature": 9,
+              "left": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "right": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "type": "split",
+              "value": 0.09297601863724758
+            },
+            "type": "split",
+            "value": 3.103057762190261
+          },
+          "right": {
+            "feature": 4,
+            "left": {
+              "feature": 18,
+              "left": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "right": {
+                "feature": 14,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 0.5361290874593561
+              },
+              "type": "split",
+              "value": -0.21547447451149446
+            },
+            "right": {
+              "size": 1,
+              "type": "leaf"
+            },
+            "type": "split",
+            "value": 2.3520122843190405
+          },
+          "type": "split",
+          "value": 1.372421009663388
+        },
+        "type": "split",
+        "value": -0.3213587378483693
+      },
+      "right": {
+        "feature": 3,
+        "left": {
+          "feature": 0,
+          "left": {
+            "feature": 17,
+            "left": {
+              "feature": 15,
+              "left": {
+                "feature": 1,
+                "left": {
+                  "feature": 2,
+                  "left": {
+                    "feature": 15,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.9936492387825271
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 0.5236359439633488
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 0.060441573826486295
+              },
+              "right": {
+                "feature": 9,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 1.4039546578923898
+              },
+              "type": "split",
+              "value": 0.45230542481905966
+            },
+            "right": {
+              "feature": 3,
+              "left": {
+                "feature": 5,
+                "left": {
+                  "feature": 18,
+                  "left": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": -0.7231832616047316
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 2.201639767974094
+              },
+              "right": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "type": "split",
+              "value": -0.22615899361129937
+            },
+            "type": "split",
+            "value": 0.5950284895584665
+          },
+          "right": {
+            "size": 1,
+            "type": "leaf"
+          },
+          "type": "split",
+          "value": 0.9554396413519819
+        },
+        "right": {
+          "feature": 7,
+          "left": {
+            "feature": 5,
+            "left": {
+              "feature": 3,
+              "left": {
+                "feature": 0,
+                "left": {
+                  "feature": 9,
+                  "left": {
+                    "feature": 12,
+                    "left": {
+                      "size": 9,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.9875089884677478
+                  },
+                  "right": {
+                    "feature": 6,
+                    "left": {
+                      "size": 5,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.6168532376622126
+                  },
+                  "type": "split",
+                  "value": 0.32877721475031474
+                },
+                "right": {
+                  "feature": 8,
+                  "left": {
+                    "feature": 7,
+                    "left": {
+                      "size": 4,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.1172992734720586
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 1.0512944983412815
+                },
+                "type": "split",
+                "value": 1.042739523960025
+              },
+              "right": {
+                "feature": 10,
+                "left": {
+                  "feature": 0,
+                  "left": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 0.7992893815721517
+                },
+                "right": {
+                  "feature": 16,
+                  "left": {
+                    "feature": 17,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.532852995555429
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 0.032922398900948835
+                },
+                "type": "split",
+                "value": -0.30047149028168635
+              },
+              "type": "split",
+              "value": 1.1909923491645895
+            },
+            "right": {
+              "feature": 13,
+              "left": {
+                "feature": 4,
+                "left": {
+                  "feature": 7,
+                  "left": {
+                    "feature": 15,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.5488669655456835
+                  },
+                  "right": {
+                    "feature": 5,
+                    "left": {
+                      "size": 6,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.5052836895191292
+                  },
+                  "type": "split",
+                  "value": -0.06031963752605907
+                },
+                "right": {
+                  "feature": 18,
+                  "left": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "right": {
+                    "feature": 7,
+                    "left": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.4057567200372465
+                  },
+                  "type": "split",
+                  "value": -1.6281655884130375
+                },
+                "type": "split",
+                "value": 0.550944344970006
+              },
+              "right": {
+                "feature": 2,
+                "left": {
+                  "feature": 0,
+                  "left": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "right": {
+                    "feature": 16,
+                    "left": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.48572081013384816
+                  },
+                  "type": "split",
+                  "value": 0.4468724998217285
+                },
+                "right": {
+                  "feature": 16,
+                  "left": {
+                    "feature": 5,
+                    "left": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 2.7419031419520747
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 0.725991129942895
+                },
+                "type": "split",
+                "value": 1.037362726319566
+              },
+              "type": "split",
+              "value": 6.7588100194739225
+            },
+            "type": "split",
+            "value": 0.26355406996823094
+          },
+          "right": {
+            "feature": 7,
+            "left": {
+              "size": 1,
+              "type": "leaf"
+            },
+            "right": {
+              "size": 1,
+              "type": "leaf"
+            },
+            "type": "split",
+            "value": 1.7883522955528859
+          },
+          "type": "split",
+          "value": 1.3569872893389907
+        },
+        "type": "split",
+        "value": 0.025738960201863503
+      },
+      "type": "split",
+      "value": 0.42865552959987174
+    },
+    {
+      "feature": 10,
+      "left": {
+        "feature": 6,
+        "left": {
+          "feature": 5,
+          "left": {
+            "feature": 18,
+            "left": {
+              "feature": 15,
+              "left": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "right": {
+                "feature": 10,
+                "left": {
+                  "feature": 7,
+                  "left": {
+                    "feature": 2,
+                    "left": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.5250278067660084
+                  },
+                  "right": {
+                    "feature": 2,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.6967240214256809
+                  },
+                  "type": "split",
+                  "value": 0.5087512316538145
+                },
+                "right": {
+                  "feature": 17,
+                  "left": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "right": {
+                    "feature": 18,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.24929336583587924
+                  },
+                  "type": "split",
+                  "value": -0.4895662794208687
+                },
+                "type": "split",
+                "value": -0.05159019222394012
+              },
+              "type": "split",
+              "value": -1.1575086978228668
+            },
+            "right": {
+              "feature": 10,
+              "left": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "right": {
+                "feature": 15,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 1.002258809050969
+              },
+              "type": "split",
+              "value": -0.19120002891106214
+            },
+            "type": "split",
+            "value": 0.4543202857758266
+          },
+          "right": {
+            "feature": 9,
+            "left": {
+              "feature": 1,
+              "left": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "right": {
+                "feature": 4,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 0.43432919069271236
+              },
+              "type": "split",
+              "value": -0.32828457057604477
+            },
+            "right": {
+              "feature": 7,
+              "left": {
+                "feature": 13,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "feature": 15,
+                  "left": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 0.5827990593642183
+                },
+                "type": "split",
+                "value": 4.257830469523477
+              },
+              "right": {
+                "feature": 17,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 0.8623985445076772
+              },
+              "type": "split",
+              "value": -0.029626008833549378
+            },
+            "type": "split",
+            "value": -0.08689867049091071
+          },
+          "type": "split",
+          "value": 0.03598519076265261
+        },
+        "right": {
+          "feature": 13,
+          "left": {
+            "feature": 18,
+            "left": {
+              "size": 1,
+              "type": "leaf"
+            },
+            "right": {
+              "feature": 14,
+              "left": {
+                "feature": 6,
+                "left": {
+                  "feature": 4,
+                  "left": {
+                    "feature": 9,
+                    "left": {
+                      "size": 8,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 1.4186861065331886
+                  },
+                  "right": {
+                    "feature": 0,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 4,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.9012894075733018
+                  },
+                  "type": "split",
+                  "value": 0.38990645942623203
+                },
+                "right": {
+                  "feature": 16,
+                  "left": {
+                    "feature": 4,
+                    "left": {
+                      "size": 9,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.5345176785784185
+                  },
+                  "right": {
+                    "feature": 15,
+                    "left": {
+                      "size": 62,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 43,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.3177277179853215
+                  },
+                  "type": "split",
+                  "value": -0.8396274946721989
+                },
+                "type": "split",
+                "value": -0.5969571973684067
+              },
+              "right": {
+                "feature": 8,
+                "left": {
+                  "feature": 8,
+                  "left": {
+                    "feature": 5,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.08328937882710685
+                  },
+                  "right": {
+                    "feature": 10,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.03456177769372264
+                  },
+                  "type": "split",
+                  "value": -0.9601869531024854
+                },
+                "right": {
+                  "feature": 3,
+                  "left": {
+                    "feature": 2,
+                    "left": {
+                      "size": 6,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.7396625549001504
+                  },
+                  "right": {
+                    "feature": 1,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 1.0546230092904572
+                  },
+                  "type": "split",
+                  "value": 0.7588989076456087
+                },
+                "type": "split",
+                "value": -0.5166428672902431
+              },
+              "type": "split",
+              "value": 0.419085743100888
+            },
+            "type": "split",
+            "value": -1.941042813331154
+          },
+          "right": {
+            "size": 1,
+            "type": "leaf"
+          },
+          "type": "split",
+          "value": 7.428065241979465
+        },
+        "type": "split",
+        "value": -0.7657357164472656
+      },
+      "right": {
+        "feature": 7,
+        "left": {
+          "feature": 9,
+          "left": {
+            "feature": 17,
+            "left": {
+              "feature": 2,
+              "left": {
+                "feature": 4,
+                "left": {
+                  "feature": 15,
+                  "left": {
+                    "feature": 1,
+                    "left": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.26970119067794085
+                  },
+                  "right": {
+                    "feature": 18,
+                    "left": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 13,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.29654694732870307
+                  },
+                  "type": "split",
+                  "value": -0.47850940198974384
+                },
+                "right": {
+                  "feature": 14,
+                  "left": {
+                    "feature": 18,
+                    "left": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 10,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.44322261532764495
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 0.6693178530173926
+                },
+                "type": "split",
+                "value": 0.3249456708161924
+              },
+              "right": {
+                "feature": 7,
+                "left": {
+                  "feature": 18,
+                  "left": {
+                    "feature": 13,
+                    "left": {
+                      "size": 4,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 5.292685998274333
+                  },
+                  "right": {
+                    "feature": 8,
+                    "left": {
+                      "size": 4,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 7,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.3213597186917987
+                  },
+                  "type": "split",
+                  "value": -0.4083614164161965
+                },
+                "right": {
+                  "feature": 5,
+                  "left": {
+                    "feature": 18,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 1.2659134354681036
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 0.0834486027050262
+                },
+                "type": "split",
+                "value": 0.33014425942462333
+              },
+              "type": "split",
+              "value": 0.36997946775233714
+            },
+            "right": {
+              "size": 1,
+              "type": "leaf"
+            },
+            "type": "split",
+            "value": 1.5435432678780199
+          },
+          "right": {
+            "feature": 9,
+            "left": {
+              "feature": 15,
+              "left": {
+                "feature": 10,
+                "left": {
+                  "feature": 5,
+                  "left": {
+                    "feature": 4,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -1.765553612602597
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 1.908849939583868
+                },
+                "right": {
+                  "feature": 9,
+                  "left": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 0.6467291920748699
+                },
+                "type": "split",
+                "value": 0.7628502562403661
+              },
+              "right": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "type": "split",
+              "value": 0.9294120436443092
+            },
+            "right": {
+              "feature": 13,
+              "left": {
+                "feature": 12,
+                "left": {
+                  "feature": 10,
+                  "left": {
+                    "feature": 16,
+                    "left": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.09845468945915625
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 1.1333398467756077
+                },
+                "right": {
+                  "feature": 4,
+                  "left": {
+                    "feature": 15,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.6708934104621216
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 0.07245445925731198
+                },
+                "type": "split",
+                "value": 0.29347078329579473
+              },
+              "right": {
+                "feature": 15,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 1.5062122579037993
+              },
+              "type": "split",
+              "value": 4.906612239268894
+            },
+            "type": "split",
+            "value": 0.8863707949361811
+          },
+          "type": "split",
+          "value": 0.5887952790838935
+        },
+        "right": {
+          "feature": 12,
+          "left": {
+            "feature": 10,
+            "left": {
+              "feature": 17,
+              "left": {
+                "feature": 9,
+                "left": {
+                  "feature": 4,
+                  "left": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": -0.02376649540043474
+                },
+                "right": {
+                  "feature": 9,
+                  "left": {
+                    "feature": 17,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 4,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.8997132763618393
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 1.1322459083195837
+                },
+                "type": "split",
+                "value": -0.48207252498966974
+              },
+              "right": {
+                "feature": 6,
+                "left": {
+                  "feature": 3,
+                  "left": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "right": {
+                    "feature": 2,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.14563238808666182
+                  },
+                  "type": "split",
+                  "value": -0.6160390395773253
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 1.2339406877474282
+              },
+              "type": "split",
+              "value": -0.012775054412935694
+            },
+            "right": {
+              "feature": 6,
+              "left": {
+                "feature": 4,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": -0.8781777981325503
+              },
+              "right": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "type": "split",
+              "value": 1.3029480413649948
+            },
+            "type": "split",
+            "value": 0.9027550059400637
+          },
+          "right": {
+            "size": 1,
+            "type": "leaf"
+          },
+          "type": "split",
+          "value": 2.5609777143974686
+        },
+        "type": "split",
+        "value": 0.6133168114877745
+      },
+      "type": "split",
+      "value": 0.23191760522596727
+    },
+    {
+      "feature": 17,
+      "left": {
+        "feature": 14,
+        "left": {
+          "feature": 17,
+          "left": {
+            "feature": 18,
+            "left": {
+              "size": 1,
+              "type": "leaf"
+            },
+            "right": {
+              "feature": 18,
+              "left": {
+                "feature": 15,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 0.4295446256747908
+              },
+              "right": {
+                "feature": 10,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "feature": 18,
+                  "left": {
+                    "feature": 1,
+                    "left": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.019107617396474152
+                  },
+                  "right": {
+                    "feature": 16,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.766912334795812
+                  },
+                  "type": "split",
+                  "value": 0.45914583790549945
+                },
+                "type": "split",
+                "value": -1.5841615435681304
+              },
+              "type": "split",
+              "value": -0.07827964800833874
+            },
+            "type": "split",
+            "value": -0.8327479043442256
+          },
+          "right": {
+            "feature": 6,
+            "left": {
+              "feature": 16,
+              "left": {
+                "feature": 5,
+                "left": {
+                  "feature": 5,
+                  "left": {
+                    "feature": 17,
+                    "left": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.7774753269079971
+                  },
+                  "right": {
+                    "feature": 18,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -1.1998910970656198
+                  },
+                  "type": "split",
+                  "value": 0.33018031675759074
+                },
+                "right": {
+                  "feature": 2,
+                  "left": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 0.5848321848805675
+                },
+                "type": "split",
+                "value": 3.07683301694849
+              },
+              "right": {
+                "feature": 3,
+                "left": {
+                  "feature": 1,
+                  "left": {
+                    "feature": 5,
+                    "left": {
+                      "size": 14,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 4,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 1.5979383842238748
+                  },
+                  "right": {
+                    "feature": 0,
+                    "left": {
+                      "size": 8,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 6,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.10021413434315207
+                  },
+                  "type": "split",
+                  "value": 0.053062797054095334
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 1.3150030628542124
+              },
+              "type": "split",
+              "value": -0.6692372494692034
+            },
+            "right": {
+              "feature": 2,
+              "left": {
+                "feature": 8,
+                "left": {
+                  "feature": 4,
+                  "left": {
+                    "feature": 4,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.7946760359943132
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": -0.34810368801707886
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 0.749368046048354
+              },
+              "right": {
+                "feature": 4,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": -0.12277975034595223
+              },
+              "type": "split",
+              "value": 0.1782946821311735
+            },
+            "type": "split",
+            "value": 0.41018656344038873
+          },
+          "type": "split",
+          "value": -1.392567564357516
+        },
+        "right": {
+          "feature": 3,
+          "left": {
+            "feature": 7,
+            "left": {
+              "size": 1,
+              "type": "leaf"
+            },
+            "right": {
+              "size": 1,
+              "type": "leaf"
+            },
+            "type": "split",
+            "value": 0.1423271260906548
+          },
+          "right": {
+            "size": 1,
+            "type": "leaf"
+          },
+          "type": "split",
+          "value": 0.735845008909011
+        },
+        "type": "split",
+        "value": 0.26722922235132623
+      },
+      "right": {
+        "feature": 18,
+        "left": {
+          "feature": 8,
+          "left": {
+            "feature": 9,
+            "left": {
+              "feature": 2,
+              "left": {
+                "feature": 15,
+                "left": {
+                  "feature": 18,
+                  "left": {
+                    "feature": 14,
+                    "left": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.7330051989913943
+                  },
+                  "right": {
+                    "feature": 6,
+                    "left": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 8,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.6127572242943612
+                  },
+                  "type": "split",
+                  "value": -1.043822248261184
+                },
+                "right": {
+                  "feature": 18,
+                  "left": {
+                    "feature": 5,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.21172857739141077
+                  },
+                  "right": {
+                    "feature": 2,
+                    "left": {
+                      "size": 6,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 1.121722015290116
+                  },
+                  "type": "split",
+                  "value": 0.4667799389490201
+                },
+                "type": "split",
+                "value": 0.18737066660899715
+              },
+              "right": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "type": "split",
+              "value": 1.8776508149071884
+            },
+            "right": {
+              "feature": 5,
+              "left": {
+                "feature": 3,
+                "left": {
+                  "feature": 18,
+                  "left": {
+                    "feature": 4,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 4,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -1.7762667133683354
+                  },
+                  "right": {
+                    "feature": 2,
+                    "left": {
+                      "size": 4,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 8,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.39495791297859506
+                  },
+                  "type": "split",
+                  "value": -0.22987151123241856
+                },
+                "right": {
+                  "feature": 16,
+                  "left": {
+                    "feature": 2,
+                    "left": {
+                      "size": 17,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 13,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.23028875024746887
+                  },
+                  "right": {
+                    "feature": 0,
+                    "left": {
+                      "size": 5,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 9,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.030906070144673614
+                  },
+                  "type": "split",
+                  "value": 0.17702731555914908
+                },
+                "type": "split",
+                "value": -0.539120640461581
+              },
+              "right": {
+                "feature": 13,
+                "left": {
+                  "feature": 3,
+                  "left": {
+                    "feature": 16,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.1885293632778149
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 0.39516139901019387
+                },
+                "right": {
+                  "feature": 14,
+                  "left": {
+                    "feature": 18,
+                    "left": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 6,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.44823839001987176
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 0.6511373378574556
+                },
+                "type": "split",
+                "value": 5.724050669336715
+              },
+              "type": "split",
+              "value": 0.8964811239746202
+            },
+            "type": "split",
+            "value": -0.47214745199954883
+          },
+          "right": {
+            "feature": 5,
+            "left": {
+              "feature": 2,
+              "left": {
+                "feature": 12,
+                "left": {
+                  "feature": 8,
+                  "left": {
+                    "feature": 6,
+                    "left": {
+                      "size": 23,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 4,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.7540891038115596
+                  },
+                  "right": {
+                    "feature": 9,
+                    "left": {
+                      "size": 7,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.7854638089113015
+                  },
+                  "type": "split",
+                  "value": 0.8883581189301444
+                },
+                "right": {
+                  "feature": 5,
+                  "left": {
+                    "feature": 17,
+                    "left": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.47613079563503286
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 0.41864340560440305
+                },
+                "type": "split",
+                "value": 0.2415371203057175
+              },
+              "right": {
+                "feature": 17,
+                "left": {
+                  "feature": 4,
+                  "left": {
+                    "feature": 3,
+                    "left": {
+                      "size": 8,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 1.0829064192503828
+                  },
+                  "right": {
+                    "feature": 0,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 7,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.31498027386331956
+                  },
+                  "type": "split",
+                  "value": 0.6207418409536158
+                },
+                "right": {
+                  "feature": 5,
+                  "left": {
+                    "feature": 2,
+                    "left": {
+                      "size": 11,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 1.085732524371283
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 0.7976829635727267
+                },
+                "type": "split",
+                "value": 0.6223807819922926
+              },
+              "type": "split",
+              "value": 0.30588454180105074
+            },
+            "right": {
+              "feature": 2,
+              "left": {
+                "feature": 10,
+                "left": {
+                  "feature": 9,
+                  "left": {
+                    "feature": 18,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.020723457601869597
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 0.5805920298821516
+                },
+                "right": {
+                  "feature": 7,
+                  "left": {
+                    "feature": 9,
+                    "left": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.40130916210984047
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 0.9339238456592878
+                },
+                "type": "split",
+                "value": -0.08364361890654548
+              },
+              "right": {
+                "feature": 10,
+                "left": {
+                  "feature": 9,
+                  "left": {
+                    "feature": 18,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.07387109301414785
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": -0.5399608555668427
+                },
+                "right": {
+                  "feature": 7,
+                  "left": {
+                    "feature": 2,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.6642869682808437
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": 0.5982808800880216
+                },
+                "type": "split",
+                "value": 0.17713149085403546
+              },
+              "type": "split",
+              "value": 0.5366576452616998
+            },
+            "type": "split",
+            "value": 1.0358328477510998
+          },
+          "type": "split",
+          "value": 0.04716315975041341
+        },
+        "right": {
+          "feature": 0,
+          "left": {
+            "feature": 6,
+            "left": {
+              "feature": 7,
+              "left": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "right": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "type": "split",
+              "value": 0.21559111350450433
+            },
+            "right": {
+              "size": 1,
+              "type": "leaf"
+            },
+            "type": "split",
+            "value": 0.5093731170098172
+          },
+          "right": {
+            "feature": 16,
+            "left": {
+              "feature": 8,
+              "left": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "right": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "type": "split",
+              "value": 1.1729025608193522
+            },
+            "right": {
+              "feature": 0,
+              "left": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "right": {
+                "feature": 16,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 0.7169855311050947
+              },
+              "type": "split",
+              "value": 0.91769744712188
+            },
+            "type": "split",
+            "value": 0.06818317543118155
+          },
+          "type": "split",
+          "value": 0.8400153873765875
+        },
+        "type": "split",
+        "value": 1.4152324687591338
+      },
+      "type": "split",
+      "value": -0.623571868700866
+    },
+    {
+      "feature": 13,
+      "left": {
+        "feature": 14,
+        "left": {
+          "feature": 1,
+          "left": {
+            "size": 1,
+            "type": "leaf"
+          },
+          "right": {
+            "feature": 18,
+            "left": {
+              "feature": 4,
+              "left": {
+                "feature": 16,
+                "left": {
+                  "feature": 15,
+                  "left": {
+                    "feature": 11,
+                    "left": {
+                      "size": 87,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.2440961525980831
+                  },
+                  "right": {
+                    "feature": 0,
+                    "left": {
+                      "size": 8,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 15,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.5465506145848505
+                  },
+                  "type": "split",
+                  "value": 0.6276033554587093
+                },
+                "right": {
+                  "feature": 2,
+                  "left": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "right": {
+                    "feature": 9,
+                    "left": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 1.5591515768285467
+                  },
+                  "type": "split",
+                  "value": -0.39371797071715925
+                },
+                "type": "split",
+                "value": 0.9508384958019254
+              },
+              "right": {
+                "feature": 3,
+                "left": {
+                  "feature": 18,
+                  "left": {
+                    "feature": 18,
+                    "left": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.6424070657223949
+                  },
+                  "right": {
+                    "feature": 6,
+                    "left": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.26345184877258054
+                  },
+                  "type": "split",
+                  "value": 0.241495064047915
+                },
+                "right": {
+                  "feature": 17,
+                  "left": {
+                    "feature": 8,
+                    "left": {
+                      "size": 95,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 1.6097288339097524
+                  },
+                  "right": {
+                    "feature": 15,
+                    "left": {
+                      "size": 4,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 3,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 0.04981958514062956
+                  },
+                  "type": "split",
+                  "value": 1.1190130216347995
+                },
+                "type": "split",
+                "value": -0.8984292222375801
+              },
+              "type": "split",
+              "value": 0.08397765423535497
+            },
+            "right": {
+              "feature": 0,
+              "left": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "right": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "type": "split",
+              "value": 0.252877399968558
+            },
+            "type": "split",
+            "value": 1.8714642122268081
+          },
+          "type": "split",
+          "value": -1.5545028092802644
+        },
+        "right": {
+          "feature": 2,
+          "left": {
+            "feature": 15,
+            "left": {
+              "feature": 12,
+              "left": {
+                "feature": 8,
+                "left": {
+                  "feature": 17,
+                  "left": {
+                    "feature": 18,
+                    "left": {
+                      "size": 2,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.05808397236809845
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": -0.1684419456791264
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 0.13557263818212018
+              },
+              "right": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "type": "split",
+              "value": 0.21110896170656615
+            },
+            "right": {
+              "feature": 5,
+              "left": {
+                "feature": 4,
+                "left": {
+                  "feature": 8,
+                  "left": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "right": {
+                    "size": 1,
+                    "type": "leaf"
+                  },
+                  "type": "split",
+                  "value": -0.7102931075817208
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 0.21163862471784844
+              },
+              "right": {
+                "feature": 3,
+                "left": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": -0.23595422224881513
+              },
+              "type": "split",
+              "value": 0.5461422789840653
+            },
+            "type": "split",
+            "value": 0.3226017634587295
+          },
+          "right": {
+            "feature": 15,
+            "left": {
+              "feature": 5,
+              "left": {
+                "feature": 12,
+                "left": {
+                  "feature": 0,
+                  "left": {
+                    "feature": 10,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 5,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": -0.4631859676845058
+                  },
+                  "right": {
+                    "feature": 0,
+                    "left": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "right": {
+                      "size": 1,
+                      "type": "leaf"
+                    },
+                    "type": "split",
+                    "value": 1.5412318247345955
+                  },
+                  "type": "split",
+                  "value": 1.0096847754378628
+                },
+                "right": {
+                  "size": 1,
+                  "type": "leaf"
+                },
+                "type": "split",
+                "value": 0.3580100058382424
+              },
+              "right": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "type": "split",
+              "value": 1.3181440904795643
+            },
+            "right": {
+              "feature": 7,
+              "left": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "right": {
+                "size": 1,
+                "type": "leaf"
+              },
+              "type": "split",
+              "value": 0.2920198909511713
+            },
+            "type": "split",
+            "value": 0.8737069668208006
+          },
+          "type": "split",
+          "value": 0.20570236914744355
+        },
+        "type": "split",
+        "value": 0.6924949463887582
+      },
+      "right": {
+        "feature": 15,
+        "left": {
+          "feature": 6,
+          "left": {
+            "size": 1,
+            "type": "leaf"
+          },
+          "right": {
+            "size": 1,
+            "type": "leaf"
+          },
+          "type": "split",
+          "value": -0.23771114404525479
+        },
+        "right": {
+          "size": 1,
+          "type": "leaf"
+        },
+        "type": "split",
+        "value": 0.5298624735085102
+      },
+      "type": "split",
+      "value": 68.31596152312865
+    }
+  ],
+  "z_alert_threshold": 8.227793180312483
+}

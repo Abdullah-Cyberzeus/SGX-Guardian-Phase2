@@ -214,8 +214,8 @@ mod tests {
     use p256::ecdsa::{signature::Signer, Signature, SigningKey};
     use rand::rngs::OsRng;
     use sha2::{Digest, Sha256};
-    use tempfile::tempdir;
     use std::fs;
+    use tempfile::tempdir;
 
     const POLICY_YAML: &str = r#"
 policy_id: "policy-test"
@@ -229,7 +229,11 @@ rules:
     port: 443
 "#;
 
-    fn signed_policy_envelope(policy_yaml: &str, version: u32, digest_hex: Option<String>) -> String {
+    fn signed_policy_envelope(
+        policy_yaml: &str,
+        version: u32,
+        digest_hex: Option<String>,
+    ) -> String {
         let signing_key = SigningKey::random(&mut OsRng);
         let digest = Sha256::digest(policy_yaml.as_bytes());
         let signature: Signature = signing_key.sign(&digest);
@@ -249,14 +253,16 @@ rules:
     fn verify_signed_policy_returns_verified_policy_for_valid_envelope() {
         let td = tempdir().expect("create temp dir");
         let path = td.path().join("policy.sig");
-        fs::write(&path, signed_policy_envelope(POLICY_YAML, 1, None))
-            .expect("write policy file");
+        fs::write(&path, signed_policy_envelope(POLICY_YAML, 1, None)).expect("write policy file");
 
-        let verified = verify_signed_policy(path.to_str().expect("utf8 path"))
-            .expect("verify signed policy");
+        let verified =
+            verify_signed_policy(path.to_str().expect("utf8 path")).expect("verify signed policy");
 
         assert_eq!(verified.policy_yaml, POLICY_YAML);
-        assert_eq!(verified.digest_hex, hex::encode(Sha256::digest(POLICY_YAML.as_bytes())));
+        assert_eq!(
+            verified.digest_hex,
+            hex::encode(Sha256::digest(POLICY_YAML.as_bytes()))
+        );
         assert_eq!(verified.signer_pubkey.len(), 65);
     }
 
@@ -264,8 +270,7 @@ rules:
     fn verify_signed_policy_rejects_unsupported_version() {
         let td = tempdir().expect("create temp dir");
         let path = td.path().join("policy.sig");
-        fs::write(&path, signed_policy_envelope(POLICY_YAML, 2, None))
-            .expect("write policy file");
+        fs::write(&path, signed_policy_envelope(POLICY_YAML, 2, None)).expect("write policy file");
 
         let err = verify_signed_policy(path.to_str().expect("utf8 path"))
             .expect_err("unsupported version should fail");

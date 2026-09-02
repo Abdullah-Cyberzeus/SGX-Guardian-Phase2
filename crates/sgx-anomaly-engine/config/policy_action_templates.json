@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "templates": [
+    {
+      "action": "tighten_firewall",
+      "enabled": true,
+      "approval_required": true,
+      "task1_action_kinds": ["rate_limit_peer", "rate_limit_traffic"],
+      "min_duration_seconds": 60,
+      "max_duration_seconds": 900,
+      "allowed_firewall_modes": ["block", "rate_limit"],
+      "min_rate_limit_per_second": 1,
+      "max_rate_limit_per_second": 100,
+      "default_duration_seconds": 300,
+      "default_rate_limit_per_second": 20
+    },
+    {
+      "action": "increase_attestation_frequency",
+      "enabled": true,
+      "approval_required": true,
+      "task1_action_kinds": ["inspect_overlay_peers"],
+      "min_attestation_interval_seconds": 30,
+      "max_attestation_interval_seconds": 300,
+      "medium_attestation_interval_seconds": 300,
+      "high_attestation_interval_seconds": 120,
+      "critical_attestation_interval_seconds": 30
+    },
+    {
+      "action": "enable_additional_logging",
+      "enabled": true,
+      "approval_required": true,
+      "task1_action_kinds": ["review_audit_logs", "inspect_node_resources", "investigate_anomaly"],
+      "min_duration_seconds": 60,
+      "max_duration_seconds": 3600,
+      "allowed_logging_levels": ["basic", "detailed"],
+      "medium_logging_level": "basic",
+      "high_logging_level": "detailed",
+      "critical_logging_level": "detailed",
+      "medium_logging_duration_seconds": 300,
+      "high_logging_duration_seconds": 900,
+      "critical_logging_duration_seconds": 1800
+    },
+    {
+      "action": "quarantine_peer",
+      "enabled": true,
+      "approval_required": true,
+      "task1_action_kinds": [],
+      "min_duration_seconds": 60,
+      "max_duration_seconds": 3600,
+      "default_duration_seconds": 900
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "circle_id": "standalone-circle",
+  "active_policy_path": "config/active_virtual_shift_policy.json",
+  "authorized_guardians": [
+    {
+      "guardian_id": "guardian-nodeA",
+      "public_key_path": "data/virtual_shift/guardian_keys/guardian-nodeA.ed25519.public"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+[package]
+name = "sgx-anomaly-engine"
+version = "0.1.0"
+edition = "2021"
+description = "Standalone anomaly detection engine (SGX-independent while under development)"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking"] }
+ring = "0.17.14"
+# NOTE (Issue #5): default-features disabled to drop native-tls/hyper-tls.
+# D4's real ScrapeSource only talks plaintext HTTP to localhost metrics
+# endpoints (:9090, :8625) — no TLS needed, and native-tls complicates
+# aarch64 cross-compilation for the board. If HTTPS is ever needed, add
+# back with `features = ["blocking", "rustls-tls"]` instead of the default
+# (native-tls) backend.
+
+[dev-dependencies]
+# used by tests/parity.rs to compare against Python-exported score fixtures
