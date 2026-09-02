@@ -218,11 +218,11 @@ export function AL10AlertActions() {
             <div className="flex items-center gap-2 mb-3">
               <Sparkles size={14} style={{ color: "var(--primary)" }} />
               <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--primary)", letterSpacing: "0.08em" }}>
-                AI RESPONSE PLAN
+                RESPONSE PLAN
               </span>
             </div>
             {actions.length === 0 ? (
-              <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>No AI response plan has been generated for this alert.</p>
+              <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>No response plan has been generated for this alert.</p>
             ) : <ol className="flex flex-col gap-3">
               {actions.map((action, index) => (
                 <li key={index} className="flex items-start gap-3">

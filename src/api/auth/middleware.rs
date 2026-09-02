@@ -257,6 +257,7 @@ fn is_public_route(method: &Method, path: &str) -> bool {
             | (&Method::POST, "/api/v1/auth/oidc/cylenium/callback")
             | (&Method::GET, "/api/v1/pwa/onboarding")
             | (&Method::POST, "/api/v1/pwa/onboarding/invite-preview")
+            | (&Method::POST, "/api/v1/pwa/onboarding/signup")
             | (&Method::POST, "/api/v1/pwa/onboarding/join")
             | (&Method::POST, "/api/v1/circles/redeem")
             // Service-authenticated in handlers::circle::receive_invite.

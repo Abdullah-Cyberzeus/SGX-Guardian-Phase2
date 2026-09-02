@@ -369,12 +369,20 @@ pub fn circle_router() -> Router<Arc<AppState>> {
             get(handlers::pwa::list_member_enrollments),
         )
         .route(
+            "/api/v1/circles/{id}/pwa-members/available",
+            get(handlers::pwa::list_available_pwa_members),
+        )
+        .route(
             "/api/v1/circles/{id}/member-enrollments/{approval_id}/approve",
             post(handlers::pwa::approve_member_enrollment),
         )
         .route(
             "/api/v1/circles/{id}/member-enrollments/{approval_id}/reject",
             post(handlers::pwa::reject_member_enrollment),
+        )
+        .route(
+            "/api/v1/circles/{id}/member-enrollments/{approval_id}/send",
+            post(handlers::pwa::send_targeted_pwa_member_invite),
         )
         .route(
             "/api/v1/circles/invites/inbox",

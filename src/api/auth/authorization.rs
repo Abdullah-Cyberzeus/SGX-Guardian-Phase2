@@ -213,6 +213,15 @@ fn member_required_scope(method: &Method, path: &str) -> Option<&'static str> {
     if method == Method::POST && path == "/api/v1/pwa/circles/join" {
         return Some(scope::CIRCLES_READ);
     }
+    if method == Method::GET && path == "/api/v1/pwa/circles/invites" {
+        return Some(scope::CIRCLES_READ);
+    }
+    if method == Method::POST
+        && path.starts_with("/api/v1/pwa/circles/invites/")
+        && path.ends_with("/decision")
+    {
+        return Some(scope::CIRCLES_READ);
+    }
     if method == Method::GET && path == "/api/v1/node/status" {
         return Some(scope::GUARDIAN_READ);
     }

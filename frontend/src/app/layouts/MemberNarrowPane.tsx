@@ -20,8 +20,9 @@ export function MemberNarrowPane() {
   const { session } = useAuth();
   const location = useLocation();
   const memberSession = isMemberRole(session?.user.role);
+  const pendingMemberSession = memberSession && (session?.circleIds.length || 0) === 0;
 
-  if (!memberSession) return <Outlet />;
+  if (!memberSession || pendingMemberSession) return <Outlet />;
 
   return (
     <>

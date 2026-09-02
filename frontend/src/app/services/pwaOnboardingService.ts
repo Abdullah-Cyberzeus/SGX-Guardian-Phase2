@@ -1,4 +1,5 @@
 import api from "./api";
+import type { MemberEnrollment } from "./circleService";
 
 export interface GuardianOnboardingInfo {
   guardianDid: string;
@@ -29,6 +30,12 @@ export interface MemberJoinPayload {
   ownerHost?: string;
   acceptedFingerprint: string;
   fingerprintConfirmed: boolean;
+}
+
+export interface StandaloneMemberSignupPayload {
+  name: string;
+  email: string;
+  password: string;
 }
 
 export interface MemberJoinResult {
@@ -71,14 +78,24 @@ export interface AdditionalCircleJoinResult {
   approvalClaim: string;
 }
 
+export interface TargetedPwaMemberInviteList {
+  invites: MemberEnrollment[];
+}
+
 export const pwaOnboardingService = {
   info: () => api.get<GuardianOnboardingInfo>("/pwa/onboarding"),
   previewInvite: (inviteToken: string, ownerHost?: string) =>
     api.post<MemberInvitePreview>("/pwa/onboarding/invite-preview", { inviteToken, ownerHost }),
+  signup: (payload: StandaloneMemberSignupPayload) =>
+    api.post<MemberJoinResult>("/pwa/onboarding/signup", payload),
   join: (payload: MemberJoinPayload) =>
     api.post<MemberJoinResult>("/pwa/onboarding/join", payload),
   joinAdditionalCircle: (inviteToken: string) =>
     api.post<AdditionalCircleJoinResult>("/pwa/circles/join", { inviteToken }),
+  targetedInvites: () =>
+    api.get<TargetedPwaMemberInviteList>("/pwa/circles/invites"),
+  decideTargetedInvite: (approvalId: string, accept: boolean) =>
+    api.post<MemberEnrollment>(`/pwa/circles/invites/${encodeURIComponent(approvalId)}/decision`, { accept }),
   approvalStatus: (approvalId: string, claim: string) =>
     api.get<MemberApprovalStatus>(`/pwa/onboarding/approval/${encodeURIComponent(approvalId)}`, { claim }),
 };

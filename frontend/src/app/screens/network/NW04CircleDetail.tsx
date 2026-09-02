@@ -256,6 +256,10 @@ export function NW04CircleDetail() {
     const deduped = Array.from(new Map(candidates.map((item) => [item.did, item])).values());
     return deduped.filter((item) => !query || item.did.toLowerCase().includes(query) || item.label.toLowerCase().includes(query) || item.sub.toLowerCase().includes(query));
   }, [trustedPeers, didSearch]);
+  const availableInviteRecipients = useMemo(() => {
+    const existing = new Set(members.map((member: any) => String(member.did || "").trim().toLowerCase()).filter(Boolean));
+    return didResults.filter((item) => !existing.has(item.did.toLowerCase()));
+  }, [didResults, members]);
 
   const normalizeGuardianDid = (did: string) => did.trim().startsWith("did:guardian:") ? did.trim() : `did:guardian:${did.trim()}`;
 
@@ -563,14 +567,12 @@ export function NW04CircleDetail() {
     );
   }
 
-  const onlineMemberCount = members.filter((member: any) => peerForMember(member)?.online).length;
-
   return (
     <>
       <div className="flex flex-col h-full">
         <PageHeader
           title={circle.name}
-          subtitle={`${onlineMemberCount} of ${members.length} online`}
+          subtitle={`${members.length} members`}
           onBack={() => navigate("/network", { replace: true })}
           right={
             <div className="flex items-center gap-1">
@@ -985,6 +987,27 @@ export function NW04CircleDetail() {
               )}
               {sheetTab === "search" && (
                 <div className="flex flex-col gap-4">
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Available members</label>
+                    <select
+                      className="w-full rounded-md border border-border bg-input-background px-3 py-2.5 text-sm outline-none"
+                      value={selectedDid}
+                      onChange={(event) => {
+                        const did = event.target.value;
+                        setSelectedDid(did);
+                        setActiveInvite(inviteCache[did] || null);
+                        setInviteError(null);
+                      }}
+                    >
+                      <option value="">Select a known Guardian member</option>
+                      {availableInviteRecipients.map((result) => (
+                        <option key={result.did} value={result.did}>{result.label} - {result.did}</option>
+                      ))}
+                    </select>
+                    {availableInviteRecipients.length === 0 && (
+                      <p className="mt-2 text-xs text-muted-foreground">No known Guardian members are available to invite. Search or paste a DID below.</p>
+                    )}
+                  </div>
                   {selectedDid && (
                     <div className="rounded-lg border border-border p-3" style={{ backgroundColor: "var(--background)" }}>
                       <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginBottom: "4px" }}>Selected Guardian</p>
@@ -1014,7 +1037,7 @@ export function NW04CircleDetail() {
                     </button>
                   </div>
                   {didResults.length === 0 ? (
-                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", textAlign: "center", marginTop: "24px" }}>Search results will appear here</p>
+                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", textAlign: "center", marginTop: "24px" }}>Available members will appear here</p>
                   ) : (
                     <div className="flex flex-col rounded-lg border border-border overflow-hidden">
                       {didResults.slice(0, 8).map((result) => {

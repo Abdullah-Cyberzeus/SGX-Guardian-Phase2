@@ -146,8 +146,7 @@ pub fn recover_stale_journal(
     recovered.node_id = node_id.to_string();
     recovered.updated_at = Utc::now().to_rfc3339();
     recovered.message = Some(
-        "stale restore journal detected; recovery marked the transaction rolled_back"
-            .to_string(),
+        "stale restore journal detected; recovery marked the transaction rolled_back".to_string(),
     );
     write_journal(config, &recovered)?;
     Ok(Some(recovered))

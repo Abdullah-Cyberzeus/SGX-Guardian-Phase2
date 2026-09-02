@@ -10,7 +10,7 @@ import {
   startCyleniumOidcRedirect,
 } from "../utils/cyleniumAuth";
 import type { GuardianRole } from "../utils/authorization";
-import pwaOnboardingService, { type MemberJoinPayload, type MemberJoinResult } from "../services/pwaOnboardingService";
+import pwaOnboardingService, { type MemberJoinPayload, type MemberJoinResult, type StandaloneMemberSignupPayload } from "../services/pwaOnboardingService";
 import { membershipRepository } from "../../pwa/db/membershipRepository";
 import { purgeAndShowBrowserOffline } from "../../pwa/offlineCleanup";
 
@@ -57,6 +57,7 @@ interface AuthContextValue {
   forceSignOut: (notice?: string) => Promise<void>;
   signOutEverywhere: () => Promise<{ error: string | null }>;
   joinMember: (payload: MemberJoinPayload) => Promise<{ error: string | null; role?: string; enrollment?: MemberJoinResult }>;
+  signUpMember: (payload: StandaloneMemberSignupPayload) => Promise<{ error: string | null; role?: string }>;
   activatePendingMember: (enrollment: MemberJoinResult) => Promise<{ error: string | null }>;
   refreshSession: () => Promise<{ error: string | null }>;
   removeBrowserRegistration: () => Promise<{ error: string | null }>;
@@ -501,6 +502,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const signUpMember = async (payload: StandaloneMemberSignupPayload): Promise<{ error: string | null; role?: string }> => {
+    try {
+      const data = await pwaOnboardingService.signup(payload);
+      const next = normalizeSession(data);
+      if (!next.token || next.user.role !== "member") {
+        throw new Error("Guardian did not issue a valid member session");
+      }
+      await refreshOfflineMode();
+      await persistOfflineMembership(next);
+      injectToken(next.token, "session");
+      setSession(next);
+      localStorage.setItem("sgx_onboarded", "1");
+      return { error: null, role: next.user.role };
+    } catch (cause) {
+      return { error: cause instanceof Error ? cause.message : "Unable to sign up member" };
+    }
+  };
+
   const activatePendingMember = async (enrollment: MemberJoinResult): Promise<{ error: string | null }> => {
     if (!enrollment.token || enrollment.role !== "member") {
       return { error: "Pending enrollment did not include a valid member session" };
@@ -595,6 +614,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         forceSignOut,
         signOutEverywhere,
         joinMember,
+        signUpMember,
         activatePendingMember,
         refreshSession,
         removeBrowserRegistration,

@@ -45,12 +45,11 @@ import { alertDetails, configuredActions, eventDetails, locationSourceLabel, sou
 import attestationService, { type PeerAttestationRecord } from "../../services/attestationService";
 import type { DIDDocumentPeerSummary } from "../../services/didService";
 import { useContactNames } from "../../contexts/ContactNameContext";
+import { WORLD_PATHS } from "../topology/lib/world-map";
 import "./circle-topology.css";
 
 const WIDTH = 1440;
 const HEIGHT = 820;
-const TILE_ZOOM = 3;
-const TILE_COUNT = 2 ** TILE_ZOOM;
 const MAP_SIZE = WIDTH;
 const MAP_Y = (HEIGHT - MAP_SIZE) / 2;
 const POLL_MS = 10_000;
@@ -162,6 +161,39 @@ interface PositionedZone {
   source: GeofenceZone;
 }
 
+const REGION_LABELS = [
+  { label: "North Atlantic Ocean", lat: 25, lng: -42 },
+  { label: "Pacific Ocean", lat: 12, lng: -150 },
+  { label: "Indian Ocean", lat: -20, lng: 78 },
+  { label: "Arctic Ocean", lat: 74, lng: 20 },
+  { label: "North America", lat: 47, lng: -103 },
+  { label: "South America", lat: -18, lng: -60 },
+  { label: "Europe", lat: 53, lng: 16 },
+  { label: "Africa", lat: 4, lng: 20 },
+  { label: "Middle East", lat: 27, lng: 45 },
+  { label: "Asia", lat: 45, lng: 88 },
+  { label: "Oceania", lat: -25, lng: 137 },
+];
+
+const COUNTRY_LABELS = [
+  { label: "United States", lat: 39, lng: -98 },
+  { label: "Canada", lat: 58, lng: -106 },
+  { label: "Mexico", lat: 23, lng: -102 },
+  { label: "Brazil", lat: -10, lng: -55 },
+  { label: "United Kingdom", lat: 55, lng: -3 },
+  { label: "France", lat: 46, lng: 2 },
+  { label: "Germany", lat: 51, lng: 10 },
+  { label: "Spain", lat: 40, lng: -4 },
+  { label: "Italy", lat: 42.5, lng: 12.5 },
+  { label: "Nigeria", lat: 9, lng: 8 },
+  { label: "South Africa", lat: -30, lng: 25 },
+  { label: "Saudi Arabia", lat: 24, lng: 45 },
+  { label: "India", lat: 22, lng: 79 },
+  { label: "China", lat: 35, lng: 103 },
+  { label: "Japan", lat: 37, lng: 138 },
+  { label: "Australia", lat: -25, lng: 134 },
+];
+
 const DEFAULT_AUTOMATION: ZoneAutomation = {
   on_entry: [{ action: "notify", severity: "low" }],
   on_exit: [{ action: "raise_alert", severity: "high" }],
@@ -224,49 +256,43 @@ function radiusToPixels(radiusM: number | null | undefined, lat: number) {
 }
 
 function RealMapTiles() {
-  // Tracks reachability of the public CARTO tile CDN specifically — distinct
-  // from Guardian-LAN reachability (`staleWarning`/`fatalError` above). One
-  // failed tile is enough to assume the whole CDN is unreachable and stop
-  // requesting the rest, rather than let every tile fail individually.
-  const [tilesUnavailable, setTilesUnavailable] = useState(false);
-  const tileSize = MAP_SIZE / TILE_COUNT;
+  const scaleX = WIDTH / 1600;
+  const scaleY = MAP_SIZE / 760;
+  const translateY = MAP_Y - 60 * scaleY;
+  const labelPoint = (lat: number, lng: number) => projectLocation(lat, lng);
 
-  if (tilesUnavailable) {
-    return (
-      <g className="clt-real-map clt-map-unavailable" pointerEvents="none">
-        <rect x={0} y={0} width={WIDTH} height={HEIGHT} />
-        <rect className="clt-map-contrast" x={0} y={MAP_Y} width={MAP_SIZE} height={MAP_SIZE} />
-        <text className="clt-map-unavailable-label" x={WIDTH / 2} y={HEIGHT / 2}>
-          Map tiles unavailable — requires Internet access
-        </text>
-      </g>
-    );
-  }
-
-  const tiles: React.ReactNode[] = [];
-  for (let x = 0; x < TILE_COUNT; x += 1) {
-    for (let y = 0; y < TILE_COUNT; y += 1) {
-      tiles.push(
-        <image
-          key={`${x}-${y}`}
-          className="clt-map-tile"
-          href={`https://a.basemaps.cartocdn.com/dark_all/${TILE_ZOOM}/${x}/${y}.png`}
-          x={x * tileSize}
-          y={MAP_Y + y * tileSize}
-          width={tileSize}
-          height={tileSize}
-          preserveAspectRatio="none"
-          onError={() => setTilesUnavailable(true)}
-        />,
-      );
-    }
-  }
   return (
     <g className="clt-real-map" pointerEvents="none">
       <rect x={0} y={0} width={WIDTH} height={HEIGHT} />
-      {tiles}
+      <g className="clt-map-grid">
+        {Array.from({ length: 13 }).map((_, i) => {
+          const x = WIDTH * (i / 12);
+          return <line key={`lng-${i}`} x1={x} y1={MAP_Y} x2={x} y2={MAP_Y + MAP_SIZE} />;
+        })}
+        {Array.from({ length: 7 }).map((_, i) => {
+          const y = MAP_Y + MAP_SIZE * (i / 6);
+          return <line key={`lat-${i}`} x1={0} y1={y} x2={WIDTH} y2={y} />;
+        })}
+      </g>
+      <g className="clt-map-land" transform={`matrix(${scaleX} 0 0 ${scaleY} 0 ${translateY})`}>
+        {WORLD_PATHS.map((path, index) => (
+          <path key={index} d={path} />
+        ))}
+      </g>
       <rect className="clt-map-contrast" x={0} y={MAP_Y} width={MAP_SIZE} height={MAP_SIZE} />
-      <text x={WIDTH - 12} y={HEIGHT - 12}>Map tiles © CARTO · Data © OpenStreetMap contributors</text>
+      <g className="clt-map-labels clt-map-labels--regional">
+        {REGION_LABELS.map((item) => {
+          const point = labelPoint(item.lat, item.lng);
+          return <text key={item.label} x={point.x} y={point.y}>{item.label}</text>;
+        })}
+      </g>
+      <g className="clt-map-labels clt-map-labels--country">
+        {COUNTRY_LABELS.map((item) => {
+          const point = labelPoint(item.lat, item.lng);
+          return <text key={item.label} x={point.x} y={point.y}>{item.label}</text>;
+        })}
+      </g>
+      <text className="clt-map-credit" x={WIDTH - 12} y={HEIGHT - 12}>Guardian map · offline labels</text>
     </g>
   );
 }
@@ -874,7 +900,7 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
         select(viewportRef.current).attr("transform", event.transform.toString());
         const value = `${Math.round(event.transform.k * 100)}%`;
         const nextMode = event.transform.k < 1.08 ? "dots" : "icons";
-        const markerScale = Math.max(0.16, Math.min(1.25, 1 / event.transform.k));
+        const markerScale = Math.max(0.28, Math.min(1.9, 1 / event.transform.k));
         select(viewportRef.current).selectAll<SVGGElement, unknown>(".clt-node-scale").attr("transform", `scale(${markerScale})`);
         setZoomMode((current) => current === nextMode ? current : nextMode);
         if (zoomLabelRef.current) zoomLabelRef.current.textContent = value;
@@ -945,7 +971,7 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
   const liveState: "live" | "stale" | "error" = fatalError ? "error" : staleWarning ? "stale" : "live";
 
   return (
-    <section className={`clt-shell ${fullscreen ? "clt-shell--fullscreen" : ""} clt-shell--${zoomMode}`} style={paletteCssVars() as React.CSSProperties}>
+    <section className={`clt-shell ${fullscreen ? "clt-shell--fullscreen" : ""} clt-shell--${zoomMode} clt-shell--${viewMode}`} style={paletteCssVars() as React.CSSProperties}>
       <header className="clt-header">
         <div className="clt-title">
           <div className="clt-title__icon"><Network size={19} /></div>
@@ -1031,14 +1057,6 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
             <span>Nodes appear after discovery or membership enrollment.</span>
           </div>
         )}
-        {viewMode === "map" && !deviceFix && scopedNodes.length > 0 && (
-          <div className="clt-empty">
-            <MapPin size={30} />
-            <strong>No device location yet</strong>
-            <span>Use "Update browser location" in the Geofence card to report this device's position.</span>
-          </div>
-        )}
-
         <svg ref={svgRef} className="clt-svg" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label={`${viewMode === "mesh" ? "Mesh" : "Map"} topology for ${selectedCircleLabel}`}>
           <defs>
             <radialGradient id="clt-node-online"><stop offset="0" stopColor="#153b3b" /><stop offset="1" stopColor="#07151c" /></radialGradient>
@@ -1073,7 +1091,6 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
             )}
 
             {viewMode === "mesh" && (
-              <>
                 <g className="clt-links">
                   {links.map((link: CircleTopologyLink, linkIndex) => {
                     const source = nodeMap.get(link.source);
@@ -1109,6 +1126,7 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
                     );
                   })}
                 </g>
+            )}
 
                 <g className="clt-nodes">
                   {nodes.map((node) => {
@@ -1184,8 +1202,6 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
                     );
                   })}
                 </g>
-              </>
-            )}
           </g>
         </svg>
 

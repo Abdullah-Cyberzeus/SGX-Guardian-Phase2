@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "react-router";
-import { Home, Bell, Cpu, Cloud, Settings, MessageSquare, Phone, Users } from "lucide-react";
+import { Home, Bell, Cpu, Cloud, Settings, MessageSquare, Phone, Users, Link2 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { isMemberRole } from "../utils/authorization";
 
@@ -41,11 +41,19 @@ const memberTabs = [
   { label: "Settings", icon: Settings, path: "/member-settings", custom: false },
 ];
 
+const pendingMemberTabs = [
+  { label: "Join", icon: Link2, path: "/join-circle", custom: false },
+  { label: "Settings", icon: Settings, path: "/member-settings", custom: false },
+];
+
 export function BottomNav() {
   const location = useLocation();
   const navigate = useNavigate();
   const { session } = useAuth();
-  const tabs = isMemberRole(session?.user.role) ? memberTabs : adminTabs;
+  const memberSession = isMemberRole(session?.user.role);
+  const tabs = memberSession && (session?.circleIds.length || 0) === 0
+    ? pendingMemberTabs
+    : memberSession ? memberTabs : adminTabs;
 
   const isActive = (path: string) => location.pathname.startsWith(path);
 

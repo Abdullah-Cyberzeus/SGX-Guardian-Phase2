@@ -31,7 +31,7 @@ export function AL07AIRecommendation() {
       })
       .catch((error) => {
         if (controller.signal.aborted) return;
-        setState({ status: "unavailable", message: error instanceof ApiError && error.status === 404 ? "No AI analysis has been generated for this alert." : "AI analysis is temporarily unavailable." });
+        setState({ status: "unavailable", message: error instanceof ApiError && error.status === 404 ? "No analysis has been generated for this alert." : "Analysis is temporarily unavailable." });
       });
     return () => controller.abort();
   }, [id, alert]);
@@ -47,7 +47,7 @@ export function AL07AIRecommendation() {
   if (!alert) {
     return (
       <div className="flex flex-col" style={{ minHeight: "100dvh" }}>
-        <PageHeader title="AI Analysis" />
+        <PageHeader title="Analysis" />
         <p style={{ fontFamily: "Inter, sans-serif", color: "var(--muted-foreground)", padding: "16px" }}>Alert not found</p>
       </div>
     );
@@ -55,14 +55,14 @@ export function AL07AIRecommendation() {
 
   return (
     <div className="flex flex-col" style={{ minHeight: "100dvh" }}>
-      <PageHeader title="AI Full Analysis" />
+      <PageHeader title="Full Analysis" />
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-2xl p-4 md:p-6 flex flex-col gap-5">
           <div className="flex items-center gap-2">
             <div className="rounded-lg flex items-center gap-1.5 px-3 py-1.5" style={{ backgroundColor: "color-mix(in srgb, var(--primary) 15%, transparent)", border: "1px solid color-mix(in srgb, var(--primary) 25%, transparent)" }}>
               <Brain size={14} style={{ color: "var(--primary)" }} />
               <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--primary)", letterSpacing: "0.06em" }}>
-                Guardian AI
+                Guardian
               </span>
             </div>
             <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>

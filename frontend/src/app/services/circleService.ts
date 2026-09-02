@@ -83,6 +83,15 @@ export interface MemberEnrollmentInvite {
   enrollment: MemberEnrollment;
 }
 
+export interface AvailablePwaMember {
+  userId: string;
+  name: string;
+  email: string;
+  memberDid: string;
+  circleIds: string[];
+  registrationExpiresAt?: number;
+}
+
 export interface JoinPreview {
   valid: boolean;
   circle?: Partial<Circle>;
@@ -338,10 +347,11 @@ export const circleService = {
     return normalizeInvite({ ...payload?.invite, ...payload });
   },
 
-  createMemberEnrollmentInvite: (id: string, expiresInMinutes = 60, baseUrl = window.location.origin) =>
+  createMemberEnrollmentInvite: (id: string, expiresInMinutes = 60, baseUrl = window.location.origin, targetUserId?: string) =>
     api.post<MemberEnrollmentInvite>(`/circles/${encode(id)}/member-invites`, {
       baseUrl,
       expiresInMinutes,
+      targetUserId,
     }),
 
   async getMemberEnrollments(id: string): Promise<MemberEnrollment[]> {
@@ -351,11 +361,21 @@ export const circleService = {
     );
   },
 
+  async getAvailablePwaMembers(id: string): Promise<AvailablePwaMember[]> {
+    return listFrom<AvailablePwaMember>(
+      await api.get<unknown>(`/circles/${encode(id)}/pwa-members/available`),
+      'members',
+    );
+  },
+
   approveMemberEnrollment: (id: string, approvalId: string) =>
     api.post<MemberEnrollment>(`/circles/${encode(id)}/member-enrollments/${encode(approvalId)}/approve`),
 
   rejectMemberEnrollment: (id: string, approvalId: string) =>
     api.post<MemberEnrollment>(`/circles/${encode(id)}/member-enrollments/${encode(approvalId)}/reject`),
+
+  sendMemberEnrollmentInvite: (id: string, approvalId: string) =>
+    api.post<MemberEnrollment>(`/circles/${encode(id)}/member-enrollments/${encode(approvalId)}/send`),
 
   async deliverInvite(id: string, inviteId: string): Promise<CircleInvite> {
     const payload = await api.post<any>(`/circles/${encode(id)}/invites/${encode(inviteId)}/deliver`);

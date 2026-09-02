@@ -173,7 +173,7 @@ export function AL06AlertDetail() {
 
             <div className="rounded-lg border border-border p-4" style={{ backgroundColor: "var(--card)" }}>
               <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "10px" }}>
-                AI Snapshot
+                Alert Snapshot
               </p>
               <div className="flex items-center gap-2 mb-3">
                 <Brain size={14} style={{ color: "var(--primary)" }} />
@@ -189,7 +189,7 @@ export function AL06AlertDetail() {
                   Recommended Actions
                 </p>
                 {actions.length === 0 ? (
-                  <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>No AI response plan has been generated for this alert.</p>
+                  <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>No response plan has been generated for this alert.</p>
                 ) : <ol className="flex flex-col gap-2">
                   {actions.slice(0, 4).map((action, index) => (
                     <li key={index} style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--foreground)", lineHeight: 1.5 }}>

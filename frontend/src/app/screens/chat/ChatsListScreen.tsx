@@ -57,7 +57,7 @@ function previewTime(timestamp?: number) {
 
 export function ChatsListScreen({ compact = false }: { compact?: boolean } = {}) {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { session } = useAuth();
   const memberSession = isMemberRole(session?.user.role);
   const { data, loading, error, refetch } = useChatPeers();

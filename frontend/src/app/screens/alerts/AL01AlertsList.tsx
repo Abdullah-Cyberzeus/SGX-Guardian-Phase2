@@ -99,7 +99,7 @@ function RecommendationCard({ state }: { state: RecommendationState }) {
       <div className="rounded-lg border p-4" style={{ backgroundColor: "var(--card)", borderColor: state.status === "unauthorized" ? "color-mix(in srgb, var(--chart-5) 28%, var(--border))" : "var(--border)" }}>
         <div className="flex items-center gap-2 mb-2">
           <Brain size={14} style={{ color: "var(--primary)" }} />
-          <span style={sectionLabel}>AI-READY REMEDIATION ADVISORY</span>
+          <span style={sectionLabel}>REMEDIATION ADVISORY</span>
         </div>
         <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{title}</p>
         <p className="mt-1" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.6 }}>{message}</p>
@@ -118,7 +118,7 @@ function RecommendationCard({ state }: { state: RecommendationState }) {
       <div className="flex items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2">
           <Brain size={14} style={{ color: "var(--primary)" }} />
-          <span style={sectionLabel}>AI REMEDIATION RECOMMENDATION</span>
+          <span style={sectionLabel}>REMEDIATION RECOMMENDATION</span>
         </div>
         <span className="rounded-full px-2 py-0.5" style={{ backgroundColor: isFallback ? "color-mix(in srgb, var(--chart-5) 13%, transparent)" : "color-mix(in srgb, var(--primary) 13%, transparent)", border: `1px solid ${isFallback ? "color-mix(in srgb, var(--chart-5) 25%, transparent)" : "color-mix(in srgb, var(--primary) 25%, transparent)"}`, color: isFallback ? "var(--chart-5)" : "var(--primary)", fontFamily: "Inter, sans-serif", fontSize: "10px", fontWeight: "var(--font-weight-semibold)" }}>
           {rec.source || "fallback"}
@@ -467,10 +467,10 @@ function AlertListPanel({
           together, so the alert list keeps full height on short viewports. */}
       <div className="flex-1 overflow-y-auto flex flex-col">
 
-      {/* AI Threat Intelligence */}
+      {/* Threat Intelligence */}
       <div className={`border-b border-border flex-shrink-0 ${isPanel ? "px-5 py-4" : "px-4 py-4"}`} style={{ backgroundColor: "var(--card)" }}>
         <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "10px" }}>
-          AI Threat Intelligence
+          Threat Intelligence
         </p>
         <div className="grid grid-cols-2 gap-2">
           {[
@@ -555,7 +555,10 @@ function AlertListPanel({
             <span key={f} className="flex items-center gap-1 px-2 py-1 rounded-full"
               style={{ backgroundColor: "color-mix(in srgb, var(--primary) 12%, transparent)", color: "var(--primary)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", border: "1px solid color-mix(in srgb, var(--primary) 25%, transparent)" }}>
               {f}
-              <button onClick={() => { if (f === severityFilter) setSeverityFilter("ALL"); else setStatusFilter("ALL"); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, lineHeight: 0 }}>
+              <button onClick={() => {
+                if (["HIGH", "MEDIUM", "LOW"].includes(f)) setSeverityFilter("ALL");
+                else setStatusFilter("ALL");
+              }} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, lineHeight: 0 }}>
                 <X size={11} style={{ color: "var(--primary)" }} />
               </button>
             </span>
@@ -768,8 +771,9 @@ export function AL01AlertsList() {
 
   const filtered = useMemo(() => {
     return baseAlerts.filter((a: any) => {
+      const normalizedSeverity = String(a.severity ?? "").toUpperCase();
       const matchSearch = !search || a.title.toLowerCase().includes(search.toLowerCase()) || a.device.toLowerCase().includes(search.toLowerCase());
-      const matchSeverity = severityFilter === "ALL" || a.severity === severityFilter;
+      const matchSeverity = severityFilter === "ALL" || normalizedSeverity === severityFilter;
       const matchStatus = statusFilter === "ALL" || a.status === statusFilter
         || (statusFilter === "Quarantine" && a.status === "Blocked");
       return matchSearch && matchSeverity && matchStatus;
@@ -936,7 +940,7 @@ export function AL01AlertsList() {
               </div>
               <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-lg)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>Select an alert to view details</p>
               <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", maxWidth: "300px", lineHeight: 1.6 }}>
-                Click any alert from the list to see full AI analysis and take action inline — no navigation needed.
+                Click any alert from the list to see full analysis and take action inline.
               </p>
             </div>
           )}

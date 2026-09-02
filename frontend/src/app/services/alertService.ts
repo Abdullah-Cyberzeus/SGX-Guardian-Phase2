@@ -133,7 +133,7 @@ export const alertService = {
   async getAll(filters?: AlertFilters): Promise<AlertsResponse> {
     const raw = await api.get<ThreatAlertApi[]>('/threat/alerts', {
       ...(filters?.severity ? { severity: filters.severity.toLowerCase() } : {}),
-      ...(filters?.limit ? { limit: filters.limit } : {}),
+      limit: filters?.limit ?? 10000,
     });
     const alerts = raw.map(normalizeThreatAlert);
     return { alerts, total: alerts.length, unread: alerts.length, timestamp: new Date().toISOString() };

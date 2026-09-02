@@ -660,7 +660,6 @@ fn validate_member_registration(
     }
     if user.status != "active"
         || user.browser_registration_id.is_none()
-        || user.circle_ids.is_empty()
         || user
             .registration_expires_at
             .is_none_or(|expiry| expiry <= chrono::Utc::now().timestamp())

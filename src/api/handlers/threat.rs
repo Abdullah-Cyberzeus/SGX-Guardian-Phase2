@@ -61,9 +61,14 @@ pub async fn list_alerts(
     Ok(Json(
         alerts
             .into_iter()
-            .map(|alert| ThreatAlertView {
-                archived: alert_state.archived.contains(&alert.alert_id),
-                alert,
+            .map(|mut alert| {
+                let event_alert_id = event_alert_id(&alert);
+                alert.alert_id = event_alert_id.clone();
+
+                ThreatAlertView {
+                    archived: alert_state.archived.contains(&event_alert_id),
+                    alert,
+                }
             })
             .collect(),
     ))
@@ -105,7 +110,7 @@ pub async fn delete_alert(
 ) -> Result<Json<AlertActionResponse>, ApiError> {
     let mut alerts = load_alerts(&state).await?;
     let before = alerts.len();
-    alerts.retain(|alert| alert.alert_id != alert_id);
+    alerts.retain(|alert| !alert_id_matches(alert, &alert_id));
     if alerts.len() == before {
         return Err(ApiError::NotFound("alert not found".into()));
     }
@@ -438,11 +443,19 @@ fn alert_state_path(state: &AppState) -> PathBuf {
     PathBuf::from(&state.threat_state_dir).join("alert_state.json")
 }
 
+fn event_alert_id(alert: &ThreatAlert) -> String {
+    format!("{}-{}", alert.alert_id, alert.timestamp.timestamp_millis())
+}
+
+fn alert_id_matches(alert: &ThreatAlert, candidate: &str) -> bool {
+    alert.alert_id == candidate || event_alert_id(alert) == candidate
+}
+
 async fn ensure_alert_exists(state: &AppState, alert_id: &str) -> Result<(), ApiError> {
     if load_alerts(state)
         .await?
         .iter()
-        .any(|alert| alert.alert_id == alert_id)
+        .any(|alert| alert_id_matches(alert, alert_id))
     {
         Ok(())
     } else {
@@ -705,5 +718,24 @@ mod tests {
         assert_eq!(value["threats24h"], 0);
         assert_eq!(value["blocked"], 0);
         assert!(value.get("lastUpdated").is_some());
+    }
+
+    #[test]
+    fn event_alert_ids_are_unique_per_alert_timestamp() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-08-19T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let first = alert_at(Severity::High, false, now);
+        let second = alert_at(
+            Severity::High,
+            false,
+            now + chrono::Duration::milliseconds(1),
+        );
+
+        assert_eq!(first.alert_id, second.alert_id);
+        assert_ne!(event_alert_id(&first), event_alert_id(&second));
+        assert!(alert_id_matches(&first, &first.alert_id));
+        assert!(alert_id_matches(&first, &event_alert_id(&first)));
+        assert!(!alert_id_matches(&first, &event_alert_id(&second)));
     }
 }

@@ -138,6 +138,21 @@ pub async fn list(State(s): State<Arc<AppState>>) -> Result<Json<PeersResponse>,
     };
     let per_node_raw: Vec<serde_json::Value> =
         serde_json::from_str(&per_node_text).unwrap_or_default();
+    let mut known_peer_ids = raw
+        .iter()
+        .filter_map(|peer| peer.get("peer_id").and_then(|value| value.as_str()))
+        .map(|peer_id| peer_id.to_lowercase())
+        .collect::<std::collections::BTreeSet<_>>();
+
+    for peer in &per_node_raw {
+        let Some(peer_id) = peer.get("peer_id").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        if known_peer_ids.insert(peer_id.to_lowercase()) {
+            raw.push(peer.clone());
+        }
+    }
+
     for peer in &mut raw {
         if peer.get("did").and_then(|value| value.as_str()).is_some() {
             continue;
@@ -171,11 +186,7 @@ pub async fn list(State(s): State<Arc<AppState>>) -> Result<Json<PeersResponse>,
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .to_string();
-            let has_attested_identity = v
-                .get("virtual_id")
-                .and_then(|x| x.as_str())
-                .is_some_and(|value| !value.trim().is_empty());
-            (peer_id != s.node_id && has_attested_identity).then_some((v, peer_id))
+            (peer_id != s.node_id).then_some((v, peer_id))
         })
         .collect();
     let peers: Vec<Peer> =

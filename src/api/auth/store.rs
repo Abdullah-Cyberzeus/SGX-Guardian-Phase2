@@ -127,6 +127,16 @@ pub struct NewMemberRegistration {
     pub pending_approval: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct NewStandaloneMemberRegistration {
+    pub name: String,
+    pub email: String,
+    pub pw_hash: String,
+    pub browser_registration_id: String,
+    pub guardian_fingerprint: String,
+    pub registration_expires_at: i64,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct SessionRec {
     pub jti: String,
@@ -217,6 +227,11 @@ pub trait UserStore: Send + Sync {
     /// Atomically creates a member or reactivates the same inactive member
     /// during a verified rejoin. Active accounts cannot be overwritten.
     async fn create_or_reactivate_member(&self, member: NewMemberRegistration) -> Result<User>;
+    /// Creates a signed-up PWA member with no Circle access yet.
+    async fn create_standalone_member(
+        &self,
+        member: NewStandaloneMemberRegistration,
+    ) -> Result<User>;
     /// Atomically grants an existing active browser member access to one
     /// additional Circle without rotating their browser DID or registration.
     async fn add_member_circle(
@@ -889,6 +904,33 @@ impl UserStore for JsonUserStore {
                     "active"
                 }
                 .into();
+                users.push(user.clone());
+                Ok(user)
+            })
+            .await
+    }
+
+    async fn create_standalone_member(
+        &self,
+        member: NewStandaloneMemberRegistration,
+    ) -> Result<User> {
+        self.file
+            .mutate(move |users| {
+                let normalized_email = normalize_email(&member.email);
+                if users.iter().any(|user| user.email == normalized_email) {
+                    return Err(anyhow!("user already exists"));
+                }
+                let mut user = Self::build_user(NewUser {
+                    name: member.name,
+                    email: normalized_email,
+                    pw_hash: member.pw_hash,
+                    role: UserRole::Member,
+                    oidc_sub: None,
+                });
+                user.browser_registration_id = Some(member.browser_registration_id);
+                user.guardian_fingerprint = Some(member.guardian_fingerprint);
+                user.registration_expires_at = Some(member.registration_expires_at);
+                user.status = "active".into();
                 users.push(user.clone());
                 Ok(user)
             })

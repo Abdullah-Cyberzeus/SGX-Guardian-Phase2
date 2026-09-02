@@ -1,5 +1,7 @@
 use crate::api::auth::{
-    middleware::AuthenticatedSession, password, session, store::NewMemberRegistration,
+    middleware::AuthenticatedSession,
+    password, session,
+    store::{NewMemberRegistration, NewStandaloneMemberRegistration, UserRole},
 };
 use crate::api::{error::ApiError, handlers::peers, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
@@ -475,6 +477,14 @@ pub struct MemberJoinRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct StandaloneMemberSignupRequest {
+    pub name: String,
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AdditionalCircleJoinRequest {
     pub invite_token: String,
 }
@@ -521,6 +531,8 @@ pub struct MintMemberEnrollmentRequest {
     pub base_url: String,
     #[serde(default)]
     pub expires_in_minutes: Option<i64>,
+    #[serde(default)]
+    pub target_user_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -535,6 +547,41 @@ pub struct MintMemberEnrollmentResponse {
 #[serde(rename_all = "camelCase")]
 pub struct MemberEnrollmentListResponse {
     pub enrollments: Vec<MemberEnrollmentView>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailablePwaMemberView {
+    pub user_id: String,
+    pub name: String,
+    pub email: String,
+    pub member_did: String,
+    pub circle_ids: Vec<String>,
+    pub registration_expires_at: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailablePwaMembersResponse {
+    pub members: Vec<AvailablePwaMemberView>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddExistingPwaMemberRequest {
+    pub user_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetedPwaMemberInviteListResponse {
+    pub invites: Vec<MemberEnrollmentView>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetedPwaMemberInviteDecisionRequest {
+    pub accept: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -584,7 +631,37 @@ pub async fn mint_member_enrollment(
     }
 
     let base_url = crate::api::handlers::circle::normalize_owner_url(&body.base_url)?;
-    let registration_id = Uuid::new_v4().to_string();
+    let target_user = if let Some(target_user_id) = body
+        .target_user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let user = state
+            .admin
+            .users
+            .find_by_id(target_user_id)
+            .await?
+            .ok_or_else(|| ApiError::NotFound("PWA member not found".into()))?;
+        if user.role != UserRole::Member || user.status != "active" {
+            return Err(ApiError::Conflict(
+                "active PWA member account required".into(),
+            ));
+        }
+        if user.circle_ids.iter().any(|allowed| allowed == &circle_id) {
+            return Err(ApiError::Conflict(
+                "PWA member is already in this Circle".into(),
+            ));
+        }
+        Some(user)
+    } else {
+        None
+    };
+    let registration_id = target_user
+        .as_ref()
+        .and_then(|user| user.browser_registration_id.clone())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     let member_did = crate::api::handlers::browser_member::did_for_registration(&registration_id);
     let (issuer, km) = store::load_runtime_signing_context(&state.node_id)
         .map_err(|error| ApiError::Internal(error.to_string()))?;
@@ -610,16 +687,31 @@ pub async fn mint_member_enrollment(
         registration_id,
         member_did,
         claim_hash: enrollment_claim_hash(&secret),
-        state: "issued".into(),
+        state: if target_user.is_some() {
+            "draft".into()
+        } else {
+            "issued".into()
+        },
         created_at: chrono::Utc::now().to_rfc3339(),
         expires_at: token.expires_at.clone(),
-        user_id: None,
-        name: None,
-        email: None,
+        user_id: target_user.as_ref().map(|user| user.user_id.clone()),
+        name: target_user.as_ref().map(|user| user.name.clone()),
+        email: target_user.as_ref().map(|user| user.email.clone()),
         decided_at: None,
-        additional_membership: false,
+        additional_membership: target_user.is_some(),
     };
     let mut records = load_member_enrollments()?;
+    if target_user.as_ref().is_some_and(|user| {
+        records.iter().any(|existing| {
+            existing.circle_id == circle_id
+                && existing.user_id.as_deref() == Some(user.user_id.as_str())
+                && matches!(existing.state.as_str(), "draft" | "issued" | "pending")
+        })
+    }) {
+        return Err(ApiError::Conflict(
+            "PWA member already has an open invitation for this Circle".into(),
+        ));
+    }
     records.push(record.clone());
     save_member_enrollments(&records)?;
 
@@ -666,6 +758,318 @@ pub async fn list_member_enrollments(
         .map(MemberEnrollmentView::from)
         .collect();
     Ok(Json(MemberEnrollmentListResponse { enrollments }))
+}
+
+pub async fn list_available_pwa_members(
+    State(state): State<Arc<AppState>>,
+    Path(circle_id): Path<String>,
+) -> Result<Json<AvailablePwaMembersResponse>, ApiError> {
+    let circle = store::get_circle(&state.node_id, &circle_id)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    if circle.owner_did != state.device_did {
+        return Err(ApiError::Forbidden(
+            "only the Circle owner can view available PWA members".into(),
+        ));
+    }
+    let open_invites = load_member_enrollments()?;
+    let now = chrono::Utc::now().timestamp();
+    let mut members = state
+        .admin
+        .users
+        .list()
+        .await?
+        .into_iter()
+        .filter(|user| {
+            user.role == UserRole::Member
+                && user.status == "active"
+                && user
+                    .browser_registration_id
+                    .as_deref()
+                    .is_some_and(|value| !value.trim().is_empty())
+                && user
+                    .registration_expires_at
+                    .is_some_and(|expiry| expiry > now)
+                && !user.circle_ids.iter().any(|allowed| allowed == &circle_id)
+                && !open_invites.iter().any(|invite| {
+                    invite.circle_id == circle_id
+                        && invite.user_id.as_deref() == Some(user.user_id.as_str())
+                        && matches!(invite.state.as_str(), "draft" | "issued" | "pending")
+                })
+        })
+        .map(|user| {
+            let registration_id = user.browser_registration_id.clone().unwrap_or_default();
+            AvailablePwaMemberView {
+                user_id: user.user_id,
+                name: user.name,
+                email: user.email,
+                member_did: crate::api::handlers::browser_member::did_for_registration(
+                    &registration_id,
+                ),
+                circle_ids: user.circle_ids,
+                registration_expires_at: user.registration_expires_at,
+            }
+        })
+        .collect::<Vec<_>>();
+    members.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    Ok(Json(AvailablePwaMembersResponse { members }))
+}
+
+pub async fn add_existing_pwa_member(
+    State(state): State<Arc<AppState>>,
+    Path(circle_id): Path<String>,
+    Json(body): Json<AddExistingPwaMemberRequest>,
+) -> Result<Json<AvailablePwaMemberView>, ApiError> {
+    let circle = store::get_circle(&state.node_id, &circle_id)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    if circle.owner_did != state.device_did {
+        return Err(ApiError::Forbidden(
+            "only the Circle owner can add PWA members".into(),
+        ));
+    }
+    if circle.is_archived() {
+        return Err(ApiError::Conflict(
+            "cannot add members to an archived Circle".into(),
+        ));
+    }
+    let user = state
+        .admin
+        .users
+        .find_by_id(body.user_id.trim())
+        .await?
+        .ok_or_else(|| ApiError::NotFound("PWA member not found".into()))?;
+    if user.role != UserRole::Member || user.status != "active" {
+        return Err(ApiError::Conflict(
+            "active PWA member account required".into(),
+        ));
+    }
+    let registration_id = user
+        .browser_registration_id
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| ApiError::Conflict("PWA member registration is missing".into()))?;
+    if user
+        .registration_expires_at
+        .is_none_or(|expiry| expiry <= chrono::Utc::now().timestamp())
+    {
+        return Err(ApiError::Conflict(
+            "PWA member registration is expired".into(),
+        ));
+    }
+    let updated = state
+        .admin
+        .users
+        .add_member_circle(&user.user_id, &registration_id, &circle_id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let member_did = crate::api::handlers::browser_member::did_for_registration(&registration_id);
+    crate::notify::publish_circle_member_joined(
+        &member_did,
+        &updated.name,
+        &circle.name,
+        &circle.circle_id,
+    );
+    if let Err(error) =
+        crate::api::handlers::circle::refresh_and_broadcast_member_snapshot(&state, &circle_id)
+            .await
+    {
+        tracing::warn!(
+            circle = circle_id,
+            member = %member_did,
+            "PWA member added but Circle snapshot broadcast failed: {error:?}"
+        );
+    }
+    log_audit(
+        &state.node_id,
+        AuditCategory::Identity,
+        AuditSeverity::Info,
+        AuditAction::Succeeded,
+        &format!(
+            "existing PWA member added circle={} member={} actor={}",
+            circle_id, member_did, updated.user_id
+        ),
+    );
+    Ok(Json(AvailablePwaMemberView {
+        user_id: updated.user_id,
+        name: updated.name,
+        email: updated.email,
+        member_did,
+        circle_ids: updated.circle_ids,
+        registration_expires_at: updated.registration_expires_at,
+    }))
+}
+
+pub async fn send_targeted_pwa_member_invite(
+    State(state): State<Arc<AppState>>,
+    Path((circle_id, approval_id)): Path<(String, String)>,
+) -> Result<Json<MemberEnrollmentView>, ApiError> {
+    let circle = store::get_circle(&state.node_id, &circle_id)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    if circle.owner_did != state.device_did {
+        return Err(ApiError::Forbidden(
+            "only the Circle owner can send PWA member invites".into(),
+        ));
+    }
+    let mut records = load_member_enrollments()?;
+    let index = records
+        .iter()
+        .position(|record| record.approval_id == approval_id && record.circle_id == circle_id)
+        .ok_or_else(|| ApiError::NotFound("member invite not found".into()))?;
+    if records[index].state != "draft" || !records[index].additional_membership {
+        return Err(ApiError::Conflict(format!(
+            "member invite cannot be sent from state {}",
+            records[index].state
+        )));
+    }
+    records[index].state = "issued".into();
+    save_member_enrollments(&records)?;
+    let view = MemberEnrollmentView::from(&records[index]);
+    log_audit(
+        &state.node_id,
+        AuditCategory::Identity,
+        AuditSeverity::Info,
+        AuditAction::Created,
+        &format!(
+            "targeted PWA member invite sent circle={} approval={} member={}",
+            circle_id, approval_id, view.member_did
+        ),
+    );
+    Ok(Json(view))
+}
+
+pub async fn targeted_pwa_member_invites(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthenticatedSession>,
+) -> Result<Json<TargetedPwaMemberInviteListResponse>, ApiError> {
+    if auth.claims.role != "member" {
+        return Err(ApiError::Forbidden(
+            "only PWA members can view member invites".into(),
+        ));
+    }
+    let registration_id = auth
+        .claims
+        .browser_registration_id
+        .as_deref()
+        .ok_or_else(|| ApiError::Unauthorized("member browser registration is missing".into()))?;
+    let member_did = crate::api::handlers::browser_member::did_for_registration(registration_id);
+    let invites = load_member_enrollments()?
+        .iter()
+        .filter(|record| {
+            record.additional_membership
+                && record.user_id.as_deref() == Some(auth.claims.sub.as_str())
+                && record.member_did == member_did
+                && record.state == "issued"
+        })
+        .map(MemberEnrollmentView::from)
+        .filter(|view| view.state == "issued")
+        .collect();
+    Ok(Json(TargetedPwaMemberInviteListResponse { invites }))
+}
+
+pub async fn decide_targeted_pwa_member_invite(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthenticatedSession>,
+    Path(approval_id): Path<String>,
+    Json(body): Json<TargetedPwaMemberInviteDecisionRequest>,
+) -> Result<Json<MemberEnrollmentView>, ApiError> {
+    if auth.claims.role != "member" {
+        return Err(ApiError::Forbidden(
+            "only PWA members can decide member invites".into(),
+        ));
+    }
+    let registration_id = auth
+        .claims
+        .browser_registration_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| ApiError::Unauthorized("member browser registration is missing".into()))?
+        .to_string();
+    let member_did = crate::api::handlers::browser_member::did_for_registration(&registration_id);
+    let _guard = MEMBER_JOIN_LOCK.lock().await;
+    let mut records = load_member_enrollments()?;
+    let index = records
+        .iter()
+        .position(|record| {
+            record.approval_id == approval_id
+                && record.additional_membership
+                && record.user_id.as_deref() == Some(auth.claims.sub.as_str())
+                && record.member_did == member_did
+        })
+        .ok_or_else(|| ApiError::NotFound("member invite not found".into()))?;
+    if records[index].state != "issued" {
+        return Err(ApiError::Conflict(format!(
+            "member invite is already {}",
+            records[index].state
+        )));
+    }
+    enrollment_not_expired(&records[index])?;
+    if body.accept {
+        let circle = store::get_circle(&state.node_id, &records[index].circle_id)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        if circle.owner_did != state.device_did {
+            return Err(ApiError::Forbidden(
+                "targeted PWA invite must be owned by this Guardian".into(),
+            ));
+        }
+        let token = invite::load_invite(&records[index].invite_id)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        invite::assert_redeemable(&circle, &token, &member_did)
+            .map_err(|error| ApiError::Conflict(error.to_string()))?;
+        invite::record_redemption(&token.id, &member_did)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        if let Err(error) = state
+            .admin
+            .users
+            .add_member_circle(
+                &auth.claims.sub,
+                &registration_id,
+                &records[index].circle_id,
+            )
+            .await
+        {
+            let _ = invite::remove_redemption(&token.id, &member_did);
+            return Err(ApiError::Internal(error.to_string()));
+        }
+        records[index].state = "approved".into();
+    } else {
+        records[index].state = "rejected".into();
+    }
+    records[index].decided_at = Some(chrono::Utc::now().to_rfc3339());
+    save_member_enrollments(&records)?;
+    let view = MemberEnrollmentView::from(&records[index]);
+    drop(_guard);
+    if body.accept {
+        if let Err(error) = crate::api::handlers::circle::refresh_and_broadcast_member_snapshot(
+            &state,
+            &view.circle_id,
+        )
+        .await
+        {
+            tracing::warn!(
+                circle = %view.circle_id,
+                member = %view.member_did,
+                "targeted PWA invite accepted but Circle snapshot broadcast failed: {error:?}"
+            );
+        }
+    }
+    log_audit(
+        &state.node_id,
+        AuditCategory::Identity,
+        if body.accept {
+            AuditSeverity::Info
+        } else {
+            AuditSeverity::Warning
+        },
+        if body.accept {
+            AuditAction::Succeeded
+        } else {
+            AuditAction::Rejected
+        },
+        &format!(
+            "targeted PWA member invite {} circle={} approval={} member={}",
+            view.state, view.circle_id, view.approval_id, view.member_did
+        ),
+    );
+    Ok(Json(view))
 }
 
 pub async fn member_approval_status(
@@ -1076,6 +1480,81 @@ pub async fn preview_member_invite(
         expires_at: token.expires_at,
         role: "member",
         approval_required,
+    }))
+}
+
+pub async fn signup_member(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<StandaloneMemberSignupRequest>,
+) -> Result<Json<MemberJoinResponse>, ApiError> {
+    let email = body.email.trim().to_ascii_lowercase();
+    let name = body.name.trim().to_string();
+    if name.len() < 2 || !email.contains('@') {
+        return Err(ApiError::BadRequest(
+            "valid name and email are required".into(),
+        ));
+    }
+    rate_limit(&state, "member-signup", &email)?;
+    let pw_hash = password::hash_password(body.password)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let registration_id = Uuid::new_v4().to_string();
+    let current_fingerprint = guardian_fingerprint(&state.device_pubkey_point);
+    let registration_expires_at =
+        chrono::Utc::now().timestamp() + registration_days().saturating_mul(24 * 60 * 60);
+    let user = state
+        .admin
+        .users
+        .create_standalone_member(NewStandaloneMemberRegistration {
+            name,
+            email,
+            pw_hash,
+            browser_registration_id: registration_id.clone(),
+            guardian_fingerprint: current_fingerprint.clone(),
+            registration_expires_at,
+        })
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    let remaining_registration_secs = registration_expires_at
+        .saturating_sub(chrono::Utc::now().timestamp())
+        .max(1) as u64;
+    let ttl = state.session_ttl_secs.min(remaining_registration_secs);
+    let (session_token, claims, session_record) = session::issue(
+        state.signer.clone(),
+        &state.device_did,
+        &user,
+        Duration::from_secs(ttl.max(1)),
+    )
+    .await?;
+    state.admin.sessions.put(session_record).await?;
+    let browser_member_did =
+        crate::api::handlers::browser_member::did_for_registration(&registration_id);
+    log_audit(
+        &state.node_id,
+        AuditCategory::Identity,
+        AuditSeverity::Info,
+        AuditAction::Created,
+        &format!(
+            "standalone PWA member signed up actor={} registration={} member={}",
+            user.user_id, registration_id, browser_member_did
+        ),
+    );
+    Ok(Json(MemberJoinResponse {
+        token: session_token,
+        user_id: user.user_id,
+        email: user.email,
+        role: "member".to_string(),
+        scopes: claims.scopes,
+        guardian_did: state.device_did.clone(),
+        guardian_fingerprint: current_fingerprint,
+        circle_ids: claims.circle_ids,
+        browser_member_did,
+        browser_registration_id: registration_id,
+        expires_at: claims.exp,
+        registration_expires_at,
+        status: "active".to_string(),
+        approval_id: None,
+        approval_claim: None,
     }))
 }
 
