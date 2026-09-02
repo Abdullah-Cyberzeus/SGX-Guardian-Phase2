@@ -2157,6 +2157,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "sgx-broker"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "dashmap",
+ "futures-util",
+ "http-body-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
+ "tower 0.5.3",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "sgx-pa-cli"
 version = "0.1.0"
 dependencies = [

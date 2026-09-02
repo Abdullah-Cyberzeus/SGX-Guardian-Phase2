@@ -13,4 +13,10 @@ echo "   software keys      : SGX_FORCE_SOFTWARE_KEYS=${SGX_FORCE_SOFTWARE_KEYS:
 echo "   lighthouse ip      : SGX_LIGHTHOUSE_IP=${SGX_LIGHTHOUSE_IP:-<unset>}"
 echo "-----------------------------------------------------------"
 
+if [ "${NODE}" = "broker" ] || [ "${1:-}" = "broker" ]; then
+    echo "   mode               : SGX Cloud Enrollment Broker (VPS)"
+    echo "-----------------------------------------------------------"
+    exec /usr/local/bin/sgx-broker
+fi
+
 exec /usr/local/bin/sgx_guardian_client "${NODE}"

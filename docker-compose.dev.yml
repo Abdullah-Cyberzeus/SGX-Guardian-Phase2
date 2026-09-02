@@ -43,6 +43,29 @@ x-guardian-common: &guardian-common
   restart: unless-stopped
 
 services:
+  # ── VPS Cloud Enrollment Broker (Lighthouse + Relay for remote nodes) ──
+  broker:
+    <<: *guardian-common
+    container_name: sgx-broker
+    hostname: broker.guardian
+    command: ["broker"]
+    networks:
+      sgxnet:
+        ipv4_address: 172.31.250.20
+    ports:
+      - "8080:8080"
+    environment:
+      <<: *guardian-env
+      NODE_ID: broker
+      RUST_LOG: info
+      SGX_BROKER_PORT: 8080
+      SGX_BROKER_TOKEN: "test-broker-secret-token"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   nodeA:
     <<: *guardian-common
     container_name: sgx-nodeA
@@ -50,6 +73,10 @@ services:
     environment:
       <<: *guardian-env
       NODE_ID: nodeA
+      SGX_BROKER_URL: "http://172.31.250.20:8080"
+      SGX_BROKER_TOKEN: "test-broker-secret-token"
+      SGX_VPS_PUBLIC_IP: "172.31.250.20"
+      SGX_VPS_OVERLAY_IP: "192.168.100.10"
       # Per-node TPM handles: 0x10 spacing leaves headroom for dkp.rs::rotate()
       # (new_handle = base + version - 1) before colliding with the next node's base.
       SGX_TPM_DKP_HANDLE_BASE: "0x81000010"
@@ -85,6 +112,7 @@ services:
     environment:
       <<: *guardian-env
       NODE_ID: nodeB
+      SGX_BROKER_URL: "http://172.31.250.20:8080"
       SGX_LIGHTHOUSE_IP: 172.31.250.10
       SGX_TPM_DKP_HANDLE_BASE: "0x81000020"
       SGX_TPM_DIK_HANDLE: "0x81000110"
@@ -113,6 +141,7 @@ services:
     environment:
       <<: *guardian-env
       NODE_ID: nodeC
+      SGX_BROKER_URL: "http://172.31.250.20:8080"
       SGX_LIGHTHOUSE_IP: 172.31.250.10
       SGX_TPM_DKP_HANDLE_BASE: "0x81000030"
       SGX_TPM_DIK_HANDLE: "0x81000120"

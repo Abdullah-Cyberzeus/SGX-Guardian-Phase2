@@ -1283,7 +1283,7 @@ pub async fn approve(
         .ok_or_else(|| ApiError::NotFound("device not found".into()))?;
 
     if let Some(mac) = device.mac.as_deref().filter(|mac| !mac.trim().is_empty()) {
-        crate::api::handlers::discovery::approve_device(
+        let _ = crate::api::handlers::discovery::approve_device(
             State(state.clone()),
             Json(crate::api::handlers::discovery::ApproveRequest {
                 mac: mac.to_string(),

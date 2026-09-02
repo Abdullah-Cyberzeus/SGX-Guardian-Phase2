@@ -330,10 +330,13 @@ build_workspace() {
   rm -f \
     "${out_dir}/${DAEMON_BINARY_NAME}" \
     "${out_dir}/sgx-pa-cli" \
+    "${out_dir}/sgx-broker" \
     "${zig_out_dir}/${DAEMON_BINARY_NAME}" \
     "${zig_out_dir}/sgx-pa-cli" \
+    "${zig_out_dir}/sgx-broker" \
     "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" \
-    "${ARTIFACT_DIR}/sgx-pa-cli"
+    "${ARTIFACT_DIR}/sgx-pa-cli" \
+    "${ARTIFACT_DIR}/sgx-broker"
 
   if [[ "${CLEAN:-0}" == "1" ]]; then
     log "CLEAN=1 detected; running cargo clean..."
@@ -341,9 +344,9 @@ build_workspace() {
   fi
 
   if [[ "${USE_ZIGBUILD}" == "1" ]]; then
-    log "Building BOTH binaries for ${ZIG_TARGET} with cargo-zigbuild (release)..."
+    log "Building ALL binaries for ${ZIG_TARGET} with cargo-zigbuild (release)..."
   else
-    log "Building BOTH binaries for ${TARGET_TRIPLE} (release)..."
+    log "Building ALL binaries for ${TARGET_TRIPLE} (release)..."
   fi
 
   local attempt=1
@@ -407,21 +410,24 @@ collect_artifacts() {
   fi
   local daemon_src="${out_dir}/${DAEMON_BINARY_NAME}"
   local cli_src="${out_dir}/sgx-pa-cli"
+  local broker_src="${out_dir}/sgx-broker"
 
   [[ -f "${daemon_src}" ]] || die "Missing built binary: ${daemon_src}"
   [[ -f "${cli_src}" ]] || die "Missing built binary: ${cli_src}"
+  [[ -f "${broker_src}" ]] || die "Missing built binary: ${broker_src}"
 
   mkdir -p "${ARTIFACT_DIR}"
 
   cp "${daemon_src}" "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}"
   cp "${cli_src}" "${ARTIFACT_DIR}/sgx-pa-cli"
+  cp "${broker_src}" "${ARTIFACT_DIR}/sgx-broker"
 
   log "Artifacts ready"
-  ls -lh "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" "${ARTIFACT_DIR}/sgx-pa-cli"
-  file "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" "${ARTIFACT_DIR}/sgx-pa-cli"
+  ls -lh "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" "${ARTIFACT_DIR}/sgx-pa-cli" "${ARTIFACT_DIR}/sgx-broker"
+  file "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" "${ARTIFACT_DIR}/sgx-pa-cli" "${ARTIFACT_DIR}/sgx-broker"
 
   log "SHA256"
-  sha256sum "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" "${ARTIFACT_DIR}/sgx-pa-cli"
+  sha256sum "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" "${ARTIFACT_DIR}/sgx-pa-cli" "${ARTIFACT_DIR}/sgx-broker"
 
   if need_cmd aarch64-linux-gnu-objdump; then
     log "Max GLIBC symbol version required"

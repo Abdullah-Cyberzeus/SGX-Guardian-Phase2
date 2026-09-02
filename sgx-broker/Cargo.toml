@@ -1,0 +1,30 @@
+[package]
+name = "sgx-broker"
+version = "0.1.0"
+edition = "2021"
+description = "SGX Guardian Cloud Enrollment Broker — lightweight VPS relay for remote node onboarding"
+
+[[bin]]
+name = "sgx-broker"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["macros", "ws"] }
+tokio = { version = "1.37", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1"
+dashmap = "5.5"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+futures-util = "0.3"
+
+[dev-dependencies]
+tokio-tungstenite = "0.26"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+
+[lib]
+doctest = false

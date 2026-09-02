@@ -74,7 +74,7 @@ secure-element = []
 tpm = []
 
 [workspace]
-members = ["sgx-pa-cli"]
+members = ["sgx-pa-cli", "sgx-broker"]
 
 
 [lib]

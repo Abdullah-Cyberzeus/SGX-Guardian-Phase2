@@ -565,6 +565,239 @@ fn set_relay_enabled_in_node_config(node_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+// ────────────────────────────────────────────────────────────────────
+// Remote enrollment via VPS broker (HTTP POST)
+// ────────────────────────────────────────────────────────────────────
+
+/// Enrollment request payload sent to the VPS broker.
+#[derive(serde::Serialize)]
+struct BrokerEnrollRequest {
+    circle_id: String,
+    node_id: String,
+    public_key_pem: String,
+}
+
+/// Enrollment response from the VPS broker.
+#[derive(serde::Deserialize)]
+struct BrokerEnrollResponse {
+    status: String,
+    #[serde(default)]
+    overlay_ip: String,
+    #[serde(default)]
+    cert: String,
+    #[serde(default)]
+    key: String,
+    #[serde(default)]
+    ca_cert: String,
+    #[serde(default)]
+    config: String,
+    #[serde(default)]
+    message: String,
+}
+
+/// Request a CA-signed Nebula certificate via the VPS enrollment broker.
+///
+/// This is the remote-enrollment alternative to `request_certificate_from_ca()`.
+/// Used when `SGX_BROKER_URL` is set, indicating the node should enroll
+/// through the VPS relay instead of directly via LAN gRPC.
+///
+/// On success:
+/// - Writes `<NEBULA_BASE_DIR>/nodes/<node_id>.crt`
+/// - Writes `<NEBULA_BASE_DIR>/ca/ca.crt`
+/// - Writes `<NEBULA_BASE_DIR>/nebula.yaml` (VPS-pointing config)
+pub async fn request_certificate_via_broker(
+    node_id: String,
+    broker_url: String,
+    public_key_pem: String,
+) {
+    if node_id.is_empty()
+        || !node_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        eprintln!("❌ Invalid node_id for broker enrollment");
+        return;
+    }
+
+    let cert_path = format!("{}/nodes/{}.crt", NEBULA_BASE_DIR, node_id);
+
+    // Idempotent: already enrolled
+    if Path::new(&cert_path).exists() && NebulaCA::ca_cert_exists(NEBULA_BASE_DIR) {
+        println!(
+            "ℹ️  Cert + CA cert already present for {} — skipping broker enrollment.",
+            node_id
+        );
+        return;
+    }
+
+    println!(
+        "☁️  Enrolling via VPS broker at {} (node={})",
+        broker_url, node_id
+    );
+    log_event(
+        &node_id,
+        &format!("Starting broker enrollment to {}", broker_url),
+    );
+    log_audit(
+        &node_id,
+        AuditCategory::Network,
+        AuditSeverity::Info,
+        AuditAction::Started,
+        &format!("Broker enrollment initiated to {}", broker_url),
+    );
+
+    let enroll_url = format!("{}/api/v1/enroll", broker_url.trim_end_matches('/'));
+    let mut attempt: u32 = 0;
+
+    loop {
+        attempt += 1;
+
+        // Re-check in case another code path wrote the files
+        if Path::new(&cert_path).exists() && NebulaCA::ca_cert_exists(NEBULA_BASE_DIR) {
+            println!("✅ Cert + CA cert detected on filesystem — done.");
+            return;
+        }
+
+        if attempt > 1 {
+            println!("☁️  Broker enrollment attempt #{}", attempt);
+        }
+
+        let payload = BrokerEnrollRequest {
+            circle_id: "guardian-circle-alpha".to_string(),
+            node_id: node_id.clone(),
+            public_key_pem: public_key_pem.clone(),
+        };
+
+        let client = match reqwest::Client::builder().build() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("⚠️  HTTP client build failed: {}", e);
+                tokio::time::sleep(std::time::Duration::from_secs(RETRY_INTERVAL_SECS)).await;
+                continue;
+            }
+        };
+
+        match client.post(&enroll_url).json(&payload).send().await {
+            Ok(http_resp) => {
+                if !http_resp.status().is_success() {
+                    eprintln!(
+                        "⚠️  Broker returned HTTP {}: retrying in {}s",
+                        http_resp.status(),
+                        RETRY_INTERVAL_SECS
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(RETRY_INTERVAL_SECS)).await;
+                    continue;
+                }
+
+                let resp: BrokerEnrollResponse = match http_resp.json().await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("⚠️  Failed to parse broker response: {}", e);
+                        tokio::time::sleep(std::time::Duration::from_secs(RETRY_INTERVAL_SECS))
+                            .await;
+                        continue;
+                    }
+                };
+
+                match resp.status.as_str() {
+                    "APPROVED" => {
+                        // Save CA cert
+                        if !resp.ca_cert.is_empty() {
+                            match NebulaCA::save_ca_cert(NEBULA_BASE_DIR, &resp.ca_cert) {
+                                Ok(_) => {
+                                    if let Some(fp) = NebulaCA::ca_fingerprint(NEBULA_BASE_DIR) {
+                                        println!("🔏 CA fingerprint (from broker): {}", fp);
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("❌ Failed to save CA cert: {}", e);
+                                    log_error(&node_id, &format!("CA cert save FATAL: {}", e));
+                                    return;
+                                }
+                            }
+                        }
+
+                        // Save node cert
+                        if !resp.cert.is_empty() {
+                            if let Err(e) = write_file(&cert_path, &resp.cert).await {
+                                eprintln!("❌ Save cert failed: {}", e);
+                                tokio::time::sleep(std::time::Duration::from_secs(
+                                    RETRY_INTERVAL_SECS,
+                                ))
+                                .await;
+                                continue;
+                            }
+                        }
+
+                        // Save node private key
+                        if !resp.key.is_empty() {
+                            let key_path = format!("{}/nodes/{}.key", NEBULA_BASE_DIR, node_id);
+                            if let Err(e) = write_file(&key_path, &resp.key).await {
+                                eprintln!("⚠️  Save key failed: {}", e);
+                            }
+                        }
+
+                        // Save nebula config (VPS-pointing)
+                        if !resp.config.is_empty() {
+                            let config_path =
+                                format!("{}/nebula.yaml", NEBULA_BASE_DIR);
+                            if let Err(e) = write_file(&config_path, &resp.config).await {
+                                eprintln!("⚠️  Save nebula config failed: {}", e);
+                            } else {
+                                println!("📋 Remote nebula config saved");
+                            }
+                        }
+
+                        println!("✅ Broker enrollment complete for {} (overlay: {})", node_id, resp.overlay_ip);
+                        log_event(&node_id, &format!("Broker enrollment completed successfully (overlay: {})", resp.overlay_ip));
+                        log_audit(
+                            &node_id,
+                            AuditCategory::Network,
+                            AuditSeverity::Info,
+                            AuditAction::Succeeded,
+                            "Certificate received via VPS broker",
+                        );
+                        return;
+                    }
+
+                    "REJECTED" => {
+                        eprintln!("❌ Enrollment rejected: {}", resp.message);
+                        log_audit(
+                            &node_id,
+                            AuditCategory::Network,
+                            AuditSeverity::Warning,
+                            AuditAction::Rejected,
+                            &format!("Broker enrollment rejected: {}", resp.message),
+                        );
+                        return;
+                    }
+
+                    other => {
+                        eprintln!(
+                            "⚠️  Broker returned status '{}': {} — retrying",
+                            other, resp.message
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                if attempt <= 3 {
+                    eprintln!(
+                        "⚠️  Broker request attempt #{} failed: {} — retrying in {}s",
+                        attempt, e, RETRY_INTERVAL_SECS
+                    );
+                }
+                log_event(
+                    &node_id,
+                    &format!("Broker enrollment attempt #{} failed: {}", attempt, e),
+                );
+            }
+        }
+
+        tokio::time::sleep(std::time::Duration::from_secs(RETRY_INTERVAL_SECS)).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::ensure_local_membership_vc;

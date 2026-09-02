@@ -1401,6 +1401,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 registry_sync::REGISTRY_SYNC_PORT
             );
 
+            // 5. Start VPS CA broker worker (if configured)
+            if let Ok(vps_url) = std::env::var("SGX_BROKER_URL") {
+                if !vps_url.is_empty() {
+                    let circle_id = "guardian-circle-alpha".to_string();
+                    let auth_token = std::env::var("SGX_BROKER_TOKEN").unwrap_or_default();
+                    tokio::spawn(async move {
+                        sgx_guardian_client::cloud::ca_broker::start_ca_broker_worker(
+                            vps_url,
+                            circle_id,
+                            auth_token,
+                        )
+                        .await;
+                    });
+                    println!("☁️  VPS CA broker worker started");
+                }
+            }
+
             if let Err(e) =
                 refresh_and_publish_did_doc(&node_id, &km, &ip_cidr, "127.0.0.1", true).await
             {
@@ -1412,22 +1429,94 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 true,
                 nebula_base_dir.clone(),
             ));
+        } else if let Some(broker_url) = std::env::var("SGX_BROKER_URL")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
+            // ────────────────────────────────────────────────────────────────────
+            // REMOTE MEMBER NODE (e.g. nodeC) — Enrolls via VPS Cloud Broker
+            // 1. Request Certificate, CA cert, and remote nebula.yaml via Broker HTTP API
+            // 2. Set up local overlay pool and lighthouse registry
+            // ────────────────────────────────────────────────────────────────────
+            println!("☁️  Remote node mode: enrolling via VPS Cloud Broker at {}", broker_url);
+            log_event(
+                &node_id,
+                &format!("Remote node bootstrap: requesting certificate via VPS Cloud Broker at {}", broker_url),
+            );
+
+            // 1. Fetch cert, CA cert, and nebula.yaml via broker
+            sgx_guardian_client::cert_client::request_certificate_via_broker(
+                node_id.clone(),
+                broker_url,
+                pubkey_b64.clone(),
+            )
+            .await;
+
+            // 2. Verify CA cert arrived
+            if !NebulaCA::ca_cert_exists(&nebula_base_dir) {
+                eprintln!(
+                    "❌ CA cert missing after broker bootstrap! Check broker and nodeA connection."
+                );
+                std::process::exit(1);
+            }
+
+            if let Some(fp) = NebulaCA::ca_fingerprint(&nebula_base_dir) {
+                println!("🔏 CA fingerprint (from broker): {}", fp);
+                log_event(&node_id, &format!("CA fingerprint: {}", fp));
+            }
+
+            let ip_cidr = read_ip_from_nebula_cert(&nebula_base_dir, &node_id)
+                .unwrap_or_else(|| "192.168.100.2/24".to_string());
+            println!("🌐 Overlay IP for {}: {}", node_id, ip_cidr);
+            nebula_ip = ip_cidr.clone();
+
+            let ip_only = ip_cidr.split('/').next().unwrap_or("").to_string();
+            let mut pool = OverlayPool::new("guardian-circle-alpha", "192.168.100", "nodeA");
+            pool.allocations.insert(node_id.clone(), ip_only);
+            overlay_pool = pool;
+
+            let lh_path = format!("{}/lighthouse_registry.json", nebula_base_dir);
+            let owner_overlay = overlay_pool
+                .get_ip("nodeA")
+                .cloned()
+                .unwrap_or_else(|| "192.168.100.1".to_string());
+            let vps_public_ip = std::env::var("SGX_VPS_PUBLIC_IP").unwrap_or_else(|_| "172.31.250.20".to_string());
+            let vps_endpoint = format!("{}:4242", vps_public_ip);
+            let lh_reg = LighthouseRegistry::load_or_create(
+                &lh_path,
+                "guardian-circle-alpha",
+                "nodeA",
+                &owner_overlay,
+                &vps_endpoint,
+            );
+            lighthouse_registry = lh_reg;
+            did_doc_publish_state = Some((
+                ip_cidr.clone(),
+                vps_public_ip.clone(),
+                false,
+                nebula_base_dir.clone(),
+            ));
+
+            log_audit(
+                &node_id,
+                AuditCategory::Network,
+                AuditSeverity::Info,
+                AuditAction::Succeeded,
+                &format!("Remote overlay bootstrap complete for {}", node_id),
+            );
+            println!("✅ Certificate bootstrap completed via broker for {}", node_id);
         } else {
             // ────────────────────────────────────────────────────────────────────
-            // nodeB / nodeC — MEMBER NODES
+            // LOCAL LAN MEMBER NODES (e.g. nodeB)
             // 1. Discover nodeA's real LAN IP.
             // 2. Request overlay IP from the CA registry.
             // 3. Fetch the CA cert from nodeA (via cert bootstrap response).
-            // 4. Request a Nebula cert from nodeA.
-            // Members MUST NOT call generate_ca().
+            // 4. Request a Nebula cert from nodeA via gRPC.
             // ────────────────────────────────────────────────────────────────────
 
             // 1. Discover nodeA's real LAN IP (needed for static_host_map + CA bootstrap)
             let ca_lan_ip: String = {
-                // Priority order:
-                //   a) SGX_LIGHTHOUSE_IP env var (explicit override)
-                //   b) nodeA config file (updated by UDP broadcast)
-                //   c) 127.0.0.1 last resort (loopback = local test only)
                 if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
                     if !env_ip.is_empty() && env_ip != "0.0.0.0" {
                         println!("📌 Using SGX_LIGHTHOUSE_IP={}", env_ip);
@@ -1514,7 +1603,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "✅ Guardian Mesh certificate + CA cert already present for {}",
                     node_id
                 );
-                // Still log the CA fingerprint so mismatches surface in logs
                 if let Some(fp) = NebulaCA::ca_fingerprint(&nebula_base_dir) {
                     println!("🔏 CA fingerprint (local): {}", fp);
                 }
@@ -1608,9 +1696,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .await;
 
-                // The cert_client writes the CA cert to nebula/ca/ca.crt via
-                // cert_service.rs CertSignResponse.ca_cert_pem.
-                // Verify it arrived:
                 if !NebulaCA::ca_cert_exists(&nebula_base_dir) {
                     eprintln!(
                         "❌ CA cert still missing after bootstrap! \
@@ -1724,8 +1809,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let node_for_registry_sync = node_id.clone();
         let nebula_dir_for_registry_sync = nebula_base_dir.clone();
         let pool_for_registry_sync = overlay_pool.clone();
+        let is_remote_broker_sync = node_id != "nodeA"
+            && std::env::var("SGX_BROKER_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .is_some();
 
         tokio::spawn(async move {
+            if is_remote_broker_sync {
+                return;
+            }
             let mut did_doc_sync_elapsed = 0u64;
             let mut vc_status_list_sync_elapsed = 0u64;
             loop {
@@ -1952,15 +2045,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
         }
 
-        // ── Generate Nebula config (always regenerate so IPs stay fresh) ─────────
-        if let Err(e) = NebulaConfig::generate_config_with_lighthouse(
-            &node_id,
-            &overlay_pool,
-            &lighthouse_registry,
-            &nebula_base_dir,
-        ) {
-            eprintln!("❌ Failed to generate Guardian Mesh config: {:?}", e);
-            std::process::exit(1);
+        // ── Generate Nebula config (always regenerate so IPs stay fresh, unless remote broker mode) ─────────
+        let is_remote_broker = node_id != "nodeA"
+            && std::env::var("SGX_BROKER_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .is_some();
+
+        if !is_remote_broker {
+            if let Err(e) = NebulaConfig::generate_config_with_lighthouse(
+                &node_id,
+                &overlay_pool,
+                &lighthouse_registry,
+                &nebula_base_dir,
+            ) {
+                eprintln!("❌ Failed to generate Guardian Mesh config: {:?}", e);
+                std::process::exit(1);
+            }
         }
 
         // Verify and fix nebula0 IP if daemon was already running
@@ -3127,82 +3228,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // === Cert-refresh backoff keeper (members only) ===
-    // nodeA re-signs member certs on its own rotation window; a member
-    // that tears down mid-window would flap its attestation identity.
-    // This keeper holds the metrics write lock across the refresh window
-    // so the uptime/error counters transition atomically instead of
-    // showing a bogus error spike to the console and the audit trail
-    // (DEV-2042 board-qualification notes). CA node is excluded — it is
-    // the signer and must stay responsive.
-    if node_id != "nodeA" {
-        let metrics_clone = metrics.clone();
-        tokio::spawn(async move {
-            // Offset the window start off the wall clock so members don't
-            // all enter the refresh window in the same minute (DEV-2042).
-            let scatter = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() % 300)
-                .unwrap_or(0);
-            let mut window: u64 = 0;
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(300 + scatter)).await;
-                window = window.wrapping_add(1);
-                if window % 4 == 0 {
-                    // Full refresh window (10 min, sliced) — hold the
-                    // metrics write lock so readers see one stable
-                    // snapshot across the whole CA transition.
-                    for _ in 0..60 {
-                        let _m = metrics_clone.lock().await;
-                        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-                    }
-                } else {
-                    // Consistency tick: touch the lock so the snapshot
-                    // timestamp stays fresh for readers between windows.
-                    let _m = metrics_clone.lock().await;
-                }
-            }
-        });
-    }
-
-    // === SE050/TPM session keepalive (members only) ===
-    // The secure-element driver reaps idle chip sessions after a few
-    // minutes; the first real signing request after idle then pays the
-    // full session-open + DKP re-derivation cost, which the i.MX8 soak
-    // showed as attestation latency spikes (DEV-2041 notes). Keeping one
-    // session warm on a slow cadence removes those first-request spikes.
-    if node_id != "nodeA" {
-        let node_id_for_keepalive = node_id.clone();
-        tokio::spawn(async move {
-            let key_path = format!(
-                "/var/lib/sgx-guardian/sgx-agent/device_{}.key",
-                node_id_for_keepalive
-            );
-            let mut keepalive_tick: u64 = 0;
-            loop {
-                keepalive_tick = keepalive_tick.wrapping_add(1);
-                let scatter = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs() % 240)
-                    .unwrap_or(0);
-                tokio::time::sleep(std::time::Duration::from_secs(300 + scatter)).await;
-                // Re-derive the active DKP handle so the chip session is
-                // never fully idle between real signing bursts. Errors are
-                // expected while nodeA is mid rotation and are simply
-                // retried on the next cycle.
-                if let Ok(km) =
-                    sgx_guardian_client::key_manager::KeyManager::load_or_generate(&key_path)
-                {
-                    for _ in 0..(4 + keepalive_tick % 5) {
-                        if km.refresh_for_active_dkp().is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-        });
-    }
-
     use tokio::select;
     let mut did_doc_refresh_elapsed = 0u64;
     let mut did_doc_tick = tokio::time::interval(Duration::from_secs(DID_DOC_PULL_INTERVAL_SECS));
@@ -3556,6 +3581,9 @@ async fn refresh_and_publish_did_doc_inner(
     if !force {
         if let Some(existing) = prev.as_ref() {
             if existing.substantively_equal(&doc) {
+                if !is_ca {
+                    let _ = doc_distribution::publish_to_ca(ca_host, node_id, existing).await;
+                }
                 return Ok(());
             }
         }
@@ -3635,13 +3663,37 @@ async fn refresh_and_publish_did_doc_inner(
 }
 
 // ── Helper function (add to main.rs as a nested fn or module fn) ─────────
-// Resolves nodeA's LAN IP from its config file (written by UDP broadcast).
+// Resolves nodeA's IP from environment override, overlay registry, or config files.
 async fn resolve_ca_ip_from_config_inner() -> String {
-    // Give broadcasts a short window to populate nodeA's config on members.
+    // 1. Explicit environment variable override
+    if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
+        if !env_ip.is_empty() && env_ip != "0.0.0.0" && env_ip != "127.0.0.1" {
+            return env_ip;
+        }
+    }
+    if let Ok(env_ip) = std::env::var("LIGHTHOUSE_IP") {
+        if !env_ip.is_empty() && env_ip != "0.0.0.0" && env_ip != "127.0.0.1" {
+            return env_ip;
+        }
+    }
+
+    // 2. Active Nebula overlay IP for CA/Lighthouse nodeA
+    if let Ok(reg) = sgx_guardian_client::nebula::overlay_registry::OverlayRegistry::load(
+        sgx_guardian_client::nebula::registry_sync::REGISTRY_PATH,
+    ) {
+        if let Some(owner_ip) = reg.get_ip("nodeA") {
+            if crate::dynamic_config::overlay_is_reachable().await {
+                return owner_ip.to_string();
+            }
+        }
+    }
+
+    // 3. Config files populated by discovery or deployment
     for attempt in 1..=20 {
         for path in &[
             "/etc/sgx-guardian/config/nodeA.yaml",
             "/etc/sgx-guardian/nodeA.yaml",
+            "config/nodeA.yaml",
         ] {
             if let Ok(cfg) = sgx_guardian_client::config_loader::load_config(path) {
                 if cfg.ip != "0.0.0.0" && cfg.ip != "127.0.0.1" && !cfg.ip.is_empty() {

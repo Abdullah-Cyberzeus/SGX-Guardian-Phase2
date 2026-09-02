@@ -1,0 +1,24 @@
+[Unit]
+Description=SGX Guardian Cloud Enrollment Broker
+Documentation=https://github.com/Abdullah-Cyberzeus/SGX-Guardian-Phase2
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sgx-broker
+Restart=always
+RestartSec=3
+Environment=RUST_LOG=info
+Environment=SGX_BROKER_PORT=8080
+# Set your pre-shared auth token (optional but recommended):
+# Environment=SGX_BROKER_TOKEN=your-secret-token-here
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
