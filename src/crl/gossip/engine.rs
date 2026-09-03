@@ -439,6 +439,18 @@ async fn handle_inbound(
     let line = protocol::read_json_line(&mut reader)
         .await
         .map_err(|error| error.to_string())?;
+    // One Guardian gossip listener serves multiple signed message kinds.
+    // CRL remains the default push/pull protocol; Task2 VS15 VSHIFT_ALERT is
+    // dispatched through this SAME listener/port/peer trust boundary.
+    let kind_probe: serde_json::Value = serde_json::from_str(line.trim())
+        .map_err(|error| format!("bad gossip message: {}", error))?;
+
+    if kind_probe.get("kind").and_then(serde_json::Value::as_str)
+        == Some(protocol::KIND_VSHIFT_ALERT)
+    {
+        return super::vshift::handle_inbound_line(&line, &mut write_half, node_id, config).await;
+    }
+
     let request: SyncRequest = serde_json::from_str(line.trim())
         .map_err(|error| format!("bad sync request: {}", error))?;
 

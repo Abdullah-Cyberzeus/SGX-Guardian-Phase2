@@ -20,6 +20,11 @@ use sgx_anomaly_engine::virtual_shift::{
     VirtualShiftTriggerConfig, VirtualShiftTriggerManager, VS01_TO_VS09_PROPOSALS,
     VS10_VS11_REVIEWS,
 };
+use sgx_anomaly_engine::virtual_shift::{
+    build_candidate_from_approved_review, sign_approved_policy, vshift_alert_from_signed_policy,
+    write_built_candidate, write_signed_policy, write_vshift_alert, ActiveVirtualShiftPolicy,
+    ApprovalService, GuardianKeyManager, VS12_CANDIDATES, VS13_SIGNED_POLICIES, VS14_ALERTS,
+};
 use sha2::{Digest, Sha256};
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -46,6 +51,12 @@ const ADMIN_NETWORK_RULE_TEMPLATES_JSON: &str =
     include_str!("../../crates/sgx-anomaly-engine/config/admin_network_rule_templates.json");
 const NODE_ROLES_JSON: &str =
     include_str!("../../crates/sgx-anomaly-engine/config/node_roles.json");
+const ACTIVE_VIRTUAL_SHIFT_POLICY_JSON: &str =
+    include_str!("../../crates/sgx-anomaly-engine/config/active_virtual_shift_policy.json");
+const GUARDIAN_SIGNER_JSON: &str =
+    include_str!("../../crates/sgx-anomaly-engine/config/guardian_signer.json");
+const CIRCLE_GOSSIP_TOPOLOGY_JSON: &str =
+    include_str!("../../crates/sgx-anomaly-engine/config/circle_gossip_topology.json");
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Task1AdvisoryConfidence {
@@ -401,6 +412,13 @@ fn ensure_virtual_shift_assets(state_dir: impl AsRef<Path>) -> Result<VirtualShi
     write_if_missing(&policy_templates, POLICY_ACTION_TEMPLATES_JSON)?;
     write_if_missing(&network_templates, ADMIN_NETWORK_RULE_TEMPLATES_JSON)?;
 
+    let active_policy = config_dir.join("active_virtual_shift_policy.json");
+    let guardian_signer = config_dir.join("guardian_signer.json");
+    let gossip_topology = config_dir.join("circle_gossip_topology.json");
+    write_if_missing(&active_policy, ACTIVE_VIRTUAL_SHIFT_POLICY_JSON)?;
+    write_if_missing(&guardian_signer, GUARDIAN_SIGNER_JSON)?;
+    write_if_missing(&gossip_topology, CIRCLE_GOSSIP_TOPOLOGY_JSON)?;
+
     let proposal_root = root.join(VS01_TO_VS09_PROPOSALS);
     let review_root = root.join(VS10_VS11_REVIEWS);
     std::fs::create_dir_all(&proposal_root)?;
@@ -542,6 +560,228 @@ pub fn persist_remediation_plan_for_owner_review(
         queue.enqueue_ai_remediation_plan(ai_plan, "task1-threat-service-runtime")?;
 
     Ok(handoff)
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Task2OwnerDecisionRuntimeResult {
+    pub schema_version: u32,
+    pub plan_id: String,
+    pub decision_actor: String,
+    pub decision: String,
+    pub policy_build_allowed: bool,
+    pub candidate_path: Option<String>,
+    pub signed_policy_path: Option<String>,
+    pub alert_id: Option<String>,
+    pub alert_json_path: Option<String>,
+    pub alert_protobuf_path: Option<String>,
+}
+
+fn task2_now_ms() -> Result<u64> {
+    Ok(u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis(),
+    )?)
+}
+
+/// Consume one real Task1 remediation review in the production state directory.
+///
+/// Reject stops at the durable owner decision.
+/// Approve continues through VS12 candidate -> VS13 Guardian signing ->
+/// VS14 signed VSHIFT_ALERT persistence. VS15 network delivery remains separate.
+pub fn process_task2_owner_decision(
+    node_id: &str,
+    state_dir: impl AsRef<Path>,
+    plan_id: &str,
+    approve: bool,
+    reason: Option<String>,
+) -> Result<Task2OwnerDecisionRuntimeResult> {
+    let state_dir = state_dir.as_ref();
+    let paths = ensure_virtual_shift_assets(state_dir)?;
+    let root = virtual_shift_root_path(state_dir);
+
+    let roles = RoleRegistry::from_json_str(NODE_ROLES_JSON)?;
+    let queue = ReviewQueue::new(paths.review_root, roles);
+    let approval = ApprovalService::new(queue);
+
+    let decided_at_ms = task2_now_ms()?;
+    let decided = if approve {
+        approval.approve(node_id, plan_id, reason, decided_at_ms)?
+    } else {
+        approval.reject(node_id, plan_id, reason, decided_at_ms)?
+    };
+
+    if !approve {
+        return Ok(Task2OwnerDecisionRuntimeResult {
+            schema_version: 1,
+            plan_id: decided.recommendation_id,
+            decision_actor: node_id.to_owned(),
+            decision: "rejected".into(),
+            policy_build_allowed: false,
+            candidate_path: None,
+            signed_policy_path: None,
+            alert_id: None,
+            alert_json_path: None,
+            alert_protobuf_path: None,
+        });
+    }
+
+    let active_policy_path = root
+        .join(VIRTUAL_SHIFT_CONFIG_DIR)
+        .join("active_virtual_shift_policy.json");
+    let active = ActiveVirtualShiftPolicy::from_path(&active_policy_path)?;
+
+    let built = build_candidate_from_approved_review(&active, &decided)?;
+    let candidate_path = write_built_candidate(root.join(VS12_CANDIDATES), &built)?;
+
+    let signer_config = root
+        .join(VIRTUAL_SHIFT_CONFIG_DIR)
+        .join("guardian_signer.json");
+    let guardian = GuardianKeyManager::from_config(&signer_config, root.join("guardian_keys"))?;
+
+    let signed_at_ms = task2_now_ms()?;
+    let signed = sign_approved_policy(&guardian, &decided, &built, signed_at_ms)?;
+    let signed_policy_path = write_signed_policy(root.join(VS13_SIGNED_POLICIES), &signed)?;
+
+    let issued_at_ms = task2_now_ms()?;
+    let alert_id = format!(
+        "vsa-{}-v{}-{}",
+        built.candidate.circle_id,
+        built.candidate.policy_version,
+        built.candidate.source_recommendation_id
+    );
+
+    let alert = vshift_alert_from_signed_policy(
+        &decided,
+        &signed,
+        alert_id.clone(),
+        issued_at_ms,
+        issued_at_ms + 300_000,
+    )?;
+
+    let (alert_json_path, alert_protobuf_path) =
+        write_vshift_alert(root.join(VS14_ALERTS), &alert)?;
+
+    Ok(Task2OwnerDecisionRuntimeResult {
+        schema_version: 1,
+        plan_id: decided.recommendation_id,
+        decision_actor: node_id.to_owned(),
+        decision: "approved".into(),
+        policy_build_allowed: true,
+        candidate_path: Some(candidate_path.display().to_string()),
+        signed_policy_path: Some(signed_policy_path.display().to_string()),
+        alert_id: Some(alert_id),
+        alert_json_path: Some(alert_json_path.display().to_string()),
+        alert_protobuf_path: Some(alert_protobuf_path.display().to_string()),
+    })
+}
+
+/// Load the exact persisted VS14 alert for an already-approved Task2 review.
+///
+/// This is intentionally retry-only:
+/// - it never re-runs owner approval,
+/// - never builds a new candidate,
+/// - never signs a new policy,
+/// - never changes policy version,
+/// - and resolves the alert by its embedded recommendation/anomaly linkage
+///   instead of guessing a policy version or hard-coding an artifact path.
+pub fn load_approved_task2_vshift_alert_for_retry(
+    state_dir: impl AsRef<Path>,
+    plan_id: &str,
+) -> Result<(sgx_anomaly_engine::virtual_shift::VShiftAlert, PathBuf)> {
+    if plan_id.trim().is_empty()
+        || matches!(plan_id, "." | "..")
+        || plan_id.contains('/')
+        || plan_id.contains('\\')
+        || plan_id.contains('\0')
+    {
+        anyhow::bail!("invalid Task2 plan_id");
+    }
+
+    let root = virtual_shift_root_path(state_dir.as_ref());
+
+    let review_path = root
+        .join(VS10_VS11_REVIEWS)
+        .join(plan_id)
+        .join("review.json");
+
+    let review_bytes = std::fs::read(&review_path)?;
+    let review: sgx_anomaly_engine::virtual_shift::review::ReviewRecord =
+        serde_json::from_slice(&review_bytes)?;
+
+    review.validate()?;
+
+    if review.recommendation_id != plan_id {
+        anyhow::bail!("persisted review recommendation_id does not match requested plan_id");
+    }
+
+    if review.status != sgx_anomaly_engine::virtual_shift::review::ReviewStatus::Approved {
+        anyhow::bail!("Task2 gossip retry requires an already-approved review");
+    }
+
+    let owner_decision = review
+        .owner_decision
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("approved Task2 review is missing owner decision"))?;
+
+    if owner_decision.decision != sgx_anomaly_engine::virtual_shift::review::ReviewStatus::Approved
+    {
+        anyhow::bail!("Task2 review owner decision is not approved");
+    }
+
+    let alert_root = root.join(VS14_ALERTS);
+
+    let mut matched: Option<(sgx_anomaly_engine::virtual_shift::VShiftAlert, PathBuf)> = None;
+
+    for entry in std::fs::read_dir(&alert_root)? {
+        let entry = entry?;
+
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+
+        let alert_pb_path = entry.path().join("vshift_alert.pb");
+
+        if !alert_pb_path.is_file() {
+            continue;
+        }
+
+        let bytes = match std::fs::read(&alert_pb_path) {
+            Ok(bytes) => bytes,
+            Err(_) => continue,
+        };
+
+        let alert = match sgx_anomaly_engine::virtual_shift::VShiftAlert::decode(&bytes) {
+            Ok(alert) => alert,
+            Err(_) => continue,
+        };
+
+        if alert.recommendation_id != plan_id {
+            continue;
+        }
+
+        if alert.anomaly_id != review.anomaly_id {
+            anyhow::bail!("persisted VS14 alert anomaly_id does not match approved review");
+        }
+
+        alert.validate()?;
+
+        if matched.is_some() {
+            anyhow::bail!(
+                "multiple persisted VS14 alerts match approved plan '{}'",
+                plan_id
+            );
+        }
+
+        matched = Some((alert, alert_pb_path));
+    }
+
+    matched.ok_or_else(|| {
+        anyhow::anyhow!(
+            "no persisted VS14 alert found for approved plan '{}'",
+            plan_id
+        )
+    })
 }
 
 fn build_pending_review_proposal(

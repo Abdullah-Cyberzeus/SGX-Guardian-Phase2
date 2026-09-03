@@ -33,3 +33,12 @@ telemetry/
 frontend/node_modules/
 frontend/*.tsbuildinfo
 /SGX Frontend/
+
+# Task2 Virtual Shift generated/runtime artifacts
+crates/sgx-anomaly-engine/data/virtual_shift/02_OWNER_REVIEW_DECISIONS/
+crates/sgx-anomaly-engine/data/virtual_shift/04_POLICY_CANDIDATES/
+crates/sgx-anomaly-engine/data/virtual_shift/05_SIGNED_POLICY_PACKAGES/
+crates/sgx-anomaly-engine/data/virtual_shift/06_SIGNED_POLICY_ALERTS/
+crates/sgx-anomaly-engine/data/virtual_shift/07_POLICY_DELIVERY_RECEIPTS/
+crates/sgx-anomaly-engine/data/virtual_shift/08_MEMBER_POLICY_VERIFICATION/
+crates/sgx-anomaly-engine/data/virtual_shift/guardian_keys/

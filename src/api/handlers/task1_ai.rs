@@ -2,12 +2,12 @@ use crate::advisory::AnomalyScoringRuntime;
 use crate::api::auth::middleware::AuthenticatedSession;
 use crate::api::{error::ApiError, state::AppState};
 use crate::task1_ai::{
-    load_recent_full_ml_alerts, RecommendedThresholdRanges, Task1FullMlAlertRecord,
-    Task1RuntimeTracker, Task1ThresholdDefaults, Task1ThresholdSettings,
-    Task1ThresholdSettingsService, Task1ThresholdUpdate,
+    load_recent_full_ml_alerts, process_task2_owner_decision, RecommendedThresholdRanges,
+    Task1FullMlAlertRecord, Task1RuntimeTracker, Task1ThresholdDefaults, Task1ThresholdSettings,
+    Task1ThresholdSettingsService, Task1ThresholdUpdate, Task2OwnerDecisionRuntimeResult,
 };
 use axum::{
-    extract::{Query, State},
+    extract::{Path, Query, State},
     Extension, Json,
 };
 use serde::{Deserialize, Serialize};
@@ -123,6 +123,209 @@ fn threshold_update_actor(
         ));
     }
     Ok(session.claims.sub)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Task2OwnerDecisionRequest {
+    pub reason: Option<String>,
+}
+
+/// Real owner/admin approval of one persisted Task1 remediation plan.
+///
+/// HTTP authentication authorizes the human/operator request.
+/// The local Guardian node identity remains the Circle Owner identity used by
+/// the standalone Virtual Shift ReviewQueue role registry.
+pub async fn approve_remediation_review(
+    State(state): State<Arc<AppState>>,
+    Path(plan_id): Path<String>,
+    session: Option<Extension<AuthenticatedSession>>,
+    Json(request): Json<Task2OwnerDecisionRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize_task2_owner_decision(&state, session)?;
+
+    let result = process_task2_owner_decision(
+        &state.node_id,
+        &state.threat_state_dir,
+        &plan_id,
+        true,
+        request.reason,
+    )
+    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+
+    let mut response =
+        serde_json::to_value(&result).map_err(|error| ApiError::Internal(error.to_string()))?;
+
+    let gossip = if let Some(alert_pb_path) = result.alert_protobuf_path.as_deref() {
+        match std::fs::read(alert_pb_path) {
+            Ok(alert_bytes) => {
+                match sgx_anomaly_engine::virtual_shift::VShiftAlert::decode(&alert_bytes) {
+                    Ok(alert) => {
+                        match crate::crl::gossip::vshift::broadcast_vshift_alert(
+                            &state.node_id,
+                            &alert,
+                        )
+                        .await
+                        {
+                            Ok(receipt) => {
+                                println!(
+                                    "Task2 VS15 real gossip completed alert_id={} origin={} delivered={} pending={} duplicate_suppressed={}",
+                                    receipt.alert_id,
+                                    receipt.origin_node,
+                                    receipt.delivered.len(),
+                                    receipt.pending_offline_nodes.len(),
+                                    receipt.duplicate_suppressed
+                                );
+
+                                serde_json::to_value(receipt).unwrap_or_else(|error| {
+                                    serde_json::json!({
+                                        "status": "broadcast_receipt_serialization_failed",
+                                        "error": error.to_string()
+                                    })
+                                })
+                            }
+                            Err(error) => {
+                                tracing::error!(
+                                    "Task2 VS15 real gossip failed plan_id={} error={}",
+                                    plan_id,
+                                    error
+                                );
+
+                                serde_json::json!({
+                                    "status": "broadcast_failed",
+                                    "error": error.to_string()
+                                })
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        tracing::error!(
+                            "Task2 VS15 alert decode failed plan_id={} path={} error={}",
+                            plan_id,
+                            alert_pb_path,
+                            error
+                        );
+
+                        serde_json::json!({
+                            "status": "alert_decode_failed",
+                            "error": error.to_string()
+                        })
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::error!(
+                    "Task2 VS15 alert read failed plan_id={} path={} error={}",
+                    plan_id,
+                    alert_pb_path,
+                    error
+                );
+
+                serde_json::json!({
+                    "status": "alert_read_failed",
+                    "error": error.to_string()
+                })
+            }
+        }
+    } else {
+        serde_json::json!({
+            "status": "no_signed_alert_to_broadcast"
+        })
+    };
+
+    if let Some(object) = response.as_object_mut() {
+        object.insert("gossip".into(), gossip);
+    }
+
+    Ok(Json(response))
+}
+
+/// Retry VS15 delivery for the exact VS14 alert of an already-approved plan.
+///
+/// This operation never repeats owner approval and never creates/signs a new
+/// policy. It only re-broadcasts the existing persisted VSHIFT_ALERT.
+pub async fn retry_remediation_gossip(
+    State(state): State<Arc<AppState>>,
+    Path(plan_id): Path<String>,
+    session: Option<Extension<AuthenticatedSession>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize_task2_owner_decision(&state, session)?;
+
+    let (alert, alert_protobuf_path) =
+        crate::task1_ai::runtime::load_approved_task2_vshift_alert_for_retry(
+            &state.threat_state_dir,
+            &plan_id,
+        )
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+
+    let receipt = crate::crl::gossip::vshift::broadcast_vshift_alert(&state.node_id, &alert)
+        .await
+        .map_err(|error| ApiError::ServiceUnavailable {
+            code: "TASK2_GOSSIP_RETRY_FAILED",
+            message: error.to_string(),
+        })?;
+
+    println!(
+        "Task2 VS15 retry completed plan_id={} alert_id={} delivered={} pending={} duplicate_suppressed={}",
+        plan_id,
+        receipt.alert_id,
+        receipt.delivered.len(),
+        receipt.pending_offline_nodes.len(),
+        receipt.duplicate_suppressed
+    );
+
+    Ok(Json(serde_json::json!({
+        "schema_version": 1,
+        "operation": "retry_existing_vshift_alert",
+        "retry_only": true,
+        "plan_id": plan_id,
+        "alert_id": alert.alert_id,
+        "alert_protobuf_path": alert_protobuf_path.display().to_string(),
+        "gossip": receipt
+    })))
+}
+
+/// Real owner/admin rejection of one persisted Task1 remediation plan.
+/// Rejection finalizes the review and must not build/sign/broadcast a policy.
+pub async fn reject_remediation_review(
+    State(state): State<Arc<AppState>>,
+    Path(plan_id): Path<String>,
+    session: Option<Extension<AuthenticatedSession>>,
+    Json(request): Json<Task2OwnerDecisionRequest>,
+) -> Result<Json<Task2OwnerDecisionRuntimeResult>, ApiError> {
+    authorize_task2_owner_decision(&state, session)?;
+
+    let result = process_task2_owner_decision(
+        &state.node_id,
+        &state.threat_state_dir,
+        &plan_id,
+        false,
+        request.reason,
+    )
+    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+
+    Ok(Json(result))
+}
+
+fn authorize_task2_owner_decision(
+    state: &AppState,
+    session: Option<Extension<AuthenticatedSession>>,
+) -> Result<(), ApiError> {
+    if crate::runtime_gates::login_disabled() {
+        let _ = state;
+        return Ok(());
+    }
+
+    let session = session
+        .map(|Extension(session)| session)
+        .ok_or_else(|| ApiError::Unauthorized("missing bearer token".into()))?;
+
+    if !matches!(session.claims.role.as_str(), "owner" | "admin") {
+        return Err(ApiError::Forbidden(
+            "Task2 remediation decisions require owner or admin access".into(),
+        ));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

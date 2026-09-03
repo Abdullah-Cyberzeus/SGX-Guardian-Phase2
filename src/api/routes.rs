@@ -87,6 +87,18 @@ pub fn task1_ai_router() -> Router<Arc<AppState>> {
             "/api/v1/task1-ai/alerts",
             get(handlers::task1_ai::list_full_ml_alerts),
         )
+        .route(
+            "/api/v1/task1-ai/reviews/{plan_id}/approve",
+            post(handlers::task1_ai::approve_remediation_review),
+        )
+        .route(
+            "/api/v1/task1-ai/reviews/{plan_id}/retry-gossip",
+            post(handlers::task1_ai::retry_remediation_gossip),
+        )
+        .route(
+            "/api/v1/task1-ai/reviews/{plan_id}/reject",
+            post(handlers::task1_ai::reject_remediation_review),
+        )
 }
 
 pub fn geofence_router() -> Router<Arc<AppState>> {

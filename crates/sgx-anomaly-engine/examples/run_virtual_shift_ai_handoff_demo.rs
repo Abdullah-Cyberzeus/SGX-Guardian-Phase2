@@ -1,5 +1,6 @@
 //! Task 2 AI remediation owner-review proof demo: Task 1 AI remediation plan
-//! is durably handed off, approved/rejected, audited, staged, and signed.
+//! is durably handed off, approved/rejected, audited, staged, signed, gossiped,
+//! and verified by receiving members before enforcement.
 //!
 //! Run from crates/sgx-anomaly-engine:
 //! cargo run --example run_virtual_shift_ai_handoff_demo -- approve
@@ -15,10 +16,12 @@ use sgx_anomaly_engine::{
     roles::RoleRegistry,
     virtual_shift::{
         build_candidate_from_approved_review, sign_approved_policy, verify_signed_policy,
-        vshift_alert_from_signed_policy, write_built_candidate, write_signed_policy,
-        write_vshift_alert, ActiveVirtualShiftPolicy, AiRemediationAction, AiRemediationPlan,
-        ApprovalService, GuardianKeyManager, ReviewQueue, ReviewStatus, VShiftAlert,
-        VS10_VS11_REVIEWS, VS12_CANDIDATES, VS13_SIGNED_POLICIES, VS14_ALERTS,
+        vshift_alert_from_signed_policy, write_built_candidate, write_gossip_receipt,
+        write_signed_policy, write_vshift_alert, ActiveVirtualShiftPolicy, AiRemediationAction,
+        AiRemediationPlan, ApprovalService, GossipTopology, GossipTransport, GuardianKeyManager,
+        InMemoryGossipTransport, MemberAlertVerifier, ReviewQueue, ReviewStatus, VShiftAlert,
+        VerificationStatus, VS10_VS11_REVIEWS, VS12_CANDIDATES, VS13_SIGNED_POLICIES, VS14_ALERTS,
+        VS15_GOSSIP, VS16_MEMBER_VERIFICATION,
     },
 };
 
@@ -251,6 +254,95 @@ fn main() -> Result<()> {
     row("Alert JSON", alert_json_path.display().to_string());
     row("Alert protobuf", alert_pb_path.display().to_string());
     row("Next step", "ready for gossip delivery");
+    line();
+
+    let mut gossip = InMemoryGossipTransport::new(GossipTopology::from_path(
+        "config/circle_gossip_topology.json",
+    )?)?;
+    let receipt = gossip.broadcast_vshift_alert("nodeA", &decoded)?;
+    let receipt_path =
+        write_gossip_receipt(Path::new("data/virtual_shift").join(VS15_GOSSIP), &receipt)?;
+    let duplicate_receipt = gossip.broadcast_vshift_alert("nodeA", &decoded)?;
+
+    println!("\n6. SIGNED VSHIFT_ALERT WAS PROPAGATED THROUGH CIRCLE GOSSIP");
+    line();
+    row("Origin node", &receipt.origin_node);
+    row(
+        "Delivered members",
+        receipt
+            .delivered
+            .iter()
+            .map(|delivery| format!("{}({} hop)", delivery.node_id, delivery.relay_hops))
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    row(
+        "Delivery timings",
+        receipt
+            .delivery_timings
+            .iter()
+            .map(|timing| format!("{}={}ms", timing.node_id, timing.delivery_time_ms))
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    row(
+        "Offline pending",
+        if receipt.pending_offline_nodes.is_empty() {
+            "none".to_owned()
+        } else {
+            receipt.pending_offline_nodes.join(", ")
+        },
+    );
+    row("Duplicate replay", duplicate_receipt.status);
+    row("Receipt JSON", receipt_path.display().to_string());
+    row("Next step", "members verify before apply");
+    line();
+
+    let verifier = MemberAlertVerifier::from_config(
+        "config/circle_guardian_authorization.json",
+        Path::new("data/virtual_shift")
+            .join(VS16_MEMBER_VERIFICATION)
+            .join(&decoded.recommendation_id),
+    )?;
+    let verification_time = now_ms()?;
+    let verification_results = receipt
+        .delivered
+        .iter()
+        .map(|delivery| verifier.verify_and_record(&delivery.node_id, &decoded, verification_time))
+        .collect::<Result<Vec<_>>>()?;
+    let replay_result =
+        verifier.verify_and_record(&receipt.delivered[0].node_id, &decoded, now_ms()?)?;
+
+    println!("\n7. RECEIVING MEMBERS VERIFIED BEFORE POLICY ENFORCEMENT");
+    line();
+    row(
+        "Verified members",
+        verification_results
+            .iter()
+            .map(|result| format!("{}={:?}", result.member_id, result.status))
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    row(
+        "Checks performed",
+        "circle, Guardian key, signature, hash, version, TTL, replay",
+    );
+    row(
+        "Apply permission",
+        if verification_results
+            .iter()
+            .all(|result| result.status == VerificationStatus::VerifiedNotApplied)
+        {
+            "verified_not_applied; VS17 may apply after this proof"
+        } else {
+            "blocked"
+        },
+    );
+    row("Replay check", format!("{:?}", replay_result.status));
+    row(
+        "Rejected before apply",
+        "any failed check stops VS17 enforcement",
+    );
     line();
 
     println!(

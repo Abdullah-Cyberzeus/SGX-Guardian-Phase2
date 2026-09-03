@@ -29,6 +29,38 @@ pub const KIND_RESPONSE: &str = "crl_sync_response";
 pub const KIND_PUSH: &str = "crl_sync_push";
 pub const KIND_ACK: &str = "crl_sync_ack";
 
+/// Task2 VS15 message routed through the existing Guardian gossip channel.
+pub const KIND_VSHIFT_ALERT: &str = "vshift_alert";
+pub const KIND_VSHIFT_ACK: &str = "vshift_alert_ack";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VShiftGossipMessage {
+    pub kind: String,
+    pub schema_version: u32,
+    /// Existing Guardian Mesh Circle used only for transport membership.
+    pub mesh_circle_id: String,
+    pub sender_did: String,
+    pub sender_node: String,
+    pub origin_node: String,
+    pub alert_id: String,
+    pub sent_at_ms: u64,
+    /// Exact VS14 protobuf bytes. The embedded VShiftAlert carries its own
+    /// policy Circle, Guardian signature, hash and freshness fields.
+    pub alert_pb: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VShiftGossipAck {
+    pub kind: String,
+    pub schema_version: u32,
+    pub alert_id: String,
+    pub receiver_node: String,
+    pub received_at_ms: u64,
+    pub duplicate_suppressed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncRequest {
     pub kind: String,

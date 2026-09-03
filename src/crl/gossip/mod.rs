@@ -27,6 +27,7 @@ pub mod engine;
 pub mod notifications;
 pub mod protocol;
 pub mod store;
+pub mod vshift;
 
 #[cfg(test)]
 #[path = "tests.rs"]
@@ -150,5 +151,9 @@ pub fn spawn(node_id: String, resolver: crate::did::Resolver) {
             config.clone(),
         ));
     }
+    // Task2 VS15 convergence worker. This binds NO listener and introduces
+    // NO port; retries reuse active_gossip_peers + existing GossipConfig.port.
+    tokio::spawn(vshift::retry_task(node_id.clone(), config.clone()));
+
     tokio::spawn(engine::round_task(node_id, resolver, config));
 }

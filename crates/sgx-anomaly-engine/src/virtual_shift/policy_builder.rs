@@ -724,7 +724,9 @@ mod tests {
     use crate::virtual_shift::{
         recommendation_from_event, sign_approved_policy, verify_signed_policy,
         vshift_alert_from_signed_policy, AggregatedAction, AnomalyEvent, AnomalyEvidence,
-        GuardianKeyManager, LoggingRecommendation, OwnerDecision, ReviewStatus, VShiftAlert,
+        GossipTopology, GossipTransport, GuardianKeyManager, InMemoryGossipTransport,
+        LoggingRecommendation, MemberAlertVerifier, OwnerDecision, ReviewStatus, VShiftAlert,
+        VerificationStatus,
     };
 
     use super::*;
@@ -964,6 +966,69 @@ mod tests {
         assert_eq!(alert.confidence, 0.88);
         let decoded = VShiftAlert::decode(&alert.encode().unwrap()).unwrap();
         assert_eq!(decoded, alert);
+
+        let mut transport = InMemoryGossipTransport::new(GossipTopology {
+            schema_version: 1,
+            circle_id: "circle-main".into(),
+            members: vec!["nodeA".into(), "nodeB".into(), "nodeC".into()],
+            links: vec![
+                ["nodeA".into(), "nodeB".into()],
+                ["nodeB".into(), "nodeC".into()],
+            ],
+        })
+        .unwrap();
+        let receipt = transport.broadcast_vshift_alert("nodeA", &decoded).unwrap();
+        assert_eq!(receipt.status, "broadcast_simulated_not_applied");
+        assert_eq!(receipt.delivered.len(), 2);
+        assert!(receipt
+            .delivered
+            .iter()
+            .any(|delivery| delivery.node_id == "nodeB" && delivery.relay_hops == 1));
+        assert!(receipt
+            .delivered
+            .iter()
+            .any(|delivery| delivery.node_id == "nodeC" && delivery.relay_hops == 2));
+        assert_eq!(
+            transport
+                .broadcast_vshift_alert("nodeA", &decoded)
+                .unwrap()
+                .status,
+            "duplicate_suppressed"
+        );
+
+        let active_path = root.join("active.json");
+        std::fs::write(
+            &active_path,
+            serde_json::to_string_pretty(&active()).unwrap(),
+        )
+        .unwrap();
+        let authorization_path = root.join("circle_guardian_authorization.json");
+        std::fs::write(
+            &authorization_path,
+            serde_json::json!({
+                "schema_version": 1,
+                "circle_id": "circle-main",
+                "active_policy_path": active_path,
+                "authorized_guardians": [{
+                    "guardian_id": "guardian-test",
+                    "public_key_path": root.join("keys").join("guardian-test.ed25519.public")
+                }]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let verifier =
+            MemberAlertVerifier::from_config(&authorization_path, root.join("verification"))
+                .unwrap();
+        let verified = verifier
+            .verify_and_record("nodeB", &decoded, 3_200)
+            .unwrap();
+        assert_eq!(verified.status, VerificationStatus::VerifiedNotApplied);
+        assert!(verified.reason.contains("VS17 has not applied"));
+        let replay = verifier
+            .verify_and_record("nodeB", &decoded, 3_300)
+            .unwrap();
+        assert_eq!(replay.status, VerificationStatus::AlreadyVerified);
 
         let mut tampered = decoded.clone();
         tampered.policy_blob.push(0);
