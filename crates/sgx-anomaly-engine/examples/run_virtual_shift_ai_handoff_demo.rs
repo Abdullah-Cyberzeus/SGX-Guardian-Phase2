@@ -1,8 +1,7 @@
-//! Task 2 Issue #1 proof demo: Task 1 AI remediation plan is durably handed
-//! off into the Virtual Shift owner-review lifecycle.
+//! Task 2 AI remediation owner-review proof demo: Task 1 AI remediation plan
+//! is durably handed off, approved/rejected, audited, staged, and signed.
 //!
 //! Run from crates/sgx-anomaly-engine:
-//! cargo run --example run_virtual_shift_ai_handoff_demo -- pending
 //! cargo run --example run_virtual_shift_ai_handoff_demo -- approve
 //! cargo run --example run_virtual_shift_ai_handoff_demo -- reject
 
@@ -15,8 +14,11 @@ use anyhow::Result;
 use sgx_anomaly_engine::{
     roles::RoleRegistry,
     virtual_shift::{
-        AiRemediationAction, AiRemediationPlan, ApprovalService, ReviewQueue, ReviewStatus,
-        VS10_VS11_REVIEWS,
+        build_candidate_from_approved_review, sign_approved_policy, verify_signed_policy,
+        vshift_alert_from_signed_policy, write_built_candidate, write_signed_policy,
+        write_vshift_alert, ActiveVirtualShiftPolicy, AiRemediationAction, AiRemediationPlan,
+        ApprovalService, GuardianKeyManager, ReviewQueue, ReviewStatus, VShiftAlert,
+        VS10_VS11_REVIEWS, VS12_CANDIDATES, VS13_SIGNED_POLICIES, VS14_ALERTS,
     },
 };
 
@@ -36,7 +38,7 @@ fn row(label: &str, value: impl AsRef<str>) {
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let decision = args.first().map(String::as_str).unwrap_or("pending");
+    let decision = args.first().map(String::as_str).unwrap_or("approve");
     if !matches!(decision, "approve" | "reject" | "pending") {
         anyhow::bail!(
             "usage: cargo run --example run_virtual_shift_ai_handoff_demo -- <pending|approve|reject>"
@@ -100,7 +102,7 @@ fn main() -> Result<()> {
     let (pending, handoff) = queue.enqueue_ai_remediation_plan(plan, "task1-live-runtime")?;
 
     println!("==========================================================================");
-    println!("TASK 2 ISSUE #1 - AI REMEDIATION PLAN HANDOFF");
+    println!("TASK 2 - AI REMEDIATION OWNER REVIEW HANDOFF");
     println!("==========================================================================");
     println!("\n1. TASK 1 AI PLAN WAS PERSISTED FOR OWNER REVIEW");
     line();
@@ -155,6 +157,100 @@ fn main() -> Result<()> {
             "not applicable"
         },
     );
+    line();
+
+    if decided.status == ReviewStatus::Rejected {
+        println!(
+            "\nRESULT: AI plan -> owner rejection -> policy build/sign/broadcast remains blocked."
+        );
+        return Ok(());
+    }
+
+    let active = ActiveVirtualShiftPolicy::from_path("config/active_virtual_shift_policy.json")?;
+    let built = build_candidate_from_approved_review(&active, &decided)?;
+    let candidate_path = write_built_candidate(
+        Path::new("data/virtual_shift").join(VS12_CANDIDATES),
+        &built,
+    )?;
+
+    println!("\n3. APPROVED AI PLAN ENTERED POLICY CANDIDATE STAGING");
+    line();
+    row("Policy candidate", &built.candidate.policy_id);
+    row(
+        "Parent version",
+        built.candidate.parent_policy_version.to_string(),
+    );
+    row("New version", built.candidate.policy_version.to_string());
+    row("Source plan ID", &built.candidate.source_recommendation_id);
+    row("Source anomaly ID", &built.candidate.source_anomaly_id);
+    row(
+        "Candidate actions",
+        built.candidate.actions.len().to_string(),
+    );
+    row("Candidate JSON", candidate_path.display().to_string());
+    row(
+        "Active policy changed",
+        "false; staging only until sign/apply",
+    );
+    line();
+
+    let keys = GuardianKeyManager::from_config(
+        "config/guardian_signer.json",
+        "data/virtual_shift/guardian_keys",
+    )?;
+    let signed = sign_approved_policy(&keys, &decided, &built, now_ms()?)?;
+    verify_signed_policy(&signed)?;
+    let signed_path = write_signed_policy(
+        Path::new("data/virtual_shift").join(VS13_SIGNED_POLICIES),
+        &signed,
+    )?;
+    let issued_at_ms = now_ms()?;
+    let alert_id = format!(
+        "vsa-{}-v{}-{}",
+        built.candidate.circle_id,
+        built.candidate.policy_version,
+        built.candidate.source_recommendation_id
+    );
+    let alert = vshift_alert_from_signed_policy(
+        &decided,
+        &signed,
+        alert_id,
+        issued_at_ms,
+        issued_at_ms + 300_000,
+    )?;
+    let encoded = alert.encode()?;
+    let decoded = VShiftAlert::decode(&encoded)?;
+    let (alert_json_path, alert_pb_path) =
+        write_vshift_alert(Path::new("data/virtual_shift").join(VS14_ALERTS), &decoded)?;
+    let mut tampered = decoded.clone();
+    tampered.policy_blob.push(0);
+    let tamper_rejected = tampered.validate().is_err();
+
+    println!("\n4. GUARDIAN SIGNED THE EXACT CANDIDATE POLICY");
+    line();
+    row("Signer", &signed.signer_id);
+    row("Algorithm", &signed.algorithm);
+    row("Policy hash", &signed.canonical_sha256);
+    row("Signature verified", "true");
+    row("Signed policy JSON", signed_path.display().to_string());
+    line();
+
+    println!("\n5. SIGNED POLICY WAS PACKAGED AS VSHIFT_ALERT");
+    line();
+    row("Alert ID", &decoded.alert_id);
+    row("Circle", &decoded.circle_id);
+    row("Policy version", decoded.policy_version.to_string());
+    row("Linked anomaly", &decoded.anomaly_id);
+    row("Linked plan", &decoded.recommendation_id);
+    row(
+        "TTL seconds",
+        ((decoded.expires_at_ms - decoded.issued_at_ms) / 1000).to_string(),
+    );
+    row("Encode/decode valid", "true");
+    row("Tamper rejected", tamper_rejected.to_string());
+    row("Alert JSON", alert_json_path.display().to_string());
+    row("Alert protobuf", alert_pb_path.display().to_string());
+    row("Next step", "ready for gossip delivery");
     line();
 
     println!(

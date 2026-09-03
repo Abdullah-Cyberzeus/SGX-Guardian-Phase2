@@ -5,7 +5,12 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{AggregatedAction, AggregatedRecommendation, ApprovalService, ReviewRecord};
+use super::{
+    AggregatedAction, AggregatedRecommendation, AiRemediationAction, AiRemediationPlan,
+    ApprovalService, AttestationRecommendation, FirewallRecommendation, LoggingRecommendation,
+    LoggingScope, QuarantineRecommendation, ReviewRecord,
+};
+use crate::policy::{FirewallMode, LoggingLevel, PolicyAction};
 use serde::{Deserialize, Serialize};
 
 /// A precise Layer-3/4 rule defined by the Circle Owner.  The anomaly model
@@ -205,13 +210,17 @@ pub fn build_candidate_from_approved_review(
 ) -> anyhow::Result<BuiltPolicyCandidate> {
     active.validate()?;
     ApprovalService::require_approved(review)?;
-    let aggregate: AggregatedRecommendation = serde_json::from_value(
-        review
-            .proposal
-            .get("vs8")
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("approved review is missing VS8 aggregate"))?,
-    )?;
+    let aggregate = if review.proposal.get("task1_ai_remediation_plan").is_some() {
+        aggregate_from_ai_review(review)?
+    } else {
+        serde_json::from_value(
+            review
+                .proposal
+                .get("vs8")
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("approved review is missing VS8 aggregate"))?,
+        )?
+    };
     if aggregate.recommendation_id != review.recommendation_id
         || aggregate.anomaly_id != review.anomaly_id
         || aggregate.source_node != review.source_node
@@ -255,6 +264,157 @@ pub fn build_candidate_from_approved_review(
         candidate,
         canonical_bytes,
     })
+}
+
+/// Convert an approved Task1 AI remediation plan into the same VS8 aggregate
+/// shape used by the rest of Virtual Shift.
+fn aggregate_from_ai_review(review: &ReviewRecord) -> anyhow::Result<AggregatedRecommendation> {
+    let plan: AiRemediationPlan = serde_json::from_value(
+        review
+            .proposal
+            .get("task1_ai_remediation_plan")
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("approved AI review is missing remediation plan"))?,
+    )?;
+    plan.validate()?;
+    if plan.plan_id != review.recommendation_id
+        || plan.anomaly_id != review.anomaly_id
+        || plan.source_node != review.source_node
+    {
+        anyhow::bail!("AI remediation plan identity does not match approved review");
+    }
+    let mut actions = Vec::new();
+    for action in &plan.actions {
+        actions.push(ai_action_to_aggregate(action, plan.created_at_ms)?);
+    }
+    Ok(AggregatedRecommendation {
+        recommendation_id: review.recommendation_id.clone(),
+        anomaly_id: review.anomaly_id.clone(),
+        source_node: review.source_node.clone(),
+        actions,
+        advisory_only: true,
+        conflict_resolution: vec![
+            "AI remediation actions were approved by the owner and translated into the existing Virtual Shift policy-candidate format.".into(),
+        ],
+    })
+}
+
+fn ai_action_to_aggregate(
+    action: &AiRemediationAction,
+    created_at_ms: u64,
+) -> anyhow::Result<AggregatedAction> {
+    match action.action_type.as_str() {
+        "tighten_firewall_rules" | "nftables_block_ip" => {
+            let protocol = action
+                .parameters
+                .get("protocol")
+                .and_then(serde_json::Value::as_str)
+                .map(|value| value.to_ascii_uppercase());
+            let port = action
+                .parameters
+                .get("port")
+                .and_then(serde_json::Value::as_u64)
+                .map(u16::try_from)
+                .transpose()
+                .map_err(|_| anyhow::anyhow!("AI firewall action port must fit u16"))?;
+            let duration_seconds =
+                optional_u64(&action.parameters, "duration_seconds").unwrap_or(900);
+            let rate_limit_per_second = optional_u64(&action.parameters, "rate_limit_per_second")
+                .unwrap_or(20)
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("AI firewall rate_limit_per_second must fit u32"))?;
+            let mode = action
+                .parameters
+                .get("mode")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("rate_limit");
+            let firewall_mode = match mode {
+                "block" | "deny" | "DENY" => FirewallMode::Block,
+                "rate_limit" | "DENY_OR_RATE_LIMIT" | "deny_or_rate_limit" => {
+                    FirewallMode::RateLimit
+                }
+                value => anyhow::bail!("unsupported AI firewall mode '{value}'"),
+            };
+            Ok(AggregatedAction::Firewall(FirewallRecommendation {
+                policy_action: PolicyAction::TightenFirewall,
+                target_peer: action.target.clone(),
+                firewall_mode,
+                protocol,
+                port,
+                rate_limit_per_second,
+                duration_seconds,
+                advisory_only: true,
+                reason: action.reason.clone(),
+            }))
+        }
+        "increase_attestation_frequency" | "tighten_attestation" => {
+            let interval_seconds = required_u64(&action.parameters, "interval_seconds")?;
+            let immediate_reattest = action
+                .parameters
+                .get("immediate_reattest")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(true);
+            Ok(AggregatedAction::Attestation(AttestationRecommendation {
+                policy_action: PolicyAction::IncreaseAttestationFrequency,
+                target_node: action.target.clone(),
+                interval_seconds,
+                immediate_reattest,
+                advisory_only: true,
+                reason: action.reason.clone(),
+            }))
+        }
+        "enable_additional_logging" | "enable_debug_logging" => {
+            let duration_seconds =
+                optional_u64(&action.parameters, "duration_seconds").unwrap_or(900);
+            let level = action
+                .parameters
+                .get("logging_level")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("detailed");
+            let logging_level = match level {
+                "basic" => LoggingLevel::Basic,
+                "detailed" | "debug" => LoggingLevel::Detailed,
+                value => anyhow::bail!("unsupported AI logging level '{value}'"),
+            };
+            Ok(AggregatedAction::Logging(LoggingRecommendation {
+                policy_action: PolicyAction::EnableAdditionalLogging,
+                target_node: action.target.clone(),
+                logging_level,
+                scopes: vec![
+                    LoggingScope::SecurityEvents,
+                    LoggingScope::PolicyEnforcementResults,
+                ],
+                duration_seconds,
+                starts_at_ms: created_at_ms,
+                expires_at_ms: created_at_ms.saturating_add(duration_seconds.saturating_mul(1000)),
+                advisory_only: true,
+                reason: action.reason.clone(),
+            }))
+        }
+        "quarantine_peer" => {
+            let duration_seconds =
+                optional_u64(&action.parameters, "duration_seconds").unwrap_or(900);
+            Ok(AggregatedAction::Quarantine(QuarantineRecommendation {
+                policy_action: PolicyAction::QuarantinePeer,
+                target_peer: action.target.clone(),
+                duration_seconds,
+                starts_at_ms: created_at_ms,
+                expires_at_ms: created_at_ms.saturating_add(duration_seconds.saturating_mul(1000)),
+                reversible: true,
+                advisory_only: true,
+                reason: action.reason.clone(),
+            }))
+        }
+        value => anyhow::bail!("unsupported AI remediation action '{value}'"),
+    }
+}
+
+fn required_u64(value: &serde_json::Value, field: &str) -> anyhow::Result<u64> {
+    optional_u64(value, field).ok_or_else(|| anyhow::anyhow!("AI action missing '{field}'"))
+}
+
+fn optional_u64(value: &serde_json::Value, field: &str) -> Option<u64> {
+    value.get(field).and_then(serde_json::Value::as_u64)
 }
 
 /// Set the explicit member scope for a new candidate before it is signed.
@@ -562,8 +722,9 @@ mod tests {
     use crate::alert::Severity;
     use crate::policy::{LoggingLevel, PolicyAction};
     use crate::virtual_shift::{
-        recommendation_from_event, AggregatedAction, AnomalyEvent, AnomalyEvidence,
-        LoggingRecommendation, OwnerDecision, ReviewStatus,
+        recommendation_from_event, sign_approved_policy, verify_signed_policy,
+        vshift_alert_from_signed_policy, AggregatedAction, AnomalyEvent, AnomalyEvidence,
+        GuardianKeyManager, LoggingRecommendation, OwnerDecision, ReviewStatus, VShiftAlert,
     };
 
     use super::*;
@@ -639,6 +800,85 @@ mod tests {
         }
     }
 
+    fn ai_review(status: ReviewStatus) -> ReviewRecord {
+        let plan = AiRemediationPlan {
+            plan_id: "airp-policy-001".into(),
+            anomaly_id: "anom-ai-policy-001".into(),
+            source_node: "nodeA".into(),
+            anomaly_score: 0.91,
+            model_confidence: 0.88,
+            severity: "High".into(),
+            anomaly_metadata: serde_json::json!({"target_port": 3389}),
+            justification: "AI recommends owner-reviewed remediation.".into(),
+            created_at_ms: 1_000,
+            requires_approval: true,
+            auto_execute: false,
+            actions: vec![
+                AiRemediationAction {
+                    action_type: "tighten_firewall_rules".into(),
+                    target: "nodeA".into(),
+                    parameters: serde_json::json!({
+                        "protocol": "TCP",
+                        "port": 3389,
+                        "mode": "rate_limit",
+                        "rate_limit_per_second": 20,
+                        "duration_seconds": 900
+                    }),
+                    requires_approval: true,
+                    reason: "Restrict suspicious target port after owner approval.".into(),
+                },
+                AiRemediationAction {
+                    action_type: "increase_attestation_frequency".into(),
+                    target: "nodeA".into(),
+                    parameters: serde_json::json!({
+                        "interval_seconds": 120,
+                        "immediate_reattest": true
+                    }),
+                    requires_approval: true,
+                    reason: "Verify the node after the suspicious activity.".into(),
+                },
+            ],
+        };
+        ReviewRecord {
+            schema_version: 1,
+            recommendation_id: plan.plan_id.clone(),
+            anomaly_id: plan.anomaly_id.clone(),
+            source_node: plan.source_node.clone(),
+            status,
+            owner_decision: (status != ReviewStatus::PendingReview).then(|| OwnerDecision {
+                reviewer_id: "nodeA".into(),
+                decision: status,
+                reason: Some("owner decided exact AI plan".into()),
+                decided_at_ms: 2_000,
+            }),
+            created_at_ms: plan.created_at_ms,
+            source_proposal_path: "task1-live-runtime".into(),
+            proposal: serde_json::json!({
+                "approval_status": "pending_review",
+                "task1_ai_remediation_plan": plan,
+                "vs3": {
+                    "recommendation_id": "airp-policy-001",
+                    "anomaly_id": "anom-ai-policy-001",
+                    "source_node": "nodeA",
+                    "created_at_ms": 1_000,
+                    "risk_level": "High",
+                    "anomaly_score": 0.91,
+                    "confidence": 0.88,
+                    "model_confidence": 0.88,
+                    "justification": "AI recommends owner-reviewed remediation.",
+                    "requires_approval": true,
+                    "auto_execute": false
+                },
+                "vs8": {
+                    "actions": [],
+                    "advisory_only": true,
+                    "conflict_resolution": []
+                },
+                "vs9": { "human_summary": "AI remediation evidence" }
+            }),
+        }
+    }
+
     #[test]
     fn approved_review_builds_v_next_without_mutating_active_policy() {
         let active = active();
@@ -662,6 +902,73 @@ mod tests {
             build_candidate_from_approved_review(&active(), &review(ReviewStatus::Rejected))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn approved_ai_remediation_plan_builds_traceable_policy_candidate() {
+        let built =
+            build_candidate_from_approved_review(&active(), &ai_review(ReviewStatus::Approved))
+                .unwrap();
+        assert_eq!(built.candidate.source_recommendation_id, "airp-policy-001");
+        assert_eq!(built.candidate.source_anomaly_id, "anom-ai-policy-001");
+        assert_eq!(built.candidate.policy_version, 22);
+        assert_eq!(built.candidate.actions.len(), 2);
+        assert!(matches!(
+            built.candidate.actions[0],
+            AggregatedAction::Attestation(_) | AggregatedAction::Firewall(_)
+        ));
+        assert_eq!(built.candidate.canonical_sha256.len(), 64);
+    }
+
+    #[test]
+    fn rejected_ai_remediation_plan_cannot_build_policy_candidate() {
+        let err =
+            build_candidate_from_approved_review(&active(), &ai_review(ReviewStatus::Rejected))
+                .unwrap_err()
+                .to_string();
+        assert!(err.contains("only approved records may reach policy building"));
+    }
+
+    #[test]
+    fn approved_ai_remediation_candidate_can_be_guardian_signed_and_alerted() {
+        let root = std::env::temp_dir().join(format!(
+            "virtual_shift_ai_signed_alert_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let signer_config = root.join("guardian_signer.json");
+        std::fs::write(
+            &signer_config,
+            serde_json::json!({
+                "schema_version": 1,
+                "guardian_id": "guardian-test",
+                "algorithm": "ed25519"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let review = ai_review(ReviewStatus::Approved);
+        let built = build_candidate_from_approved_review(&active(), &review).unwrap();
+        let guardian = GuardianKeyManager::from_config(&signer_config, root.join("keys")).unwrap();
+        let signed = sign_approved_policy(&guardian, &review, &built, 3_000).unwrap();
+        verify_signed_policy(&signed).unwrap();
+        let alert =
+            vshift_alert_from_signed_policy(&review, &signed, "vsa-ai-plan-001", 3_100, 303_100)
+                .unwrap();
+        assert_eq!(alert.recommendation_id, "airp-policy-001");
+        assert_eq!(alert.anomaly_id, "anom-ai-policy-001");
+        assert_eq!(alert.policy_version, 22);
+        assert_eq!(alert.policy_hash_hex, signed.canonical_sha256);
+        assert_eq!(alert.confidence, 0.88);
+        let decoded = VShiftAlert::decode(&alert.encode().unwrap()).unwrap();
+        assert_eq!(decoded, alert);
+
+        let mut tampered = decoded.clone();
+        tampered.policy_blob.push(0);
+        assert!(tampered.validate().is_err());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

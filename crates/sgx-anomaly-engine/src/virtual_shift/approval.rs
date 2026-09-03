@@ -79,6 +79,7 @@ impl ApprovalService {
             decided_at_ms,
         })?;
         self.queue.write_record(&record)?;
+        self.queue.write_decision_audit(&record)?;
         Ok(record)
     }
 }
@@ -153,6 +154,11 @@ mod tests {
         );
         assert!(queue.list_pending("nodeA").unwrap().is_empty());
         ApprovalService::require_approved(&approved).unwrap();
+        assert!(root
+            .join("reviews")
+            .join("vsr-approval-001")
+            .join("owner_decision_audit.json")
+            .is_file());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -172,6 +178,18 @@ mod tests {
             .unwrap();
         assert_eq!(rejected.status, ReviewStatus::Rejected);
         assert!(ApprovalService::require_approved(&rejected).is_err());
+        let audit_path = root
+            .join("reviews")
+            .join("vsr-approval-001")
+            .join("owner_decision_audit.json");
+        let audit: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(audit_path).unwrap()).unwrap();
+        assert_eq!(
+            audit
+                .get("policy_mutation_allowed")
+                .and_then(serde_json::Value::as_bool),
+            Some(false)
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

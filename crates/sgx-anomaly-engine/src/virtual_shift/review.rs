@@ -341,6 +341,51 @@ impl ReviewQueue {
         Ok(path)
     }
 
+    pub(crate) fn write_decision_audit(&self, record: &ReviewRecord) -> anyhow::Result<PathBuf> {
+        record.validate()?;
+        let decision = record
+            .owner_decision
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("decision audit requires an owner decision"))?;
+        let path = self
+            .record_path(&record.recommendation_id)?
+            .parent()
+            .expect("review record has a parent directory")
+            .join("owner_decision_audit.json");
+        let audit = serde_json::json!({
+            "schema_version": 1,
+            "record_type": "task2_owner_decision_audit",
+            "plan_id": record.recommendation_id,
+            "recommendation_id": record.recommendation_id,
+            "anomaly_id": record.anomaly_id,
+            "source_node": record.source_node,
+            "decision": decision.decision,
+            "decision_actor": decision.reviewer_id,
+            "decision_timestamp_ms": decision.decided_at_ms,
+            "reason": decision.reason,
+            "policy_mutation_allowed": record.status == ReviewStatus::Approved,
+            "policy_mutation_blocked_reason": if record.status == ReviewStatus::Rejected {
+                Some("owner rejected AI recommendation before policy build/sign/broadcast")
+            } else {
+                None
+            },
+            "ai_justification": record
+                .proposal
+                .get("vs3")
+                .and_then(|value| value.get("justification"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+            "original_anomaly_metadata": record
+                .proposal
+                .get("vs9")
+                .and_then(|value| value.get("anomaly_metadata"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&audit)?)?;
+        Ok(path)
+    }
+
     pub(crate) fn record_path(&self, recommendation_id: &str) -> anyhow::Result<PathBuf> {
         if recommendation_id.trim().is_empty()
             || matches!(recommendation_id, "." | "..")
@@ -382,6 +427,7 @@ fn ai_plan_to_review_proposal(plan: &AiRemediationPlan) -> serde_json::Value {
             "created_at_ms": plan.created_at_ms,
             "risk_level": plan.severity,
             "anomaly_score": plan.anomaly_score,
+            "confidence": plan.model_confidence,
             "model_confidence": plan.model_confidence,
             "justification": plan.justification,
             "requires_approval": plan.requires_approval,
