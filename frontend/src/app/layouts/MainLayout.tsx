@@ -2,7 +2,7 @@ import { Outlet } from "react-router";
 import { BottomNav } from "../components/BottomNav";
 import { OfflineBanner } from "../components/OfflineBanner";
 import { AppSidebar } from "../components/AppSidebar";
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
 import { Loader2 } from "lucide-react";
 import { useGuardianConnectivity } from "../../pwa/connectivity/GuardianConnectivityContext";
 import { useAuth } from "../contexts/AuthContext";
@@ -16,7 +16,7 @@ const routeFallback = (
 );
 
 export function MainLayout() {
-  const { session } = useAuth();
+  const { session, refreshSession } = useAuth();
   const memberSession = isMemberRole(session?.user.role);
   const pendingMemberSession = memberSession && (session?.circleIds.length || 0) === 0;
   const { reachable, status, lastSeen, pendingCount, syncRunning, retryNow } = useGuardianConnectivity();
@@ -30,6 +30,14 @@ export function MainLayout() {
       onRetry={() => void retryNow()}
     />
   ) : null;
+
+  useEffect(() => {
+    if (!memberSession || !reachable) return;
+    const timer = window.setInterval(() => {
+      void refreshSession();
+    }, 10_000);
+    return () => window.clearInterval(timer);
+  }, [memberSession, reachable, refreshSession]);
 
   return (
     <>

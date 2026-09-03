@@ -8,7 +8,7 @@ This is NOT a desktop app. This is NOT a native iOS or Android app. This is a **
 
 The primary user is a field security engineer named Marcus. He is 34 years old. He works at an energy facility in Texas managing the physical security of industrial networks. He carries his phone while walking factory floors, checking equipment, and responding to incidents. He opens this app up to 8 times a day. Most of his sessions are under 30 seconds. He needs to open the app and know in 3 seconds whether his network is safe or not.
 
-When a high severity security alert fires — say, a service account being used for unauthorized login at 9am — Marcus gets a push notification on his phone. He taps it. The app opens directly to that alert. He needs to immediately see: what happened, which device was affected, what the IP address was, what the AI recommends, and what action to take. He cannot afford confusion. He cannot afford to dig through menus. He is a security professional, not a casual user, and the app must treat him like one.
+When a high severity security alert fires — say, a service account being used for unauthorized login at 9am — Marcus gets a push notification on his phone. He taps it. The app opens directly to that alert. He needs to immediately see: what happened, which device was affected, what the IP address was, what the it recommends, and what action to take. He cannot afford confusion. He cannot afford to dig through menus. He is a security professional, not a casual user, and the app must treat him like one.
 
 The secondary user is Sofia. She is 41, the security team lead. She manages who has access to the team's secure network — called a Circle of Trust. She invites new engineers, removes people who leave, and coordinates incident response over secure voice calls. She uses the app from her office, sitting down, two-handed. She notices every visual inconsistency and will report them. She cares about polish, confirmation dialogs on destructive actions, and clear status information about her team members.
 
@@ -103,7 +103,7 @@ shadcn Sheet sliding up from bottom. Title: "Scanning Network". Progress bar. Li
 ### ALERTS
 
 **AL-01 Alerts Root**
-Top section (not scrollable): AI Threat Intelligence panel — four stat blocks in a 2x2 grid: Threat Score (large number, green/amber/red depending on value), Threats 24h (count), Blocked (count), Quarantined (count). Below (scrollable): "Recent Events (X)" heading with Select button and View Archived button top right. Search input. Three filter dropdowns in a row: All Severities, All Statuses, All Types. Alert list below. Each alert row: clock icon left, title bold, description one line muted below, severity badge right, timestamp right, delete icon far right, chevron for expand. Build all 5 states.
+Top section (not scrollable): Threat Intelligence panel — four stat blocks in a 2x2 grid: Threat Score (large number, green/amber/red depending on value), Threats 24h (count), Blocked (count), Quarantined (count). Below (scrollable): "Recent Events (X)" heading with Select button and View Archived button top right. Search input. Three filter dropdowns in a row: All Severities, All Statuses, All Types. Alert list below. Each alert row: clock icon left, title bold, description one line muted below, severity badge right, timestamp right, delete icon far right, chevron for expand. Build all 5 states.
 
 **AL-02 Filtered Alerts**
 Same as AL-01 but with active filter chips shown below the dropdowns. "Clear all" link at end of filter chips row.
@@ -118,9 +118,9 @@ Same layout as AL-01 but heading says "Archived Events". "View Active" button re
 Alert row expanded in-place. Shows: Event Type label + value, Status label + value, Archive Event button (shadcn Button). Chevron rotates to point up.
 
 **AL-06 Alert Detail Full Screen**
-Pushed as a new screen. Header: back arrow + severity badge. Large title. Description. Divider. Section: "Affected Device" — device name bold, IP address muted below, OS muted, "View Device →" link. Divider. Section: "AI Recommendation" — AI badge label, two-sentence summary in italics, "View Full Analysis →" link. Divider. Bottom: large primary button "Take Action" that opens AL-08.
+Pushed as a new screen. Header: back arrow + severity badge. Large title. Description. Divider. Section: "Affected Device" — device name bold, IP address muted below, OS muted, "View Device →" link. Divider. Section: "Recommendation" — badge label, two-sentence summary in italics, "View Full Analysis →" link. Divider. Bottom: large primary button "Take Action" that opens AL-08.
 
-**AL-07 AI Recommendation Panel**
+**AL-07 Recommendation Panel**
 Full screen. Sections: "What Happened" (plain language paragraph), "Why It Matters" (plain language paragraph), "Recommended Actions" (numbered list using shadcn ordered list styling, each item is an actionable step). Back arrow in header.
 
 **AL-08 Remediation Actions Sheet**

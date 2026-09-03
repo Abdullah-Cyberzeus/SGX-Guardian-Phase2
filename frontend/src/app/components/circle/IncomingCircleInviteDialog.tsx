@@ -8,21 +8,57 @@ import pwaOnboardingService from "../../services/pwaOnboardingService";
 import { useAuth } from "../../contexts/AuthContext";
 import type { MemberEnrollment } from "../../services/circleService";
 
+const DISMISSED_TARGETED_INVITES_KEY = "sgx_dismissed_targeted_circle_invites";
+
 function isPendingInvite(invite: CircleInvite) {
   return String(invite.state || invite.status || "").toLowerCase() === "pending";
 }
 
+function targetedInviteExpired(invite: MemberEnrollment) {
+  return invite.state === "expired" || (invite.expiresAt ? new Date(invite.expiresAt).getTime() <= Date.now() : false);
+}
+
+function loadDismissedTargetedInvites(userId?: string) {
+  if (!userId) return new Set<string>();
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DISMISSED_TARGETED_INVITES_KEY) || "{}");
+    return new Set<string>(Array.isArray(parsed[userId]) ? parsed[userId] : []);
+  } catch {
+    localStorage.removeItem(DISMISSED_TARGETED_INVITES_KEY);
+    return new Set<string>();
+  }
+}
+
+function saveDismissedTargetedInvites(userId: string | undefined, values: Set<string>) {
+  if (!userId) return;
+  let parsed: Record<string, string[]> = {};
+  try {
+    parsed = JSON.parse(localStorage.getItem(DISMISSED_TARGETED_INVITES_KEY) || "{}");
+  } catch {
+    parsed = {};
+  }
+  parsed[userId] = [...values];
+  localStorage.setItem(DISMISSED_TARGETED_INVITES_KEY, JSON.stringify(parsed));
+}
+
 export function IncomingCircleInviteDialog() {
   const navigate = useNavigate();
-  const { refreshSession } = useAuth();
+  const { session, refreshSession } = useAuth();
   const { data: invites, refetch: refetchInvites } = useCircleInviteInbox();
   const { refetch: refetchCircles } = useCircles();
   const [targetedInvites, setTargetedInvites] = useState<MemberEnrollment[]>([]);
+  const [dismissedTargetedInvites, setDismissedTargetedInvites] = useState<Set<string>>(
+    () => loadDismissedTargetedInvites(session?.user.id),
+  );
   const [processing, setProcessing] = useState<string | null>(null);
+  const hasCircleAccess = (session?.circleIds.length || 0) > 0;
   const pending = useMemo(
     () => (Array.isArray(invites) ? invites : []).filter(isPendingInvite),
     [invites],
   );
+  useEffect(() => {
+    setDismissedTargetedInvites(loadDismissedTargetedInvites(session?.user.id));
+  }, [session?.user.id]);
   useEffect(() => {
     let stopped = false;
     let timer: number | undefined;
@@ -41,9 +77,22 @@ export function IncomingCircleInviteDialog() {
       if (timer) window.clearTimeout(timer);
     };
   }, []);
-  const targetedInvite = targetedInvites[0];
+  const visibleTargetedInvites = hasCircleAccess
+    ? targetedInvites.filter((item) => !targetedInviteExpired(item) && !dismissedTargetedInvites.has(item.approvalId))
+    : targetedInvites;
+  const targetedInvite = visibleTargetedInvites[0];
   const invite = pending[0];
   if (!targetedInvite && !invite) return null;
+
+  const dismissTargetedInvite = () => {
+    if (!targetedInvite?.approvalId) return;
+    setDismissedTargetedInvites((prev) => {
+      const next = new Set(prev);
+      next.add(targetedInvite.approvalId);
+      saveDismissedTargetedInvites(session?.user.id, next);
+      return next;
+    });
+  };
 
   const decide = async (decision: "accept" | "reject") => {
     if (targetedInvite) {
@@ -61,6 +110,12 @@ export function IncomingCircleInviteDialog() {
         } else {
           toast.success("Circle invitation rejected");
         }
+        setDismissedTargetedInvites((prev) => {
+          const next = new Set(prev);
+          next.delete(targetedInvite.approvalId);
+          saveDismissedTargetedInvites(session?.user.id, next);
+          return next;
+        });
         const result = await pwaOnboardingService.targetedInvites();
         setTargetedInvites(Array.isArray(result.invites) ? result.invites : []);
         await refetchCircles();
@@ -92,6 +147,40 @@ export function IncomingCircleInviteDialog() {
       setProcessing(null);
     }
   };
+
+  if (hasCircleAccess) {
+    return (
+      <aside className="incoming-call-toast" role="alertdialog" aria-labelledby="incoming-circle-invite-title">
+        <div className="incoming-call-icon"><Check size={18} /></div>
+        <div className="min-w-0">
+          <strong id="incoming-circle-invite-title">Circle invitation</strong>
+          <span>{targetedInvite?.circleName || invite?.circleName || "New Circle"}</span>
+          <small>{targetedInvite ? "Pending invitation" : "Trusted Circle invitation"}</small>
+        </div>
+        <button
+          className="incoming-decline-icon"
+          disabled={!!processing}
+          onClick={targetedInvite ? dismissTargetedInvite : () => void decide("reject")}
+          aria-label={targetedInvite ? "Move invitation to pending" : "Decline Circle invitation"}
+        >
+          <X size={17} />
+        </button>
+        <div className="incoming-call-actions">
+          {targetedInvite && (
+            <button disabled={!!processing} onClick={() => navigate("/join-circle?tab=pending")}>
+              Pending
+            </button>
+          )}
+          <button disabled={!!processing} onClick={() => void decide("reject")}>
+            {processing === "reject" ? "..." : "Decline"}
+          </button>
+          <button disabled={!!processing} onClick={() => void decide("accept")}>
+            {processing === "accept" ? "..." : "Accept"}
+          </button>
+        </div>
+      </aside>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-[110] grid place-items-center bg-black/65 p-4" role="dialog" aria-modal="true">

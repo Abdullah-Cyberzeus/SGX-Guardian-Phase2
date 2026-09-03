@@ -1,11 +1,11 @@
 import { useNavigate } from "react-router";
 import { ArrowLeft } from "lucide-react";
-import { ReactNode } from "react";
+import type { ReactNode } from "react";
 
 interface PageHeaderProps {
   title: string;
   titleColor?: string;
-  subtitle?: string;
+  subtitle?: ReactNode;
   subtitleColor?: string;
   showBack?: boolean;
   onBack?: () => void;
@@ -51,7 +51,7 @@ export function PageHeader({ title, titleColor, subtitle, subtitleColor, showBac
           {title}
         </h2>
         {subtitle && (
-          <p
+          <div
             className="truncate"
             style={{
               fontFamily: "Inter, sans-serif",
@@ -61,7 +61,7 @@ export function PageHeader({ title, titleColor, subtitle, subtitleColor, showBac
             }}
           >
             {subtitle}
-          </p>
+          </div>
         )}
       </div>
       {right && <div className="ml-2">{right}</div>}

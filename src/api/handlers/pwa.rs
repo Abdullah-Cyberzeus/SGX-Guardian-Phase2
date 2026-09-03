@@ -52,6 +52,10 @@ struct MemberEnrollmentRecord {
     /// additional Circle. Legacy/initial enrollment records default false.
     #[serde(default)]
     additional_membership: bool,
+    /// Admin-side history dismissal only. This does not change invite
+    /// redeemability or member Circle access.
+    #[serde(default)]
+    hidden_from_history: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -159,6 +163,26 @@ fn enrollment_not_expired(record: &MemberEnrollmentRecord) -> Result<(), ApiErro
         return Err(ApiError::BadRequest("member invitation has expired".into()));
     }
     Ok(())
+}
+
+fn enrollment_previewable(record: &MemberEnrollmentRecord) -> bool {
+    record.state == "issued" || (record.state == "draft" && record.additional_membership)
+}
+
+fn enrollment_visible_to_targeted_member(record: &MemberEnrollmentRecord) -> bool {
+    record.state == "issued"
+}
+
+fn enrollment_claimable_by_member(
+    record: &MemberEnrollmentRecord,
+    user_id: &str,
+    member_did: &str,
+) -> bool {
+    record.state == "issued"
+        || (record.state == "draft"
+            && record.additional_membership
+            && record.user_id.as_deref() == Some(user_id)
+            && record.member_did == member_did)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -353,10 +377,10 @@ async fn contact_metadata(
 
 /// Communication-safe peer data for member sessions.
 ///
-/// The administrative `/peers` response includes network addresses used for
-/// topology and diagnostics. Member clients need only the attested identity,
-/// presence, and call availability, so this endpoint deliberately omits IPs,
-/// ports, policy data, and attestation internals.
+/// The administrative `/peers` response includes topology and diagnostics.
+/// Member clients receive only the basic contact address plus identity,
+/// presence, and call availability; ports, policy data, and attestation
+/// internals remain admin-only.
 #[derive(Debug, Serialize)]
 pub struct PwaContact {
     #[serde(rename = "peerId")]
@@ -369,6 +393,7 @@ pub struct PwaContact {
     pub device_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub did: Option<String>,
+    pub ip: String,
     pub status: String,
     pub role: String,
     #[serde(rename = "memberType")]
@@ -699,6 +724,7 @@ pub async fn mint_member_enrollment(
         email: target_user.as_ref().map(|user| user.email.clone()),
         decided_at: None,
         additional_membership: target_user.is_some(),
+        hidden_from_history: false,
     };
     let mut records = load_member_enrollments()?;
     if target_user.as_ref().is_some_and(|user| {
@@ -754,7 +780,7 @@ pub async fn list_member_enrollments(
     }
     let enrollments = load_member_enrollments()?
         .iter()
-        .filter(|record| record.circle_id == circle_id)
+        .filter(|record| record.circle_id == circle_id && !record.hidden_from_history)
         .map(MemberEnrollmentView::from)
         .collect();
     Ok(Json(MemberEnrollmentListResponse { enrollments }))
@@ -937,7 +963,6 @@ pub async fn send_targeted_pwa_member_invite(
 }
 
 pub async fn targeted_pwa_member_invites(
-    State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthenticatedSession>,
 ) -> Result<Json<TargetedPwaMemberInviteListResponse>, ApiError> {
     if auth.claims.role != "member" {
@@ -957,10 +982,10 @@ pub async fn targeted_pwa_member_invites(
             record.additional_membership
                 && record.user_id.as_deref() == Some(auth.claims.sub.as_str())
                 && record.member_did == member_did
-                && record.state == "issued"
+                && enrollment_visible_to_targeted_member(record)
         })
         .map(MemberEnrollmentView::from)
-        .filter(|view| view.state == "issued")
+        .filter(|view| matches!(view.state.as_str(), "issued" | "expired"))
         .collect();
     Ok(Json(TargetedPwaMemberInviteListResponse { invites }))
 }
@@ -995,7 +1020,7 @@ pub async fn decide_targeted_pwa_member_invite(
                 && record.member_did == member_did
         })
         .ok_or_else(|| ApiError::NotFound("member invite not found".into()))?;
-    if records[index].state != "issued" {
+    if !enrollment_claimable_by_member(&records[index], &auth.claims.sub, &member_did) {
         return Err(ApiError::Conflict(format!(
             "member invite is already {}",
             records[index].state
@@ -1138,7 +1163,15 @@ pub async fn join_additional_circle(
             approval_claim: body.invite_token,
         }));
     }
-    if existing.state != "issued" {
+    if existing.additional_membership
+        && existing.user_id.as_deref().is_some()
+        && existing.user_id.as_deref() != Some(user.user_id.as_str())
+    {
+        return Err(ApiError::Forbidden(
+            "member invitation is assigned to another member".into(),
+        ));
+    }
+    if !enrollment_claimable_by_member(&existing, &user.user_id, &member_did) {
         return Err(ApiError::Conflict(format!(
             "member invitation is already {}",
             existing.state
@@ -1249,6 +1282,39 @@ pub async fn reject_member_enrollment(
     decide_member_enrollment(&state, &circle_id, &approval_id, false).await
 }
 
+pub async fn revoke_member_enrollment(
+    State(state): State<Arc<AppState>>,
+    Path((circle_id, approval_id)): Path<(String, String)>,
+) -> Result<Json<MemberEnrollmentView>, ApiError> {
+    let _guard = MEMBER_JOIN_LOCK.lock().await;
+    let circle = store::get_circle(&state.node_id, &circle_id)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    if circle.owner_did != state.device_did {
+        return Err(ApiError::Forbidden(
+            "only the Circle owner can delete member invite history".into(),
+        ));
+    }
+    let mut records = load_member_enrollments()?;
+    let index = records
+        .iter()
+        .position(|record| record.approval_id == approval_id && record.circle_id == circle_id)
+        .ok_or_else(|| ApiError::NotFound("member invite not found".into()))?;
+    records[index].hidden_from_history = true;
+    save_member_enrollments(&records)?;
+    let view = MemberEnrollmentView::from(&records[index]);
+    log_audit(
+        &state.node_id,
+        AuditCategory::Identity,
+        AuditSeverity::Info,
+        AuditAction::Updated,
+        &format!(
+            "PWA member invite history hidden circle={} approval={} member={}",
+            circle_id, approval_id, view.member_did
+        ),
+    );
+    Ok(Json(view))
+}
+
 async fn decide_member_enrollment(
     state: &Arc<AppState>,
     circle_id: &str,
@@ -1318,12 +1384,14 @@ async fn decide_member_enrollment(
             &records[index].circle_name,
             &records[index].circle_id,
         );
-    } else if !records[index].additional_membership {
-        state
-            .admin
-            .users
-            .set_member_status(&user_id, "inactive")
-            .await?;
+    } else {
+        if !records[index].additional_membership {
+            state
+                .admin
+                .users
+                .set_member_status(&user_id, "inactive")
+                .await?;
+        }
         records[index].state = "rejected".into();
     }
     records[index].decided_at = Some(chrono::Utc::now().to_rfc3339());
@@ -1433,7 +1501,7 @@ pub async fn preview_member_invite(
         let index = enrollment_index_for_claim(&records, &body.invite_token)?;
         let enrollment = &records[index];
         enrollment_not_expired(enrollment)?;
-        if enrollment.state != "issued" {
+        if !enrollment_previewable(enrollment) {
             return Err(ApiError::Conflict(format!(
                 "member invitation is already {}",
                 enrollment.state
@@ -1943,13 +2011,14 @@ mod tests {
     }
 
     #[test]
-    fn pwa_contact_contract_omits_network_address_and_includes_profile_presence() {
+    fn pwa_contact_contract_includes_basic_ip_and_profile_presence() {
         let contact = PwaContact {
             peer_id: "nodeB".into(),
             display_name: "Node B".into(),
             full_name: Some("Node B Guardian".into()),
             device_name: "nodeB".into(),
             did: Some("did:guardian:b".into()),
+            ip: "192.168.100.22".into(),
             status: "verified".into(),
             role: "member".into(),
             member_type: "guardian".into(),
@@ -1967,7 +2036,7 @@ mod tests {
         assert_eq!(json["displayName"], "Node B");
         assert_eq!(json["deviceName"], "nodeB");
         assert_eq!(json["presenceStatus"], "online");
-        assert!(json.get("ip").is_none());
+        assert_eq!(json["ip"], "192.168.100.22");
         assert!(json.get("port").is_none());
     }
 
@@ -1993,6 +2062,51 @@ mod tests {
         assert_eq!(visible.presence_status, "online");
         assert_eq!(visible.last_seen, "2026-08-17T12:00:00Z");
         assert!(visible.presence_expires_at.is_some());
+    }
+
+    fn enrollment_for_test(state: &str, additional_membership: bool) -> MemberEnrollmentRecord {
+        MemberEnrollmentRecord {
+            approval_id: "approval-1".into(),
+            invite_id: "invite-1".into(),
+            circle_id: "circle-1".into(),
+            circle_name: "Circle 1".into(),
+            registration_id: "registration-1".into(),
+            member_did: "did:guardian:member".into(),
+            claim_hash: "hash".into(),
+            state: state.into(),
+            created_at: "2026-08-17T00:00:00Z".into(),
+            expires_at: "2026-08-18T00:00:00Z".into(),
+            user_id: Some("user-1".into()),
+            name: Some("Member".into()),
+            email: Some("member@example.com".into()),
+            decided_at: None,
+            additional_membership,
+            hidden_from_history: false,
+        }
+    }
+
+    #[test]
+    fn draft_targeted_enrollment_is_hidden_but_claimable_by_assigned_member() {
+        let record = enrollment_for_test("draft", true);
+        assert!(enrollment_previewable(&record));
+        assert!(!enrollment_visible_to_targeted_member(&record));
+        assert!(enrollment_claimable_by_member(
+            &record,
+            "user-1",
+            "did:guardian:member"
+        ));
+    }
+
+    #[test]
+    fn issued_targeted_enrollment_is_previewable_and_claimable() {
+        let record = enrollment_for_test("issued", true);
+        assert!(enrollment_previewable(&record));
+        assert!(enrollment_visible_to_targeted_member(&record));
+        assert!(enrollment_claimable_by_member(
+            &record,
+            "user-1",
+            "did:guardian:member"
+        ));
     }
 }
 
@@ -2065,12 +2179,18 @@ pub async fn contacts(
         })
     };
     let self_presence = presence_fields(owner_hide_presence, true, &now);
+    let self_ip = state
+        .call_nebula_signaling
+        .get_local_nebula_ip()
+        .await
+        .unwrap_or_default();
     let mut contacts = vec![PwaContact {
         peer_id: state.node_id.clone(),
         display_name: state.node_id.clone(),
         full_name: Some("This Guardian".to_string()),
         device_name: state.node_id.clone(),
         did: Some(state.device_did.clone()),
+        ip: self_ip,
         status: "verified".to_string(),
         role: "owner".to_string(),
         member_type: "guardian".to_string(),
@@ -2114,6 +2234,7 @@ pub async fn contacts(
                     full_name: meta.and_then(|item| item.full_name.clone()),
                     device_name,
                     did: Some(did),
+                    ip: peer.ip,
                     status: peer.status,
                     role: meta
                         .and_then(|item| item.role.clone())
@@ -2150,6 +2271,7 @@ pub async fn contacts(
             full_name: meta.full_name,
             device_name: meta.device_name.unwrap_or_else(|| "Browser".to_string()),
             did: Some(did),
+            ip: String::new(),
             status: if active { "verified" } else { "inactive" }.to_string(),
             role: meta.role.unwrap_or_else(|| "member".to_string()),
             member_type: meta.member_type.unwrap_or_else(|| "browser".to_string()),

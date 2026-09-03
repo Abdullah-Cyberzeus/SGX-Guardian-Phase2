@@ -761,6 +761,8 @@ function InventoryTab({ data, loading, error, refetch, scanning, onScan, whiteli
   const [unauthorizedOnly, setUnauthorizedOnly] = useState(false);
   const [approveTarget, setApproveTarget] = useState<ConnectedDevice | null>(null);
   const [detailTarget, setDetailTarget] = useState<ConnectedDevice | null>(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   const devices = data ?? [];
   // Prefer the authoritative backend summary; fall back to client-side counts
@@ -787,6 +789,13 @@ function InventoryTab({ data, loading, error, refetch, scanning, onScan, whiteli
   }, [devices]);
 
   const shown = unauthorizedOnly ? devices.filter(isUnauthorized) : devices;
+  const totalPages = Math.max(1, Math.ceil(shown.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const visibleDevices = shown.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [unauthorizedOnly, devices.length]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -904,9 +913,16 @@ function InventoryTab({ data, loading, error, refetch, scanning, onScan, whiteli
         </div>
       ) : (
         <div className="flex flex-col gap-3">
-          {shown.map((d) => (
+          {visibleDevices.map((d) => (
             <DeviceCard key={d.device_id} device={d} onApprove={setApproveTarget} onOpenDetail={setDetailTarget} />
           ))}
+          <PaginationControls
+            page={currentPage}
+            totalPages={totalPages}
+            totalItems={shown.length}
+            pageSize={pageSize}
+            onPage={setPage}
+          />
         </div>
       )}
 
@@ -1047,6 +1063,52 @@ function Chip({ children, color = "var(--muted-foreground)" }: { children: React
     >
       {children}
     </span>
+  );
+}
+
+function PaginationControls({
+  page,
+  totalPages,
+  totalItems,
+  pageSize,
+  onPage,
+}: {
+  page: number;
+  totalPages: number;
+  totalItems: number;
+  pageSize: number;
+  onPage: (page: number) => void;
+}) {
+  if (totalItems <= pageSize) return null;
+  const start = (page - 1) * pageSize + 1;
+  const end = Math.min(totalItems, page * pageSize);
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
+      <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
+        {start}-{end} of {totalItems}
+      </span>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => onPage(Math.max(1, page - 1))}
+          disabled={page <= 1}
+          className="rounded-md border px-2.5 py-1 text-xs disabled:opacity-45"
+          style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+        >
+          Previous
+        </button>
+        <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
+          {page}/{totalPages}
+        </span>
+        <button
+          onClick={() => onPage(Math.min(totalPages, page + 1))}
+          disabled={page >= totalPages}
+          className="rounded-md border px-2.5 py-1 text-xs disabled:opacity-45"
+          style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+        >
+          Next
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -2405,8 +2467,16 @@ function RunDetailsDialog({
   onApprove: (d: ConnectedDevice) => void;
   onOpenDetail: (d: ConnectedDevice) => void;
 }) {
+  const [page, setPage] = useState(1);
+  const pageSize = 8;
+  useEffect(() => {
+    setPage(1);
+  }, [details?.title, details?.subtitle]);
   if (!details) return null;
   const flaggedCount = details.devices.filter(isUnauthorized).length;
+  const totalPages = Math.max(1, Math.ceil(details.devices.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const visibleDevices = details.devices.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   return (
     <Dialog.Root open={!!details} onOpenChange={(o) => !o && onClose()}>
       <Dialog.Portal>
@@ -2499,7 +2569,7 @@ function RunDetailsDialog({
                     {flaggedCount} unauthorized / drifted
                   </p>
                 )}
-                {details.devices.map((d) => (
+                {visibleDevices.map((d) => (
                   <RunDeviceRow
                     key={d.device_id || `${d.mac}-${d.ip}`}
                     device={d}
@@ -2507,6 +2577,13 @@ function RunDetailsDialog({
                     onOpenDetail={onOpenDetail}
                   />
                 ))}
+                <PaginationControls
+                  page={currentPage}
+                  totalPages={totalPages}
+                  totalItems={details.devices.length}
+                  pageSize={pageSize}
+                  onPage={setPage}
+                />
               </div>
             )}
           </DetailSection>
@@ -2523,6 +2600,8 @@ function RunsTab({ onEditSchedule }: { onEditSchedule: () => void }) {
   const [selectedRun, setSelectedRun] = useState<RunDetails | null>(null);
   const [approveTarget, setApproveTarget] = useState<ConnectedDevice | null>(null);
   const [detailTarget, setDetailTarget] = useState<ConnectedDevice | null>(null);
+  const [runPage, setRunPage] = useState(1);
+  const runPageSize = 6;
 
   const cfg = useMemo(() => (schedule.data ? normalizeScheduleForm(schedule.data) : null), [schedule.data]);
   const enabled = !!cfg?.enabled;
@@ -2545,6 +2624,15 @@ function RunsTab({ onEditSchedule }: { onEditSchedule: () => void }) {
   }, [runs.data]);
   const inferredRuns = useMemo(() => deriveRunsFromInventory(devices.data ?? []), [devices.data]);
   const upcomingScans = useMemo(() => buildUpcomingScheduledScans(cfg), [cfg]);
+  const historyLength = realRuns ? realRuns.length : inferredRuns.length;
+  const historyTotalPages = Math.max(1, Math.ceil(historyLength / runPageSize));
+  const historyPage = Math.min(runPage, historyTotalPages);
+  const visibleRealRuns = realRuns?.slice((historyPage - 1) * runPageSize, historyPage * runPageSize);
+  const visibleInferredRuns = inferredRuns.slice((historyPage - 1) * runPageSize, historyPage * runPageSize);
+
+  useEffect(() => {
+    setRunPage(1);
+  }, [realRuns?.length, inferredRuns.length]);
 
   const openRealRun = (run: ScheduleRun) => {
     const runDevices = resolveDevicesForRun(run, devices.data ?? []);
@@ -2773,9 +2861,16 @@ function RunsTab({ onEditSchedule }: { onEditSchedule: () => void }) {
 
         {realRuns ? (
           <div className="flex flex-col gap-2">
-            {realRuns.map((r) => (
+            {visibleRealRuns!.map((r) => (
               <ScheduleRunCard key={r.run_id} run={r} onClick={() => openRealRun(r)} />
             ))}
+            <PaginationControls
+              page={historyPage}
+              totalPages={historyTotalPages}
+              totalItems={historyLength}
+              pageSize={runPageSize}
+              onPage={setRunPage}
+            />
           </div>
         ) : (
           <>
@@ -2811,7 +2906,7 @@ function RunsTab({ onEditSchedule }: { onEditSchedule: () => void }) {
               </div>
             ) : (
               <div className="flex flex-col gap-2">
-                {inferredRuns.map((r) => (
+                {visibleInferredRuns.map((r) => (
                   <div
                     key={r.bucket}
                     role="button"
@@ -2846,6 +2941,13 @@ function RunsTab({ onEditSchedule }: { onEditSchedule: () => void }) {
                     </div>
                   </div>
                 ))}
+                <PaginationControls
+                  page={historyPage}
+                  totalPages={historyTotalPages}
+                  totalItems={historyLength}
+                  pageSize={runPageSize}
+                  onPage={setRunPage}
+                />
               </div>
             )}
           </>

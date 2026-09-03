@@ -294,7 +294,12 @@ export function ST13DualWifi() {
             <div className="flex items-center gap-3">
               <span className="rounded px-2 py-1 text-[10px] font-semibold uppercase tracking-wider" style={tone}>{runtimeState}</span>
               <div>
-                <p className="text-sm font-semibold">Network orchestrator</p>
+                <span className="group relative inline-flex">
+                  <p className="cursor-help text-sm font-semibold" tabIndex={0}>Network orchestrator</p>
+                  <span className="pointer-events-none absolute left-1/2 top-7 z-20 hidden w-72 -translate-x-1/2 rounded-md border border-border bg-popover px-3 py-2 text-xs leading-5 text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
+                    Coordinates Wi-Fi mode changes, applies hotspot/uplink routing, enables Zero-Trust network enforcement, and monitors transition status.
+                  </span>
+                </span>
                 <p className="text-xs text-muted-foreground">Current mode: {modeData?.mode.replaceAll("_", " ") ?? "unknown"}</p>
               </div>
             </div>

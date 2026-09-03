@@ -76,29 +76,26 @@ export function CircleManagementScreen() {
   const [memberEnrollments, setMemberEnrollments] = useState<MemberEnrollment[]>([]);
   const [availablePwaMembers, setAvailablePwaMembers] = useState<AvailablePwaMember[]>([]);
   const [selectedPwaMemberUserId, setSelectedPwaMemberUserId] = useState("");
-  const [confirm, setConfirm] = useState<{ kind: "archive" } | { kind: "unarchive" } | { kind: "delete" } | { kind: "member"; did: string } | { kind: "invite"; id: string } | null>(null);
+  const [confirm, setConfirm] = useState<{ kind: "archive" } | { kind: "unarchive" } | { kind: "delete" } | { kind: "member"; did: string } | { kind: "invite"; id: string } | { kind: "member-invite"; id: string } | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [detailResult, memberResult, inviteResult, enrollmentResult, availablePwaResult] = await Promise.allSettled([
-        circleService.getById(circleId), circleService.getMembers(circleId), circleService.getInvites(circleId), circleService.getMemberEnrollments(circleId), circleService.getAvailablePwaMembers(circleId),
+      const [detailResult, memberResult, enrollmentResult, availablePwaResult] = await Promise.allSettled([
+        circleService.getById(circleId), circleService.getMembers(circleId), circleService.getMemberEnrollments(circleId), circleService.getAvailablePwaMembers(circleId),
       ]);
       if (detailResult.status === "rejected") throw detailResult.reason;
       const detail = detailResult.value;
       const memberList = memberResult.status === "fulfilled" ? memberResult.value : [];
-      const inviteList = inviteResult.status === "fulfilled" ? inviteResult.value : [];
       setCircle(detail);
       setName(detail.name || "");
       setDescription(detail.description || "");
       setMembers(memberList);
-      setInvites(inviteList);
       setMemberEnrollments(enrollmentResult.status === "fulfilled" ? enrollmentResult.value : []);
       const availableMembers = availablePwaResult.status === "fulfilled" ? availablePwaResult.value : [];
       setAvailablePwaMembers(availableMembers);
       setSelectedPwaMemberUserId((current) => availableMembers.some((member) => member.userId === current) ? current : "");
       if (memberResult.status === "rejected") toast.error("Circle loaded, but members could not be retrieved");
-      if (inviteResult.status === "rejected") toast.error("Circle loaded, but invites could not be retrieved");
       if (availablePwaResult.status === "rejected") setAvailablePwaMembers([]);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to load Circle controls");
@@ -138,6 +135,16 @@ export function CircleManagementScreen() {
       .then((result) => setDidPeers(result.peers || []))
       .catch(() => setDidPeers([]));
   }, [tab]);
+
+  useEffect(() => {
+    if (tab !== "invites" || inviteMode !== "guardian") return;
+    circleService.getInvites(circleId)
+      .then(setInvites)
+      .catch(() => {
+        setInvites([]);
+        toast.error("Guardian invites could not be retrieved");
+      });
+  }, [tab, inviteMode, circleId]);
 
   const saveDetails = async () => {
     if (!name.trim()) return;
@@ -388,9 +395,13 @@ export function CircleManagementScreen() {
         await circleService.removeMember(circleId, confirm.did);
         toast.success("Member removed");
         await refetchMembers();
+      } else if (confirm.kind === "member-invite") {
+        await circleService.revokeMemberEnrollment(circleId, confirm.id);
+        toast.success("Member invite history deleted");
+        await reload();
       } else {
         await circleService.revokeInvite(circleId, confirm.id);
-        toast.success("Invite revoked");
+        toast.success("Invite history deleted");
         await reload();
       }
       setConfirm(null);
@@ -421,7 +432,7 @@ export function CircleManagementScreen() {
         <p className="truncate font-mono text-xs text-muted-foreground" title={member.did}>{memberSecondary}</p>
         {revoked && <p className="mt-1 text-xs text-muted-foreground">Membership credential revoked; the DID can be added to this Circle again.</p>}
       </div>
-      <select className="rounded-md border border-border bg-input-background px-2 py-2 text-sm" value={member.role || "member"} onChange={(e) => void updateRole(member.did, e.target.value as CircleRole)} disabled={busy || revoked || primaryOwner}>{roles.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}</select>
+      <span className="inline-flex items-center justify-center rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">{roleLabel(member.role)}</span>
       {revoked ? <button className={primaryButton} onClick={() => void restoreMember(member)} disabled={busy} aria-label={`Add ${memberDisplayName} again`}><UserPlus size={15} />Add again</button> : <button className={secondaryButton} onClick={() => setConfirm({ kind: "member", did: member.did })} disabled={busy || primaryOwner} aria-label={`Remove ${memberDisplayName}`}><Trash2 size={15} className="text-destructive" /></button>}
     </div>
     );
@@ -456,7 +467,6 @@ export function CircleManagementScreen() {
           </div>}
 
           {tab === "members" && <div className="space-y-5">
-            <section className="rounded-xl border border-border bg-card p-5"><div className="mb-4 flex items-center gap-2"><UserPlus size={18} className="text-primary" /><h2 className="font-semibold">Add member</h2></div><div className="grid gap-3 sm:grid-cols-[1fr_150px_auto]"><input className={fieldClass} value={memberDid} onChange={(e) => setMemberDid(e.target.value)} placeholder="did:guardian:…" /><select className={fieldClass} value={memberRole} onChange={(e) => setMemberRole(e.target.value as CircleRole)}><option value="member">Member — participant</option><option value="owner">Admin — administrator</option></select><button className={primaryButton} onClick={submitMember} disabled={busy || !memberDid.trim()}><Plus size={15} />Add</button></div><div className="mt-3 flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-muted-foreground">Circle membership does not grant network trust. Voice and video calling activate after this DID completes certificate approval and mutual attestation.</p><button className={secondaryButton} onClick={redirectMemberDidToInvite}><Send size={14} />Use DID invite flow</button></div><div className="mt-4 flex items-center justify-between border-t border-border pt-4"><div><p className="text-sm font-medium">Bulk upload</p><p className="text-xs text-muted-foreground">CSV rows use backend roles: <code>did,role</code> with owner or member</p></div><label className={`${secondaryButton} cursor-pointer`}><Upload size={15} />Upload CSV<input className="hidden" type="file" accept=".csv,text/csv,text/plain" onChange={uploadMembers} disabled={busy} /></label></div></section>
             <section className="overflow-hidden rounded-xl border border-border bg-card"><div className="flex items-center justify-between border-b border-border p-4"><div className="flex items-center gap-2"><Users size={18} className="text-primary" /><h2 className="font-semibold">Active Members</h2></div><span className="text-xs text-muted-foreground">{currentMembers.length} active</span></div>{currentMembers.length === 0 ? <p className="p-8 text-center text-sm text-muted-foreground">No active members in this Circle.</p> : currentMembers.map((member) => memberRow(member))}</section>
             <section className="overflow-hidden rounded-xl border border-destructive/25 bg-card"><div className="flex items-center justify-between border-b border-border p-4"><div className="flex items-center gap-2"><Trash2 size={18} className="text-destructive" /><h2 className="font-semibold">Deleted Members</h2></div><span className="text-xs text-muted-foreground">{revokedMembers.length} deleted</span></div>{revokedMembers.length === 0 ? <p className="p-8 text-center text-sm text-muted-foreground">No deleted members.</p> : revokedMembers.map((member) => memberRow(member, true))}</section>
           </div>}
@@ -474,7 +484,7 @@ export function CircleManagementScreen() {
               <p className="mt-2 text-sm leading-6 text-muted-foreground">Select a signed-up member, generate a one-use link, then send it to that member for approval.</p>
               <label className="mb-1.5 mt-4 block text-xs font-medium text-muted-foreground">Signed-up PWA members</label>
               <div className="grid gap-3 sm:grid-cols-[1fr_170px_auto]">
-                <select className={fieldClass} value={selectedPwaMemberUserId} onChange={(event) => setSelectedPwaMemberUserId(event.target.value)}>
+                <select className={fieldClass} value={selectedPwaMemberUserId} onChange={(event) => { setSelectedPwaMemberUserId(event.target.value); setMemberInvite(null); setInviteQrOpen(false); }}>
                   <option value="">Select an available member</option>
                   {availablePwaMembers.map((member) => (
                     <option key={member.userId} value={member.userId}>{member.name || member.email} - {member.email}</option>
@@ -505,7 +515,7 @@ export function CircleManagementScreen() {
                 <p className="text-sm font-semibold">LAN enrollment link</p>
                 <p className="mt-2 break-all font-mono text-xs">{memberInvite.link}</p>
                 <p className="mt-2 break-all text-xs text-muted-foreground">Reserved DID: <span className="font-mono">{memberInvite.enrollment.memberDid}</span></p>
-                <div className="mt-3 flex flex-wrap gap-2">{memberInvite.enrollment.state === "draft" && <button className={primaryButton} onClick={() => void sendSelectedMemberInvite()} disabled={busy}><Send size={14} />Send link</button>}<button className={secondaryButton} onClick={() => void navigator.clipboard.writeText(memberInvite.link).then(() => toast.success("Member link copied"))}><Copy size={14} />Copy link</button><button className={secondaryButton} onClick={() => setInviteQrOpen((open) => !open)}><QrCode size={14} />QR code</button></div>
+                <div className="mt-3 flex flex-wrap gap-2">{memberInvite.enrollment.state === "draft" && <button className={primaryButton} onClick={() => void sendSelectedMemberInvite()} disabled={busy}><Send size={14} />Send invite link message</button>}<button className={secondaryButton} onClick={() => void navigator.clipboard.writeText(memberInvite.link).then(() => toast.success("Member link copied"))}><Copy size={14} />Copy link</button><button className={secondaryButton} onClick={() => setInviteQrOpen((open) => !open)}><QrCode size={14} />QR code</button></div>
                 {inviteQrOpen && <div className="mt-4 inline-flex rounded-md border border-border bg-background p-4"><QRCodeSVG value={memberInvite.link} size={220} bgColor="transparent" fgColor="var(--foreground)" level="M" /></div>}
               </div>}
             </section>}
@@ -513,7 +523,7 @@ export function CircleManagementScreen() {
             {inviteMode === "member" && <section className="overflow-hidden rounded-xl border border-border bg-card">
               <div className="flex items-center justify-between border-b border-border p-4"><h2 className="font-semibold">Member approval requests</h2><span className="text-xs text-muted-foreground">{memberEnrollments.filter((item) => item.state === "pending").length} pending</span></div>
               {memberEnrollments.length === 0 ? <p className="p-8 text-center text-sm text-muted-foreground">No member enrollment links or approval requests.</p> : memberEnrollments.map((enrollment) => <div key={enrollment.approvalId} className="border-b border-border p-4 last:border-0">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{enrollment.name || (enrollment.state === "issued" ? "Unused member link" : "PWA member")}</p><p className="text-xs text-muted-foreground">{enrollment.email || `Expires ${new Date(enrollment.expiresAt).toLocaleString()}`}</p><p className="mt-1 truncate font-mono text-[10px] text-muted-foreground" title={enrollment.memberDid}>{enrollment.memberDid}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${enrollment.state === "approved" ? "bg-primary/10 text-primary" : enrollment.state === "rejected" ? "bg-destructive/10 text-destructive" : "bg-muted text-muted-foreground"}`}>{enrollment.state}</span>{enrollment.state === "pending" && <div className="flex gap-2"><button className={primaryButton} disabled={busy} onClick={() => void decideMemberEnrollment(enrollment, true)}><Check size={14} />Approve</button><button className={secondaryButton} disabled={busy} onClick={() => void decideMemberEnrollment(enrollment, false)}><X size={14} />Decline</button></div>}</div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{enrollment.name || (enrollment.state === "issued" ? "Unused member link" : "PWA member")}</p><p className="text-xs text-muted-foreground">{enrollment.email || `Expires ${new Date(enrollment.expiresAt).toLocaleString()}`}</p><p className="mt-1 truncate font-mono text-[10px] text-muted-foreground" title={enrollment.memberDid}>{enrollment.memberDid}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${enrollment.state === "approved" ? "bg-primary/10 text-primary" : enrollment.state === "rejected" ? "bg-destructive/10 text-destructive" : "bg-muted text-muted-foreground"}`}>{enrollment.state}</span>{enrollment.state === "pending" && <div className="flex gap-2"><button className={primaryButton} disabled={busy} onClick={() => void decideMemberEnrollment(enrollment, true)}><Check size={14} />Approve</button><button className={secondaryButton} disabled={busy} onClick={() => void decideMemberEnrollment(enrollment, false)}><X size={14} />Decline</button></div>}<button className={secondaryButton} onClick={() => setConfirm({ kind: "member-invite", id: enrollment.approvalId })} disabled={busy} aria-label="Delete member invite history"><X size={15} className="text-destructive" /></button></div>
               </div>)}
             </section>}
 
@@ -568,12 +578,12 @@ export function CircleManagementScreen() {
                 {inviteQrOpen && <div id="admin-circle-invite-qr" className="mt-4 inline-flex flex-col items-center gap-3 rounded-md border border-border bg-background p-4"><QRCodeSVG value={inviteShareValue(newInvite) || newInvite.id} size={220} bgColor="transparent" fgColor="var(--foreground)" level="M" /><button className={secondaryButton} onClick={downloadQr}><Download size={14} />Download QR</button></div>}
               </div>}
             </section>}
-            {inviteMode === "guardian" && <section className="overflow-hidden rounded-xl border border-border bg-card"><div className="flex items-center justify-between border-b border-border p-4"><h2 className="font-semibold">Active Guardian invites</h2><span className="text-xs text-muted-foreground">{invites.length} total</span></div>{invites.length === 0 ? <p className="p-8 text-center text-sm text-muted-foreground">No active invites.</p> : invites.map((invite) => { const peer = didPeers.find((item) => item.did === invite.targetDid); return <div key={invite.id} className="flex items-center gap-3 border-b border-border p-4 last:border-0"><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{peer?.node_name || invite.circleName || "Guardian invite"}</p><p className="truncate font-mono text-xs text-muted-foreground">{invite.targetDid || invite.id}</p><p className="mt-1 text-xs text-muted-foreground">{roleLabel(invite.role)} · {invite.expiresAt ? `Expires ${new Date(invite.expiresAt).toLocaleString()}` : "No expiry"} · {stateLabel(invite)}</p></div><button className={secondaryButton} onClick={() => void sendDirectInvite(invite)} aria-label="Send direct invite"><Send size={14} /></button><button className={secondaryButton} onClick={() => void copyInvite(invite)} aria-label="Copy invite"><Copy size={14} /></button><button className={secondaryButton} onClick={() => setConfirm({ kind: "invite", id: invite.id })} aria-label="Revoke invite"><X size={15} className="text-destructive" /></button></div>; })}</section>}
+            {inviteMode === "guardian" && <section className="overflow-hidden rounded-xl border border-border bg-card"><div className="flex items-center justify-between border-b border-border p-4"><h2 className="font-semibold">Active Guardian invites</h2><span className="text-xs text-muted-foreground">{invites.length} total</span></div>{invites.length === 0 ? <p className="p-8 text-center text-sm text-muted-foreground">No active invites.</p> : invites.map((invite) => { const peer = didPeers.find((item) => item.did === invite.targetDid); const label = displayForDid(invite.targetDid, invite.targetName || peer?.node_name || invite.targetEmail || invite.circleName || "Guardian invite"); return <div key={invite.id} className="flex items-center gap-3 border-b border-border p-4 last:border-0"><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium" title={invite.targetDid || invite.id}>{label}</p><p className="truncate text-xs text-muted-foreground">{label} · {invite.expiresAt ? `Expires ${new Date(invite.expiresAt).toLocaleString()}` : "No expiry"} · {stateLabel(invite)}</p></div><button className={secondaryButton} onClick={() => void sendDirectInvite(invite)} aria-label="Send direct invite"><Send size={14} /></button><button className={secondaryButton} onClick={() => void copyInvite(invite)} aria-label="Copy invite"><Copy size={14} /></button><button className={secondaryButton} onClick={() => setConfirm({ kind: "invite", id: invite.id })} aria-label="Delete invite history"><X size={15} className="text-destructive" /></button></div>; })}</section>}
             <button className={secondaryButton} onClick={() => navigate("/network/join")}><Clipboard size={15} />Open invite preview and join</button>
           </div>}
         </div>
       </main>
-      {confirm && <ConfirmDialog title={confirm.kind === "archive" ? "Archive this Circle?" : confirm.kind === "unarchive" ? "Unarchive this Circle?" : confirm.kind === "delete" ? "Permanently delete this Circle?" : confirm.kind === "member" ? "Remove this member?" : "Revoke this invite?"} message={confirm.kind === "archive" ? "The Circle will be removed from Active Circles and moved to Archived Circles with its audit history preserved." : confirm.kind === "unarchive" ? "The Circle will be restored to Active Circles and become fully usable again." : confirm.kind === "delete" ? "This deletes the Circle and revokes every membership credential issued for it. This action cannot be undone." : confirm.kind === "member" ? "The member will immediately lose Circle access and appear under Revoked Members." : "Anyone holding this invite will no longer be able to use it."} confirmLabel={confirm.kind === "archive" ? "Archive Circle" : confirm.kind === "unarchive" ? "Unarchive Circle" : confirm.kind === "delete" ? "Delete Circle" : confirm.kind === "member" ? "Remove" : "Revoke"} tone={confirm.kind === "unarchive" ? "primary" : "destructive"} onConfirm={() => void runConfirmedAction()} onClose={() => setConfirm(null)} busy={busy} />}
+      {confirm && <ConfirmDialog title={confirm.kind === "archive" ? "Archive this Circle?" : confirm.kind === "unarchive" ? "Unarchive this Circle?" : confirm.kind === "delete" ? "Permanently delete this Circle?" : confirm.kind === "member" ? "Remove this member?" : confirm.kind === "member-invite" ? "Delete this member invite history?" : confirm.kind === "invite" ? "Delete this invite history?" : "Revoke this invite?"} message={confirm.kind === "archive" ? "The Circle will be removed from Active Circles and moved to Archived Circles with its audit history preserved." : confirm.kind === "unarchive" ? "The Circle will be restored to Active Circles and become fully usable again." : confirm.kind === "delete" ? "This deletes the Circle and revokes every membership credential issued for it. This action cannot be undone." : confirm.kind === "member" ? "The member will immediately lose Circle access and appear under Revoked Members." : confirm.kind === "member-invite" ? "This only removes the row from member invite history. Existing member access and invite link behavior are unchanged." : confirm.kind === "invite" ? "This only removes the row from invite history. Existing access and invite link behavior are unchanged." : "Anyone holding this invite will no longer be able to use it."} confirmLabel={confirm.kind === "archive" ? "Archive Circle" : confirm.kind === "unarchive" ? "Unarchive Circle" : confirm.kind === "delete" ? "Delete Circle" : confirm.kind === "member" ? "Remove" : confirm.kind === "member-invite" || confirm.kind === "invite" ? "Delete" : "Revoke"} tone={confirm.kind === "unarchive" ? "primary" : "destructive"} onConfirm={() => void runConfirmedAction()} onClose={() => setConfirm(null)} busy={busy} />}
     </div>
   );
 }

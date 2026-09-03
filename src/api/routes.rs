@@ -385,6 +385,10 @@ pub fn circle_router() -> Router<Arc<AppState>> {
             post(handlers::pwa::send_targeted_pwa_member_invite),
         )
         .route(
+            "/api/v1/circles/{id}/member-enrollments/{approval_id}",
+            axum::routing::delete(handlers::pwa::revoke_member_enrollment),
+        )
+        .route(
             "/api/v1/circles/invites/inbox",
             get(handlers::circle::received_invites).post(handlers::circle::receive_invite),
         )

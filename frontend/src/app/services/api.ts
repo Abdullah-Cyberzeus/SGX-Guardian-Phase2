@@ -285,14 +285,14 @@ class ApiClient {
     return this.request<T>(endpoint, { method: 'GET', params });
   }
 
-  async post<T>(endpoint: string, data?: unknown, options?: { timeoutMs?: number }): Promise<T> {
+  async post<T>(endpoint: string, data?: unknown, options?: { timeoutMs?: number; suppressUnauthorizedEvent?: boolean }): Promise<T> {
     const body =
       data === undefined || data === null
         ? undefined
         : data instanceof FormData
           ? data
           : JSON.stringify(data);
-    return this.request<T>(endpoint, { method: 'POST', body, timeoutMs: options?.timeoutMs });
+    return this.request<T>(endpoint, { method: 'POST', body, timeoutMs: options?.timeoutMs, suppressUnauthorizedEvent: options?.suppressUnauthorizedEvent });
   }
 
   async put<T>(endpoint: string, data?: unknown): Promise<T> {

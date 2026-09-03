@@ -240,6 +240,14 @@ pub trait UserStore: Send + Sync {
         registration_id: &str,
         circle_id: &str,
     ) -> Result<User>;
+    /// Atomically removes one Circle from an active browser member without
+    /// rotating or revoking their browser registration.
+    async fn remove_member_circle(
+        &self,
+        user_id: &str,
+        registration_id: &str,
+        circle_id: &str,
+    ) -> Result<User>;
     async fn set_member_status(&self, user_id: &str, status: &str) -> Result<User>;
     async fn revoke_browser_registration(
         &self,
@@ -969,6 +977,40 @@ impl UserStore for JsonUserStore {
                     user.circle_ids.push(circle_id);
                     user.circle_ids.sort();
                     user.circle_ids.dedup();
+                }
+                Ok(user.clone())
+            })
+            .await
+    }
+
+    async fn remove_member_circle(
+        &self,
+        user_id: &str,
+        registration_id: &str,
+        circle_id: &str,
+    ) -> Result<User> {
+        let user_id = user_id.to_string();
+        let registration_id = registration_id.to_string();
+        let circle_id = circle_id.trim().to_string();
+        if circle_id.is_empty() {
+            return Err(anyhow!("circle id is required"));
+        }
+        self.file
+            .mutate(move |users| {
+                let user = users
+                    .iter_mut()
+                    .find(|user| user.user_id == user_id)
+                    .ok_or_else(|| anyhow!("user not found"))?;
+                if user.role != UserRole::Member {
+                    return Err(anyhow!("member account required"));
+                }
+                if user.browser_registration_id.as_deref() != Some(registration_id.as_str()) {
+                    return Err(anyhow!("browser registration changed"));
+                }
+                let before = user.circle_ids.len();
+                user.circle_ids.retain(|existing| existing != &circle_id);
+                if user.circle_ids.len() == before {
+                    return Err(anyhow!("member is not in this Circle"));
                 }
                 Ok(user.clone())
             })

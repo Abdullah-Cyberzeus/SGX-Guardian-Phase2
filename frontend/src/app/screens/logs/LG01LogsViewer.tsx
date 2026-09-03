@@ -1204,7 +1204,7 @@ export function LG01LogsViewer() {
           <button
             key={id}
             onClick={() => setActiveTab(id)}
-            className="flex-1 flex items-center justify-center gap-1.5 py-3 transition-opacity active:opacity-70"
+            className={`flex-1 flex items-center justify-center gap-1.5 py-3 transition-opacity active:opacity-70 ${id === "audit" ? "group" : ""}`}
             style={{
               backgroundColor: "transparent",
               border: "none",
@@ -1213,15 +1213,23 @@ export function LG01LogsViewer() {
             }}
           >
             <Icon size={14} style={{ color: activeTab === id ? "var(--primary)" : "var(--muted-foreground)" }} />
-            <span
-              style={{
-                fontFamily: "Inter, sans-serif",
-                fontSize: "var(--text-sm)",
-                fontWeight: activeTab === id ? "var(--font-weight-semibold)" : "var(--font-weight-normal)",
-                color: activeTab === id ? "var(--primary)" : "var(--muted-foreground)",
-              }}
-            >
-              {label}
+            <span className={id === "audit" ? "relative" : undefined}>
+              <span
+                className={id === "audit" ? "cursor-help" : undefined}
+                style={{
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "var(--text-sm)",
+                  fontWeight: activeTab === id ? "var(--font-weight-semibold)" : "var(--font-weight-normal)",
+                  color: activeTab === id ? "var(--primary)" : "var(--muted-foreground)",
+                }}
+              >
+                {label}
+              </span>
+              {id === "audit" ? (
+                <span className="pointer-events-none absolute left-1/2 top-7 z-20 hidden w-72 -translate-x-1/2 rounded-md border border-border bg-popover px-3 py-2 text-xs leading-5 text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
+                  Tamper-evident security history for sign-ins, Circle activity, device events, admin actions, and system changes.
+                </span>
+              ) : null}
             </span>
           </button>
         ))}

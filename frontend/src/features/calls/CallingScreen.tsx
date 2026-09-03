@@ -11,6 +11,7 @@ import {
   VideoOff,
 } from "lucide-react";
 import { useContactNames } from "../../app/contexts/ContactNameContext";
+import { useCommunicationPeers } from "../../app/hooks/useApiData";
 import { useCall } from "./CallContext";
 import type { CallSession } from "./call.types";
 
@@ -24,7 +25,7 @@ const labels: Record<string, string> = { local_policy_check: "Checking call poli
 // renders, offer_received always means WE are the caller — the incoming-call
 // gate (`incoming`) already claims that state for the receiver's own view.
 function stateLabel(state: string, peerOnline?: boolean): string {
-  if (state === "offer_sent" || state === "offer_received") return peerOnline ? "Ringing…" : "Calling…";
+  if (state === "offer_sent" || state === "offer_received") return peerOnline === false ? "Calling…" : "Ringing…";
   return labels[state] ?? state;
 }
 
@@ -68,6 +69,17 @@ function compactIdentity(identity: string) {
   return identity.length > 32 ? `${identity.slice(0, 15)}…${identity.slice(-10)}` : identity;
 }
 
+function rosterNameFor(identity: string, peers?: Array<{ did?: string; peerId?: string; displayName?: string; fullName?: string; deviceName?: string; ip?: string }>) {
+  const peer = peers?.find((item) => item.did === identity || item.peerId === identity);
+  return [peer?.displayName, peer?.fullName, peer?.deviceName]
+    .map((value) => String(value || "").trim())
+    .find((value) => value
+      && value !== identity
+      && value !== peer?.ip
+      && !["browser", "pwa member device"].includes(value.toLowerCase())
+      && !value.toLowerCase().startsWith("did:"));
+}
+
 function ControlButton({
   label,
   active = false,
@@ -104,6 +116,7 @@ function ControlButton({
 export function CallingScreen() {
   const { call, incoming, peerId, peerOnline, localStream, remoteStream, error, muted, cameraEnabled, qualityLabel, toggleMute, toggleCamera, sendTestTone, shareScreen, end } = useCall();
   const { displayForDid } = useContactNames();
+  const { data: communicationPeers } = useCommunicationPeers();
   const elapsed = useCallDuration(call);
   const [testingAudio, setTestingAudio] = useState(false);
   // While a call is still ringing (offer_received), the incoming toast owns the UI —
@@ -111,7 +124,7 @@ export function CallingScreen() {
   if (!call || incoming) return null;
 
   const peer = peerId ?? "Remote Guardian";
-  const displayName = displayForDid(peer, compactIdentity(peer));
+  const displayName = displayForDid(peer, rosterNameFor(peer, communicationPeers || undefined) || compactIdentity(peer));
   const showIdentity = displayName !== peer;
   const label = stateLabel(call.state, peerOnline);
   const connected = call.state === "connected";

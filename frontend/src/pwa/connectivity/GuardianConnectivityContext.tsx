@@ -195,6 +195,9 @@ export function GuardianConnectivityProvider({ children }: { children: ReactNode
   }, []);
 
   useEffect(() => {
+    const memberSessionActive = () =>
+      (session?.user.role?.toLowerCase() === "member" && Boolean(api.getToken()))
+      || Boolean(sessionStorage.getItem("sgx_auth_token"));
     const success = () => void markConnected(false);
     const failure = (event: Event) => {
       const kind = (event as CustomEvent<{ kind?: ApiFailureKind }>).detail?.kind;
@@ -202,6 +205,7 @@ export function GuardianConnectivityProvider({ children }: { children: ReactNode
       // must not directly mark the Guardian offline. Confirm with /health.
       if (kind === "guardian_unreachable" || kind === "timeout") void checkNowRef.current();
       if (kind === "unauthorized") {
+        if (memberSessionActive()) return;
         setRevoked(true);
         setReachable(false);
       }
@@ -219,6 +223,7 @@ export function GuardianConnectivityProvider({ children }: { children: ReactNode
       void refreshPendingCount();
     };
     const revokedEvent = () => {
+      if (memberSessionActive()) return;
       setRevoked(true);
       setReachable(false);
     };
@@ -239,7 +244,7 @@ export function GuardianConnectivityProvider({ children }: { children: ReactNode
       window.removeEventListener("sgx:sync-revoked", revokedEvent);
       window.removeEventListener("sgx:unauthorized", revokedEvent);
     };
-  }, [markConnected, refreshPendingCount]);
+  }, [markConnected, refreshPendingCount, session]);
 
   const status: ConnectivityStatus = revoked
     ? "credential_revoked"

@@ -237,8 +237,8 @@ export function HM02GuardianDetail() {
 
   useEffect(() => {
     wifiService.getWifiMode().then(setWifiMode).catch(() => setWifiMode(null));
-    async function fetchData() {
-      setLoading(true);
+    async function fetchData(silent = false) {
+      if (!silent) setLoading(true);
       try {
         const data = await guardianService.getInfo();
         setGuardian({
@@ -263,11 +263,11 @@ export function HM02GuardianDetail() {
       } catch {
         setDataSource('error');
       } finally {
-        setLoading(false);
+        if (!silent) setLoading(false);
       }
     }
     fetchData();
-    const id = setInterval(fetchData, 15000);
+    const id = setInterval(() => void fetchData(true), 15000);
     return () => clearInterval(id);
   }, []);
 

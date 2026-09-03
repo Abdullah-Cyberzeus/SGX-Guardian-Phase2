@@ -45,6 +45,10 @@ pub fn redeemed_path() -> PathBuf {
     invites_dir().join("redeemed.json")
 }
 
+pub fn hidden_invites_path() -> PathBuf {
+    invites_dir().join("hidden_history.json")
+}
+
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), CircleError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;

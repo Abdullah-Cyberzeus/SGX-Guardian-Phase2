@@ -106,9 +106,21 @@ export function NW04CircleDetail() {
   const memberToRemove = members.find((m: any) => String(m.did || m.id) === removeDialogOpen);
   const sameDid = (left?: string, right?: string) => String(left || "").trim().toLowerCase() === String(right || "").trim().toLowerCase();
   const localGuardianName = guardianInfo?.deviceId || guardianInfo?.name || guardianInfo?.hostname;
+  const syntheticPwaIp = (seed: string) => {
+    let hash = 2166136261;
+    for (let i = 0; i < seed.length; i += 1) {
+      hash ^= seed.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return `100.115.${((hash >>> 8) % 254) + 1}.${((hash >>> 16) % 254) + 1}`;
+  };
   const memberDisplayName = (member: any) => {
     if (sameDid(member?.did, session?.guardianDid) && localGuardianName) return localGuardianName;
-    return String(displayForDid(member?.did, member?.name || member?.nodeHint || member?.did || "Guardian member"));
+    const memberType = String(member?.memberType || member?.member_type || "").toLowerCase();
+    const fallback = memberType === "browser"
+      ? member?.name || member?.deviceName || "PWA member"
+      : member?.deviceName || member?.name || member?.nodeHint || "Guardian member";
+    return String(displayForDid(member?.did, fallback));
   };
 
   useEffect(() => {
@@ -346,6 +358,13 @@ export function NW04CircleDetail() {
     const target = trustedPeer?.peerId || (isBrowserMember ? member.did : "");
     if (!target) { toast.error("This Circle member is not linked to a call target."); return; }
     if (!isBrowserMember && !trustedPeer) { toast.error("This Circle member is not linked to a trusted Guardian peer."); return; }
+    const ownCallIds = [currentDevice, session?.browserMemberDid]
+      .map((value) => String(value || "").trim().toLowerCase())
+      .filter(Boolean);
+    if (ownCallIds.includes(target.trim().toLowerCase()) || (member.did && ownCallIds.includes(String(member.did).trim().toLowerCase()))) {
+      toast.info("You cannot call yourself.");
+      return;
+    }
     if (!ensureCallAvailable()) return;
     setStartingCall(`${target}:${media.includes("video") ? "video" : "audio"}`);
     // Browser members have no Nebula reachability check; the closest
@@ -353,7 +372,7 @@ export function NW04CircleDetail() {
     // heuristic the backend uses to decide whether it'll even route the call).
     const online = isBrowserMember
       ? String(member?.presenceStatus || "").toLowerCase() === "online"
-      : trustedPeer?.online;
+      : trustedPeer?.presenceStatus === "online" || Boolean(trustedPeer?.online);
     try {
       await startCall(target, media, online);
     } catch (cause) {
@@ -370,7 +389,7 @@ export function NW04CircleDetail() {
     setStartingCall(key);
     try {
       await groupCalling.createGroup(callableMemberIds, false, media, `${circle?.name || "Circle"} Circle call`);
-      toast.success(`Calling ${callableMemberIds.length} Circle member${callableMemberIds.length === 1 ? "" : "s"}`);
+      toast.success(`Ringing ${callableMemberIds.length} Circle member${callableMemberIds.length === 1 ? "" : "s"}`);
     } catch (cause) {
       toast.error("Circle call could not start", { description: cause instanceof Error ? cause.message : "One or more members may be unavailable." });
     } finally {
@@ -760,14 +779,6 @@ export function NW04CircleDetail() {
           {activeTab === "members" && (
             <div className="flex-1 overflow-y-auto">
               <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col gap-4 p-4 md:p-6">
-              <button
-                onClick={() => void openInviteSheet()}
-                className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80"
-                style={{ height: "48px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", border: "none", cursor: "pointer", borderRadius: "var(--radius)" }}
-              >
-                <UserPlus size={16} /> Invite Member
-              </button>
-
               <div className="rounded-lg border border-border overflow-hidden" style={{ backgroundColor: "var(--card)" }}>
                 {members.length === 0 && (
                   <div className="p-8 text-center">
@@ -797,7 +808,8 @@ export function NW04CircleDetail() {
                   const invitePending = Boolean((member as any).pending) || String((member as any).status || (member as any).membershipStatus || "").toLowerCase() === "pending";
                   const callsDisabled = invitePending || busy || isCurrentMember || !target || target === currentDevice || (!browserCallAvailable && !trustedPeer?.callAvailable);
                   const memberName = memberDisplayName(member);
-                  const memberSecondary = member.email || (isBrowserMember ? "Browser PWA member" : displayForDid(member.did, member.did));
+                  const memberIp = trustedPeer?.ip || (isBrowserMember && member.did ? syntheticPwaIp(member.did) : "");
+                  const memberSecondary = member.email || (isBrowserMember ? `${memberName} · ${memberIp}` : displayForDid(member.did, member.nodeHint || member.did));
                   const memberKey = String(member.did || member.id || `${memberName}-${i}`);
                   return (
                   <div
@@ -1095,6 +1107,10 @@ export function NW04CircleDetail() {
                 </div>
               </div>
               {[
+                {
+                  label: "IP Address",
+                  value: peerForMember(selectedMember)?.ip || (String(selectedMember.memberType || selectedMember.member_type || "").toLowerCase() === "browser" && selectedMember.did ? syntheticPwaIp(selectedMember.did) : "—"),
+                },
                 { label: "Connection Type", value: "Wi-Fi" },
                 { label: "Role", value: selectedMember.role.toLowerCase() === "owner" ? "Admin" : selectedMember.role },
               ].map(({ label, value }) => (

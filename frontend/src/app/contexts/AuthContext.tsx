@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   CYLENIUM_OIDC_CONFIG,
   cyleniumConfigErrorMessage,
@@ -229,8 +229,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const sessionRef = useRef<Session | null>(null);
+  const refreshingAfterUnauthorizedRef = useRef(false);
 
   useEffect(() => {
+    sessionRef.current = session;
     if (session) void persistOfflineMembership(session).catch(() => {});
   }, [session]);
 
@@ -263,6 +266,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const handleUnauthorized = () => {
+      const current = sessionRef.current;
+      const hasTabScopedToken = Boolean(sessionStorage.getItem(TOKEN_KEY));
+      if ((current?.user.role?.toLowerCase() === "member" && current.token) || hasTabScopedToken) {
+        if (refreshingAfterUnauthorizedRef.current) return;
+        refreshingAfterUnauthorizedRef.current = true;
+        api.post<AuthPayload>("/auth/session/refresh", undefined, { suppressUnauthorizedEvent: true })
+          .then(async (data) => {
+            const next = normalizeSession(data);
+            if (!next.token) throw new Error("Refresh response did not include a session token");
+            await refreshOfflineMode();
+            await persistOfflineMembership(next);
+            injectToken(next.token, "session");
+            setSession(next);
+          })
+          .catch(() => undefined)
+          .finally(() => { refreshingAfterUnauthorizedRef.current = false; });
+        return;
+      }
       sessionStorage.setItem(AUTH_NOTICE_KEY, "Your Guardian session expired or was revoked. Please sign in again.");
       injectToken(null);
       setSession(null);

@@ -122,10 +122,21 @@ pub struct ChangeRoleRequest {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InviteListItem {
+    #[serde(flatten)]
+    pub invite: InviteToken,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_email: Option<String>,
+}
+
+#[derive(Serialize)]
 pub struct InviteListResponse {
     pub status: String,
     pub count: usize,
-    pub invites: Vec<InviteToken>,
+    pub invites: Vec<InviteListItem>,
 }
 
 #[derive(Deserialize, Default)]
@@ -623,6 +634,52 @@ pub async fn remove_member(
     Path((id, did)): Path<(String, String)>,
 ) -> Result<Json<MemberRemoveResponse>, ApiError> {
     let did = required_did(Some(&did))?;
+    let browser_user = state.admin.users.list().await?.into_iter().find(|user| {
+        user.role == UserRole::Member
+            && user.circle_ids.iter().any(|circle_id| circle_id == &id)
+            && user
+                .browser_registration_id
+                .as_deref()
+                .is_some_and(|registration_id| {
+                    crate::api::handlers::browser_member::did_for_registration(registration_id)
+                        == did
+                })
+    });
+    if let Some(user) = browser_user {
+        let registration_id = user
+            .browser_registration_id
+            .clone()
+            .ok_or_else(|| ApiError::Internal("browser member registration is missing".into()))?;
+        state
+            .admin
+            .users
+            .remove_member_circle(&user.user_id, &registration_id, &id)
+            .await
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        if let Err(err) =
+            refresh_and_broadcast_member_snapshot_with_extra_targets(&state, &id, &[did.clone()])
+                .await
+        {
+            tracing::warn!(
+                "Circle member snapshot broadcast failed after remove browser member circle={} subject={} error={}",
+                id,
+                did,
+                err
+            );
+        }
+        log_audit(
+            &state.node_id,
+            AuditCategory::Circle,
+            AuditSeverity::Warning,
+            AuditAction::Revoked,
+            &format!("PWA Circle member removed: circle={} subject={}", id, did),
+        );
+        return Ok(Json(MemberRemoveResponse {
+            status: "success".to_string(),
+            message: "Circle member removed".to_string(),
+            revoked_vc_ids: Vec::new(),
+        }));
+    }
     let revoked_vc_ids = members::remove_member(&state.node_id, &id, &did, "circle member removed")
         .map_err(map_circle_error)?;
     if let Err(err) =
@@ -692,6 +749,25 @@ pub async fn list_invites(
 ) -> Result<Json<InviteListResponse>, ApiError> {
     ensure_circle_owner_access(&state, &id, VcAdminAction::Issue)?;
     let invites = invite::list_invites(&id).map_err(map_circle_error)?;
+    let users = state.admin.users.list().await?;
+    let invites = invites
+        .into_iter()
+        .map(|invite| {
+            let target_user = users.iter().find(|user| {
+                user.browser_registration_id
+                    .as_deref()
+                    .is_some_and(|registration_id| {
+                        crate::api::handlers::browser_member::did_for_registration(registration_id)
+                            == invite.target_did
+                    })
+            });
+            InviteListItem {
+                invite,
+                target_name: target_user.map(|user| user.name.clone()),
+                target_email: target_user.map(|user| user.email.clone()),
+            }
+        })
+        .collect::<Vec<_>>();
     Ok(Json(InviteListResponse {
         status: "success".to_string(),
         count: invites.len(),
@@ -835,17 +911,20 @@ pub async fn revoke_invite(
             invite_id, id
         )));
     }
-    invite::delete_invite(&invite_id).map_err(map_circle_error)?;
+    invite::hide_invite_from_history(&invite_id).map_err(map_circle_error)?;
     log_audit(
         &state.node_id,
         AuditCategory::Circle,
         AuditSeverity::Warning,
-        AuditAction::Revoked,
-        &format!("Circle invite revoked: circle={} invite={}", id, invite_id),
+        AuditAction::Updated,
+        &format!(
+            "Circle invite history hidden: circle={} invite={}",
+            id, invite_id
+        ),
     );
     Ok(Json(InviteDeleteResponse {
         status: "success".to_string(),
-        message: "Circle invite revoked".to_string(),
+        message: "Circle invite history deleted".to_string(),
         invite_id,
     }))
 }
