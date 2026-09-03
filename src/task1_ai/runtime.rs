@@ -14,9 +14,10 @@ use sgx_anomaly_engine::virtual_shift::{
     firewall_recommendations_from_event, justification_from_aggregate,
     logging_recommendation_from_policy, quarantine_recommendation_from_policy,
     recommendation_from_event, task1_virtual_shift_handoff_record, AdminNetworkRuleTemplates,
-    AttestationProposalResult, FirewallProposalResult, LoggingProposalResult, ProposalStageNote,
-    QuarantineProposalResult, RecommendedAction, ReviewQueue, Task1VirtualShiftHandoff,
-    TriggerDecision, VirtualShiftTriggerConfig, VirtualShiftTriggerManager, VS01_TO_VS09_PROPOSALS,
+    AiRemediationAction, AiRemediationHandoffResult, AiRemediationPlan, AttestationProposalResult,
+    FirewallProposalResult, LoggingProposalResult, ProposalStageNote, QuarantineProposalResult,
+    RecommendedAction, ReviewQueue, Task1VirtualShiftHandoff, TriggerDecision,
+    VirtualShiftTriggerConfig, VirtualShiftTriggerManager, VS01_TO_VS09_PROPOSALS,
     VS10_VS11_REVIEWS,
 };
 use sha2::{Digest, Sha256};
@@ -419,6 +420,128 @@ fn virtual_shift_root_path(state_dir: impl AsRef<Path>) -> PathBuf {
 
 pub fn full_ml_handoffs_path(state_dir: impl AsRef<Path>) -> PathBuf {
     virtual_shift_root_path(state_dir).join(FULL_ML_HANDOFFS_FILE)
+}
+
+fn task1_remediation_action_for_review(
+    action: &crate::task1_ai::ActionType,
+    target_ip: &str,
+) -> AiRemediationAction {
+    match action {
+        crate::task1_ai::ActionType::NftablesBlockIp { duration_secs } => AiRemediationAction {
+            action_type: "tighten_firewall_rules".into(),
+            target: target_ip.into(),
+            parameters: serde_json::json!({
+                "source_ip": target_ip,
+                "duration_secs": duration_secs
+            }),
+            requires_approval: true,
+            reason: "Task 1 recommends a bounded firewall restriction after anomaly detection."
+                .into(),
+        },
+        crate::task1_ai::ActionType::QuarantinePeer { peer_id } => AiRemediationAction {
+            action_type: "quarantine_suspicious_peer".into(),
+            target: peer_id.clone(),
+            parameters: serde_json::json!({
+                "peer_id": peer_id
+            }),
+            requires_approval: true,
+            reason: "Task 1 recommends quarantining the suspicious peer after owner review.".into(),
+        },
+        crate::task1_ai::ActionType::TightenAttestation { interval_secs } => AiRemediationAction {
+            action_type: "increase_attestation_frequency".into(),
+            target: target_ip.into(),
+            parameters: serde_json::json!({
+                "interval_secs": interval_secs
+            }),
+            requires_approval: true,
+            reason: "Task 1 recommends tighter attestation after suspicious activity.".into(),
+        },
+        crate::task1_ai::ActionType::ProposePolicyUpdate { rule_delta } => AiRemediationAction {
+            action_type: "propose_policy_update".into(),
+            target: target_ip.into(),
+            parameters: serde_json::json!({
+                "rule_delta": rule_delta
+            }),
+            requires_approval: true,
+            reason: "Task 1 recommends a policy update; owner approval is required.".into(),
+        },
+        crate::task1_ai::ActionType::EnableDebugLogging { interface } => AiRemediationAction {
+            action_type: "enable_additional_logging".into(),
+            target: target_ip.into(),
+            parameters: serde_json::json!({
+                "interface": interface
+            }),
+            requires_approval: true,
+            reason: "Task 1 recommends additional logging for investigation.".into(),
+        },
+        crate::task1_ai::ActionType::AlertOnly => AiRemediationAction {
+            action_type: "alert_only".into(),
+            target: target_ip.into(),
+            parameters: serde_json::json!({}),
+            requires_approval: true,
+            reason: "Task 1 recommends owner-visible alert handling.".into(),
+        },
+    }
+}
+
+/// Persist the real ThreatService-generated Task 1 remediation plan into the
+/// same Task 2 owner-review queue already used by the Virtual Shift runtime.
+pub fn persist_remediation_plan_for_owner_review(
+    node_id: &str,
+    state_dir: impl AsRef<Path>,
+    plan: &crate::task1_ai::RemediationPlan,
+    thresholds: &crate::task1_ai::Task1ThresholdSettings,
+) -> Result<AiRemediationHandoffResult> {
+    let paths = ensure_virtual_shift_assets(state_dir)?;
+    let roles = RoleRegistry::from_json_str(NODE_ROLES_JSON)?;
+    let queue = ReviewQueue::new(paths.review_root, roles);
+
+    let severity = if plan.score.score >= thresholds.critical_threshold {
+        "Critical"
+    } else if plan.score.score >= thresholds.high_threshold {
+        "High"
+    } else {
+        "Medium"
+    };
+
+    let actions = plan
+        .requires_approval
+        .iter()
+        .map(|action| task1_remediation_action_for_review(action, &plan.target_ip))
+        .collect::<Vec<_>>();
+
+    let created_at_ms = u64::try_from(plan.created_at.timestamp_millis())
+        .map_err(|_| anyhow!("Task 1 remediation timestamp predates Unix epoch"))?;
+
+    let ai_plan = AiRemediationPlan {
+        plan_id: plan.plan_id.clone(),
+        anomaly_id: format!("task1-threat-{}", plan.plan_id),
+        source_node: node_id.to_string(),
+        anomaly_score: f64::from(plan.score.score),
+        model_confidence: f64::from(plan.score.model_confidence),
+        severity: severity.into(),
+        anomaly_metadata: serde_json::json!({
+            "contributing_ip": plan.score.contributing_ip,
+            "target_ip": plan.target_ip,
+            "alert_count": plan.score.alert_count,
+            "top_signature_id": plan.score.top_signature_id,
+            "top_signature_count": plan.score.top_signature_count,
+            "category": plan.score.category,
+            "computed_at": plan.score.computed_at,
+            "window_secs": plan.score.window_secs,
+            "scoring_runtime": plan.score.scoring_runtime
+        }),
+        justification: plan.justification.clone(),
+        created_at_ms,
+        requires_approval: true,
+        auto_execute: false,
+        actions,
+    };
+
+    let (_, handoff) =
+        queue.enqueue_ai_remediation_plan(ai_plan, "task1-threat-service-runtime")?;
+
+    Ok(handoff)
 }
 
 fn build_pending_review_proposal(

@@ -220,10 +220,33 @@ impl ThreatService {
                                             ) {
                                                 tracing::info!(
                                                     node_id = %self.node_id,
+                                                    plan_id = %plan.plan_id,
                                                     target = %plan.target_ip,
                                                     score = score.score,
                                                     "task1 remediation plan generated"
                                                 );
+
+                                                match task1_ai::persist_remediation_plan_for_owner_review(
+                                                    &self.node_id,
+                                                    &self.state_dir,
+                                                    &plan,
+                                                    &thresholds,
+                                                ) {
+                                                    Ok(handoff) => tracing::info!(
+                                                        node_id = %self.node_id,
+                                                        plan_id = %handoff.plan_id,
+                                                        review_status = ?handoff.review_status,
+                                                        review_path = %handoff.pending_review_path,
+                                                        duplicate = handoff.duplicate,
+                                                        "task1 remediation plan persisted to Task 2 owner review"
+                                                    ),
+                                                    Err(err) => tracing::warn!(
+                                                        node_id = %self.node_id,
+                                                        plan_id = %plan.plan_id,
+                                                        %err,
+                                                        "failed to persist task1 remediation plan to Task 2 owner review"
+                                                    ),
+                                                }
                                             }
                                             Some(task1_ai::anomaly_context_from_score_with_thresholds(
                                                 &score,

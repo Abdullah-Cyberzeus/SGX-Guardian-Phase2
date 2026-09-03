@@ -81,7 +81,10 @@ pub use recommendation::{
     PolicyRecommendation, QuarantineProposalResult, QuarantineRecommendation, RecommendationStatus,
     RecommendedAction, RiskLevel, TrustedFirewallContext,
 };
-pub use review::{OwnerDecision, ReviewQueue, ReviewRecord, ReviewStatus};
+pub use review::{
+    AiRemediationAction, AiRemediationHandoffResult, AiRemediationPlan, OwnerDecision, ReviewQueue,
+    ReviewRecord, ReviewStatus,
+};
 pub use routing_trust::{
     RoutingTrustSources, RoutingTrustStatus, RoutingTrustSummary, RoutingTrustSummaryWriter,
 };

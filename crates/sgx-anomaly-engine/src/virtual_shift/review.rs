@@ -30,6 +30,93 @@ pub struct OwnerDecision {
     pub decided_at_ms: u64,
 }
 
+/// One AI-generated remediation action that can later become a Virtual Shift
+/// policy action after owner approval. The model may recommend, but the owner
+/// still decides.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiRemediationAction {
+    pub action_type: String,
+    pub target: String,
+    #[serde(default)]
+    pub parameters: serde_json::Value,
+    pub requires_approval: bool,
+    pub reason: String,
+}
+
+/// Durable AI remediation plan generated from a Task 1 anomaly. A plan with
+/// `requires_approval=true` must be persisted into the owner review queue
+/// before any Virtual Shift policy can be built, signed, or broadcast.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AiRemediationPlan {
+    pub plan_id: String,
+    pub anomaly_id: String,
+    pub source_node: String,
+    pub anomaly_score: f64,
+    pub model_confidence: f64,
+    pub severity: String,
+    #[serde(default)]
+    pub anomaly_metadata: serde_json::Value,
+    pub justification: String,
+    pub created_at_ms: u64,
+    pub requires_approval: bool,
+    pub auto_execute: bool,
+    pub actions: Vec<AiRemediationAction>,
+}
+
+impl AiRemediationPlan {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if self.plan_id.trim().is_empty()
+            || self.plan_id.contains(['/', '\\'])
+            || matches!(self.plan_id.as_str(), "." | "..")
+        {
+            anyhow::bail!("AI remediation plan_id must be a non-empty file-name-safe identifier");
+        }
+        if self.anomaly_id.trim().is_empty() || self.source_node.trim().is_empty() {
+            anyhow::bail!("AI remediation plan must keep anomaly_id and source_node");
+        }
+        if !(0.0..=1.0).contains(&self.anomaly_score)
+            || !(0.0..=1.0).contains(&self.model_confidence)
+        {
+            anyhow::bail!("AI remediation plan score/confidence must be between 0.0 and 1.0");
+        }
+        if self.created_at_ms == 0 {
+            anyhow::bail!("AI remediation plan requires a non-zero creation timestamp");
+        }
+        if !self.requires_approval {
+            anyhow::bail!("Task 2 handoff only accepts owner-reviewable remediation plans");
+        }
+        if self.auto_execute {
+            anyhow::bail!("Task 2 handoff refuses auto_execute plans; owner approval is mandatory");
+        }
+        if self.actions.is_empty() {
+            anyhow::bail!("AI remediation plan must include at least one recommended action");
+        }
+        for action in &self.actions {
+            if action.action_type.trim().is_empty()
+                || action.target.trim().is_empty()
+                || action.reason.trim().is_empty()
+            {
+                anyhow::bail!("AI remediation action must include type, target and reason");
+            }
+            if !action.requires_approval {
+                anyhow::bail!("AI remediation action must require owner approval");
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Result of inserting a Task 1 AI remediation plan into the Task 2 owner
+/// review lifecycle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiRemediationHandoffResult {
+    pub plan_id: String,
+    pub review_status: ReviewStatus,
+    pub pending_review_path: String,
+    pub duplicate: bool,
+    pub next_step: String,
+}
+
 /// One durable review item. `proposal` embeds the complete VS1-VS9 package so
 /// the owner sees score, confidence, evidence, actions and justification from
 /// one record rather than following several file paths.
@@ -157,6 +244,61 @@ impl ReviewQueue {
         Ok(record)
     }
 
+    /// Persist a generated Task 1 AI remediation plan as a Task 2 pending
+    /// owner-review record. This prevents AI plans from staying only in
+    /// memory/logs; the exact plan ID is what later approval/rejection consumes.
+    pub fn enqueue_ai_remediation_plan(
+        &self,
+        plan: AiRemediationPlan,
+        source_description: impl Into<String>,
+    ) -> anyhow::Result<(ReviewRecord, AiRemediationHandoffResult)> {
+        plan.validate()?;
+        let source_description = source_description.into();
+        let proposal = ai_plan_to_review_proposal(&plan);
+        let record = ReviewRecord {
+            schema_version: 1,
+            recommendation_id: plan.plan_id.clone(),
+            anomaly_id: plan.anomaly_id.clone(),
+            source_node: plan.source_node.clone(),
+            status: ReviewStatus::PendingReview,
+            owner_decision: None,
+            created_at_ms: plan.created_at_ms,
+            source_proposal_path: source_description,
+            proposal,
+        };
+        let path = self.record_path(&record.recommendation_id)?;
+        if path.exists() {
+            let existing = self.read_record_path(&path)?;
+            if existing.status == ReviewStatus::PendingReview {
+                return Ok((
+                    existing.clone(),
+                    AiRemediationHandoffResult {
+                        plan_id: existing.recommendation_id,
+                        review_status: existing.status,
+                        pending_review_path: path.display().to_string(),
+                        duplicate: true,
+                        next_step: "owner_review_existing_pending_plan".into(),
+                    },
+                ));
+            }
+            anyhow::bail!(
+                "AI remediation plan '{}' is already finalized and cannot be re-queued",
+                existing.recommendation_id
+            );
+        }
+        self.write_record(&record)?;
+        Ok((
+            record.clone(),
+            AiRemediationHandoffResult {
+                plan_id: record.recommendation_id,
+                review_status: record.status,
+                pending_review_path: path.display().to_string(),
+                duplicate: false,
+                next_step: "owner_approve_or_reject_exact_plan".into(),
+            },
+        ))
+    }
+
     /// Only the trusted owner role may browse the queue. Current standalone
     /// deployment maps this role to `admin` in `config/node_roles.json`.
     pub fn list_pending(&self, owner_id: &str) -> anyhow::Result<Vec<ReviewRecord>> {
@@ -225,6 +367,47 @@ impl ReviewQueue {
     pub(crate) fn require_authorised_owner(&self, owner_id: &str) -> anyhow::Result<()> {
         self.require_owner(owner_id)
     }
+}
+
+fn ai_plan_to_review_proposal(plan: &AiRemediationPlan) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": 1,
+        "record_type": "task1_ai_remediation_plan_owner_review",
+        "approval_status": "pending_review",
+        "task1_ai_remediation_plan": plan,
+        "vs3": {
+            "recommendation_id": plan.plan_id,
+            "anomaly_id": plan.anomaly_id,
+            "source_node": plan.source_node,
+            "created_at_ms": plan.created_at_ms,
+            "risk_level": plan.severity,
+            "anomaly_score": plan.anomaly_score,
+            "model_confidence": plan.model_confidence,
+            "justification": plan.justification,
+            "requires_approval": plan.requires_approval,
+            "auto_execute": plan.auto_execute
+        },
+        "vs8": {
+            "actions": plan.actions,
+            "advisory_only": true,
+            "conflict_resolution": [],
+            "handoff_source": "task1_ai_remediation_plan"
+        },
+        "vs9": {
+            "human_summary": plan.justification,
+            "anomaly_metadata": plan.anomaly_metadata,
+            "traceability": {
+                "plan_id": plan.plan_id,
+                "anomaly_id": plan.anomaly_id,
+                "source_node": plan.source_node
+            }
+        },
+        "lifecycle": {
+            "state": "pending",
+            "next_allowed_steps": ["owner_approve", "owner_reject"],
+            "policy_build_allowed": false
+        }
+    })
 }
 
 fn review_record_from_proposal(
@@ -311,6 +494,38 @@ mod tests {
         path
     }
 
+    fn ai_plan() -> AiRemediationPlan {
+        AiRemediationPlan {
+            plan_id: "plan-nodeA-001".into(),
+            anomaly_id: "anom-nodeA-001".into(),
+            source_node: "nodeA".into(),
+            anomaly_score: 0.91,
+            model_confidence: 0.88,
+            severity: "High".into(),
+            anomaly_metadata: serde_json::json!({
+                "detector": "tier2_isolation_forest",
+                "source_ip": "10.0.0.99",
+                "target_ip": "10.0.0.25",
+                "target_port": 3389
+            }),
+            justification: "Task 1 detected a high-confidence network anomaly; owner review is required before policy change.".into(),
+            created_at_ms: 10_000,
+            requires_approval: true,
+            auto_execute: false,
+            actions: vec![AiRemediationAction {
+                action_type: "tighten_firewall_rules".into(),
+                target: "nodeA".into(),
+                parameters: serde_json::json!({
+                    "protocol": "TCP",
+                    "port": 3389,
+                    "mode": "rate_limit"
+                }),
+                requires_approval: true,
+                reason: "Restrict suspicious RDP-like exposure only after owner approval.".into(),
+            }],
+        }
+    }
+
     #[test]
     fn authorized_owner_can_enqueue_list_and_show_complete_pending_review() {
         let root = root();
@@ -361,6 +576,134 @@ mod tests {
             .is_err());
         assert!(queue.enqueue_from_proposal(&proposal).is_err());
         assert!(queue.list_pending("nodeA").unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ai_remediation_plan_is_persisted_as_pending_owner_review() {
+        let root = root();
+        let queue = queue(&root);
+        let (record, handoff) = queue
+            .enqueue_ai_remediation_plan(ai_plan(), "task1-live-runtime")
+            .unwrap();
+
+        assert_eq!(record.recommendation_id, "plan-nodeA-001");
+        assert_eq!(record.status, ReviewStatus::PendingReview);
+        assert_eq!(record.source_proposal_path, "task1-live-runtime");
+        assert_eq!(
+            record
+                .proposal
+                .get("task1_ai_remediation_plan")
+                .and_then(|value| value.get("plan_id"))
+                .and_then(serde_json::Value::as_str),
+            Some("plan-nodeA-001")
+        );
+        assert_eq!(handoff.plan_id, "plan-nodeA-001");
+        assert!(!handoff.duplicate);
+        assert!(std::path::Path::new(&handoff.pending_review_path).is_file());
+
+        let pending = queue.list_pending("nodeA").unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].recommendation_id, "plan-nodeA-001");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ai_remediation_plan_handoff_is_idempotent_until_owner_decision() {
+        let root = root();
+        let queue = queue(&root);
+        let (_, first) = queue
+            .enqueue_ai_remediation_plan(ai_plan(), "task1-live-runtime")
+            .unwrap();
+        let (_, second) = queue
+            .enqueue_ai_remediation_plan(ai_plan(), "task1-live-runtime")
+            .unwrap();
+
+        assert!(!first.duplicate);
+        assert!(second.duplicate);
+        assert_eq!(queue.list_pending("nodeA").unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn owner_approval_and_rejection_consume_the_same_persisted_plan_id() {
+        let root = root();
+        let review_queue = queue(&root);
+        review_queue
+            .enqueue_ai_remediation_plan(ai_plan(), "task1-live-runtime")
+            .unwrap();
+        let service = crate::virtual_shift::ApprovalService::new(review_queue.clone());
+
+        let approved = service
+            .approve(
+                "nodeA",
+                "plan-nodeA-001",
+                Some("owner reviewed exact AI plan".into()),
+                11_000,
+            )
+            .unwrap();
+        assert_eq!(approved.status, ReviewStatus::Approved);
+        assert_eq!(approved.recommendation_id, "plan-nodeA-001");
+        assert_eq!(
+            approved
+                .proposal
+                .get("task1_ai_remediation_plan")
+                .and_then(|value| value.get("plan_id"))
+                .and_then(serde_json::Value::as_str),
+            Some("plan-nodeA-001")
+        );
+        assert!(review_queue.list_pending("nodeA").unwrap().is_empty());
+        assert!(review_queue
+            .enqueue_ai_remediation_plan(ai_plan(), "task1-live-runtime")
+            .is_err());
+
+        let reject_root = root.join("reject");
+        let reject_queue = queue(&reject_root);
+        reject_queue
+            .enqueue_ai_remediation_plan(
+                AiRemediationPlan {
+                    plan_id: "plan-nodeA-002".into(),
+                    anomaly_id: "anom-nodeA-002".into(),
+                    ..ai_plan()
+                },
+                "task1-live-runtime",
+            )
+            .unwrap();
+        let reject_service = crate::virtual_shift::ApprovalService::new(reject_queue.clone());
+        let rejected = reject_service
+            .reject(
+                "nodeA",
+                "plan-nodeA-002",
+                Some("false positive after owner review".into()),
+                12_000,
+            )
+            .unwrap();
+        assert_eq!(rejected.status, ReviewStatus::Rejected);
+        assert_eq!(
+            crate::virtual_shift::ApprovalService::require_approved(&rejected)
+                .unwrap_err()
+                .to_string(),
+            "recommendation 'plan-nodeA-002' is Rejected; only approved records may reach policy building"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ai_remediation_plan_handoff_refuses_auto_execute_or_unapproved_actions() {
+        let root = root();
+        let queue = queue(&root);
+
+        let mut auto = ai_plan();
+        auto.auto_execute = true;
+        assert!(queue
+            .enqueue_ai_remediation_plan(auto, "task1-live-runtime")
+            .is_err());
+
+        let mut no_approval = ai_plan();
+        no_approval.actions[0].requires_approval = false;
+        assert!(queue
+            .enqueue_ai_remediation_plan(no_approval, "task1-live-runtime")
+            .is_err());
         let _ = std::fs::remove_dir_all(root);
     }
 }

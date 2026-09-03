@@ -15,8 +15,8 @@ pub use remediation::{
     generate_plan_with_thresholds, ActionType, RemediationPlan,
 };
 pub use runtime::{
-    full_ml_alerts_path, load_recent_full_ml_alerts, spawn_full_ml_runtime,
-    Task1AdvisoryConfidence, Task1FullMlAlertRecord,
+    full_ml_alerts_path, load_recent_full_ml_alerts, persist_remediation_plan_for_owner_review,
+    spawn_full_ml_runtime, Task1AdvisoryConfidence, Task1FullMlAlertRecord,
 };
 pub use scorer::{
     anomaly_context_from_score, anomaly_context_from_score_with_thresholds, feature_from_alert,
