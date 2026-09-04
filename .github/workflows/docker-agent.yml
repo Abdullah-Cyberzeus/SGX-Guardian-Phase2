@@ -2,11 +2,12 @@ name: Docker Agent Image (multi-arch)
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "feat/112-116-emergency-addons" ]
     paths:
       - 'docker/**'
       - '.github/workflows/docker-agent.yml'
   pull_request:
+    branches: [ "feat/112-116-emergency-addons" ]
     paths:
       - 'docker/**'
       - '.github/workflows/docker-agent.yml'

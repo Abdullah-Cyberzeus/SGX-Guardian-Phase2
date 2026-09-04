@@ -21,7 +21,7 @@ name: Cybersecurity Review Gate
 
 on:
   pull_request:
-    branches: [ main ]
+    branches: [ "feat/112-116-emergency-addons" ]
     types: [ opened, reopened, ready_for_review, labeled ]
   workflow_dispatch:
     inputs:
@@ -139,7 +139,7 @@ jobs:
         run: |
           set -euo pipefail
           # "Build, Test & Security Checks" is excluded to mirror the ruleset:
-          # it is red on main from pre-existing cargo-audit advisories and is
+          # it is red on the default branch from pre-existing cargo-audit advisories and is
           # deliberately not a required check until #89 is fixed (ADR 0001).
           poll() {  # sets FAILED and PENDING for all checks except our own jobs
             sha=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)
@@ -205,9 +205,9 @@ jobs:
           prompt: |
             You are the Lead/Judge of a cybersecurity code review of pull request
             #${{ env.PR_NUMBER }} in ${{ env.REPO }}. Repo root is the checkout.
-            The PR base is `origin/main`; the head is checked out. Scope the
+            The PR base is `origin/feat/112-116-emergency-addons`; the head is checked out. Scope the
             review to the PR diff:
-              git diff --stat origin/main...HEAD
+              git diff --stat origin/feat/112-116-emergency-addons...HEAD
 
             FIRST check for a previous "Cybersecurity Code Review" comment on
             this PR (gh api repos/${{ env.REPO }}/issues/${{ env.PR_NUMBER }}/comments).
@@ -309,7 +309,7 @@ jobs:
           fi
 
           # "Build, Test & Security Checks" is excluded to mirror the ruleset:
-          # it is red on main from pre-existing cargo-audit advisories and is
+          # it is red on the default branch from pre-existing cargo-audit advisories and is
           # deliberately not a required check until #89 is fixed (ADR 0001).
           poll() {  # sets FAILED and PENDING for all checks except our own jobs
             sha=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)

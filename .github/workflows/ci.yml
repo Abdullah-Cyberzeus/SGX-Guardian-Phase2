@@ -2,9 +2,9 @@ name: CI Pipeline
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "feat/112-116-emergency-addons" ]
   pull_request:
-    branches: [ main ]
+    branches: [ "feat/112-116-emergency-addons" ]
 
 jobs:
   build-test-audit:
