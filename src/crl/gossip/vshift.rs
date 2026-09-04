@@ -17,7 +17,9 @@ use crate::did::DidRecord;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sgx_anomaly_engine::virtual_shift::{
-    MemberAlertVerifier, VShiftAlert, VerificationStatus, VS15_GOSSIP,
+    IdentityRotationResult, MemberAlertVerifier, MemberIdentityRotator, MemberPolicyApplier,
+    MemberPolicyApplyResult, VShiftAlert, VerificationStatus, VS15_GOSSIP,
+    VS16_MEMBER_VERIFICATION, VS17_MEMBER_POLICY_STATE, VS18_MEMBER_IDENTITY_STATE,
 };
 use std::{
     collections::BTreeSet,
@@ -806,10 +808,83 @@ fn process_inbound(
         }
     }
 
+    // VS17 and VS18 run only after a fresh VS16 acceptance.
+    if first_delivery && verification_status == "verified_not_applied" {
+        let _ = apply_verified_member_alert(node_id, &alert, received_at_ms)?;
+        let _ = rotate_member_identity_after_apply(node_id, &alert, received_at_ms)?;
+    }
+
     append_receive_event(node_id, message, &alert, received_at_ms, !first_delivery)
         .map_err(|error| format!("persist VSHIFT receive event failed: {error}"))?;
 
     Ok((alert, !first_delivery, received_at_ms, verification_status))
+}
+
+pub fn verify_and_apply_local_vshift_alert(
+    node_id: &str,
+    alert: &VShiftAlert,
+) -> Result<serde_json::Value, String> {
+    let processed_at_ms =
+        now_ms().map_err(|error| format!("local VSHIFT timestamp failed: {error}"))?;
+
+    let verification_status = verify_member_alert(node_id, alert, processed_at_ms)?;
+
+    let (policy_apply, identity_rotation) = if verification_status == "verified_not_applied" {
+        let policy_apply = apply_verified_member_alert(node_id, alert, processed_at_ms)?;
+        let identity_rotation =
+            rotate_member_identity_after_apply(node_id, alert, processed_at_ms)?;
+
+        (Some(policy_apply), Some(identity_rotation))
+    } else {
+        (None, None)
+    };
+
+    let replay_apply_suppressed = policy_apply.is_none();
+
+    Ok(serde_json::json!({
+        "schema_version": 1,
+        "member_id": node_id,
+        "alert_id": &alert.alert_id,
+        "verification_status": verification_status,
+        "policy_apply": policy_apply,
+        "identity_rotation": identity_rotation,
+        "replay_apply_suppressed": replay_apply_suppressed
+    }))
+}
+
+fn apply_verified_member_alert(
+    node_id: &str,
+    alert: &VShiftAlert,
+    applied_at_ms: u64,
+) -> Result<MemberPolicyApplyResult, String> {
+    let root = virtual_shift_root();
+
+    let applier = MemberPolicyApplier::new(
+        root.join("config").join("active_virtual_shift_policy.json"),
+        root.join(VS16_MEMBER_VERIFICATION),
+        root.join(VS17_MEMBER_POLICY_STATE),
+    );
+
+    applier
+        .apply_verified_alert(node_id, alert, applied_at_ms)
+        .map_err(|error| format!("VS17 member policy apply failed: {error}"))
+}
+
+fn rotate_member_identity_after_apply(
+    node_id: &str,
+    alert: &VShiftAlert,
+    rotated_at_ms: u64,
+) -> Result<IdentityRotationResult, String> {
+    let root = virtual_shift_root();
+
+    let rotator = MemberIdentityRotator::new(
+        root.join(VS17_MEMBER_POLICY_STATE),
+        root.join(VS18_MEMBER_IDENTITY_STATE),
+    );
+
+    rotator
+        .rotate_after_applied_policy(node_id, alert, rotated_at_ms)
+        .map_err(|error| format!("VS18 member identity rotation failed: {error}"))
 }
 
 fn verify_member_alert(

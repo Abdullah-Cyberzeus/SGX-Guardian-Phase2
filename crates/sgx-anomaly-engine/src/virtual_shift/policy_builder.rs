@@ -724,8 +724,9 @@ mod tests {
     use crate::virtual_shift::{
         recommendation_from_event, sign_approved_policy, verify_signed_policy,
         vshift_alert_from_signed_policy, AggregatedAction, AnomalyEvent, AnomalyEvidence,
-        GossipTopology, GossipTransport, GuardianKeyManager, InMemoryGossipTransport,
-        LoggingRecommendation, MemberAlertVerifier, OwnerDecision, ReviewStatus, VShiftAlert,
+        GossipTopology, GossipTransport, GuardianKeyManager, IdentityRotationStatus,
+        InMemoryGossipTransport, LoggingRecommendation, MemberAlertVerifier, MemberIdentityRotator,
+        MemberPolicyApplier, OwnerDecision, PolicyApplyStatus, ReviewStatus, VShiftAlert,
         VerificationStatus,
     };
 
@@ -952,7 +953,8 @@ mod tests {
         .unwrap();
 
         let review = ai_review(ReviewStatus::Approved);
-        let built = build_candidate_from_approved_review(&active(), &review).unwrap();
+        let mut built = build_candidate_from_approved_review(&active(), &review).unwrap();
+        set_policy_targets(&mut built, &["nodeB".into(), "nodeC".into()]).unwrap();
         let guardian = GuardianKeyManager::from_config(&signer_config, root.join("keys")).unwrap();
         let signed = sign_approved_policy(&guardian, &review, &built, 3_000).unwrap();
         verify_signed_policy(&signed).unwrap();
@@ -1029,6 +1031,54 @@ mod tests {
             .verify_and_record("nodeB", &decoded, 3_300)
             .unwrap();
         assert_eq!(replay.status, VerificationStatus::AlreadyVerified);
+
+        let applier =
+            MemberPolicyApplier::new(&active_path, root.join("verification"), root.join("state"));
+        let unverified = applier
+            .apply_verified_alert("nodeA", &decoded, 3_350)
+            .unwrap();
+        assert_eq!(unverified.status, PolicyApplyStatus::Rejected);
+        assert!(unverified
+            .reason
+            .contains("VS16 verification record is missing"));
+        let applied = applier
+            .apply_verified_alert("nodeB", &decoded, 3_400)
+            .unwrap();
+        assert_eq!(applied.status, PolicyApplyStatus::Applied);
+        assert!(Path::new(applied.backup_path.as_deref().unwrap()).is_file());
+        let active_after =
+            ActiveVirtualShiftPolicy::from_path(&applied.active_policy_path).unwrap();
+        assert_eq!(active_after.policy_version, decoded.policy_version);
+        assert!(active_after
+            .applicable_members
+            .iter()
+            .any(|member| member == "nodeB"));
+        let rotator = MemberIdentityRotator::new(root.join("state"), root.join("identity_state"));
+        let rotated = rotator
+            .rotate_after_applied_policy("nodeB", &decoded, 3_600)
+            .unwrap();
+        assert_eq!(
+            rotated.status,
+            IdentityRotationStatus::RotatedReAttestationRequired
+        );
+        assert!(rotated.old_virtual_id.is_some());
+        assert!(rotated.new_virtual_id.is_some());
+        assert_eq!(
+            rotated.attestation_state,
+            Some(crate::virtual_shift::AttestationState::ReAttestationRequired)
+        );
+        let duplicate_rotation = rotator
+            .rotate_after_applied_policy("nodeB", &decoded, 3_700)
+            .unwrap();
+        assert_eq!(duplicate_rotation.status, IdentityRotationStatus::Rejected);
+        let unverified_rotation = rotator
+            .rotate_after_applied_policy("nodeA", &decoded, 3_800)
+            .unwrap();
+        assert_eq!(unverified_rotation.status, IdentityRotationStatus::Rejected);
+        let second_apply = applier
+            .apply_verified_alert("nodeB", &decoded, 3_900)
+            .unwrap();
+        assert_eq!(second_apply.status, PolicyApplyStatus::Rejected);
 
         let mut tampered = decoded.clone();
         tampered.policy_blob.push(0);

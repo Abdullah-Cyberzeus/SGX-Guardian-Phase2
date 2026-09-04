@@ -24,6 +24,7 @@ use sgx_anomaly_engine::virtual_shift::{
     build_candidate_from_approved_review, sign_approved_policy, vshift_alert_from_signed_policy,
     write_built_candidate, write_signed_policy, write_vshift_alert, ActiveVirtualShiftPolicy,
     ApprovalService, GuardianKeyManager, VS12_CANDIDATES, VS13_SIGNED_POLICIES, VS14_ALERTS,
+    VS17_MEMBER_POLICY_STATE,
 };
 use sha2::{Digest, Sha256};
 use std::fs::OpenOptions;
@@ -626,9 +627,24 @@ pub fn process_task2_owner_decision(
         });
     }
 
-    let active_policy_path = root
+    // After VS17 has activated a member-local policy, use that policy as the
+    // parent for the next owner-approved candidate. The configured policy is
+    // only the bootstrap seed before this member has VS17 state.
+    let configured_active_policy_path = root
         .join(VIRTUAL_SHIFT_CONFIG_DIR)
         .join("active_virtual_shift_policy.json");
+
+    let member_active_policy_path = root
+        .join(VS17_MEMBER_POLICY_STATE)
+        .join(node_id)
+        .join("active_policy.json");
+
+    let active_policy_path = if member_active_policy_path.is_file() {
+        member_active_policy_path
+    } else {
+        configured_active_policy_path
+    };
+
     let active = ActiveVirtualShiftPolicy::from_path(&active_policy_path)?;
 
     let built = build_candidate_from_approved_review(&active, &decided)?;

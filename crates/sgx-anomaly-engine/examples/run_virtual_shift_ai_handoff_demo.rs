@@ -1,6 +1,6 @@
 //! Task 2 AI remediation owner-review proof demo: Task 1 AI remediation plan
 //! is durably handed off, approved/rejected, audited, staged, signed, gossiped,
-//! and verified by receiving members before enforcement.
+//! verified, applied atomically, and followed by VirtualID rotation.
 //!
 //! Run from crates/sgx-anomaly-engine:
 //! cargo run --example run_virtual_shift_ai_handoff_demo -- approve
@@ -15,13 +15,15 @@ use anyhow::Result;
 use sgx_anomaly_engine::{
     roles::RoleRegistry,
     virtual_shift::{
-        build_candidate_from_approved_review, sign_approved_policy, verify_signed_policy,
-        vshift_alert_from_signed_policy, write_built_candidate, write_gossip_receipt,
-        write_signed_policy, write_vshift_alert, ActiveVirtualShiftPolicy, AiRemediationAction,
-        AiRemediationPlan, ApprovalService, GossipTopology, GossipTransport, GuardianKeyManager,
-        InMemoryGossipTransport, MemberAlertVerifier, ReviewQueue, ReviewStatus, VShiftAlert,
+        build_candidate_from_approved_review, set_policy_targets, sign_approved_policy,
+        verify_signed_policy, vshift_alert_from_signed_policy, write_built_candidate,
+        write_gossip_receipt, write_signed_policy, write_vshift_alert, ActiveVirtualShiftPolicy,
+        AiRemediationAction, AiRemediationPlan, ApprovalService, GossipTopology, GossipTransport,
+        GuardianKeyManager, InMemoryGossipTransport, MemberAlertVerifier, MemberIdentityRotator,
+        MemberPolicyApplier, PolicyApplyStatus, ReviewQueue, ReviewStatus, VShiftAlert,
         VerificationStatus, VS10_VS11_REVIEWS, VS12_CANDIDATES, VS13_SIGNED_POLICIES, VS14_ALERTS,
-        VS15_GOSSIP, VS16_MEMBER_VERIFICATION,
+        VS15_GOSSIP, VS16_MEMBER_VERIFICATION, VS17_MEMBER_POLICY_STATE,
+        VS18_MEMBER_IDENTITY_STATE,
     },
 };
 
@@ -170,7 +172,9 @@ fn main() -> Result<()> {
     }
 
     let active = ActiveVirtualShiftPolicy::from_path("config/active_virtual_shift_policy.json")?;
-    let built = build_candidate_from_approved_review(&active, &decided)?;
+    let mut built = build_candidate_from_approved_review(&active, &decided)?;
+    let target_members = vec!["nodeB".to_owned(), "nodeC".to_owned()];
+    set_policy_targets(&mut built, &target_members)?;
     let candidate_path = write_built_candidate(
         Path::new("data/virtual_shift").join(VS12_CANDIDATES),
         &built,
@@ -186,6 +190,10 @@ fn main() -> Result<()> {
     row("New version", built.candidate.policy_version.to_string());
     row("Source plan ID", &built.candidate.source_recommendation_id);
     row("Source anomaly ID", &built.candidate.source_anomaly_id);
+    row(
+        "Applicable members",
+        built.candidate.applicable_members.join(", "),
+    );
     row(
         "Candidate actions",
         built.candidate.actions.len().to_string(),
@@ -343,6 +351,120 @@ fn main() -> Result<()> {
         "Rejected before apply",
         "any failed check stops VS17 enforcement",
     );
+    line();
+
+    let verification_root = Path::new("data/virtual_shift")
+        .join(VS16_MEMBER_VERIFICATION)
+        .join(&decoded.recommendation_id);
+    let apply_root = Path::new("data/virtual_shift")
+        .join(VS17_MEMBER_POLICY_STATE)
+        .join(&decoded.recommendation_id);
+    let applier = MemberPolicyApplier::new(
+        "config/active_virtual_shift_policy.json",
+        &verification_root,
+        &apply_root,
+    );
+    let unverified_result = applier.apply_verified_alert("nodeA", &decoded, now_ms()?)?;
+    let apply_results = verification_results
+        .iter()
+        .map(|result| applier.apply_verified_alert(&result.member_id, &decoded, now_ms()?))
+        .collect::<Result<Vec<_>>>()?;
+
+    println!("\n8. VERIFIED ALERT WAS APPLIED ATOMICALLY WITH BACKUP");
+    line();
+    row(
+        "Applied members",
+        apply_results
+            .iter()
+            .map(|result| format!("{}={:?}", result.member_id, result.status))
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    row(
+        "Backup saved",
+        apply_results
+            .iter()
+            .all(|result| result.backup_path.is_some())
+            .to_string(),
+    );
+    row(
+        "Active policy version",
+        apply_results
+            .first()
+            .map(|result| result.policy_version.to_string())
+            .unwrap_or_else(|| "none".to_owned()),
+    );
+    row(
+        "Unverified nodeA apply",
+        format!("{:?}", unverified_result.status),
+    );
+    row(
+        "Apply gate",
+        if apply_results
+            .iter()
+            .all(|result| result.status == PolicyApplyStatus::Applied)
+        {
+            "only VS16-verified target members applied"
+        } else {
+            "blocked"
+        },
+    );
+    row("Policy state root", apply_root.display().to_string());
+    line();
+
+    let identity_root = Path::new("data/virtual_shift")
+        .join(VS18_MEMBER_IDENTITY_STATE)
+        .join(&decoded.recommendation_id);
+    let rotator = MemberIdentityRotator::new(&apply_root, &identity_root);
+    let rotation_results = apply_results
+        .iter()
+        .map(|result| rotator.rotate_after_applied_policy(&result.member_id, &decoded, now_ms()?))
+        .collect::<Result<Vec<_>>>()?;
+    let duplicate_rotation =
+        rotator.rotate_after_applied_policy(&apply_results[0].member_id, &decoded, now_ms()?)?;
+    let unverified_rotation = rotator.rotate_after_applied_policy("nodeA", &decoded, now_ms()?)?;
+
+    println!("\n9. SUCCESSFUL APPLY ROTATED VIRTUALID AND REQUIRED RE-ATTESTATION");
+    line();
+    row(
+        "Rotated members",
+        rotation_results
+            .iter()
+            .map(|result| format!("{}={:?}", result.member_id, result.status))
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    row(
+        "Old IDs invalidated",
+        rotation_results
+            .iter()
+            .all(|result| result.old_virtual_id.is_some())
+            .to_string(),
+    );
+    row(
+        "New IDs issued",
+        rotation_results
+            .iter()
+            .all(|result| result.new_virtual_id.is_some())
+            .to_string(),
+    );
+    row(
+        "Attestation state",
+        rotation_results
+            .iter()
+            .map(|result| format!("{:?}", result.attestation_state))
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    row(
+        "Duplicate rotation",
+        format!("{:?}", duplicate_rotation.status),
+    );
+    row(
+        "Unverified nodeA rotation",
+        format!("{:?}", unverified_rotation.status),
+    );
+    row("Identity state root", identity_root.display().to_string());
     line();
 
     println!(

@@ -155,6 +155,29 @@ pub async fn approve_remediation_review(
     let mut response =
         serde_json::to_value(&result).map_err(|error| ApiError::Internal(error.to_string()))?;
 
+    // The origin node does not receive its own gossip packet, so run the same
+    // VS16 verification gate and VS17 atomic apply path locally before VS15
+    // broadcasts the signed alert to peer members.
+    let local_member_policy = if let Some(alert_pb_path) = result.alert_protobuf_path.as_deref() {
+        (|| -> Result<serde_json::Value, String> {
+            let alert_bytes = std::fs::read(alert_pb_path).map_err(|error| error.to_string())?;
+            let alert = sgx_anomaly_engine::virtual_shift::VShiftAlert::decode(&alert_bytes)
+                .map_err(|error| error.to_string())?;
+
+            crate::crl::gossip::vshift::verify_and_apply_local_vshift_alert(&state.node_id, &alert)
+        })()
+        .unwrap_or_else(|error| {
+            serde_json::json!({
+                "status": "local_vs16_vs17_failed",
+                "error": error
+            })
+        })
+    } else {
+        serde_json::json!({
+            "status": "no_signed_alert_for_local_processing"
+        })
+    };
+
     let gossip = if let Some(alert_pb_path) = result.alert_protobuf_path.as_deref() {
         match std::fs::read(alert_pb_path) {
             Ok(alert_bytes) => {
@@ -233,6 +256,7 @@ pub async fn approve_remediation_review(
     };
 
     if let Some(object) = response.as_object_mut() {
+        object.insert("local_member_policy".into(), local_member_policy);
         object.insert("gossip".into(), gossip);
     }
 
