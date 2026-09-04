@@ -16,7 +16,7 @@ pub struct AuditStep {
     pub present: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PolicyAuditTrail {
     pub schema_version: u32,
     pub member_id: String,
@@ -24,6 +24,9 @@ pub struct PolicyAuditTrail {
     pub anomaly_id: String,
     pub recommendation_id: String,
     pub policy_version: u64,
+    pub anomaly_score: f64,
+    pub confidence: f64,
+    pub ai_justification: String,
     pub generated_at_ms: u64,
     pub steps: Vec<AuditStep>,
 }
@@ -122,6 +125,9 @@ impl AuditService {
             anomaly_id: alert.anomaly_id.clone(),
             recommendation_id: alert.recommendation_id.clone(),
             policy_version: alert.policy_version,
+            anomaly_score: alert.anomaly_score,
+            confidence: alert.confidence,
+            ai_justification: alert.ai_justification.clone(),
             generated_at_ms: now_ms,
             steps,
         };
@@ -169,6 +175,9 @@ mod tests {
             .build_and_write("nodeB", &alert, 10)
             .unwrap();
         assert_eq!(audit.steps.len(), 8);
+        assert_eq!(audit.anomaly_score, 0.9);
+        assert_eq!(audit.confidence, 0.9);
+        assert_eq!(audit.ai_justification, "x");
         assert!(audit
             .steps
             .iter()

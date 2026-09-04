@@ -18,12 +18,13 @@ use sgx_anomaly_engine::{
         build_candidate_from_approved_review, set_policy_targets, sign_approved_policy,
         verify_signed_policy, vshift_alert_from_signed_policy, write_built_candidate,
         write_gossip_receipt, write_signed_policy, write_vshift_alert, ActiveVirtualShiftPolicy,
-        AiRemediationAction, AiRemediationPlan, ApprovalService, GossipTopology, GossipTransport,
-        GuardianKeyManager, InMemoryGossipTransport, MemberAlertVerifier, MemberIdentityRotator,
-        MemberPolicyApplier, PolicyApplyStatus, ReviewQueue, ReviewStatus, VShiftAlert,
-        VerificationStatus, VS10_VS11_REVIEWS, VS12_CANDIDATES, VS13_SIGNED_POLICIES, VS14_ALERTS,
-        VS15_GOSSIP, VS16_MEMBER_VERIFICATION, VS17_MEMBER_POLICY_STATE,
-        VS18_MEMBER_IDENTITY_STATE,
+        AiRemediationAction, AiRemediationPlan, ApprovalService, AuditService, GossipTopology,
+        GossipTransport, GuardianKeyManager, InMemoryGossipTransport, MemberAlertVerifier,
+        MemberIdentityRotator, MemberPolicyApplier, MockAttestationConnector,
+        MockAttestationOutcome, PolicyApplyStatus, ReAttestationService, ReviewQueue, ReviewStatus,
+        VShiftAlert, VerificationStatus, VS10_VS11_REVIEWS, VS12_CANDIDATES, VS13_SIGNED_POLICIES,
+        VS14_ALERTS, VS15_GOSSIP, VS16_MEMBER_VERIFICATION, VS17_MEMBER_POLICY_STATE,
+        VS18_MEMBER_IDENTITY_STATE, VS19_AUDIT,
     },
 };
 
@@ -420,6 +421,41 @@ fn main() -> Result<()> {
         .iter()
         .map(|result| rotator.rotate_after_applied_policy(&result.member_id, &decoded, now_ms()?))
         .collect::<Result<Vec<_>>>()?;
+
+    // Re-attestation reads the fresh rotation proof. Run it before the
+    // rejected duplicate/unverified rotation probes overwrite rejection files.
+    let reattest = ReAttestationService::new(&identity_root);
+    let trusted_member = rotation_results[0].member_id.clone();
+    let degraded_member = rotation_results[1].member_id.clone();
+    let trusted_result = reattest.complete_after_rotation(
+        &trusted_member,
+        &decoded,
+        "mock-board",
+        &MockAttestationConnector::new(MockAttestationOutcome::Pass),
+        now_ms()?,
+    )?;
+    let degraded_result = reattest.complete_after_rotation(
+        &degraded_member,
+        &decoded,
+        "mock-board",
+        &MockAttestationConnector::new(MockAttestationOutcome::Fail),
+        now_ms()?,
+    )?;
+    let duplicate_reattest = reattest.complete_after_rotation(
+        &trusted_member,
+        &decoded,
+        "mock-board",
+        &MockAttestationConnector::new(MockAttestationOutcome::Pass),
+        now_ms()?,
+    )?;
+    let unrotated_reattest = reattest.complete_after_rotation(
+        "nodeA",
+        &decoded,
+        "mock-board",
+        &MockAttestationConnector::new(MockAttestationOutcome::Pass),
+        now_ms()?,
+    )?;
+
     let duplicate_rotation =
         rotator.rotate_after_applied_policy(&apply_results[0].member_id, &decoded, now_ms()?)?;
     let unverified_rotation = rotator.rotate_after_applied_policy("nodeA", &decoded, now_ms()?)?;
@@ -465,6 +501,82 @@ fn main() -> Result<()> {
         format!("{:?}", unverified_rotation.status),
     );
     row("Identity state root", identity_root.display().to_string());
+    line();
+
+    println!("\n10. VS18 FORCED RE-ATTESTATION GATED TRUST RESTORATION");
+    line();
+    row(
+        "Valid proof result",
+        format!("{trusted_member}={:?}", trusted_result.status),
+    );
+    row(
+        "Invalid proof result",
+        format!("{degraded_member}={:?}", degraded_result.status),
+    );
+    row(
+        "Duplicate re-attestation",
+        format!("{:?}", duplicate_reattest.status),
+    );
+    row(
+        "Unrotated nodeA re-attestation",
+        format!("{:?}", unrotated_reattest.status),
+    );
+    row(
+        "Alert/policy binding",
+        format!(
+            "alert_id={} policy_version={}",
+            trusted_result.alert_id, trusted_result.policy_version
+        ),
+    );
+    line();
+
+    let audit_root = Path::new("data/virtual_shift");
+    let audit_service = AuditService::new(audit_root);
+    let audit_trails = [&trusted_member, &degraded_member]
+        .into_iter()
+        .map(|member| audit_service.build_and_write(member, &decoded, now_ms()?))
+        .collect::<Result<Vec<_>>>()?;
+
+    println!("\n11. LINKED END-TO-END VIRTUAL SHIFT AUDIT TRAIL");
+    line();
+    for trail in &audit_trails {
+        row(
+            &format!("{} audit steps present", trail.member_id),
+            format!(
+                "{}/{} ({})",
+                trail.steps.iter().filter(|step| step.present).count(),
+                trail.steps.len(),
+                trail
+                    .steps
+                    .iter()
+                    .map(|step| format!(
+                        "{}={}",
+                        step.stage,
+                        if step.present { "yes" } else { "no" }
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        );
+    }
+    row(
+        "AI justification retained",
+        decoded.ai_justification.clone(),
+    );
+    row(
+        "Linked IDs",
+        format!(
+            "anomaly={} plan={} alert={} policy_version={}",
+            audit_trails[0].anomaly_id,
+            audit_trails[0].recommendation_id,
+            audit_trails[0].alert_id,
+            audit_trails[0].policy_version
+        ),
+    );
+    row(
+        "Audit trail root",
+        audit_root.join(VS19_AUDIT).display().to_string(),
+    );
     line();
 
     println!(

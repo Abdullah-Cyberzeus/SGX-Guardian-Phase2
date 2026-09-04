@@ -17,9 +17,11 @@ use crate::did::DidRecord;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sgx_anomaly_engine::virtual_shift::{
-    IdentityRotationResult, MemberAlertVerifier, MemberIdentityRotator, MemberPolicyApplier,
-    MemberPolicyApplyResult, VShiftAlert, VerificationStatus, VS15_GOSSIP,
-    VS16_MEMBER_VERIFICATION, VS17_MEMBER_POLICY_STATE, VS18_MEMBER_IDENTITY_STATE,
+    AttestationConnector, AttestationConnectorResponse, AttestationRequest, IdentityRotationResult,
+    IdentityRotationStatus, MemberAlertVerifier, MemberIdentityRotator, MemberPolicyApplier,
+    MemberPolicyApplyResult, ReAttestationResult, ReAttestationService, VShiftAlert,
+    VerificationStatus, VS15_GOSSIP, VS16_MEMBER_VERIFICATION, VS17_MEMBER_POLICY_STATE,
+    VS18_MEMBER_IDENTITY_STATE,
 };
 use std::{
     collections::BTreeSet,
@@ -808,10 +810,14 @@ fn process_inbound(
         }
     }
 
-    // VS17 and VS18 run only after a fresh VS16 acceptance.
+    // VS17 policy apply -> VS18 identity rotation -> forced re-attestation.
     if first_delivery && verification_status == "verified_not_applied" {
         let _ = apply_verified_member_alert(node_id, &alert, received_at_ms)?;
-        let _ = rotate_member_identity_after_apply(node_id, &alert, received_at_ms)?;
+        let rotation = rotate_member_identity_after_apply(node_id, &alert, received_at_ms)?;
+
+        if rotation.status == IdentityRotationStatus::RotatedReAttestationRequired {
+            let _ = complete_member_reattestation(node_id, &alert, received_at_ms)?;
+        }
     }
 
     append_receive_event(node_id, message, &alert, received_at_ms, !first_delivery)
@@ -829,14 +835,27 @@ pub fn verify_and_apply_local_vshift_alert(
 
     let verification_status = verify_member_alert(node_id, alert, processed_at_ms)?;
 
-    let (policy_apply, identity_rotation) = if verification_status == "verified_not_applied" {
+    let (policy_apply, identity_rotation, re_attestation) = if verification_status
+        == "verified_not_applied"
+    {
         let policy_apply = apply_verified_member_alert(node_id, alert, processed_at_ms)?;
         let identity_rotation =
             rotate_member_identity_after_apply(node_id, alert, processed_at_ms)?;
 
-        (Some(policy_apply), Some(identity_rotation))
+        let re_attestation =
+            if identity_rotation.status == IdentityRotationStatus::RotatedReAttestationRequired {
+                Some(complete_member_reattestation(
+                    node_id,
+                    alert,
+                    processed_at_ms,
+                )?)
+            } else {
+                None
+            };
+
+        (Some(policy_apply), Some(identity_rotation), re_attestation)
     } else {
-        (None, None)
+        (None, None, None)
     };
 
     let replay_apply_suppressed = policy_apply.is_none();
@@ -848,6 +867,7 @@ pub fn verify_and_apply_local_vshift_alert(
         "verification_status": verification_status,
         "policy_apply": policy_apply,
         "identity_rotation": identity_rotation,
+        "re_attestation": re_attestation,
         "replay_apply_suppressed": replay_apply_suppressed
     }))
 }
@@ -885,6 +905,93 @@ fn rotate_member_identity_after_apply(
     rotator
         .rotate_after_applied_policy(node_id, alert, rotated_at_ms)
         .map_err(|error| format!("VS18 member identity rotation failed: {error}"))
+}
+
+#[derive(Debug, Clone)]
+struct GuardianLocalAttestationConnector {
+    node_id: String,
+}
+
+impl AttestationConnector for GuardianLocalAttestationConnector {
+    fn attest(&self, request: &AttestationRequest) -> anyhow::Result<AttestationConnectorResponse> {
+        if request.member_id != self.node_id {
+            return Ok(AttestationConnectorResponse {
+                accepted: false,
+                reason: format!(
+                    "Task2 attestation member mismatch: request={} local={}",
+                    request.member_id, self.node_id
+                ),
+            });
+        }
+
+        let key_path = format!(
+            "/var/lib/sgx-guardian/sgx-agent/device_{}.key",
+            self.node_id
+        );
+        let km = crate::key_manager::KeyManager::load_or_generate(&key_path)?;
+
+        // Bind the exact Task2 rotated identity and policy lifecycle into the
+        // material whose SHA-256 digest is signed by real Guardian attestation.
+        let binding = format!(
+            "SGX-TASK2-VS18-REATTEST-v1\nmember_id={}\nvirtual_id={}\nalert_id={}\npolicy_version={}\n",
+            request.member_id,
+            request.virtual_id,
+            request.alert_id,
+            request.policy_version
+        );
+
+        let evidence =
+            crate::attestation_service::AttestationService::create_signed_evidence(&km, &binding)?;
+
+        let verified = crate::attestation_service::AttestationService::verify_signed_evidence(
+            &evidence, &binding,
+        )?;
+
+        let identity_matches = evidence.node_id == request.member_id;
+        let accepted = verified && identity_matches;
+
+        Ok(AttestationConnectorResponse {
+            accepted,
+            reason: if accepted {
+                format!(
+                    "Guardian attestation verified fresh signed DKP/PCR evidence bound to Task2 VirtualID {} for alert {} policy v{}.",
+                    request.virtual_id,
+                    request.alert_id,
+                    request.policy_version
+                )
+            } else {
+                format!(
+                    "Guardian attestation rejected Task2 binding: cryptographic_verified={} evidence_node={} requested_member={}.",
+                    verified,
+                    evidence.node_id,
+                    request.member_id
+                )
+            },
+        })
+    }
+}
+
+fn complete_member_reattestation(
+    node_id: &str,
+    alert: &VShiftAlert,
+    completed_at_ms: u64,
+) -> Result<ReAttestationResult, String> {
+    let root = virtual_shift_root();
+
+    let service = ReAttestationService::new(root.join(VS18_MEMBER_IDENTITY_STATE));
+    let connector = GuardianLocalAttestationConnector {
+        node_id: node_id.to_string(),
+    };
+
+    service
+        .complete_after_rotation(
+            node_id,
+            alert,
+            "guardian-local-cryptographic-attestation",
+            &connector,
+            completed_at_ms,
+        )
+        .map_err(|error| format!("VS18 forced re-attestation failed: {error}"))
 }
 
 fn verify_member_alert(

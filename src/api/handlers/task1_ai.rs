@@ -255,9 +255,48 @@ pub async fn approve_remediation_review(
         })
     };
 
+    // VS19 is written only after the local VS16-VS18 lifecycle and the
+    // VS15 broadcast attempt have completed, so the trail reflects the
+    // production evidence that exists for this exact signed alert.
+    let audit = if let Some(alert_pb_path) = result.alert_protobuf_path.as_deref() {
+        (|| -> Result<serde_json::Value, String> {
+            let alert_bytes = std::fs::read(alert_pb_path).map_err(|error| error.to_string())?;
+            let alert = sgx_anomaly_engine::virtual_shift::VShiftAlert::decode(&alert_bytes)
+                .map_err(|error| error.to_string())?;
+
+            let audit_root = std::path::Path::new(alert_pb_path)
+                .parent()
+                .and_then(|path| path.parent())
+                .and_then(|path| path.parent())
+                .ok_or_else(|| "cannot derive Virtual Shift root from alert path".to_string())?;
+
+            let generated_at_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_millis() as u64;
+
+            let trail = sgx_anomaly_engine::virtual_shift::AuditService::new(audit_root)
+                .build_and_write(&state.node_id, &alert, generated_at_ms)
+                .map_err(|error| error.to_string())?;
+
+            serde_json::to_value(trail).map_err(|error| error.to_string())
+        })()
+        .unwrap_or_else(|error| {
+            serde_json::json!({
+                "status": "vs19_audit_failed",
+                "error": error
+            })
+        })
+    } else {
+        serde_json::json!({
+            "status": "no_signed_alert_for_vs19_audit"
+        })
+    };
+
     if let Some(object) = response.as_object_mut() {
         object.insert("local_member_policy".into(), local_member_policy);
         object.insert("gossip".into(), gossip);
+        object.insert("audit".into(), audit);
     }
 
     Ok(Json(response))
