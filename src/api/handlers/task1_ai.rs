@@ -2,8 +2,9 @@ use crate::advisory::AnomalyScoringRuntime;
 use crate::api::auth::middleware::AuthenticatedSession;
 use crate::api::{error::ApiError, state::AppState};
 use crate::task1_ai::{
-    load_recent_full_ml_alerts, process_task2_owner_decision, RecommendedThresholdRanges,
-    Task1FullMlAlertRecord, Task1RuntimeTracker, Task1ThresholdDefaults, Task1ThresholdSettings,
+    load_recent_full_ml_alerts, process_task2_false_positive_override,
+    process_task2_owner_decision, RecommendedThresholdRanges, Task1FullMlAlertRecord,
+    Task1RuntimeTracker, Task1ThresholdDefaults, Task1ThresholdSettings,
     Task1ThresholdSettingsService, Task1ThresholdUpdate, Task2OwnerDecisionRuntimeResult,
 };
 use axum::{
@@ -293,10 +294,50 @@ pub async fn approve_remediation_review(
         })
     };
 
+    // VS20 performs the final read-only lifecycle acceptance check after
+    // local apply/rotation/re-attestation, gossip attempt, and VS19 audit.
+    // It persists a durable report for this exact signed alert.
+    let final_verification = if let Some(alert_pb_path) = result.alert_protobuf_path.as_deref() {
+        (|| -> Result<serde_json::Value, String> {
+            let alert_bytes = std::fs::read(alert_pb_path).map_err(|error| error.to_string())?;
+            let alert = sgx_anomaly_engine::virtual_shift::VShiftAlert::decode(&alert_bytes)
+                .map_err(|error| error.to_string())?;
+
+            let virtual_shift_root = std::path::Path::new(alert_pb_path)
+                .parent()
+                .and_then(|path| path.parent())
+                .and_then(|path| path.parent())
+                .ok_or_else(|| "cannot derive Virtual Shift root from alert path".to_string())?;
+
+            let verified_at_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_millis() as u64;
+
+            let report =
+                sgx_anomaly_engine::virtual_shift::FinalHardeningVerifier::new(virtual_shift_root)
+                    .verify_and_write(&state.node_id, &alert, verified_at_ms)
+                    .map_err(|error| error.to_string())?;
+
+            serde_json::to_value(report).map_err(|error| error.to_string())
+        })()
+        .unwrap_or_else(|error| {
+            serde_json::json!({
+                "status": "vs20_final_verification_failed",
+                "error": error
+            })
+        })
+    } else {
+        serde_json::json!({
+            "status": "no_signed_alert_for_vs20_verification"
+        })
+    };
+
     if let Some(object) = response.as_object_mut() {
         object.insert("local_member_policy".into(), local_member_policy);
         object.insert("gossip".into(), gossip);
         object.insert("audit".into(), audit);
+        object.insert("final_verification".into(), final_verification);
     }
 
     Ok(Json(response))
@@ -344,6 +385,53 @@ pub async fn retry_remediation_gossip(
         "alert_id": alert.alert_id,
         "alert_protobuf_path": alert_protobuf_path.display().to_string(),
         "gossip": receipt
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Task2FalsePositiveOverrideRequest {
+    pub reason: String,
+}
+
+pub async fn false_positive_override(
+    State(state): State<Arc<AppState>>,
+    Path(plan_id): Path<String>,
+    session: Option<Extension<AuthenticatedSession>>,
+    Json(request): Json<Task2FalsePositiveOverrideRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize_task2_owner_decision(&state, session)?;
+
+    let result = process_task2_false_positive_override(
+        &state.node_id,
+        &state.threat_state_dir,
+        &plan_id,
+        &request.reason,
+    )
+    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+
+    let alert_bytes = std::fs::read(&result.alert_protobuf_path)
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+
+    let alert = sgx_anomaly_engine::virtual_shift::VShiftAlert::decode(&alert_bytes)
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+
+    let local_member_policy =
+        crate::crl::gossip::vshift::verify_and_apply_local_vshift_alert(&state.node_id, &alert)
+            .map_err(ApiError::BadRequest)?;
+
+    let gossip = crate::crl::gossip::vshift::broadcast_vshift_alert(&state.node_id, &alert)
+        .await
+        .map_err(|error| ApiError::ServiceUnavailable {
+            code: "TASK2_OVERRIDE_GOSSIP_FAILED",
+            message: error.to_string(),
+        })?;
+
+    Ok(Json(serde_json::json!({
+        "schema_version": 1,
+        "operation": "false_positive_override",
+        "override": result,
+        "local_member_policy": local_member_policy,
+        "gossip": gossip
     })))
 }
 

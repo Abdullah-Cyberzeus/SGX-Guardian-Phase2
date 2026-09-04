@@ -96,6 +96,10 @@ pub fn task1_ai_router() -> Router<Arc<AppState>> {
             post(handlers::task1_ai::retry_remediation_gossip),
         )
         .route(
+            "/api/v1/task1-ai/reviews/{plan_id}/override",
+            post(handlers::task1_ai::false_positive_override),
+        )
+        .route(
             "/api/v1/task1-ai/reviews/{plan_id}/reject",
             post(handlers::task1_ai::reject_remediation_review),
         )

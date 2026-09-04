@@ -73,35 +73,26 @@ impl ManualOverrideService {
         let apply_path = self
             .policy_state_root
             .join(member)
-            .join(&alert.alert_id)
-            .join("apply_result.json");
+            .join("latest_apply_result.json");
         let apply: MemberPolicyApplyResult = serde_json::from_str(
             &std::fs::read_to_string(&apply_path)
                 .map_err(|_| anyhow::anyhow!("original VS17 apply record is missing"))?,
         )?;
         if apply.status != PolicyApplyStatus::Applied
+            || apply.alert_id != alert.alert_id
             || apply.policy_version != alert.policy_version
         {
-            anyhow::bail!("only a successfully applied original policy can be overridden");
+            anyhow::bail!(
+                "only the exact successfully applied original alert/policy can be overridden"
+            );
         }
         let backup_path = apply
             .backup_path
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("original apply has no backup policy to restore"))?;
         let prior = ActiveVirtualShiftPolicy::from_path(backup_path)?;
-        let canonical_active = self
-            .policy_state_root
-            .join(member)
-            .join("policies")
-            .join("active_policy.json");
-        let active_path = if canonical_active.is_file() {
-            canonical_active
-        } else {
-            self.policy_state_root
-                .join(member)
-                .join("active_policy.json")
-        };
-        let active = ActiveVirtualShiftPolicy::from_path(active_path)?;
+        let active_path = self.policy_state_root.join(member).join("active_policy.json");
+        let active = ActiveVirtualShiftPolicy::from_path(&active_path)?;
         if active.policy_version != alert.policy_version {
             anyhow::bail!("member active policy no longer matches selected original policy; select current lifecycle instead");
         }
@@ -226,8 +217,8 @@ mod tests {
             serde_json::to_string(&current).unwrap(),
         )
         .unwrap();
-        let apply_dir = state.join(member).join(&alert.alert_id);
-        std::fs::create_dir_all(&apply_dir).unwrap();
+        let member_dir = state.join(member);
+        std::fs::create_dir_all(&member_dir).unwrap();
         let apply = MemberPolicyApplyResult {
             schema_version: 1,
             member_id: member.into(),
@@ -241,7 +232,7 @@ mod tests {
             active_policy_path: String::new(),
         };
         std::fs::write(
-            apply_dir.join("apply_result.json"),
+            member_dir.join("latest_apply_result.json"),
             serde_json::to_string(&apply).unwrap(),
         )
         .unwrap();

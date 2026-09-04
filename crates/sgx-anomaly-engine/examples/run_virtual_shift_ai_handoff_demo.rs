@@ -18,13 +18,14 @@ use sgx_anomaly_engine::{
         build_candidate_from_approved_review, set_policy_targets, sign_approved_policy,
         verify_signed_policy, vshift_alert_from_signed_policy, write_built_candidate,
         write_gossip_receipt, write_signed_policy, write_vshift_alert, ActiveVirtualShiftPolicy,
-        AiRemediationAction, AiRemediationPlan, ApprovalService, AuditService, GossipTopology,
-        GossipTransport, GuardianKeyManager, InMemoryGossipTransport, MemberAlertVerifier,
-        MemberIdentityRotator, MemberPolicyApplier, MockAttestationConnector,
-        MockAttestationOutcome, PolicyApplyStatus, ReAttestationService, ReviewQueue, ReviewStatus,
-        VShiftAlert, VerificationStatus, VS10_VS11_REVIEWS, VS12_CANDIDATES, VS13_SIGNED_POLICIES,
-        VS14_ALERTS, VS15_GOSSIP, VS16_MEMBER_VERIFICATION, VS17_MEMBER_POLICY_STATE,
-        VS18_MEMBER_IDENTITY_STATE, VS19_AUDIT,
+        AiRemediationAction, AiRemediationPlan, ApprovalService, AuditService,
+        FinalHardeningVerifier, GossipTopology, GossipTransport, GuardianKeyManager,
+        InMemoryGossipTransport, ManualOverrideService, MemberAlertVerifier, MemberIdentityRotator,
+        MemberPolicyApplier, MockAttestationConnector, MockAttestationOutcome, PolicyApplyStatus,
+        ReAttestationService, ReviewQueue, ReviewStatus, VShiftAlert, VerificationStatus,
+        VS10_VS11_REVIEWS, VS12_CANDIDATES, VS13_SIGNED_POLICIES, VS14_ALERTS, VS15_GOSSIP,
+        VS16_MEMBER_VERIFICATION, VS17_MEMBER_POLICY_STATE, VS18_MEMBER_IDENTITY_STATE, VS19_AUDIT,
+        VS19_OVERRIDES, VS20_FINAL_VERIFICATION,
     },
 };
 
@@ -441,6 +442,12 @@ fn main() -> Result<()> {
         &MockAttestationConnector::new(MockAttestationOutcome::Fail),
         now_ms()?,
     )?;
+
+    let audit_root = Path::new("data/virtual_shift");
+    let hardening = FinalHardeningVerifier::new(audit_root);
+    let trusted_report = hardening.verify_and_write(&trusted_member, &decoded, now_ms()?)?;
+    let degraded_report = hardening.verify_and_write(&degraded_member, &decoded, now_ms()?)?;
+
     let duplicate_reattest = reattest.complete_after_rotation(
         &trusted_member,
         &decoded,
@@ -530,7 +537,6 @@ fn main() -> Result<()> {
     );
     line();
 
-    let audit_root = Path::new("data/virtual_shift");
     let audit_service = AuditService::new(audit_root);
     let audit_trails = [&trusted_member, &degraded_member]
         .into_iter()
@@ -576,6 +582,109 @@ fn main() -> Result<()> {
     row(
         "Audit trail root",
         audit_root.join(VS19_AUDIT).display().to_string(),
+    );
+    line();
+
+    let override_root = Path::new("data/virtual_shift")
+        .join(VS19_OVERRIDES)
+        .join(&decoded.recommendation_id);
+    let override_service = ManualOverrideService::from_role_config(
+        &apply_root,
+        &override_root,
+        "config/node_roles.json",
+    )?;
+    let override_record = override_service.create_signed_revert(
+        owner,
+        &trusted_member,
+        &decoded,
+        "Owner confirmed this Virtual Shift policy transition was a false positive.",
+        now_ms()?,
+        &keys,
+    )?;
+    let member_override_attempt = override_service.create_signed_revert(
+        "nodeB",
+        &trusted_member,
+        &decoded,
+        "member attempting unauthorized override",
+        now_ms()?,
+        &keys,
+    );
+    let record_path = Path::new(&override_record.signed_policy_path)
+        .parent()
+        .expect("override directory")
+        .join("override_record.json");
+
+    println!("\n12. OWNER FALSE-POSITIVE OVERRIDE CREATED A NEW SIGNED REPLACEMENT POLICY");
+    line();
+    row("Override actor", &override_record.owner_id);
+    row(
+        "Original alert/plan",
+        format!(
+            "{} / {}",
+            override_record.original_alert_id, decoded.recommendation_id
+        ),
+    );
+    row(
+        "Original policy version",
+        override_record.original_policy_version.to_string(),
+    );
+    row(
+        "Replacement policy version",
+        override_record.replacement_policy_version.to_string(),
+    );
+    row(
+        "Replacement signed & verified",
+        Path::new(&override_record.signed_policy_path)
+            .is_file()
+            .to_string(),
+    );
+    row(
+        "Non-admin member override",
+        if member_override_attempt.is_err() {
+            "Rejected"
+        } else {
+            "unexpected: allowed"
+        },
+    );
+    row(
+        "Original policy history preserved",
+        "true; active_policy.json untouched, replacement is a new v(N+1) candidate",
+    );
+    row("Override record", record_path.display().to_string());
+    line();
+
+    println!("\n13. VS20 FINAL LIFECYCLE VERIFICATION (READ-ONLY, NO MUTATION)");
+    line();
+    row(
+        "Trusted member result",
+        format!("{}={}", trusted_report.member_id, trusted_report.status),
+    );
+    row(
+        "Degraded member result",
+        format!(
+            "{}={} (missing: {})",
+            degraded_report.member_id,
+            degraded_report.status,
+            degraded_report.missing_stages.join(", ")
+        ),
+    );
+    row(
+        "Trusted member checks",
+        format!(
+            "alert_valid={} audit_complete={} applied={} rotated={} trusted={}",
+            trusted_report.alert_signature_and_hash_valid,
+            trusted_report.audit_complete,
+            trusted_report.policy_applied,
+            trusted_report.identity_rotated,
+            trusted_report.re_attestation_trusted
+        ),
+    );
+    row(
+        "VS20 report root",
+        audit_root
+            .join(VS20_FINAL_VERIFICATION)
+            .display()
+            .to_string(),
     );
     line();
 

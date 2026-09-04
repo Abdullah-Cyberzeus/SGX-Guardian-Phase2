@@ -21,10 +21,11 @@ use sgx_anomaly_engine::virtual_shift::{
     VS10_VS11_REVIEWS,
 };
 use sgx_anomaly_engine::virtual_shift::{
-    build_candidate_from_approved_review, sign_approved_policy, vshift_alert_from_signed_policy,
-    write_built_candidate, write_signed_policy, write_vshift_alert, ActiveVirtualShiftPolicy,
-    ApprovalService, GuardianKeyManager, VS12_CANDIDATES, VS13_SIGNED_POLICIES, VS14_ALERTS,
-    VS17_MEMBER_POLICY_STATE,
+    build_candidate_from_approved_review, canonical_policy_bytes, sha256_hex, sign_approved_policy,
+    verify_signed_policy, vshift_alert_from_signed_policy, write_built_candidate,
+    write_signed_policy, write_vshift_alert, ActiveVirtualShiftPolicy, ApprovalService,
+    GuardianKeyManager, ManualOverrideService, SignedVirtualShiftPolicy, VShiftAlert,
+    VS12_CANDIDATES, VS13_SIGNED_POLICIES, VS14_ALERTS, VS17_MEMBER_POLICY_STATE, VS19_OVERRIDES,
 };
 use sha2::{Digest, Sha256};
 use std::fs::OpenOptions;
@@ -415,9 +416,11 @@ fn ensure_virtual_shift_assets(state_dir: impl AsRef<Path>) -> Result<VirtualShi
 
     let active_policy = config_dir.join("active_virtual_shift_policy.json");
     let guardian_signer = config_dir.join("guardian_signer.json");
+    let node_roles = config_dir.join("node_roles.json");
     let gossip_topology = config_dir.join("circle_gossip_topology.json");
     write_if_missing(&active_policy, ACTIVE_VIRTUAL_SHIFT_POLICY_JSON)?;
     write_if_missing(&guardian_signer, GUARDIAN_SIGNER_JSON)?;
+    write_if_missing(&node_roles, NODE_ROLES_JSON)?;
     write_if_missing(&gossip_topology, CIRCLE_GOSSIP_TOPOLOGY_JSON)?;
 
     let proposal_root = root.join(VS01_TO_VS09_PROPOSALS);
@@ -689,6 +692,128 @@ pub fn process_task2_owner_decision(
         alert_id: Some(alert_id),
         alert_json_path: Some(alert_json_path.display().to_string()),
         alert_protobuf_path: Some(alert_protobuf_path.display().to_string()),
+    })
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Task2FalsePositiveOverrideRuntimeResult {
+    pub schema_version: u32,
+    pub plan_id: String,
+    pub original_alert_id: String,
+    pub original_policy_version: u64,
+    pub override_id: String,
+    pub replacement_policy_version: u64,
+    pub override_record_path: String,
+    pub signed_policy_path: String,
+    pub alert_id: String,
+    pub alert_json_path: String,
+    pub alert_protobuf_path: String,
+}
+
+pub fn process_task2_false_positive_override(
+    node_id: &str,
+    state_dir: impl AsRef<Path>,
+    plan_id: &str,
+    reason: &str,
+) -> Result<Task2FalsePositiveOverrideRuntimeResult> {
+    if reason.trim().is_empty() {
+        anyhow::bail!("false-positive override reason is required");
+    }
+
+    let state_dir = state_dir.as_ref();
+    ensure_virtual_shift_assets(state_dir)?;
+    let root = virtual_shift_root_path(state_dir);
+
+    let (original_alert, _) = load_approved_task2_vshift_alert_for_retry(state_dir, plan_id)?;
+
+    let role_config = root.join(VIRTUAL_SHIFT_CONFIG_DIR).join("node_roles.json");
+
+    let role_config_str = role_config
+        .to_str()
+        .ok_or_else(|| anyhow!("node role config path is not valid UTF-8"))?;
+
+    let override_root = root.join(VS19_OVERRIDES).join(plan_id);
+
+    let service = ManualOverrideService::from_role_config(
+        root.join(VS17_MEMBER_POLICY_STATE),
+        &override_root,
+        role_config_str,
+    )?;
+
+    let signer_config = root
+        .join(VIRTUAL_SHIFT_CONFIG_DIR)
+        .join("guardian_signer.json");
+
+    let guardian = GuardianKeyManager::from_config(&signer_config, root.join("guardian_keys"))?;
+
+    let created_at_ms = task2_now_ms()?;
+
+    let record = service.create_signed_revert(
+        node_id,
+        node_id,
+        &original_alert,
+        reason,
+        created_at_ms,
+        &guardian,
+    )?;
+
+    let signed_bytes = std::fs::read(&record.signed_policy_path)?;
+    let signed: SignedVirtualShiftPolicy = serde_json::from_slice(&signed_bytes)?;
+    verify_signed_policy(&signed)?;
+
+    let policy_blob = canonical_policy_bytes(&signed.policy)?;
+    if sha256_hex(&policy_blob) != signed.canonical_sha256 {
+        anyhow::bail!("manual override signed policy canonical hash mismatch");
+    }
+
+    let issued_at_ms = task2_now_ms()?;
+    let alert_id = format!(
+        "vsa-{}-v{}-override-{}",
+        signed.policy.circle_id, signed.policy.policy_version, plan_id
+    );
+
+    let alert = VShiftAlert {
+        schema_version: 1,
+        alert_id: alert_id.clone(),
+        circle_id: signed.policy.circle_id.clone(),
+        policy_version: signed.policy.policy_version,
+        policy_blob,
+        policy_hash_hex: signed.canonical_sha256.clone(),
+        guardian_signature_hex: signed.signature_hex.clone(),
+        guardian_public_key_hex: signed.public_key_hex.clone(),
+        signer_id: signed.signer_id.clone(),
+        signature_algorithm: signed.algorithm.clone(),
+        anomaly_id: original_alert.anomaly_id.clone(),
+        recommendation_id: signed.policy.source_recommendation_id.clone(),
+        anomaly_score: original_alert.anomaly_score,
+        confidence: original_alert.confidence,
+        ai_justification: original_alert.ai_justification.clone(),
+        issued_at_ms,
+        expires_at_ms: issued_at_ms + 300_000,
+    };
+
+    alert.validate()?;
+
+    let (alert_json_path, alert_protobuf_path) =
+        write_vshift_alert(root.join(VS14_ALERTS), &alert)?;
+
+    let override_record_path = Path::new(&record.signed_policy_path)
+        .parent()
+        .ok_or_else(|| anyhow!("manual override directory is missing"))?
+        .join("override_record.json");
+
+    Ok(Task2FalsePositiveOverrideRuntimeResult {
+        schema_version: 1,
+        plan_id: plan_id.to_owned(),
+        original_alert_id: record.original_alert_id,
+        original_policy_version: record.original_policy_version,
+        override_id: record.override_id,
+        replacement_policy_version: record.replacement_policy_version,
+        override_record_path: override_record_path.display().to_string(),
+        signed_policy_path: record.signed_policy_path,
+        alert_id,
+        alert_json_path: alert_json_path.display().to_string(),
+        alert_protobuf_path: alert_protobuf_path.display().to_string(),
     })
 }
 
