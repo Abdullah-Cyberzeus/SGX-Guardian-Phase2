@@ -165,7 +165,7 @@ pub fn apply_overlay_snapshot(raw: &str, path: &str) -> Result<(), String> {
 
 pub fn apply_lighthouse_snapshot(raw: &str, path: &str) -> Result<(), String> {
     let value = parse_snapshot_payload(raw)?;
-    let incoming: LighthouseRegistry = serde_json::from_value(value.clone())
+    let mut incoming: LighthouseRegistry = serde_json::from_value(value.clone())
         .map_err(|e| format!("invalid lighthouse snapshot schema: {}", e))?;
 
     let active_lh_total = incoming
@@ -185,6 +185,37 @@ pub fn apply_lighthouse_snapshot(raw: &str, path: &str) -> Result<(), String> {
                         .to_string(),
                 );
             }
+
+            // Identify existing local primary lighthouse
+            let existing_primary = existing.primary().map(|p| p.node_name.clone());
+
+            // Merge local state into incoming:
+            // 1. Preserve physical endpoints if incoming has empty endpoint
+            // 2. Preserve local is_active states
+            for in_entry in incoming.lighthouses.iter_mut() {
+                if let Some(ex_entry) = existing.lighthouses.iter().find(|e| e.node_name == in_entry.node_name) {
+                    if in_entry.physical_endpoint.is_empty() && !ex_entry.physical_endpoint.is_empty() {
+                        in_entry.physical_endpoint = ex_entry.physical_endpoint.clone();
+                    }
+                    in_entry.is_active = ex_entry.is_active;
+                }
+            }
+
+            // 3. Preserve local is_primary selection
+            if let Some(ref prim_name) = existing_primary {
+                if incoming.lighthouses.iter().any(|l| &l.node_name == prim_name && l.is_lighthouse) {
+                    for entry in incoming.lighthouses.iter_mut().filter(|l| l.is_lighthouse) {
+                        entry.is_primary = &entry.node_name == prim_name;
+                    }
+                }
+            }
+
+            // 4. Preserve any additional local entries (such as locally discovered / configured lighthouses/relays)
+            for ex_entry in &existing.lighthouses {
+                if !incoming.lighthouses.iter().any(|in_entry| in_entry.node_name == ex_entry.node_name) {
+                    incoming.lighthouses.push(ex_entry.clone());
+                }
+            }
         }
     }
 
@@ -195,7 +226,7 @@ pub fn apply_lighthouse_snapshot(raw: &str, path: &str) -> Result<(), String> {
 
 pub fn apply_relay_snapshot(raw: &str, path: &str) -> Result<(), String> {
     let value = parse_snapshot_payload(raw)?;
-    let incoming: RelayRegistry = serde_json::from_value(value.clone())
+    let mut incoming: RelayRegistry = serde_json::from_value(value.clone())
         .map_err(|e| format!("invalid relay snapshot schema: {}", e))?;
 
     if Path::new(path).exists() {
@@ -205,6 +236,21 @@ pub fn apply_relay_snapshot(raw: &str, path: &str) -> Result<(), String> {
                     "refusing to overwrite non-empty relay registry with empty snapshot"
                         .to_string(),
                 );
+            }
+
+            for (name, in_entry) in incoming.relays.iter_mut() {
+                if let Some(ex_entry) = existing.relays.get(name) {
+                    if in_entry.physical_endpoint.is_empty() && !ex_entry.physical_endpoint.is_empty() {
+                        in_entry.physical_endpoint = ex_entry.physical_endpoint.clone();
+                    }
+                    in_entry.is_active = ex_entry.is_active;
+                }
+            }
+
+            for (name, ex_entry) in &existing.relays {
+                if !incoming.relays.contains_key(name) {
+                    incoming.relays.insert(name.clone(), ex_entry.clone());
+                }
             }
         }
     }

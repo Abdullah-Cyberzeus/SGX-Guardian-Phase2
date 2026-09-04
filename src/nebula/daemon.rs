@@ -45,11 +45,13 @@ impl NebulaDaemon {
         if output.status.success() {
             Ok(())
         } else {
+            let out_str = String::from_utf8_lossy(&output.stdout);
+            let err_str = String::from_utf8_lossy(&output.stderr);
             Err(Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!(
-                    "Guardian Mesh config validation failed:\n{}",
-                    String::from_utf8_lossy(&output.stderr)
+                    "Guardian Mesh config validation failed:\n{}\n{}",
+                    out_str, err_str
                 ),
             ))
         }

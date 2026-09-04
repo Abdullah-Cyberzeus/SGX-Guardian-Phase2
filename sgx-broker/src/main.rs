@@ -65,6 +65,11 @@ async fn main() {
 
     tracing::info!("🚀 Broker listening on http://{}", addr);
 
+    // Spawn background Lighthouse & Relay manager
+    tokio::spawn(async {
+        sgx_broker::lighthouse_manager::start_lighthouse_manager().await;
+    });
+
     axum::serve(listener, app)
         .await
         .expect("Broker server failed");

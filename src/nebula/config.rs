@@ -158,13 +158,14 @@ firewall:
             )
         })?;
 
-        let am_lh = node_name == "nodeA"
+        let has_vps_relay = lh_registry.lighthouses.iter().any(|l| l.node_name == "vps-lighthouse" && l.is_active);
+        let am_lh = (node_name == "nodeA" && !has_vps_relay)
             || std::path::Path::new("/var/lib/sgx-guardian/nebula/am_lighthouse").exists();
-        let is_lighthouse = am_lh || lh_registry.is_lighthouse(node_name);
+        let is_lighthouse = am_lh || (lh_registry.is_lighthouse(node_name) && (!has_vps_relay || node_name != "nodeA"));
         let active_lighthouses = lh_registry
             .active()
             .iter()
-            .filter(|l| l.node_name != node_name)
+            .filter(|l| l.node_name != node_name && !l.physical_endpoint.is_empty())
             .map(|l| l.overlay_ip.clone())
             .collect::<Vec<String>>();
 
@@ -197,7 +198,7 @@ firewall:
         let mut entries = lh_registry
             .static_host_map_entries()
             .into_iter()
-            .filter(|(overlay, _)| overlay.as_str() != overlay_ip_base)
+            .filter(|(overlay, physical)| overlay.as_str() != overlay_ip_base && !physical.is_empty())
             .collect::<Vec<(String, String)>>();
 
         // Defensive merge from relay registry: if lighthouse registry lags,
@@ -235,8 +236,12 @@ firewall:
             || std::path::Path::new("/var/lib/sgx-guardian/nebula/am_relay").exists();
         let lh_also_relay = Self::env_bool("SGX_LH_ALSO_RELAY").unwrap_or(true);
         let explicit_relay_role = lh_registry.relay_role_for(node_name);
-        let am_relay =
-            forced_relay || explicit_relay_role.unwrap_or(is_lighthouse && lh_also_relay);
+        let has_vps_relay = lh_registry.lighthouses.iter().any(|l| l.node_name == "vps-lighthouse" && l.is_active);
+        let am_relay = if has_vps_relay && node_name == "nodeA" {
+            false
+        } else {
+            forced_relay || explicit_relay_role.unwrap_or(is_lighthouse && lh_also_relay)
+        };
 
         let self_overlay = overlay_ip_base.to_string();
         let mut candidate_relays = lh_registry
@@ -274,7 +279,7 @@ firewall:
 
         // Prefer dedicated relays over lighthouse relays.
         // This avoids advertising nodeA as relay when a dedicated relay (nodeB) exists.
-        let dedicated_relay_ips = candidate_relays
+        let _dedicated_relay_ips = candidate_relays
             .iter()
             .filter(|r| !r.is_lighthouse)
             .map(|r| r.overlay_ip.clone())
@@ -302,19 +307,15 @@ firewall:
         // Optional fallback to lighthouse-relays when no dedicated relay exists.
         // Enabled by default so nodeA acts as the out-of-the-box relay unless
         // a dedicated relay is available or the operator explicitly disables it.
-        let allow_lh_relay_fallback = Self::env_bool("SGX_ALLOW_LH_RELAY_FALLBACK").unwrap_or(true);
-        let active_relays = if !dedicated_relay_ips.is_empty() {
-            dedicated_relay_ips
-        } else if !known_relay_ips.is_empty() {
-            known_relay_ips
-        } else if allow_lh_relay_fallback {
-            candidate_relays
-                .iter()
-                .map(|r| r.overlay_ip.clone())
-                .collect::<Vec<String>>()
-        } else {
-            Vec::new()
-        };
+        let mut active_relays = Vec::new();
+        for r in &candidate_relays {
+            active_relays.push(r.overlay_ip.clone());
+        }
+        for ip in &known_relay_ips {
+            if !active_relays.contains(ip) {
+                active_relays.push(ip.clone());
+            }
+        }
 
         // Defensive dedupe to keep a stable relays list.
         let mut seen = std::collections::HashSet::new();
@@ -369,6 +370,10 @@ listen:
   port: 4242
 
 {relay}
+
+punchy:
+  punch: true
+  respond: true
 
 stats:
   type: prometheus

@@ -994,6 +994,7 @@ fn load_node_config_for_attestation(node_id: &str) -> Result<NodeConfig> {
                     metrics: None,
                     relay: None,
                     api: None,
+                    vps: None,
                 });
             }
         }
@@ -1082,6 +1083,23 @@ fn infer_node_id_from_peer(peer_ip: &str, base_port: u16) -> Option<String> {
         return Some(node_id.to_string());
     }
 
+    match peer_ip {
+        "192.168.100.1" => return Some("nodeA".to_string()),
+        "192.168.100.2" => return Some("nodeB".to_string()),
+        "192.168.100.3" => return Some("nodeC".to_string()),
+        _ => {}
+    }
+
+    if let Ok(reg) = crate::nebula::overlay_registry::OverlayRegistry::load(
+        crate::nebula::registry_sync::REGISTRY_PATH,
+    ) {
+        for (node_name, ip_rec) in reg.allocations {
+            if ip_rec.overlay_ip == peer_ip {
+                return Some(node_name);
+            }
+        }
+    }
+
     for node in ["nodeA", "nodeB", "nodeC"] {
         if let Ok(conf) = load_node_config_for_attestation(node) {
             if conf.port == base_port && conf.ip == peer_ip {
@@ -1093,11 +1111,19 @@ fn infer_node_id_from_peer(peer_ip: &str, base_port: u16) -> Option<String> {
 }
 
 fn overlay_ip_from_local_registry(node_id: &str) -> Option<String> {
-    let reg = crate::nebula::overlay_registry::OverlayRegistry::load(
+    if let Ok(reg) = crate::nebula::overlay_registry::OverlayRegistry::load(
         crate::nebula::registry_sync::REGISTRY_PATH,
-    )
-    .ok()?;
-    reg.get_ip(node_id).map(|s| s.to_string())
+    ) {
+        if let Some(ip) = reg.get_ip(node_id) {
+            return Some(ip.to_string());
+        }
+    }
+    match node_id {
+        "nodeA" => Some("192.168.100.1".to_string()),
+        "nodeB" => Some("192.168.100.2".to_string()),
+        "nodeC" => Some("192.168.100.3".to_string()),
+        _ => None,
+    }
 }
 
 async fn resolve_overlay_ip_for_node(node_id: &str) -> Option<String> {
@@ -1106,7 +1132,9 @@ async fn resolve_overlay_ip_for_node(node_id: &str) -> Option<String> {
     }
 
     // On member nodes, ask nodeA's registry service for authoritative mapping.
-    let ca_ip = if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
+    let ca_ip = if std::path::Path::new("/var/lib/sgx-guardian/nebula/ca/ca.crt").exists() {
+        "192.168.100.1".to_string()
+    } else if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
         if !env_ip.is_empty() && env_ip != "0.0.0.0" && env_ip != "127.0.0.1" {
             env_ip
         } else {
@@ -1370,6 +1398,16 @@ fn resolve_ca_host_for_vc() -> String {
         if crate::dynamic_config::is_routable_ip(&host) {
             return host;
         }
+    }
+    if std::path::Path::new("/var/lib/sgx-guardian/nebula/ca/ca.crt").exists() {
+        if let Ok(reg) = crate::nebula::overlay_registry::OverlayRegistry::load(
+            crate::nebula::registry_sync::REGISTRY_PATH,
+        ) {
+            if let Some(owner_ip) = reg.get_ip("nodeA") {
+                return owner_ip.to_string();
+            }
+        }
+        return "192.168.100.1".to_string();
     }
     load_node_config_for_attestation("nodeA")
         .ok()
@@ -2551,16 +2589,13 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
             match KeyManager::load_or_generate(&key_path) {
                 Ok(km) => {
                     let base_port = if port >= 100 { port - 100 } else { port };
-                    let Some((target_ip, target_port, peer_node)) =
+                    let Some((target_ip, target_port, _peer_node)) =
                         resolve_attestation_target(&ip, base_port, overlay_only).await
                     else {
                         continue;
                     };
 
-                    if node_id != "nodeA"
-                        && peer_node == "nodeA"
-                        && !target_is_reachable(&target_ip, target_port, 2).await
-                    {
+                    if !target_is_reachable(&target_ip, target_port, 1).await {
                         continue;
                     }
 
@@ -2627,16 +2662,13 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
                     match KeyManager::load_or_generate(&key_path) {
                         Ok(km) => {
                             let base_port = if port >= 100 { port - 100 } else { port };
-                            let Some((target_ip, target_port, peer_node)) =
+                            let Some((target_ip, target_port, _peer_node)) =
                                 resolve_attestation_target(&ip, base_port, overlay_only).await
                             else {
                                 continue;
                             };
 
-                            if node_id != "nodeA"
-                                && peer_node == "nodeA"
-                                && !target_is_reachable(&target_ip, target_port, 2).await
-                            {
+                            if !target_is_reachable(&target_ip, target_port, 1).await {
                                 continue;
                             }
 
@@ -2773,10 +2805,26 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
         }
         last_attempts.insert(target_key.clone(), Instant::now());
 
-        if local_node_id != "nodeA"
-            && peer_node_id == "nodeA"
-            && !target_is_reachable(&target_ip, attest_port, 2).await
-        {
+        // Avoid discovery spam if we already have a recent trusted session with this peer.
+        // The background `re_attestation_loop` handles session refresh (VID nonces).
+        let trusted_peers = load_trusted_peers_from_global();
+        let already_trusted = trusted_peers.iter().any(|p| {
+            if !trusted_peer_is_recent(&p.timestamp) {
+                return false;
+            }
+            if p.peer_id == target_key {
+                return true;
+            }
+            if p.peer_id.starts_with(&target_ip) {
+                return true;
+            }
+            false
+        });
+        if already_trusted {
+            continue;
+        }
+
+        if !target_is_reachable(&target_ip, attest_port, 1).await {
             continue;
         }
 

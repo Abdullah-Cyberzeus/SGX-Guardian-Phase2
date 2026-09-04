@@ -58,7 +58,7 @@ impl RecommendationRules {
         match Self::load_verified(path) {
             Ok(rules) => rules,
             Err(err) => {
-                tracing::warn!(path = %path.display(), %err, "using built-in advisory rules");
+                tracing::debug!(path = %path.display(), %err, "using built-in advisory rules");
                 Self::default_rules()
             }
         }

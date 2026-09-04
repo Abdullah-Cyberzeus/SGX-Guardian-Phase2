@@ -103,3 +103,25 @@ async fn test_models_roundtrip() {
     assert_eq!(resp_de.status, "APPROVED");
     assert_eq!(resp_de.key, "key-data");
 }
+
+#[test]
+fn test_lighthouse_manager_config_generation() {
+    let tmp_dir = tempfile::tempdir().unwrap();
+    let path = tmp_dir.path().to_str().unwrap();
+
+    assert!(!sgx_broker::lighthouse_manager::certificates_exist(path));
+
+    // Create dummy cert files
+    std::fs::write(format!("{}/ca.crt", path), "dummy-ca").unwrap();
+    std::fs::write(format!("{}/vps-lighthouse.crt", path), "dummy-cert").unwrap();
+    std::fs::write(format!("{}/vps-lighthouse.key", path), "dummy-key").unwrap();
+
+    assert!(sgx_broker::lighthouse_manager::certificates_exist(path));
+
+    // Ensure config is created
+    assert!(sgx_broker::lighthouse_manager::ensure_nebula_config(path).is_ok());
+    let cfg_content = std::fs::read_to_string(format!("{}/config.yaml", path)).unwrap();
+    assert!(cfg_content.contains("am_lighthouse: true"));
+    assert!(cfg_content.contains("am_relay: true"));
+    assert!(cfg_content.contains("port: 4242"));
+}

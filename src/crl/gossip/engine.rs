@@ -97,10 +97,17 @@ pub fn parse_nebula_endpoint(endpoint: &str) -> Option<String> {
 /// `SGXNebulaMesh` overlay endpoint. Revoked peers are excluded in BOTH
 /// directions (never dialed here; inbound rejected in `handle_inbound`).
 pub fn active_gossip_peers(self_did: &str) -> Vec<GossipPeer> {
-    let docs = match crate::did::doc_persistence::list_peer_docs() {
+    let mut docs = match crate::did::doc_persistence::list_peer_docs() {
         Ok(docs) => docs,
-        Err(_) => return Vec::new(),
+        Err(_) => Vec::new(),
     };
+    if let Ok(agg_docs) = crate::did::doc_persistence::load_ca_aggregate() {
+        for doc in agg_docs {
+            if !docs.iter().any(|d| d.id == doc.id) {
+                docs.push(doc);
+            }
+        }
+    }
     let mut peers = Vec::new();
     for doc in docs {
         if doc.id == self_did {

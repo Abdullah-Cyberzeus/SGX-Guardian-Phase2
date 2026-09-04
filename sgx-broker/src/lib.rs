@@ -1,4 +1,5 @@
 pub mod handlers;
+pub mod lighthouse_manager;
 pub mod models;
 pub mod state;
 

@@ -1027,6 +1027,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             metrics: None,
             relay: None,
             api: None,
+            vps: None,
         }
     }
 
@@ -1363,6 +1364,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             let _ = lh_reg.update_endpoint("nodeA", &lighthouse_endpoint);
             lh_reg.mark_active("nodeA");
+
+            let vps_cfg = sgx_guardian_client::config_loader::resolve_vps_config(&node_id);
+            if let Some(vps_pub_ip) = vps_cfg.vps_public_ip {
+                if !vps_pub_ip.trim().is_empty() {
+                    let vps_ovl_ip = vps_cfg
+                        .vps_overlay_ip
+                        .unwrap_or_else(|| "192.168.100.10".to_string());
+                    let vps_endpoint = format!("{}:4242", vps_pub_ip.trim());
+                    lh_reg.upsert_node("vps-lighthouse", &vps_ovl_ip, &vps_endpoint, true, true);
+                    lh_reg.mark_active("vps-lighthouse");
+                    println!(
+                        "🗼 Registered VPS Cloud Lighthouse on Node A: {} -> {}",
+                        vps_ovl_ip, vps_endpoint
+                    );
+                }
+            }
+
             if let Err(e) = lh_reg.save(&lh_path) {
                 eprintln!("⚠️ LH registry save failed: {}", e);
             }
@@ -1402,10 +1420,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
 
             // 5. Start VPS CA broker worker (if configured)
-            if let Ok(vps_url) = std::env::var("SGX_BROKER_URL") {
+            if let Some(vps_url) = vps_cfg.broker_url {
                 if !vps_url.is_empty() {
                     let circle_id = "guardian-circle-alpha".to_string();
-                    let auth_token = std::env::var("SGX_BROKER_TOKEN").unwrap_or_default();
+                    let auth_token = vps_cfg.broker_token.unwrap_or_default();
                     tokio::spawn(async move {
                         sgx_guardian_client::cloud::ca_broker::start_ca_broker_worker(
                             vps_url,
@@ -1429,183 +1447,69 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 true,
                 nebula_base_dir.clone(),
             ));
-        } else if let Some(broker_url) = std::env::var("SGX_BROKER_URL")
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-        {
-            // ────────────────────────────────────────────────────────────────────
-            // REMOTE MEMBER NODE (e.g. nodeC) — Enrolls via VPS Cloud Broker
-            // 1. Request Certificate, CA cert, and remote nebula.yaml via Broker HTTP API
-            // 2. Set up local overlay pool and lighthouse registry
-            // ────────────────────────────────────────────────────────────────────
-            println!("☁️  Remote node mode: enrolling via VPS Cloud Broker at {}", broker_url);
-            log_event(
-                &node_id,
-                &format!("Remote node bootstrap: requesting certificate via VPS Cloud Broker at {}", broker_url),
-            );
-
-            // 1. Fetch cert, CA cert, and nebula.yaml via broker
-            sgx_guardian_client::cert_client::request_certificate_via_broker(
-                node_id.clone(),
-                broker_url,
-                pubkey_b64.clone(),
-            )
-            .await;
-
-            // 2. Verify CA cert arrived
-            if !NebulaCA::ca_cert_exists(&nebula_base_dir) {
-                eprintln!(
-                    "❌ CA cert missing after broker bootstrap! Check broker and nodeA connection."
-                );
-                std::process::exit(1);
-            }
-
-            if let Some(fp) = NebulaCA::ca_fingerprint(&nebula_base_dir) {
-                println!("🔏 CA fingerprint (from broker): {}", fp);
-                log_event(&node_id, &format!("CA fingerprint: {}", fp));
-            }
-
-            let ip_cidr = read_ip_from_nebula_cert(&nebula_base_dir, &node_id)
-                .unwrap_or_else(|| "192.168.100.2/24".to_string());
-            println!("🌐 Overlay IP for {}: {}", node_id, ip_cidr);
-            nebula_ip = ip_cidr.clone();
-
-            let ip_only = ip_cidr.split('/').next().unwrap_or("").to_string();
-            let mut pool = OverlayPool::new("guardian-circle-alpha", "192.168.100", "nodeA");
-            pool.allocations.insert(node_id.clone(), ip_only);
-            overlay_pool = pool;
-
-            let lh_path = format!("{}/lighthouse_registry.json", nebula_base_dir);
-            let owner_overlay = overlay_pool
-                .get_ip("nodeA")
-                .cloned()
-                .unwrap_or_else(|| "192.168.100.1".to_string());
-            let vps_public_ip = std::env::var("SGX_VPS_PUBLIC_IP").unwrap_or_else(|_| "172.31.250.20".to_string());
-            let vps_endpoint = format!("{}:4242", vps_public_ip);
-            let lh_reg = LighthouseRegistry::load_or_create(
-                &lh_path,
-                "guardian-circle-alpha",
-                "nodeA",
-                &owner_overlay,
-                &vps_endpoint,
-            );
-            lighthouse_registry = lh_reg;
-            did_doc_publish_state = Some((
-                ip_cidr.clone(),
-                vps_public_ip.clone(),
-                false,
-                nebula_base_dir.clone(),
-            ));
-
-            log_audit(
-                &node_id,
-                AuditCategory::Network,
-                AuditSeverity::Info,
-                AuditAction::Succeeded,
-                &format!("Remote overlay bootstrap complete for {}", node_id),
-            );
-            println!("✅ Certificate bootstrap completed via broker for {}", node_id);
         } else {
             // ────────────────────────────────────────────────────────────────────
-            // LOCAL LAN MEMBER NODES (e.g. nodeB)
-            // 1. Discover nodeA's real LAN IP.
-            // 2. Request overlay IP from the CA registry.
-            // 3. Fetch the CA cert from nodeA (via cert bootstrap response).
-            // 4. Request a Nebula cert from nodeA via gRPC.
+            // MEMBER NODES (e.g. nodeB, nodeC)
             // ────────────────────────────────────────────────────────────────────
-
-            // 1. Discover nodeA's real LAN IP (needed for static_host_map + CA bootstrap)
-            let ca_lan_ip: String = {
-                if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
-                    if !env_ip.is_empty() && env_ip != "0.0.0.0" {
-                        println!("📌 Using SGX_LIGHTHOUSE_IP={}", env_ip);
-                        env_ip
-                    } else {
-                        resolve_ca_ip_from_config_inner().await
-                    }
-                } else {
-                    resolve_ca_ip_from_config_inner().await
-                }
-            };
-            println!("📡 nodeA (CA/Lighthouse) LAN IP: {}", ca_lan_ip);
-
-            // If no registry sync from CA yet this boot, treat cache as suspect
-            if !std::path::Path::new(registry_sync::REGISTRY_PATH).exists() {
-                let _ = registry_sync::clear_local_ip_cache(&node_id);
-            }
-
-            // 2. Resolve overlay IP from CA registry
-            let pubkey_prefix = &pubkey_b64[..20.min(pubkey_b64.len())];
-            let ip_cidr =
-                registry_sync::resolve_overlay_ip(&node_id, &ca_lan_ip, pubkey_prefix).await;
-            println!("🌐 Overlay IP for {}: {}", node_id, ip_cidr);
-
-            nebula_ip = ip_cidr.clone();
-
-            if let Err(e) =
-                refresh_and_publish_did_doc(&node_id, &km, &ip_cidr, &ca_lan_ip, false).await
-            {
-                eprintln!("⚠️ DID Document publish failed: {}", e);
-            }
-            did_doc_publish_state = Some((
-                ip_cidr.clone(),
-                ca_lan_ip.clone(),
-                false,
-                nebula_base_dir.clone(),
-            ));
-
-            let ip_only = ip_cidr.split('/').next().unwrap_or("").to_string();
-            let mut pool = OverlayPool::new("guardian-circle-alpha", "192.168.100", "nodeA");
-            pool.allocations.insert(node_id.clone(), ip_only);
-            overlay_pool = pool;
-
-            let lh_path = format!("{}/lighthouse_registry.json", nebula_base_dir);
-            let owner_overlay = overlay_pool
-                .get_ip("nodeA")
-                .cloned()
-                .unwrap_or_else(|| "192.168.100.1".to_string());
-            let lighthouse_endpoint = format!("{}:4242", ca_lan_ip);
-            let mut lh_reg = LighthouseRegistry::load_or_create(
-                &lh_path,
-                "guardian-circle-alpha",
-                "nodeA",
-                &owner_overlay,
-                &lighthouse_endpoint,
-            );
-            let _ = lh_reg.update_endpoint("nodeA", &lighthouse_endpoint);
-            lh_reg.mark_active("nodeA");
-            if let Err(e) = lh_reg.save(&lh_path) {
-                eprintln!("⚠️ LH registry save failed: {}", e);
-            }
-            println!("📡 {}", lh_reg.summary());
-            lighthouse_registry = lh_reg;
-
-            log_audit(
-                &node_id,
-                AuditCategory::Network,
-                AuditSeverity::Info,
-                AuditAction::Succeeded,
-                &format!("Overlay IP resolved: {}", ip_cidr),
-            );
-
-            // 3. Fetch Nebula cert + CA cert from nodeA
             let member_cert_path = format!("{}/nodes/{}.crt", nebula_base_dir, node_id);
             let member_key_path = format!("{}/nodes/{}.key", nebula_base_dir, node_id);
-
-            let cert_exists = Path::new(&member_cert_path).exists();
-            let key_exists = Path::new(&member_key_path).exists();
             let ca_exists = NebulaCA::ca_cert_exists(&nebula_base_dir);
-            let cert_ip_ok = cert_exists && cert_matches_overlay_ip(&member_cert_path, &ip_cidr);
+            let cert_exists = Path::new(&member_cert_path).exists()
+                && Path::new(&member_key_path).exists()
+                && ca_exists;
 
-            if cert_exists && key_exists && ca_exists && cert_ip_ok {
+            if cert_exists {
+                // ── Fast-Path: Existing valid certificate on disk ────────────────
+                let ip_cidr = read_ip_from_nebula_cert(&nebula_base_dir, &node_id)
+                    .unwrap_or_else(|| "192.168.100.2/24".to_string());
                 println!(
-                    "✅ Guardian Mesh certificate + CA cert already present for {}",
-                    node_id
+                    "✅ Guardian Mesh certificate + CA cert already present for {} (IP: {})",
+                    node_id, ip_cidr
                 );
                 if let Some(fp) = NebulaCA::ca_fingerprint(&nebula_base_dir) {
                     println!("🔏 CA fingerprint (local): {}", fp);
                 }
+                nebula_ip = ip_cidr.clone();
+
+                let ip_only = ip_cidr.split('/').next().unwrap_or("").to_string();
+                let mut pool = OverlayPool::new("guardian-circle-alpha", "192.168.100", "nodeA");
+                pool.allocations.insert(node_id.clone(), ip_only);
+                overlay_pool = pool;
+
+                let lh_path = format!("{}/lighthouse_registry.json", nebula_base_dir);
+                let vps_cfg = sgx_guardian_client::config_loader::resolve_vps_config(&node_id);
+                let vps_public_ip = vps_cfg
+                    .vps_public_ip
+                    .clone()
+                    .unwrap_or_else(|| "159.203.186.55".to_string());
+                let vps_overlay_ip = vps_cfg
+                    .vps_overlay_ip
+                    .clone()
+                    .unwrap_or_else(|| "192.168.100.10".to_string());
+                let vps_endpoint = format!("{}:4242", vps_public_ip);
+                let owner_overlay = overlay_pool
+                    .get_ip("nodeA")
+                    .cloned()
+                    .unwrap_or_else(|| "192.168.100.1".to_string());
+                let mut lh_reg = LighthouseRegistry::load_or_create(
+                    &lh_path,
+                    "guardian-circle-alpha",
+                    "nodeA",
+                    &owner_overlay,
+                    "",
+                );
+                lh_reg.upsert_node("vps-lighthouse", &vps_overlay_ip, &vps_endpoint, true, true);
+                lh_reg.mark_active("vps-lighthouse");
+                let _ = lh_reg.save(&lh_path);
+                lighthouse_registry = lh_reg;
+
+                did_doc_publish_state = Some((
+                    ip_cidr.clone(),
+                    owner_overlay.clone(),
+                    false,
+                    nebula_base_dir.clone(),
+                ));
+
                 log_audit(
                     &node_id,
                     AuditCategory::Network,
@@ -1614,106 +1518,257 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &format!("Existing Guardian Mesh certificate found for {}", node_id),
                 );
             } else {
-                if cert_exists && key_exists && !cert_ip_ok {
-                    eprintln!(
-                        "⚠️ Existing cert IP mismatch for {} (expected {}). Rebootstrapping cert.",
-                        node_id, ip_cidr
+                // ── Bootstrap Required: LAN First with Automatic VPS Fallback ────
+                let lan_ca_ip = discover_lan_node_a(3, std::time::Duration::from_secs(30)).await;
+
+                if let Some(ca_lan_ip) = lan_ca_ip {
+                    // ── Case A: Local Node A Found on LAN ────────────────────────
+                    println!("🌐 Local Node A discovered at {} — proceeding with LAN enrollment", ca_lan_ip);
+
+                    if !std::path::Path::new(registry_sync::REGISTRY_PATH).exists() {
+                        let _ = registry_sync::clear_local_ip_cache(&node_id);
+                    }
+
+                    let pubkey_prefix = &pubkey_b64[..20.min(pubkey_b64.len())];
+                    let ip_cidr =
+                        registry_sync::resolve_overlay_ip(&node_id, &ca_lan_ip, pubkey_prefix).await;
+                    println!("🌐 Overlay IP for {}: {}", node_id, ip_cidr);
+                    nebula_ip = ip_cidr.clone();
+
+                    if let Err(e) =
+                        refresh_and_publish_did_doc(&node_id, &km, &ip_cidr, &ca_lan_ip, false).await
+                    {
+                        eprintln!("⚠️ DID Document publish failed: {}", e);
+                    }
+                    did_doc_publish_state = Some((
+                        ip_cidr.clone(),
+                        ca_lan_ip.clone(),
+                        false,
+                        nebula_base_dir.clone(),
+                    ));
+
+                    let ip_only = ip_cidr.split('/').next().unwrap_or("").to_string();
+                    let mut pool = OverlayPool::new("guardian-circle-alpha", "192.168.100", "nodeA");
+                    pool.allocations.insert(node_id.clone(), ip_only);
+                    overlay_pool = pool;
+
+                    let lh_path = format!("{}/lighthouse_registry.json", nebula_base_dir);
+                    let owner_overlay = overlay_pool
+                        .get_ip("nodeA")
+                        .cloned()
+                        .unwrap_or_else(|| "192.168.100.1".to_string());
+                    let lighthouse_endpoint = format!("{}:4242", ca_lan_ip);
+                    let mut lh_reg = LighthouseRegistry::load_or_create(
+                        &lh_path,
+                        "guardian-circle-alpha",
+                        "nodeA",
+                        &owner_overlay,
+                        &lighthouse_endpoint,
                     );
-                    let _ = std::fs::remove_file(&member_cert_path);
-                    let _ = std::fs::remove_file(&member_key_path);
-                }
+                    let _ = lh_reg.update_endpoint("nodeA", &lighthouse_endpoint);
+                    lh_reg.mark_active("nodeA");
+                    if let Err(e) = lh_reg.save(&lh_path) {
+                        eprintln!("⚠️ LH registry save failed: {}", e);
+                    }
+                    println!("📡 {}", lh_reg.summary());
+                    lighthouse_registry = lh_reg;
 
-                println!(
-                    "🔐 Requesting cert + CA cert from nodeA at {}:50061...",
-                    ca_lan_ip
-                );
-                log_event(
-                    &node_id,
-                    "Guardian Mesh certificate missing — requesting from CA",
-                );
+                    log_audit(
+                        &node_id,
+                        AuditCategory::Network,
+                        AuditSeverity::Info,
+                        AuditAction::Succeeded,
+                        &format!("Overlay IP resolved: {}", ip_cidr),
+                    );
 
-                let ca_address = format!("{}:50061", ca_lan_ip);
-                let wants_lh = std::env::var("SGX_WANTS_LIGHTHOUSE")
-                    .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
-                    .unwrap_or(false);
-                let wants_relay = std::env::var("SGX_WANTS_RELAY")
-                    .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
-                    .unwrap_or(false);
-                let pairing_proof = match std::env::var("SGX_GUARDIAN_PAIRING_CODE") {
-                    Ok(code) if !code.trim().is_empty() => {
-                        let device_did = sgx_guardian_client::did::DidRecord::load(
-                            sgx_guardian_client::did::DEFAULT_DID_PATH,
-                        )
-                        .map(|record| record.did)
-                        .map_err(|e| {
-                            eprintln!("⚠️ Failed to load DID for pairing bootstrap proof: {}", e);
-                            e
-                        })
-                        .ok();
-                        let device_pubkey = km.pubkey_der().map_err(|e| {
-                            eprintln!(
-                                "⚠️ Failed to load device pubkey for pairing bootstrap proof: {}",
+                    let ca_address = format!("{}:50061", ca_lan_ip);
+                    let wants_lh = std::env::var("SGX_WANTS_LIGHTHOUSE")
+                        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
+                        .unwrap_or(false);
+                    let wants_relay = std::env::var("SGX_WANTS_RELAY")
+                        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
+                        .unwrap_or(false);
+                    let pairing_proof = match std::env::var("SGX_GUARDIAN_PAIRING_CODE") {
+                        Ok(code) if !code.trim().is_empty() => {
+                            let device_did = sgx_guardian_client::did::DidRecord::load(
+                                sgx_guardian_client::did::DEFAULT_DID_PATH,
+                            )
+                            .map(|record| record.did)
+                            .map_err(|e| {
+                                eprintln!("⚠️ Failed to load DID for pairing bootstrap proof: {}", e);
                                 e
-                            );
-                            e
-                        });
-                        match (device_did, device_pubkey) {
-                            (Some(device_did), Ok(device_pubkey)) => {
-                                match sgx_guardian_client::api::auth::pairing::build_pairing_proof(
-                                    &code,
-                                    &node_id,
-                                    &device_did,
-                                    &device_pubkey,
-                                    km.clone(),
-                                )
-                                .await
-                                {
-                                    Ok(proof) => Some(proof),
-                                    Err(e) => {
-                                        eprintln!(
-                                            "⚠️ Failed to build pairing bootstrap proof: {}",
-                                            e
-                                        );
-                                        None
+                            })
+                            .ok();
+                            let device_pubkey = km.pubkey_der().map_err(|e| {
+                                eprintln!(
+                                    "⚠️ Failed to load device pubkey for pairing bootstrap proof: {}",
+                                    e
+                                );
+                                e
+                            });
+                            match (device_did, device_pubkey) {
+                                (Some(device_did), Ok(device_pubkey)) => {
+                                    match sgx_guardian_client::api::auth::pairing::build_pairing_proof(
+                                        &code,
+                                        &node_id,
+                                        &device_did,
+                                        &device_pubkey,
+                                        km.clone(),
+                                    )
+                                    .await
+                                    {
+                                        Ok(proof) => Some(proof),
+                                        Err(e) => {
+                                            eprintln!(
+                                                "⚠️ Failed to build pairing bootstrap proof: {}",
+                                                e
+                                            );
+                                            None
+                                        }
                                     }
                                 }
+                                _ => None,
                             }
-                            _ => None,
                         }
-                    }
-                    _ => None,
-                };
+                        _ => None,
+                    };
 
-                // BLOCKING: wait until we have the cert before starting Nebula
-                sgx_guardian_client::cert_client::request_certificate_from_ca(
-                    node_id.clone(),
-                    ca_address,
-                    ip_cidr.clone(),
-                    pubkey_b64.clone(),
-                    wants_lh,
-                    wants_relay,
-                    pairing_proof,
-                )
-                .await;
-
-                if !NebulaCA::ca_cert_exists(&nebula_base_dir) {
-                    eprintln!(
-                        "❌ CA cert still missing after bootstrap! \
-                 Check nodeA is running and cert_service wrote ca_cert_pem."
+                    println!("🔐 Requesting cert + CA cert from nodeA at {}:50061...", ca_lan_ip);
+                    log_event(
+                        &node_id,
+                        "Guardian Mesh certificate missing — requesting from CA via LAN",
                     );
-                    std::process::exit(1);
-                }
 
-                if let Some(fp) = NebulaCA::ca_fingerprint(&nebula_base_dir) {
-                    println!("🔏 CA fingerprint (from nodeA): {}", fp);
-                    log_event(&node_id, &format!("CA fingerprint: {}", fp));
-                }
+                    sgx_guardian_client::cert_client::request_certificate_from_ca(
+                        node_id.clone(),
+                        ca_address,
+                        ip_cidr.clone(),
+                        pubkey_b64.clone(),
+                        wants_lh,
+                        wants_relay,
+                        pairing_proof,
+                    )
+                    .await;
 
-                println!("✅ Certificate bootstrap completed for {}", node_id);
+                    if !NebulaCA::ca_cert_exists(&nebula_base_dir) {
+                        eprintln!(
+                            "❌ CA cert still missing after bootstrap! \
+                     Check nodeA is running and cert_service wrote ca_cert_pem."
+                        );
+                        std::process::exit(1);
+                    }
+
+                    if let Some(fp) = NebulaCA::ca_fingerprint(&nebula_base_dir) {
+                        println!("🔏 CA fingerprint (from nodeA): {}", fp);
+                        log_event(&node_id, &format!("CA fingerprint: {}", fp));
+                    }
+
+                    println!("✅ Certificate bootstrap completed for {}", node_id);
+                } else {
+                    // ── Case B: Remote Fallback to Cloud VPS Broker ──────────────
+                    let vps_cfg = sgx_guardian_client::config_loader::resolve_vps_config(&node_id);
+                    let broker_url = match vps_cfg.broker_url {
+                        Some(ref u) if !u.trim().is_empty() => u.clone(),
+                        _ => {
+                            eprintln!("❌ Node A not found on LAN and no VPS broker configured in /etc/sgx-guardian/config.yaml");
+                            std::process::exit(1);
+                        }
+                    };
+
+                    println!();
+                    println!("☁️  Node A not found on local network after 3 attempts (90s).");
+                    println!("☁️  Falling back to VPS Cloud Broker enrollment at {}", broker_url);
+                    println!();
+                    log_event(
+                        &node_id,
+                        &format!("Remote fallback: requesting certificate via VPS Cloud Broker at {}", broker_url),
+                    );
+
+                    sgx_guardian_client::cert_client::request_certificate_via_broker(
+                        node_id.clone(),
+                        broker_url,
+                        pubkey_b64.clone(),
+                    )
+                    .await;
+
+                    if !NebulaCA::ca_cert_exists(&nebula_base_dir) {
+                        eprintln!(
+                            "❌ CA cert missing after broker bootstrap! Check broker and nodeA connection."
+                        );
+                        std::process::exit(1);
+                    }
+
+                    if let Some(fp) = NebulaCA::ca_fingerprint(&nebula_base_dir) {
+                        println!("🔏 CA fingerprint (from broker): {}", fp);
+                        log_event(&node_id, &format!("CA fingerprint: {}", fp));
+                    }
+
+                    let ip_cidr = read_ip_from_nebula_cert(&nebula_base_dir, &node_id)
+                        .unwrap_or_else(|| "192.168.100.2/24".to_string());
+                    println!("🌐 Overlay IP for {}: {}", node_id, ip_cidr);
+                    nebula_ip = ip_cidr.clone();
+
+                    let ip_only = ip_cidr.split('/').next().unwrap_or("").to_string();
+                    let mut pool = OverlayPool::new("guardian-circle-alpha", "192.168.100", "nodeA");
+                    pool.allocations.insert(node_id.clone(), ip_only);
+                    overlay_pool = pool;
+
+                    let lh_path = format!("{}/lighthouse_registry.json", nebula_base_dir);
+                    let owner_overlay = overlay_pool
+                        .get_ip("nodeA")
+                        .cloned()
+                        .unwrap_or_else(|| "192.168.100.1".to_string());
+                    let vps_public_ip = vps_cfg
+                        .vps_public_ip
+                        .unwrap_or_else(|| "159.203.186.55".to_string());
+                    let vps_overlay_ip = vps_cfg
+                        .vps_overlay_ip
+                        .unwrap_or_else(|| "192.168.100.10".to_string());
+                    let vps_endpoint = format!("{}:4242", vps_public_ip);
+                    let mut lh_reg = LighthouseRegistry::load_or_create(
+                        &lh_path,
+                        "guardian-circle-alpha",
+                        "nodeA",
+                        &owner_overlay,
+                        "",
+                    );
+                    lh_reg.upsert_node("vps-lighthouse", &vps_overlay_ip, &vps_endpoint, true, true);
+                    lh_reg.mark_active("vps-lighthouse");
+                    let _ = lh_reg.save(&lh_path);
+                    lighthouse_registry = lh_reg;
+                    did_doc_publish_state = Some((
+                        ip_cidr.clone(),
+                        owner_overlay.clone(),
+                        false,
+                        nebula_base_dir.clone(),
+                    ));
+
+                    log_audit(
+                        &node_id,
+                        AuditCategory::Network,
+                        AuditSeverity::Info,
+                        AuditAction::Succeeded,
+                        &format!("Remote overlay bootstrap complete for {}", node_id),
+                    );
+                    println!("✅ Certificate bootstrap completed via broker for {}", node_id);
+                }
             }
 
             let lh_path = format!("{}/lighthouse_registry.json", nebula_base_dir);
-            if let Ok(fresh_lh) = LighthouseRegistry::load(&lh_path) {
+            if let Ok(mut fresh_lh) = LighthouseRegistry::load(&lh_path) {
+                let vps_cfg = sgx_guardian_client::config_loader::resolve_vps_config(&node_id);
+                if let Some(ref vps_pub) = vps_cfg.vps_public_ip {
+                    if !vps_pub.trim().is_empty() {
+                        let vps_ovl = vps_cfg
+                            .vps_overlay_ip
+                            .clone()
+                            .unwrap_or_else(|| "192.168.100.10".to_string());
+                        let vps_end = format!("{}:4242", vps_pub.trim());
+                        fresh_lh.upsert_node("vps-lighthouse", &vps_ovl, &vps_end, true, true);
+                        fresh_lh.mark_active("vps-lighthouse");
+                    }
+                }
+                let _ = fresh_lh.save(&lh_path);
                 lighthouse_registry = fresh_lh;
             }
 
@@ -1730,7 +1785,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if crate::dynamic_config::is_routable_ip(&endpoint_ip) {
                     let endpoint = format!("{}:4242", endpoint_ip);
                     if !lighthouse_registry.is_lighthouse(&node_id) {
-                        let self_overlay = ip_cidr.split('/').next().unwrap_or("").to_string();
+                        let self_overlay = nebula_ip.split('/').next().unwrap_or("").to_string();
                         lighthouse_registry.add_lighthouse(&node_id, &self_overlay, &endpoint);
                     }
                     let _ = lighthouse_registry.update_endpoint(&node_id, &endpoint);
@@ -1809,16 +1864,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let node_for_registry_sync = node_id.clone();
         let nebula_dir_for_registry_sync = nebula_base_dir.clone();
         let pool_for_registry_sync = overlay_pool.clone();
-        let is_remote_broker_sync = node_id != "nodeA"
-            && std::env::var("SGX_BROKER_URL")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-                .is_some();
-
         tokio::spawn(async move {
-            if is_remote_broker_sync {
-                return;
-            }
             let mut did_doc_sync_elapsed = 0u64;
             let mut vc_status_list_sync_elapsed = 0u64;
             loop {
@@ -2010,7 +2056,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     last_relay = cur_relay;
 
                     match LighthouseRegistry::load(&lh_path) {
-                        Ok(lh) => {
+                        Ok(mut lh) => {
+                            let vps_cfg = sgx_guardian_client::config_loader::resolve_vps_config(&node_for_local_reload);
+                            if let Some(vps_pub_ip) = vps_cfg.vps_public_ip {
+                                if !vps_pub_ip.trim().is_empty() {
+                                    let vps_ovl_ip = vps_cfg
+                                        .vps_overlay_ip
+                                        .unwrap_or_else(|| "192.168.100.10".to_string());
+                                    let vps_endpoint = format!("{}:4242", vps_pub_ip.trim());
+                                    lh.upsert_node("vps-lighthouse", &vps_ovl_ip, &vps_endpoint, true, true);
+                                    lh.mark_active("vps-lighthouse");
+                                }
+                            }
+
                             if let Err(e) = NebulaConfig::generate_config_with_lighthouse(
                                 &node_for_local_reload,
                                 &pool_for_local_reload,
@@ -2045,23 +2103,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
         }
 
-        // ── Generate Nebula config (always regenerate so IPs stay fresh, unless remote broker mode) ─────────
-        let is_remote_broker = node_id != "nodeA"
-            && std::env::var("SGX_BROKER_URL")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-                .is_some();
-
-        if !is_remote_broker {
-            if let Err(e) = NebulaConfig::generate_config_with_lighthouse(
-                &node_id,
-                &overlay_pool,
-                &lighthouse_registry,
-                &nebula_base_dir,
-            ) {
-                eprintln!("❌ Failed to generate Guardian Mesh config: {:?}", e);
-                std::process::exit(1);
-            }
+        // ── Generate Nebula config (always regenerate so IPs and lighthouse mappings stay fresh) ─────────
+        if let Err(e) = NebulaConfig::generate_config_with_lighthouse(
+            &node_id,
+            &overlay_pool,
+            &lighthouse_registry,
+            &nebula_base_dir,
+        ) {
+            eprintln!("❌ Failed to generate Guardian Mesh config: {:?}", e);
+            std::process::exit(1);
         }
 
         // Verify and fix nebula0 IP if daemon was already running
@@ -2096,6 +2146,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "⚠️  Guardian Mesh interface IP fix failed: {} (continuing)",
                     e
                 ),
+            }
+
+            if node_id != "nodeA" {
+                let node_for_init_pub = node_id.clone();
+                let nebula_ip_for_init_pub = nebula_ip.clone();
+                let node_key_path_for_init_pub = node_key_path.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                    let ca_host = resolve_ca_ip_from_config_inner().await;
+                    if let Ok(km_init) = KeyManager::load_or_generate(&node_key_path_for_init_pub) {
+                        for attempt in 1..=5 {
+                            if let Err(e) = refresh_and_publish_did_doc_inner(
+                                &node_for_init_pub,
+                                &km_init,
+                                &nebula_ip_for_init_pub,
+                                &ca_host,
+                                false,
+                                true,
+                            )
+                            .await
+                            {
+                                tracing::warn!("Boot DID doc publish attempt {} failed: {}", attempt, e);
+                                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                            } else {
+                                tracing::info!("Boot DID doc published successfully to CA at {}", ca_host);
+                                let _ = sgx_guardian_client::did::doc_distribution::pull_and_apply_aggregate(&ca_host).await;
+                                break;
+                            }
+                        }
+                    }
+                });
             }
         } else {
             eprintln!(
@@ -3678,14 +3759,15 @@ async fn resolve_ca_ip_from_config_inner() -> String {
     }
 
     // 2. Active Nebula overlay IP for CA/Lighthouse nodeA
-    if let Ok(reg) = sgx_guardian_client::nebula::overlay_registry::OverlayRegistry::load(
-        sgx_guardian_client::nebula::registry_sync::REGISTRY_PATH,
-    ) {
-        if let Some(owner_ip) = reg.get_ip("nodeA") {
-            if crate::dynamic_config::overlay_is_reachable().await {
+    if std::path::Path::new("/var/lib/sgx-guardian/nebula/ca/ca.crt").exists() {
+        if let Ok(reg) = sgx_guardian_client::nebula::overlay_registry::OverlayRegistry::load(
+            sgx_guardian_client::nebula::registry_sync::REGISTRY_PATH,
+        ) {
+            if let Some(owner_ip) = reg.get_ip("nodeA") {
                 return owner_ip.to_string();
             }
         }
+        return "192.168.100.1".to_string();
     }
 
     // 3. Config files populated by discovery or deployment
@@ -3713,6 +3795,72 @@ async fn resolve_ca_ip_from_config_inner() -> String {
     "127.0.0.1".to_string()
 }
 
+async fn is_lan_ca_reachable(ip: &str) -> bool {
+    let addr = format!("{}:50061", ip);
+    tokio::time::timeout(
+        std::time::Duration::from_millis(1500),
+        tokio::net::TcpStream::connect(&addr),
+    )
+    .await
+    .map(|r| r.is_ok())
+    .unwrap_or(false)
+}
+
+/// Discovers Node A on the local network (mDNS/UDP/config/LAN gRPC).
+/// Attempts up to `attempts` rounds, each lasting `timeout_per_attempt` (e.g. 3 attempts x 30s = 90s).
+async fn discover_lan_node_a(attempts: usize, timeout_per_attempt: std::time::Duration) -> Option<String> {
+    for attempt in 1..=attempts {
+        println!(
+            "🔍 [{}/{}] Scanning local LAN for Node A CA/Lighthouse (timeout: {}s)...",
+            attempt,
+            attempts,
+            timeout_per_attempt.as_secs()
+        );
+
+        let start = std::time::Instant::now();
+        while start.elapsed() < timeout_per_attempt {
+            // 1. Explicit env var override
+            if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
+                let trimmed = env_ip.trim();
+                if !trimmed.is_empty() && trimmed != "0.0.0.0" && trimmed != "127.0.0.1" {
+                    if is_lan_ca_reachable(trimmed).await {
+                        println!("✅ Found Node A at {} via SGX_LIGHTHOUSE_IP", trimmed);
+                        return Some(trimmed.to_string());
+                    }
+                }
+            }
+
+            // 2. Local config files (populated by mDNS/UDP broadcast discovery)
+            for path in &[
+                "/etc/sgx-guardian/config/nodeA.yaml",
+                "/etc/sgx-guardian/nodeA.yaml",
+                "config/nodeA.yaml",
+            ] {
+                if let Ok(cfg) = sgx_guardian_client::config_loader::load_config(path) {
+                    let ip = cfg.ip.trim();
+                    if !ip.is_empty() && ip != "0.0.0.0" && ip != "127.0.0.1" {
+                        if is_lan_ca_reachable(ip).await {
+                            println!("✅ Found Node A at {} via {}", ip, path);
+                            return Some(ip.to_string());
+                        }
+                    }
+                }
+            }
+
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+
+        if attempt < attempts {
+            println!(
+                "⏳ [Attempt {}/{}] Node A not detected on local LAN. Retrying...",
+                attempt, attempts
+            );
+        }
+    }
+    None
+}
+
+#[allow(dead_code)]
 fn cert_matches_overlay_ip(cert_path: &str, expected_ip_cidr: &str) -> bool {
     let output = std::process::Command::new("nebula-cert")
         .args(["print", "-path", cert_path])

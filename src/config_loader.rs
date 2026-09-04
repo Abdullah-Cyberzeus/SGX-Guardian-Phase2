@@ -103,7 +103,132 @@ pub struct NodeConfig {
     pub relay: Option<RelayLimitsConfig>,
     #[serde(default)]
     pub api: Option<ApiConfig>,
+    #[serde(default)]
+    pub vps: Option<CloudBrokerConfig>,
 }
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct CloudBrokerConfig {
+    #[serde(default)]
+    pub broker_url: Option<String>,
+    #[serde(default)]
+    pub broker_token: Option<String>,
+    #[serde(default)]
+    pub vps_public_ip: Option<String>,
+    #[serde(default)]
+    pub vps_overlay_ip: Option<String>,
+}
+
+/// Resolves the VPS Cloud Broker configuration for a given node.
+/// Merges environment variables with settings from /etc/sgx-guardian/config.yaml
+/// and /etc/sgx-guardian/config/{node_id}.yaml.
+pub fn resolve_vps_config(node_id: &str) -> CloudBrokerConfig {
+    let mut config = CloudBrokerConfig::default();
+
+    // 1. Try reading from config files
+    let paths = [
+        "/etc/sgx-guardian/config.yaml".to_string(),
+        format!("/etc/sgx-guardian/config/{}.yaml", node_id),
+        format!("/etc/sgx-guardian/{}.yaml", node_id),
+        format!("config/{}.yaml", node_id),
+        "config/config.yaml".to_string(),
+    ];
+
+    for path in &paths {
+        if let Ok(data) = fs::read_to_string(path) {
+            // First check if it's a NodeConfig with a vps section
+            if let Ok(node_cfg) = serde_yaml::from_str::<NodeConfig>(&data) {
+                if let Some(vps) = node_cfg.vps {
+                    if config.broker_url.is_none() {
+                        config.broker_url = vps.broker_url;
+                    }
+                    if config.broker_token.is_none() {
+                        config.broker_token = vps.broker_token;
+                    }
+                    if config.vps_public_ip.is_none() {
+                        config.vps_public_ip = vps.vps_public_ip;
+                    }
+                    if config.vps_overlay_ip.is_none() {
+                        config.vps_overlay_ip = vps.vps_overlay_ip;
+                    }
+                }
+            } else if let Ok(direct_vps) = serde_yaml::from_str::<serde_yaml::Value>(&data) {
+                // Also check if the YAML has a top-level `vps:` key
+                if let Some(vps_val) = direct_vps.get("vps") {
+                    if let Ok(vps) = serde_yaml::from_value::<CloudBrokerConfig>(vps_val.clone()) {
+                        if config.broker_url.is_none() {
+                            config.broker_url = vps.broker_url;
+                        }
+                        if config.broker_token.is_none() {
+                            config.broker_token = vps.broker_token;
+                        }
+                        if config.vps_public_ip.is_none() {
+                            config.vps_public_ip = vps.vps_public_ip;
+                        }
+                        if config.vps_overlay_ip.is_none() {
+                            config.vps_overlay_ip = vps.vps_overlay_ip;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Environment variables override file config
+    if let Ok(env_url) = std::env::var("SGX_BROKER_URL") {
+        if !env_url.trim().is_empty() {
+            config.broker_url = Some(env_url.trim().to_string());
+        }
+    }
+    if let Ok(env_tok) = std::env::var("SGX_BROKER_TOKEN") {
+        if !env_tok.trim().is_empty() {
+            config.broker_token = Some(env_tok.trim().to_string());
+        }
+    }
+    if let Ok(env_pub) = std::env::var("SGX_VPS_PUBLIC_IP") {
+        if !env_pub.trim().is_empty() {
+            config.vps_public_ip = Some(env_pub.trim().to_string());
+        }
+    }
+    if let Ok(env_ovl) = std::env::var("SGX_VPS_OVERLAY_IP") {
+        if !env_ovl.trim().is_empty() {
+            config.vps_overlay_ip = Some(env_ovl.trim().to_string());
+        }
+    }
+
+    // 3. Fallback inference: if vps_public_ip is set but broker_url is not
+    // Default fallback values if unconfigured (zero-config out-of-the-box operation)
+    if config.vps_public_ip.is_none() && config.broker_url.is_none() {
+        config.vps_public_ip = Some("159.203.186.55".to_string());
+        config.broker_url = Some("http://159.203.186.55:8080".to_string());
+    } else if config.broker_url.is_none() {
+        if let Some(ref pub_ip) = config.vps_public_ip {
+            config.broker_url = Some(format!("http://{}:8080", pub_ip));
+        }
+    } else if config.vps_public_ip.is_none() {
+        if let Some(ref url) = config.broker_url {
+            let host = url
+                .trim_start_matches("http://")
+                .trim_start_matches("https://")
+                .trim_start_matches("ws://")
+                .trim_start_matches("wss://")
+                .split(':')
+                .next()
+                .unwrap_or("");
+            if !host.is_empty() {
+                config.vps_public_ip = Some(host.to_string());
+            }
+        }
+    }
+
+    // Default overlay IP
+    if config.vps_overlay_ip.is_none() {
+        config.vps_overlay_ip = Some("192.168.100.10".to_string());
+    }
+
+    config
+}
+
 impl NodeConfig {
     /// Validates the node configuration fields, ensuring correct ID,
     /// hostname, IP format, port range, and non-empty public key.
@@ -211,5 +336,40 @@ impl CloudConfig {
 
             endpoint: std::env::var("SGX_CLOUD_ENDPOINT").unwrap_or_else(|_| "".into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_vps_config_defaults() {
+        let cfg = resolve_vps_config("node_test_nonexistent");
+        assert_eq!(cfg.vps_overlay_ip.as_deref(), Some("192.168.100.10"));
+    }
+
+    #[test]
+    fn test_node_config_with_vps_section() {
+        let yaml = r#"
+node_id: "nodeB"
+hostname: "nodeb.guardian"
+ip: "172.31.250.11"
+port: 50052
+public_key: "dummy-key-for-test"
+vps:
+  broker_url: "http://159.203.186.55:8080"
+  broker_token: "test-token"
+  vps_public_ip: "159.203.186.55"
+  vps_overlay_ip: "192.168.100.10"
+"#;
+        let node_cfg: NodeConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(node_cfg.node_id, "nodeB");
+        assert!(node_cfg.vps.is_some());
+        let vps = node_cfg.vps.unwrap();
+        assert_eq!(vps.broker_url.as_deref(), Some("http://159.203.186.55:8080"));
+        assert_eq!(vps.broker_token.as_deref(), Some("test-token"));
+        assert_eq!(vps.vps_public_ip.as_deref(), Some("159.203.186.55"));
+        assert_eq!(vps.vps_overlay_ip.as_deref(), Some("192.168.100.10"));
     }
 }
