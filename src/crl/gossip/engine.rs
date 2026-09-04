@@ -2180,4 +2180,25 @@ mod unit_tests {
         let result = server.await.expect("server task joined");
         assert!(result.is_ok(), "expected Ok, got {result:?}");
     }
+
+    #[tokio::test]
+    async fn listener_task_logs_and_returns_when_the_bind_port_is_already_taken() {
+        // Occupy a real ephemeral TCP port first so the listener's own bind
+        // to that exact port fails deterministically (EADDRINUSE).
+        let holder = TcpListener::bind("127.0.0.1:0").await.expect("bind holder");
+        let port = holder.local_addr().expect("addr").port();
+        let config = sample_gossip_config(port, 80);
+        let resolver = Resolver::new(ResolverConfig::default());
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            listener_task("listener-bind-fail".to_string(), resolver, config),
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "listener_task must return promptly on a bind failure, not hang"
+        );
+        drop(holder);
+    }
 }

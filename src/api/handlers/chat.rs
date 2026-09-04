@@ -1523,4 +1523,125 @@ mod tests {
         );
         assert_eq!(msg3.status, MessageStatus::Delivered);
     }
+
+    #[test]
+    fn get_grpc_addr_maps_known_port_ranges_and_named_nodes() {
+        assert_eq!(get_grpc_addr("10.0.0.1", "peer:50060"), "10.0.0.1:50260");
+        assert_eq!(get_grpc_addr("10.0.0.1", "peer:50160"), "10.0.0.1:50260");
+        assert_eq!(get_grpc_addr("10.0.0.1", "peer:50260"), "10.0.0.1:50260");
+        assert_eq!(get_grpc_addr("10.0.0.1", "peer:60000"), "10.0.0.1:60100");
+        assert_eq!(get_grpc_addr("10.0.0.1", "nodeA"), "10.0.0.1:50251");
+        assert_eq!(get_grpc_addr("10.0.0.1", "nodeB"), "10.0.0.1:50252");
+        assert_eq!(get_grpc_addr("10.0.0.1", "nodeC"), "10.0.0.1:50253");
+        assert_eq!(get_grpc_addr("192.168.1.5", "unknown"), "192.168.1.5:50255");
+        assert_eq!(get_grpc_addr("192.168.1.20", "unknown"), "192.168.1.20:50251");
+        assert_eq!(get_grpc_addr("not-an-ip", "unknown"), "not-an-ip:50251");
+    }
+
+    #[test]
+    fn get_local_nebula_ip_returns_none_without_registry_or_interface() {
+        // No overlay registry file and no real `nebula0` interface exist in
+        // this sandbox, so both the file-based and `ip`-based lookups
+        // deterministically fail.
+        assert!(get_local_nebula_ip().is_none());
+    }
+
+    #[test]
+    fn local_pair_conversation_id_keys_by_the_non_device_side_or_canonical_pair() {
+        let td = TempDir::new().expect("tempdir");
+        let state = AppState::for_tests(
+            td.path(),
+            "nodeA",
+            td.path().join("config").to_string_lossy().to_string(),
+        );
+        let other = "did:guardian:other".to_string();
+        assert_eq!(
+            local_pair_conversation_id(&state, &state.device_did, &other),
+            other
+        );
+        assert_eq!(
+            local_pair_conversation_id(&state, &other, &state.device_did),
+            other
+        );
+        assert_eq!(
+            local_pair_conversation_id(&state, "did:guardian:aaa", "did:guardian:bbb"),
+            "pair-did:guardian:aaa-did:guardian:bbb"
+        );
+        assert_eq!(
+            local_pair_conversation_id(&state, "did:guardian:bbb", "did:guardian:aaa"),
+            "pair-did:guardian:aaa-did:guardian:bbb"
+        );
+    }
+
+    #[test]
+    fn payload_matches_request_compares_content_and_attachment_id() {
+        let req = SendMessageRequest {
+            recipient_did: "did:guardian:x".to_string(),
+            content: Some("hi".to_string()),
+            attachment_id: None,
+            is_group: false,
+            message_id: None,
+        };
+        let payload = request_payload_json(&req, None);
+        assert!(payload_matches_request(&payload, &req));
+
+        let other = SendMessageRequest {
+            recipient_did: "did:guardian:x".to_string(),
+            content: Some("different".to_string()),
+            attachment_id: None,
+            is_group: false,
+            message_id: None,
+        };
+        assert!(!payload_matches_request(&payload, &other));
+        assert!(!payload_matches_request("not json", &req));
+    }
+
+    #[tokio::test]
+    async fn group_min_reader_count_is_at_least_one_with_no_roster() {
+        let td = TempDir::new().expect("tempdir");
+        let state = AppState::for_tests(
+            td.path(),
+            "nodeA",
+            td.path().join("config").to_string_lossy().to_string(),
+        );
+        let count = group_min_reader_count(&state, "no-such-circle", &state.device_did).await;
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn resolve_actor_label_uses_the_device_admin_label_for_the_guardian_itself() {
+        let td = TempDir::new().expect("tempdir");
+        let state = AppState::for_tests(
+            td.path(),
+            "nodeA",
+            td.path().join("config").to_string_lossy().to_string(),
+        );
+        let label = resolve_actor_label(&state, &state.device_did).await;
+        assert_eq!(label, "the Guardian administrator");
+
+        let fallback = resolve_actor_label(&state, "did:guardian:unregistered").await;
+        assert_eq!(fallback, "did:guardian:unregistered");
+    }
+
+    #[tokio::test]
+    async fn send_message_rejects_a_request_with_neither_content_nor_attachment() {
+        let td = TempDir::new().expect("tempdir");
+        let state = AppState::for_tests(
+            td.path(),
+            "nodeA",
+            td.path().join("config").to_string_lossy().to_string(),
+        );
+        let req = SendMessageRequest {
+            recipient_did: "did:guardian:someone".to_string(),
+            content: None,
+            attachment_id: None,
+            is_group: false,
+            message_id: None,
+        };
+        let error = send_message(State(state), None, Json(req))
+            .await
+            .err()
+            .expect("must reject empty payload");
+        assert!(matches!(error, ApiError::BadRequest(_)));
+    }
 }

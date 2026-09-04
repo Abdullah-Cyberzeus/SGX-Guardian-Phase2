@@ -81,4 +81,12 @@ mod tests {
         let error = normalize_signature(vec![0xff; 17]).expect_err("invalid framing");
         assert!(matches!(error, TpmError::Key(message) if message.contains("17 bytes")));
     }
+
+    #[test]
+    fn sign_fails_deterministically_when_tpm2_tools_are_not_installed() {
+        // tpm2_* binaries genuinely aren't installed in this sandbox, so sign_plain fails
+        // fast and deterministically before ever reaching normalize_signature.
+        let signer = TpmSigner::new(&TpmConfig::default());
+        assert!(signer.sign(0x8100_0100, b"payload").is_err());
+    }
 }

@@ -49,4 +49,19 @@ mod tests {
         let error = ensure(&cfg).expect_err("missing TPM should fail");
         assert!(matches!(error, TpmError::NotAvailable(message) if message.contains("tpm-dik")));
     }
+
+    #[test]
+    fn ensure_reports_unreachable_tpm_when_backend_is_forced_but_tpm2_getcap_is_missing() {
+        // `tpm2_getcap` genuinely isn't installed in this sandbox, so forcing past the
+        // device-presence check (explicit_backend) deterministically reaches and fails the
+        // real `cli.available()` probe — no actual hardware or root access involved.
+        let cfg = TpmConfig {
+            device: "/definitely/missing/tpm-dik-2".into(),
+            tcti: "device:/definitely/missing/tpm-dik-2".into(),
+            explicit_backend: true,
+            ..TpmConfig::default()
+        };
+        let error = ensure(&cfg).expect_err("tpm2_getcap is not installed");
+        assert!(matches!(error, TpmError::NotAvailable(message) if message.contains("cannot reach TPM")));
+    }
 }

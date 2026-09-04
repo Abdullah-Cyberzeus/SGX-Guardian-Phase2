@@ -973,4 +973,181 @@ mod tests {
         let root_error = root(State(test_state(&temp))).await.expect_err("no CLI");
         assert!(matches!(root_error, ApiError::Internal(_)));
     }
+
+    fn cli_response(success: bool, stdout: &str, stderr: &str) -> ActionResponse {
+        ActionResponse {
+            success,
+            stdout: stdout.to_string(),
+            stderr: stderr.to_string(),
+            restart_required: false,
+            timestamp: "2026-09-03T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn push_optional_arg_appends_a_flag_and_value_only_when_present() {
+        let mut args = vec!["crl".to_string()];
+        push_optional_arg(&mut args, "--reason", Some("compromised"));
+        push_optional_arg(&mut args, "--circle", None);
+        assert_eq!(args, vec!["crl", "--reason", "compromised"]);
+    }
+
+    #[test]
+    fn cli_message_prefers_stderr_then_stdout_then_a_default() {
+        assert_eq!(
+            cli_message(&cli_response(false, "out", "  the real error  ")),
+            "the real error"
+        );
+        assert_eq!(cli_message(&cli_response(false, "  out  ", "   ")), "out");
+        assert_eq!(
+            cli_message(&cli_response(false, "  ", "")),
+            "sgx-pa-cli crl command failed"
+        );
+    }
+
+    #[test]
+    fn ensure_cli_success_passes_a_successful_response_through_untouched() {
+        let response = ensure_cli_success(cli_response(true, "done", ""))
+            .expect("a successful CLI response is returned as-is");
+        assert_eq!(response.stdout, "done");
+
+        assert!(ensure_cli_success(cli_response(false, "", "boom")).is_err());
+    }
+
+    /// `map_cli_failure` is what turns the CLI's free-text stderr into an HTTP
+    /// status, so each phrase it keys on gets its own case here.
+    #[test]
+    fn map_cli_failure_classifies_each_known_cli_message() {
+        let cases: &[(&str, fn(&ApiError) -> bool)] = &[
+            ("DID is already revoked", |e| matches!(e, ApiError::Conflict(_))),
+            ("cannot revoke self", |e| matches!(e, ApiError::Forbidden(_))),
+            ("member-issued credential", |e| matches!(e, ApiError::Forbidden(_))),
+            ("invalid signature on entry", |e| matches!(e, ApiError::Forbidden(_))),
+            ("only the circle owner may do this", |e| matches!(e, ApiError::Forbidden(_))),
+            ("cannot revoke the circle owner", |e| matches!(e, ApiError::Forbidden(_))),
+            ("entry not found", |e| matches!(e, ApiError::NotFound(_))),
+            ("DID is not currently revoked", |e| matches!(e, ApiError::NotFound(_))),
+            ("something else entirely", |e| matches!(e, ApiError::BadRequest(_))),
+        ];
+
+        for (message, expected) in cases {
+            let error = map_cli_failure(&cli_response(false, "", message));
+            assert!(expected(&error), "message {message:?} produced {error:?}");
+        }
+
+        // Classification is case-insensitive and reads stdout when stderr is
+        // empty, so an uppercase message on stdout still classifies.
+        assert!(matches!(
+            map_cli_failure(&cli_response(false, "ALREADY REVOKED", "")),
+            ApiError::Conflict(_)
+        ));
+
+        // With nothing to go on at all it falls through to a bad request.
+        assert!(matches!(
+            map_cli_failure(&cli_response(false, "", "")),
+            ApiError::BadRequest(_)
+        ));
+    }
+
+    #[test]
+    fn normalize_debug_did_trims_and_rejects_blanks() {
+        assert_eq!(normalize_debug_did("  did:guardian:abc  ").expect("valid"), "did:guardian:abc");
+        for blank in ["", "   ", "\t"] {
+            assert!(
+                matches!(normalize_debug_did(blank), Err(ApiError::BadRequest(_))),
+                "{blank:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_debug_transport_accepts_every_alias_and_defaults_to_ethernet() {
+        use crate::cot::types::TransportType;
+
+        // Absent and blank both default.
+        assert_eq!(parse_debug_transport(None).expect("default"), TransportType::Ethernet);
+        assert_eq!(parse_debug_transport(Some("   ")).expect("default"), TransportType::Ethernet);
+
+        for (raw, expected) in [
+            ("ethernet", TransportType::Ethernet),
+            ("ETH", TransportType::Ethernet),
+            ("wifi", TransportType::WiFi),
+            ("Wi-Fi", TransportType::WiFi),
+            ("wlan", TransportType::WiFi),
+            ("bluetooth", TransportType::Bluetooth),
+            ("BT", TransportType::Bluetooth),
+            ("cellular", TransportType::Cellular),
+            ("lte", TransportType::Cellular),
+            ("5G", TransportType::Cellular),
+            ("satellite", TransportType::Satellite),
+            ("sat", TransportType::Satellite),
+        ] {
+            assert_eq!(
+                parse_debug_transport(Some(raw)).unwrap_or_else(|e| panic!("{raw}: {e:?}")),
+                expected,
+                "input {raw}"
+            );
+        }
+
+        let error = parse_debug_transport(Some("carrier-pigeon"))
+            .err()
+            .expect("an unknown transport is rejected");
+        assert!(
+            matches!(&error, ApiError::BadRequest(message)
+                if message.contains("carrier-pigeon") && message.contains("Ethernet")),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn session_manager_handle_reports_an_uninitialized_cot_stack() {
+        // `global_session_manager()` is only installed by the running daemon,
+        // so under test it is always absent — the deterministic outcome this
+        // helper exists to translate.
+        let error = session_manager_handle()
+            .err()
+            .expect("no CoT session manager under test");
+        assert!(
+            matches!(&error, ApiError::Internal(message) if message.contains("not initialized")),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn device_id_resolution_reports_a_missing_self_document() {
+        let _lock = crate::test_utils::TEST_ENV_LOCK.lock().await;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let previous_self = std::env::var_os(crate::did::doc_persistence::SELF_DOC_PATH_ENV);
+        let previous_peers = std::env::var_os(crate::did::doc_persistence::PEERS_DOC_DIR_ENV);
+        let peers = temp.path().join("peers");
+        std::fs::create_dir_all(&peers).expect("peers dir");
+        std::env::set_var(
+            crate::did::doc_persistence::SELF_DOC_PATH_ENV,
+            temp.path().join("did_doc.json"),
+        );
+        std::env::set_var(crate::did::doc_persistence::PEERS_DOC_DIR_ENV, &peers);
+
+        let error = resolve_local_device_id()
+            .err()
+            .expect("no self DID document exists");
+        assert!(matches!(error, ApiError::NotFound(_)), "{error:?}");
+
+        // ...and neither self nor any peer document matches an arbitrary DID.
+        let error = resolve_device_id_for_did("did:guardian:nobody")
+            .err()
+            .expect("no matching document");
+        assert!(
+            matches!(&error, ApiError::NotFound(message) if message.contains("did:guardian:nobody")),
+            "{error:?}"
+        );
+
+        match previous_self {
+            Some(value) => std::env::set_var(crate::did::doc_persistence::SELF_DOC_PATH_ENV, value),
+            None => std::env::remove_var(crate::did::doc_persistence::SELF_DOC_PATH_ENV),
+        }
+        match previous_peers {
+            Some(value) => std::env::set_var(crate::did::doc_persistence::PEERS_DOC_DIR_ENV, value),
+            None => std::env::remove_var(crate::did::doc_persistence::PEERS_DOC_DIR_ENV),
+        }
+    }
 }

@@ -1707,6 +1707,76 @@ mod tests {
             std::env::remove_var(KEY);
         }
     }
+
+    fn test_state() -> Arc<AppState> {
+        let td = tempfile::TempDir::new().expect("tempdir");
+        AppState::for_tests(
+            td.path(),
+            "nodeA",
+            td.path().join("config").to_string_lossy().to_string(),
+        )
+    }
+
+    fn test_claims(sub: &str, role: &str) -> crate::api::auth::session::Claims {
+        crate::api::auth::session::Claims {
+            sub: sub.to_string(),
+            role: role.to_string(),
+            scopes: vec![],
+            circle_ids: vec![],
+            browser_registration_id: None,
+            guardian_fingerprint: None,
+            iss: "did:guardian:issuer".to_string(),
+            iat: 0,
+            exp: 0,
+            jti: "jti-1".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn identity_reports_the_device_did() {
+        let state = test_state();
+        let response = identity(State(state.clone())).await;
+        assert_eq!(response.0.did, state.device_did);
+    }
+
+    #[tokio::test]
+    async fn health_reflects_the_authenticated_session_claims() {
+        let state = test_state();
+        let claims = test_claims("browser-user-1", "member");
+        let session = crate::api::auth::middleware::AuthenticatedSession {
+            claims: claims.clone(),
+            token: "tok".to_string(),
+        };
+        let response = health(State(state.clone()), Extension(session)).await;
+        assert_eq!(response.0.guardian_did, state.device_did);
+        assert_eq!(response.0.actor_id, "browser-user-1");
+        assert_eq!(response.0.role, "member");
+    }
+
+    #[tokio::test]
+    async fn contacts_fails_without_a_bootstrapped_circle_registry() {
+        let state = test_state();
+        let claims = test_claims("browser-user-1", "member");
+        let session = crate::api::auth::middleware::AuthenticatedSession {
+            claims,
+            token: "tok".to_string(),
+        };
+        let error = contacts(State(state), Extension(session))
+            .await
+            .err()
+            .expect("no circle registry must fail");
+        assert!(matches!(error, ApiError::Internal(_)));
+    }
+
+    #[tokio::test]
+    async fn contact_metadata_fails_without_a_bootstrapped_circle_registry() {
+        let state = test_state();
+        let error = contact_metadata(&state, &[])
+            .await
+            .err()
+            .expect("no circle registry must fail");
+        assert!(matches!(error, ApiError::Internal(_)));
+    }
 }
 
 pub async fn identity(State(state): State<Arc<AppState>>) -> Json<PwaIdentityResponse> {

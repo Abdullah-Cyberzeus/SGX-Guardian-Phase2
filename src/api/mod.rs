@@ -3,6 +3,7 @@
 //! Port: 8443 (separate listener from the :50051 mTLS gRPC endpoint).
 
 use axum::{
+    extract::DefaultBodyLimit,
     http::{header, HeaderName, HeaderValue, Request},
     middleware::Next,
     response::Response,
@@ -402,7 +403,9 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         .route("/api/v1/chat/ws", get(handlers::chat::ws_handler))
         .route(
             "/api/v1/chat/upload",
-            post(handlers::chat_attachments::upload_attachment),
+            post(handlers::chat_attachments::upload_attachment).layer(DefaultBodyLimit::max(
+                crate::chat::storage::MAX_ATTACHMENT_BYTES as usize + 1024 * 1024,
+            )),
         )
         .route(
             "/api/v1/chat/download/{attachment_id}",
@@ -1758,6 +1761,30 @@ mod tests {
         Arc::new(state)
     }
 
+    /// Moves a locked account's `locked_until` into the past by rewriting the
+    /// users file directly, so lockout-expiry can be asserted without sleeping
+    /// through a real timeout or depending on where a second boundary falls.
+    /// The stored `failed_attempts`/`last_failed_at` are left untouched, so the
+    /// route still has to reset them itself on the next successful login.
+    async fn expire_auth_lockout(state: &Arc<AppState>, email: &str) {
+        let path = std::path::Path::new(&state.admin_dir).join("users.json");
+        let raw = tokio::fs::read(&path).await.expect("read users file");
+        let mut users: Value = serde_json::from_slice(&raw).expect("parse users file");
+        let expired = chrono::Utc::now().timestamp() - 60;
+        let entries = users.as_array_mut().expect("users file is an array");
+        let mut found = false;
+        for user in entries.iter_mut() {
+            if user["email"] == email {
+                user["locked_until"] = Value::from(expired);
+                found = true;
+            }
+        }
+        assert!(found, "no stored user for {email}");
+        tokio::fs::write(&path, serde_json::to_vec(&users).expect("serialize users"))
+            .await
+            .expect("write users file");
+    }
+
     async fn seed_auth_user(state: &Arc<AppState>, email: &str, password: &str) {
         let pw_hash = password::hash_password(password.to_string())
             .await
@@ -2798,10 +2825,17 @@ mod tests {
 
     #[tokio::test]
     async fn login_allows_success_after_lockout_expires() {
+        // A long lockout, expired by rewriting the stored deadline rather than
+        // by sleeping. `locked_until` is whole seconds and `is_locked` is
+        // `locked_until > now`, so a 1-second lockout plus a real sleep raced
+        // the second boundary: if the five failed logins and the locked check
+        // straddled one, the account read as already unlocked and the LOCKED
+        // assertion failed. Argon2 verification makes that likely under a
+        // loaded full-suite run, which is exactly when this used to fail.
         let state = auth_test_state(AuthLockoutConfig {
             max_failed_attempts: 5,
             attempt_window_secs: 300,
-            lockout_secs: 1,
+            lockout_secs: 600,
         });
         seed_auth_user(&state, "admin@example.com", "GuardianPass123!").await;
         let (base_url, handle) = spawn_api_with_state(state.clone()).await;
@@ -2815,7 +2849,7 @@ mod tests {
             login_request(&client, &base_url, "admin@example.com", "GuardianPass123!").await;
         assert_eq!(locked.status(), StatusCode::LOCKED);
 
-        tokio::time::sleep(Duration::from_millis(1_100)).await;
+        expire_auth_lockout(&state, "admin@example.com").await;
 
         let success =
             login_request(&client, &base_url, "admin@example.com", "GuardianPass123!").await;
@@ -3821,6 +3855,9 @@ mod tests {
             .expect("write self floor version");
         doc_persistence::save_peer(&peer_doc).expect("save peer doc");
 
+        // Held for the rest of the test: `spawn_mock_ca_publish_server` binds
+        // the fixed REGISTRY_SYNC_PORT, which two other test suites also use.
+        let _port_guard = crate::test_support::registry_port_lock().await;
         let publish_handle = spawn_mock_ca_publish_server("nodeB").await;
         let (base_url, client, handle) = spawn_authed_api().await;
 

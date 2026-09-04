@@ -279,4 +279,91 @@ mod tests {
         config.enabled = false;
         assert!(matches!(Se050::init(&config), Err(SeError::NotAvailable)));
     }
+
+    #[cfg(unix)]
+    struct PathGuard(Option<std::ffi::OsString>);
+
+    #[cfg(unix)]
+    impl Drop for PathGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(path) => std::env::set_var("PATH", path),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn install_fake_ssscli(dir: &std::path::Path, body: &str) -> PathGuard {
+        use std::os::unix::fs::PermissionsExt;
+        let tool = dir.join("ssscli");
+        std::fs::write(&tool, format!("#!/bin/sh\n{body}\n")).expect("write fake ssscli");
+        let mut permissions = std::fs::metadata(&tool).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(tool, permissions).expect("make executable");
+        let old_path = std::env::var_os("PATH");
+        std::env::set_var("PATH", dir);
+        PathGuard(old_path)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn init_reports_connection_failure_when_connect_fails() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let dir = tempfile::tempdir().expect("fake tool directory");
+        let _guard = install_fake_ssscli(dir.path(), "exit 5");
+        match Se050::init(&config()) {
+            Err(SeError::ConnectionFailed(_)) => {}
+            other => panic!("expected ConnectionFailed, got {}", other.is_ok()),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn init_succeeds_end_to_end_with_a_fake_chip() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let dir = tempfile::tempdir().expect("fake tool directory");
+        let _guard = install_fake_ssscli(
+            dir.path(),
+            r#"case "$1 $2" in
+  connect*) echo "session already open" ;;
+  "se05x reset") exit 0 ;;
+  "se05x uid") echo "Unique ID: 040050011f595a6179b9b204783ebae51090" ;;
+  "se05x certuid") echo "Cert UID: aabbccddee" ;;
+  "se05x readidlist") echo "id-list-ok" ;;
+  "se05x getrng") echo "random-bytes" ;;
+  *) exit 9 ;;
+esac"#,
+        );
+
+        let se = Se050::init(&config()).expect("init should succeed against fake chip");
+        assert!(se.is_active());
+        assert_eq!(se.uid.as_deref(), Some("040050011f595a6179b9b204783ebae51090"));
+        assert_eq!(se.cert_uid.as_deref(), Some("aabbccddee"));
+        assert!(se.read_id_list().expect("id list").contains("id-list-ok"));
+        assert!(se.get_random().expect("rng").contains("random-bytes"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn init_tolerates_reset_warning_and_missing_uids() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let dir = tempfile::tempdir().expect("fake tool directory");
+        let _guard = install_fake_ssscli(
+            dir.path(),
+            r#"case "$1 $2" in
+  connect*) echo "connected" ;;
+  "se05x reset") exit 1 ;;
+  "se05x uid") exit 1 ;;
+  "se05x certuid") exit 1 ;;
+  *) exit 9 ;;
+esac"#,
+        );
+
+        let se = Se050::init(&config()).expect("init tolerates reset/uid failures");
+        assert!(se.is_active());
+        assert!(se.uid.is_none());
+        assert!(se.cert_uid.is_none());
+        assert!(se.status_detail().contains("Unique ID: N/A"));
+    }
 }

@@ -227,8 +227,11 @@ mod tests {
             .expect("no rotation")
             .is_none());
 
+        // "bad" is deliberately NOT used here: it happens to be valid lowercase hex
+        // (0xBAD = 2989), so parse_handle would actually succeed on it instead of
+        // exercising the fallback this test means to check.
         let malformed = manager(
-            DkpKeyHistory::new(KeyMetadata::new("bad", "dkp", "ECDSA-P256", 9)),
+            DkpKeyHistory::new(KeyMetadata::new("not-hex", "dkp", "ECDSA-P256", 9)),
             "/missing".into(),
         );
         assert_eq!(malformed.active_version(), 9);
@@ -270,5 +273,27 @@ mod tests {
         let mut manager = manager(DkpKeyHistory { keys: vec![] }, "/missing".into());
         let error = manager.rotate().expect_err("empty history must fail");
         assert!(matches!(error, TpmError::Key(message) if message.contains("no active TPM DKP")));
+    }
+
+    #[test]
+    fn init_reports_unreachable_tpm_when_backend_is_forced_but_tools_are_missing() {
+        // tpm2_getcap genuinely isn't installed in this sandbox, so forcing past the
+        // device-presence check deterministically fails at the `cli.available()` probe.
+        let mut cfg = config();
+        cfg.explicit_backend = true;
+        let error = TpmDkpManager::init(&cfg, "/unused")
+            .err()
+            .expect("tpm2 tools are not installed");
+        assert!(matches!(error, TpmError::NotAvailable(message) if message.contains("cannot reach TPM")));
+    }
+
+    #[test]
+    fn create_signer_builds_a_signer_from_the_manager_config() {
+        let manager = manager(
+            DkpKeyHistory::new(KeyMetadata::new("0x81000010", "dkp", "ECDSA-P256", 1)),
+            "/missing".into(),
+        );
+        // Constructing a signer never touches hardware; only sign() does.
+        let _signer = manager.create_signer();
     }
 }

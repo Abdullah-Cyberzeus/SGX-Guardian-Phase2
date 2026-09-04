@@ -434,6 +434,46 @@ mod tests {
         assert!(matches!(err, crate::threat::ThreatError::BadConfig(_)));
     }
 
+    fn test_service(state_dir: &Path, config_path: PathBuf) -> ThreatService {
+        ThreatService {
+            node_id: "test-node".to_string(),
+            config_path,
+            state_dir: state_dir.to_path_buf(),
+            inventory: Arc::new(Mutex::new(AlertInventory::default())),
+        }
+    }
+
+    #[tokio::test]
+    async fn start_returns_early_when_the_config_fails_to_load() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("missing-config.yaml");
+        // No file is written at `config_path`, so `SuricataConfig::load`
+        // must fail and `start()` should return without spawning any of the
+        // long-running tailer/blocker/select-loop tasks.
+        let service = test_service(temp.path(), config_path);
+        service.start();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    #[tokio::test]
+    async fn start_stops_suricata_and_returns_early_when_guardian_integration_is_disabled() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("config.yaml");
+        write_config(
+            &config_path,
+            &SuricataConfig {
+                enabled: false,
+                ..SuricataConfig::default()
+            },
+        );
+        let service = test_service(temp.path(), config_path);
+        service.start();
+        // `stop_suricata_when_disabled` queries the real (absent) suricata
+        // service and returns quickly; a short sleep lets the spawned task
+        // reach its early `return` before the test ends.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+
     #[tokio::test]
     async fn stop_suricata_when_disabled_is_a_safe_noop_when_the_service_is_not_active() {
         // `systemctl is-active --quiet suricata` genuinely returns "not

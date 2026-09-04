@@ -257,3 +257,346 @@ pub async fn delete(
     store::delete(&contacts_path(&state), owner.as_deref(), &did).await?;
     Ok(Json(ContactDeleteResponse { success: true, did }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::auth::session::Claims;
+
+    fn member_session(registration_id: &str, circle_ids: Vec<String>) -> AuthenticatedSession {
+        AuthenticatedSession {
+            claims: Claims {
+                sub: registration_id.to_string(),
+                role: "member".to_string(),
+                scopes: vec![],
+                circle_ids,
+                browser_registration_id: Some(registration_id.to_string()),
+                guardian_fingerprint: None,
+                iss: "test".into(),
+                iat: 0,
+                exp: 0,
+                jti: "jti".into(),
+            },
+            token: "test-token".into(),
+        }
+    }
+
+    fn as_member(
+        registration_id: &str,
+        circle_ids: Vec<String>,
+    ) -> Option<Extension<AuthenticatedSession>> {
+        Some(Extension(member_session(registration_id, circle_ids)))
+    }
+
+    fn test_state() -> (tempfile::TempDir, Arc<AppState>) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_dir = temp.path().join("config");
+        std::fs::create_dir_all(&config_dir).expect("config dir");
+        let state = AppState::for_tests(temp.path(), "nodeContactsTest", config_dir.display().to_string());
+        (temp, state)
+    }
+
+    #[test]
+    fn normalize_contact_did_validates_format() {
+        assert!(normalize_contact_did("").is_err());
+        assert!(normalize_contact_did("   ").is_err());
+        assert!(normalize_contact_did("not-a-did").is_err());
+        assert_eq!(
+            normalize_contact_did(" did:guardian:x ").unwrap(),
+            "did:guardian:x"
+        );
+    }
+
+    #[tokio::test]
+    async fn member_can_always_save_their_own_guardians_did_as_a_contact() {
+        let (_temp, state) = test_state();
+        let session = as_member("did:guardian:member1", vec!["circle-1".to_string()]);
+        let Json(response) = create(
+            State(state.clone()),
+            session.clone(),
+            Json(ContactDraft {
+                did: state.device_did.clone(),
+                name: Some("My Guardian".to_string()),
+                alias: None,
+                notes: None,
+            }),
+        )
+        .await
+        .expect("member can save their own guardian's DID");
+        assert!(response.success);
+        assert_eq!(response.contact.did, state.device_did);
+
+        let Json(listed) = list(State(state.clone()), session.clone())
+            .await
+            .expect("list contacts");
+        assert_eq!(listed.total, 1);
+
+        let Json(fetched) = get(
+            State(state.clone()),
+            session.clone(),
+            Path(state.device_did.clone()),
+        )
+        .await
+        .expect("get contact");
+        assert_eq!(fetched.did, state.device_did);
+
+        let Json(updated) = update(
+            State(state.clone()),
+            session.clone(),
+            Path(state.device_did.clone()),
+            Json(ContactPatch {
+                name: Some("Renamed".to_string()),
+                alias: None,
+                notes: None,
+            }),
+        )
+        .await
+        .expect("update contact");
+        assert_eq!(updated.contact.name.as_deref(), Some("Renamed"));
+
+        let Json(deleted) = delete(
+            State(state.clone()),
+            session.clone(),
+            Path(state.device_did.clone()),
+        )
+        .await
+        .expect("delete contact");
+        assert!(deleted.success);
+
+        let Json(after_delete) = list(State(state.clone()), session)
+            .await
+            .expect("list after delete");
+        assert_eq!(after_delete.total, 0);
+    }
+
+    #[tokio::test]
+    async fn admin_contacts_are_a_separate_address_book_from_member_contacts() {
+        let (_temp, state) = test_state();
+        // Seed one contact directly via the store as the admin/owner (session=None), and one
+        // as a member — they must not see each other's entries.
+        store::create(
+            &contacts_path(&state),
+            None,
+            ContactDraft {
+                did: "did:guardian:admin-contact".to_string(),
+                name: None,
+                alias: None,
+                notes: None,
+            },
+        )
+        .await
+        .expect("seed admin contact");
+        let member_owner_did =
+            crate::api::handlers::browser_member::did_for_registration("member1");
+        store::create(
+            &contacts_path(&state),
+            Some(member_owner_did.as_str()),
+            ContactDraft {
+                did: "did:guardian:member-contact".to_string(),
+                name: None,
+                alias: None,
+                notes: None,
+            },
+        )
+        .await
+        .expect("seed member contact");
+
+        let Json(admin_view) = list(State(state.clone()), None).await.expect("admin list");
+        assert_eq!(admin_view.total, 1);
+        assert_eq!(admin_view.contacts[0].did, "did:guardian:admin-contact");
+
+        let member_session = as_member("member1", vec![]);
+        let Json(member_view) = list(State(state.clone()), member_session)
+            .await
+            .expect("member list");
+        assert_eq!(member_view.total, 1);
+        assert_eq!(member_view.contacts[0].did, "did:guardian:member-contact");
+    }
+
+    #[tokio::test]
+    async fn create_rejects_an_invalid_did_before_any_membership_check() {
+        let (_temp, state) = test_state();
+        let err = create(
+            State(state),
+            None,
+            Json(ContactDraft {
+                did: "not-a-did".to_string(),
+                name: None,
+                alias: None,
+                notes: None,
+            }),
+        )
+        .await
+        .err().expect("invalid DID format");
+        assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn create_fails_closed_for_an_unverified_did_with_no_circle_or_peer_data() {
+        // With no real circle/VC/trusted-peer data on disk, ensure_saveable_contact_did can't
+        // verify this DID belongs to any shared Circle or known trusted peer — it must not be
+        // saved silently.
+        let (_temp, state) = test_state();
+        let err = create(
+            State(state),
+            None,
+            Json(ContactDraft {
+                did: "did:guardian:totally-unverified".to_string(),
+                name: None,
+                alias: None,
+                notes: None,
+            }),
+        )
+        .await
+        .err().expect("unverified DID must not be saveable");
+        assert!(matches!(
+            err,
+            ApiError::BadRequest(_) | ApiError::Internal(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn get_and_delete_report_not_found_for_an_unknown_did() {
+        let (_temp, state) = test_state();
+        let err = get(State(state.clone()), None, Path("did:guardian:ghost".to_string()))
+            .await
+            .err().expect("unknown contact");
+        assert!(matches!(err, ApiError::NotFound(_)));
+
+        let err = delete(State(state), None, Path("did:guardian:ghost".to_string()))
+            .await
+            .err().expect("unknown contact");
+        assert!(matches!(err, ApiError::NotFound(_)));
+    }
+
+    fn write_registry(state: &AppState, filename: &str, peers: serde_json::Value) {
+        let path = std::path::Path::new(&state.log_dir_primary).join(filename);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("log dir");
+        std::fs::write(&path, serde_json::to_vec(&peers).expect("serialize")).expect("write");
+    }
+
+    fn registry_state(temp: &tempfile::TempDir) -> std::sync::Arc<AppState> {
+        let config_dir = temp.path().join("config");
+        std::fs::create_dir_all(&config_dir).expect("config dir");
+        AppState::for_tests(temp.path(), "nodeA", config_dir.display().to_string())
+    }
+
+    #[tokio::test]
+    async fn read_peer_registry_is_empty_for_missing_and_malformed_files() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = registry_state(&temp);
+
+        assert!(read_peer_registry("absent.json", &state).await.is_empty());
+
+        write_registry(&state, "bad.json", serde_json::json!({"not": "an array"}));
+        assert!(
+            read_peer_registry("bad.json", &state).await.is_empty(),
+            "a JSON document that is not an array reads as empty"
+        );
+    }
+
+    /// The filter chain that decides which peers may be saved as contacts:
+    /// a peer must not be this node, must be attested, must carry a non-empty
+    /// virtual id, and must resolve to a non-empty DID.
+    #[tokio::test]
+    async fn known_trusted_peer_dids_applies_every_filter() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = registry_state(&temp);
+
+        write_registry(
+            &state,
+            "trusted_peers.json",
+            serde_json::json!([
+                {"peer_id": "nodeB", "status": "verified", "virtual_id": "vid-b", "did": "did:guardian:b"},
+                {"peer_id": "nodeC", "status": "trusted",  "virtual_id": "vid-c", "did": "did:guardian:c"},
+                {"peer_id": "nodeD", "status": "success",  "virtual_id": "vid-d", "did": "did:guardian:d"},
+                // Excluded: this node itself.
+                {"peer_id": "nodeA", "status": "verified", "virtual_id": "vid-a", "did": "did:guardian:a"},
+                // Excluded: not attested.
+                {"peer_id": "nodeE", "status": "unknown",  "virtual_id": "vid-e", "did": "did:guardian:e"},
+                // Excluded: no attested virtual id.
+                {"peer_id": "nodeF", "status": "verified", "virtual_id": "   ",   "did": "did:guardian:f"},
+                // Excluded: blank DID.
+                {"peer_id": "nodeG", "status": "verified", "virtual_id": "vid-g", "did": "   "},
+                // Excluded: no peer_id at all.
+                {"status": "verified", "virtual_id": "vid-h", "did": "did:guardian:h"}
+            ]),
+        );
+
+        let dids = known_trusted_peer_dids(&state).await;
+        let mut found: Vec<&str> = dids.iter().map(String::as_str).collect();
+        found.sort();
+        assert_eq!(
+            found,
+            vec!["did:guardian:b", "did:guardian:c", "did:guardian:d"],
+            "all three attested statuses are accepted and every other entry is filtered"
+        );
+    }
+
+    /// The merged global registry can drop the DID for a peer that the
+    /// per-node file still knows, so the DID is backfilled by `peer_id`.
+    #[tokio::test]
+    async fn known_trusted_peer_dids_backfills_a_missing_did_from_the_per_node_registry() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = registry_state(&temp);
+
+        write_registry(
+            &state,
+            "trusted_peers.json",
+            serde_json::json!([
+                {"peer_id": "nodeB", "status": "verified", "virtual_id": "vid-b"},
+                {"peer_id": "nodeC", "status": "verified", "virtual_id": "vid-c"}
+            ]),
+        );
+        write_registry(
+            &state,
+            "trusted_peers_nodeA.json",
+            serde_json::json!([
+                {"peer_id": "nodeB", "status": "verified", "virtual_id": "vid-b", "did": "did:guardian:b"},
+                // Blank DID: not a usable backfill source.
+                {"peer_id": "nodeC", "status": "verified", "virtual_id": "vid-c", "did": "  "}
+            ]),
+        );
+
+        let dids = known_trusted_peer_dids(&state).await;
+        assert!(
+            dids.contains("did:guardian:b"),
+            "nodeB's DID is recovered from the per-node registry: {dids:?}"
+        );
+        assert_eq!(
+            dids.len(),
+            1,
+            "nodeC has no usable DID in either file: {dids:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn known_trusted_peer_dids_is_empty_without_any_registry() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = registry_state(&temp);
+        assert!(known_trusted_peer_dids(&state).await.is_empty());
+    }
+
+    /// This helper only trims and requires the `did:` scheme — it deliberately
+    /// does not check the method. A `did:other:...` value passes here and is
+    /// rejected later by `ensure_saveable_contact_did`, because it will not be
+    /// a member of any Circle.
+    #[test]
+    fn normalize_contact_did_trims_and_requires_only_the_did_scheme() {
+        assert_eq!(
+            normalize_contact_did("  did:guardian:abc  ").expect("valid"),
+            "did:guardian:abc"
+        );
+        assert_eq!(
+            normalize_contact_did("did:other:abc").expect("any method passes this check"),
+            "did:other:abc"
+        );
+
+        for invalid in ["", "   ", "not-a-did", "guardian:abc"] {
+            assert!(
+                normalize_contact_did(invalid).is_err(),
+                "{invalid:?} must be rejected"
+            );
+        }
+    }
+}

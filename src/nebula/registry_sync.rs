@@ -1468,4 +1468,181 @@ mod tests {
     // an unprivileged test process. So `save_local_ip_cache`,
     // `load_local_ip_cache`, `clear_local_ip_cache`, and `ensure_dirs` are not
     // exercised here — they are left uncovered for that reason.
+
+    // ── client functions (pull_*_from_ca / request_ip_from_ca /
+    // query_ip_from_ca / resolve_overlay_ip) ──────────────────────
+    //
+    // Unlike `handle_registry_connection`, these hardcode
+    // `format!("{ca_host}:{REGISTRY_SYNC_PORT}")` with no port override, so
+    // there is no ephemeral-port seam available — the ONLY way to exercise
+    // them against a real socket is to bind the real, fixed
+    // `REGISTRY_SYNC_PORT` (50062) on loopback. A process-wide async mutex
+    // serializes every test below so at most one of them ever holds that
+    // port at a time, regardless of test-runner thread count. A fake
+    // responder (not the real `start_registry_server`/`handle_registry_connection`,
+    // which are already covered above via the ephemeral-port `roundtrip`
+    // helper) gives full control over the response for each case.
+    // The lock now lives in `crate::test_support` so the other suites that
+    // bind this same fixed port (`did::tests::resolver_tests`, `api::tests`)
+    // serialize against it too.
+    use crate::test_support::registry_port_lock;
+
+    async fn fake_ca_responder(
+        response_line: String,
+    ) -> tokio::task::JoinHandle<Vec<u8>> {
+        let listener = TcpListener::bind(("127.0.0.1", REGISTRY_SYNC_PORT))
+            .await
+            .expect("bind fixed registry port (held by REGISTRY_PORT_LOCK)");
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let mut request_line = String::new();
+            reader
+                .read_line(&mut request_line)
+                .await
+                .expect("read request");
+            writer
+                .write_all(response_line.as_bytes())
+                .await
+                .expect("write response");
+            request_line.into_bytes()
+        })
+    }
+
+    #[tokio::test]
+    async fn pull_registry_snapshot_from_ca_returns_the_raw_response_line() {
+        let _guard = registry_port_lock().await;
+        let server = fake_ca_responder("{\"nodes\":{}}\n".to_string()).await;
+        let result = pull_registry_snapshot_from_ca("127.0.0.1").await;
+        assert_eq!(result.as_deref(), Ok("{\"nodes\":{}}\n"));
+        let request = server.await.expect("server task joined");
+        let request: RegistryRequest =
+            serde_json::from_slice(&request).expect("parse request sent by client");
+        assert_eq!(request.action, "snapshot");
+    }
+
+    #[tokio::test]
+    async fn pull_lighthouse_snapshot_from_ca_returns_the_raw_response_line() {
+        let _guard = registry_port_lock().await;
+        let server = fake_ca_responder("{\"lighthouses\":[]}\n".to_string()).await;
+        let result = pull_lighthouse_snapshot_from_ca("127.0.0.1").await;
+        assert_eq!(result.as_deref(), Ok("{\"lighthouses\":[]}\n"));
+        let request: RegistryRequest =
+            serde_json::from_slice(&server.await.expect("server joined")).expect("parse request");
+        assert_eq!(request.action, "snapshot_lh");
+    }
+
+    #[tokio::test]
+    async fn pull_relay_snapshot_from_ca_returns_the_raw_response_line() {
+        let _guard = registry_port_lock().await;
+        let server = fake_ca_responder("{\"relays\":{}}\n".to_string()).await;
+        let result = pull_relay_snapshot_from_ca("127.0.0.1").await;
+        assert_eq!(result.as_deref(), Ok("{\"relays\":{}}\n"));
+        let request: RegistryRequest =
+            serde_json::from_slice(&server.await.expect("server joined")).expect("parse request");
+        assert_eq!(request.action, "snapshot_relay");
+    }
+
+    #[tokio::test]
+    async fn pull_status_list_snapshot_from_ca_parses_a_registry_response() {
+        let _guard = registry_port_lock().await;
+        let response = RegistryResponse {
+            success: true,
+            status_list_body: Some("status-list-body".to_string()),
+            ..Default::default()
+        };
+        let mut line = serde_json::to_string(&response).expect("serialize response");
+        line.push('\n');
+        let server = fake_ca_responder(line).await;
+        let result = pull_status_list_snapshot_from_ca("127.0.0.1")
+            .await
+            .expect("parse response");
+        assert!(result.success);
+        assert_eq!(result.status_list_body.as_deref(), Some("status-list-body"));
+        let request: RegistryRequest =
+            serde_json::from_slice(&server.await.expect("server joined")).expect("parse request");
+        assert_eq!(request.action, "status_list_snapshot");
+    }
+
+    #[tokio::test]
+    async fn request_ip_from_ca_succeeds_and_reports_the_assigned_ip() {
+        let _guard = registry_port_lock().await;
+        let response = RegistryResponse {
+            success: true,
+            ip_cidr: Some("192.168.100.7/24".to_string()),
+            ip: Some("192.168.100.7".to_string()),
+            ..Default::default()
+        };
+        let mut line = serde_json::to_string(&response).expect("serialize");
+        line.push('\n');
+        let server = fake_ca_responder(line).await;
+        let (ip_cidr, ip) = request_ip_from_ca("nodeB", "127.0.0.1", "aabbcc")
+            .await
+            .expect("assign should succeed");
+        assert_eq!(ip_cidr, "192.168.100.7/24");
+        assert_eq!(ip, "192.168.100.7");
+        let request: RegistryRequest =
+            serde_json::from_slice(&server.await.expect("server joined")).expect("parse request");
+        assert_eq!(request.action, "assign");
+        assert_eq!(request.node_name, "nodeB");
+    }
+
+    #[tokio::test]
+    async fn request_ip_from_ca_surfaces_a_server_side_error() {
+        let _guard = registry_port_lock().await;
+        let response = RegistryResponse {
+            success: false,
+            error: Some("Only CA can assign IPs".to_string()),
+            ..Default::default()
+        };
+        let mut line = serde_json::to_string(&response).expect("serialize");
+        line.push('\n');
+        let _server = fake_ca_responder(line).await;
+        let error = request_ip_from_ca("nodeB", "127.0.0.1", "aabbcc")
+            .await
+            .expect_err("server error must surface");
+        assert_eq!(error, "Only CA can assign IPs");
+    }
+
+    #[tokio::test]
+    async fn query_ip_from_ca_succeeds_and_reports_the_known_ip() {
+        let _guard = registry_port_lock().await;
+        let response = RegistryResponse {
+            success: true,
+            ip_cidr: Some("192.168.100.9/24".to_string()),
+            ip: Some("192.168.100.9".to_string()),
+            ..Default::default()
+        };
+        let mut line = serde_json::to_string(&response).expect("serialize");
+        line.push('\n');
+        let server = fake_ca_responder(line).await;
+        let (ip_cidr, ip) = query_ip_from_ca("nodeC", "127.0.0.1")
+            .await
+            .expect("query should succeed");
+        assert_eq!(ip_cidr, "192.168.100.9/24");
+        assert_eq!(ip, "192.168.100.9");
+        let request: RegistryRequest =
+            serde_json::from_slice(&server.await.expect("server joined")).expect("parse request");
+        assert_eq!(request.action, "query");
+    }
+
+    #[tokio::test]
+    async fn resolve_overlay_ip_returns_the_ca_assigned_ip_on_first_attempt() {
+        let _guard = registry_port_lock().await;
+        let response = RegistryResponse {
+            success: true,
+            ip_cidr: Some("192.168.100.5/24".to_string()),
+            ip: Some("192.168.100.5".to_string()),
+            ..Default::default()
+        };
+        let mut line = serde_json::to_string(&response).expect("serialize");
+        line.push('\n');
+        let _server = fake_ca_responder(line).await;
+        // `ensure_dirs`/`save_local_ip_cache` hit the real unwritable
+        // `/var/lib/sgx-guardian` path, but both failures are caught and
+        // only logged — the function still returns the CA-assigned IP.
+        let ip_cidr = resolve_overlay_ip("node-resolve-test", "127.0.0.1", "aabbcc").await;
+        assert_eq!(ip_cidr, "192.168.100.5/24");
+    }
 }

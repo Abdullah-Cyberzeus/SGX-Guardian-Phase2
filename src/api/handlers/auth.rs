@@ -847,4 +847,348 @@ mod tests {
         let value = random_url_safe(32);
         assert_eq!(URL_SAFE_NO_PAD.decode(value).expect("decode").len(), 32);
     }
+
+    /// The six OIDC settings `cylenium_oidc_config_from_env` reads, plus the
+    /// provider flag, which `ProviderRegistry::from_env` reads when the
+    /// `AppState` is built — so it must be set before `test_state`.
+    const OIDC_ENV: &[(&str, &str)] = &[
+        ("SGX_SSO_CYLENIUM_ENABLED", "1"),
+        ("SGX_CYLENIUM_OIDC_ISSUER", "https://login.cylenium.example"),
+        // Port 1 is reserved and never listening, so the token exchange fails
+        // fast and deterministically instead of reaching a real IdP.
+        ("SGX_CYLENIUM_OIDC_TOKEN_ENDPOINT", "http://127.0.0.1:1/token"),
+        ("SGX_CYLENIUM_OIDC_JWKS_URI", "http://127.0.0.1:1/jwks"),
+        ("SGX_CYLENIUM_OIDC_CLIENT_ID", "sgx-client"),
+        ("SGX_CYLENIUM_OIDC_REDIRECT_URI", "https://guardian.local/callback"),
+    ];
+
+    struct OidcEnv {
+        previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
+
+    impl OidcEnv {
+        /// Sets every OIDC variable except those named in `omit`, remembering
+        /// the prior values so the process environment is restored on drop.
+        fn set(omit: &[&str]) -> Self {
+            let mut previous = Vec::new();
+            for (key, value) in OIDC_ENV {
+                previous.push((*key, std::env::var_os(key)));
+                if omit.contains(key) {
+                    std::env::remove_var(key);
+                } else {
+                    std::env::set_var(key, value);
+                }
+            }
+            Self { previous }
+        }
+    }
+
+    impl Drop for OidcEnv {
+        fn drop(&mut self) {
+            for (key, value) in self.previous.drain(..) {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn cylenium_endpoints_are_forbidden_while_the_provider_is_disabled() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let previous = std::env::var_os("SGX_SSO_CYLENIUM_ENABLED");
+        std::env::remove_var("SGX_SSO_CYLENIUM_ENABLED");
+        let td = TempDir::new().expect("tempdir");
+        let state = test_state(&td);
+
+        let error = cylenium_authorize_start(State(state.clone()))
+            .await
+            .err()
+            .expect("disabled provider");
+        assert!(matches!(error, ApiError::Forbidden(_)), "{error:?}");
+
+        let error = cylenium_callback(
+            State(state),
+            Json(CyleniumCallbackRequest {
+                code: "code".into(),
+                state: "state".into(),
+                code_verifier: None,
+            }),
+        )
+        .await
+        .err()
+        .expect("disabled provider");
+        assert!(matches!(error, ApiError::Forbidden(_)), "{error:?}");
+
+        if let Some(value) = previous {
+            std::env::set_var("SGX_SSO_CYLENIUM_ENABLED", value);
+        }
+    }
+
+    #[tokio::test]
+    async fn cylenium_authorize_start_issues_and_persists_a_transaction() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _env = OidcEnv::set(&[]);
+        let td = TempDir::new().expect("tempdir");
+        let state = test_state(&td);
+
+        let started = cylenium_authorize_start(State(state.clone()))
+            .await
+            .expect("authorize start succeeds");
+        assert_eq!(
+            URL_SAFE_NO_PAD.decode(&started.0.state).expect("decode state").len(),
+            32
+        );
+        assert_eq!(
+            URL_SAFE_NO_PAD.decode(&started.0.nonce).expect("decode nonce").len(),
+            32
+        );
+        assert!(started.0.expires_at > chrono::Utc::now().timestamp());
+
+        // The transaction is single-use: consuming it once yields the record
+        // with the matching nonce, and a second consume yields nothing.
+        let consumed = state
+            .admin
+            .oidc_transactions
+            .consume(&started.0.state)
+            .await
+            .expect("consume")
+            .expect("transaction present");
+        assert_eq!(consumed.nonce, started.0.nonce);
+        assert_eq!(consumed.client_id, "sgx-client");
+        assert!(state
+            .admin
+            .oidc_transactions
+            .consume(&started.0.state)
+            .await
+            .expect("consume")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn cylenium_authorize_start_reports_a_missing_oidc_setting() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _env = OidcEnv::set(&["SGX_CYLENIUM_OIDC_ISSUER"]);
+        let td = TempDir::new().expect("tempdir");
+        let state = test_state(&td);
+
+        let error = cylenium_authorize_start(State(state))
+            .await
+            .err()
+            .expect("incomplete OIDC configuration");
+        assert!(
+            matches!(&error, ApiError::Internal(message) if message.contains("SGX_CYLENIUM_OIDC_ISSUER")),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn cylenium_callback_rejects_missing_unknown_and_replayed_transactions() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _env = OidcEnv::set(&[]);
+        let td = TempDir::new().expect("tempdir");
+        let state = test_state(&td);
+
+        for (label, transaction_state) in [("blank", "   "), ("unknown", "no-such-state")] {
+            let error = cylenium_callback(
+                State(state.clone()),
+                Json(CyleniumCallbackRequest {
+                    code: "code".into(),
+                    state: transaction_state.into(),
+                    code_verifier: None,
+                }),
+            )
+            .await
+            .err()
+            .unwrap_or_else(|| panic!("{label} state must be rejected"));
+            assert!(matches!(error, ApiError::Unauthorized(_)), "{label}: {error:?}");
+        }
+
+        // A real, unconsumed transaction gets past the state check and fails at
+        // the token exchange instead — the IdP endpoint is a dead port.
+        let started = cylenium_authorize_start(State(state.clone()))
+            .await
+            .expect("authorize start succeeds");
+        let error = cylenium_callback(
+            State(state.clone()),
+            Json(CyleniumCallbackRequest {
+                code: "code".into(),
+                state: started.0.state.clone(),
+                code_verifier: None,
+            }),
+        )
+        .await
+        .err()
+        .expect("token exchange cannot reach the IdP");
+        assert!(
+            matches!(&error, ApiError::Unauthorized(message) if message.contains("cylenium OIDC login failed")),
+            "{error:?}"
+        );
+
+        // ...and that attempt consumed it, so replaying the same state fails
+        // at the transaction check rather than reaching the IdP again.
+        let error = cylenium_callback(
+            State(state),
+            Json(CyleniumCallbackRequest {
+                code: "code".into(),
+                state: started.0.state,
+                code_verifier: None,
+            }),
+        )
+        .await
+        .err()
+        .expect("a consumed transaction cannot be replayed");
+        assert!(
+            matches!(&error, ApiError::Unauthorized(message) if message.contains("oidc transaction")),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn optional_and_required_env_trim_values_and_treat_blank_as_absent() {
+        let _previous = std::env::var_os("SGX_TEST_AUTH_ENV_PROBE");
+
+        std::env::set_var("SGX_TEST_AUTH_ENV_PROBE", "  value  ");
+        assert_eq!(optional_env("SGX_TEST_AUTH_ENV_PROBE").as_deref(), Some("value"));
+        assert_eq!(required_env("SGX_TEST_AUTH_ENV_PROBE").expect("present"), "value");
+
+        std::env::set_var("SGX_TEST_AUTH_ENV_PROBE", "   ");
+        assert_eq!(optional_env("SGX_TEST_AUTH_ENV_PROBE"), None);
+        assert!(required_env("SGX_TEST_AUTH_ENV_PROBE").is_err());
+
+        std::env::remove_var("SGX_TEST_AUTH_ENV_PROBE");
+        assert_eq!(optional_env("SGX_TEST_AUTH_ENV_PROBE"), None);
+        assert!(matches!(
+            required_env("SGX_TEST_AUTH_ENV_PROBE"),
+            Err(ApiError::Internal(message)) if message.contains("SGX_TEST_AUTH_ENV_PROBE")
+        ));
+    }
+
+    /// The serde default applied when a signup request omits `role`. It is
+    /// `admin` because the signup route only accepts `admin` or `member` (see
+    /// `signup`'s own "role must be admin or member" rejection), so this is the
+    /// administrative default for first-boot onboarding rather than a
+    /// least-privilege fallback.
+    #[test]
+    fn default_signup_role_is_admin() {
+        assert_eq!(default_signup_role(), "admin");
+        assert!(
+            UserRole::parse(&default_signup_role()).is_some(),
+            "the default must be a role the signup route actually accepts"
+        );
+    }
+
+    fn member_user(state: &AppState) -> crate::api::auth::store::User {
+        crate::api::auth::store::User {
+            user_id: "user-1".into(),
+            name: "Member".into(),
+            email: "member@example.test".into(),
+            pw_hash: "unusable".into(),
+            role: UserRole::Member,
+            scopes: Vec::new(),
+            circle_ids: vec!["circle-1".into()],
+            browser_registration_id: Some("registration-1".into()),
+            guardian_fingerprint: Some(crate::api::handlers::pwa::guardian_fingerprint(
+                &state.device_pubkey_point,
+            )),
+            registration_expires_at: Some(chrono::Utc::now().timestamp() + 3_600),
+            invite_id: None,
+            created_at: "2026-07-24T00:00:00Z".into(),
+            status: "active".into(),
+            failed_attempts: 0,
+            locked_until: None,
+            last_failed_at: None,
+            oidc_sub: None,
+            hide_presence: false,
+            hide_read_receipts: false,
+            hide_typing: false,
+        }
+    }
+
+    /// Every reason a member browser registration stops being accepted. Each
+    /// case starts from a valid member and breaks exactly one precondition.
+    #[test]
+    fn validate_member_registration_rejects_each_broken_precondition() {
+        let td = TempDir::new().expect("tempdir");
+        let state = test_state(&td);
+        let valid = member_user(&state);
+        validate_member_registration(&state, &valid).expect("a complete member is accepted");
+
+        // Non-member accounts are not subject to any of these checks.
+        let mut owner = valid.clone();
+        owner.role = UserRole::Owner;
+        owner.status = "inactive".into();
+        owner.circle_ids.clear();
+        owner.browser_registration_id = None;
+        owner.registration_expires_at = None;
+        owner.guardian_fingerprint = None;
+        validate_member_registration(&state, &owner).expect("non-members are exempt");
+
+        let mut inactive = valid.clone();
+        inactive.status = "inactive".into();
+        let mut no_registration = valid.clone();
+        no_registration.browser_registration_id = None;
+        let mut no_circles = valid.clone();
+        no_circles.circle_ids.clear();
+        let mut no_expiry = valid.clone();
+        no_expiry.registration_expires_at = None;
+        let mut expired = valid.clone();
+        expired.registration_expires_at = Some(chrono::Utc::now().timestamp() - 1);
+
+        for (label, user) in [
+            ("inactive", inactive),
+            ("no registration id", no_registration),
+            ("no circles", no_circles),
+            ("no expiry", no_expiry),
+            ("expired", expired),
+        ] {
+            let error = validate_member_registration(&state, &user)
+                .err()
+                .unwrap_or_else(|| panic!("{label} must be rejected"));
+            assert!(matches!(error, ApiError::Unauthorized(_)), "{label}: {error:?}");
+        }
+
+        // A changed Guardian fingerprint is a conflict, not an expiry — it
+        // needs explicit re-verification rather than a silent refresh.
+        let mut rotated = valid;
+        rotated.guardian_fingerprint = Some("0000-0000-0000-0000".into());
+        let error = validate_member_registration(&state, &rotated)
+            .err()
+            .expect("a rotated Guardian identity must be caught");
+        assert!(matches!(error, ApiError::Conflict(_)), "{error:?}");
+    }
+
+    #[test]
+    fn member_session_ttl_is_capped_by_the_remaining_registration_window() {
+        let td = TempDir::new().expect("tempdir");
+        let state = test_state(&td);
+
+        // Non-members always get the full session TTL.
+        let mut owner = member_user(&state);
+        owner.role = UserRole::Owner;
+        owner.registration_expires_at = Some(chrono::Utc::now().timestamp() + 1);
+        assert_eq!(member_session_ttl(&state, &owner), state.session_ttl_secs);
+
+        // A member whose registration outlives the session TTL gets the TTL.
+        let mut long_lived = member_user(&state);
+        long_lived.registration_expires_at =
+            Some(chrono::Utc::now().timestamp() + state.session_ttl_secs as i64 * 10);
+        assert_eq!(member_session_ttl(&state, &long_lived), state.session_ttl_secs);
+
+        // A member whose registration expires sooner is clamped to it.
+        let mut short_lived = member_user(&state);
+        short_lived.registration_expires_at = Some(chrono::Utc::now().timestamp() + 30);
+        let ttl = member_session_ttl(&state, &short_lived);
+        assert!(ttl <= 30 && ttl > 0, "expected a clamped ttl, got {ttl}");
+
+        // An already-expired or missing registration still yields at least 1s
+        // rather than underflowing.
+        let mut expired = member_user(&state);
+        expired.registration_expires_at = Some(chrono::Utc::now().timestamp() - 10_000);
+        assert_eq!(member_session_ttl(&state, &expired), 1);
+        let mut missing = member_user(&state);
+        missing.registration_expires_at = None;
+        assert_eq!(member_session_ttl(&state, &missing), 1);
+    }
 }

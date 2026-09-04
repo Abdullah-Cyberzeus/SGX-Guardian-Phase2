@@ -388,20 +388,55 @@ mod tests {
         let script = format!("echo run >> {} ; sleep 5", marker.display());
         let runner = ProcessRunner::new("sh".to_string(), vec!["-c".to_string(), script]);
 
+        // `start()` returns as soon as the child is spawned, not once the shell
+        // has actually run `echo`. Waiting for the marker makes "the first
+        // process really ran" an explicit precondition — without it, a loaded
+        // machine could have `stop()` kill the child before it was ever
+        // scheduled, leaving an empty marker and failing the count below for a
+        // reason that has nothing to do with duplicate starts.
+        async fn marker_lines(path: &std::path::Path) -> usize {
+            tokio::fs::read_to_string(path)
+                .await
+                .unwrap_or_default()
+                .lines()
+                .count()
+        }
+
+        async fn await_marker_lines(path: &std::path::Path, expected: usize) {
+            for _ in 0..100 {
+                if marker_lines(path).await >= expected {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            panic!(
+                "marker never reached {expected} line(s); saw {}",
+                marker_lines(path).await
+            );
+        }
+
         runner.start().await.expect("first start succeeds");
         assert_eq!(runner.get_status(), ProcessStatus::Running);
+        await_marker_lines(&marker, 1).await;
 
         // A second call while already running must be a pure no-op: Ok(()), no new spawn.
         runner.start().await.expect("duplicate start remains Ok");
         assert_eq!(runner.get_status(), ProcessStatus::Running);
 
-        runner.stop().await.expect("stop succeeds");
-
-        let contents = std::fs::read_to_string(&marker).unwrap_or_default();
+        // Give a second process time to appear if the no-op were broken, so a
+        // regression here fails rather than racing past unnoticed.
+        tokio::time::sleep(Duration::from_millis(250)).await;
         assert_eq!(
-            contents.lines().count(),
+            marker_lines(&marker).await,
             1,
             "duplicate start must not spawn a second process"
+        );
+
+        runner.stop().await.expect("stop succeeds");
+        assert_eq!(
+            marker_lines(&marker).await,
+            1,
+            "stopping must not have spawned anything either"
         );
     }
 

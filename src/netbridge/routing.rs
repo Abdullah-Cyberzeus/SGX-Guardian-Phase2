@@ -492,3 +492,303 @@ mod tests {
         let _default = RoutingManager::default();
     }
 }
+
+/// Tests that drive the real `ip` binary and the real sysctl paths.
+///
+/// Every mutating call in this file needs `CAP_NET_ADMIN` (or root), so under a
+/// normal unprivileged test run each one fails deterministically — `ip route
+/// add` answers `Operation not permitted`, `fs::write` to `/proc/sys/...`
+/// answers `EACCES`. That is a real, reproducible outcome rather than a mock,
+/// and it is the outcome this code actually has to survive on a board where
+/// the daemon has been dropped from root. The read-only queries (`ip addr
+/// show`, `ip route show`, `ip rule show`) succeed for real, so the parsing and
+/// decision logic downstream of them runs against genuine kernel output.
+///
+/// The handful of assertions whose expected result differs under root are
+/// gated on [`unprivileged`] and skip rather than assert the wrong thing.
+#[cfg(test)]
+mod live_ip_tests {
+    use super::{
+        RoutingManager, HOTSPOT_ROUTE_TABLE, POLICY_ROUTING_UNSUPPORTED, UPLINK_SOURCE_RULE_PRIORITY,
+    };
+    use crate::netbridge::types::NetbridgeError;
+    use std::net::Ipv4Addr;
+    use std::process::Command;
+    use std::sync::atomic::Ordering;
+    use std::sync::{Mutex, MutexGuard};
+
+    const IP_FORWARD: &str = "/proc/sys/net/ipv4/ip_forward";
+    const MISSING_IFACE: &str = "sgxtest-nodev0";
+
+    /// `POLICY_ROUTING_UNSUPPORTED` is process-global, so the tests that read or
+    /// write it must not interleave with each other.
+    static POLICY_FLAG_LOCK: Mutex<()> = Mutex::new(());
+
+    fn policy_flag_lock() -> MutexGuard<'static, ()> {
+        POLICY_FLAG_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// True when this process cannot write the forwarding sysctl — i.e. the
+    /// ordinary case, and the one whose failure paths these tests assert.
+    fn unprivileged() -> bool {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(IP_FORWARD)
+            .is_err()
+    }
+
+    fn have_ip() -> bool {
+        Command::new("ip").arg("-V").output().is_ok()
+    }
+
+    /// The interface carrying this host's real default route, if any.
+    fn default_route_interface() -> Option<String> {
+        let output = Command::new("ip")
+            .args(["-4", "route", "show", "default"])
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&output.stdout).into_owned();
+        text.lines().find_map(|line| {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            let pos = parts.iter().position(|part| *part == "dev")?;
+            parts.get(pos + 1).map(|value| value.to_string())
+        })
+    }
+
+    #[test]
+    fn enable_forwarding_surfaces_the_unprivileged_write_refusal() {
+        if !unprivileged() {
+            return;
+        }
+        let error = RoutingManager::new()
+            .enable_forwarding()
+            .expect_err("writing the forwarding sysctl must fail without privileges");
+        // The path exists on every Linux host, so this is the IO branch rather
+        // than the "sysfs entry missing" validation branch.
+        assert!(
+            matches!(error, NetbridgeError::IoError(_)),
+            "expected an IO error, got {error:?}"
+        );
+    }
+
+    #[test]
+    fn disable_forwarding_surfaces_the_unprivileged_write_refusal() {
+        if !unprivileged() {
+            return;
+        }
+        let error = RoutingManager::new()
+            .disable_forwarding()
+            .expect_err("clearing the forwarding sysctl must fail without privileges");
+        assert!(
+            matches!(error, NetbridgeError::IoError(_)),
+            "expected an IO error, got {error:?}"
+        );
+    }
+
+    #[test]
+    fn is_forwarding_enabled_reports_the_live_sysctl_value() {
+        let live = std::fs::read_to_string(IP_FORWARD).expect("sysctl readable");
+        assert_eq!(
+            RoutingManager::new().is_forwarding_enabled().unwrap(),
+            live.trim() == "1"
+        );
+    }
+
+    #[test]
+    fn interface_ipv4_cidr_parses_loopback_and_rejects_an_absent_interface() {
+        if !have_ip() {
+            return;
+        }
+        // `lo` always carries 127.0.0.1/8 as its first inet line.
+        assert_eq!(
+            RoutingManager::interface_ipv4_cidr("lo"),
+            Some((Ipv4Addr::new(127, 0, 0, 1), 8))
+        );
+        // A missing device makes `ip` exit non-zero with empty stdout: the call
+        // still succeeds, and the parse returns None.
+        assert_eq!(RoutingManager::interface_ipv4_cidr(MISSING_IFACE), None);
+    }
+
+    #[test]
+    fn gateway_for_interface_is_none_when_the_interface_has_no_default_route() {
+        if !have_ip() {
+            return;
+        }
+        assert_eq!(RoutingManager::gateway_for_interface("lo"), None);
+        assert_eq!(RoutingManager::gateway_for_interface(MISSING_IFACE), None);
+    }
+
+    #[test]
+    fn gateway_for_interface_reads_the_real_default_route() {
+        let Some(iface) = default_route_interface() else {
+            return; // no default route on this host
+        };
+        let gateway = RoutingManager::gateway_for_interface(&iface);
+        // A default route printed with `via` must parse; one without (a
+        // point-to-point link) legitimately yields None.
+        let raw = Command::new("ip")
+            .args(["-4", "route", "show", "default", "dev", &iface])
+            .output()
+            .expect("ip route show");
+        let has_via = String::from_utf8_lossy(&raw.stdout).contains(" via ");
+        assert_eq!(gateway.is_some(), has_via);
+    }
+
+    #[test]
+    fn run_ip_distinguishes_a_read_only_query_from_a_refused_mutation() {
+        if !have_ip() {
+            return;
+        }
+        RoutingManager::run_ip(&["-4", "route", "show"]).expect("a read-only query must succeed");
+
+        if !unprivileged() {
+            return;
+        }
+        let error = RoutingManager::run_ip(&[
+            "-4",
+            "rule",
+            "add",
+            "priority",
+            UPLINK_SOURCE_RULE_PRIORITY,
+            "from",
+            "10.255.254.0/24",
+            "lookup",
+            HOTSPOT_ROUTE_TABLE,
+        ])
+        .expect_err("adding a policy rule must be refused without CAP_NET_ADMIN");
+        match error {
+            NetbridgeError::ProcessExecutionFailed(message) => {
+                assert!(
+                    message.starts_with("ip -4 rule add"),
+                    "the failure must name the exact argv: {message}"
+                );
+                assert!(
+                    message.contains("not permitted") || message.contains("not supported"),
+                    "expected the kernel's refusal in the message: {message}"
+                );
+            }
+            other => panic!("expected a process failure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn remove_hotspot_uplink_is_a_safe_no_op_without_privileges() {
+        if !have_ip() {
+            return;
+        }
+        // Both `rule del` calls are refused on the first iteration, so each
+        // loop breaks immediately; the table flush is discarded either way.
+        // Running it twice proves it is idempotent and never panics.
+        RoutingManager::remove_hotspot_uplink();
+        RoutingManager::remove_hotspot_uplink();
+    }
+
+    #[test]
+    fn ensure_default_route_falls_back_to_the_inferred_gateway() {
+        if !have_ip() || !unprivileged() {
+            return;
+        }
+        // `lo` has no default route and no `via` on any of its routes, so the
+        // gateway is inferred from 127.0.0.1/8 and the `route replace` that
+        // follows is refused — exercising the whole recovery path plus its
+        // failure-logging tail without changing this host's routing table.
+        RoutingManager::ensure_default_route_for_interface("lo");
+
+        // A device that does not exist yields no routes and no address, so the
+        // function returns at the `let Some(gateway) else` guard.
+        RoutingManager::ensure_default_route_for_interface(MISSING_IFACE);
+    }
+
+    #[test]
+    fn ensure_default_route_returns_early_when_one_already_exists() {
+        let Some(iface) = default_route_interface() else {
+            return;
+        };
+        let before = Command::new("ip")
+            .args(["-4", "route", "show", "default", "dev", &iface])
+            .output()
+            .expect("ip route show");
+        RoutingManager::ensure_default_route_for_interface(&iface);
+        let after = Command::new("ip")
+            .args(["-4", "route", "show", "default", "dev", &iface])
+            .output()
+            .expect("ip route show");
+        assert_eq!(
+            before.stdout, after.stdout,
+            "an interface that already has a default route must be left untouched"
+        );
+    }
+
+    #[test]
+    fn configure_hotspot_uplink_rejects_an_interface_without_an_address() {
+        if !have_ip() {
+            return;
+        }
+        let error = RoutingManager::configure_hotspot_uplink("10.42.0.0/24", MISSING_IFACE)
+            .expect_err("an interface with no IPv4 address cannot be policy-routed");
+        match error {
+            NetbridgeError::ValidationFailed(message) => assert!(
+                message.contains(MISSING_IFACE) && message.contains("no usable IPv4"),
+                "unexpected validation message: {message}"
+            ),
+            other => panic!("expected a validation failure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn configure_hotspot_uplink_stops_at_the_multihoming_sysctls_without_privileges() {
+        if !have_ip() || !unprivileged() {
+            return;
+        }
+        // `lo` resolves an address (127.0.0.1/8), a network (127.0.0.0/8) and
+        // an inferred gateway (127.0.0.1), so the call gets as far as the
+        // multihoming sysctls — which an unprivileged process cannot write.
+        // Nothing is added to the routing table before that point.
+        let error = RoutingManager::configure_hotspot_uplink("10.42.0.0/24", "lo")
+            .expect_err("the rp_filter/arp sysctl writes must be refused");
+        assert!(
+            matches!(error, NetbridgeError::IoError(_)),
+            "expected the sysctl write to fail with an IO error, got {error:?}"
+        );
+    }
+
+    #[test]
+    fn hotspot_uplink_is_configured_short_circuits_when_policy_routing_is_unsupported() {
+        let _guard = policy_flag_lock();
+        let previous = POLICY_ROUTING_UNSUPPORTED.load(Ordering::SeqCst);
+        POLICY_ROUTING_UNSUPPORTED.store(true, Ordering::SeqCst);
+        // On a kernel without policy routing the check reports "configured" so
+        // callers stop trying to reinstall rules that can never exist — and it
+        // does so without consulting the interface at all, hence the bogus name.
+        assert!(RoutingManager::hotspot_uplink_is_configured(
+            "10.42.0.0/24",
+            MISSING_IFACE
+        ));
+        POLICY_ROUTING_UNSUPPORTED.store(previous, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn hotspot_uplink_is_configured_is_false_without_the_rules_and_routes() {
+        if !have_ip() {
+            return;
+        }
+        let _guard = policy_flag_lock();
+        let previous = POLICY_ROUTING_UNSUPPORTED.load(Ordering::SeqCst);
+        POLICY_ROUTING_UNSUPPORTED.store(false, Ordering::SeqCst);
+
+        // No address at all: fails at the first guard.
+        assert!(!RoutingManager::hotspot_uplink_is_configured(
+            "10.42.0.0/24",
+            MISSING_IFACE
+        ));
+        // `lo` resolves an address, network and inferred gateway, so both `ip`
+        // queries run for real; table 200 is empty here, so the rule and route
+        // assertions all fail and the answer is false.
+        assert!(!RoutingManager::hotspot_uplink_is_configured(
+            "10.42.0.0/24",
+            "lo"
+        ));
+
+        POLICY_ROUTING_UNSUPPORTED.store(previous, Ordering::SeqCst);
+    }
+}

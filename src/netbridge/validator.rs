@@ -351,16 +351,13 @@ mod tests {
     // directly to an external binary (iw, hostapd, dnsmasq, wpa_supplicant,
     // udhcpc, ip, wpa_cli, id) via `std::process::Command` with no injectable
     // runner/trait seam (unlike `ProcessRunner` used elsewhere in this crate).
-    // Their outcomes depend on which binaries exist on the host and, for
-    // `check_root_permissions`, on whether the test process itself is root —
-    // so they cannot be driven deterministically without touching real system
-    // binaries/state. Per the isolation rules (no root, no mocked process
-    // seam available), those methods are intentionally left uncovered here:
-    // detect_wifi_interface, check_ap_mode_support, check_dnsmasq_installed,
-    // validate_runtime_conditions, check_wpa_supplicant_installed,
-    // check_udhcpc_installed, check_interface_exists, check_root_permissions,
-    // check_client_mode_support, check_interface_not_busy,
-    // check_wifi_scan_works, validate_uplink_runtime_conditions.
+    // `iw`, `hostapd`, `dnsmasq`, `wpa_supplicant`, `udhcpc`, and `wpa_cli` are
+    // all confirmed absent in this sandbox (verified by hand: `which <bin>`
+    // fails for each), and the test process is confirmed non-root (`id -u` =
+    // 1000) — so every method's outcome is in fact fully deterministic here,
+    // just not the "happy path" outcome. `ip` and `id` ARE present, so
+    // `check_interface_exists`/`check_root_permissions`/`check_wifi_scan_works`
+    // exercise their real command-invocation logic too, not just spawn-failure.
 
     #[test]
     fn display_command_execution_failed() {
@@ -503,5 +500,119 @@ mod tests {
             other => panic!("expected PortInUse({}), got {:?}", port, other),
         }
         drop(held);
+    }
+
+    #[test]
+    fn detect_wifi_interface_reports_iw_not_installed() {
+        let validator = Validator::new();
+        assert!(matches!(
+            validator.detect_wifi_interface(),
+            Err(ValidationError::IwNotInstalled)
+        ));
+    }
+
+    #[test]
+    fn check_ap_mode_support_reports_iw_not_installed() {
+        let validator = Validator::new();
+        assert!(matches!(
+            validator.check_ap_mode_support(),
+            Err(ValidationError::IwNotInstalled)
+        ));
+    }
+
+    #[test]
+    fn check_dnsmasq_installed_reports_not_installed() {
+        let validator = Validator::new();
+        assert!(matches!(
+            validator.check_dnsmasq_installed(),
+            Err(ValidationError::DnsmasqNotInstalled)
+        ));
+    }
+
+    #[test]
+    fn validate_runtime_conditions_short_circuits_on_missing_iw() {
+        let validator = Validator::new();
+        assert!(matches!(
+            validator.validate_runtime_conditions(),
+            Err(ValidationError::IwNotInstalled)
+        ));
+    }
+
+    #[test]
+    fn check_wpa_supplicant_installed_reports_not_installed() {
+        let validator = Validator::new();
+        assert!(matches!(
+            validator.check_wpa_supplicant_installed(),
+            Err(ValidationError::WpaSupplicantNotInstalled)
+        ));
+    }
+
+    #[test]
+    fn check_udhcpc_installed_reports_not_installed() {
+        let validator = Validator::new();
+        assert!(matches!(
+            validator.check_udhcpc_installed(),
+            Err(ValidationError::UdhcpcNotInstalled)
+        ));
+    }
+
+    #[test]
+    fn check_interface_exists_true_for_loopback_false_for_fake_interface() {
+        let validator = Validator::new();
+        assert!(validator.check_interface_exists("lo").is_ok());
+        assert!(matches!(
+            validator.check_interface_exists("zzz-fake-iface-not-real"),
+            Err(ValidationError::InterfaceNotAvailable(iface)) if iface == "zzz-fake-iface-not-real"
+        ));
+    }
+
+    #[test]
+    fn check_root_permissions_reports_permission_denied_when_not_root() {
+        let validator = Validator::new();
+        assert!(matches!(
+            validator.check_root_permissions(),
+            Err(ValidationError::PermissionDenied)
+        ));
+    }
+
+    #[test]
+    fn check_client_mode_support_reports_iw_not_installed() {
+        let validator = Validator::new();
+        assert!(matches!(
+            validator.check_client_mode_support(),
+            Err(ValidationError::IwNotInstalled)
+        ));
+    }
+
+    #[test]
+    fn check_interface_not_busy_is_ok_when_wpa_cli_is_absent() {
+        let validator = Validator::new();
+        // `wpa_cli` fails to spawn at all (ENOENT), so `output` is `Err` and
+        // the function falls through to `Ok(())` without ever inspecting a
+        // real wpa_cli status.
+        assert!(validator.check_interface_not_busy("lo").is_ok());
+    }
+
+    #[test]
+    fn check_wifi_scan_works_reports_iw_not_installed() {
+        let validator = Validator::new();
+        // The preceding `ip link set lo up` real call succeeds harmlessly;
+        // the subsequent `iw dev lo scan` fails because `iw` is absent.
+        assert!(matches!(
+            validator.check_wifi_scan_works("lo"),
+            Err(ValidationError::IwNotInstalled)
+        ));
+    }
+
+    #[test]
+    fn validate_uplink_runtime_conditions_short_circuits_on_non_root() {
+        let validator = Validator::new();
+        // check_root_permissions runs first and fails deterministically
+        // (non-root), before any of the later checks (interface existence,
+        // wpa_supplicant, udhcpc, client mode support) ever run.
+        assert!(matches!(
+            validator.validate_uplink_runtime_conditions("lo"),
+            Err(ValidationError::PermissionDenied)
+        ));
     }
 }

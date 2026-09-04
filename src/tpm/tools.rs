@@ -561,4 +561,108 @@ mod tests {
             "  0: 0xabc\n"
         );
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_strings_writes_stdin_to_the_child_process() {
+        // PATH is fully replaced with the fake-tool directory for these tests, so external
+        // binaries like `cat` aren't reachable — read stdin with a shell builtin instead and
+        // just confirm the write-then-wait sequence succeeds (the stdin-piping branch is what
+        // this test targets, not exact byte transport).
+        let _lock = crate::test_support::blocking_env_lock();
+        let tools = tempfile::tempdir().expect("tool directory");
+        install_tool(
+            tools.path(),
+            "stdin-tool",
+            "read -r line\n[ \"$line\" = \"hello-stdin\" ] || exit 1",
+        );
+        let _path = use_tool_dir(tools.path());
+        let cli = Tpm2Cli::new(cfg());
+        cli.run_strings("stdin-tool", &[], Some(b"hello-stdin\n"))
+            .expect("stdin was piped to the child process");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn evict_handle_passes_owner_auth_when_provided() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let tools = tempfile::tempdir().expect("tool directory");
+        install_tool(
+            tools.path(),
+            "tpm2_evictcontrol",
+            "case \"$*\" in *-P*secret*) exit 0;; *) exit 5;; esac",
+        );
+        let _path = use_tool_dir(tools.path());
+        let cli = Tpm2Cli::new(cfg());
+        cli.evict_handle(0x8101_0001, Some("secret"))
+            .expect("evict with auth");
+        cli.evict_handle(0x8101_0001, None)
+            .expect_err("without auth the fake tool rejects it");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sign_plain_succeeds_via_a_fallback_candidate() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let tools = tempfile::tempdir().expect("tool directory");
+        // Only accept the third (--message-first) candidate shape; find the path that
+        // follows "-o" and write the fake signature there.
+        install_tool(
+            tools.path(),
+            "tpm2_sign",
+            r#"case "$*" in
+  *--message*)
+    found=0
+    for arg in "$@"; do
+      if [ "$found" = "1" ]; then printf sig > "$arg"; break; fi
+      if [ "$arg" = "-o" ]; then found=1; fi
+    done
+    ;;
+  *) exit 6 ;;
+esac"#,
+        );
+        let _path = use_tool_dir(tools.path());
+        let cli = Tpm2Cli::new(cfg());
+        let dir = tempfile::tempdir().expect("io dir");
+        let input = dir.path().join("sign-input.bin");
+        let output = dir.path().join("sign-output.bin");
+        std::fs::write(&input, b"payload").expect("write input");
+        cli.sign_plain(
+            0x8101_0002,
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+            Some("pin"),
+        )
+        .expect("sign via fallback candidate");
+        assert_eq!(std::fs::read(&output).expect("signature"), b"sig");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn provision_persistent_signing_key_runs_the_full_toolchain() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let tools = tempfile::tempdir().expect("tool directory");
+        install_tool(tools.path(), "tpm2_createprimary", "exit 0");
+        install_tool(tools.path(), "tpm2_create", "exit 0");
+        install_tool(tools.path(), "tpm2_load", "exit 0");
+        install_tool(tools.path(), "tpm2_evictcontrol", "exit 0");
+        install_tool(
+            tools.path(),
+            "tpm2_readpublic",
+            "printf DER > \"$6\"",
+        );
+        let _path = use_tool_dir(tools.path());
+        let cli = Tpm2Cli::new(cfg());
+        let out_dir = tempfile::tempdir().expect("output dir");
+        let out_pub = out_dir.path().join("nested/dkp_pub.der");
+        cli.provision_persistent_signing_key(
+            0x8101_0003,
+            out_pub.to_str().unwrap(),
+            "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|sign",
+            Some("owner"),
+            Some("keypin"),
+        )
+        .expect("full provisioning flow");
+        assert_eq!(std::fs::read(&out_pub).expect("public key"), b"DER");
+    }
 }

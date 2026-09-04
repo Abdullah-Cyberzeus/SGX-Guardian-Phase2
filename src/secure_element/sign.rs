@@ -164,6 +164,43 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn new_connects_via_the_real_ssscli_invocation() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let dir = tempfile::tempdir().expect("fake tool directory");
+        use std::os::unix::fs::PermissionsExt;
+        let tool = dir.path().join("ssscli");
+        std::fs::write(&tool, "#!/bin/sh\n[ \"$1\" = connect ] && exit 0\nexit 9\n")
+            .expect("write fake ssscli");
+        let mut permissions = std::fs::metadata(&tool).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(tool, permissions).expect("make executable");
+        let old_path = std::env::var_os("PATH");
+        std::env::set_var("PATH", dir.path());
+        let _guard = EnvGuard(old_path);
+
+        SeSigner::new(&config()).expect("connect succeeds via fake ssscli");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_reports_a_connect_failure() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let dir = tempfile::tempdir().expect("fake tool directory");
+        use std::os::unix::fs::PermissionsExt;
+        let tool = dir.path().join("ssscli");
+        std::fs::write(&tool, "#!/bin/sh\nexit 1\n").expect("write fake ssscli");
+        let mut permissions = std::fs::metadata(&tool).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(tool, permissions).expect("make executable");
+        let old_path = std::env::var_os("PATH");
+        std::env::set_var("PATH", dir.path());
+        let _guard = EnvGuard(old_path);
+
+        assert!(SeSigner::new(&config()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn tamper_flag_blocks_sign_and_verify_before_creating_temp_files() {
         let _lock = crate::test_support::blocking_env_lock();
         let dir = tempfile::tempdir().expect("fake tool directory");

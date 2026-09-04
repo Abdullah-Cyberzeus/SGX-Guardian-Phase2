@@ -607,4 +607,170 @@ mod tests {
         assert!(km.refresh_for_active_dkp().unwrap().is_none());
         fs::remove_file(test_path).unwrap();
     }
+
+    /// The crash-loop fix this function's own comment describes: a key file
+    /// that exists but does not parse must be moved aside and replaced, not
+    /// propagated as an error that takes the daemon down.
+    #[test]
+    fn a_corrupt_key_file_is_quarantined_and_a_fresh_one_generated() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let key_path = dir.path().join("device.key");
+        fs::write(&key_path, b"this is not a pkcs8 document").expect("write corrupt key");
+
+        let km = KeyManager::load_or_generate(key_path.to_str().expect("path"))
+            .expect("a corrupt key must not be fatal");
+        assert!(!km.pubkey_der().expect("pubkey").is_empty());
+
+        // The replacement is usable...
+        let signature = km.sign(b"payload").expect("sign with the regenerated key");
+        KeyManager::verify_signature(
+            b"payload",
+            &signature,
+            &km.runtime_public_key_export().expect("export"),
+        )
+        .expect("the regenerated key verifies its own signature");
+
+        // ...and the bad file was preserved rather than deleted.
+        let quarantined: Vec<_> = fs::read_dir(dir.path())
+            .expect("read dir")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name.contains(".corrupt."))
+            .collect();
+        assert_eq!(quarantined.len(), 1, "expected one quarantined file: {quarantined:?}");
+    }
+
+    #[test]
+    fn a_missing_key_file_is_generated_with_owner_only_permissions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let key_path = dir.path().join("nested").join("device.key");
+
+        let km = KeyManager::load_or_generate(key_path.to_str().expect("path"))
+            .expect("a missing key is generated");
+        assert_eq!(km.key_path(), key_path.to_str().expect("path"));
+        assert!(key_path.exists(), "the parent directory is created as needed");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&key_path).expect("metadata").permissions().mode();
+            assert_eq!(mode & 0o777, 0o600, "the private key must not be group/world readable");
+        }
+    }
+
+    #[test]
+    fn verify_signature_rejects_a_tampered_message_and_a_foreign_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let km = KeyManager::load_or_generate(
+            dir.path().join("a.key").to_str().expect("path"),
+        )
+        .expect("generate");
+        let other = KeyManager::load_or_generate(
+            dir.path().join("b.key").to_str().expect("path"),
+        )
+        .expect("generate");
+
+        let signature = km.sign(b"payload").expect("sign");
+        let public_key = km.runtime_public_key_export().expect("export");
+
+        KeyManager::verify_signature(b"payload", &signature, &public_key).expect("valid signature");
+        assert!(
+            KeyManager::verify_signature(b"tampered", &signature, &public_key).is_err(),
+            "a different message must not verify"
+        );
+        assert!(
+            KeyManager::verify_signature(
+                b"payload",
+                &signature,
+                &other.runtime_public_key_export().expect("export")
+            )
+            .is_err(),
+            "another node's key must not verify this signature"
+        );
+        assert!(
+            KeyManager::verify_signature(b"payload", b"not-a-signature", &public_key).is_err(),
+            "a malformed signature must not verify"
+        );
+    }
+
+    #[test]
+    fn the_software_backend_reports_its_identity_and_dkp_version() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let km = KeyManager::load_or_generate(
+            dir.path().join("device.key").to_str().expect("path"),
+        )
+        .expect("generate");
+
+        assert_eq!(km.backend_name(), "Software");
+        assert_eq!(km.backend_display_name(), "software");
+        assert_eq!(km.dkp_version(), 1, "software identities are always slot 1");
+
+        // Both public-key accessors agree for the software backend.
+        assert_eq!(
+            km.pubkey_der().expect("pubkey_der"),
+            km.runtime_public_key_export().expect("runtime export")
+        );
+    }
+
+    #[test]
+    fn uid_to_bytes_decodes_hex_and_falls_back_to_raw_bytes() {
+        // Even-length hex decodes to its bytes.
+        assert_eq!(uid_to_bytes("0a0b0c"), vec![0x0a, 0x0b, 0x0c]);
+        assert_eq!(uid_to_bytes("  0A0B  "), vec![0x0a, 0x0b]);
+        // Odd length, non-hex, and empty all fall back to the raw characters.
+        assert_eq!(uid_to_bytes("abc"), b"abc".to_vec());
+        assert_eq!(uid_to_bytes("zz"), b"zz".to_vec());
+        assert_eq!(uid_to_bytes(""), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn runtime_device_uid_classifies_its_source_and_falls_back() {
+        // No secure element is present here, so the fallback is what comes
+        // back — and a fallback that looks like a long hex string is still
+        // reported as a fallback only if it is shorter than the ssscli shape.
+        let short = runtime_device_uid("node-a");
+        assert_eq!(short, "node-a");
+
+        let (uid, source, bytes) =
+            runtime_device_uid_details("node-a").expect("a non-empty fallback succeeds");
+        assert_eq!(uid, "node-a");
+        assert_eq!(source, "fallback");
+        assert_eq!(bytes, b"node-a".to_vec());
+
+        // A fallback that is long and fully hexadecimal is indistinguishable
+        // from a real device UID, and is reported as such.
+        let hex_uid = "0123456789abcdef0123";
+        let (uid, source, bytes) =
+            runtime_device_uid_details(hex_uid).expect("hex fallback succeeds");
+        assert_eq!(uid, hex_uid);
+        assert_eq!(source, "ssscli");
+        assert_eq!(bytes, hex::decode(hex_uid).expect("decode"));
+
+        // An empty UID is an error, and `runtime_device_uid` turns that back
+        // into the caller's fallback string.
+        assert!(runtime_device_uid_details("   ").is_err());
+        assert_eq!(runtime_device_uid("   "), "   ");
+    }
+
+    #[test]
+    fn write_private_key_replaces_content_and_restricts_permissions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("secret.bin");
+
+        write_private_key(&path, b"first").expect("first write");
+        assert_eq!(fs::read(&path).expect("read"), b"first");
+
+        write_private_key(&path, b"second").expect("second write");
+        assert_eq!(fs::read(&path).expect("read"), b"second");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&path).expect("metadata").permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+
+        // An unwritable location is surfaced as an error rather than panicking.
+        assert!(write_private_key(dir.path().join("missing").join("x.bin"), b"x").is_err());
+    }
 }

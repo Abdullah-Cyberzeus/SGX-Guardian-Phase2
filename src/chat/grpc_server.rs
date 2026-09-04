@@ -540,3 +540,256 @@ async fn verify_peer_is_trusted(state: &Arc<AppState>, did: &str) -> Result<(), 
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn test_state(td: &TempDir) -> Arc<AppState> {
+        AppState::for_tests(
+            td.path(),
+            "nodeA",
+            td.path().join("config").to_string_lossy().to_string(),
+        )
+    }
+
+    /// Writes the global trusted-peer registry this Guardian reads.
+    fn write_global_registry(state: &AppState, peers: serde_json::Value) {
+        let path = std::path::Path::new(&state.log_dir_primary).join("trusted_peers.json");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("log dir");
+        std::fs::write(&path, serde_json::to_vec(&peers).expect("serialize")).expect("write");
+    }
+
+    /// ...and the per-node one, which is merged in for DIDs the global file
+    /// does not already carry.
+    fn write_per_node_registry(state: &AppState, peers: serde_json::Value) {
+        let path = std::path::Path::new(&state.log_dir_primary)
+            .join(format!("trusted_peers_{}.json", state.node_id));
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("log dir");
+        std::fs::write(&path, serde_json::to_vec(&peers).expect("serialize")).expect("write");
+    }
+
+    #[test]
+    fn attachment_id_from_payload_extracts_only_a_non_empty_string_id() {
+        assert_eq!(
+            attachment_id_from_payload(r#"{"attachment_id":"abc-123"}"#).as_deref(),
+            Some("abc-123")
+        );
+        // Absent, empty, wrong type, and not JSON at all.
+        assert_eq!(attachment_id_from_payload(r#"{"other":"x"}"#), None);
+        assert_eq!(attachment_id_from_payload(r#"{"attachment_id":""}"#), None);
+        assert_eq!(attachment_id_from_payload(r#"{"attachment_id":42}"#), None);
+        assert_eq!(attachment_id_from_payload("plain text"), None);
+        assert_eq!(attachment_id_from_payload(""), None);
+    }
+
+    #[tokio::test]
+    async fn load_trusted_peers_merges_the_per_node_registry_without_duplicating() {
+        let td = TempDir::new().expect("tempdir");
+        let state = test_state(&td);
+
+        // Neither file exists yet.
+        assert!(load_trusted_peers(&state).await.is_empty());
+
+        write_global_registry(
+            &state,
+            serde_json::json!([{"peer_id": "nodeB", "status": "verified", "ip": "127.0.0.1", "did": "did:guardian:b"}]),
+        );
+        write_per_node_registry(
+            &state,
+            serde_json::json!([
+                {"peer_id": "nodeB", "status": "verified", "ip": "127.0.0.9", "did": "did:guardian:b"},
+                {"peer_id": "nodeC", "status": "verified", "ip": "127.0.0.3", "did": "did:guardian:c"},
+                {"peer_id": "nameless", "status": "verified", "ip": "127.0.0.4"}
+            ]),
+        );
+
+        let peers = load_trusted_peers(&state).await;
+        let dids: Vec<&str> = peers
+            .iter()
+            .filter_map(|peer| peer.get("did").and_then(|value| value.as_str()))
+            .collect();
+        assert_eq!(
+            dids,
+            vec!["did:guardian:b", "did:guardian:c"],
+            "the duplicate is skipped and the DID-less entry is not merged"
+        );
+        // The global entry wins for a DID present in both.
+        assert_eq!(
+            peers[0].get("ip").and_then(|value| value.as_str()),
+            Some("127.0.0.1")
+        );
+    }
+
+    #[tokio::test]
+    async fn load_trusted_peers_tolerates_malformed_registry_files() {
+        let td = TempDir::new().expect("tempdir");
+        let state = test_state(&td);
+        let path = std::path::Path::new(&state.log_dir_primary).join("trusted_peers.json");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("log dir");
+        std::fs::write(&path, b"{ not json").expect("write");
+
+        assert!(
+            load_trusted_peers(&state).await.is_empty(),
+            "a corrupt registry reads as empty rather than panicking"
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_peer_is_trusted_accepts_trusted_dids_and_peer_ids_only() {
+        let td = TempDir::new().expect("tempdir");
+        let state = test_state(&td);
+
+        // Nothing in the registry at all.
+        assert!(verify_peer_is_trusted(&state, "did:guardian:b").await.is_err());
+
+        write_global_registry(
+            &state,
+            serde_json::json!([
+                {"peer_id": "nodeB", "status": "verified", "ip": "127.0.0.1", "did": "did:guardian:b"},
+                {"peer_id": "nodeC", "status": "trusted", "ip": "127.0.0.3", "did": "did:guardian:c"},
+                {"peer_id": "nodeD", "status": "unknown", "ip": "127.0.0.4", "did": "did:guardian:d"}
+            ]),
+        );
+
+        // Matched by full DID, and by the bare peer id.
+        verify_peer_is_trusted(&state, "did:guardian:b")
+            .await
+            .expect("a verified peer is trusted");
+        verify_peer_is_trusted(&state, "did:guardian:c")
+            .await
+            .expect("a trusted peer is trusted");
+        verify_peer_is_trusted(&state, "nodeB")
+            .await
+            .expect("the bare peer id also matches");
+
+        // Present but not attested, and absent entirely.
+        assert!(verify_peer_is_trusted(&state, "did:guardian:d").await.is_err());
+        assert!(verify_peer_is_trusted(&state, "did:guardian:z").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn trusted_peer_grpc_addr_resolves_an_address_or_explains_why_not() {
+        let td = TempDir::new().expect("tempdir");
+        let state = test_state(&td);
+
+        // Untrusted sender.
+        let error = trusted_peer_grpc_addr(&state, "did:guardian:b")
+            .await
+            .err()
+            .expect("no registry yet");
+        assert_eq!(error.code(), tonic::Code::PermissionDenied);
+
+        write_global_registry(
+            &state,
+            serde_json::json!([
+                {"peer_id": "nodeB", "status": "verified", "ip": "127.0.0.1", "did": "did:guardian:b"},
+                {"peer_id": "nodeC", "status": "verified", "did": "did:guardian:c"}
+            ]),
+        );
+
+        let addr = trusted_peer_grpc_addr(&state, "did:guardian:b")
+            .await
+            .expect("resolves");
+        assert!(addr.contains("127.0.0.1"), "{addr}");
+
+        // Trusted, but the registry entry carries no overlay address — a
+        // different failure from "not trusted", and reported as such.
+        let error = trusted_peer_grpc_addr(&state, "did:guardian:c")
+            .await
+            .err()
+            .expect("no ip");
+        assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+    }
+
+    #[tokio::test]
+    async fn verify_relayed_actor_allows_a_self_relay_and_blocks_outsiders() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let td = TempDir::new().expect("tempdir");
+        // The Circle registry is process-global; point it at this tempdir so
+        // `load_or_seed` succeeds and yields an empty, Circle-less Guardian
+        // rather than failing with an I/O error.
+        let previous = std::env::var_os("SGX_GUARDIAN_CIRCLE_BASE");
+        std::env::set_var("SGX_GUARDIAN_CIRCLE_BASE", td.path().join("circle-base"));
+        let state = test_state(&td);
+
+        // A peer relaying its own message needs no Circle lookup at all.
+        verify_relayed_actor(&state, "did:guardian:b", "did:guardian:b", None)
+            .expect("a self-relay is always allowed");
+
+        // Relaying on behalf of somebody else requires a shared active Circle.
+        // This Guardian has none, so the relay is refused — fail-closed is the
+        // property that matters here, and the code distinguishes "no shared
+        // Circle" (PermissionDenied) from "the registry could not be read at
+        // all" (Internal). Both are denials; which one appears depends on
+        // whether a Circle store exists for this node.
+        let error = verify_relayed_actor(&state, "did:guardian:b", "did:guardian:x", None)
+            .err()
+            .expect("an unrelated actor must be blocked");
+        assert!(
+            matches!(
+                error.code(),
+                tonic::Code::PermissionDenied | tonic::Code::Internal
+            ),
+            "relay must fail closed, got {:?}: {}",
+            error.code(),
+            error.message()
+        );
+
+        // Naming a specific group that does not exist is refused the same way.
+        let error =
+            verify_relayed_actor(&state, "did:guardian:b", "did:guardian:x", Some("no-such-circle"))
+                .err()
+                .expect("unknown circle");
+        assert!(
+            matches!(
+                error.code(),
+                tonic::Code::PermissionDenied | tonic::Code::Internal
+            ),
+            "naming an unknown Circle must also fail closed, got {:?}",
+            error.code()
+        );
+
+        match previous {
+            Some(value) => std::env::set_var("SGX_GUARDIAN_CIRCLE_BASE", value),
+            None => std::env::remove_var("SGX_GUARDIAN_CIRCLE_BASE"),
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_remote_peer_label_prefers_the_registry_and_falls_back_to_the_did() {
+        let td = TempDir::new().expect("tempdir");
+        let state = test_state(&td);
+
+        // No registry and no Circle: the DID is its own label.
+        assert_eq!(
+            resolve_remote_peer_label(&state, "did:guardian:b", None).await,
+            "did:guardian:b"
+        );
+
+        write_global_registry(
+            &state,
+            serde_json::json!([
+                {"peer_id": "nodeB", "status": "verified", "ip": "127.0.0.1", "did": "did:guardian:b"},
+                {"peer_id": "   ", "status": "verified", "ip": "127.0.0.5", "did": "did:guardian:blank"}
+            ]),
+        );
+
+        assert_eq!(
+            resolve_remote_peer_label(&state, "did:guardian:b", None).await,
+            "nodeB"
+        );
+        // A blank label is not a label.
+        assert_eq!(
+            resolve_remote_peer_label(&state, "did:guardian:blank", None).await,
+            "did:guardian:blank"
+        );
+        // An unknown DID, and a group id that resolves to no Circle members,
+        // both fall through to the DID.
+        assert_eq!(
+            resolve_remote_peer_label(&state, "did:guardian:z", Some("no-such-circle")).await,
+            "did:guardian:z"
+        );
+    }
+}

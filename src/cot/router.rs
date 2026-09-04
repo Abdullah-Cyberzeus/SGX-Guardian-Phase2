@@ -161,6 +161,7 @@ impl CotRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cot::types::PeerEndpoint;
 
     fn make_key(seed: u8) -> Vec<u8> {
         let mut key = vec![0x04];
@@ -202,5 +203,100 @@ mod tests {
         let t = Arc::new(TrustEngine::new(id.clone(), c.clone()));
         let router = CotRouter::new(id, r, s, c, t, None);
         assert!(router.status_summary().await.contains("CoT Router Status"));
+    }
+
+    /// A router whose Circle contains one member, so `send_to_peer` gets past
+    /// the membership gate and into endpoint selection.
+    async fn router_with_member(
+        endpoints: Vec<PeerEndpoint>,
+    ) -> (CotRouter, Arc<CircleMembership>, String) {
+        let owner_key = make_key(0xAA);
+        let owner = DeviceIdentity::from_public_key(&owner_key).expect("owner identity");
+        let peer_key = make_key(0xBB);
+        let peer = DeviceIdentity::from_public_key(&peer_key).expect("peer identity");
+        let peer_id = peer.device_id().to_string();
+
+        let circle = Arc::new(CircleMembership::new(
+            "t".into(),
+            owner.device_id().into(),
+            owner_key,
+        ));
+        circle
+            .add_member(peer_id.clone(), peer_key)
+            .await
+            .expect("add member");
+        for endpoint in endpoints {
+            circle
+                .update_endpoint(&peer_id, endpoint)
+                .await
+                .expect("update endpoint");
+        }
+
+        let registry = Arc::new(TransportRegistry::new());
+        let sessions = Arc::new(SessionManager::new());
+        let trust = Arc::new(TrustEngine::new(owner.clone(), circle.clone()));
+        let router = CotRouter::new(owner, registry, sessions, circle.clone(), trust, None);
+        (router, circle, peer_id)
+    }
+
+    #[tokio::test]
+    async fn send_to_peer_rejects_a_member_with_no_endpoints() {
+        let (router, _circle, peer_id) = router_with_member(Vec::new()).await;
+
+        let error = router
+            .send_to_peer(&peer_id, b"hi".to_vec())
+            .await
+            .err()
+            .expect("a member with no endpoints cannot be reached");
+        assert!(
+            matches!(&error, CotError::PeerNotFound(message) if message.contains("No endpoints")),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_to_peer_fails_when_no_transport_is_registered_for_any_endpoint() {
+        // The peer advertises two endpoints, but the registry is empty, so
+        // every candidate is tried and none can carry the message.
+        let (router, _circle, peer_id) = router_with_member(vec![
+            PeerEndpoint::new("peer".into(), TransportType::Bluetooth, "AA:BB:CC:DD:EE:FF".into()),
+            PeerEndpoint::new("peer".into(), TransportType::Ethernet, "127.0.0.1:1".into()),
+        ])
+        .await;
+
+        assert!(
+            router.send_to_peer(&peer_id, b"hi".to_vec()).await.is_err(),
+            "with no registered transports the send must fail"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_router_exposes_the_components_it_was_built_from() {
+        let (router, circle, _peer_id) = router_with_member(Vec::new()).await;
+
+        assert_eq!(router.circle().circle_id(), circle.circle_id());
+        assert_eq!(router.registry().summary().await, {
+            let empty = TransportRegistry::new();
+            empty.summary().await
+        });
+        assert!(router.sessions().summary().await.contains("Session"));
+        // The owner is a member of its own Circle, so adding one peer makes two.
+        assert_eq!(router.circle().member_count().await, 2);
+        let _ = router.trust_engine();
+    }
+
+    #[tokio::test]
+    async fn status_summary_reports_the_local_identity_and_every_subsystem() {
+        let (router, _circle, _peer_id) = router_with_member(vec![PeerEndpoint::new(
+            "peer".into(),
+            TransportType::Ethernet,
+            "127.0.0.1:1".into(),
+        )])
+        .await;
+
+        let summary = router.status_summary().await;
+        assert!(summary.contains("CoT Router Status"), "{summary}");
+        assert!(summary.contains("Local:"), "{summary}");
+        assert!(summary.contains("Transports:"), "{summary}");
     }
 }

@@ -297,6 +297,8 @@ async fn resolves_from_ca_network() {
 
     let did = Did::from_id_bytes(&[14u8; 32]).to_string();
     let doc = signed_doc(&did, "nodeD", 6, 5);
+    // Held for the rest of the test: this binds the fixed REGISTRY_SYNC_PORT.
+    let _port_guard = crate::test_support::registry_port_lock().await;
     let handle = spawn_mock_resolve_server(did.clone(), doc).await;
 
     let result = resolver("127.0.0.1").resolve(&did).await.expect("resolve");

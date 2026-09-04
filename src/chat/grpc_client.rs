@@ -457,3 +457,24 @@ fn attachment_id_from_payload(payload: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attachment_id_from_payload_extracts_a_present_non_empty_id() {
+        assert_eq!(
+            attachment_id_from_payload(r#"{"attachment_id":"urn-1","text":"hi"}"#),
+            Some("urn-1".to_string())
+        );
+    }
+
+    #[test]
+    fn attachment_id_from_payload_returns_none_when_absent_empty_or_malformed() {
+        assert_eq!(attachment_id_from_payload(r#"{"text":"hi"}"#), None);
+        assert_eq!(attachment_id_from_payload(r#"{"attachment_id":""}"#), None);
+        assert_eq!(attachment_id_from_payload("not json"), None);
+        assert_eq!(attachment_id_from_payload(r#"{"attachment_id":42}"#), None);
+    }
+}

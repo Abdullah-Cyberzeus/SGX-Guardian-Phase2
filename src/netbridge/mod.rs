@@ -686,8 +686,8 @@ impl Drop for DualWifiOrchestrator {
 #[cfg(test)]
 mod tests {
     use super::{
-        hotspot_subnet_cidr, parse_ipv4_octets, select_non_conflicting_dns_settings,
-        shares_subnet_24,
+        get_interface_ipv4, hotspot_subnet_cidr, interface_has_ap_ssid, parse_ipv4_octets,
+        select_non_conflicting_dns_settings, shares_subnet_24,
     };
     use crate::netbridge::types::DnsmasqSettings;
 
@@ -764,5 +764,177 @@ mod tests {
         assert_eq!(updated.gateway_ip, "172.22.0.1");
         assert_eq!(updated.dhcp_range_start, "172.22.0.100");
         assert_eq!(updated.dhcp_range_end, "172.22.0.254");
+    }
+
+    #[tokio::test]
+    async fn get_interface_ipv4_parses_the_real_loopback_interface() {
+        // `lo` and the real `ip` binary are guaranteed present on any Linux
+        // sandbox, and loopback's address is always 127.0.0.1 — this is a
+        // real (unmocked), deterministic call.
+        assert_eq!(
+            get_interface_ipv4("lo").await.as_deref(),
+            Some("127.0.0.1")
+        );
+    }
+
+    #[tokio::test]
+    async fn get_interface_ipv4_returns_none_for_a_nonexistent_interface() {
+        assert!(get_interface_ipv4("no-such-iface-xyz").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn interface_has_ap_ssid_returns_false_when_iw_is_not_installed() {
+        // `iw` is genuinely absent from this sandbox, so this deterministically
+        // exercises the "command failed to spawn" branch.
+        assert!(which::which("iw").is_err(), "this test assumes iw is not installed");
+        assert!(!interface_has_ap_ssid("lo", "any-ssid").await);
+    }
+}
+
+/// Tests for the three orchestrators' lifecycle, driven against the real host.
+///
+/// Every bring-up path in this module begins with the bootstrap validations,
+/// which shell out to `iw`/`hostapd`/`wpa_supplicant` — none of which are
+/// installed here — so `start()` aborts at a known, reproducible stage. That is
+/// exactly the failure the daemon must survive on an unprovisioned board, and
+/// it lets the fail-closed cleanup branches be asserted for real rather than
+/// mocked. `stop()` is deliberately all-ignored-errors, so it runs to
+/// completion on a never-started orchestrator and is asserted to be idempotent.
+#[cfg(test)]
+mod orchestrator_lifecycle_tests {
+    use super::{DualWifiOrchestrator, Netbridge, UplinkOrchestrator};
+    use crate::netbridge::types::{
+        ApSettings, DnsmasqSettings, NetbridgeError, UplinkState, WifiClientSettings,
+    };
+
+    /// A loopback-safe interface name: nothing here can be brought up or down,
+    /// but every command still runs for real and is refused for real.
+    const TEST_IFACE: &str = "sgxtest-nodev0";
+
+    fn ap_settings() -> ApSettings {
+        ApSettings {
+            interface: TEST_IFACE.to_string(),
+            ..ApSettings::default()
+        }
+    }
+
+    fn uplink_settings() -> WifiClientSettings {
+        WifiClientSettings {
+            interface: TEST_IFACE.to_string(),
+            ..WifiClientSettings::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn netbridge_start_aborts_in_the_bootstrap_phase() {
+        let mut netbridge = Netbridge::new(ap_settings(), DnsmasqSettings::default());
+        let error = netbridge
+            .start()
+            .await
+            .expect_err("hostapd bring-up cannot succeed without the wireless toolchain");
+        match error {
+            NetbridgeError::BootstrapFailed(message) => assert!(
+                message.contains("Validation Error"),
+                "the bootstrap failure must carry the underlying validation cause: {message}"
+            ),
+            other => panic!("expected a bootstrap failure, got {other:?}"),
+        }
+        // Nothing was spawned, so no runner is left behind for `stop` to reap.
+        assert!(netbridge.runner.is_none());
+        assert!(netbridge.health_task.is_none());
+    }
+
+    #[tokio::test]
+    async fn netbridge_stop_is_clean_and_idempotent_when_never_started() {
+        let mut netbridge = Netbridge::new(ap_settings(), DnsmasqSettings::default());
+        // No health task, no hostapd runner and no dnsmasq runner: the teardown
+        // walks every step, ignores the refused `ip link set down`, and succeeds.
+        netbridge.stop().await.expect("first stop");
+        netbridge.stop().await.expect("stop must be idempotent");
+    }
+
+    #[tokio::test]
+    async fn uplink_start_aborts_in_the_bootstrap_phase() {
+        let mut uplink = UplinkOrchestrator::new(uplink_settings());
+        let error = uplink
+            .start()
+            .await
+            .expect_err("station-mode bring-up cannot succeed without wpa_supplicant");
+        assert!(
+            matches!(error, NetbridgeError::BootstrapFailed(_)),
+            "expected a bootstrap failure, got {error:?}"
+        );
+        // The monitor task is only spawned after a fully successful bring-up.
+        assert!(uplink.monitor_task.is_none());
+    }
+
+    #[tokio::test]
+    async fn uplink_stop_runs_every_teardown_step_without_a_running_uplink() {
+        let mut uplink = UplinkOrchestrator::new(uplink_settings());
+        // Each step is best-effort: forwarding cannot be disabled unprivileged,
+        // there is no DHCP client to stop and no supplicant to disconnect, and
+        // both `ip` calls are refused. The teardown still reports success.
+        uplink.stop().await.expect("first stop");
+        uplink.stop().await.expect("stop must be idempotent");
+    }
+
+    #[tokio::test]
+    async fn uplink_exposes_its_shared_monitor_and_initial_state() {
+        let uplink = UplinkOrchestrator::new(uplink_settings());
+        // A monitor that has never evaluated health reports `Unknown` — it is
+        // distinct from `Disconnected`, which means a check actually failed.
+        assert_eq!(uplink.current_state().await, UplinkState::Unknown);
+
+        // `get_monitor` hands higher-level orchestrators the *same* monitor, not
+        // a copy — otherwise a reconnect observed by one would be invisible to
+        // the other.
+        let shared = uplink.get_monitor();
+        assert!(std::sync::Arc::ptr_eq(&shared, &uplink.monitor));
+    }
+
+    #[tokio::test]
+    async fn dual_wifi_start_fails_closed_at_the_access_point_stage() {
+        let mut dual = DualWifiOrchestrator::new(
+            ap_settings(),
+            DnsmasqSettings::default(),
+            uplink_settings(),
+        );
+        // The AP is stage 1, so it fails first and the error is surfaced
+        // unchanged after NAT teardown and an uplink stop have both been
+        // attempted — the fail-closed path.
+        let error = dual
+            .start()
+            .await
+            .expect_err("the dual-wifi flow cannot come up without the wireless toolchain");
+        assert!(
+            matches!(error, NetbridgeError::BootstrapFailed(_)),
+            "the AP stage's error must propagate unchanged, got {error:?}"
+        );
+        assert!(dual.nat_task.is_none());
+    }
+
+    #[tokio::test]
+    async fn dual_wifi_stop_tears_down_both_halves_when_never_started() {
+        let mut dual = DualWifiOrchestrator::new(
+            ap_settings(),
+            DnsmasqSettings::default(),
+            uplink_settings(),
+        );
+        dual.stop().await.expect("first stop");
+        dual.stop().await.expect("stop must be idempotent");
+    }
+
+    #[tokio::test]
+    async fn dropping_an_orchestrator_aborts_its_background_task() {
+        // The Drop impls exist to stop the health/NAT/monitor loops leaking past
+        // the orchestrator. With nothing spawned there is no task to abort, but
+        // the impl still has to run without panicking during unwind.
+        drop(Netbridge::new(ap_settings(), DnsmasqSettings::default()));
+        drop(UplinkOrchestrator::new(uplink_settings()));
+        drop(DualWifiOrchestrator::new(
+            ap_settings(),
+            DnsmasqSettings::default(),
+            uplink_settings(),
+        ));
     }
 }

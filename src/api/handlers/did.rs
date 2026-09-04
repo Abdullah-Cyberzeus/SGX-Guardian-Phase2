@@ -808,4 +808,677 @@ mod tests {
         assert!(resp.ok);
         assert!(resp.restart_required);
     }
+
+    fn not_found_io() -> DidError {
+        DidError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "missing"))
+    }
+
+    fn other_io() -> DidError {
+        DidError::Io(std::io::Error::other("disk"))
+    }
+
+    fn bad_json() -> DidError {
+        DidError::Json(serde_json::from_str::<serde_json::Value>("{").unwrap_err())
+    }
+
+    /// The six `DidError` variants that every mapper below funnels into
+    /// `BadRequest`, each carrying its own message through unchanged.
+    fn client_fault_variants() -> Vec<(&'static str, DidError)> {
+        vec![
+            ("InvalidFormat", DidError::InvalidFormat("bad format".into())),
+            ("WrongMethod", DidError::WrongMethod("bad method".into())),
+            ("Base58", DidError::Base58("bad base58".into())),
+            ("UidUnavailable", DidError::UidUnavailable("no uid".into())),
+            ("Signing", DidError::Signing("sign failed".into())),
+            ("DkpPubkeyMissing", DidError::DkpPubkeyMissing("no dkp".into())),
+        ]
+    }
+
+    #[tokio::test]
+    async fn deactivate_requires_explicit_confirmation() {
+        let _lock = TEST_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let _env = EnvGuard::new(
+            dir.path().join("did.json").to_str().expect("did path"),
+            dir.path().join("dkp.pub").to_str().expect("dkp path"),
+        );
+        let state = test_app_state(dir.path());
+
+        let error = deactivate(
+            State(state),
+            Json(DeactivateRequest {
+                reason: Some("oops".into()),
+                confirm: false,
+            }),
+        )
+        .await
+        .err()
+        .expect("deactivation without confirmation is refused");
+        assert!(
+            matches!(&error, ApiError::BadRequest(message) if message.contains("confirm must be true")),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn deactivate_reports_a_missing_did_record() {
+        let _lock = TEST_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let did_path = dir.path().join("did.json");
+        let _env = EnvGuard::new(
+            did_path.to_str().expect("did path"),
+            dir.path().join("dkp.pub").to_str().expect("dkp path"),
+        );
+        let state = test_app_state(dir.path());
+
+        // Confirmed, and with a blank reason so the "manual-admin" default is
+        // taken, but there is no DID record to deactivate.
+        let error = deactivate(
+            State(state),
+            Json(DeactivateRequest {
+                reason: Some("   ".into()),
+                confirm: true,
+            }),
+        )
+        .await
+        .err()
+        .expect("no DID record exists");
+        assert!(
+            matches!(&error, ApiError::NotFound(message)
+                if message.contains(did_path.to_str().expect("did path"))),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_rejects_a_blank_did_query_parameter() {
+        let _lock = TEST_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let _docs = DocEnvGuard::new(dir.path());
+        let state = test_app_state(dir.path());
+
+        let error = resolve(
+            State(state),
+            Query(ResolveQuery {
+                did: Some("   ".to_string()),
+                reject_deactivated: false,
+            }),
+        )
+        .await
+        .err()
+        .expect("a blank did is refused");
+        assert!(
+            matches!(&error, ApiError::BadRequest(message) if message.contains("must not be empty")),
+            "{error:?}"
+        );
+    }
+
+    /// Points the self-document and peer-document locations at a tempdir for
+    /// the duration of a test, restoring whatever was there before.
+    struct DocEnvGuard {
+        self_prev: Option<OsString>,
+        peers_prev: Option<OsString>,
+    }
+
+    impl DocEnvGuard {
+        fn new(dir: &std::path::Path) -> Self {
+            let self_prev = std::env::var_os(doc_persistence::SELF_DOC_PATH_ENV);
+            let peers_prev = std::env::var_os(doc_persistence::PEERS_DOC_DIR_ENV);
+            let peers = dir.join("peers");
+            std::fs::create_dir_all(&peers).expect("peers dir");
+            std::env::set_var(doc_persistence::SELF_DOC_PATH_ENV, dir.join("did_doc.json"));
+            std::env::set_var(doc_persistence::PEERS_DOC_DIR_ENV, &peers);
+            Self { self_prev, peers_prev }
+        }
+    }
+
+    impl Drop for DocEnvGuard {
+        fn drop(&mut self) {
+            restore_env(doc_persistence::SELF_DOC_PATH_ENV, self.self_prev.take());
+            restore_env(doc_persistence::PEERS_DOC_DIR_ENV, self.peers_prev.take());
+        }
+    }
+
+    fn unsigned_doc_json(did: &str, node_name: &str, version: u32) -> serde_json::Value {
+        serde_json::json!({
+            "@context": ["https://www.w3.org/ns/did/v1"],
+            "id": did,
+            "controller": did,
+            "verificationMethod": [{
+                "id": format!("{did}#dkp-v1"),
+                "type": "JsonWebKey2020",
+                "controller": did,
+                "publicKeyJwk": {"kty": "EC", "crv": "P-256", "x": "x", "y": "y", "kid": "dkp-v1"}
+            }],
+            "authentication": [format!("{did}#dkp-v1")],
+            "assertionMethod": [format!("{did}#dkp-v1")],
+            "service": [],
+            "sgx:nodeName": node_name,
+            "sgx:created": "2026-01-01T00:00:00Z",
+            "sgx:updated": "2026-01-02T00:00:00Z",
+            "sgx:versionId": version,
+            "sgx:methodSpecVersion": "1.0"
+        })
+    }
+
+    fn test_app_state(dir: &std::path::Path) -> Arc<AppState> {
+        AppState::for_tests(
+            dir,
+            "nodeA",
+            dir.join("config").to_string_lossy().to_string(),
+        )
+    }
+
+    #[tokio::test]
+    async fn document_publish_validates_its_body_before_touching_the_ca() {
+        let _lock = TEST_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let _docs = DocEnvGuard::new(dir.path());
+        let state = test_app_state(dir.path());
+        let ca_prev = std::env::var_os("SGX_CA_HOST");
+        std::env::set_var("SGX_CA_HOST", "192.168.50.101");
+
+        // An empty body is rejected outright.
+        let error = document_publish(
+            State(state.clone()),
+            axum::http::HeaderMap::new(),
+            Bytes::new(),
+        )
+        .await
+        .err()
+        .expect("an empty body is refused");
+        assert!(
+            matches!(&error, ApiError::BadRequest(message) if message.contains("required")),
+            "{error:?}"
+        );
+
+        // Blank required fields, then a CA host that is not the configured one.
+        for (label, body, expected) in [
+            (
+                "blank ca_host",
+                serde_json::json!({"ca_host": "  ", "node_name": "nodeA"}),
+                "ca_host is required",
+            ),
+            (
+                "blank node_name",
+                serde_json::json!({"ca_host": "192.168.50.101", "node_name": " "}),
+                "node_name is required",
+            ),
+            (
+                "wrong ca_host",
+                serde_json::json!({"ca_host": "10.0.0.9", "node_name": "nodeA"}),
+                "ca_host must be 192.168.50.101",
+            ),
+        ] {
+            let error = document_publish(
+                State(state.clone()),
+                axum::http::HeaderMap::new(),
+                Bytes::from(serde_json::to_vec(&body).expect("serialize")),
+            )
+            .await
+            .err()
+            .unwrap_or_else(|| panic!("{label} must be rejected"));
+            assert!(
+                matches!(&error, ApiError::BadRequest(message) if message.contains(expected)),
+                "{label}: {error:?}"
+            );
+        }
+
+        // Everything valid, but this Guardian has no self document to publish,
+        // so it stops there rather than reaching the CA.
+        let error = document_publish(
+            State(state),
+            axum::http::HeaderMap::new(),
+            Bytes::from(
+                serde_json::to_vec(
+                    &serde_json::json!({"ca_host": "192.168.50.101", "node_name": "nodeA"}),
+                )
+                .expect("serialize"),
+            ),
+        )
+        .await
+        .err()
+        .expect("no self document exists");
+        assert!(matches!(error, ApiError::NotFound(_)), "{error:?}");
+
+        restore_env("SGX_CA_HOST", ca_prev);
+    }
+
+    #[tokio::test]
+    async fn document_verify_reports_an_unsigned_document_as_invalid() {
+        let _lock = TEST_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let _docs = DocEnvGuard::new(dir.path());
+        let state = test_app_state(dir.path());
+
+        // No document on disk at all.
+        let error = document_verify(State(state.clone()), Bytes::new())
+            .await
+            .err()
+            .expect("no document to verify");
+        assert!(matches!(error, ApiError::NotFound(_)), "{error:?}");
+
+        // A syntactically valid but unsigned document loads, then fails the
+        // proof check — the failure the handler is there to report.
+        std::fs::write(
+            dir.path().join("did_doc.json"),
+            serde_json::to_vec(&unsigned_doc_json("did:guardian:selfdoc", "nodeA", 1))
+                .expect("serialize"),
+        )
+        .expect("write self doc");
+        let error = document_verify(State(state.clone()), Bytes::new())
+            .await
+            .err()
+            .expect("an unsigned document cannot verify");
+        assert!(matches!(error, ApiError::BadRequest(_)), "{error:?}");
+
+        // Malformed JSON on disk is a client-visible bad request, not a 500.
+        std::fs::write(dir.path().join("did_doc.json"), b"{").expect("write bad doc");
+        let error = document_verify(State(state), Bytes::new())
+            .await
+            .err()
+            .expect("malformed document");
+        assert!(matches!(error, ApiError::BadRequest(_)), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn document_peers_lists_only_documents_that_verify() {
+        let _lock = TEST_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let _docs = DocEnvGuard::new(dir.path());
+        let state = test_app_state(dir.path());
+
+        // Empty peers directory.
+        let listed = document_peers(State(state.clone()))
+            .await
+            .expect("listing succeeds");
+        assert_eq!(listed.0.count, 0);
+        assert!(listed.0.peers.is_empty());
+
+        // An unsigned peer document is present on disk but must not be listed:
+        // the handler filters on proof verification.
+        let did = "did:guardian:9iwQY8smBVRjQHqDt4kWZ3J4mvzG8DR3dw4HvHcKGhu3";
+        let msi = did::Did::parse(did).expect("parse did").msi().to_string();
+        std::fs::write(
+            dir.path().join("peers").join(format!("did_doc_{msi}.json")),
+            serde_json::to_vec(&unsigned_doc_json(did, "nodeB", 2)).expect("serialize"),
+        )
+        .expect("write peer doc");
+
+        let listed = document_peers(State(state))
+            .await
+            .expect("listing succeeds");
+        assert_eq!(
+            listed.0.count, 0,
+            "an unverifiable peer document must be filtered out, but {} were listed",
+            listed.0.peers.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn document_peer_requires_a_did_and_reports_unknown_peers() {
+        let _lock = TEST_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let _docs = DocEnvGuard::new(dir.path());
+        let state = test_app_state(dir.path());
+
+        for (label, query) in [
+            ("absent", PeerDidQuery { did: None }),
+            (
+                "blank",
+                PeerDidQuery {
+                    did: Some("   ".to_string()),
+                },
+            ),
+        ] {
+            let error = document_peer(State(state.clone()), Query(query))
+                .await
+                .err()
+                .unwrap_or_else(|| panic!("{label} did must be rejected"));
+            assert!(
+                matches!(&error, ApiError::BadRequest(message) if message.contains("did query parameter is required")),
+                "{label}: {error:?}"
+            );
+        }
+
+        // A malformed DID is a query error.
+        let error = document_peer(
+            State(state.clone()),
+            Query(PeerDidQuery {
+                did: Some("not-a-did".to_string()),
+            }),
+        )
+        .await
+        .err()
+        .expect("malformed did");
+        assert!(matches!(error, ApiError::BadRequest(_)), "{error:?}");
+
+        // A well-formed DID with no document on disk.
+        let error = document_peer(
+            State(state),
+            Query(PeerDidQuery {
+                did: Some("did:guardian:9iwQY8smBVRjQHqDt4kWZ3J4mvzG8DR3dw4HvHcKGhu3".to_string()),
+            }),
+        )
+        .await
+        .err()
+        .expect("unknown peer");
+        assert!(
+            matches!(&error, ApiError::NotFound(message) if message.contains("peer did document not found")),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn did_error_separates_missing_records_client_faults_and_internal_faults() {
+        assert!(matches!(
+            did_error(not_found_io(), "/tmp/did.json"),
+            ApiError::NotFound(message) if message.contains("/tmp/did.json")
+        ));
+        for (label, err) in client_fault_variants() {
+            assert!(
+                matches!(did_error(err, "/tmp/did.json"), ApiError::BadRequest(_)),
+                "{label} should be a client fault"
+            );
+        }
+        // A non-NotFound I/O error is ours, not the caller's.
+        assert!(matches!(
+            did_error(other_io(), "/tmp/did.json"),
+            ApiError::Internal(message) if message.contains("disk")
+        ));
+        assert!(matches!(
+            did_error(DidError::DerivationMismatch, "/tmp/did.json"),
+            ApiError::Internal(_)
+        ));
+    }
+
+    #[test]
+    fn did_query_error_always_blames_the_caller() {
+        for (label, err) in client_fault_variants() {
+            assert!(
+                matches!(did_query_error(err), ApiError::BadRequest(_)),
+                "{label}"
+            );
+        }
+        // Even an I/O failure is reported as a bad query here, since the only
+        // input to a query is the caller's DID string.
+        assert!(matches!(did_query_error(other_io()), ApiError::BadRequest(_)));
+    }
+
+    #[test]
+    fn did_resolution_error_distinguishes_unresolvable_from_transport_failure() {
+        assert!(matches!(
+            did_resolution_error(DidError::Unresolvable("did:guardian:nobody".into())),
+            ApiError::NotFound(message) if message.contains("did:guardian:nobody")
+        ));
+        assert!(matches!(
+            did_resolution_error(other_io()),
+            ApiError::Internal(message) if message.contains("did resolve failed")
+        ));
+        assert!(matches!(
+            did_resolution_error(DidError::ResolutionFailed("upstream down".into())),
+            ApiError::Internal(message) if message.contains("upstream down")
+        ));
+        assert!(matches!(
+            did_resolution_error(DidError::Deactivated("2026-01-01".into())),
+            ApiError::BadRequest(message) if message.contains("2026-01-01")
+        ));
+        for (label, err) in client_fault_variants() {
+            assert!(
+                matches!(did_resolution_error(err), ApiError::BadRequest(_)),
+                "{label}"
+            );
+        }
+        assert!(matches!(
+            did_resolution_error(DidError::DerivationMismatch),
+            ApiError::BadRequest(_)
+        ));
+    }
+
+    #[test]
+    fn did_document_load_error_reports_the_path_it_looked_at() {
+        let path = Path::new("/tmp/did_doc.json");
+        assert!(matches!(
+            did_document_load_error(not_found_io(), path),
+            ApiError::NotFound(message) if message.contains("/tmp/did_doc.json")
+        ));
+        assert!(matches!(
+            did_document_load_error(other_io(), path),
+            ApiError::Internal(message)
+                if message.contains("/tmp/did_doc.json") && message.contains("disk")
+        ));
+    }
+
+    #[test]
+    fn did_document_verify_error_maps_missing_malformed_and_invalid_documents() {
+        let path = Path::new("/tmp/did_doc.json");
+        assert!(matches!(
+            did_document_verify_error(not_found_io(), path),
+            ApiError::NotFound(_)
+        ));
+        assert!(matches!(
+            did_document_verify_error(bad_json(), path),
+            ApiError::BadRequest(message) if message.contains("/tmp/did_doc.json")
+        ));
+        for (label, err) in client_fault_variants() {
+            assert!(
+                matches!(did_document_verify_error(err, path), ApiError::BadRequest(_)),
+                "{label}"
+            );
+        }
+        assert!(matches!(
+            did_document_verify_error(DidError::DerivSignatureInvalid, path),
+            ApiError::BadRequest(_)
+        ));
+    }
+
+    #[test]
+    fn did_document_verify_failure_treats_io_as_ours_and_the_rest_as_the_callers() {
+        assert!(matches!(
+            did_document_verify_failure(other_io()),
+            ApiError::Internal(message) if message.contains("verify I/O failed")
+        ));
+        assert!(matches!(
+            did_document_verify_failure(bad_json()),
+            ApiError::BadRequest(_)
+        ));
+        for (label, err) in client_fault_variants() {
+            assert!(
+                matches!(did_document_verify_failure(err), ApiError::BadRequest(_)),
+                "{label}"
+            );
+        }
+        assert!(matches!(
+            did_document_verify_failure(DidError::DerivSignatureInvalid),
+            ApiError::BadRequest(_)
+        ));
+    }
+
+    #[test]
+    fn did_document_publish_error_maps_io_json_and_client_faults() {
+        assert!(matches!(
+            did_document_publish_error(other_io()),
+            ApiError::Internal(message) if message.contains("publish failed")
+        ));
+        assert!(matches!(
+            did_document_publish_error(bad_json()),
+            ApiError::BadRequest(_)
+        ));
+        for (label, err) in client_fault_variants() {
+            assert!(
+                matches!(did_document_publish_error(err), ApiError::BadRequest(_)),
+                "{label}"
+            );
+        }
+        assert!(matches!(
+            did_document_publish_error(DidError::ReplayedOldVersion {
+                incoming: 1,
+                known: 2
+            }),
+            ApiError::BadRequest(message) if message.contains("replay")
+        ));
+    }
+
+    #[test]
+    fn did_document_listing_error_is_always_internal() {
+        assert!(matches!(
+            did_document_listing_error(other_io()),
+            ApiError::Internal(message) if message.contains("listing failed")
+        ));
+        assert!(matches!(
+            did_document_listing_error(DidError::DerivationMismatch),
+            ApiError::Internal(_)
+        ));
+    }
+
+    #[test]
+    fn did_peer_load_error_names_the_expected_peer_document_file() {
+        let did = did::Did::parse("did:guardian:9iwQY8smBVRjQHqDt4kWZ3J4mvzG8DR3dw4HvHcKGhu3")
+            .expect("parse did");
+        let error = did_peer_load_error(not_found_io(), &did);
+        assert!(
+            matches!(&error, ApiError::NotFound(message) if message.contains(&format!("did_doc_{}.json", did.msi()))),
+            "{error:?}"
+        );
+        assert!(matches!(
+            did_peer_load_error(other_io(), &did),
+            ApiError::Internal(message) if message.contains("peer did document load failed")
+        ));
+    }
+
+    #[test]
+    fn parse_optional_json_body_defaults_on_an_empty_body() {
+        #[derive(Debug, Default, PartialEq, serde::Deserialize)]
+        struct Body {
+            value: u32,
+        }
+
+        assert_eq!(
+            parse_optional_json_body::<Body>(&Bytes::new()).expect("empty body defaults"),
+            Body::default()
+        );
+        assert_eq!(
+            parse_optional_json_body::<Body>(&Bytes::from_static(b"{\"value\":7}"))
+                .expect("valid body"),
+            Body { value: 7 }
+        );
+        assert!(matches!(
+            parse_optional_json_body::<Body>(&Bytes::from_static(b"{")),
+            Err(ApiError::BadRequest(message)) if message.contains("invalid JSON body")
+        ));
+    }
+
+    #[test]
+    fn parse_required_json_body_rejects_an_empty_body() {
+        #[derive(Debug, PartialEq, serde::Deserialize)]
+        struct Body {
+            value: u32,
+        }
+
+        assert!(matches!(
+            parse_required_json_body::<Body>(&Bytes::new()),
+            Err(ApiError::BadRequest(message)) if message.contains("required")
+        ));
+        assert_eq!(
+            parse_required_json_body::<Body>(&Bytes::from_static(b"{\"value\":7}"))
+                .expect("valid body"),
+            Body { value: 7 }
+        );
+        assert!(matches!(
+            parse_required_json_body::<Body>(&Bytes::from_static(b"nonsense")),
+            Err(ApiError::BadRequest(_))
+        ));
+    }
+
+    #[test]
+    fn required_nonempty_field_trims_and_rejects_blanks() {
+        assert_eq!(
+            required_nonempty_field("  value  ", "field").expect("present"),
+            "value"
+        );
+        for blank in ["", "   ", "\t\n"] {
+            assert!(matches!(
+                required_nonempty_field(blank, "nodeName"),
+                Err(ApiError::BadRequest(message)) if message.contains("nodeName is required")
+            ));
+        }
+    }
+
+    #[test]
+    fn summarize_document_projects_counts_and_defaults() {
+        // Built from JSON so the summary is exercised against the same shape
+        // the handlers actually deserialize.
+        let doc: DidDocument = serde_json::from_value(serde_json::json!({
+            "@context": ["https://www.w3.org/ns/did/v1"],
+            "id": "did:guardian:abc",
+            "controller": "did:guardian:abc",
+            "verificationMethod": [
+                {
+                    "id": "did:guardian:abc#dkp-v1",
+                    "type": "JsonWebKey2020",
+                    "controller": "did:guardian:abc",
+                    "publicKeyJwk": {"kty": "EC", "crv": "P-256", "x": "x", "y": "y", "kid": "dkp-v1"}
+                }
+            ],
+            "authentication": ["did:guardian:abc#dkp-v1"],
+            "assertionMethod": ["did:guardian:abc#dkp-v1"],
+            "service": [
+                {"id": "did:guardian:abc#mesh", "type": "SGXNebulaMesh", "serviceEndpoint": "nebula://192.168.100.1"}
+            ],
+            "sgx:created": "2026-01-01T00:00:00Z",
+            "sgx:updated": "2026-01-02T00:00:00Z",
+            "sgx:versionId": 4,
+            "sgx:methodSpecVersion": "1.0"
+        }))
+        .expect("deserialize did document");
+
+        let summary = summarize_document(&doc);
+        assert_eq!(summary.did, "did:guardian:abc");
+        assert_eq!(summary.controller, "did:guardian:abc");
+        assert_eq!(summary.version, 4);
+        assert_eq!(summary.active_vms, 1);
+        assert_eq!(summary.revoked_vms, 0);
+        assert_eq!(summary.services, 1);
+        // Absent optional fields fall back rather than failing.
+        assert_eq!(summary.node_name, "", "no sgx:nodeName was present");
+        assert_eq!(summary.status, "active", "absent status defaults to active");
+        assert_eq!(summary.proof_vm, "", "an unsigned document has no proof vm");
+    }
+
+    #[tokio::test]
+    async fn verify_request_path_defaults_to_the_configured_self_document() {
+        let _lock = TEST_ENV_LOCK.lock().await;
+        let resolved = verify_request_path(None).expect("default path");
+        assert_eq!(resolved, doc_persistence::configured_self_doc_path());
+    }
+
+    /// The path-traversal guard: an explicit path must resolve inside one of
+    /// the configured DID document directories.
+    #[tokio::test]
+    async fn verify_request_path_rejects_blank_missing_and_out_of_tree_paths() {
+        let _lock = TEST_ENV_LOCK.lock().await;
+
+        assert!(matches!(
+            verify_request_path(Some("   ".to_string())),
+            Err(ApiError::BadRequest(message)) if message.contains("must not be empty")
+        ));
+
+        // A path that cannot be canonicalized at all (it does not exist).
+        assert!(matches!(
+            verify_request_path(Some("/nonexistent/definitely/not/here.json".to_string())),
+            Err(ApiError::BadRequest(message)) if message.contains("invalid path")
+        ));
+
+        // A real file that exists but lives outside the allowed roots — this
+        // is the traversal the guard is there to stop.
+        let outside = tempfile::NamedTempFile::new().expect("tempfile");
+        let error = verify_request_path(Some(outside.path().display().to_string()))
+            .err()
+            .expect("a file outside the DID directories must be refused");
+        assert!(
+            matches!(&error, ApiError::BadRequest(message)
+                if message.contains("configured DID document directories")),
+            "{error:?}"
+        );
+    }
 }

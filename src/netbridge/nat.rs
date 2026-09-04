@@ -378,3 +378,116 @@ mod tests {
         assert!(!default_nat.is_enabled());
     }
 }
+
+/// Tests for the live NAT bring-up path.
+///
+/// `enable_nat`/`disable_nat` end in `enforcement::apply_policy`, which drives
+/// `nft` — not installed here — so both fail deterministically at that final
+/// step. Everything before it (subnet discovery from a real interface, the
+/// uplink fan-out, the full dynamic rule set, and the merge with the signed
+/// policy) runs for real, which is the part with actual decision logic in it.
+#[cfg(test)]
+mod live_nat_tests {
+    use super::{interface_network_cidr, NatManager};
+    use std::sync::atomic::Ordering;
+
+    const MISSING_IFACE: &str = "sgxtest-nodev0";
+
+    fn nft_installed() -> bool {
+        std::process::Command::new("nft").arg("--version").output().is_ok()
+    }
+
+    #[test]
+    fn interface_network_cidr_derives_the_subnet_from_a_real_interface() {
+        assert_eq!(interface_network_cidr("lo").unwrap(), "127.0.0.0/8");
+    }
+
+    #[test]
+    fn interface_network_cidr_reports_an_absent_interface() {
+        // `ip` exits non-zero for a device that does not exist, so this is the
+        // "command ran but failed" branch rather than the spawn-failure branch.
+        let error = interface_network_cidr(MISSING_IFACE)
+            .expect_err("a missing interface has no subnet");
+        assert!(
+            error.to_string().contains(MISSING_IFACE),
+            "the error must name the interface: {error}"
+        );
+    }
+
+    #[test]
+    fn enable_nat_rejects_an_interface_without_a_subnet() {
+        let manager = NatManager::new();
+        let error = manager
+            .enable_nat(MISSING_IFACE, "wlan0", false)
+            .expect_err("NAT needs the hotspot subnet before it can build any rule");
+        assert!(error.to_string().contains(MISSING_IFACE));
+        assert!(!manager.is_enabled(), "a failed enable must not flip the flag");
+    }
+
+    #[test]
+    fn enable_nat_builds_the_full_rule_set_then_fails_at_the_enforcement_engine() {
+        if nft_installed() {
+            return; // a host with nftables would apply real firewall rules
+        }
+        let manager = NatManager::new();
+        // `lo` yields 127.0.0.0/8, so the uplink fan-out (wlan0 -> wlan1, eth0)
+        // and every masquerade/forward/isolation rule is constructed and merged
+        // with the signed policy before `nft` is reached and refuses.
+        let error = manager
+            .enable_nat("lo", "wlan0", true)
+            .expect_err("nftables is not installed, so the policy cannot be applied");
+        assert!(
+            error.to_string().starts_with("Failed to enable NAT"),
+            "unexpected failure: {error}"
+        );
+        assert!(
+            !manager.is_enabled(),
+            "the enabled flag is only set after the policy actually applies"
+        );
+
+        // The sibling-uplink branch flips when the caller passes wlan1 instead,
+        // producing a different fan-out through the same code path.
+        assert!(manager.enable_nat("lo", "wlan1", false).is_err());
+    }
+
+    #[test]
+    fn disable_nat_clears_the_flag_by_removing_the_policy_outright() {
+        let manager = NatManager::new();
+        manager.is_enabled.store(true, Ordering::SeqCst);
+        // With no signed policy cached, disabling takes the `remove_policy`
+        // branch rather than reapplying one. Unlike `apply_policy`, removal
+        // succeeds with no enforcement backend present — there is nothing to
+        // tear down — so this is the success path, and the flag must clear.
+        manager
+            .disable_nat()
+            .expect("removing an absent policy must succeed");
+        assert!(!manager.is_enabled());
+
+        // Idempotent: disabling an already-disabled manager is still fine.
+        manager.disable_nat().expect("disable must be idempotent");
+        assert!(!manager.is_enabled());
+    }
+
+    #[test]
+    fn kernel_rules_active_is_false_when_the_tables_cannot_be_read() {
+        if nft_installed() {
+            return;
+        }
+        let manager = NatManager::new();
+        // The flag is the first gate: an un-enabled manager never shells out.
+        assert!(!manager.kernel_rules_active("lo", "wlan0"));
+
+        // Force the flag on to get past it. `lo` resolves a subnet, so both
+        // `nft list chain` calls run — and fail to spawn, which the function
+        // must read as "the kernel rules are not in place" rather than trusting
+        // the in-memory flag.
+        manager.is_enabled.store(true, Ordering::SeqCst);
+        assert!(!manager.kernel_rules_active("lo", "wlan0"));
+        assert!(manager.is_enabled(), "the check must not clear the flag");
+
+        // An interface with no subnet fails the second gate, before any `nft`.
+        assert!(!manager.kernel_rules_active(MISSING_IFACE, "wlan0"));
+
+        manager.is_enabled.store(false, Ordering::SeqCst);
+    }
+}

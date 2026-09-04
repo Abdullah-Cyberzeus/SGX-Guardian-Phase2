@@ -1299,6 +1299,34 @@ mod unit_tests {
 
     // --- terminate_sessions_for_did ------------------------------------------
 
+    // --- listener_task ---------------------------------------------------
+
+    #[tokio::test]
+    async fn listener_task_logs_and_returns_when_the_bind_port_is_already_taken() {
+        let _lock = crate::test_support::async_env_lock().await;
+        // Occupy a real ephemeral UDP port first so the listener's own bind
+        // to that exact port fails deterministically (EADDRINUSE).
+        let holder = UdpSocket::bind("0.0.0.0:0").await.expect("bind holder");
+        let port = holder.local_addr().expect("local addr").port();
+
+        let config = test_gossip_config(port, 1);
+        let resolver = Resolver::new(ResolverConfig::default());
+
+        // listener_task returns immediately on a bind failure rather than
+        // looping forever, so awaiting it directly (bounded by a timeout as
+        // a safety net) proves the bind-failure branch fired.
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            listener_task("listener-bind-fail".to_string(), resolver, config),
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "listener_task must return promptly on a bind failure, not hang"
+        );
+        drop(holder);
+    }
+
     #[tokio::test]
     async fn terminate_sessions_for_did_returns_zero_without_global_session_manager() {
         // No global SessionManager has been installed in this test binary

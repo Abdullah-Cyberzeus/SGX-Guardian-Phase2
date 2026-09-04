@@ -76,6 +76,20 @@ mod tests {
     }
 
     #[test]
+    fn ensure_uid_fails_when_the_state_directory_cannot_be_created() {
+        // Forcing past the device-presence check reaches `create_dir_all` on the hardcoded,
+        // non-overridable `/var/lib/sgx-guardian/keys`, which genuinely can't be created
+        // without root in this sandbox — a real, deterministic Io error.
+        let cfg = TpmConfig {
+            device: "/definitely/missing/tpm-ek-2".into(),
+            tcti: "device:/definitely/missing/tpm-ek-2".into(),
+            explicit_backend: true,
+            ..TpmConfig::default()
+        };
+        assert!(ensure_uid(&cfg).is_err());
+    }
+
+    #[test]
     fn uid_helpers_reject_missing_implicit_device_before_filesystem_access() {
         let cfg = unavailable_config();
         assert!(matches!(ensure_uid(&cfg), Err(TpmError::NotAvailable(_))));

@@ -624,4 +624,284 @@ mod tests {
         assert_eq!(r.primary().map(|p| p.node_name.as_str()), Some("nodeB"));
         assert!(!r.set_primary_lighthouse("nodeB"));
     }
+
+    #[test]
+    fn host_from_endpoint_strips_the_port_and_rejects_hostless_input() {
+        assert_eq!(host_from_endpoint("192.168.1.5:4242").as_deref(), Some("192.168.1.5"));
+        // IPv6-ish endpoints split on the *last* colon, so the bracketed host survives.
+        assert_eq!(host_from_endpoint("[fd00::1]:4242").as_deref(), Some("[fd00::1]"));
+        assert_eq!(host_from_endpoint("host.example:1"). as_deref(), Some("host.example"));
+        // No colon at all, and a colon with nothing before it.
+        assert_eq!(host_from_endpoint("no-port"), None);
+        assert_eq!(host_from_endpoint(":4242"), None);
+    }
+
+    #[test]
+    fn default_true_is_the_serde_default_for_active_entries() {
+        assert!(default_true());
+    }
+
+    #[test]
+    fn upsert_node_inserts_then_updates_in_place_and_demotes_a_former_primary() {
+        let mut registry =
+            LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "10.0.0.1:4242");
+
+        // A brand-new node is appended, active, and never primary.
+        registry.upsert_node("nodeB", "192.168.100.2", "10.0.0.2:4242", true, false);
+        let entry = registry
+            .lighthouses
+            .iter()
+            .find(|l| l.node_name == "nodeB")
+            .expect("nodeB inserted");
+        assert!(entry.is_active);
+        assert!(entry.is_lighthouse);
+        assert!(!entry.am_relay);
+        assert!(!entry.is_primary);
+
+        // Upserting the same name updates in place rather than duplicating.
+        registry.upsert_node("nodeB", "192.168.100.9", "10.0.0.9:4242", true, true);
+        assert_eq!(
+            registry.lighthouses.iter().filter(|l| l.node_name == "nodeB").count(),
+            1
+        );
+        let entry = registry
+            .lighthouses
+            .iter()
+            .find(|l| l.node_name == "nodeB")
+            .expect("nodeB present");
+        assert_eq!(entry.overlay_ip, "192.168.100.9");
+        assert_eq!(entry.physical_endpoint, "10.0.0.9:4242");
+        assert!(entry.am_relay);
+
+        // Demoting the owner out of the lighthouse role also clears its
+        // primary flag — a non-lighthouse can never remain primary.
+        assert!(registry.primary().is_some());
+        registry.upsert_node("nodeA", "192.168.100.1", "10.0.0.1:4242", false, false);
+        let owner = registry
+            .lighthouses
+            .iter()
+            .find(|l| l.node_name == "nodeA")
+            .expect("nodeA present");
+        assert!(!owner.is_primary, "a demoted node must not stay primary");
+    }
+
+    #[test]
+    fn relay_role_queries_report_membership_and_unknown_nodes() {
+        let mut registry =
+            LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "10.0.0.1:4242");
+        registry.upsert_node("nodeB", "192.168.100.2", "10.0.0.2:4242", false, true);
+
+        // `new` makes the owner a relay as well as the primary lighthouse.
+        assert_eq!(registry.relay_role_for("nodeA"), Some(true));
+        assert_eq!(registry.relay_role_for("nodeB"), Some(true));
+        assert_eq!(registry.relay_role_for("nodeZ"), None, "unknown nodes have no role");
+
+        assert!(registry.is_relay("nodeB"));
+        assert!(registry.is_relay("nodeA"));
+        assert!(!registry.is_relay("nodeZ"));
+        assert_eq!(registry.active_relays().len(), 2);
+
+        // Setting the role is reported as applied only for a known node.
+        assert!(registry.set_relay_role("nodeA", false));
+        assert!(!registry.set_relay_role("nodeZ", true));
+        assert_eq!(registry.relay_role_for("nodeA"), Some(false));
+        let relays = registry.active_relays();
+        assert_eq!(relays.len(), 1);
+        assert_eq!(relays[0].node_name, "nodeB");
+
+        // An inactive relay drops out of the active listing but keeps its role.
+        registry.mark_inactive("nodeB");
+        assert_eq!(registry.active_relays().len(), 0);
+        assert_eq!(registry.relay_role_for("nodeB"), Some(true));
+    }
+
+    #[test]
+    fn mark_active_on_interaction_revives_a_known_node_and_ignores_others() {
+        let mut registry =
+            LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "10.0.0.1:4242");
+        registry.upsert_node("nodeB", "192.168.100.2", "10.0.0.2:4242", true, false);
+        registry.mark_inactive("nodeB");
+        assert!(!registry.active().iter().any(|l| l.node_name == "nodeB"));
+
+        registry.mark_active_on_interaction("nodeB");
+        assert!(registry.active().iter().any(|l| l.node_name == "nodeB"));
+
+        // An unknown name is a silent no-op rather than an insertion.
+        let before = registry.lighthouses.len();
+        registry.mark_active_on_interaction("nodeZ");
+        assert_eq!(registry.lighthouses.len(), before);
+    }
+
+    #[test]
+    fn load_or_create_reuses_an_existing_registry_and_falls_back_otherwise() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("lighthouse_registry.json");
+        let path_str = path.to_str().expect("path");
+
+        // Nothing on disk: a fresh registry is created for the owner.
+        let created =
+            LighthouseRegistry::load_or_create(path_str, "alpha", "nodeA", "192.168.100.1", "10.0.0.1:4242");
+        assert_eq!(created.primary().expect("primary").node_name, "nodeA");
+
+        // Persisted and reloaded: the saved entries win over the arguments.
+        let mut saved = created;
+        saved.upsert_node("nodeB", "192.168.100.2", "10.0.0.2:4242", true, false);
+        saved.save(path_str).expect("save");
+        let loaded =
+            LighthouseRegistry::load_or_create(path_str, "beta", "nodeZ", "192.168.100.9", "10.0.0.9:4242");
+        assert_eq!(loaded.lighthouses.len(), 2, "the saved registry is reused");
+        assert!(loaded.lighthouses.iter().any(|l| l.node_name == "nodeB"));
+
+        // A corrupt file falls back to creating a fresh registry rather than
+        // failing — the daemon must still come up.
+        std::fs::write(&path, b"{ not json").expect("corrupt the registry");
+        let recovered =
+            LighthouseRegistry::load_or_create(path_str, "alpha", "nodeA", "192.168.100.1", "10.0.0.1:4242");
+        assert_eq!(recovered.lighthouses.len(), 1);
+        assert_eq!(recovered.primary().expect("primary").node_name, "nodeA");
+    }
+
+    #[test]
+    fn load_reports_missing_and_malformed_registry_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("absent.json");
+        assert!(LighthouseRegistry::load(missing.to_str().expect("path")).is_err());
+
+        let malformed = dir.path().join("bad.json");
+        std::fs::write(&malformed, b"{").expect("write");
+        assert!(LighthouseRegistry::load(malformed.to_str().expect("path")).is_err());
+    }
+
+    #[tokio::test]
+    async fn health_check_all_marks_reachable_nodes_active_and_unreachable_ones_inactive() {
+        // A real loopback listener stands in for a reachable peer; the probe
+        // order is overlay -> LAN host -> direct endpoint, and the direct
+        // endpoint is the one that can be pointed at a live socket here.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind reachable peer");
+        let reachable = listener.local_addr().expect("addr").to_string();
+        let accept = tokio::spawn(async move {
+            // Accept a bounded number of probes so the task always finishes.
+            for _ in 0..8 {
+                if listener.accept().await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        let mut registry =
+            LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "10.0.0.1:4242");
+        // Reachable: no overlay IP, so the direct endpoint probe is what runs.
+        registry.upsert_node("nodeB", "", &reachable, true, false);
+        // Unreachable: port 1 is reserved and never listening.
+        registry.upsert_node("nodeC", "", "127.0.0.1:1", true, false);
+        // No endpoint at all: explicitly skipped rather than marked inactive.
+        registry.upsert_node("nodeD", "", "", true, false);
+        // Not a lighthouse or relay: never probed.
+        registry.upsert_node("nodeE", "", "127.0.0.1:1", false, false);
+
+        registry.health_check_all(1, "nodeA").await;
+
+        let state_of = |name: &str| {
+            registry
+                .lighthouses
+                .iter()
+                .find(|l| l.node_name == name)
+                .map(|l| l.is_active)
+                .expect("node present")
+        };
+        assert!(state_of("nodeA"), "the local node is always active");
+        assert!(state_of("nodeB"), "a reachable peer stays active");
+        assert!(!state_of("nodeC"), "an unreachable peer is marked inactive");
+        assert!(state_of("nodeD"), "an endpoint-less node is skipped, not demoted");
+        assert!(state_of("nodeE"), "a plain member node is not probed");
+
+        accept.abort();
+    }
+
+    #[tokio::test]
+    async fn health_check_all_reconciles_the_primary_when_it_goes_unreachable() {
+        let mut registry =
+            LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "127.0.0.1:1");
+        registry.upsert_node("nodeB", "", "127.0.0.1:1", true, false);
+
+        // Probed from a different node's perspective, so the owner is not
+        // auto-marked active and its endpoint (a dead port) decides.
+        registry.health_check_all(1, "nodeZ").await;
+
+        assert!(
+            registry.active().is_empty(),
+            "every lighthouse was unreachable"
+        );
+    }
+
+    #[test]
+    fn add_lighthouse_and_add_relay_register_their_respective_roles() {
+        let mut registry =
+            LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "10.0.0.1:4242");
+
+        // `add_lighthouse` delegates to `add_secondary`, which grants both
+        // roles — a secondary lighthouse also relays.
+        registry.add_lighthouse("nodeB", "192.168.100.2", "10.0.0.2:4242");
+        assert!(registry.is_lighthouse("nodeB"));
+        assert!(registry.is_relay("nodeB"));
+
+        // `add_relay` grants only the relay role to a new node.
+        registry.add_relay("nodeC", "192.168.100.3", "10.0.0.3:4242");
+        assert!(registry.is_relay("nodeC"));
+        assert!(!registry.is_lighthouse("nodeC"));
+
+        // Promoting an existing relay-only node to a lighthouse keeps both.
+        registry.add_lighthouse("nodeC", "192.168.100.3", "10.0.0.3:4242");
+        assert!(registry.is_lighthouse("nodeC"));
+        assert!(registry.is_relay("nodeC"));
+
+        // Neither inserts a duplicate when called again for the same node.
+        registry.add_lighthouse("nodeB", "192.168.100.9", "10.0.0.9:4242");
+        assert_eq!(
+            registry.lighthouses.iter().filter(|l| l.node_name == "nodeB").count(),
+            1
+        );
+    }
+
+    #[test]
+    fn add_secondary_ignores_a_node_that_is_already_registered() {
+        let mut registry =
+            LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "10.0.0.1:4242");
+        registry.add_secondary("nodeB", "192.168.100.2", "10.0.0.2:4242");
+        let before = registry.lighthouses.len();
+
+        registry.add_secondary("nodeB", "192.168.100.9", "10.0.0.9:4242");
+        assert_eq!(registry.lighthouses.len(), before, "no duplicate is appended");
+        // The original entry is left untouched.
+        let entry = registry
+            .lighthouses
+            .iter()
+            .find(|l| l.node_name == "nodeB")
+            .expect("nodeB");
+        assert_eq!(entry.overlay_ip, "192.168.100.2");
+    }
+
+    #[test]
+    fn upsert_endpoint_only_inserts_a_plain_member_and_reports_whether_it_changed() {
+        let mut registry =
+            LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "10.0.0.1:4242");
+
+        // A new node is inserted with no roles, and the insert counts as a change.
+        assert!(registry.upsert_endpoint_only("nodeB", "192.168.100.2", "10.0.0.2:4242"));
+        let entry = registry
+            .lighthouses
+            .iter()
+            .find(|l| l.node_name == "nodeB")
+            .expect("nodeB inserted");
+        assert!(!entry.is_lighthouse);
+        assert!(!entry.am_relay);
+        assert!(entry.is_active);
+
+        // Re-applying identical values is not a change...
+        assert!(!registry.upsert_endpoint_only("nodeB", "192.168.100.2", "10.0.0.2:4242"));
+        // ...but a different address is.
+        assert!(registry.upsert_endpoint_only("nodeB", "192.168.100.9", "10.0.0.2:4242"));
+    }
 }

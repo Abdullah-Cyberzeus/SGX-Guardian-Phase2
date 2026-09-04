@@ -2208,6 +2208,64 @@ mod tests {
     use super::*;
 
     #[test]
+    fn push_container_host_port_ignores_unknown_nodes() {
+        let mut endpoints = Vec::new();
+        push_container_host_port(&mut endpoints, "nodeZ");
+        assert!(endpoints.is_empty());
+    }
+
+    #[test]
+    fn push_container_host_port_adds_overlay_and_host_endpoints_per_node() {
+        for (node, overlay, default_port) in [
+            ("nodeA", "http://172.31.250.10:8443", "18443"),
+            ("nodeB", "http://172.31.250.11:8443", "28443"),
+            ("nodeC", "http://172.31.250.12:8443", "38443"),
+        ] {
+            let mut endpoints = Vec::new();
+            push_container_host_port(&mut endpoints, node);
+            assert_eq!(endpoints.first().map(String::as_str), Some(overlay));
+            assert!(
+                endpoints
+                    .iter()
+                    .any(|endpoint| endpoint == &format!("http://127.0.0.1:{default_port}")),
+                "{node} should fall back to the loopback host: {endpoints:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn container_endpoint_fallbacks_maps_overlay_addresses_to_container_names() {
+        let fallbacks = container_endpoint_fallbacks("https://192.168.100.2:8443/api/v1/x");
+        assert_eq!(
+            fallbacks.first().map(String::as_str),
+            Some("http://sgx-nodeB:8443")
+        );
+        assert!(fallbacks.len() > 1, "{fallbacks:?}");
+    }
+
+    #[test]
+    fn container_endpoint_fallbacks_returns_nothing_for_non_overlay_or_unmapped_hosts() {
+        // Not in the overlay range at all.
+        assert!(container_endpoint_fallbacks("http://example.test:8443").is_empty());
+        // Overlay range, but not one of the three mapped node addresses.
+        assert!(container_endpoint_fallbacks("http://192.168.100.42:8443").is_empty());
+        // Overlay-looking prefix with a non-numeric final octet.
+        assert!(container_endpoint_fallbacks("http://192.168.100.abc:8443").is_empty());
+    }
+
+    #[test]
+    fn container_host_candidates_always_ends_with_the_built_in_defaults() {
+        let hosts = container_host_candidates();
+        assert!(hosts.contains(&"host.docker.internal".to_string()), "{hosts:?}");
+        assert!(hosts.contains(&"127.0.0.1".to_string()), "{hosts:?}");
+        // Deduplicated.
+        let mut sorted = hosts.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), hosts.len(), "{hosts:?}");
+    }
+
+    #[test]
     fn required_name_accepts_valid_names() {
         assert_eq!(required_name(Some("Family Circle")).unwrap(), "Family Circle");
         assert_eq!(required_name(Some("  Trusted Group  ")).unwrap(), "Trusted Group");

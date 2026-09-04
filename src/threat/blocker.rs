@@ -1021,6 +1021,12 @@ mod tests {
     async fn block_ip_for_rule_respects_config_exempt() {
         let _guard = async_env_lock().await;
         let _nft_mock = ScopedEnvStrVar::set("SGX_THREAT_MOCK_NFT", "1");
+        // `MOCK_NFT_CALLS` is a process-global buffer that every mocked test
+        // appends to, and several of them never drain it. Establish a clean
+        // baseline first — same convention as the other tests here — so the
+        // assertion below measures what *this* call did rather than whatever
+        // ran earlier in the binary.
+        let _ = take_mock_nft_calls();
         let td = tempdir().expect("tempdir");
 
         let cfg = SuricataConfig {
@@ -1039,7 +1045,10 @@ mod tests {
             .expect("block_ip_for_rule");
         assert!(!result.blocked);
         assert!(result.reason.unwrap().contains("block_exempt"));
-        assert!(take_mock_nft_calls().is_empty());
+        assert!(
+            take_mock_nft_calls().is_empty(),
+            "an exempt address must not reach nft at all"
+        );
     }
 
     #[tokio::test]

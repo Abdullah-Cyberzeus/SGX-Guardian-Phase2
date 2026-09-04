@@ -20,3 +20,39 @@ pub async fn start_daemon() -> (Router, Arc<RuntimeManager>) {
 
     (build_wifi_router(manager.clone(), event_bus), manager)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `start_daemon` wires the event bus, state machine, runtime manager and
+    /// router together and kicks off saved-state restoration in the background.
+    /// The spawned task swallows its own errors (there is no saved state here,
+    /// and no wireless hardware to apply it to), so the function is safe to
+    /// call directly and the assertion is on what it hands back.
+    #[tokio::test]
+    async fn start_daemon_returns_a_wired_router_and_manager() {
+        let (router, manager) = start_daemon().await;
+
+        // The manager is live: `stop_all` is safe with nothing running and
+        // proves the supervisor was constructed rather than left uninitialised.
+        manager.stop_all().await;
+
+        // The router it returns is the wifi router: dispatching an unknown
+        // path yields 404 rather than panicking, which proves it was built.
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/definitely-not-a-route")
+                    .body(Body::empty())
+                    .expect("build request"),
+            )
+            .await
+            .expect("router responds");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+}

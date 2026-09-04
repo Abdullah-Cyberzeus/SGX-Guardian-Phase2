@@ -954,6 +954,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stop_unsafe_suricata_wifi_capture_is_a_safe_noop_when_nothing_uses_wifi() {
+        // Neither /etc/suricata/suricata.yaml nor a real "suricata" systemd
+        // unit exist in this sandbox, so both heuristics deterministically
+        // report "no wifi capture configured" and the function returns
+        // without ever reaching its real `systemctl stop` branch.
+        RuntimeManager::stop_unsafe_suricata_wifi_capture().await;
+    }
+
+    #[tokio::test]
+    async fn perform_system_cleanup_safely_no_ops_against_nonexistent_interfaces() {
+        let manager = new_manager();
+        let mut config = GuardianConfig::default();
+        config.hotspot.interface = "zzz-fake-hotspot-iface".to_string();
+        config.uplink.interface = "zzz-fake-uplink-iface".to_string();
+
+        // Real `ip`/`iw` invocations against interfaces that don't exist
+        // fail harmlessly (their output is discarded); this just confirms
+        // the cleanup pass completes without panicking.
+        manager
+            .perform_system_cleanup(&RuntimeMode::DualWifi, &config)
+            .await;
+    }
+
+    #[tokio::test]
     async fn apply_saved_state_with_restore_enabled_spawns_supervisor() {
         let _env_lock = async_env_lock().await;
         let dir = TempDir::new().expect("tempdir");

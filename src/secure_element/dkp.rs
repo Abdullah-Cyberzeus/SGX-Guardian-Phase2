@@ -530,4 +530,176 @@ mod tests {
             matches!(manager.rotate(), Err(SeError::KeyError(message)) if message.contains("No active key"))
         );
     }
+
+    // ── init() / rotate() with a fake ssscli on PATH ─────────────────────
+
+    #[cfg(unix)]
+    struct FakeChipEnv {
+        _path_guard: PathGuardDkp,
+        _env_lock: tokio::sync::MutexGuard<'static, ()>,
+    }
+
+    #[cfg(unix)]
+    struct PathGuardDkp(Option<std::ffi::OsString>);
+
+    #[cfg(unix)]
+    impl Drop for PathGuardDkp {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(path) => std::env::set_var("PATH", path),
+                None => std::env::remove_var("PATH"),
+            }
+            std::env::remove_var("FAKE_SLOT_PRESENT");
+            std::env::remove_var("FAKE_SLOT_HEX");
+        }
+    }
+
+    #[cfg(unix)]
+    fn fake_chip(slot_present: bool, slot_hex: &str) -> FakeChipEnv {
+        use std::os::unix::fs::PermissionsExt;
+        // Leak the tempdir so the fake tool outlives this function; the tests are short-lived
+        // per-process so this is a cheap, acceptable trade-off.
+        let dir = Box::leak(Box::new(tempfile::tempdir().expect("fake tool directory")));
+        let tool = dir.path().join("ssscli");
+        std::fs::write(
+            &tool,
+            r#"#!/bin/sh
+case "$1" in
+  connect) exit 0 ;;
+  se05x)
+    if [ "$2" = "readidlist" ]; then
+      if [ "$FAKE_SLOT_PRESENT" = "1" ]; then
+        echo "$FAKE_SLOT_HEX"
+      else
+        echo "no-keys-here"
+      fi
+    else
+      exit 0
+    fi
+    ;;
+  generate) exit 0 ;;
+  get) printf 'DER' > "$5" ;;
+  erase) exit 0 ;;
+  *) exit 9 ;;
+esac
+"#,
+        )
+        .expect("write fake ssscli");
+        let mut permissions = std::fs::metadata(&tool).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(tool, permissions).expect("make executable");
+
+        let env_lock = crate::test_support::blocking_env_lock();
+        let old_path = std::env::var_os("PATH");
+        std::env::set_var("PATH", dir.path());
+        std::env::set_var("FAKE_SLOT_PRESENT", if slot_present { "1" } else { "0" });
+        std::env::set_var("FAKE_SLOT_HEX", slot_hex);
+        FakeChipEnv {
+            _path_guard: PathGuardDkp(old_path),
+            _env_lock: env_lock,
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn init_generates_a_fresh_dkp_when_no_metadata_exists() {
+        let _env = fake_chip(false, "");
+        let base = tempfile::tempdir().expect("base dir");
+        std::fs::create_dir_all(base.path().join("keys")).expect("keys dir");
+        let manager =
+            DkpManager::init(&config(), base.path().to_str().unwrap()).expect("fresh provision");
+        assert_eq!(manager.active_key_id(), DKP_BASE_KEY_ID);
+        assert_eq!(manager.history.active_key().unwrap().version, 1);
+        assert_eq!(manager.public_key_der().expect("pubkey"), b"DER");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn init_reuses_existing_dkp_when_se050_confirms_slot_present() {
+        let base = tempfile::tempdir().expect("base dir");
+        let keys_dir = base.path().join("keys");
+        std::fs::create_dir_all(&keys_dir).expect("keys dir");
+        let metadata_path = keys_dir.join("dkp_metadata.json");
+        let history = DkpKeyHistory::new(KeyMetadata::new(
+            "0x20000010",
+            "dkp",
+            "ECDSA-P256",
+            1,
+        ));
+        history
+            .save(metadata_path.to_str().unwrap())
+            .expect("seed metadata");
+
+        let _env = fake_chip(true, "0x20000010");
+        let manager =
+            DkpManager::init(&config(), base.path().to_str().unwrap()).expect("reuse existing");
+        assert_eq!(manager.history.active_key().unwrap().version, 1);
+        // No quarantine file should have been created for a confirmed-present slot.
+        let stale_exists = std::fs::read_dir(&keys_dir)
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().contains(".stale."));
+        assert!(!stale_exists);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn init_quarantines_and_reprovisions_when_se050_confirms_slot_absent() {
+        let base = tempfile::tempdir().expect("base dir");
+        let keys_dir = base.path().join("keys");
+        std::fs::create_dir_all(&keys_dir).expect("keys dir");
+        let metadata_path = keys_dir.join("dkp_metadata.json");
+        let history = DkpKeyHistory::new(KeyMetadata::new(
+            "0x20000010",
+            "dkp",
+            "ECDSA-P256",
+            5,
+        ));
+        history
+            .save(metadata_path.to_str().unwrap())
+            .expect("seed metadata");
+
+        // Slot confirmed ABSENT: readidlist never reports the configured hex id.
+        let _env = fake_chip(false, "");
+        let manager = DkpManager::init(&config(), base.path().to_str().unwrap())
+            .expect("quarantine and reprovision");
+        // Freshly generated, so back to v1 rather than the seeded v5.
+        assert_eq!(manager.history.active_key().unwrap().version, 1);
+        let stale_exists = std::fs::read_dir(&keys_dir)
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().contains(".stale."));
+        assert!(stale_exists, "original metadata should have been quarantined");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rotate_succeeds_against_a_fake_chip_and_persists_history() {
+        let _env = fake_chip(true, "0x20000010");
+        let base = tempfile::tempdir().expect("manager directory");
+        let metadata_path = base.path().join("keys/history.json");
+        let mut manager = manager(
+            DkpKeyHistory::new(KeyMetadata::new("0x20000010", "dkp", "ECDSA-P256", 1)),
+            metadata_path.to_string_lossy().into_owned(),
+            base.path().join("pub.der").to_string_lossy().into_owned(),
+        );
+
+        let new_meta = manager.rotate().expect("rotate against fake chip");
+        assert_eq!(new_meta.version, 2);
+        assert_eq!(new_meta.key_id, "0x20000011");
+        let loaded = DkpKeyHistory::load(metadata_path.to_str().unwrap()).expect("persisted");
+        assert_eq!(loaded.active_key().unwrap().version, 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_signer_connects_via_fake_chip() {
+        let _env = fake_chip(true, "0x20000010");
+        let manager = manager(
+            DkpKeyHistory::new(KeyMetadata::new("0x20000010", "dkp", "ECDSA-P256", 1)),
+            "/unused/metadata.json".into(),
+            "/unused/pub.der".into(),
+        );
+        manager.create_signer().expect("signer connects");
+    }
 }

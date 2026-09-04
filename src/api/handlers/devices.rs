@@ -3849,4 +3849,1329 @@ relay:
         assert_eq!(summary_result.0.manual, 1);
         assert_eq!(summary_result.0.blocked, 0);
     }
+
+    /// A device with no observed ports at all — the "nothing found" side of
+    /// every findings helper.
+    fn bare_device() -> ConnectedDevice {
+        let mut device = inventory_device("dev-bare", "10.0.0.9", "aa:bb:cc:dd:ee:09");
+        device.open_ports.clear();
+        device
+    }
+
+    fn port(port: u16, service: &str, scripts: &[&str]) -> OpenPort {
+        OpenPort {
+            port,
+            protocol: "tcp".into(),
+            service: Some(service.into()),
+            product_version: None,
+            cpe: Vec::new(),
+            scripts: scripts
+                .iter()
+                .map(|id| crate::discovery::ScriptResult {
+                    id: (*id).into(),
+                    output: "output".into(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn open_port_findings_reports_each_port_or_says_nothing_was_observed() {
+        assert_eq!(
+            open_port_findings(&bare_device()),
+            vec!["no open TCP/UDP services observed by targeted scan"]
+        );
+
+        let mut device = bare_device();
+        device.open_ports = vec![port(22, "ssh", &[]), {
+            // A port whose service could not be identified renders as "unknown".
+            let mut unknown = port(9999, "x", &[]);
+            unknown.service = None;
+            unknown
+        }];
+        assert_eq!(
+            open_port_findings(&device),
+            vec![
+                "observed open ssh service on tcp/22",
+                "observed open unknown service on tcp/9999",
+            ]
+        );
+    }
+
+    #[test]
+    fn encryption_findings_separates_cleartext_tls_and_no_evidence() {
+        assert_eq!(
+            encryption_findings(&bare_device()),
+            vec!["no encryption evidence observed from network scan"]
+        );
+
+        let mut cleartext = bare_device();
+        cleartext.open_ports = vec![port(80, "http", &[]), port(23, "telnet", &[])];
+        assert_eq!(
+            encryption_findings(&cleartext),
+            vec!["cleartext service exposure observed: tcp/80, tcp/23"]
+        );
+
+        // TLS evidence can come either from the service name or from an
+        // ssl-flavoured script id on an otherwise unremarkable port.
+        let mut tls = bare_device();
+        tls.open_ports = vec![port(443, "https", &[])];
+        assert_eq!(
+            encryption_findings(&tls),
+            vec!["TLS-capable service evidence observed"]
+        );
+
+        let mut scripted = bare_device();
+        scripted.open_ports = vec![port(8443, "unknown-service", &["ssl-cert"])];
+        assert_eq!(
+            encryption_findings(&scripted),
+            vec!["TLS-capable service evidence observed"]
+        );
+
+        // Both at once.
+        let mut both = bare_device();
+        both.open_ports = vec![port(80, "http", &[]), port(443, "https", &[])];
+        assert_eq!(encryption_findings(&both).len(), 2);
+    }
+
+    #[test]
+    fn vulnerability_findings_collects_vuln_and_cve_script_ids_only() {
+        assert_eq!(
+            vulnerability_findings(&bare_device()),
+            vec!["no known vulnerability script findings observed"]
+        );
+
+        let mut device = bare_device();
+        device.open_ports = vec![port(80, "http", &["http-title", "vulners", "cve-2024-1234"])];
+        assert_eq!(
+            vulnerability_findings(&device),
+            vec![
+                "vulnerability script evidence from vulners",
+                "vulnerability script evidence from cve-2024-1234",
+            ]
+        );
+    }
+
+    fn scores_with_security(security_score: Option<u8>) -> crate::devices::DeviceScores {
+        crate::devices::DeviceScores {
+            security_score,
+            security_reasons: Vec::new(),
+            privacy_score: None,
+            privacy_reasons: Vec::new(),
+            privacy_basis: "scan".into(),
+            risk_level: "low".into(),
+            computed_at: "2026-07-24T00:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn final_recommendations_escalates_on_low_score_and_on_cleartext_services() {
+        // A missing score is treated as 100 (nothing to remediate).
+        assert_eq!(
+            final_recommendations(&bare_device(), &scores_with_security(None)),
+            vec!["no immediate remediation from network-observable scan"]
+        );
+        assert_eq!(
+            final_recommendations(&bare_device(), &scores_with_security(Some(90))),
+            vec!["no immediate remediation from network-observable scan"]
+        );
+
+        let low = final_recommendations(&bare_device(), &scores_with_security(Some(30)));
+        assert_eq!(
+            low,
+            vec!["review exposed services and patch vulnerability findings"]
+        );
+
+        let mut cleartext = bare_device();
+        cleartext.open_ports = vec![port(21, "ftp", &[])];
+        let both = final_recommendations(&cleartext, &scores_with_security(Some(30)));
+        assert_eq!(both.len(), 2, "{both:?}");
+        assert!(
+            both.windows(2).all(|pair| pair[0] <= pair[1]),
+            "recommendations are sorted and deduplicated: {both:?}"
+        );
+    }
+
+    #[test]
+    fn parse_cpe_accepts_os_and_hardware_cpes_and_rejects_everything_else() {
+        assert_eq!(
+            parse_cpe("cpe:/o:linux:linux_kernel:5.10"),
+            Some(("linux".into(), "linux kernel".into(), Some("5.10".into())))
+        );
+        assert_eq!(
+            parse_cpe("cpe:/h:acme:smart_plug"),
+            Some(("acme".into(), "smart plug".into(), None))
+        );
+        // A wildcard or empty version is not a version.
+        assert_eq!(
+            parse_cpe("cpe:/o:acme:widget:*"),
+            Some(("acme".into(), "widget".into(), None))
+        );
+        assert_eq!(
+            parse_cpe("cpe:/o:acme:widget:"),
+            Some(("acme".into(), "widget".into(), None))
+        );
+        // Application CPEs are not OS/hardware evidence.
+        assert_eq!(parse_cpe("cpe:/a:openbsd:openssh:7.6"), None);
+        // Too few parts, and a string that is not a CPE at all.
+        assert_eq!(parse_cpe("cpe:/o:acme"), None);
+        assert_eq!(parse_cpe("not-a-cpe"), None);
+    }
+
+    #[test]
+    fn os_release_value_reads_quoted_keys_and_ignores_others() {
+        let text = "NAME=\"Debian GNU/Linux\"\nVERSION_ID=\"12\"\nID=debian\n";
+        assert_eq!(
+            os_release_value(text, "NAME"),
+            Some("Debian GNU/Linux".into())
+        );
+        assert_eq!(os_release_value(text, "ID"), Some("debian".into()));
+        assert_eq!(os_release_value(text, "MISSING"), None);
+        // Lines without an '=' are skipped rather than panicking.
+        assert_eq!(os_release_value("garbage\nID=x\n", "ID"), Some("x".into()));
+    }
+
+    #[tokio::test]
+    async fn read_os_release_honours_its_test_override_and_rejects_blank_files() {
+        let dir = TempDir::new().expect("tempdir");
+
+        let populated = dir.path().join("os-release");
+        std::fs::write(&populated, "ID=testos\n").expect("write os-release");
+        let _guard = ScopedEnvVar::set("SGX_TEST_OS_RELEASE_FILE", &populated);
+        assert_eq!(read_os_release().await.as_deref(), Some("ID=testos"));
+        drop(_guard);
+
+        // Whitespace-only content is filtered out, as is a missing file.
+        let blank = dir.path().join("blank");
+        std::fs::write(&blank, "   \n").expect("write blank");
+        let _guard = ScopedEnvVar::set("SGX_TEST_OS_RELEASE_FILE", &blank);
+        assert_eq!(read_os_release().await, None);
+        drop(_guard);
+
+        let _guard = ScopedEnvVar::set("SGX_TEST_OS_RELEASE_FILE", &dir.path().join("absent"));
+        assert_eq!(read_os_release().await, None);
+    }
+
+    #[test]
+    fn compact_evidence_value_caps_lines_and_characters() {
+        assert_eq!(compact_evidence_value("a\nb"), "a; b");
+        assert_eq!(compact_evidence_value("a\nb\nc\nd\ne\nf"), "a; b; c; d");
+        let long = "x".repeat(500);
+        assert_eq!(compact_evidence_value(&long).chars().count(), 240);
+    }
+
+    #[test]
+    fn push_evidence_skips_blanks_and_deduplicates_by_source_and_value() {
+        let mut evidence = Vec::new();
+        let mut seen = BTreeSet::new();
+
+        push_evidence(&mut evidence, &mut seen, "scan", "  ");
+        assert!(evidence.is_empty(), "blank values are dropped");
+
+        push_evidence(&mut evidence, &mut seen, "scan", "  linux  ");
+        push_evidence(&mut evidence, &mut seen, "scan", "linux");
+        assert_eq!(evidence.len(), 1, "same source+value is recorded once");
+        assert_eq!(evidence[0].value, "linux", "the value is trimmed");
+
+        // Same value from a different source is genuinely new evidence.
+        push_evidence(&mut evidence, &mut seen, "did-doc", "linux");
+        assert_eq!(evidence.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn is_local_device_ip_honours_its_test_override_and_rejects_unparseable_input() {
+        let _lock = async_env_lock().await;
+        let _guard = ScopedEnvStrVar::set("SGX_TEST_LOCAL_DEVICE_IPS", "10.1.2.3, 192.168.5.5");
+        assert!(is_local_device_ip("10.1.2.3").await);
+        assert!(is_local_device_ip("192.168.5.5").await);
+        assert!(!is_local_device_ip("10.9.9.9").await);
+        assert!(!is_local_device_ip("not-an-ip").await);
+    }
+
+    #[tokio::test]
+    async fn is_protected_ip_fails_closed_for_unparseable_input() {
+        // An address that cannot be parsed is treated as protected rather than
+        // being allowed through — the safe direction for a blocking decision.
+        assert!(is_protected_ip("not-an-ip").await);
+    }
+
+    fn onboarding_state(td: &TempDir) -> Arc<AppState> {
+        AppState::for_tests(
+            td.path(),
+            "nodeA",
+            td.path().join("config").to_string_lossy().to_string(),
+        )
+    }
+
+    /// `onboarding_proof` is only reachable on a Guardian that has never paired
+    /// anything. Every rejection below is checked before the handler shells out
+    /// to the pairing CLI, so they all resolve without touching a subprocess.
+    #[tokio::test]
+    async fn onboarding_proof_rejects_a_guardian_that_has_already_paired_a_device() {
+        let (_td, state) = state_with_two_owners().await;
+        let session = test_session(&state, "owner-1");
+
+        let error = onboarding_proof(
+            State(state),
+            Some(Extension(session)),
+            Json(OnboardingProofRequest {
+                pairing_code: "anything".into(),
+            }),
+        )
+        .await
+        .err()
+        .expect("onboarding is over once a device is paired");
+        assert!(matches!(error, ApiError::Conflict(_)), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn onboarding_proof_rejects_malformed_pairing_codes() {
+        let td = TempDir::new().expect("tempdir");
+        let state = onboarding_state(&td);
+        let session = test_session(&state, "owner-1");
+
+        for (label, pairing_code) in [
+            ("blank", "   ".to_string()),
+            ("oversize", "A".repeat(8193)),
+            ("undecodable", "not-a-pairing-code".to_string()),
+        ] {
+            let error = onboarding_proof(
+                State(state.clone()),
+                Some(Extension(session.clone())),
+                Json(OnboardingProofRequest { pairing_code }),
+            )
+            .await
+            .err()
+            .unwrap_or_else(|| panic!("{label} pairing code must be rejected"));
+            assert!(matches!(error, ApiError::BadRequest(_)), "{label}: {error:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn onboarding_proof_rejects_a_challenge_that_was_never_issued_here() {
+        let td = TempDir::new().expect("tempdir");
+        let state = onboarding_state(&td);
+        let session = test_session(&state, "owner-1");
+
+        // A perfectly well-formed code for a challenge this Guardian never
+        // recorded.
+        let challenge = issue_challenge("GX-2026-TX-100", Duration::from_secs(600))
+            .expect("issue challenge");
+        let error = onboarding_proof(
+            State(state),
+            Some(Extension(session)),
+            Json(OnboardingProofRequest {
+                pairing_code: encode_challenge(&challenge).expect("encode challenge"),
+            }),
+        )
+        .await
+        .err()
+        .expect("unknown challenge");
+        assert!(
+            matches!(&error, ApiError::BadRequest(message) if message.contains("not found")),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn onboarding_proof_rejects_challenges_owned_by_someone_else_or_already_used() {
+        let td = TempDir::new().expect("tempdir");
+        let state = onboarding_state(&td);
+        let session = test_session(&state, "owner-1");
+
+        // Recorded against a different owner.
+        let foreign = issue_challenge("GX-2026-TX-101", Duration::from_secs(600))
+            .expect("issue challenge");
+        state
+            .admin
+            .pairings
+            .put(record_from_challenge(&foreign, "someone-else"))
+            .await
+            .expect("store challenge");
+        let error = onboarding_proof(
+            State(state.clone()),
+            Some(Extension(session.clone())),
+            Json(OnboardingProofRequest {
+                pairing_code: encode_challenge(&foreign).expect("encode challenge"),
+            }),
+        )
+        .await
+        .err()
+        .expect("another owner's challenge");
+        assert!(matches!(error, ApiError::Forbidden(_)), "{error:?}");
+
+        // Recorded for the right owner, but the stored challenge text no longer
+        // matches the code being presented.
+        let tampered = issue_challenge("GX-2026-TX-102", Duration::from_secs(600))
+            .expect("issue challenge");
+        let mut record = record_from_challenge(&tampered, "owner-1");
+        record.challenge = "a-different-challenge".into();
+        state.admin.pairings.put(record).await.expect("store challenge");
+        let error = onboarding_proof(
+            State(state.clone()),
+            Some(Extension(session.clone())),
+            Json(OnboardingProofRequest {
+                pairing_code: encode_challenge(&tampered).expect("encode challenge"),
+            }),
+        )
+        .await
+        .err()
+        .expect("mismatched challenge");
+        assert!(
+            matches!(&error, ApiError::BadRequest(message) if message.contains("mismatch")),
+            "{error:?}"
+        );
+
+        // Right owner, matching challenge, but already redeemed.
+        let used = issue_challenge("GX-2026-TX-103", Duration::from_secs(600))
+            .expect("issue challenge");
+        let mut record = record_from_challenge(&used, "owner-1");
+        record.api_consumed = true;
+        state.admin.pairings.put(record).await.expect("store challenge");
+        let error = onboarding_proof(
+            State(state),
+            Some(Extension(session)),
+            Json(OnboardingProofRequest {
+                pairing_code: encode_challenge(&used).expect("encode challenge"),
+            }),
+        )
+        .await
+        .err()
+        .expect("already-consumed challenge");
+        assert!(
+            matches!(&error, ApiError::BadRequest(message) if message.contains("already used")),
+            "{error:?}"
+        );
+    }
+
+    /// With every precondition satisfied the handler shells out to the pairing
+    /// CLI. No signing key exists here, so that call fails deterministically —
+    /// which is what exercises the command-invocation and failure-reporting
+    /// half of the handler.
+    #[tokio::test]
+    async fn onboarding_proof_surfaces_a_failing_pairing_cli() {
+        let _lock = async_env_lock().await;
+        let td = TempDir::new().expect("tempdir");
+        let state = onboarding_state(&td);
+        let session = test_session(&state, "owner-1");
+
+        let challenge = issue_challenge("GX-2026-TX-104", Duration::from_secs(600))
+            .expect("issue challenge");
+        state
+            .admin
+            .pairings
+            .put(record_from_challenge(&challenge, "owner-1"))
+            .await
+            .expect("store challenge");
+
+        let error = onboarding_proof(
+            State(state),
+            Some(Extension(session)),
+            Json(OnboardingProofRequest {
+                pairing_code: encode_challenge(&challenge).expect("encode challenge"),
+            }),
+        )
+        .await
+        .err()
+        .expect("no pairing key exists, so the CLI cannot produce a proof");
+        assert!(
+            matches!(error, ApiError::Internal(_) | ApiError::BadRequest(_)),
+            "{error:?}"
+        );
+    }
+
+    /// A manual device with a MAC but no IP is the one input that makes
+    /// `start_scan` finish synchronously: there is no target to scan, so it
+    /// takes the failure branch instead of spawning a real nmap run.
+    #[tokio::test]
+    async fn start_scan_fails_immediately_for_a_device_with_no_ip_target() {
+        let _lock = async_env_lock().await;
+        let td = TempDir::new().expect("tempdir");
+        let devices_base = td.path().join("devices-base");
+        let _devices_guard = ScopedEnvVar::set(crate::devices::DEVICES_BASE_ENV, &devices_base);
+        let state = AppState::for_tests(
+            td.path(),
+            "nodeA",
+            td.path().join("config").to_string_lossy().to_string(),
+        );
+
+        let created = add_manual(
+            State(state.clone()),
+            Json(crate::devices::registry::AddManualDevice {
+                display_name: Some("Unreachable sensor".into()),
+                ip: None,
+                mac: Some("AA:BB:CC:DD:EE:F0".into()),
+                manufacturer: None,
+                notes: None,
+            }),
+        )
+        .await
+        .expect("add_manual succeeds");
+        let device_id = created.0.device_id.clone();
+
+        let started = start_scan(
+            State(state.clone()),
+            Path(device_id.clone()),
+            HeaderMap::new(),
+        )
+        .await
+        .expect("start_scan succeeds");
+        assert_eq!(started.0.device_id, device_id);
+        assert_eq!(started.0.progress_history.len(), 1);
+
+        // The persisted run records the terminal failure, even though the
+        // response was returned before it was written.
+        let finished = scan_status(
+            State(state.clone()),
+            Path((device_id.clone(), started.0.scan_id.clone())),
+        )
+        .await
+        .expect("scan_status finds the run");
+        assert_eq!(finished.0.state, "failed");
+        assert_eq!(finished.0.findings, vec!["device has no IP target"]);
+        assert_eq!(
+            finished.0.firmware_assessment.map(|assessment| assessment.status),
+            Some(crate::devices::model::FirmwareAssessmentStatus::Unsupported)
+        );
+
+        // An unknown scan id for a real device is reported as not found.
+        let missing_run = scan_status(
+            State(state.clone()),
+            Path((device_id.clone(), "no-such-scan".into())),
+        )
+        .await
+        .err()
+        .expect("unknown scan id");
+        assert!(matches!(missing_run, ApiError::NotFound(_)), "{missing_run:?}");
+
+        let missing_device = start_scan(
+            State(state),
+            Path("no-such-device".into()),
+            HeaderMap::new(),
+        )
+        .await
+        .err()
+        .expect("unknown device");
+        assert!(matches!(missing_device, ApiError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn start_scan_replays_a_cached_run_for_a_repeated_idempotency_key() {
+        let _lock = async_env_lock().await;
+        let td = TempDir::new().expect("tempdir");
+        let devices_base = td.path().join("devices-base");
+        let _devices_guard = ScopedEnvVar::set(crate::devices::DEVICES_BASE_ENV, &devices_base);
+        let state = AppState::for_tests(
+            td.path(),
+            "nodeA",
+            td.path().join("config").to_string_lossy().to_string(),
+        );
+
+        let created = add_manual(
+            State(state.clone()),
+            Json(crate::devices::registry::AddManualDevice {
+                display_name: Some("Idempotent sensor".into()),
+                ip: None,
+                mac: Some("AA:BB:CC:DD:EE:F1".into()),
+                manufacturer: None,
+                notes: None,
+            }),
+        )
+        .await
+        .expect("add_manual succeeds");
+        let device_id = created.0.device_id.clone();
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "idempotency-key",
+            "scan-key-1".parse().expect("header value"),
+        );
+
+        let first = start_scan(State(state.clone()), Path(device_id.clone()), headers.clone())
+            .await
+            .expect("start_scan succeeds");
+        let replay = start_scan(State(state), Path(device_id), headers)
+            .await
+            .expect("start_scan replays");
+        assert_eq!(
+            first.0.scan_id, replay.0.scan_id,
+            "the same key must return the original run rather than starting a new one"
+        );
+    }
+
+    #[tokio::test]
+    async fn index_falls_back_to_paired_devices_when_the_inventory_is_empty() {
+        let (_td, state) = state_with_two_owners().await;
+        let session = test_session(&state, "owner-1");
+
+        let response = index(State(state.clone()), Some(Extension(session.clone())))
+            .await
+            .expect("index succeeds");
+        let listed = response.0.as_array().expect("array response").clone();
+        assert_eq!(listed.len(), 1, "only this owner's paired device: {listed:?}");
+        // The paired-device view serializes its ids as camelCase.
+        assert_eq!(listed[0]["deviceId"], "dev-b");
+
+        // Once discovery has actually seen something, `index` serves the
+        // managed-device view instead and stops filtering by owner.
+        write_inventory(
+            state.as_ref(),
+            vec![inventory_device("scanned-1", "10.0.0.7", "AA:BB:CC:DD:EE:07")],
+        );
+        let response = index(State(state), Some(Extension(session)))
+            .await
+            .expect("index succeeds");
+        let listed = response.0.as_array().expect("array response").clone();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0]["device_id"], "scanned-1");
+    }
+
+    #[tokio::test]
+    async fn devices_config_for_state_derives_its_base_dir_from_the_key_directory() {
+        let _lock = async_env_lock().await;
+        let td = TempDir::new().expect("tempdir");
+        let state = AppState::for_tests(
+            td.path(),
+            "nodeA",
+            td.path().join("config").to_string_lossy().to_string(),
+        );
+
+        // With no explicit override, the registry lives beside the runtime keys.
+        let previous = std::env::var_os(crate::devices::DEVICES_BASE_ENV);
+        std::env::remove_var(crate::devices::DEVICES_BASE_ENV);
+        let derived = devices_config_for_state(state.as_ref());
+        let expected = PathBuf::from(&state.keys_dir)
+            .parent()
+            .expect("keys dir parent")
+            .join("devices");
+        assert_eq!(derived.base_dir, expected);
+
+        // An explicit override wins outright.
+        let override_dir = td.path().join("explicit-devices");
+        std::env::set_var(crate::devices::DEVICES_BASE_ENV, &override_dir);
+        let overridden = devices_config_for_state(state.as_ref());
+        assert_eq!(overridden.base_dir, override_dir);
+
+        match previous {
+            Some(value) => std::env::set_var(crate::devices::DEVICES_BASE_ENV, value),
+            None => std::env::remove_var(crate::devices::DEVICES_BASE_ENV),
+        }
+    }
+
+    #[test]
+    fn session_user_id_falls_back_to_the_empty_owner() {
+        let td = TempDir::new().expect("tempdir");
+        let state = AppState::for_tests(
+            td.path(),
+            "nodeA",
+            td.path().join("config").to_string_lossy().to_string(),
+        );
+        let session = test_session(&state, "owner-7");
+        assert_eq!(session_user_id(Some(&session)), "owner-7");
+        assert_eq!(session_user_id(None), "");
+    }
+
+    #[tokio::test]
+    async fn pairing_code_issues_a_record_and_clamps_the_requested_ttl() {
+        let td = TempDir::new().expect("tempdir");
+        let state = AppState::for_tests(
+            td.path(),
+            "nodeA",
+            td.path().join("config").to_string_lossy().to_string(),
+        );
+        let session = test_session(&state, "owner-1");
+
+        let issued = pairing_code(
+            State(state.clone()),
+            Some(Extension(session.clone())),
+            Query(PairingCodeQuery {
+                serial: "GX-2026-TX-042".into(),
+                // Well past the one-hour cap.
+                ttl_secs: Some(99_999),
+            }),
+        )
+        .await
+        .expect("pairing_code succeeds");
+        assert_eq!(issued.0.serial, "GX-2026-TX-042");
+        assert!(!issued.0.pairing_code.is_empty());
+        let ttl = issued.0.expires_at - Utc::now().timestamp();
+        assert!(ttl <= 3600, "ttl must be clamped to an hour, got {ttl}");
+
+        // The record is persisted against the issuing session's owner.
+        let stored = state.admin.pairings.list().await.expect("list pairings");
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].owner_user_id, "owner-1");
+        assert_eq!(stored[0].serial, "GX-2026-TX-042");
+
+        // A zero TTL is treated as "unspecified" and falls back to the default.
+        let defaulted = pairing_code(
+            State(state.clone()),
+            Some(Extension(session)),
+            Query(PairingCodeQuery {
+                serial: "GX-2026-TX-043".into(),
+                ttl_secs: Some(0),
+            }),
+        )
+        .await
+        .expect("pairing_code succeeds");
+        let ttl = defaulted.0.expires_at - Utc::now().timestamp();
+        assert!(
+            ttl > 0 && ttl <= DEFAULT_PAIRING_TTL_SECS as i64,
+            "zero ttl falls back to the default, got {ttl}"
+        );
+    }
+
+    #[tokio::test]
+    async fn pairing_code_rejects_a_serial_the_challenge_issuer_will_not_accept() {
+        let td = TempDir::new().expect("tempdir");
+        let state = AppState::for_tests(
+            td.path(),
+            "nodeA",
+            td.path().join("config").to_string_lossy().to_string(),
+        );
+        let session = test_session(&state, "owner-1");
+
+        let error = pairing_code(
+            State(state),
+            Some(Extension(session)),
+            Query(PairingCodeQuery {
+                serial: String::new(),
+                ttl_secs: None,
+            }),
+        )
+        .await
+        .err()
+        .expect("a blank serial is rejected");
+        assert!(matches!(error, ApiError::BadRequest(_)), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn pairing_status_reports_the_latest_record_for_the_serial() {
+        let td = TempDir::new().expect("tempdir");
+        let state = AppState::for_tests(
+            td.path(),
+            "nodeA",
+            td.path().join("config").to_string_lossy().to_string(),
+        );
+        let session = test_session(&state, "owner-1");
+
+        let missing = pairing_status(
+            State(state.clone()),
+            Some(Extension(session.clone())),
+            Query(PairingStatusQuery {
+                serial: "GX-2026-UNKNOWN".into(),
+            }),
+        )
+        .await
+        .err()
+        .expect("no record for this serial");
+        assert!(matches!(missing, ApiError::NotFound(_)));
+
+        pairing_code(
+            State(state.clone()),
+            Some(Extension(session.clone())),
+            Query(PairingCodeQuery {
+                serial: "GX-2026-TX-044".into(),
+                ttl_secs: None,
+            }),
+        )
+        .await
+        .expect("issue pairing code");
+
+        let status = pairing_status(
+            State(state.clone()),
+            Some(Extension(session)),
+            Query(PairingStatusQuery {
+                serial: "GX-2026-TX-044".into(),
+            }),
+        )
+        .await
+        .expect("pairing_status succeeds");
+        assert_eq!(status.0.serial, "GX-2026-TX-044");
+        assert_eq!(status.0.status, "pending", "nothing has consumed it yet");
+        assert!(!status.0.api_consumed);
+        assert!(!status.0.bootstrap_consumed);
+        assert!(status.0.device_id.is_none());
+
+        // A different owner cannot see it at all.
+        let stranger = test_session(&state, "owner-2");
+        let hidden = pairing_status(
+            State(state),
+            Some(Extension(stranger)),
+            Query(PairingStatusQuery {
+                serial: "GX-2026-TX-044".into(),
+            }),
+        )
+        .await
+        .err()
+        .expect("another owner's pairing record is hidden");
+        assert!(matches!(hidden, ApiError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn unpair_requires_an_owner_or_admin_role_and_removes_the_binding() {
+        let (_td, state) = state_with_two_owners().await;
+
+        let mut member = test_session(&state, "owner-1");
+        member.claims.role = "member".into();
+        let forbidden = unpair(
+            State(state.clone()),
+            Some(Extension(member)),
+            Path("dev-b".into()),
+        )
+        .await
+        .err()
+        .expect("a member may not unpair");
+        assert!(matches!(forbidden, ApiError::Forbidden(_)));
+
+        let owner = test_session(&state, "owner-1");
+        let response = unpair(
+            State(state.clone()),
+            Some(Extension(owner.clone())),
+            Path("dev-b".into()),
+        )
+        .await
+        .expect("unpair succeeds");
+        assert_eq!(response.0.device_id, "dev-b");
+        assert_eq!(response.0.status, "unpaired");
+
+        // The binding really is gone from the owner's view.
+        let remaining = paired_list(State(state.clone()), Some(Extension(owner.clone())))
+            .await
+            .expect("paired_list succeeds");
+        assert!(
+            remaining.0.iter().all(|device| device.device_id != "dev-b"),
+            "{:?}",
+            remaining.0
+        );
+
+        // Unbinding again is idempotent rather than an error.
+        unpair(State(state), Some(Extension(owner)), Path("dev-b".into()))
+            .await
+            .expect("unpair is idempotent");
+    }
+
+    /// Seeds two devices belonging to different owners, so the owner-scoping
+    /// branch of every listing handler has something to actually filter.
+    async fn state_with_two_owners() -> (TempDir, Arc<AppState>) {
+        let td = TempDir::new().expect("tempdir");
+        let state = AppState::for_tests(
+            td.path(),
+            "nodeA",
+            td.path().join("config").to_string_lossy().to_string(),
+        );
+        for (device_id, serial, owner, status) in [
+            ("dev-b", "GX-2026-B", "owner-1", "active"),
+            ("dev-a", "GX-2026-A", "owner-2", "bootstrap_pending"),
+        ] {
+            state
+                .admin
+                .devices
+                .upsert(PairedDevice {
+                    device_id: device_id.into(),
+                    serial: serial.into(),
+                    did: format!("did:guardian:{device_id}"),
+                    owner_user_id: owner.into(),
+                    paired_at: "2026-07-24T00:00:00Z".into(),
+                    reactivated_at: None,
+                    updated_at: None,
+                    status: status.into(),
+                    node_id: Some("nodeA".into()),
+                })
+                .await
+                .expect("seed device");
+        }
+        (td, state)
+    }
+
+    #[tokio::test]
+    async fn paired_list_is_sorted_by_serial_and_scoped_to_the_session_owner() {
+        let (_td, state) = state_with_two_owners().await;
+
+        let session = test_session(&state, "owner-1");
+        let listed = paired_list(State(state.clone()), Some(Extension(session)))
+            .await
+            .expect("paired_list succeeds");
+        assert_eq!(listed.0.len(), 1, "only this owner's device is visible");
+        assert_eq!(listed.0[0].device_id, "dev-b");
+
+        // A session for an owner with nothing paired sees an empty list rather
+        // than an error.
+        let stranger = test_session(&state, "owner-nobody");
+        let empty = paired_list(State(state.clone()), Some(Extension(stranger)))
+            .await
+            .expect("paired_list succeeds");
+        assert!(empty.0.is_empty());
+    }
+
+    #[tokio::test]
+    async fn all_list_returns_every_record_sorted_by_serial() {
+        let (_td, state) = state_with_two_owners().await;
+        let session = test_session(&state, "owner-1");
+
+        let listed = all_list(State(state.clone()), Some(Extension(session)))
+            .await
+            .expect("all_list succeeds");
+        let serials: Vec<_> = listed.0.iter().map(|device| device.serial.clone()).collect();
+        assert_eq!(
+            serials,
+            vec!["GX-2026-A", "GX-2026-B"],
+            "all_list ignores ownership and sorts by serial"
+        );
+    }
+
+    #[tokio::test]
+    async fn unpaired_list_is_empty_when_every_device_is_paired() {
+        let (_td, state) = state_with_two_owners().await;
+        let session = test_session(&state, "owner-1");
+
+        let listed = unpaired_list(State(state), Some(Extension(session)))
+            .await
+            .expect("unpaired_list succeeds");
+        assert!(listed.0.is_empty(), "{:?}", listed.0.len());
+    }
+
+    #[tokio::test]
+    async fn paired_detail_returns_the_device_for_its_owner_and_hides_it_from_others() {
+        let (_td, state) = state_with_two_owners().await;
+
+        let owner = test_session(&state, "owner-1");
+        let detail = paired_detail(
+            State(state.clone()),
+            Some(Extension(owner)),
+            Path("dev-b".into()),
+        )
+        .await
+        .expect("paired_detail succeeds");
+        assert_eq!(detail.0.serial, "GX-2026-B");
+        assert_eq!(detail.0.status, "active");
+        assert_eq!(
+            detail.0.bootstrap_status, "completed",
+            "an active device has finished bootstrap"
+        );
+        // No DID document has been written for this device, so neither overlay
+        // address nor attestation endpoint can be resolved.
+        assert!(detail.0.overlay_ip.is_none());
+        assert!(detail.0.attestation_endpoint.is_none());
+
+        // Someone else's device is reported as not found rather than forbidden,
+        // so the listing does not leak which device ids exist.
+        let stranger = test_session(&state, "owner-2");
+        let hidden = paired_detail(
+            State(state.clone()),
+            Some(Extension(stranger)),
+            Path("dev-b".into()),
+        )
+        .await
+        .err()
+        .expect("another owner's device is hidden");
+        assert!(matches!(hidden, ApiError::NotFound(_)));
+
+        let missing = paired_detail(
+            State(state),
+            Some(Extension(test_session_for_missing())),
+            Path("no-such-device".into()),
+        )
+        .await
+        .err()
+        .expect("unknown device");
+        assert!(matches!(missing, ApiError::NotFound(_)));
+    }
+
+    fn test_session_for_missing() -> AuthenticatedSession {
+        AuthenticatedSession {
+            claims: Claims {
+                sub: "owner-1".into(),
+                role: "owner".into(),
+                scopes: crate::api::auth::authorization::default_scopes("owner"),
+                circle_ids: Vec::new(),
+                browser_registration_id: None,
+                guardian_fingerprint: None,
+                iss: "did:guardian:test".into(),
+                iat: 0,
+                exp: i64::MAX,
+                jti: "test-jti".into(),
+            },
+            token: "test-token".into(),
+        }
+    }
+
+    /// The one input `local_guardian_firmware_assessment` reads that has no
+    /// test override: if this host really has a device tree, the "no evidence"
+    /// case below cannot be produced and is skipped rather than asserted
+    /// falsely.
+    fn host_has_device_tree_model() -> bool {
+        std::fs::read_to_string("/sys/firmware/devicetree/base/model")
+            .ok()
+            .map(|value| value.trim_matches(char::from(0)).trim().to_string())
+            .is_some_and(|value| !value.is_empty())
+    }
+
+    #[tokio::test]
+    async fn local_guardian_firmware_assessment_reports_os_and_board_evidence() {
+        let _lock = async_env_lock().await;
+        let dir = TempDir::new().expect("tempdir");
+
+        let os_release = dir.path().join("os-release");
+        std::fs::write(
+            &os_release,
+            "ID=debian\nPRETTY_NAME=\"Debian GNU/Linux 12\"\nVERSION_ID=\"12\"\n",
+        )
+        .expect("write os-release");
+        let model = dir.path().join("model");
+        std::fs::write(&model, "SGX Guardian Board v2\0").expect("write model");
+
+        let _os_guard = ScopedEnvVar::set("SGX_TEST_OS_RELEASE_FILE", &os_release);
+        let _model_guard = ScopedEnvVar::set("SGX_TEST_DEVICE_TREE_MODEL_FILE", &model);
+
+        let assessment = local_guardian_firmware_assessment().await;
+        assert_eq!(
+            assessment.status,
+            crate::devices::model::FirmwareAssessmentStatus::Observed
+        );
+        assert_eq!(assessment.vendor.as_deref(), Some("debian"));
+        assert_eq!(assessment.product.as_deref(), Some("Debian GNU/Linux 12"));
+        assert_eq!(assessment.version.as_deref(), Some("12"));
+        assert_eq!(assessment.platform.as_deref(), Some("SGX Guardian Board v2"));
+        assert_eq!(assessment.confidence, 0.75);
+        assert!(!assessment.integrity_verified);
+        assert_eq!(assessment.evidence_sources.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn local_guardian_firmware_assessment_falls_back_through_name_and_version_keys() {
+        let _lock = async_env_lock().await;
+        let dir = TempDir::new().expect("tempdir");
+
+        // Neither PRETTY_NAME nor VERSION_ID is present, so the NAME/VERSION
+        // fallbacks are what supply the product and version.
+        let os_release = dir.path().join("os-release");
+        std::fs::write(&os_release, "ID=sgxos\nNAME=\"SGX OS\"\nVERSION=\"3 (bookworm)\"\n")
+            .expect("write os-release");
+        let _os_guard = ScopedEnvVar::set("SGX_TEST_OS_RELEASE_FILE", &os_release);
+        let _model_guard =
+            ScopedEnvVar::set("SGX_TEST_DEVICE_TREE_MODEL_FILE", &dir.path().join("absent"));
+
+        let assessment = local_guardian_firmware_assessment().await;
+        assert_eq!(assessment.product.as_deref(), Some("SGX OS"));
+        assert_eq!(assessment.version.as_deref(), Some("3 (bookworm)"));
+        if !host_has_device_tree_model() {
+            assert!(assessment.platform.is_none());
+            assert_eq!(
+                assessment.confidence, 0.55,
+                "product but no platform is the mid-confidence case"
+            );
+            assert_eq!(assessment.evidence_sources.len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn local_guardian_firmware_assessment_reports_unknown_without_any_evidence() {
+        if host_has_device_tree_model() {
+            return;
+        }
+        let _lock = async_env_lock().await;
+        let dir = TempDir::new().expect("tempdir");
+        let _os_guard = ScopedEnvVar::set("SGX_TEST_OS_RELEASE_FILE", &dir.path().join("absent"));
+        let _model_guard =
+            ScopedEnvVar::set("SGX_TEST_DEVICE_TREE_MODEL_FILE", &dir.path().join("absent"));
+
+        let assessment = local_guardian_firmware_assessment().await;
+        assert_eq!(
+            assessment.status,
+            crate::devices::model::FirmwareAssessmentStatus::Unknown
+        );
+        assert_eq!(assessment.confidence, 0.0);
+        assert!(assessment.evidence_sources.is_empty());
+        assert_eq!(
+            assessment.findings,
+            vec!["no local Guardian firmware or OS evidence was available"]
+        );
+        assert_eq!(
+            assessment.recommendations,
+            vec!["verify local OS and board metadata collection on the Guardian"]
+        );
+    }
+
+    #[test]
+    fn guardian_nebula_role_reports_every_combination_of_lighthouse_and_relay() {
+        let dir = TempDir::new().expect("tempdir");
+        let lighthouse_path = dir.path().join("lighthouse_registry.json");
+        let relay_path = dir.path().join("relay_registry.json");
+
+        // No node name at all — nothing to look up.
+        assert_eq!(
+            guardian_nebula_role(None, lighthouse_path.clone(), relay_path.clone()),
+            "unknown"
+        );
+        // Neither registry exists on disk yet.
+        assert_eq!(
+            guardian_nebula_role(Some("nodeB"), lighthouse_path.clone(), relay_path.clone()),
+            "unknown"
+        );
+
+        LighthouseRegistry::new("alpha", "nodeB", "192.168.100.2", "192.168.1.252:4242")
+            .save(lighthouse_path.to_str().expect("lighthouse path"))
+            .expect("save lighthouse registry");
+        let mut relay = RelayRegistry::new("alpha");
+        relay.add_relay("nodeC", "192.168.100.3", "192.168.1.253:4242", 5, 10, false);
+        relay
+            .save(relay_path.to_str().expect("relay path"))
+            .expect("save relay registry");
+
+        assert_eq!(
+            guardian_nebula_role(Some("nodeB"), lighthouse_path.clone(), relay_path.clone()),
+            "lighthouse"
+        );
+        assert_eq!(
+            guardian_nebula_role(Some("nodeC"), lighthouse_path.clone(), relay_path.clone()),
+            "relay"
+        );
+        assert_eq!(
+            guardian_nebula_role(Some("nodeZ"), lighthouse_path.clone(), relay_path.clone()),
+            "member"
+        );
+
+        // A node that is both.
+        let both_relay_path = dir.path().join("relay_registry_both.json");
+        let mut both = RelayRegistry::new("alpha");
+        both.add_relay("nodeB", "192.168.100.2", "192.168.1.252:4242", 5, 10, false);
+        both.save(both_relay_path.to_str().expect("relay path"))
+            .expect("save relay registry");
+        assert_eq!(
+            guardian_nebula_role(Some("nodeB"), lighthouse_path, both_relay_path),
+            "lighthouse + relay"
+        );
+    }
+
+    #[test]
+    fn bucket_score_places_every_band_and_the_missing_score() {
+        let mut distribution = ScoreDistribution::default();
+        for score in [None, Some(0), Some(39), Some(40), Some(59), Some(60), Some(79), Some(80), Some(100)] {
+            bucket_score(score, &mut distribution);
+        }
+        assert_eq!(distribution.unavailable, 1);
+        assert_eq!(distribution.poor, 2, "0 and 39 are both poor");
+        assert_eq!(distribution.fair, 2, "40 and 59 are both fair");
+        assert_eq!(distribution.good, 2, "60 and 79 are both good");
+        assert_eq!(distribution.excellent, 2, "80 and 100 are both excellent");
+    }
+
+    #[test]
+    fn devices_error_maps_each_variant_to_its_status() {
+        assert!(matches!(
+            devices_error(crate::devices::errors::DevicesError::NotFound),
+            ApiError::NotFound(_)
+        ));
+        assert!(matches!(
+            devices_error(crate::devices::errors::DevicesError::Invalid("bad id".into())),
+            ApiError::BadRequest(message) if message == "bad id"
+        ));
+        assert!(matches!(
+            devices_error(crate::devices::errors::DevicesError::TamperedRegistry),
+            ApiError::Internal(_)
+        ));
+        // Everything else falls through to a generic internal error carrying
+        // the underlying message.
+        assert!(matches!(
+            devices_error(crate::devices::errors::DevicesError::Io(std::io::Error::other("disk"))),
+            ApiError::Internal(message) if message.contains("disk")
+        ));
+    }
+
+    #[test]
+    fn api_error_from_threat_blocker_error_maps_each_variant_to_its_status() {
+        assert!(matches!(
+            api_error_from_threat_blocker_error(
+                crate::threat::error::ThreatError::ProtectedIp("10.0.0.1".into())
+            ),
+            ApiError::Forbidden(_)
+        ));
+        assert!(matches!(
+            api_error_from_threat_blocker_error(
+                crate::threat::error::ThreatError::InvalidCidr("nope".into())
+            ),
+            ApiError::BadRequest(message) if message.contains("nope")
+        ));
+        assert!(matches!(
+            api_error_from_threat_blocker_error(crate::threat::error::ThreatError::Io(
+                std::io::Error::other("disk")
+            )),
+            ApiError::Internal(message) if message.contains("disk")
+        ));
+    }
+
+    #[test]
+    fn synthetic_device_projects_a_registry_record_onto_an_unauthorized_device() {
+        let now = "2026-07-24T00:00:00Z";
+        let record = crate::devices::DeviceRecord {
+            device_id: "dev-manual".into(),
+            display_name: Some("Front door".into()),
+            manual: true,
+            ip: Some("10.0.0.5".into()),
+            mac: Some("aa:bb:cc:dd:ee:05".into()),
+            manufacturer: Some("Acme".into()),
+            monitoring_enabled: true,
+            blocked: false,
+            rejected: false,
+            rejection_reason: None,
+            notes: None,
+            created_at: now.into(),
+            updated_at: now.into(),
+        };
+
+        let device = synthetic_device(&record);
+        assert_eq!(device.device_id, "dev-manual");
+        assert_eq!(device.ip, "10.0.0.5");
+        assert_eq!(device.hostname.as_deref(), Some("Front door"));
+        assert_eq!(device.vendor.as_deref(), Some("Acme"));
+        assert_eq!(device.status, DeviceStatus::Unauthorized);
+        assert!(device.open_ports.is_empty());
+
+        // A record with no IP projects to an empty string rather than failing.
+        let mut without_ip = record.clone();
+        without_ip.ip = None;
+        assert_eq!(synthetic_device(&without_ip).ip, "");
+    }
+
+    fn challenge_record(exp: i64) -> PairingChallengeRecord {
+        PairingChallengeRecord {
+            serial: "GX-2026-TX-001".into(),
+            challenge: "challenge".into(),
+            nonce: "nonce".into(),
+            exp,
+            owner_user_id: "owner-1".into(),
+            api_consumed: false,
+            bootstrap_consumed: false,
+            device_id: None,
+            did: None,
+            node_id: None,
+            public_key: None,
+            bound_at: None,
+        }
+    }
+
+    fn paired_device(status: &str) -> PairedDevice {
+        PairedDevice {
+            device_id: "dev-1".into(),
+            serial: "GX-2026-TX-001".into(),
+            did: "did:guardian:device".into(),
+            owner_user_id: "owner-1".into(),
+            paired_at: "2026-07-24T00:00:00Z".into(),
+            reactivated_at: None,
+            updated_at: None,
+            status: status.into(),
+            node_id: Some("nodeA".into()),
+        }
+    }
+
+    /// The pairing state machine, walked in the same precedence order the
+    /// function checks it: failed beats everything, then completed, then the
+    /// two proof-verified variants, then expiry, then plain pending.
+    #[test]
+    fn pairing_status_value_resolves_each_state_in_precedence_order() {
+        let now = 1_000;
+        let live = challenge_record(now + 60);
+        let stale = challenge_record(now - 1);
+
+        // `failed` wins even over a record that would otherwise read completed.
+        let mut consumed = live.clone();
+        consumed.bootstrap_consumed = true;
+        assert_eq!(
+            pairing_status_value(&consumed, Some(&paired_device("failed")), now),
+            "failed"
+        );
+
+        assert_eq!(pairing_status_value(&consumed, None, now), "completed");
+        assert_eq!(
+            pairing_status_value(&live, Some(&paired_device("active")), now),
+            "completed"
+        );
+
+        let mut api_consumed = live.clone();
+        api_consumed.api_consumed = true;
+        assert_eq!(
+            pairing_status_value(&api_consumed, Some(&paired_device("bootstrap_pending")), now),
+            "bootstrap_pending"
+        );
+        assert_eq!(
+            pairing_status_value(&api_consumed, None, now),
+            "proof_verified"
+        );
+
+        assert_eq!(pairing_status_value(&stale, None, now), "expired");
+        assert_eq!(pairing_status_value(&live, None, now), "pending");
+    }
+
+    #[test]
+    fn bootstrap_status_value_resolves_completed_expired_and_pending() {
+        let now = 1_000;
+        let live = challenge_record(now + 60);
+        let stale = challenge_record(now - 1);
+
+        assert_eq!(
+            bootstrap_status_value(None, &paired_device("active"), now),
+            "completed"
+        );
+        let mut consumed = live.clone();
+        consumed.bootstrap_consumed = true;
+        assert_eq!(
+            bootstrap_status_value(Some(&consumed), &paired_device("bootstrap_pending"), now),
+            "completed"
+        );
+
+        assert_eq!(
+            bootstrap_status_value(Some(&stale), &paired_device("bootstrap_pending"), now),
+            "expired"
+        );
+
+        // An expired record that was nonetheless consumed reads completed, not
+        // expired — the completed check runs first.
+        let mut stale_consumed = stale.clone();
+        stale_consumed.bootstrap_consumed = true;
+        assert_eq!(
+            bootstrap_status_value(Some(&stale_consumed), &paired_device("bootstrap_pending"), now),
+            "completed"
+        );
+
+        assert_eq!(
+            bootstrap_status_value(Some(&live), &paired_device("bootstrap_pending"), now),
+            "pending"
+        );
+        assert_eq!(
+            bootstrap_status_value(None, &paired_device("bootstrap_pending"), now),
+            "pending"
+        );
+    }
+
+    #[test]
+    fn set_scan_stage_labels_the_final_step_specially() {
+        let mut run = crate::devices::DeviceScanRun {
+            scan_id: "scan-1".into(),
+            device_id: "dev-1".into(),
+            state: "queued".into(),
+            step: 0,
+            step_label: String::new(),
+            started_at: "2026-07-24T00:00:00Z".into(),
+            updated_at: None,
+            finished_at: None,
+            findings: Vec::new(),
+            recommendations: Vec::new(),
+            firmware_assessment: None,
+            progress_history: Vec::new(),
+        };
+
+        set_scan_stage(&mut run, 1, "running");
+        assert_eq!(run.step, 1);
+        assert_eq!(run.state, "running");
+        assert_eq!(run.step_label, crate::devices::scan::SCAN_STEPS[0]);
+        assert!(run.updated_at.is_some());
+
+        set_scan_stage(&mut run, 5, "complete");
+        assert_eq!(run.step_label, "Complete");
+
+        // Step 5 while still running keeps the ordinary step label.
+        set_scan_stage(&mut run, 5, "running");
+        assert_eq!(run.step_label, crate::devices::scan::SCAN_STEPS[4]);
+    }
 }

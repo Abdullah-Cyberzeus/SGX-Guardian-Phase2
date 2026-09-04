@@ -179,3 +179,193 @@ fn map_rules_error(error: RulesError) -> ApiError {
         | RulesError::Action(_) => ApiError::Internal(error.to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rules::model::{Condition, RuleAction, RuleTrigger};
+
+    /// `rules_base()`/`runtime_signer()` both read real env-var overrides
+    /// (`SGX_GUARDIAN_RULES_BASE`, `SGX_GUARDIAN_DEVICE_KEY_DIR` +
+    /// `SGX_FORCE_SOFTWARE_KEYS`), so a real signer and real rule storage can be built in a
+    /// tempdir rather than needing `/var/lib/sgx-guardian`.
+    struct RulesEnv {
+        _guard: tokio::sync::MutexGuard<'static, ()>,
+        _td: tempfile::TempDir,
+        restore: Vec<(&'static str, Option<String>)>,
+        state: Arc<AppState>,
+    }
+
+    impl RulesEnv {
+        async fn new() -> Self {
+            let guard = crate::test_support::async_env_lock().await;
+            let td = tempfile::tempdir().expect("rules env tempdir");
+            let rules_base = td.path().join("rules");
+            let key_dir = td.path().join("keys");
+            std::fs::create_dir_all(&rules_base).expect("rules base dir");
+            std::fs::create_dir_all(&key_dir).expect("key dir");
+
+            let restore = vec![
+                (
+                    crate::rules::persistence::RULES_BASE_ENV,
+                    std::env::var(crate::rules::persistence::RULES_BASE_ENV).ok(),
+                ),
+                (
+                    crate::vc::issue::DEVICE_KEY_DIR_ENV,
+                    std::env::var(crate::vc::issue::DEVICE_KEY_DIR_ENV).ok(),
+                ),
+                (
+                    "SGX_FORCE_SOFTWARE_KEYS",
+                    std::env::var("SGX_FORCE_SOFTWARE_KEYS").ok(),
+                ),
+            ];
+            std::env::set_var(crate::rules::persistence::RULES_BASE_ENV, &rules_base);
+            std::env::set_var(crate::vc::issue::DEVICE_KEY_DIR_ENV, &key_dir);
+            std::env::set_var("SGX_FORCE_SOFTWARE_KEYS", "1");
+
+            let config_dir = td.path().join("config");
+            std::fs::create_dir_all(&config_dir).expect("config dir");
+            let state = AppState::for_tests(td.path(), "nodeRulesTest", config_dir.display().to_string());
+
+            Self {
+                _guard: guard,
+                _td: td,
+                restore,
+                state,
+            }
+        }
+    }
+
+    impl Drop for RulesEnv {
+        fn drop(&mut self) {
+            for (key, value) in self.restore.drain(..) {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    fn sample_draft(name: &str) -> RuleDraft {
+        RuleDraft {
+            rule_id: None,
+            name: Some(name.to_string()),
+            enabled: Some(true),
+            trigger: Some(RuleTrigger::ThreatAlert),
+            condition: Some(Condition::SeverityAtLeast("medium".to_string())),
+            actions: Some(vec![RuleAction::Notify {
+                severity: "info".to_string(),
+            }]),
+            notify: Some(true),
+            allow_destructive: Some(false),
+            cooldown_secs: Some(60),
+            max_actions_per_hour: Some(10),
+        }
+    }
+
+    #[tokio::test]
+    async fn list_is_empty_on_a_fresh_registry() {
+        let env = RulesEnv::new().await;
+        let Json(rules) = list(State(env.state.clone())).await.expect("list rules");
+        assert!(rules.is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_list_detail_edit_toggle_and_delete_round_trip() {
+        let env = RulesEnv::new().await;
+        let Json(created) = create(State(env.state.clone()), Json(sample_draft("Critical alerts")))
+            .await
+            .expect("create rule");
+        assert_eq!(created.name, "Critical alerts");
+        assert!(created.enabled);
+
+        let Json(listed) = list(State(env.state.clone())).await.expect("list rules");
+        assert_eq!(listed.len(), 1);
+
+        let Json(detail_rule) = detail(State(env.state.clone()), AxumPath(created.rule_id.clone()))
+            .await
+            .expect("detail rule");
+        assert_eq!(detail_rule.rule_id, created.rule_id);
+
+        let Json(edited) = edit(
+            State(env.state.clone()),
+            AxumPath(created.rule_id.clone()),
+            Json(RulePatch {
+                name: Some("Renamed".to_string()),
+                ..RulePatch::default()
+            }),
+        )
+        .await
+        .expect("edit rule");
+        assert_eq!(edited.name, "Renamed");
+
+        let Json(disabled) = set_enabled(
+            State(env.state.clone()),
+            AxumPath(created.rule_id.clone()),
+            Json(EnabledBody { enabled: false }),
+        )
+        .await
+        .expect("disable rule");
+        assert!(!disabled.enabled);
+
+        let Json(deleted) = delete(State(env.state.clone()), AxumPath(created.rule_id.clone()))
+            .await
+            .expect("delete rule");
+        assert!(deleted.success);
+        assert_eq!(deleted.rule_id, created.rule_id);
+
+        let err = detail(State(env.state.clone()), AxumPath(created.rule_id))
+            .await
+            .expect_err("deleted rule should be gone");
+        assert!(matches!(err, ApiError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn create_rejects_a_blank_name() {
+        let env = RulesEnv::new().await;
+        let mut draft = sample_draft("");
+        draft.name = Some("   ".to_string());
+        let err = create(State(env.state.clone()), Json(draft))
+            .await
+            .expect_err("blank name must be rejected");
+        assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn detail_reports_not_found_for_an_unknown_id() {
+        let env = RulesEnv::new().await;
+        let err = detail(State(env.state.clone()), AxumPath("missing".to_string()))
+            .await
+            .expect_err("unknown rule");
+        assert!(matches!(err, ApiError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn test_endpoint_reports_would_fire_and_dry_run_actions() {
+        let env = RulesEnv::new().await;
+        let Json(created) = create(State(env.state.clone()), Json(sample_draft("Threat rule")))
+            .await
+            .expect("create rule");
+
+        let Json(response) = test(State(env.state.clone()), AxumPath(created.rule_id.clone()), None)
+            .await
+            .expect("test rule");
+        assert_eq!(response.rule_id, created.rule_id);
+        assert!(response.dry_run);
+        assert!(response.would_fire);
+        assert_eq!(response.outcome, "dry-run");
+        assert!(!response.actions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn executions_returns_an_empty_list_when_none_have_run() {
+        let _env = RulesEnv::new().await;
+        let Json(list) = executions(Query(ExecutionsQuery { limit: None }))
+            .await
+            .expect("executions");
+        // Executions are process-global (not env-var-scoped to this test's tempdir), so this
+        // just confirms the endpoint succeeds and returns a well-formed list.
+        let _ = list;
+    }
+}

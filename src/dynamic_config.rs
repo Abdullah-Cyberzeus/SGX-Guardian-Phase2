@@ -808,6 +808,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn latest_known_ca_ip_returns_none_when_the_system_config_is_absent() {
+        // `/etc/sgx-guardian/config/nodeA.yaml` is a hardcoded path (no env
+        // override) that genuinely doesn't exist in this sandbox, so this
+        // deterministically exercises the load-failure branch.
+        assert!(!std::path::Path::new("/etc/sgx-guardian/config/nodeA.yaml").exists());
+        assert_eq!(latest_known_ca_ip(), None);
+    }
+
+    #[tokio::test]
+    async fn overlay_is_reachable_and_reachable_lighthouse_name_return_none_without_a_registry() {
+        // `LIGHTHOUSE_REGISTRY_PATH` is likewise a hardcoded, non-overridable
+        // path that is genuinely absent in this sandbox.
+        assert!(!std::path::Path::new(
+            "/var/lib/sgx-guardian/nebula/lighthouse_registry.json"
+        )
+        .exists());
+        assert_eq!(reachable_lighthouse_name().await, None);
+        assert!(!overlay_is_reachable().await);
+    }
+
+    #[test]
+    fn detect_local_lan_ip_runs_the_real_network_scan_without_panicking() {
+        // Whichever branch this sandbox's real interfaces produce, the call
+        // itself must complete without panicking.
+        let _ = detect_local_lan_ip();
+    }
+
+    #[test]
+    fn update_peer_config_rejects_an_invalid_node_id_without_touching_disk() {
+        // An invalid node_id must be rejected before any path is built or
+        // file I/O attempted, regardless of whether `/etc/sgx-guardian` is
+        // writable in this environment.
+        update_peer_config("../escape", "host", "10.0.0.1", 50070, "key");
+        update_peer_config("", "host", "10.0.0.1", 50070, "key");
+        assert!(!std::path::Path::new("/etc/sgx-guardian/config/../escape.yaml").exists());
+    }
+
     #[tokio::test]
     async fn overlay_and_broadcast_empty_paths_do_not_require_network_or_config() {
         let config = NodeConfigBroadcast {

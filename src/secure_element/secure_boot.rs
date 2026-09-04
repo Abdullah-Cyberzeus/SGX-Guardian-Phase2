@@ -534,4 +534,71 @@ mod tests {
         // the function must return None cleanly without panicking.
         let _ = read_nvmem_u32(0x2C);
     }
+
+    // NOTE: `BootChainStatus::check()`/`check_inner()` are deliberately not exercised here.
+    // They populate a process-wide `OnceCell` shared with `main.rs` and
+    // `attestation_service.rs` (which already calls `check()` from its own tests) — calling
+    // it again here would either be a silent no-op (cache already populated by whichever
+    // test in the binary ran first) or, if this file's test happened to run first, would
+    // pin the cache to env-var state this test controls, making *other* tests' behavior
+    // depend on test run order. Not worth the flakiness for a function that's already
+    // exercised elsewhere in the real test suite.
+
+    #[test]
+    fn save_writes_pretty_json_and_creates_parent_dirs() {
+        let status = BootChainStatus {
+            hab_enabled: true,
+            device_closed: true,
+            hab_events_found: false,
+            hab_description: "test".into(),
+            kernel_version: "Linux 6.1.36".into(),
+            device_model: "Variscite VAR-SOM-MX8M-PLUS".into(),
+            guardian_binary_hash: Some("abc123".into()),
+            boot_chain_intact: true,
+        };
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("nested/status.json");
+        status.save(path.to_str().unwrap()).expect("save status");
+
+        let loaded: BootChainStatus =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("read saved status"))
+                .expect("parse saved status");
+        assert_eq!(loaded.device_model, "Variscite VAR-SOM-MX8M-PLUS");
+        assert!(loaded.boot_chain_intact);
+    }
+
+    #[test]
+    fn print_does_not_panic_with_and_without_a_binary_hash() {
+        let mut status = BootChainStatus::unknown();
+        status.print();
+
+        status.guardian_binary_hash = Some("f".repeat(64));
+        status.device_model = "Variscite VAR-SOM-MX8M-PLUS".into();
+        status.print();
+    }
+
+    #[test]
+    fn dump_ocotp_if_requested_is_a_no_op_without_the_env_flag() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let old = std::env::var_os("SGX_DUMP_OCOTP");
+        std::env::remove_var("SGX_DUMP_OCOTP");
+        BootChainStatus::dump_ocotp_if_requested();
+        if let Some(value) = old {
+            std::env::set_var("SGX_DUMP_OCOTP", value);
+        }
+    }
+
+    #[test]
+    fn dump_ocotp_if_requested_reports_missing_nvmem_when_flag_is_set() {
+        // The real nvmem device nodes genuinely don't exist on this machine, so this
+        // deterministically hits the "no nvmem node found" branch without touching hardware.
+        let _lock = crate::test_support::blocking_env_lock();
+        let old = std::env::var_os("SGX_DUMP_OCOTP");
+        std::env::set_var("SGX_DUMP_OCOTP", "1");
+        BootChainStatus::dump_ocotp_if_requested();
+        match old {
+            Some(value) => std::env::set_var("SGX_DUMP_OCOTP", value),
+            None => std::env::remove_var("SGX_DUMP_OCOTP"),
+        }
+    }
 }

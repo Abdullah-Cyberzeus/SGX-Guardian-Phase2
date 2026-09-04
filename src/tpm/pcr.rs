@@ -118,6 +118,19 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn read_snapshot_fails_once_it_reaches_the_unreachable_ek_step() {
+        // read_pcr_values succeeds against the fake tool, but read_snapshot then calls
+        // ek::node_uid_hex, which needs /var/lib/sgx-guardian/keys (unwritable here) — a
+        // real, deterministic failure past the PCR-reading step.
+        let a = "a".repeat(64);
+        with_pcr_tool(&format!("sha256:\n  0 : 0x{a}\n"), || {
+            let result = read_snapshot(&config("sha256:0"), "/missing/dkp.der");
+            assert!(result.is_err());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn read_pcr_values_ignores_short_hex_and_unparseable_lines() {
         let valid = "c".repeat(64);
         with_pcr_tool(

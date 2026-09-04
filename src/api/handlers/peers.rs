@@ -236,3 +236,308 @@ pub async fn list(State(s): State<Arc<AppState>>) -> Result<Json<PeersResponse>,
         timestamp: chrono::Utc::now().to_rfc3339(),
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::extract::State;
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    fn state_with_logs() -> (std::sync::Arc<AppState>, TempDir, TempDir) {
+        let base = TempDir::new().expect("base tempdir");
+        let config = TempDir::new().expect("config tempdir");
+        let state = AppState::for_tests(
+            base.path(),
+            "nodeA",
+            config.path().to_string_lossy().to_string(),
+        );
+        (state, base, config)
+    }
+
+    fn write_peers(state: &AppState, filename: &str, value: &serde_json::Value) {
+        std::fs::write(
+            std::path::Path::new(&state.log_dir_primary).join(filename),
+            serde_json::to_vec(value).unwrap(),
+        )
+        .expect("write peers file");
+    }
+
+    #[tokio::test]
+    async fn state_for_guardian_returns_none_when_no_files_exist() {
+        let (state, _base, _config) = state_with_logs();
+        assert!(state_for_guardian(&state, "did:guardian:x", None)
+            .await
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn state_for_guardian_finds_a_case_insensitive_match_by_did() {
+        let (state, _base, _config) = state_with_logs();
+        write_peers(
+            &state,
+            "trusted_peers.json",
+            &json!([{ "did": "did:guardian:ABC", "online": true, "status": "verified" }]),
+        );
+        let found = state_for_guardian(&state, "did:guardian:abc", None)
+            .await
+            .expect("should find by case-insensitive did");
+        assert_eq!(found.status, "verified");
+        assert_eq!(found.online, Some(true));
+    }
+
+    #[tokio::test]
+    async fn state_for_guardian_filters_by_node_id_when_provided() {
+        let (state, _base, _config) = state_with_logs();
+        write_peers(
+            &state,
+            "trusted_peers.json",
+            &json!([{ "did": "did:guardian:abc", "node_id": "nodeB", "status": "verified" }]),
+        );
+        assert!(state_for_guardian(&state, "did:guardian:abc", Some("nodeC"))
+            .await
+            .is_none());
+        let found = state_for_guardian(&state, "did:guardian:abc", Some("nodeB"))
+            .await
+            .expect("matching node_id should be found");
+        assert_eq!(found.status, "verified");
+    }
+
+    #[tokio::test]
+    async fn state_for_guardian_defaults_status_to_unknown_when_absent() {
+        let (state, _base, _config) = state_with_logs();
+        write_peers(
+            &state,
+            "trusted_peers.json",
+            &json!([{ "did": "did:guardian:abc" }]),
+        );
+        let found = state_for_guardian(&state, "did:guardian:abc", None)
+            .await
+            .expect("present");
+        assert_eq!(found.status, "unknown");
+        assert_eq!(found.online, None);
+    }
+
+    #[tokio::test]
+    async fn state_for_guardian_returns_none_for_malformed_json() {
+        let (state, _base, _config) = state_with_logs();
+        std::fs::write(
+            std::path::Path::new(&state.log_dir_primary).join("trusted_peers.json"),
+            b"not json",
+        )
+        .expect("write malformed file");
+        assert!(state_for_guardian(&state, "did:guardian:abc", None)
+            .await
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn state_for_guardian_falls_back_to_node_specific_file() {
+        let (state, _base, _config) = state_with_logs();
+        write_peers(
+            &state,
+            "trusted_peers_nodeA.json",
+            &json!([{ "did": "did:guardian:abc", "status": "trusted" }]),
+        );
+        let found = state_for_guardian(&state, "did:guardian:abc", None)
+            .await
+            .expect("should fall back to node-specific file");
+        assert_eq!(found.status, "trusted");
+    }
+
+    #[tokio::test]
+    async fn list_returns_an_empty_response_when_no_registry_file_exists() {
+        let (state, _base, _config) = state_with_logs();
+        let response = list(State(state)).await.expect("list should not error");
+        assert_eq!(response.0.total, 0);
+        assert!(response.0.peers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_excludes_self_and_peers_without_an_attested_virtual_id() {
+        let (state, _base, _config) = state_with_logs();
+        write_peers(
+            &state,
+            "trusted_peers.json",
+            &json!([
+                { "peer_id": "nodeA", "virtual_id": "vid-self", "status": "verified", "ip": "10.0.0.1" },
+                { "peer_id": "nodeB", "status": "verified", "ip": "10.0.0.2" },
+            ]),
+        );
+        let response = list(State(state)).await.expect("list should not error");
+        assert!(response.0.peers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_reports_call_unavailable_reasons_for_untrusted_and_invalid_ip_peers() {
+        let (state, _base, _config) = state_with_logs();
+        write_peers(
+            &state,
+            "trusted_peers.json",
+            &json!([
+                { "peer_id": "nodeB", "virtual_id": "vid-b", "status": "unknown", "ip": "10.0.0.2" },
+                { "peer_id": "nodeC", "virtual_id": "vid-c", "status": "verified", "ip": "not-an-ip" },
+            ]),
+        );
+        let response = list(State(state)).await.expect("list should not error");
+        assert_eq!(response.0.total, 2);
+        let by_id = |id: &str| {
+            response
+                .0
+                .peers
+                .iter()
+                .find(|p| p.peer_id == id)
+                .unwrap_or_else(|| panic!("missing peer {id}"))
+        };
+        let untrusted = by_id("nodeB");
+        assert!(!untrusted.call_available);
+        assert_eq!(
+            untrusted.call_unavailable_reason.as_deref(),
+            Some("Peer is not currently trusted")
+        );
+        let bad_ip = by_id("nodeC");
+        assert!(!bad_ip.call_available);
+        assert_eq!(
+            bad_ip.call_unavailable_reason.as_deref(),
+            Some("Peer registry has no plain Nebula IP address")
+        );
+    }
+
+    #[tokio::test]
+    async fn list_reports_offline_when_the_signaling_port_is_unreachable() {
+        let (state, _base, _config) = state_with_logs();
+        write_peers(
+            &state,
+            "trusted_peers.json",
+            &json!([
+                { "peer_id": "nodeB", "virtual_id": "vid-b", "status": "verified", "ip": "127.0.0.1" },
+            ]),
+        );
+        std::env::set_var("SGX_CALL_SIGNALING_PORT", "1");
+        let response = list(State(state)).await.expect("list should not error");
+        std::env::remove_var("SGX_CALL_SIGNALING_PORT");
+        let peer = &response.0.peers[0];
+        assert!(!peer.online);
+        assert!(!peer.call_available);
+        assert_eq!(
+            peer.call_unavailable_reason.as_deref(),
+            Some("Peer is offline on the Nebula call network")
+        );
+    }
+
+    #[tokio::test]
+    async fn list_reports_online_when_the_signaling_port_is_reachable() {
+        let (state, _base, _config) = state_with_logs();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback listener");
+        let port = listener.local_addr().expect("local addr").port();
+        tokio::spawn(async move {
+            loop {
+                if listener.accept().await.is_err() {
+                    break;
+                }
+            }
+        });
+        write_peers(
+            &state,
+            "trusted_peers.json",
+            &json!([
+                { "peer_id": "nodeB", "virtual_id": "vid-b", "status": "verified", "ip": "127.0.0.1" },
+            ]),
+        );
+        std::env::set_var("SGX_CALL_SIGNALING_PORT", port.to_string());
+        let response = list(State(state)).await.expect("list should not error");
+        std::env::remove_var("SGX_CALL_SIGNALING_PORT");
+        let peer = &response.0.peers[0];
+        assert!(peer.online);
+        assert!(peer.call_available);
+        assert!(peer.call_unavailable_reason.is_none());
+    }
+
+    #[tokio::test]
+    async fn list_enriches_a_did_less_merged_entry_from_the_per_node_registry() {
+        let (state, _base, _config) = state_with_logs();
+        write_peers(
+            &state,
+            "trusted_peers.json",
+            &json!([
+                { "peer_id": "nodeB", "virtual_id": "vid-b", "status": "unknown", "ip": "10.0.0.2" },
+            ]),
+        );
+        write_peers(
+            &state,
+            "trusted_peers_nodeA.json",
+            &json!([
+                { "peer_id": "nodeB", "did": "did:guardian:node-b" },
+            ]),
+        );
+        let response = list(State(state)).await.expect("list should not error");
+        assert_eq!(response.0.peers[0].did.as_deref(), Some("did:guardian:node-b"));
+    }
+
+    #[tokio::test]
+    async fn list_does_not_overwrite_a_did_already_present_in_the_merged_registry() {
+        let (state, _base, _config) = state_with_logs();
+        write_peers(
+            &state,
+            "trusted_peers.json",
+            &json!([
+                {
+                    "peer_id": "nodeB",
+                    "did": "did:guardian:already-present",
+                    "virtual_id": "vid-b",
+                    "status": "unknown",
+                    "ip": "10.0.0.2",
+                },
+            ]),
+        );
+        write_peers(
+            &state,
+            "trusted_peers_nodeA.json",
+            &json!([{ "peer_id": "nodeB", "did": "did:guardian:should-not-be-used" }]),
+        );
+        let response = list(State(state)).await.expect("list should not error");
+        assert_eq!(
+            response.0.peers[0].did.as_deref(),
+            Some("did:guardian:already-present")
+        );
+    }
+
+    #[tokio::test]
+    async fn safe_read_rejects_a_path_that_escapes_the_base_dir() {
+        let temp = TempDir::new().expect("tempdir");
+        let base = temp.path().join("base");
+        std::fs::create_dir_all(&base).expect("mkdir base");
+        let outside = temp.path().join("outside.txt");
+        std::fs::write(&outside, b"secret").expect("write outside file");
+        // A symlink inside `base` pointing outside it must not be followed.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside, base.join("escape.txt")).expect("symlink");
+            let result = safe_read("escape.txt", base.to_str().expect("utf8 base")).await;
+            assert!(result.is_none(), "must not read through a symlink escaping base_dir");
+        }
+    }
+
+    #[tokio::test]
+    async fn safe_read_returns_none_when_the_base_dir_does_not_exist() {
+        assert!(safe_read("whatever.json", "/does/not/exist").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn safe_read_returns_file_contents_when_present() {
+        let temp = TempDir::new().expect("tempdir");
+        std::fs::write(temp.path().join("data.json"), b"hello").expect("write");
+        let result = safe_read("data.json", temp.path().to_str().expect("utf8 path")).await;
+        assert_eq!(result.as_deref(), Some("hello"));
+    }
+
+    #[tokio::test]
+    async fn call_peer_online_returns_false_for_an_unreachable_port() {
+        std::env::set_var("SGX_CALL_SIGNALING_PORT", "1");
+        let online = call_peer_online("127.0.0.1").await;
+        std::env::remove_var("SGX_CALL_SIGNALING_PORT");
+        assert!(!online);
+    }
+}

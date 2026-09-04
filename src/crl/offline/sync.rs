@@ -614,17 +614,24 @@ mod tests {
         let peers_dir = temp.path().join("peers");
         let _peers_guard = EnvGuard::set(crate::did::doc_persistence::PEERS_DOC_DIR_ENV, &peers_dir);
 
-        // A bound-but-listening loopback socket = reachable peer.
+        // A listening loopback socket = reachable peer. The listener is held
+        // for the whole test and drains connections in a loop: `reachable_peers`
+        // probes every candidate, and an accept-once-then-drop listener would
+        // make the result depend on which peer happened to be probed first.
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let listen_addr = listener.local_addr().expect("addr");
         let accept_task = tokio::spawn(async move {
-            let _ = listener.accept().await;
+            loop {
+                if listener.accept().await.is_err() {
+                    break;
+                }
+            }
         });
 
-        // Bind-then-drop reserves a free port nobody listens on = unreachable.
-        let dead_listener = TcpListener::bind("127.0.0.1:0").await.expect("bind dead");
-        let dead_addr = dead_listener.local_addr().expect("dead addr");
-        drop(dead_listener);
+        // A different loopback address on the *same* port, with nothing bound
+        // to it, is refused. 127.0.0.0/8 is entirely local, and a listener on
+        // 127.0.0.1:P does not accept on 127.0.0.2:P.
+        let dead_ip = "127.0.0.2";
 
         write_peer_doc(
             &peers_dir,
@@ -641,7 +648,7 @@ mod tests {
             &sample_peer_doc(
                 "did:guardian:unreachable-peer",
                 Some("active"),
-                Some(&format!("{}/24", dead_addr.ip())),
+                Some(&format!("{}/24", dead_ip)),
             ),
         );
 
@@ -650,9 +657,14 @@ mod tests {
         let reachable = reachable_peers("did:guardian:self", &config(1)).await;
         std::env::remove_var("SGX_CRL_GOSSIP_PORT");
 
-        assert_eq!(reachable.len(), 1);
+        assert_eq!(
+            reachable.len(),
+            1,
+            "exactly one of the two peers is listening: {:?}",
+            reachable.iter().map(|peer| peer.did.as_str()).collect::<Vec<_>>()
+        );
         assert_eq!(reachable[0].did, "did:guardian:reachable-peer");
-        accept_task.await.expect("accept task joined");
+        accept_task.abort();
     }
 
     #[tokio::test]

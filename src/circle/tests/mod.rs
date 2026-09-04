@@ -1193,3 +1193,5 @@ async fn vault_file_download_is_restricted_to_circle_members() {
         "a member of a different Circle must not download this file"
     );
 }
+
+mod snapshot_tests;

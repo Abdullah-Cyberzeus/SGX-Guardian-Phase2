@@ -1104,9 +1104,9 @@ fn intensity_name(intensity: ScanIntensity) -> &'static str {
 mod tests {
     use super::{
         apply_schedule_patch, build_scan_args, default_version, get_runs, list_devices,
-        normalize_excludes, refresh_inventory_statuses, resolve_scan_target, runtime_whitelist,
-        RunsApiResponse, RunsQuery, RunsView, ScanTargetRequest, SchedulePatch,
-        ScheduleProfilePatch, ScheduleUpdateRequest, WhitelistDoc,
+        normalize_excludes, refresh_inventory_statuses, resolve_scan_target, risk_level,
+        runtime_whitelist, ApiError, RunsApiResponse, RunsQuery, RunsView, ScanTargetRequest,
+        SchedulePatch, ScheduleProfilePatch, ScheduleUpdateRequest, WhitelistDoc,
     };
     use crate::api::state::AppState;
     use crate::did::Resolver;
@@ -1469,5 +1469,559 @@ mod tests {
             .as_deref()
             .expect("devices_error should be present")
             .contains("raw xml not available"));
+    }
+
+    fn scanned_device(status: DeviceStatus) -> ConnectedDevice {
+        ConnectedDevice {
+            device_id: "dev-risk".into(),
+            ip: "10.0.0.4".into(),
+            mac: Some("AA:BB:CC:DD:EE:04".into()),
+            vendor: None,
+            hostname: None,
+            os_fingerprint: Some("Linux".into()),
+            os_cpe: Vec::new(),
+            open_ports: Vec::new(),
+            host_scripts: Vec::new(),
+            status,
+            first_seen: "2026-07-24T00:00:00Z".into(),
+            last_seen: "2026-07-24T00:00:00Z".into(),
+            vuln_triaged: false,
+            last_scan_intensity: None,
+        }
+    }
+
+    fn scanned_port(port: u16, scripts: &[(&str, &str)]) -> OpenPort {
+        OpenPort {
+            port,
+            protocol: "tcp".into(),
+            service: Some("svc".into()),
+            product_version: None,
+            cpe: Vec::new(),
+            scripts: scripts
+                .iter()
+                .map(|(id, output)| crate::discovery::ScriptResult {
+                    id: (*id).into(),
+                    output: (*output).into(),
+                })
+                .collect(),
+        }
+    }
+
+    /// `risk_level`'s ladder, walked from the top down. Each case differs from
+    /// the one above it by exactly the input that selects the next rung.
+    #[test]
+    fn risk_level_grades_devices_from_critical_down_to_unknown() {
+        // Unauthorized + a vulnerability finding is the top of the ladder.
+        let mut critical = scanned_device(DeviceStatus::Unauthorized);
+        critical.open_ports = vec![scanned_port(8080, &[("vulners", "CVE-2024-0001")])];
+        let (level, reasons, flagged) = risk_level(&critical);
+        assert_eq!(level, "critical");
+        assert!(reasons.iter().any(|r| r == "unauthorized device"), "{reasons:?}");
+        assert!(
+            reasons.iter().any(|r| r == "vulnerability findings detected"),
+            "{reasons:?}"
+        );
+        assert_eq!(flagged, vec![8080], "the risky port is flagged");
+
+        // A vulners script with empty output is not a finding.
+        let mut blank_vulners = scanned_device(DeviceStatus::Unauthorized);
+        blank_vulners.open_ports = vec![scanned_port(8080, &[("vulners", "   ")])];
+        assert_eq!(risk_level(&blank_vulners).0, "high");
+
+        // Host-level scripts count as findings too.
+        let mut host_level = scanned_device(DeviceStatus::Unauthorized);
+        host_level.host_scripts = vec![crate::discovery::ScriptResult {
+            id: "vulners".into(),
+            output: "CVE-2024-0002".into(),
+        }];
+        assert_eq!(risk_level(&host_level).0, "critical");
+
+        // Unauthorized with a risky port but no findings.
+        let mut high = scanned_device(DeviceStatus::Drifted);
+        high.open_ports = vec![scanned_port(22, &[])];
+        assert_eq!(risk_level(&high).0, "high", "Drifted counts as unauthorized");
+
+        // Approved with any open port.
+        let mut medium = scanned_device(DeviceStatus::Approved);
+        medium.open_ports = vec![scanned_port(9999, &[])];
+        let (level, reasons, flagged) = risk_level(&medium);
+        assert_eq!(level, "medium");
+        assert!(reasons.is_empty(), "a benign port raises nothing: {reasons:?}");
+        assert!(flagged.is_empty());
+
+        // No ports at all, but the OS was fingerprinted.
+        assert_eq!(risk_level(&scanned_device(DeviceStatus::Approved)).0, "low");
+
+        // Nothing observed at all.
+        let mut unknown = scanned_device(DeviceStatus::Approved);
+        unknown.os_fingerprint = None;
+        assert_eq!(risk_level(&unknown).0, "unknown");
+
+        // Unauthorized with neither ports nor findings still falls through to
+        // the port-based rungs.
+        let mut bare_unauthorized = scanned_device(DeviceStatus::Unauthorized);
+        bare_unauthorized.os_fingerprint = None;
+        assert_eq!(risk_level(&bare_unauthorized).0, "unknown");
+    }
+
+    #[test]
+    fn normalize_mac_accepts_common_separators_and_rejects_bad_input() {
+        for raw in ["aa:bb:cc:dd:ee:ff", "AA-BB-CC-DD-EE-FF", " aabbccddeeff "] {
+            assert_eq!(
+                super::normalize_mac(raw).expect("valid mac"),
+                "AA:BB:CC:DD:EE:FF",
+                "input: {raw}"
+            );
+        }
+        for raw in ["", "aa:bb:cc", "aa:bb:cc:dd:ee:ff:00", "zz:bb:cc:dd:ee:ff"] {
+            assert!(super::normalize_mac(raw).is_err(), "input: {raw}");
+        }
+    }
+
+    #[test]
+    fn normalize_mac_lossy_falls_back_to_the_uppercased_input() {
+        assert_eq!(super::normalize_mac_lossy("aa-bb-cc-dd-ee-ff"), "AA:BB:CC:DD:EE:FF");
+        // Not a MAC at all: kept as-is rather than dropped, so a malformed
+        // whitelist entry still matches itself.
+        assert_eq!(super::normalize_mac_lossy(" wildcard "), "WILDCARD");
+    }
+
+    #[test]
+    fn normalize_mac_for_match_keeps_only_hex_digits() {
+        assert_eq!(super::normalize_mac_for_match("aa:bb-cc.dd ee ff"), "AABBCCDDEEFF");
+        assert_eq!(
+            super::normalize_mac_for_match("no-hex-here"),
+            "EEE",
+            "only the three `e`s are hex digits"
+        );
+        assert_eq!(super::normalize_mac_for_match(""), "");
+    }
+
+    #[test]
+    fn normalize_target_override_treats_the_auto_tokens_as_absent() {
+        for token in ["auto", "AUTO", "null", "None", "   "] {
+            assert_eq!(
+                super::normalize_target_override(Some(token.to_string())),
+                None,
+                "token: {token}"
+            );
+        }
+        assert_eq!(super::normalize_target_override(None), None);
+        assert_eq!(
+            super::normalize_target_override(Some("  10.0.0.0/24  ".to_string())),
+            Some("10.0.0.0/24".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_optional_label_drops_blank_labels() {
+        assert_eq!(super::normalize_optional_label(None), None);
+        assert_eq!(super::normalize_optional_label(Some("   ".into())), None);
+        assert_eq!(
+            super::normalize_optional_label(Some("  Kitchen  ".into())),
+            Some("Kitchen".to_string())
+        );
+    }
+
+    #[test]
+    fn intensity_name_covers_every_scan_intensity() {
+        assert_eq!(super::intensity_name(ScanIntensity::Stealth), "stealth");
+        assert_eq!(super::intensity_name(ScanIntensity::Standard), "standard");
+        assert_eq!(super::intensity_name(ScanIntensity::Aggressive), "aggressive");
+    }
+
+    #[test]
+    fn unix_ts_to_rfc3339_formats_an_epoch_second() {
+        assert!(super::unix_ts_to_rfc3339(0).starts_with("1970-01-01T00:00:00"));
+        assert!(super::unix_ts_to_rfc3339(1_700_000_000).starts_with("2023-11-14T"));
+    }
+
+    #[test]
+    fn api_error_from_threat_blocker_error_maps_protected_ips_to_forbidden() {
+        assert!(matches!(
+            super::api_error_from_threat_blocker_error(
+                crate::threat::error::ThreatError::ProtectedIp("10.0.0.1".into())
+            ),
+            ApiError::Forbidden(_)
+        ));
+        assert!(matches!(
+            super::api_error_from_threat_blocker_error(crate::threat::error::ThreatError::Io(
+                std::io::Error::other("disk")
+            )),
+            ApiError::Internal(message) if message.contains("disk")
+        ));
+    }
+
+    #[test]
+    fn atomic_write_bytes_creates_parents_and_replaces_existing_content() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("nested").join("doc.yaml");
+
+        super::atomic_write_bytes(&path, b"first", "tmp").expect("first write");
+        assert_eq!(std::fs::read(&path).expect("read"), b"first");
+
+        super::atomic_write_bytes(&path, b"second", "tmp").expect("second write");
+        assert_eq!(std::fs::read(&path).expect("read"), b"second");
+
+        // The temporary file is not left behind.
+        assert!(!path.with_extension("tmp").exists());
+    }
+
+    #[test]
+    fn schedule_doc_from_config_projects_the_scan_config() {
+        let mut cfg = NmapConfig::default();
+        cfg.enabled = true;
+        cfg.target_cidr = Some("10.0.0.0/24".into());
+        cfg.timeout_secs = 120;
+        cfg.exclude = vec!["10.0.0.1".into()];
+
+        let doc = super::schedule_doc_from_config(&cfg);
+        assert!(doc.enabled);
+        assert_eq!(doc.target_cidr.as_deref(), Some("10.0.0.0/24"));
+        assert_eq!(doc.timeout_secs, 120);
+        assert_eq!(doc.exclude, vec!["10.0.0.1"]);
+        assert_eq!(doc.legacy_schedule_mode, cfg.legacy_schedule_mode());
+    }
+
+    /// A config + state dir pair with an inventory already written, so the
+    /// read-side handlers have something real to serve.
+    fn state_with_inventory(
+        devices: Vec<ConnectedDevice>,
+    ) -> (tempfile::TempDir, Arc<AppState>) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_dir = dir.path().join("config");
+        let state_dir = dir.path().join("state");
+        std::fs::create_dir_all(&config_dir).expect("config dir");
+        std::fs::create_dir_all(&state_dir).expect("state dir");
+        std::fs::write(
+            state_dir.join("inventory.json"),
+            serde_json::to_vec(&devices).expect("serialize inventory"),
+        )
+        .expect("write inventory");
+        let state = test_state(&config_dir, &state_dir);
+        (dir, state)
+    }
+
+    #[tokio::test]
+    async fn get_summary_counts_devices_by_status() {
+        let (_dir, state) = state_with_inventory(vec![
+            test_device(DeviceStatus::Approved),
+            {
+                let mut device = test_device(DeviceStatus::Unauthorized);
+                device.device_id = "dev-2".into();
+                device.mac = Some("AA:BB:CC:11:22:44".into());
+                device
+            },
+        ]);
+
+        let summary = super::get_summary(State(state))
+            .await
+            .expect("summary succeeds");
+        assert_eq!(summary.0.total, 2);
+    }
+
+    #[tokio::test]
+    async fn get_summary_reports_not_found_before_any_scan_has_run() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_dir = dir.path().join("config");
+        let state_dir = dir.path().join("state");
+        std::fs::create_dir_all(&config_dir).expect("config dir");
+        std::fs::create_dir_all(&state_dir).expect("state dir");
+        let state = test_state(&config_dir, &state_dir);
+
+        let error = super::get_summary(State(state))
+            .await
+            .err()
+            .expect("no inventory yet");
+        assert!(matches!(error, ApiError::NotFound(_)), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn get_device_serves_one_device_and_reports_unknown_ids() {
+        let (_dir, state) = state_with_inventory(vec![test_device(DeviceStatus::Unauthorized)]);
+
+        let detail = super::get_device(
+            State(state.clone()),
+            axum::extract::Path("dev-1".to_string()),
+        )
+        .await
+        .expect("device detail");
+        assert_eq!(detail.0.device.device_id, "dev-1");
+
+        let error = super::get_device(
+            State(state),
+            axum::extract::Path("no-such-device".to_string()),
+        )
+        .await
+        .err()
+        .expect("unknown device");
+        assert!(matches!(error, ApiError::NotFound(_)), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn list_unauthorized_returns_only_unapproved_devices() {
+        let (_dir, state) = state_with_inventory(vec![
+            test_device(DeviceStatus::Approved),
+            {
+                let mut device = test_device(DeviceStatus::Unauthorized);
+                device.device_id = "dev-2".into();
+                device
+            },
+        ]);
+
+        let listed = super::list_unauthorized(State(state))
+            .await
+            .expect("list_unauthorized succeeds");
+        assert!(
+            listed.0.iter().all(|device| device.status != DeviceStatus::Approved),
+            "approved devices must not be listed"
+        );
+    }
+
+    #[tokio::test]
+    async fn whitelist_round_trips_through_put_and_get() {
+        let (_dir, state) = state_with_inventory(vec![test_device(DeviceStatus::Unauthorized)]);
+
+        // A blank version is replaced with the default rather than persisted.
+        let saved = super::put_whitelist(
+            State(state.clone()),
+            Json(WhitelistDoc {
+                version: "   ".to_string(),
+                devices: vec![WhitelistEntry {
+                    mac: "aa:bb:cc:11:22:33".into(),
+                    label: Some("Printer".into()),
+                    expected_os: None,
+                    expected_ports: vec![22],
+                    expected_ips: Vec::new(),
+                }],
+            }),
+        )
+        .await
+        .expect("put_whitelist succeeds");
+        assert_eq!(saved.0.version, default_version());
+
+        let view = super::get_whitelist(State(state))
+            .await
+            .expect("get_whitelist succeeds");
+        assert_eq!(view.0.devices.len(), 1);
+        assert!(
+            view.0.devices[0].inventory_match,
+            "the whitelisted MAC matches the seeded inventory device"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_whitelist_is_empty_before_one_is_written() {
+        let (_dir, state) = state_with_inventory(Vec::new());
+        let view = super::get_whitelist(State(state))
+            .await
+            .expect("get_whitelist succeeds");
+        assert!(view.0.devices.is_empty());
+    }
+
+    #[tokio::test]
+    async fn schedule_round_trips_through_put_and_get() {
+        let (_dir, state) = state_with_inventory(Vec::new());
+
+        let initial = super::get_schedule(State(state.clone()))
+            .await
+            .expect("get_schedule succeeds");
+        let was_enabled = initial.0.enabled;
+
+        let updated = super::put_schedule(
+            State(state.clone()),
+            Json(ScheduleUpdateRequest {
+                enabled: Some(!was_enabled),
+                target_cidr: Some(Some("10.10.0.0/24".to_string())),
+                timeout_secs: Some(300),
+                exclude: Some(vec!["10.10.0.1".to_string()]),
+                schedules: None,
+                hourly_intensity: None,
+                daily_intensity: None,
+            }),
+        )
+        .await
+        .expect("put_schedule succeeds");
+        assert_eq!(updated.0.enabled, !was_enabled);
+        assert_eq!(updated.0.target_cidr.as_deref(), Some("10.10.0.0/24"));
+        assert_eq!(updated.0.timeout_secs, 300);
+        assert_eq!(updated.0.exclude, vec!["10.10.0.1"]);
+
+        // The change was actually persisted, not just echoed back.
+        let reloaded = super::get_schedule(State(state))
+            .await
+            .expect("get_schedule succeeds");
+        assert_eq!(reloaded.0.target_cidr.as_deref(), Some("10.10.0.0/24"));
+        assert_eq!(reloaded.0.timeout_secs, 300);
+    }
+
+    /// With no `view`/`limit` the handler serves the raw-XML listing instead of
+    /// the enriched history, sorted newest first.
+    #[tokio::test]
+    async fn get_runs_serves_the_raw_xml_listing_newest_first() {
+        let (dir, state) = state_with_inventory(vec![test_device(DeviceStatus::Approved)]);
+        let raw_dir = dir.path().join("state").join("raw");
+        std::fs::create_dir_all(&raw_dir).expect("raw dir");
+        for name in ["1700000000.xml", "1800000000.xml", "not-a-timestamp.xml", "notes.txt"] {
+            std::fs::write(raw_dir.join(name), b"<nmaprun/>").expect("write raw file");
+        }
+
+        let Json(RunsApiResponse::Raw(response)) =
+            super::get_runs(State(state), Query(RunsQuery::default()))
+                .await
+                .expect("get_runs succeeds")
+        else {
+            panic!("expected the raw listing when no view or limit is given");
+        };
+
+        assert_eq!(
+            response.total_in_inventory, 1,
+            "the raw listing carries the inventory size for context"
+        );
+        let timestamps: Vec<u64> = response.runs.iter().map(|run| run.unix_ts).collect();
+        assert_eq!(
+            timestamps,
+            vec![1_800_000_000, 1_700_000_000],
+            "newest first, and only well-formed .xml names are listed"
+        );
+        assert!(response.runs.iter().all(|run| run.source == "raw_xml"));
+    }
+
+    #[tokio::test]
+    async fn get_runs_serves_an_empty_raw_listing_when_nothing_has_been_scanned() {
+        let (_dir, state) = state_with_inventory(Vec::new());
+        let Json(RunsApiResponse::Raw(response)) =
+            super::get_runs(State(state), Query(RunsQuery::default()))
+                .await
+                .expect("get_runs succeeds")
+        else {
+            panic!("expected the raw listing");
+        };
+        assert!(response.runs.is_empty());
+        assert_eq!(response.total_in_inventory, 0);
+    }
+
+    /// The four scan endpoints differ only in the intensity flag they pass to
+    /// the CLI. `run_cli` honours `SGX_PA_CLI_PATH`, so pointing it at a stub
+    /// that simply succeeds or fails exercises each handler — and
+    /// `scan_with_args`' publish-on-success branch — without launching a real
+    /// nmap scan.
+    #[tokio::test]
+    async fn every_scan_endpoint_invokes_the_cli_and_reports_its_outcome() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let (_dir, state) = state_with_inventory(vec![test_device(DeviceStatus::Unauthorized)]);
+        let previous = std::env::var_os("SGX_PA_CLI_PATH");
+
+        // A stub that exits 0: every handler reports success and the
+        // rule-event replay runs.
+        std::env::set_var("SGX_PA_CLI_PATH", "/bin/true");
+        for (label, response) in [
+            (
+                "scan_now",
+                super::scan_now(
+                    State(state.clone()),
+                    Query(ScanTargetRequest::default()),
+                    axum::body::Bytes::new(),
+                )
+                .await,
+            ),
+            (
+                "scan_stealth",
+                super::scan_stealth(
+                    State(state.clone()),
+                    Query(ScanTargetRequest::default()),
+                    axum::body::Bytes::new(),
+                )
+                .await,
+            ),
+            (
+                "scan_standard",
+                super::scan_standard(
+                    State(state.clone()),
+                    Query(ScanTargetRequest::default()),
+                    axum::body::Bytes::new(),
+                )
+                .await,
+            ),
+            (
+                "scan_aggressive",
+                super::scan_aggressive(
+                    State(state.clone()),
+                    Query(ScanTargetRequest::default()),
+                    axum::body::Bytes::new(),
+                )
+                .await,
+            ),
+        ] {
+            let response = response.unwrap_or_else(|error| panic!("{label}: {error:?}"));
+            assert!(response.0.success, "{label} should report success");
+        }
+
+        // A stub that exits non-zero: the handler still answers 200, reporting
+        // the failure in the body rather than as an error.
+        std::env::set_var("SGX_PA_CLI_PATH", "/bin/false");
+        let response = super::scan_now(
+            State(state),
+            Query(ScanTargetRequest::default()),
+            axum::body::Bytes::new(),
+        )
+        .await
+        .expect("scan_now still answers");
+        assert!(!response.0.success, "a failing CLI is reported, not raised");
+
+        match previous {
+            Some(value) => std::env::set_var("SGX_PA_CLI_PATH", value),
+            None => std::env::remove_var("SGX_PA_CLI_PATH"),
+        }
+    }
+
+    /// The rules bridge replays the most recent run's devices as rule events.
+    /// It is infallible by construction — every failure path just returns — so
+    /// this checks it completes for both an empty history and a real run.
+    #[tokio::test]
+    async fn publish_rule_events_for_latest_run_handles_empty_and_populated_history() {
+        let (dir, state) = state_with_inventory(vec![test_device(DeviceStatus::Unauthorized)]);
+
+        // No history file at all: returns without publishing anything.
+        super::publish_rule_events_for_latest_run(state.as_ref());
+
+        let state_dir = dir.path().join("state");
+        let raw_xml = state_dir.join("raw").join("1700000000.xml");
+        std::fs::create_dir_all(raw_xml.parent().expect("raw parent")).expect("raw dir");
+        std::fs::write(&raw_xml, b"<nmaprun/>").expect("write raw xml");
+        let inventory = state_dir.join("inventory.json");
+        let record = test_run_record(&raw_xml, &inventory);
+        let history_path = run_history::history_path(&state_dir);
+        run_history::append_record(&history_path, &record).expect("append run history");
+
+        super::publish_rule_events_for_latest_run(state.as_ref());
+    }
+
+    #[tokio::test]
+    async fn list_runs_is_empty_before_any_scan_has_run() {
+        let (_dir, state) = state_with_inventory(Vec::new());
+        let runs = super::list_runs(State(state), Query(RunsQuery::default()))
+            .await
+            .expect("list_runs succeeds");
+        assert!(runs.0.is_empty(), "{:?}", runs.0.len());
+    }
+
+    #[test]
+    fn enrich_whitelist_doc_preserves_the_version_and_entry_count() {
+        let doc = WhitelistDoc {
+            version: "3".to_string(),
+            devices: vec![WhitelistEntry {
+                mac: "AA:BB:CC:DD:EE:04".into(),
+                label: Some("Sensor".into()),
+                expected_os: None,
+                expected_ports: Vec::new(),
+                expected_ips: Vec::new(),
+            }],
+        };
+        let inventory = vec![scanned_device(DeviceStatus::Approved)];
+
+        let view = super::enrich_whitelist_doc(doc, &inventory);
+        assert_eq!(view.version, "3");
+        assert_eq!(view.devices.len(), 1);
     }
 }
