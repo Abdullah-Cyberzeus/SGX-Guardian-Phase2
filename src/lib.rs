@@ -50,6 +50,7 @@ pub mod runtime;
 pub mod runtime_gates;
 pub mod secure_element;
 pub mod server;
+pub mod startup;
 pub mod storage;
 pub mod telemetry;
 pub mod testkit;

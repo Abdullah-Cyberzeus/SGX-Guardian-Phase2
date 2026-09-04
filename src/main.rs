@@ -7,7 +7,7 @@ use sgx_guardian_client::audit::event::{AuditAction, AuditCategory, AuditSeverit
 use sgx_guardian_client::audit::logger::{init_audit_logger, log_audit};
 use sgx_guardian_client::audit::verifier::AuditVerifier;
 use sgx_guardian_client::client::send_ping;
-use sgx_guardian_client::config_loader::{load_config, CloudConfig, NodeConfig, RelayLimitsConfig};
+use sgx_guardian_client::config_loader::{CloudConfig, RelayLimitsConfig};
 use sgx_guardian_client::key_manager::KeyManager;
 #[cfg(feature = "secure-element")]
 use sgx_guardian_client::secure_element;
@@ -27,9 +27,12 @@ use sgx_guardian_client::node_announcement::NodeAnnouncement;
 use sgx_guardian_client::node_broadcast;
 use sgx_guardian_client::node_listener;
 use sgx_guardian_client::runtime_gates::{cooldown, step, GATES};
+use sgx_guardian_client::startup::config as startup_config;
+use sgx_guardian_client::startup::nebula_cert::{cert_matches_overlay_ip, read_ip_from_nebula_cert};
+use sgx_guardian_client::startup::{env_true, json_equivalent};
+use sgx_guardian_client::startup::{admin_tls, audit_paths, bootstrap, pcr_status, GuardianPaths};
 
 use base64::{engine::general_purpose, Engine as _};
-use sha2::Digest;
 use std::fs;
 use std::path::PathBuf;
 #[cfg(windows)]
@@ -49,13 +52,6 @@ const DID_DOC_REFRESH_INTERVAL_SECS: u64 = 300;
 const DID_DOC_PULL_INTERVAL_SECS: u64 = 30;
 const VC_STATUS_LIST_PULL_INTERVAL_SECS: u64 = 300;
 const DID_DOC_ROTATION_FLAG: &str = "/var/lib/sgx-guardian/identity/.dkp_rotated.flag";
-
-fn env_true(key: &str) -> bool {
-    matches!(
-        std::env::var(key).ok().as_deref(),
-        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("on")
-    )
-}
 
 fn audit_key_backend(node_id: &str, message: &str) {
     log_audit(
@@ -207,107 +203,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::env::set_var("SGX_LAN_HOSTNAME", &lan_hostname);
     std::env::set_var("SGX_LAN_FQDN", &lan_fqdn);
 
-    // === FIRST: Ensure all required directories exist ===
-    for dir in &[
-        "/etc/sgx-guardian/config",
-        "/etc/sgx-guardian/schemas",
-        "/etc/sgx-guardian/policies",
-        "/var/lib/sgx-guardian/keys",
-        "/var/lib/sgx-guardian/pcr",
-        "/var/lib/sgx-guardian/boot",
-        "/var/lib/sgx-guardian/sgx-agent",
-        "/var/lib/sgx-guardian/identity",
-        "/var/lib/sgx-guardian/identity/peers",
-        "/var/lib/sgx-guardian/nebula/ca",
-        "/var/lib/sgx-guardian/nebula/nodes",
-        "/var/lib/sgx-guardian/nebula/requests",
-        "/var/lib/sgx-guardian/threat",
-        "/etc/sgx-guardian/threat",
-        "/var/log/sgx-guardian",
-    ] {
-        if let Err(e) = std::fs::create_dir_all(dir) {
-            eprintln!(
-                "⚠️ Failed to create {}: {} (may cause issues later)",
-                dir, e
-            );
-        }
+    // === FIRST-BOOT FILESYSTEM BOOTSTRAP ===
+    // Directory creation, default node configs, the shipped policy schema and
+    // pruning of approval requests written by an incompatible binary all live
+    // in `startup::bootstrap` so each branch is testable against a tempdir.
+    let paths = GuardianPaths::production();
+    let report = bootstrap::bootstrap_filesystem(&paths, node_id == "nodeA");
+    for dir in &report.directory_failures {
+        eprintln!(
+            "⚠️ Failed to create {} (may cause issues later)",
+            dir.display()
+        );
     }
-
-    if node_id == "nodeA" {
-        let requests_dir = "/var/lib/sgx-guardian/nebula/requests";
-        if let Ok(entries) = std::fs::read_dir(requests_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-                    continue;
-                };
-                if !name.ends_with(".yaml") {
-                    continue;
-                }
-
-                let compatible = std::fs::read_to_string(&path)
-                    .ok()
-                    .and_then(|content| serde_yaml::from_str::<serde_yaml::Value>(&content).ok())
-                    .and_then(|v| v.as_mapping().cloned())
-                    .map(|m| {
-                        let required = [
-                            "node_id",
-                            "requested_at",
-                            "overlay_ip",
-                            "public_key_fingerprint",
-                            "approve",
-                        ];
-                        let has_required = required
-                            .iter()
-                            .all(|k| m.contains_key(serde_yaml::Value::String((*k).to_string())));
-                        if !has_required {
-                            return false;
-                        }
-                        match m.get(serde_yaml::Value::String("approve".to_string())) {
-                            Some(serde_yaml::Value::String(v)) => {
-                                matches!(
-                                    v.as_str(),
-                                    "false"
-                                        | "member"
-                                        | "lighthouse"
-                                        | "relay"
-                                        | "lh_relay"
-                                        | "reject"
-                                        | "no"
-                                        | "lh"
-                                )
-                            }
-                            Some(serde_yaml::Value::Bool(v)) => !v,
-                            _ => false,
-                        }
-                    })
-                    .unwrap_or(false);
-
-                if !compatible {
-                    eprintln!("🗑️  Removing incompatible old approval YAML: {}", name);
-                    let _ = std::fs::remove_file(path);
-                }
-            }
-        }
+    for name in &report.pruned_approvals {
+        eprintln!("🗑️  Removed incompatible old approval YAML: {}", name);
     }
-
-    // Create default node configs if missing
-    for (nid, port) in &[("nodeA", 50051u16), ("nodeB", 50052), ("nodeC", 50053)] {
-        let path = format!("/etc/sgx-guardian/config/{}.yaml", nid);
-        if !std::path::Path::new(&path).exists() {
-            let letter = &nid[4..];
-            let lan_fqdn = sgx_guardian_client::lan_name::fqdn(nid);
-            let content = format!(
-                "---\nnode_id: \"{}\"\nhostname: \"{}\"\nip: \"0.0.0.0\"\nport: {}\npublic_key: \"placeholder-key-{}\"\n\napi:\n  tls:\n    enabled: true\n    require_https: true\n\nrelay:\n  enabled: false\n  max_peers: 5\n  max_bandwidth_mbps: 10\n  alert_threshold_pct: 80\n\nsecure_element:\n  enabled: true\n  scp_key_path: \"/home/root/se05x_mw_v04.05.01/simw-top/scripts/se050F_scp_keys.txt\"\n  interface: \"t1oi2c\"\n  auth_type: \"PlatformSCP\"\n  connection_type: \"se05x\"\n",
-                nid, lan_fqdn, port, letter
-            );
-            let _ = std::fs::write(&path, &content);
-        }
-        // Also create /etc/sgx-guardian/<node>.yaml symlink/copy
-        let main_path = format!("/etc/sgx-guardian/{}.yaml", nid);
-        if !std::path::Path::new(&main_path).exists() {
-            let _ = std::fs::copy(&path, &main_path);
-        }
+    match &report.schema_digest {
+        Some(digest) => println!(
+            "📜 Local schema canonical digest: {} (compare to peers — must match)",
+            digest
+        ),
+        None => eprintln!(
+            "⚠️ Schema at {} is INVALID or missing — attestation digest will fall back to constant default",
+            paths.policy_schema().display()
+        ),
     }
 
     // === Policy Authority key bootstrap (nodeA only) ===
@@ -327,33 +246,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     e
                 );
             }
-        }
-    }
-
-    // Create default policy schema if missing.
-    // CRITICAL: this string is byte-identical across all nodes — same binary,
-    // same default schema → same canonical digest → mutual attestation works
-    // out of the box on a fresh cohort.
-    let schema_path = "/etc/sgx-guardian/schemas/uep_policy_v1.yaml";
-    const DEFAULT_SCHEMA: &str = "---\npolicy_id: \"123e4567-e89b-12d3-a456-426614174000\"\nversion: \"1.0.0\"\ndescription: \"Default Guardian Edge Policy\"\nrules:\n  - id: \"rule-001\"\n    action: \"ALLOW\"\n    src: \"10.0.0.0/24\"\n    dst: \"0.0.0.0/0\"\n    protocol: \"TCP\"\n    port: 443\n  - id: \"rule-005\"\n    action: \"DENY\"\n    src: \"0.0.0.0/0\"\n    dst: \"10.0.0.10\"\n    protocol: \"UDP\"\n";
-    if !std::path::Path::new(schema_path).exists() {
-        let _ = std::fs::write(schema_path, DEFAULT_SCHEMA);
-    }
-    // Always log the canonical digest of the active schema so the operator
-    // can compare it across boards.
-    if let Ok(yaml) = std::fs::read_to_string(schema_path) {
-        if let Ok(parsed) = sgx_guardian_client::policy::validate_policy(&yaml) {
-            let canonical = sgx_guardian_client::policy::canonical_policy_bytes(&parsed);
-            let digest = hex::encode(sha2::Sha256::digest(&canonical));
-            println!(
-                "📜 Local schema canonical digest: {} (compare to peers — must match)",
-                digest
-            );
-        } else {
-            eprintln!(
-                "⚠️ Schema at {} is INVALID — attestation digest will fall back to constant default",
-                schema_path
-            );
         }
     }
 
@@ -684,8 +576,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         boot_status.print();
 
         // Save boot chain status
-        let boot_status_path = format!("/var/lib/sgx-guardian/boot/{}_chain_status.json", node_id);
-        if let Err(e) = boot_status.save(&boot_status_path) {
+        let boot_status_path = paths.boot_chain_status(&node_id);
+        if let Err(e) = boot_status.save(&boot_status_path.to_string_lossy()) {
             eprintln!("  Boot chain save failed: {}", e);
         }
 
@@ -701,14 +593,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n  Measuring platform integrity (PCR)...");
     {
         use sgx_guardian_client::secure_element::pcr::*;
-        use sgx_guardian_client::secure_element::pcr_config;
-        use sha2::Digest;
-
+        
         let mut pcr_engine = PcrEngine::new();
-        let mut measurement_errors: Vec<PcrMeasurementError> = Vec::new();
 
         // Detect environment
-        let is_hardware = std::path::Path::new("/proc/device-tree/model").exists();
+        let is_hardware = pcr_status::running_on_hardware();
         println!(
             "  PCR mode: {}",
             if is_hardware {
@@ -718,120 +607,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         );
 
-        let sources = if is_hardware {
-            pcr_config::default_measurement_sources(&node_id)
-        } else {
-            pcr_config::software_measurement_sources()
-        };
-
-        // Perform measurements
-        for src in &sources {
-            if src.source_type == "boot_chain" {
-                // Measure the boot chain state string
-                use sgx_guardian_client::secure_element::secure_boot::BootChainStatus;
-                let boot_status = BootChainStatus::check();
-                let measurement = boot_status.to_measurement_string();
-                match pcr_engine.extend_from_string(src.pcr_index, &measurement) {
-                    Ok(hash) => println!(
-                        "    PCR{}: {} → {}...",
-                        src.pcr_index,
-                        src.label,
-                        &hash[..12]
-                    ),
-                    Err(e) => {
-                        let _ =
-                            pcr_engine.extend_from_string(src.pcr_index, &format!("ERROR:{}", e));
-                        measurement_errors.push(PcrMeasurementError {
-                            pcr_index: src.pcr_index,
-                            source: src.source.clone(),
-                            error: e.clone(),
-                        });
-                        println!("    PCR{}: {} → ⚠️ {}", src.pcr_index, src.label, e);
-                    }
-                }
-            } else if src.source_type == "multi_file" {
-                let files: Vec<String> = src
-                    .source
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .collect();
-                let errs = pcr_engine.extend_from_files(src.pcr_index, &files);
-                measurement_errors.extend(errs);
-            } else if src.source_type == "static_yaml" {
-                let canonical = canonical_static_yaml_measurement(&src.source);
-                match pcr_engine.extend_from_string(src.pcr_index, &canonical) {
-                    Ok(hash) => println!(
-                        "    PCR{}: {} → {}...",
-                        src.pcr_index,
-                        src.label,
-                        &hash[..12]
-                    ),
-                    Err(e) => {
-                        let _ =
-                            pcr_engine.extend_from_string(src.pcr_index, &format!("ERROR:{}", e));
-                        measurement_errors.push(PcrMeasurementError {
-                            pcr_index: src.pcr_index,
-                            source: src.source.clone(),
-                            error: e.clone(),
-                        });
-                        println!("    PCR{}: {} → ⚠️ {}", src.pcr_index, src.label, e);
-                    }
-                }
-            } else {
-                let result = match src.source_type.as_str() {
-                    "file" => pcr_engine.extend_from_file(src.pcr_index, &src.source),
-                    "string" => pcr_engine.extend_from_string(src.pcr_index, &src.source),
-                    _ => Err(format!("Unknown type: {}", src.source_type)),
-                };
-                match result {
-                    Ok(hash) => println!(
-                        "    PCR{}: {} → {}...",
-                        src.pcr_index,
-                        src.label,
-                        &hash[..12]
-                    ),
-                    Err(e) => {
-                        let _ =
-                            pcr_engine.extend_from_string(src.pcr_index, &format!("ERROR:{}", e));
-                        measurement_errors.push(PcrMeasurementError {
-                            pcr_index: src.pcr_index,
-                            source: src.source.clone(),
-                            error: e.clone(),
-                        });
-                        println!("    PCR{}: {} → ⚠️ {}", src.pcr_index, src.label, e);
-                    }
-                }
-            }
-        }
+        let sources = pcr_status::measurement_sources(&node_id, is_hardware);
+        let run = pcr_status::measure_sources(&mut pcr_engine, &sources);
+        pcr_status::print_measurement_lines(&run.lines);
+        let measurement_errors = run.errors;
 
         pcr_engine.print_status();
 
         // Determine integrity status
-        let has_critical_fail = measurement_errors.iter().any(|err| {
-            sources
-                .iter()
-                .any(|s| s.pcr_index == err.pcr_index && s.critical)
-        });
-        let integrity_status = if measurement_errors.is_empty() {
-            "PASS".to_string()
-        } else if has_critical_fail {
-            "FAIL".to_string()
-        } else {
-            "DEGRADED".to_string()
-        };
-
-        if integrity_status == "FAIL" {
-            eprintln!("  🔴 CRITICAL: Platform integrity check FAILED — attestation will be rejected by peers");
-        } else if integrity_status == "DEGRADED" {
-            println!("  ⚠️ Some measurements failed (non-critical) — status DEGRADED");
-        } else {
-            println!("  Platform integrity: ✅ PASS");
+        let integrity_status = pcr_status::integrity_status(&measurement_errors, &sources);
+        match integrity_status {
+            pcr_status::IntegrityStatus::Fail => eprintln!(
+                "  🔴 CRITICAL: Platform integrity check FAILED — attestation will be rejected by peers"
+            ),
+            pcr_status::IntegrityStatus::Degraded => {
+                println!("  ⚠️ Some measurements failed (non-critical) — status DEGRADED")
+            }
+            pcr_status::IntegrityStatus::Pass => println!("  Platform integrity: ✅ PASS"),
         }
 
         // Build snapshot
         let mut snapshot = pcr_engine.snapshot();
         snapshot.measurement_errors = measurement_errors;
-        snapshot.integrity_status = integrity_status;
+        snapshot.integrity_status = integrity_status.as_str().to_string();
         #[cfg(feature = "secure-element")]
         let se_node_uid = if km.backend_name() == "SE050" {
             let se_config = sgx_guardian_client::secure_element::config::SeConfig::default();
@@ -857,15 +655,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         snapshot.measured_at = chrono::Utc::now().to_rfc3339();
 
         // Sign: SHA256(composite_bytes || nonce_bytes || timestamp_bytes)  (BINARY concat)
-        let composite_bytes =
-            hex::decode(&snapshot.composite_digest).unwrap_or_else(|_| vec![0u8; 32]);
-        let nonce_sign_bytes = hex::decode(&snapshot.nonce).unwrap_or_else(|_| vec![0u8; 16]);
-        let ts_bytes = snapshot.measured_at.as_bytes();
-        let mut sign_input = Vec::with_capacity(32 + 16 + ts_bytes.len());
-        sign_input.extend_from_slice(&composite_bytes);
-        sign_input.extend_from_slice(&nonce_sign_bytes);
-        sign_input.extend_from_slice(ts_bytes);
-        let sign_hash = sha2::Sha256::digest(&sign_input);
+        let sign_hash = pcr_status::composite_sign_hash(
+            &snapshot.composite_digest,
+            &snapshot.nonce,
+            &snapshot.measured_at,
+        );
 
         if let Ok(sig) = km.sign(&sign_hash) {
             snapshot.composite_signature =
@@ -877,15 +671,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Save snapshot
-        let pcr_path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node_id);
+        let pcr_path = paths.pcr_snapshot(&node_id).to_string_lossy().into_owned();
         match snapshot.save(&pcr_path) {
             Ok(_) => println!("  PCR snapshot → {}", pcr_path),
             Err(e) => eprintln!("  PCR save failed: {}", e),
         }
 
         // Compare against baseline
-        let baseline_path = format!("/etc/sgx-guardian/pcr_{}_baseline.json", node_id);
-        if let Ok(baseline) = PcrBaseline::load(&baseline_path) {
+        let baseline_path = paths.pcr_baseline(&node_id);
+        if let Ok(baseline) = PcrBaseline::load(&baseline_path.to_string_lossy()) {
             // Validate schema version
             if baseline.schema_version != PCR_SCHEMA_VERSION {
                 eprintln!(
@@ -979,118 +773,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Sanitize configs before load
-    for yaml_file in &[
-        "/etc/sgx-guardian/config/nodeA.yaml",
-        "/etc/sgx-guardian/config/nodeB.yaml",
-        "/etc/sgx-guardian/config/nodeC.yaml",
-    ] {
-        if let Err(e) = dynamic_config::sanitize_config_ip_if_invalid(yaml_file) {
-            eprintln!("⚠️ Sanitize failed for {}: {:?}", yaml_file, e);
+    for (node, _) in bootstrap::DEFAULT_NODE_PORTS {
+        let yaml_file = paths.node_config(node);
+        if let Err(e) = dynamic_config::sanitize_config_ip_if_invalid(&yaml_file.to_string_lossy())
+        {
+            eprintln!("⚠️ Sanitize failed for {}: {:?}", yaml_file.display(), e);
         }
     }
 
     // Update ONLY current node config with detected IP
     if !detected_ip.is_empty() {
-        let config_path = format!("/etc/sgx-guardian/config/{}.yaml", node_id);
-        let main_path = format!("/etc/sgx-guardian/{}.yaml", node_id);
-        let _ = dynamic_config::update_config_ip_if_changed(&config_path, &detected_ip);
+        let config_path = paths.node_config(&node_id);
+        let _ = dynamic_config::update_config_ip_if_changed(
+            &config_path.to_string_lossy(),
+            &detected_ip,
+        );
         // Keep main path in sync
-        let _ = std::fs::copy(&config_path, &main_path);
-    }
-
-    fn load_config_safe(node: &str) -> NodeConfig {
-        // Try config/ dir first (dynamic configs live here)
-        let config_path = format!("/etc/sgx-guardian/config/{}.yaml", node);
-        if let Ok(cfg) = load_config(&config_path) {
-            return cfg;
-        }
-        // Fallback to root dir
-        let root_path = format!("/etc/sgx-guardian/{}.yaml", node);
-        if let Ok(cfg) = load_config(&root_path) {
-            return cfg;
-        }
-        // Last resort: default config
-        eprintln!("⚠️ No config found for {} — using defaults", node);
-        NodeConfig {
-            node_id: node.to_string(),
-            device_name: None,
-            hostname: format!("guardian-node-{}", &node[4..]),
-            display_hostname: None,
-            ip: "0.0.0.0".to_string(),
-            port: match node {
-                "nodeA" => 50051,
-                "nodeB" => 50052,
-                _ => 50053,
-            },
-            public_key: format!("placeholder-key-{}", &node[4..]),
-            offline_mode: 1,
-            metrics: None,
-            relay: None,
-            api: None,
-        }
+        let _ = std::fs::copy(&config_path, paths.node_config_mirror(&node_id));
     }
 
     println!("\n Loading node configurations...");
-    let node_a = load_config_safe("nodeA");
-    let node_b = load_config_safe("nodeB");
-    let node_c = load_config_safe("nodeC");
-
-    println!(
-        "✅ Loaded Node A: {} ({}) at {}:{} | key: {}",
-        node_a.node_id, node_a.hostname, node_a.ip, node_a.port, node_a.public_key
-    );
-    println!(
-        "✅ Loaded Node B: {} ({}) at {}:{} | key: {}",
-        node_b.node_id, node_b.hostname, node_b.ip, node_b.port, node_b.public_key
-    );
-    println!(
-        "✅ Loaded Node C: {} ({}) at {}:{} | key: {}",
-        node_c.node_id, node_c.hostname, node_c.ip, node_c.port, node_c.public_key
-    );
-
-    let current_relay_cfg: RelayLimitsConfig = match node_id.as_str() {
-        "nodeA" => node_a.relay_or_default(),
-        "nodeB" => node_b.relay_or_default(),
-        "nodeC" => node_c.relay_or_default(),
-        _ => RelayLimitsConfig::default(),
-    };
-
-    // Read the UEP policy YAML file
-    let _yaml_content = fs::read_to_string("/etc/sgx-guardian/schemas/uep_policy_v1.yaml")
-        .unwrap_or_else(|e| {
-            eprintln!("⚠️ Policy schema not found: {} — using empty default", e);
-            // Return minimal valid policy YAML
-            String::from(
-                "---\npolicy_id: \"default\"\nversion: \"0.0.0\"\ndescription: \"Empty default\"\nrules: []\n",
-            )
-        });
-    // Validate and parse the YAML policy
-    fn print_policy_from_yaml(yaml: &str, label: &str) {
-        match policy::validate_policy(yaml) {
-            Ok(parsed) => {
-                println!(
-                    "Policy Loaded ({}): ID = {}, Version = {}",
-                    label, parsed.policy_id, parsed.version
-                );
-                for rule in parsed.rules {
-                    println!(
-                        " - Rule {}: {} {} -> {} (protocol: {}{})",
-                        rule.id,
-                        rule.action,
-                        rule.src,
-                        rule.dst,
-                        rule.protocol,
-                        rule.port
-                            .map(|p| format!(", port: {}", p))
-                            .unwrap_or_else(|| "".to_string())
-                    );
-                }
-            }
-            Err(e) => {
-                eprintln!("❌ Failed to parse {} policy: {}", label, e);
-            }
-        }
+    let cohort = startup_config::Cohort::load(&paths);
+    for node in [&cohort.node_a, &cohort.node_b, &cohort.node_c] {
+        println!(
+            "✅ Loaded {}: {} ({}) at {}:{} | key: {}",
+            node.node_id, node.node_id, node.hostname, node.ip, node.port, node.public_key
+        );
     }
+
+    let current_relay_cfg: RelayLimitsConfig = cohort.relay_limits_for(&node_id);
+
+    // Read the UEP policy YAML file (falls back to a minimal valid document)
+    let _yaml_content = startup_config::read_policy_schema_or_fallback(&paths);
     println!("\n Starting inter-node mock communication...");
 
     // Initialize structured JSON logger
@@ -1098,25 +812,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     log_event(&node_id, "Logger initialized for node");
     log_event(&node_id, "Node configuration loading complete");
     // === VERIFY EXISTING AUDIT LOG (tamper detection) ===
-    let prod_log_dir = "/var/log/sgx-guardian";
-    let dev_log_dir = "logs";
+    // The pre-init verifier and the writer must agree on one path; that
+    // selection lives in `startup::audit_paths` (see FIX #8 there).
+    std::fs::create_dir_all(&paths.log_root).ok();
+    std::fs::create_dir_all(audit_paths::DEV_LOG_DIR).ok();
+    let audit_log = audit_paths::AuditLogPaths::for_node(&paths, &node_id);
+    let audit_check_path = audit_log.verification_target();
 
-    std::fs::create_dir_all(prod_log_dir).ok();
-    std::fs::create_dir_all(dev_log_dir).ok();
-
-    // === FIX #8: use per-node log file, matching what the writer produces. ===
-    // Writer initialised below as `audit-<node>.log`; pre-init verifier must
-    // check the SAME file, otherwise it verifies a stale/empty/wrong artefact.
-    let audit_log_path_prod = format!("{}/audit-{}.log", prod_log_dir, node_id);
-    let audit_log_path_dev = format!("logs/audit-{}.log", node_id);
-    let audit_check_path = if std::path::Path::new(&audit_log_path_prod).exists() {
-        audit_log_path_prod.clone()
-    } else {
-        audit_log_path_dev.clone()
-    };
-
-    if std::path::Path::new(&audit_check_path).exists() {
-        if let Err(e) = AuditVerifier::verify(&audit_check_path) {
+    if audit_check_path.exists() {
+        if let Err(e) = AuditVerifier::verify(&audit_check_path.to_string_lossy()) {
             log_error(
                 &node_id,
                 &format!("Audit log integrity warning (non-fatal): {}", e),
@@ -1125,10 +829,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // === Initialize Audit Logger (tamper-evident) ===
-    let audit_path_prod = PathBuf::from(format!("{}/audit-{}.log", prod_log_dir, node_id));
-
-    // Initialize PROD logger first
-    init_audit_logger(audit_path_prod);
+    init_audit_logger(audit_log.writer_target());
     log_audit(
         &node_id,
         AuditCategory::Node,
@@ -1348,8 +1049,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_else(|| "192.168.100.1".to_string());
             let lighthouse_endpoint_ip = if !detected_ip.is_empty() {
                 detected_ip.clone()
-            } else if !node_a.ip.is_empty() && node_a.ip != "0.0.0.0" {
-                node_a.ip.clone()
+            } else if !cohort.node_a.ip.is_empty() && cohort.node_a.ip != "0.0.0.0" {
+                cohort.node_a.ip.clone()
             } else {
                 "0.0.0.0".to_string()
             };
@@ -1636,7 +1337,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let endpoint_ip = if crate::dynamic_config::is_routable_ip(&detected_ip) {
                     detected_ip.clone()
                 } else {
-                    load_config(&format!("/etc/sgx-guardian/config/{}.yaml", node_id))
+                    sgx_guardian_client::config_loader::load_config(&format!(
+                        "/etc/sgx-guardian/config/{}.yaml",
+                        node_id
+                    ))
                         .ok()
                         .map(|c| c.ip)
                         .filter(|ip| crate::dynamic_config::is_routable_ip(ip))
@@ -1866,7 +1570,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if node_id == "nodeA" {
             let lh_path = format!("{}/lighthouse_registry.json", nebula_base_dir);
             let mut changed = false;
-            for (peer_id, cfg) in [("nodeB", &node_b), ("nodeC", &node_c)] {
+            for (peer_id, cfg) in [("nodeB", &cohort.node_b), ("nodeC", &cohort.node_c)] {
                 let Some(overlay_ip) = overlay_pool.get_ip(peer_id).cloned() else {
                     continue;
                 };
@@ -2571,23 +2275,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("✅ P2P Discovery and Attestation background services started.");
 
-    let (this_node, peers) = match node_id.as_str() {
-        "nodeA" => (node_a.clone(), vec![node_b, node_c]),
-        "nodeB" => (node_b.clone(), vec![node_a, node_c]),
-        "nodeC" => (node_c.clone(), vec![node_a, node_b]),
-        _ => {
-            eprintln!("❌ Unknown node ID: {}", node_id);
-            log_error(&node_id, "Unknown node ID provided");
-            std::process::exit(1);
-        }
+    let Some((this_node, peers)) = cohort.split(&node_id) else {
+        eprintln!("❌ Unknown node ID: {}", node_id);
+        log_error(&node_id, "Unknown node ID provided");
+        std::process::exit(1);
     };
 
     // === NODE BROADCAST + CONFIG SYNC ===
-    let detected_ip_for_broadcast = if detected_ip.is_empty() {
-        this_node.ip.clone()
-    } else {
-        detected_ip.clone()
-    };
+    let detected_ip_for_broadcast = startup_config::broadcast_ip(&detected_ip, &this_node.ip);
 
     // Initial broadcast
     step(31, "broadcast-loop gate");
@@ -2696,7 +2391,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match load_and_activate_policy(signed_policy_path) {
             Ok(verified) => {
                 println!("📜 Verified policy loaded (digest={})", verified.digest_hex);
-                print_policy_from_yaml(&verified.policy_yaml, "NEW");
+                startup_config::print_policy_from_yaml(&verified.policy_yaml, "NEW");
                 if let Err(e) = load_policy_runtime(&verified.policy_yaml) {
                     eprintln!("❌ Policy runtime load failed: {}", e);
                     log_error(&node_id, &format!("Policy runtime load failed: {}", e));
@@ -2745,7 +2440,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Ok(backup_yaml) =
                     fs::read_to_string("/etc/sgx-guardian/policies/backup_policy.yaml")
                 {
-                    print_policy_from_yaml(&backup_yaml, "BACKUP / LAST-ACTIVE");
+                    startup_config::print_policy_from_yaml(&backup_yaml, "BACKUP / LAST-ACTIVE");
                 } else {
                     eprintln!("⚠️ No backup_policy.yaml found to display");
                 }
@@ -2770,16 +2465,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .ok()
     .and_then(|r| r.get_ip(&node_id).map(|s| s.to_string()))
     .unwrap_or_else(|| "192.168.100.1".to_string());
-    let san: Vec<&str> = vec![
-        lan_fqdn.as_str(),
-        this_node.hostname.as_str(),
-        node_id.as_str(),
-        overlay_ip_only.as_str(),
-        "127.0.0.1",
-        "localhost",
-        "guardian.local",
-        "192.168.200.1",
-    ];
+    let san_entries = admin_tls::certificate_san(
+        &lan_fqdn,
+        &this_node.hostname,
+        &node_id,
+        &overlay_ip_only,
+    );
+    let san: Vec<&str> = san_entries.iter().map(String::as_str).collect();
     // Ensure certificate exists
     match tls::ensure_node_certificate_or_generate(&key_path, &cert_path, &san) {
         Ok(_) => {
@@ -2871,12 +2563,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         device_did,
         device_pubkey_point,
     );
-    let chat_grpc_port = match node_id.as_str() {
-        "nodeA" => 50251,
-        "nodeB" => 50252,
-        "nodeC" => 50253,
-        _ => 50251,
-    };
+    let chat_grpc_port = startup_config::chat_grpc_port(&node_id);
     tokio::spawn({
         let state = api_state.clone();
         let chat_addr = format!("0.0.0.0:{}", chat_grpc_port);
@@ -2890,34 +2577,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     let api_bind: std::net::SocketAddr = "0.0.0.0:8443".parse().unwrap();
-    let mut tls_cfg = this_node.api_or_default().tls;
-    let env_flag = |name: &str| {
-        std::env::var(name).ok().and_then(|value| {
-            match value.trim().to_ascii_lowercase().as_str() {
-                "1" | "true" | "yes" | "on" => Some(true),
-                "0" | "false" | "no" | "off" => Some(false),
-                _ => None,
-            }
-        })
-    };
-    if let Some(enabled) = env_flag("SGX_ADMIN_TLS_ENABLED") {
-        tls_cfg.enabled = enabled;
-    }
-    if let Some(require_https) = env_flag("SGX_ADMIN_REQUIRE_HTTPS") {
-        tls_cfg.require_https = require_https;
-    }
-    if tls_cfg.require_https && !tls_cfg.enabled {
+    let tls_plan = admin_tls::resolve_admin_tls_from_env(this_node.api_or_default().tls, &node_id);
+    if tls_plan.misconfigured {
         eprintln!("❌ REST API TLS misconfigured: require_https=true but tls.enabled=false");
         log_error(
             &node_id,
             "REST API TLS misconfigured: require_https=true but tls.enabled=false",
         );
     } else {
-        let tls = tls_cfg.enabled.then(|| sgx_guardian_client::api::AdminTls {
-            cert_path: tls_cfg.resolved_cert_path(&node_id),
-            key_path: tls_cfg.resolved_key_path(&node_id),
+        let tls = tls_plan.enabled.then(|| sgx_guardian_client::api::AdminTls {
+            cert_path: tls_plan.cert_path.clone(),
+            key_path: tls_plan.key_path.clone(),
         });
-        let require_https = tls_cfg.require_https;
+        let require_https = tls_plan.require_https;
         tokio::spawn({
             let state = api_state.clone();
             async move {
@@ -2931,12 +2603,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         });
-        if tls_cfg.enabled {
-            let alias_port = std::env::var("SGX_ADMIN_TLS_ALIAS_PORT")
-                .ok()
-                .and_then(|value| value.parse::<u16>().ok())
-                .unwrap_or(443);
-            if alias_port != api_bind.port() {
+        if tls_plan.enabled {
+            if let Some(alias_port) = admin_tls::alias_port_from_env(api_bind.port()) {
                 let alias_bind = std::net::SocketAddr::from(([0, 0, 0, 0], alias_port));
                 let alias_upstream = std::net::SocketAddr::from(([127, 0, 0, 1], api_bind.port()));
                 tokio::spawn(async move {
@@ -2946,10 +2614,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 });
             }
         }
-        let scheme = if tls_cfg.enabled { "https" } else { "http" };
         println!(
             "✅ REST API ({}) starting on {}://{}/api/v1",
-            node_id, scheme, api_bind
+            node_id,
+            tls_plan.scheme(),
+            api_bind
         );
     }
 
@@ -2981,8 +2650,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // === NMAP discovery scheduler ===
     {
         use sgx_guardian_client::discovery::{DiscoveryScheduler, Inventory};
-        use std::path::PathBuf;
-
+        
         let cfg_path = PathBuf::from("/etc/sgx-guardian/discovery/nmap.yaml");
         let wl_path = PathBuf::from("/etc/sgx-guardian/discovery/whitelist.yaml");
         let inv_path = PathBuf::from("/var/lib/sgx-guardian/discovery/inventory.json");
@@ -3004,8 +2672,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // === Suricata IDS/IPS threat service ===
     {
         use sgx_guardian_client::threat::{AlertInventory, ThreatService};
-        use std::path::PathBuf;
-
+        
         let cfg_path = PathBuf::from("/etc/sgx-guardian/threat/config.yaml");
         let state_dir = PathBuf::from("/var/lib/sgx-guardian/threat");
         let _ = std::fs::create_dir_all(&state_dir);
@@ -3657,64 +3324,9 @@ async fn resolve_ca_ip_from_config_inner() -> String {
     "127.0.0.1".to_string()
 }
 
-fn cert_matches_overlay_ip(cert_path: &str, expected_ip_cidr: &str) -> bool {
-    let output = std::process::Command::new("nebula-cert")
-        .args(["print", "-path", cert_path])
-        .output();
-    match output {
-        Ok(out) if out.status.success() => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            stdout.contains(expected_ip_cidr)
-        }
-        _ => false,
-    }
-}
-
-fn read_ip_from_nebula_cert(base: &str, node_id: &str) -> Option<String> {
-    let cert_path = format!("{}/nodes/{}.crt", base, node_id);
-    let out = std::process::Command::new("nebula-cert")
-        .args(["print", "-path", &cert_path])
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    for line in text.lines() {
-        // Look for any private overlay IP (not just 192.168.100.x)
-        if let Some(idx) = line
-            .find("192.168.100.")
-            .or_else(|| line.find("10."))
-            .or_else(|| line.find("172.16."))
-        {
-            let rest = &line[idx..];
-            let end = rest
-                .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '/')
-                .unwrap_or(rest.len());
-            let cleaned = rest[..end].trim().to_string();
-            if cleaned.contains('/')
-                && (cleaned.starts_with("192.168.100.")
-                    || cleaned.starts_with("10.")
-                    || cleaned.starts_with("172.16."))
-            {
-                return Some(cleaned);
-            }
-        }
-    }
-    None
-}
-
-fn json_equivalent(a: &str, b: &str) -> bool {
-    let va = serde_json::from_str::<serde_json::Value>(a);
-    let vb = serde_json::from_str::<serde_json::Value>(b);
-    match (va, vb) {
-        (Ok(lhs), Ok(rhs)) => lhs == rhs,
-        _ => a.trim() == b.trim(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(unix)]
-    use std::os::unix::fs::PermissionsExt;
     use std::sync::Mutex as StdMutex;
 
     static ENV_LOCK: StdMutex<()> = StdMutex::new(());
@@ -3743,80 +3355,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn env_true_accepts_only_the_documented_truthy_values() {
-        let _lock = ENV_LOCK.lock().expect("lock environment");
-        const KEY: &str = "SGX_MAIN_TEST_BOOLEAN_GATE";
-        let _guard = EnvGuard::capture(KEY);
 
-        std::env::remove_var(KEY);
-        assert!(!env_true(KEY));
 
-        for value in ["1", "true", "TRUE", "yes", "on"] {
-            std::env::set_var(KEY, value);
-            assert!(env_true(KEY), "{value} should enable the gate");
-        }
-        for value in ["0", "false", "True", "YES", "off", "", " true "] {
-            std::env::set_var(KEY, value);
-            assert!(!env_true(KEY), "{value:?} should not enable the gate");
-        }
-    }
-
-    #[test]
-    fn json_equivalent_handles_semantic_json_and_plain_text_fallbacks() {
-        assert!(json_equivalent(
-            r#"{"node":"nodeA","ports":[443,80]}"#,
-            r#"{ "ports": [443, 80], "node": "nodeA" }"#,
-        ));
-        assert!(!json_equivalent("[1,2]", "[2,1]"));
-        assert!(json_equivalent("  not-json  ", "not-json"));
-        assert!(!json_equivalent("not-json-a", "not-json-b"));
-        assert!(!json_equivalent(r#"{"valid":true}"#, "not-json"));
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn nebula_certificate_helpers_cover_success_failure_and_private_ip_shapes() {
-        let _lock = ENV_LOCK.lock().expect("lock environment");
-        let _path_guard = EnvGuard::capture("PATH");
-        let temp = tempfile::tempdir().expect("create temporary command directory");
-        let command = temp.path().join("nebula-cert");
-        let write_command = |body: &str| {
-            std::fs::write(&command, format!("#!/bin/sh\n{body}\n"))
-                .expect("write fake nebula-cert");
-            let mut permissions = std::fs::metadata(&command)
-                .expect("read fake command metadata")
-                .permissions();
-            permissions.set_mode(0o755);
-            std::fs::set_permissions(&command, permissions).expect("make fake command executable");
-        };
-        std::env::set_var("PATH", temp.path());
-
-        write_command("printf '%s\\n' 'Ips: 192.168.100.7/24'");
-        assert!(cert_matches_overlay_ip("ignored.crt", "192.168.100.7/24"));
-        assert_eq!(
-            read_ip_from_nebula_cert("ignored", "nodeA").as_deref(),
-            Some("192.168.100.7/24")
-        );
-
-        write_command("printf '%s\\n' 'overlay address 10.20.30.4/16, active'");
-        assert_eq!(
-            read_ip_from_nebula_cert("ignored", "nodeB").as_deref(),
-            Some("10.20.30.4/16")
-        );
-
-        write_command("printf '%s\\n' 'overlay address 172.16.5.2/24; active'");
-        assert_eq!(
-            read_ip_from_nebula_cert("ignored", "nodeC").as_deref(),
-            Some("172.16.5.2/24")
-        );
-
-        write_command("printf '%s\\n' 'overlay address 10.20.30.4 without cidr'");
-        assert!(read_ip_from_nebula_cert("ignored", "nodeD").is_none());
-
-        write_command("printf '%s\\n' 'certificate parse failed' >&2; exit 7");
-        assert!(!cert_matches_overlay_ip("missing.crt", "10.20.30.4/16"));
-    }
 
     #[test]
     fn missing_runtime_pcr_snapshot_returns_none() {
