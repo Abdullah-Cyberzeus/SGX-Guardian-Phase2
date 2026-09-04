@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { PageHeader } from "../../components/PageHeader";
-import { Wifi, Signal, Cpu, Clock, Server, Globe, Key, Copy, Check, Loader2, Shield, Pencil, X } from "lucide-react";
+import { Wifi, Signal, Cpu, Clock, Server, Globe, Key, Copy, Check, Loader2, Shield, Pencil, X, Info } from "lucide-react";
 import { toast } from "sonner";
 import { guardianService } from "../../services/guardianService";
 import { wifiService, type WifiModeResponse } from "../../services/wifiService";
@@ -23,12 +23,47 @@ interface GuardianData {
   publicKey: string;
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function InfoTooltip({ label, children }: { label: string; children: React.ReactNode }) {
+  const tooltipId = `tooltip-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+
   return (
-    <div className="rounded-lg border border-border overflow-hidden" style={{ backgroundColor: "var(--card)" }}>
+    <span className="group relative inline-flex shrink-0 items-center">
+      <button
+        type="button"
+        aria-label={`About ${label}`}
+        aria-describedby={tooltipId}
+        className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      >
+        <Info size={14} aria-hidden="true" />
+      </button>
+      <span
+        id={tooltipId}
+        role="tooltip"
+        className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-64 -translate-x-1/2 rounded-md border border-border bg-popover px-3 py-2 text-left normal-case tracking-normal text-popover-foreground opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+        style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-normal)", lineHeight: 1.5 }}
+      >
+        {children}
+      </span>
+    </span>
+  );
+}
+
+function FieldLabel({ label, description }: { label: string; description?: string }) {
+  return (
+    <span className="flex items-center gap-1.5" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>
+      <span>{label}</span>
+      {description && <InfoTooltip label={label}>{description}</InfoTooltip>}
+    </span>
+  );
+}
+
+function Section({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-border" style={{ backgroundColor: "var(--card)" }}>
       <div className="px-4 py-3 border-b border-border">
-        <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em" }}>
-          {title}
+        <span className="flex items-center gap-1.5" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em" }}>
+          <span>{title}</span>
+          {description && <InfoTooltip label={title}>{description}</InfoTooltip>}
         </span>
       </div>
       {children}
@@ -36,10 +71,10 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Row({ label, value, icon: Icon, accent }: { label: string; value: string; icon?: any; accent?: string }) {
+function Row({ label, value, icon: Icon, accent, description }: { label: string; value: string; icon?: any; accent?: string; description?: string }) {
   return (
     <div className="flex items-center justify-between px-4 py-3.5" style={{ borderBottom: "1px solid var(--border)" }}>
-      <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>{label}</span>
+      <FieldLabel label={label} description={description} />
       <div className="flex items-center gap-1.5">
         {Icon && <Icon size={13} style={{ color: accent || "var(--muted-foreground)" }} />}
         <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", color: accent || "var(--foreground)" }}>
@@ -50,10 +85,10 @@ function Row({ label, value, icon: Icon, accent }: { label: string; value: strin
   );
 }
 
-function LastRow({ label, value, icon: Icon }: { label: string; value: string; icon?: any }) {
+function LastRow({ label, value, icon: Icon, description }: { label: string; value: string; icon?: any; description?: string }) {
   return (
     <div className="flex items-center justify-between px-4 py-3.5">
-      <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>{label}</span>
+      <FieldLabel label={label} description={description} />
       <div className="flex items-center gap-1.5">
         {Icon && <Icon size={13} style={{ color: "var(--muted-foreground)" }} />}
         <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", color: "var(--foreground)" }}>{value}</span>
@@ -339,21 +374,34 @@ export function HM02GuardianDetail() {
         </Section>
 
         {/* Wi-Fi Mode */}
-        <Section title="Wi-Fi Mode">
+        <Section
+          title="Wi-Fi Mode"
+          description="Shows how your Guardian is using Wi-Fi to connect your devices and reach another network."
+        >
           <Row
             label="Operation Mode"
             value={wifiMode?.mode === 'dual' ? 'Dual' : wifiMode?.mode === 'hotspot_only' ? 'Hotspot Only' : wifiMode?.mode === 'client_only' ? 'Client Only' : 'Off'}
             icon={Wifi}
             accent="var(--primary)"
+            description="Shows whether Guardian is sharing Wi-Fi, connecting to another Wi-Fi network, doing both, or has Wi-Fi turned off."
           />
           <Row
             label="Zero-Trust Active"
             value={wifiMode?.security.zero_trust_active ? 'Yes' : 'No'}
             icon={Shield}
             accent={wifiMode?.security.zero_trust_active ? "var(--chart-2)" : undefined}
+            description="Shows whether Guardian is checking and protecting network traffic before allowing it through."
           />
-          <Row label="Hotspot SSID" value={wifiMode?.module1.ssid || "—"} />
-          <LastRow label="External Network" value={wifiMode?.module2.saved_networks.join(", ") || "None"} />
+          <Row
+            label="Hotspot SSID"
+            value={wifiMode?.module1.ssid || "—"}
+            description="The Wi-Fi network name that nearby phones, computers, and other devices can use to connect to Guardian."
+          />
+          <LastRow
+            label="External Network"
+            value={wifiMode?.module2.saved_networks.join(", ") || "None"}
+            description="The outside Wi-Fi network Guardian uses to reach the internet or another local network."
+          />
         </Section>
 
         </div>
