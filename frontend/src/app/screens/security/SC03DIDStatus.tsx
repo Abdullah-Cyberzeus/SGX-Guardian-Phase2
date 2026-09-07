@@ -98,10 +98,6 @@ function shortDid(did: string): string {
   return did.slice(0, 16) + "…" + did.slice(-6);
 }
 
-function defaultCaHostForNode(nodeName?: string): string {
-  return nodeName === "nodeA" ? "127.0.0.1" : "172.31.250.10";
-}
-
 function HideableDID({
   value,
   hidden,
@@ -173,7 +169,6 @@ export function SC03DIDStatus() {
   const [verifying, setVerifying] = useState(false);
   const [showPublish, setShowPublish] = useState(false);
   const [publishing, setPublishing] = useState(false);
-  const [publishHost, setPublishHost] = useState("");
   const [publishNodeName, setPublishNodeName] = useState("");
 
   // Per-DID visibility toggle. Defaults to visible; clicking the DID adds it
@@ -249,7 +244,6 @@ export function SC03DIDStatus() {
   const openPublish = () => {
     const nodeName = didDocument?.node_name ?? "";
     setPublishNodeName(nodeName);
-    setPublishHost(defaultCaHostForNode(nodeName));
     setShowPublish(true);
   };
 
@@ -261,7 +255,7 @@ export function SC03DIDStatus() {
     setPublishing(true);
     try {
       const result = await didService.publishDocument(
-        publishHost.trim(),
+        undefined,
         publishNodeName.trim(),
       );
       if (result.success) {
@@ -736,9 +730,7 @@ export function SC03DIDStatus() {
 
       {showPublish && (
         <PublishModal
-          host={publishHost}
           nodeName={publishNodeName}
-          onHostChange={setPublishHost}
           onNodeNameChange={setPublishNodeName}
           publishing={publishing}
           onClose={() => setShowPublish(false)}
@@ -1187,17 +1179,13 @@ function RawDocumentModal({
 }
 
 function PublishModal({
-  host,
   nodeName,
-  onHostChange,
   onNodeNameChange,
   publishing,
   onClose,
   onPublish,
 }: {
-  host: string;
   nodeName: string;
-  onHostChange: (v: string) => void;
   onNodeNameChange: (v: string) => void;
   publishing: boolean;
   onClose: () => void;
@@ -1254,22 +1242,18 @@ function PublishModal({
         </div>
 
         <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-1.5">
-            <label style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: "var(--foreground)" }}>
-              CA Host
-            </label>
-            <input
-              type="text"
-              value={host}
-              onChange={e => onHostChange(e.target.value)}
-              placeholder={defaultCaHostForNode(nodeName)}
-              style={{
-                padding: "8px 12px", borderRadius: "8px",
-                border: "1px solid var(--border)", backgroundColor: "var(--background)",
-                color: "var(--foreground)", fontFamily: "JetBrains Mono, monospace",
-                fontSize: "var(--text-sm)", outline: "none",
-              }}
-            />
+          <div
+            className="flex items-center gap-2 rounded-lg px-3 py-2"
+            style={{
+              border: "1px solid var(--border)",
+              backgroundColor: "var(--background)",
+              color: "var(--muted-foreground)",
+              fontFamily: "Inter, sans-serif",
+              fontSize: "var(--text-xs)",
+            }}
+          >
+            <Globe size={14} style={{ flexShrink: 0 }} />
+            CA host is detected from live node configuration when you publish.
           </div>
           <div className="flex flex-col gap-1.5">
             <label style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", color: "var(--foreground)" }}>

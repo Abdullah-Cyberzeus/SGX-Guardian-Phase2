@@ -322,19 +322,24 @@ pub async fn document_publish(
         }
     }
     let req: PublishDocumentRequest = parse_required_json_body(&body)?;
+    let detected_ca = resolved_ca_host(&state.node_id).ok_or_else(|| {
+        ApiError::BadRequest(
+            "CA host is unavailable; wait for nodeA discovery/config sync or set SGX_CA_HOST"
+                .to_string(),
+        )
+    })?;
     let ca_host = match req.ca_host.as_deref() {
         Some(value) => required_nonempty_field(value, "ca_host")?,
-        None => resolved_ca_host(&state.node_id),
+        None => detected_ca.clone(),
     };
     let node_name = match req.node_name.as_deref() {
         Some(value) => required_nonempty_field(value, "node_name")?,
         None => state.node_id.clone(),
     };
-    let allowed_ca = resolved_ca_host(&state.node_id);
-    if ca_host != allowed_ca {
+    if ca_host != detected_ca {
         return Err(ApiError::BadRequest(format!(
             "ca_host must be {}",
-            allowed_ca
+            detected_ca
         )));
     }
     let doc = load_self_document()?;
@@ -549,24 +554,20 @@ fn required_nonempty_field(value: &str, field: &str) -> Result<String, ApiError>
     Ok(trimmed.to_string())
 }
 
-fn resolved_ca_host(node_id: &str) -> String {
+fn resolved_ca_host(node_id: &str) -> Option<String> {
     std::env::var("SGX_CA_HOST")
         .ok()
-        .filter(|value| !value.trim().is_empty())
+        .filter(|value| !value.trim().is_empty() && value.trim() != "0.0.0.0")
+        // This file is refreshed by discovery/config sync on member nodes, so
+        // read it for every publish request instead of caching a startup value.
+        .or_else(crate::dynamic_config::latest_known_ca_ip)
         .or_else(|| {
             std::env::var("SGX_LIGHTHOUSE_IP")
                 .ok()
                 .filter(|value| !value.trim().is_empty() && value.trim() != "0.0.0.0")
         })
-        .unwrap_or_else(|| {
-            if node_id == "nodeA" {
-                "127.0.0.1".to_string()
-            } else {
-                "192.168.50.101".to_string()
-            }
-        })
-        .trim()
-        .to_string()
+        .or_else(|| (node_id == "nodeA").then(|| "127.0.0.1".to_string()))
+        .map(|value| value.trim().to_string())
 }
 
 fn known_floor_version(doc: &DidDocument) -> u32 {
