@@ -2,11 +2,11 @@ use crate::api::auth::middleware::AuthenticatedSession;
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::chat::models::{ChatMessageRecord, MessageStatus};
-use axum::extract::{
-    ws::{Message, WebSocket, WebSocketUpgrade},
-    Json, Query, State,
-};
 use axum::Extension;
+use axum::extract::{
+    Json, Query, State,
+    ws::{Message, WebSocket, WebSocketUpgrade},
+};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -1173,7 +1173,9 @@ pub async fn get_history(
                         .unwrap_or_default();
                     eprintln!(
                         "💬 History: direct lookup for peer_did={} empty, canonical retry via {} found {} message(s)",
-                        peer_did, canonical_did, history.len()
+                        peer_did,
+                        canonical_did,
+                        history.len()
                     );
                 }
             }
@@ -1194,7 +1196,9 @@ pub async fn get_history(
                 let candidates = crate::chat::storage::list_p2p_conversation_ids().await;
                 eprintln!(
                     "💬 History: canonical retry also empty for peer_did={}, scanning {} existing conversation file(s) against matched registry entry {:?}",
-                    peer_did, candidates.len(), target_peer.get("peer_id").and_then(|v| v.as_str())
+                    peer_did,
+                    candidates.len(),
+                    target_peer.get("peer_id").and_then(|v| v.as_str())
                 );
                 for candidate_did in candidates {
                     if candidate_did == peer_did {

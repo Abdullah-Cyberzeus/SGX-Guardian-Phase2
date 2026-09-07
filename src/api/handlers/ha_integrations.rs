@@ -1,8 +1,8 @@
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -51,7 +51,7 @@ pub async fn list_integrations(
             return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({ "error": "IntegrationManager not initialized" })),
-            ))
+            ));
         }
     };
 
@@ -70,7 +70,7 @@ pub async fn get_integration_status(
             return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({ "error": "IntegrationManager not initialized" })),
-            ))
+            ));
         }
     };
 
@@ -129,7 +129,7 @@ pub async fn connect_integration(
             return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({ "error": "IntegrationManager not initialized" })),
-            ))
+            ));
         }
     };
 
@@ -307,7 +307,7 @@ pub async fn disconnect_integration(
             return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({ "error": "IntegrationManager not initialized" })),
-            ))
+            ));
         }
     };
 

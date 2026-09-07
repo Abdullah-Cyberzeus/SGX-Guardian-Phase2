@@ -1,7 +1,9 @@
 use crate::api::{error::ApiError, state::AppState};
+use crate::did::doc_persistence;
 use crate::virtual_id::read_runtime_virtual_id_status;
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Debug, Serialize)]
@@ -38,6 +40,8 @@ pub struct VidPeersResponse {
 #[derive(Debug, Serialize)]
 pub struct VidPeer {
     pub did: String,
+    #[serde(rename = "nodeName", skip_serializing_if = "Option::is_none")]
+    pub node_name: Option<String>,
     #[serde(rename = "virtualId")]
     pub virtual_id: String,
     #[serde(rename = "observedAt")]
@@ -66,12 +70,26 @@ pub async fn show(State(state): State<Arc<AppState>>) -> Result<Json<VidShowResp
     }))
 }
 pub async fn peers(State(state): State<Arc<AppState>>) -> Result<Json<VidPeersResponse>, ApiError> {
+    let did_node_names: HashMap<String, String> = doc_persistence::list_peer_docs()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|doc| {
+            let node_name = doc.sgx_node_name?.trim().to_string();
+            if node_name.is_empty() {
+                None
+            } else {
+                Some((doc.id, node_name))
+            }
+        })
+        .collect();
+
     let mut peers: Vec<VidPeer> = state
         .vid_cache
         .snapshot()
         .await
         .into_iter()
         .map(|(did, cached)| VidPeer {
+            node_name: did_node_names.get(&did).cloned(),
             did,
             virtual_id: cached.vid_hex,
             observed_at: cached.observed_at.to_rfc3339(),

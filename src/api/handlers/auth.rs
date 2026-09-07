@@ -9,9 +9,9 @@ use crate::api::auth::{
 use crate::api::{error::ApiError, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
-use axum::{extract::State, Extension, Json};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use rand::{rngs::OsRng, RngCore};
+use axum::{Extension, Json, extract::State};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use rand::{RngCore, rngs::OsRng};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -180,12 +180,12 @@ pub async fn signup(
         Some(UserRole::Member) => {
             return Err(ApiError::Forbidden(
                 "member accounts require the verified Guardian invitation workflow".into(),
-            ))
+            ));
         }
         _ => {
             return Err(ApiError::BadRequest(
                 "role must be admin or member".to_string(),
-            ))
+            ));
         }
     };
 

@@ -110,19 +110,6 @@ export function NotificationDeliverySettings() {
             checked={prefs.masterEnabled}
             onCheckedChange={() => void toggleMaster(!prefs.masterEnabled)}
           />
-          <ToggleRow
-            label="Sound"
-            checked={prefs.sound}
-            disabled={!prefs.masterEnabled}
-            onCheckedChange={() => void update("sound", !prefs.sound)}
-          />
-          <ToggleRow
-            label="Vibration"
-            description="Only applies on devices that support it."
-            checked={prefs.vibration}
-            disabled={!prefs.masterEnabled}
-            onCheckedChange={() => void update("vibration", !prefs.vibration)}
-          />
         </div>
       </div>
 

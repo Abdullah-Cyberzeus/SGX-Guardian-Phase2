@@ -98,6 +98,10 @@ function shortDid(did: string): string {
   return did.slice(0, 16) + "…" + did.slice(-6);
 }
 
+function defaultCaHostForNode(nodeName?: string): string {
+  return nodeName === "nodeA" ? "127.0.0.1" : "172.31.250.10";
+}
+
 function HideableDID({
   value,
   hidden,
@@ -169,7 +173,7 @@ export function SC03DIDStatus() {
   const [verifying, setVerifying] = useState(false);
   const [showPublish, setShowPublish] = useState(false);
   const [publishing, setPublishing] = useState(false);
-  const [publishHost, setPublishHost] = useState("127.0.0.1");
+  const [publishHost, setPublishHost] = useState("");
   const [publishNodeName, setPublishNodeName] = useState("");
 
   // Per-DID visibility toggle. Defaults to visible; clicking the DID adds it
@@ -243,13 +247,15 @@ export function SC03DIDStatus() {
   };
 
   const openPublish = () => {
-    setPublishNodeName(didDocument?.node_name ?? "");
+    const nodeName = didDocument?.node_name ?? "";
+    setPublishNodeName(nodeName);
+    setPublishHost(defaultCaHostForNode(nodeName));
     setShowPublish(true);
   };
 
   const handlePublish = async () => {
-    if (!publishHost.trim() || !publishNodeName.trim()) {
-      toast.error("ca_host and node_name are required");
+    if (!publishNodeName.trim()) {
+      toast.error("node_name is required");
       return;
     }
     setPublishing(true);
@@ -259,16 +265,20 @@ export function SC03DIDStatus() {
         publishNodeName.trim(),
       );
       if (result.success) {
+        const peerCount =
+          typeof result.registry_peer_count === "number"
+            ? `; CA aggregate peers=${result.registry_peer_count}`
+            : "";
         toast.success("DID Document published", {
-          description: `${result.message} (v${result.version})`,
+          description: `${result.message} via ${result.ca_host}${peerCount}`,
         });
         setShowPublish(false);
         await Promise.all([refetchDoc(), refetchPeers()]);
       } else {
-        toast.error("Publish failed", { description: result.message });
+        toast.error("DID Document publish failed", { description: result.message });
       }
     } catch (err) {
-      toast.error("Publish failed", {
+      toast.error("DID Document publish failed", {
         description: err instanceof Error ? err.message : undefined,
       });
     } finally {
@@ -1252,7 +1262,7 @@ function PublishModal({
               type="text"
               value={host}
               onChange={e => onHostChange(e.target.value)}
-              placeholder="127.0.0.1"
+              placeholder={defaultCaHostForNode(nodeName)}
               style={{
                 padding: "8px 12px", borderRadius: "8px",
                 border: "1px solid var(--border)", backgroundColor: "var(--background)",

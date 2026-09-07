@@ -1,8 +1,8 @@
-use crate::advisory::{store, AdvisoryConfig, AdvisoryRules};
+use crate::advisory::{AdvisoryConfig, AdvisoryRules, store};
 use crate::api::{error::ApiError, state::AppState};
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::Deserialize;
 use std::sync::Arc;

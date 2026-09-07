@@ -9,16 +9,16 @@
 //! /etc/sgx-guardian/policies/. Only nodeA holds the private half. Member
 //! nodes receive the public half through the cert-bootstrap response.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use ring::rand::SystemRandom;
-use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
+use ring::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, KeyPair};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
 
-const PA_DIR: &str = "/etc/sgx-guardian/policies";
-const PA_PRIV_PATH: &str = "/etc/sgx-guardian/policies/pa_admin_priv.der";
-const PA_PUB_PATH: &str = "/etc/sgx-guardian/policies/pa_admin_pub.der";
+pub const PA_DIR: &str = "/etc/sgx-guardian/policies";
+pub const PA_PRIV_PATH: &str = "/etc/sgx-guardian/policies/pa_admin_priv.der";
+pub const PA_PUB_PATH: &str = "/etc/sgx-guardian/policies/pa_admin_pub.der";
 const SIGNED_POLICY_PATH: &str = "/etc/sgx-guardian/policies/policy.sig";
 
 pub struct PaKey {
@@ -33,17 +33,22 @@ impl PaKey {
     /// Calling this on a member node is harmless (member never signs), but
     /// in practice we only invoke this from the nodeA bootstrap path.
     pub fn load_or_generate() -> Result<Self> {
-        let _ = fs::create_dir_all(PA_DIR);
+        Self::load_or_generate_at(PA_PRIV_PATH, PA_PUB_PATH)
+    }
+
+    pub fn load_or_generate_at(priv_path: &str, pub_path: &str) -> Result<Self> {
+        if let Some(parent) = Path::new(priv_path).parent() {
+            let _ = fs::create_dir_all(parent);
+        }
         let rng = SystemRandom::new();
 
-        let pkcs8 = if Path::new(PA_PRIV_PATH).exists() {
-            fs::read(PA_PRIV_PATH)
-                .with_context(|| format!("Read PA private key {}", PA_PRIV_PATH))?
+        let pkcs8 = if Path::new(priv_path).exists() {
+            fs::read(priv_path).with_context(|| format!("Read PA private key {}", priv_path))?
         } else {
             tracing::info!("PA: generating new Policy Authority key (first run)");
             let doc = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
                 .map_err(|_| anyhow!("PA keygen failed"))?;
-            atomic_write(PA_PRIV_PATH, doc.as_ref(), 0o600)?;
+            atomic_write(priv_path, doc.as_ref(), 0o600)?;
             doc.as_ref().to_vec()
         };
 
@@ -52,7 +57,7 @@ impl PaKey {
         let pubkey_der = keypair.public_key().as_ref().to_vec();
 
         // Always (re-)write the public key file so it stays in sync.
-        atomic_write(PA_PUB_PATH, &pubkey_der, 0o644)?;
+        atomic_write(pub_path, &pubkey_der, 0o644)?;
 
         let fp = hex::encode(&Sha256::digest(&pubkey_der)[..8]);
         tracing::info!("PA: key ready (pubkey fp={})", fp);
@@ -73,8 +78,8 @@ impl PaKey {
     /// so policy_manager::verify_signed_policy continues to work without
     /// any change.
     pub fn sign_policy_to_disk(&self, yaml_path: &str) -> Result<String> {
-        use base64::engine::general_purpose;
         use base64::Engine as _;
+        use base64::engine::general_purpose;
 
         let yaml = fs::read_to_string(yaml_path)
             .with_context(|| format!("Read policy yaml {}", yaml_path))?;

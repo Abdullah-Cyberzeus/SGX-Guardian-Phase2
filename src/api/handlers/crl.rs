@@ -1,12 +1,12 @@
-use super::dkp::{run_cli, run_cli_with_env, ActionResponse};
+use super::dkp::{ActionResponse, run_cli, run_cli_with_env};
 use crate::api::error::ApiError;
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::crl::entry::CrlEntry;
 use crate::crl::persistence;
 use axum::{
-    extract::{Query, State},
     Json,
+    extract::{Query, State},
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -76,6 +76,8 @@ pub struct CrlCheckResponse {
 pub struct CrlVerifyResponse {
     pub ok: bool,
     pub errors: Vec<String>,
+    pub sequence: Option<u64>,
+    pub merkle_root: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -616,15 +618,22 @@ pub async fn verify(
     State(_state): State<Arc<crate::api::state::AppState>>,
 ) -> Result<Json<CrlVerifyResponse>, ApiError> {
     let response = run_owned_cli(vec!["crl".to_string(), "verify".to_string()]).await?;
+    let root = persistence::load_crl()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .map(|crl| (crl.sequence, crl.merkle_root));
     if response.success {
         Ok(Json(CrlVerifyResponse {
             ok: true,
             errors: Vec::new(),
+            sequence: root.as_ref().map(|(sequence, _)| *sequence),
+            merkle_root: root.map(|(_, merkle_root)| merkle_root),
         }))
     } else {
         Ok(Json(CrlVerifyResponse {
             ok: false,
             errors: vec![cli_message(&response)],
+            sequence: root.as_ref().map(|(sequence, _)| *sequence),
+            merkle_root: root.map(|(_, merkle_root)| merkle_root),
         }))
     }
 }

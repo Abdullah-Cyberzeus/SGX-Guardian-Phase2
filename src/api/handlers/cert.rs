@@ -2,12 +2,12 @@ use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::cert_service::{ApprovalDecision, CertRequestYaml};
 use axum::{
+    Json,
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
         State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::IntoResponse,
-    Json,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};

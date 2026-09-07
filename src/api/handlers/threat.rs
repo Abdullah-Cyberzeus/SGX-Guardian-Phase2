@@ -1,4 +1,4 @@
-use super::dkp::{run_cli, ActionResponse};
+use super::dkp::{ActionResponse, run_cli};
 use crate::api::{error::ApiError, state::AppState};
 use crate::threat::{
     blocker::load_block_records,
@@ -6,8 +6,8 @@ use crate::threat::{
     threat_alert::{Severity, ThreatAlert},
 };
 use axum::{
-    extract::{Path as AxumPath, Query, State},
     Json,
+    extract::{Path as AxumPath, Query, State},
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -424,7 +424,7 @@ async fn load_alerts(state: &AppState) -> Result<Vec<ThreatAlert>, ApiError> {
                 "failed to read {}: {}",
                 path.display(),
                 err
-            )))
+            )));
         }
     };
 

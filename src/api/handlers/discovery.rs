@@ -1,16 +1,15 @@
 use crate::api::{error::ApiError, state::AppState};
 use crate::discovery::whitelist::{
-    enrich_entries, infer_label_for_mac, Whitelist, WhitelistEntry, WhitelistEntryView,
+    Whitelist, WhitelistEntry, WhitelistEntryView, enrich_entries, infer_label_for_mac,
 };
 use crate::discovery::{
-    nmap_parser,
-    run_history::{self, ScanRunRecord},
     ConnectedDevice, DeviceStatus, NmapConfig, ScanIntensity, ScanSchedule, ScanScheduleProfile,
-    ScheduleDay, ScheduledScans,
+    ScheduleDay, ScheduledScans, nmap_parser,
+    run_history::{self, ScanRunRecord},
 };
+use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path as AxumPath, Query, State};
-use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -1175,10 +1174,10 @@ fn intensity_name(intensity: ScanIntensity) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_schedule_patch, build_scan_args, default_version, get_runs, list_devices,
-        normalize_excludes, refresh_inventory_statuses, resolve_scan_target, runtime_whitelist,
         RunsApiResponse, RunsQuery, RunsView, ScanTargetRequest, SchedulePatch,
-        ScheduleProfilePatch, ScheduleUpdateRequest, WhitelistDoc,
+        ScheduleProfilePatch, ScheduleUpdateRequest, WhitelistDoc, apply_schedule_patch,
+        build_scan_args, default_version, get_runs, list_devices, normalize_excludes,
+        refresh_inventory_statuses, resolve_scan_target, runtime_whitelist,
     };
     use crate::api::state::AppState;
     use crate::did::Resolver;
@@ -1188,8 +1187,8 @@ mod tests {
         ConnectedDevice, DeviceStatus, NmapConfig, OpenPort, ScanIntensity, ScheduleDay,
     };
     use crate::virtual_id_cache::VirtualIdCache;
-    use axum::extract::{Query, State};
     use axum::Json;
+    use axum::extract::{Query, State};
     use chrono::{TimeZone, Utc};
     use std::sync::Arc;
     use tempfile::tempdir;
@@ -1555,10 +1554,12 @@ mod tests {
 
         assert_eq!(runs.len(), 1);
         assert!(runs[0].devices.is_none());
-        assert!(runs[0]
-            .devices_error
-            .as_deref()
-            .expect("devices_error should be present")
-            .contains("raw xml not available"));
+        assert!(
+            runs[0]
+                .devices_error
+                .as_deref()
+                .expect("devices_error should be present")
+                .contains("raw xml not available")
+        );
     }
 }

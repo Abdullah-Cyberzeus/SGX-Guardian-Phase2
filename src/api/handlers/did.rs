@@ -2,14 +2,14 @@ use crate::api::{error::ApiError, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::did::{
-    self, doc_distribution, doc_persistence, doc_sign, document::DidDocument, DidError,
+    self, DidError, doc_distribution, doc_persistence, doc_sign, document::DidDocument,
 };
 use axum::{
+    Json,
     body::Bytes,
     extract::{Query, State},
-    Json,
 };
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -94,8 +94,10 @@ pub struct VerifyDocumentResponse {
 
 #[derive(Deserialize)]
 pub struct PublishDocumentRequest {
-    pub ca_host: String,
-    pub node_name: String,
+    #[serde(default)]
+    pub ca_host: Option<String>,
+    #[serde(default)]
+    pub node_name: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -105,6 +107,8 @@ pub struct PublishDocumentResponse {
     pub version: u32,
     pub ca_host: String,
     pub node_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registry_peer_count: Option<usize>,
     pub message: String,
 }
 
@@ -305,7 +309,7 @@ pub async fn document_verify(
 }
 
 pub async fn document_publish(
-    _state: State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
     body: Bytes,
 ) -> Result<Json<PublishDocumentResponse>, ApiError> {
@@ -318,9 +322,15 @@ pub async fn document_publish(
         }
     }
     let req: PublishDocumentRequest = parse_required_json_body(&body)?;
-    let ca_host = required_nonempty_field(&req.ca_host, "ca_host")?;
-    let node_name = required_nonempty_field(&req.node_name, "node_name")?;
-    let allowed_ca = std::env::var("SGX_CA_HOST").unwrap_or_else(|_| "192.168.50.101".to_string());
+    let ca_host = match req.ca_host.as_deref() {
+        Some(value) => required_nonempty_field(value, "ca_host")?,
+        None => resolved_ca_host(&state.node_id),
+    };
+    let node_name = match req.node_name.as_deref() {
+        Some(value) => required_nonempty_field(value, "node_name")?,
+        None => state.node_id.clone(),
+    };
+    let allowed_ca = resolved_ca_host(&state.node_id);
     if ca_host != allowed_ca {
         return Err(ApiError::BadRequest(format!(
             "ca_host must be {}",
@@ -331,9 +341,16 @@ pub async fn document_publish(
     let floor_version = known_floor_version(&doc);
     doc_sign::verify_with_replay_protection(&doc, floor_version)
         .map_err(did_document_verify_failure)?;
-    doc_distribution::publish_to_ca(&ca_host, &node_name, &doc)
+    let registry_response = doc_distribution::publish_to_ca(&ca_host, &node_name, &doc)
         .await
         .map_err(did_document_publish_error)?;
+    let persisted_did = registry_response
+        .did_doc_did
+        .as_deref()
+        .unwrap_or(doc.id.as_str());
+    let persisted_version = registry_response
+        .did_doc_version
+        .unwrap_or(doc.sgx_version_id);
 
     let response = PublishDocumentResponse {
         success: true,
@@ -341,7 +358,11 @@ pub async fn document_publish(
         version: doc.sgx_version_id,
         ca_host,
         node_name,
-        message: "DID Document published to CA registry".to_string(),
+        registry_peer_count: registry_response.did_doc_peer_count,
+        message: format!(
+            "DID Document {} v{} persisted in CA registry",
+            persisted_did, persisted_version
+        ),
     };
     if let Some(key) = idempotency_key.as_deref() {
         crate::api::idempotency::store("did:document_publish", key, &response);
@@ -528,6 +549,26 @@ fn required_nonempty_field(value: &str, field: &str) -> Result<String, ApiError>
     Ok(trimmed.to_string())
 }
 
+fn resolved_ca_host(node_id: &str) -> String {
+    std::env::var("SGX_CA_HOST")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("SGX_LIGHTHOUSE_IP")
+                .ok()
+                .filter(|value| !value.trim().is_empty() && value.trim() != "0.0.0.0")
+        })
+        .unwrap_or_else(|| {
+            if node_id == "nodeA" {
+                "127.0.0.1".to_string()
+            } else {
+                "192.168.50.101".to_string()
+            }
+        })
+        .trim()
+        .to_string()
+}
+
 fn known_floor_version(doc: &DidDocument) -> u32 {
     if let Ok(Some(self_doc)) = doc_persistence::load_self() {
         if self_doc.id == doc.id {
@@ -654,8 +695,8 @@ mod tests {
     use super::*;
     use crate::did::persistence::{DerivationProof, DidRecord};
     use axum::extract::State;
-    use base64::engine::general_purpose;
     use base64::Engine as _;
+    use base64::engine::general_purpose;
     use std::ffi::OsString;
 
     use crate::test_utils::TEST_ENV_LOCK;

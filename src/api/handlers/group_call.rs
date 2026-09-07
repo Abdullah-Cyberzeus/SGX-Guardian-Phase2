@@ -1,15 +1,15 @@
 //! Browser API for trusted full-mesh group calls.
 
 use axum::{
+    Extension,
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
         Json, Path, Query, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::{HeaderMap, StatusCode},
-    response::{sse::Event, sse::KeepAlive, IntoResponse, Sse},
-    Extension,
+    response::{IntoResponse, Sse, sse::Event, sse::KeepAlive},
 };
-use futures_util::{stream, SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt, stream};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -26,7 +26,7 @@ use crate::api::handlers::call::{browser_call_actor_id, local_virtual_id_for_act
 use crate::api::state::AppState;
 use crate::call::{
     GroupCallState, GroupMemberState, GroupParticipant, GroupRole, GroupSession, GroupWireMessage,
-    MediaType, ModerationAction, SignalKind, MAX_GROUP_PARTICIPANTS,
+    MAX_GROUP_PARTICIPANTS, MediaType, ModerationAction, SignalKind,
 };
 
 #[derive(Debug, Deserialize)]
@@ -239,7 +239,7 @@ pub async fn create(
                 return error(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("{:?}", error_value),
-                )
+                );
             }
         };
     // A member caller can only reach browser members of Circles they
@@ -265,7 +265,7 @@ pub async fn create(
                     return error(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         format!("{:?}", error_value),
-                    )
+                    );
                 }
             }
         }
@@ -338,7 +338,7 @@ pub async fn create(
         nebula_ip: match state.call_nebula_signaling.get_local_nebula_ip().await {
             Ok(ip) => ip,
             Err(error_value) => {
-                return error(StatusCode::SERVICE_UNAVAILABLE, error_value.to_string())
+                return error(StatusCode::SERVICE_UNAVAILABLE, error_value.to_string());
             }
         },
         role: GroupRole::Host,
@@ -398,7 +398,7 @@ pub async fn create(
         let device_nebula_ip = match state.call_nebula_signaling.get_local_nebula_ip().await {
             Ok(ip) => ip,
             Err(error_value) => {
-                return error(StatusCode::SERVICE_UNAVAILABLE, error_value.to_string())
+                return error(StatusCode::SERVICE_UNAVAILABLE, error_value.to_string());
             }
         };
         invitees.push(GroupParticipant {

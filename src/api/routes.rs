@@ -1,9 +1,9 @@
 use crate::api::handlers;
 use crate::api::state::AppState;
 use axum::{
+    Router,
     extract::DefaultBodyLimit,
     routing::{get, patch, post},
-    Router,
 };
 use std::sync::Arc;
 

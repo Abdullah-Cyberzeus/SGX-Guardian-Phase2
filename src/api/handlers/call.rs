@@ -2,16 +2,16 @@
 //! Endpoints for initiating, accepting, rejecting, and ending calls.
 
 use axum::{
+    Extension, Router,
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
         Json, Path, Query, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::StatusCode,
-    response::{sse::Event, sse::KeepAlive, IntoResponse, Sse},
-    Extension, Router,
+    response::{IntoResponse, Sse, sse::Event, sse::KeepAlive},
 };
 use chrono::{DateTime, Utc};
-use futures_util::{stream, SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt, stream};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::convert::Infallible;
@@ -50,7 +50,7 @@ pub async fn signal_socket(
                 StatusCode::NOT_FOUND,
                 Json(serde_json::json!({"error": error.to_string()})),
             )
-                .into_response()
+                .into_response();
         }
     };
     let actor_id = browser_call_actor_id(&state, &session_auth);
@@ -278,7 +278,7 @@ async fn initiate_local_browser_call(
                     error: error.to_string(),
                 }),
             )
-                .into_response()
+                .into_response();
         }
     };
     if let Err(error) = state
@@ -405,7 +405,7 @@ pub async fn initiate_browser_call(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(ErrorResponse { error }),
                 )
-                    .into_response()
+                    .into_response();
             }
         };
         if !target.did.as_ref().is_some_and(|did| allowed.contains(did)) {
@@ -435,7 +435,7 @@ pub async fn initiate_browser_call(
                         error: "Local attested VirtualID is unavailable".into(),
                     }),
                 )
-                    .into_response()
+                    .into_response();
             }
         };
     initiate_call(
@@ -660,7 +660,7 @@ pub async fn end_browser_call(
                     error: "Session not found".into(),
                 }),
             )
-                .into_response()
+                .into_response();
         }
     };
     if session.initiator.device_id != actor_id && session.receiver.device_id != actor_id {
@@ -831,7 +831,7 @@ pub async fn submit_signal(
                     error: "Session not found".into(),
                 }),
             )
-                .into_response()
+                .into_response();
         }
     };
     let is_local_browser = match is_local_browser_call(&state, &session).await {
@@ -979,7 +979,7 @@ pub async fn list_signals(
                     error: "Session not found".into(),
                 }),
             )
-                .into_response()
+                .into_response();
         }
     };
     let actor_id = browser_call_actor_id(&state, &session_auth);
@@ -1028,7 +1028,7 @@ pub async fn media_ready(
                     error: "Session not found".into(),
                 }),
             )
-                .into_response()
+                .into_response();
         }
     };
     let is_local_browser = match is_local_browser_call(&state, &session).await {
@@ -1131,7 +1131,7 @@ pub async fn report_quality(
                     error: "Session not found".into(),
                 }),
             )
-                .into_response()
+                .into_response();
         }
     };
     if session.state != CallStateEnum::Connected {
@@ -1562,7 +1562,7 @@ pub async fn accept_call(
                     error: "Initiator Nebula address is unavailable".to_string(),
                 }),
             )
-                .into_response()
+                .into_response();
         }
     };
     if let Err(error) = state
@@ -1703,7 +1703,7 @@ pub async fn reject_call(
                     error: "Initiator Nebula address is unavailable".to_string(),
                 }),
             )
-                .into_response()
+                .into_response();
         }
     };
     if let Err(error) = state
@@ -1824,7 +1824,7 @@ pub async fn policy_check(Json(req): Json<PolicyCheckRequest>) -> axum::response
                     error: format!("Invalid caller_role: {}", req.caller_role),
                 }),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -1837,7 +1837,7 @@ pub async fn policy_check(Json(req): Json<PolicyCheckRequest>) -> axum::response
                     error: format!("Invalid target_role: {}", req.target_role),
                 }),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -1855,7 +1855,7 @@ pub async fn policy_check(Json(req): Json<PolicyCheckRequest>) -> axum::response
                     ),
                 }),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -1927,7 +1927,7 @@ pub async fn ice_servers() -> axum::response::Response {
                     "error":"SGX_WEBRTC_ICE_SERVERS is not a valid JSON array"
                 })),
             )
-                .into_response()
+                .into_response();
         }
     };
     for server in &servers {

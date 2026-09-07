@@ -1,4 +1,4 @@
-use serde::{de, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 
 fn de_opt_usize<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
 where

@@ -2,8 +2,8 @@ use crate::api::auth::middleware::AuthenticatedSession;
 use crate::api::{error::ApiError, state::AppState};
 use crate::contacts::store::{self, Contact, ContactDraft, ContactPatch};
 use axum::{
-    extract::{Path, State},
     Extension, Json,
+    extract::{Path, State},
 };
 use serde::Serialize;
 use std::collections::HashSet;

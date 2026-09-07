@@ -3556,6 +3556,13 @@ async fn refresh_and_publish_did_doc_inner(
     if !force {
         if let Some(existing) = prev.as_ref() {
             if existing.substantively_equal(&doc) {
+                if !is_ca {
+                    doc_distribution::publish_to_ca(ca_host, node_id, existing)
+                        .await
+                        .map_err(|e| {
+                            audit_failed(format!("DID Document publish_to_ca failed: {}", e))
+                        })?;
+                }
                 return Ok(());
             }
         }

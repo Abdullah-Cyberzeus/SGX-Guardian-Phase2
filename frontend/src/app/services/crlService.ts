@@ -49,6 +49,8 @@ export interface CrlRootResponse {
 export interface CrlVerifyResponse {
   ok: boolean;
   errors: string[];
+  sequence?: number | null;
+  merkle_root?: string | null;
 }
 
 export interface CrlCheckResponse {

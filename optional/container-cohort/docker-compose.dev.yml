@@ -34,6 +34,7 @@ services:
       SGX_DUSAGE_CATEGORIES_ENABLED: "1"
       SGX_DISABLE_POLICY_ENFORCEMENT: "0"
       SGX_RULES_DRYRUN: "0"
+      SGX_CA_HOST: 127.0.0.1
     networks:
       sgxnet:
         ipv4_address: 172.31.250.10
@@ -59,6 +60,7 @@ services:
       NODE_ID: nodeB
       SGX_SOFTHSM_PIN: "${NODEB_HSM_PIN:-123457}"
       SGX_LIGHTHOUSE_IP: 172.31.250.10
+      SGX_CA_HOST: 172.31.250.10
     networks:
       sgxnet:
         ipv4_address: 172.31.250.11
@@ -81,6 +83,7 @@ services:
       NODE_ID: nodeC
       SGX_SOFTHSM_PIN: "${NODEC_HSM_PIN:-123458}"
       SGX_LIGHTHOUSE_IP: 172.31.250.10
+      SGX_CA_HOST: 172.31.250.10
     networks:
       sgxnet:
         ipv4_address: 172.31.250.12

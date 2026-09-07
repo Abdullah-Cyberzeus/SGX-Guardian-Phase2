@@ -1,8 +1,8 @@
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -45,7 +45,7 @@ pub async fn list_devices(
             return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({ "error": "DeviceManager not initialized" })),
-            ))
+            ));
         }
     };
 
@@ -100,7 +100,7 @@ pub async fn get_device(
             return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({ "error": "DeviceManager not initialized" })),
-            ))
+            ));
         }
     };
 
@@ -125,7 +125,7 @@ pub async fn get_device_state(
             return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({ "error": "DeviceManager not initialized" })),
-            ))
+            ));
         }
     };
 
@@ -167,7 +167,7 @@ pub async fn get_device_capabilities(
             return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({ "error": "DeviceManager not initialized" })),
-            ))
+            ));
         }
     };
 
@@ -212,7 +212,7 @@ pub async fn execute_device_command(
             return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({ "error": "DeviceManager not initialized" })),
-            ))
+            ));
         }
     };
 
@@ -321,7 +321,7 @@ pub async fn sync_devices(
             return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({ "error": "DeviceManager not initialized" })),
-            ))
+            ));
         }
     };
 

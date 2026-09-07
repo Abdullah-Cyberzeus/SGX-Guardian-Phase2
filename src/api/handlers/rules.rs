@@ -1,11 +1,11 @@
 use crate::api::{error::ApiError, state::AppState};
+use crate::rules::RulesConfig;
 use crate::rules::errors::RulesError;
 use crate::rules::eval::evaluate;
 use crate::rules::exec;
 use crate::rules::model::{Rule, RuleDraft, RuleEvent, RulePatch};
-use crate::rules::RulesConfig;
-use axum::extract::{Path as AxumPath, Query, State};
 use axum::Json;
+use axum::extract::{Path as AxumPath, Query, State};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Result};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use anyhow::{Result, anyhow};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
 use reqwest::header;
 use ring::signature::{self, UnparsedPublicKey};
@@ -347,10 +347,10 @@ mod tests {
     use crate::api::auth::ecdsa::normalize_p256_signature;
     use crate::key_manager::KeyManager;
     use axum::{
+        Router,
         extract::State,
         response::IntoResponse,
         routing::{get, post},
-        Router,
     };
     use serde_json::json;
     use std::sync::Arc;
@@ -626,10 +626,12 @@ mod tests {
             kid: Some("missing".into()),
             ..header
         };
-        assert!(select_jwk(&jwks, &missing)
-            .expect_err("missing key")
-            .to_string()
-            .contains("not found"));
+        assert!(
+            select_jwk(&jwks, &missing)
+                .expect_err("missing key")
+                .to_string()
+                .contains("not found")
+        );
 
         let ambiguous_header = JwtHeader {
             alg: "ES256".into(),
@@ -639,44 +641,56 @@ mod tests {
         let ambiguous = Jwks {
             keys: vec![test_jwk(None, None), test_jwk(None, Some("ES256"))],
         };
-        assert!(select_jwk(&ambiguous, &ambiguous_header)
-            .expect_err("ambiguous key")
-            .to_string()
-            .contains("ambiguous"));
+        assert!(
+            select_jwk(&ambiguous, &ambiguous_header)
+                .expect_err("ambiguous key")
+                .to_string()
+                .contains("ambiguous")
+        );
     }
 
     #[test]
     fn rejects_unsupported_or_malformed_signing_keys() {
         let mut ec = test_jwk(Some("key"), Some("ES256"));
-        assert!(verify_signature(&ec, "HS256", b"input", b"signature")
-            .expect_err("unsupported algorithm")
-            .to_string()
-            .contains("unsupported"));
+        assert!(
+            verify_signature(&ec, "HS256", b"input", b"signature")
+                .expect_err("unsupported algorithm")
+                .to_string()
+                .contains("unsupported")
+        );
 
         ec.crv = Some("P-384".into());
-        assert!(verify_signature(&ec, "ES256", b"input", b"signature")
-            .expect_err("unsupported curve")
-            .to_string()
-            .contains("curve"));
+        assert!(
+            verify_signature(&ec, "ES256", b"input", b"signature")
+                .expect_err("unsupported curve")
+                .to_string()
+                .contains("curve")
+        );
 
         ec.crv = Some("P-256".into());
         ec.x = None;
-        assert!(verify_signature(&ec, "ES256", b"input", b"signature")
-            .expect_err("missing x")
-            .to_string()
-            .contains("missing jwk x"));
+        assert!(
+            verify_signature(&ec, "ES256", b"input", b"signature")
+                .expect_err("missing x")
+                .to_string()
+                .contains("missing jwk x")
+        );
 
         ec.x = Some(URL_SAFE_NO_PAD.encode([0u8; 31]));
-        assert!(verify_signature(&ec, "ES256", b"input", b"signature")
-            .expect_err("short coordinate")
-            .to_string()
-            .contains("coordinate length"));
+        assert!(
+            verify_signature(&ec, "ES256", b"input", b"signature")
+                .expect_err("short coordinate")
+                .to_string()
+                .contains("coordinate length")
+        );
 
         ec.x = Some(URL_SAFE_NO_PAD.encode([0u8; 32]));
-        assert!(verify_signature(&ec, "ES256", b"input", b"bad")
-            .expect_err("invalid signature")
-            .to_string()
-            .contains("signature verification failed"));
+        assert!(
+            verify_signature(&ec, "ES256", b"input", b"bad")
+                .expect_err("invalid signature")
+                .to_string()
+                .contains("signature verification failed")
+        );
 
         let rsa = Jwk {
             kty: "RSA".into(),
@@ -688,10 +702,12 @@ mod tests {
             n: Some(URL_SAFE_NO_PAD.encode([1u8; 256])),
             e: Some(URL_SAFE_NO_PAD.encode([1u8, 0, 1])),
         };
-        assert!(verify_signature(&rsa, "RS256", b"input", b"bad")
-            .expect_err("invalid rsa signature")
-            .to_string()
-            .contains("signature verification failed"));
+        assert!(
+            verify_signature(&rsa, "RS256", b"input", b"bad")
+                .expect_err("invalid rsa signature")
+                .to_string()
+                .contains("signature verification failed")
+        );
     }
 
     #[test]
@@ -745,14 +761,18 @@ mod tests {
             decode_jwk_part(Some("AQID"), "x").expect("decode"),
             vec![1, 2, 3]
         );
-        assert!(decode_jwk_part(None, "x")
-            .expect_err("missing")
-            .to_string()
-            .contains("missing jwk x"));
-        assert!(decode_jwk_part(Some("!"), "x")
-            .expect_err("invalid")
-            .to_string()
-            .contains("invalid jwk x"));
+        assert!(
+            decode_jwk_part(None, "x")
+                .expect_err("missing")
+                .to_string()
+                .contains("missing jwk x")
+        );
+        assert!(
+            decode_jwk_part(Some("!"), "x")
+                .expect_err("invalid")
+                .to_string()
+                .contains("invalid jwk x")
+        );
     }
 
     #[test]

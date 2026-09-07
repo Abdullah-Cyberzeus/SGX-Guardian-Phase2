@@ -1,7 +1,7 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use once_cell::sync::OnceCell;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::marker::PhantomData;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -1409,8 +1409,8 @@ fn default_user_status() -> String {
 mod tests {
     use super::*;
     use crate::api::auth::pairing::{
-        authorize_pairing_proof, build_pairing_proof, encode_challenge, issue_challenge,
-        record_from_challenge, PairingUsage,
+        PairingUsage, authorize_pairing_proof, build_pairing_proof, encode_challenge,
+        issue_challenge, record_from_challenge,
     };
     use crate::key_manager::KeyManager;
     use tempfile::TempDir;
@@ -1642,12 +1642,14 @@ mod tests {
             .expect("create user");
         assert_eq!(created.email, "admin@example.com");
         assert_eq!(stores.users.count().await.expect("count"), 1);
-        assert!(stores
-            .users
-            .find_by_email("admin@example.com")
-            .await
-            .expect("find")
-            .is_some());
+        assert!(
+            stores
+                .users
+                .find_by_email("admin@example.com")
+                .await
+                .expect("find")
+                .is_some()
+        );
 
         #[cfg(unix)]
         {
@@ -1677,22 +1679,26 @@ mod tests {
             .put(session.clone())
             .await
             .expect("save session");
-        assert!(!stores
-            .sessions
-            .is_revoked(&session.jti)
-            .await
-            .expect("revoked state"));
+        assert!(
+            !stores
+                .sessions
+                .is_revoked(&session.jti)
+                .await
+                .expect("revoked state")
+        );
 
         stores
             .sessions
             .revoke(&session.jti)
             .await
             .expect("revoke session");
-        assert!(stores
-            .sessions
-            .is_revoked(&session.jti)
-            .await
-            .expect("revoked state after revoke"));
+        assert!(
+            stores
+                .sessions
+                .is_revoked(&session.jti)
+                .await
+                .expect("revoked state after revoke")
+        );
     }
 
     #[tokio::test]
@@ -1721,21 +1727,27 @@ mod tests {
                 .expect("revoke all"),
             2
         );
-        assert!(stores
-            .sessions
-            .is_revoked("one")
-            .await
-            .expect("first state"));
-        assert!(stores
-            .sessions
-            .is_revoked("two")
-            .await
-            .expect("second state"));
-        assert!(!stores
-            .sessions
-            .is_revoked("other")
-            .await
-            .expect("other state"));
+        assert!(
+            stores
+                .sessions
+                .is_revoked("one")
+                .await
+                .expect("first state")
+        );
+        assert!(
+            stores
+                .sessions
+                .is_revoked("two")
+                .await
+                .expect("second state")
+        );
+        assert!(
+            !stores
+                .sessions
+                .is_revoked("other")
+                .await
+                .expect("other state")
+        );
     }
 
     #[tokio::test]
@@ -1765,9 +1777,10 @@ mod tests {
             })
             .await
             .expect_err("reject second initial owner");
-        assert!(err
-            .to_string()
-            .contains("signup is only allowed before the first user is created"));
+        assert!(
+            err.to_string()
+                .contains("signup is only allowed before the first user is created")
+        );
     }
 
     #[tokio::test]
@@ -1904,12 +1917,14 @@ mod tests {
             .expect("device after unbind")
             .expect("unpaired device persists");
         assert_eq!(unpaired.status, "unpaired");
-        assert!(stores
-            .devices
-            .list(&device.owner_user_id)
-            .await
-            .expect("list devices after unbind")
-            .is_empty());
+        assert!(
+            stores
+                .devices
+                .list(&device.owner_user_id)
+                .await
+                .expect("list devices after unbind")
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -2173,24 +2188,28 @@ mod tests {
             .expect("transaction exists");
         assert_eq!(consumed.nonce, "nonce-replaced");
         assert!(consumed.used);
-        assert!(reopened
-            .oidc_transactions
-            .consume("state-1")
-            .await
-            .expect("replay lookup")
-            .is_none());
+        assert!(
+            reopened
+                .oidc_transactions
+                .consume("state-1")
+                .await
+                .expect("replay lookup")
+                .is_none()
+        );
     }
 
     #[tokio::test]
     async fn oidc_transactions_reject_unknown_and_expired_state() {
         let td = TempDir::new().expect("tempdir");
         let stores = AdminStores::new(td.path().join("admin"));
-        assert!(stores
-            .oidc_transactions
-            .consume("unknown")
-            .await
-            .expect("unknown lookup")
-            .is_none());
+        assert!(
+            stores
+                .oidc_transactions
+                .consume("unknown")
+                .await
+                .expect("unknown lookup")
+                .is_none()
+        );
 
         let now = chrono::Utc::now().timestamp();
         stores
@@ -2206,12 +2225,14 @@ mod tests {
             })
             .await
             .expect("store expired transaction");
-        assert!(stores
-            .oidc_transactions
-            .consume("expired")
-            .await
-            .expect("expired lookup")
-            .is_none());
+        assert!(
+            stores
+                .oidc_transactions
+                .consume("expired")
+                .await
+                .expect("expired lookup")
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -2230,12 +2251,14 @@ mod tests {
             .await
             .expect("create local account");
 
-        assert!(stores
-            .users
-            .find_by_oidc_sub("cylenium-subject")
-            .await
-            .expect("subject lookup")
-            .is_none());
+        assert!(
+            stores
+                .users
+                .find_by_oidc_sub("cylenium-subject")
+                .await
+                .expect("subject lookup")
+                .is_none()
+        );
         let linked = stores
             .users
             .link_oidc_sub(&user.user_id, "cylenium-subject")
@@ -2252,12 +2275,14 @@ mod tests {
                 .user_id,
             user.user_id
         );
-        assert!(stores
-            .users
-            .link_oidc_sub("missing-user", "other-subject")
-            .await
-            .expect_err("unknown user")
-            .to_string()
-            .contains("user not found"));
+        assert!(
+            stores
+                .users
+                .link_oidc_sub("missing-user", "other-subject")
+                .await
+                .expect_err("unknown user")
+                .to_string()
+                .contains("user not found")
+        );
     }
 }

@@ -1,7 +1,7 @@
 use clap::{Args, Subcommand};
 use comfy_table::{Cell, Table};
 use sgx_guardian_client::did::{
-    doc_distribution, doc_persistence, doc_sign, document::DidDocument, Did,
+    Did, doc_distribution, doc_persistence, doc_sign, document::DidDocument,
 };
 
 #[derive(Args)]
@@ -222,7 +222,28 @@ fn cmd_publish(args: PublishArgs) {
         &args.node_name,
         &doc,
     )) {
-        Ok(()) => println!("✅ Published DID Document to {}", args.ca_host),
+        Ok(resp) if resp.success => {
+            let did = resp.did_doc_did.as_deref().unwrap_or(doc.id.as_str());
+            let version = resp.did_doc_version.unwrap_or(doc.sgx_version_id);
+            match resp.did_doc_peer_count {
+                Some(count) => println!(
+                    "✅ Published DID Document {} v{} to {} (CA aggregate peers={})",
+                    did, version, args.ca_host, count
+                ),
+                None => println!(
+                    "✅ Published DID Document {} v{} to {}",
+                    did, version, args.ca_host
+                ),
+            }
+        }
+        Ok(resp) => {
+            eprintln!(
+                "❌ Publish rejected by CA: {}",
+                resp.error
+                    .unwrap_or_else(|| "unknown rejection".to_string())
+            );
+            std::process::exit(1);
+        }
         Err(e) => {
             eprintln!("❌ Publish failed: {}", e);
             std::process::exit(1);
