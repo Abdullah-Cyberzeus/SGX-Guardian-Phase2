@@ -328,20 +328,17 @@ pub async fn document_publish(
                 .to_string(),
         )
     })?;
-    let ca_host = match req.ca_host.as_deref() {
-        Some(value) => required_nonempty_field(value, "ca_host")?,
-        None => detected_ca.clone(),
-    };
+    // The server is authoritative for CA routing. Older cached frontend bundles
+    // submitted hardcoded values here; accepting those as routing input either
+    // sent the document to the wrong host or caused a mismatch rejection after
+    // discovery learned the real CA address. Keep the request field for wire
+    // compatibility, but always use the value detected at request time.
+    let _requested_ca_host = req.ca_host;
+    let ca_host = detected_ca;
     let node_name = match req.node_name.as_deref() {
         Some(value) => required_nonempty_field(value, "node_name")?,
         None => state.node_id.clone(),
     };
-    if ca_host != detected_ca {
-        return Err(ApiError::BadRequest(format!(
-            "ca_host must be {}",
-            detected_ca
-        )));
-    }
     let doc = load_self_document()?;
     let floor_version = known_floor_version(&doc);
     doc_sign::verify_with_replay_protection(&doc, floor_version)

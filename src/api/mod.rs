@@ -4091,7 +4091,9 @@ mod tests {
         let publish: Value = client
             .post(format!("{}/api/v1/did/document/publish", base_url))
             .json(&serde_json::json!({
-                "ca_host": "127.0.0.1",
+                // Simulate a stale cached UI. The API must use its current
+                // server-side CA discovery result instead of this old value.
+                "ca_host": "172.31.250.10",
                 "node_name": "nodeB"
             }))
             .send()
