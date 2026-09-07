@@ -294,9 +294,11 @@ mod tests {
             "trusted_peers.json",
             &json!([{ "did": "did:guardian:abc", "node_id": "nodeB", "status": "verified" }]),
         );
-        assert!(state_for_guardian(&state, "did:guardian:abc", Some("nodeC"))
-            .await
-            .is_none());
+        assert!(
+            state_for_guardian(&state, "did:guardian:abc", Some("nodeC"))
+                .await
+                .is_none()
+        );
         let found = state_for_guardian(&state, "did:guardian:abc", Some("nodeB"))
             .await
             .expect("matching node_id should be found");
@@ -473,7 +475,10 @@ mod tests {
             ]),
         );
         let response = list(State(state)).await.expect("list should not error");
-        assert_eq!(response.0.peers[0].did.as_deref(), Some("did:guardian:node-b"));
+        assert_eq!(
+            response.0.peers[0].did.as_deref(),
+            Some("did:guardian:node-b")
+        );
     }
 
     #[tokio::test]
@@ -516,13 +521,18 @@ mod tests {
         {
             std::os::unix::fs::symlink(&outside, base.join("escape.txt")).expect("symlink");
             let result = safe_read("escape.txt", base.to_str().expect("utf8 base")).await;
-            assert!(result.is_none(), "must not read through a symlink escaping base_dir");
+            assert!(
+                result.is_none(),
+                "must not read through a symlink escaping base_dir"
+            );
         }
     }
 
     #[tokio::test]
     async fn safe_read_returns_none_when_the_base_dir_does_not_exist() {
-        assert!(safe_read("whatever.json", "/does/not/exist").await.is_none());
+        assert!(safe_read("whatever.json", "/does/not/exist")
+            .await
+            .is_none());
     }
 
     #[tokio::test]

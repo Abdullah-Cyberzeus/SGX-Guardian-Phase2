@@ -418,7 +418,10 @@ rules: []
             canonical,
             r#"{"policy_id":"canonical","rules":[{"action":"ALLOW","dst":"b","id":"with-port","port":443,"protocol":"TCP","src":"a"},{"action":"DENY","dst":"d","id":"without-port","port":null,"protocol":"UDP","src":"c"}],"version":"9"}"#
         );
-        assert_eq!(canonical_policy_bytes(&policy), canonical_policy_bytes(&policy));
+        assert_eq!(
+            canonical_policy_bytes(&policy),
+            canonical_policy_bytes(&policy)
+        );
     }
 
     #[test]
@@ -436,7 +439,10 @@ rules: []
         let material = canonical_policy_material(&policy, "unit-test-source");
 
         assert_eq!(material.source, "unit-test-source");
-        assert_eq!(material.yaml, String::from_utf8(canonical_policy_bytes(&policy)).unwrap());
+        assert_eq!(
+            material.yaml,
+            String::from_utf8(canonical_policy_bytes(&policy)).unwrap()
+        );
         assert_eq!(material.digest_hex, canonical_policy_digest(&policy));
 
         let cloned = material.clone();
@@ -477,10 +483,14 @@ rules: []
                 load_effective_policy_material_from_sources(None, active_path, &schema_path);
 
             assert_eq!(material.source, "schema-canonical");
-            assert_eq!(material.yaml, canonical_policy_material(
-                &validate_policy(SCHEMA_POLICY_YAML).unwrap(),
-                "schema-canonical"
-            ).yaml);
+            assert_eq!(
+                material.yaml,
+                canonical_policy_material(
+                    &validate_policy(SCHEMA_POLICY_YAML).unwrap(),
+                    "schema-canonical"
+                )
+                .yaml
+            );
         }
     }
 
@@ -499,7 +509,10 @@ rules: []
             validate_policy(DEFAULT_EFFECTIVE_POLICY_YAML).expect("default policy parses");
 
         assert_eq!(material.source, "constant-default");
-        assert_eq!(material.digest_hex, canonical_policy_digest(&default_policy));
+        assert_eq!(
+            material.digest_hex,
+            canonical_policy_digest(&default_policy)
+        );
 
         let invalid_active_path = td.path().join("invalid-active.yaml");
         let invalid_schema_path = td.path().join("invalid-schema.yaml");

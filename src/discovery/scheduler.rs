@@ -572,7 +572,9 @@ mod tests {
 
         let mut seed_inventory = Inventory::default();
         let device = dummy_connected_device("preloaded-1", "10.0.0.5");
-        seed_inventory.by_id.insert(device.device_id.clone(), device);
+        seed_inventory
+            .by_id
+            .insert(device.device_id.clone(), device);
         seed_inventory
             .save_atomic(&scheduler.inventory_path)
             .unwrap();

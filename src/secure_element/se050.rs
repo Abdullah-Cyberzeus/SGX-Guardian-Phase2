@@ -338,7 +338,10 @@ esac"#,
 
         let se = Se050::init(&config()).expect("init should succeed against fake chip");
         assert!(se.is_active());
-        assert_eq!(se.uid.as_deref(), Some("040050011f595a6179b9b204783ebae51090"));
+        assert_eq!(
+            se.uid.as_deref(),
+            Some("040050011f595a6179b9b204783ebae51090")
+        );
         assert_eq!(se.cert_uid.as_deref(), Some("aabbccddee"));
         assert!(se.read_id_list().expect("id list").contains("id-list-ok"));
         assert!(se.get_random().expect("rng").contains("random-bytes"));

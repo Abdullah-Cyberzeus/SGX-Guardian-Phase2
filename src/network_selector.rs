@@ -637,7 +637,10 @@ mod tests {
         assert_eq!(classify_transport("bt-pan"), Some(TransportType::Bluetooth));
         assert_eq!(classify_transport("hci0"), Some(TransportType::Bluetooth));
         assert_eq!(classify_transport("wwan0"), Some(TransportType::Cellular));
-        assert_eq!(classify_transport("rmnet_data0"), Some(TransportType::Cellular));
+        assert_eq!(
+            classify_transport("rmnet_data0"),
+            Some(TransportType::Cellular)
+        );
         assert_eq!(classify_transport("usb0"), Some(TransportType::Cellular));
         assert_eq!(classify_transport("tun0"), None);
         assert_eq!(classify_transport(""), None);
@@ -682,15 +685,27 @@ mod tests {
 
     #[test]
     fn estimate_bandwidth_uses_speed_when_available_and_static_fallbacks_otherwise() {
-        assert_eq!(estimate_bandwidth_kbps(TransportType::Ethernet, Some(1)), 1_000);
+        assert_eq!(
+            estimate_bandwidth_kbps(TransportType::Ethernet, Some(1)),
+            1_000
+        );
         assert_eq!(
             estimate_bandwidth_kbps(TransportType::WiFi, Some(u64::MAX)),
             u64::MAX
         );
-        assert_eq!(estimate_bandwidth_kbps(TransportType::Ethernet, None), 100_000);
+        assert_eq!(
+            estimate_bandwidth_kbps(TransportType::Ethernet, None),
+            100_000
+        );
         assert_eq!(estimate_bandwidth_kbps(TransportType::WiFi, None), 60_000);
-        assert_eq!(estimate_bandwidth_kbps(TransportType::Cellular, None), 8_000);
-        assert_eq!(estimate_bandwidth_kbps(TransportType::Bluetooth, None), 1_500);
+        assert_eq!(
+            estimate_bandwidth_kbps(TransportType::Cellular, None),
+            8_000
+        );
+        assert_eq!(
+            estimate_bandwidth_kbps(TransportType::Bluetooth, None),
+            1_500
+        );
         assert_eq!(estimate_bandwidth_kbps(TransportType::Satellite, None), 512);
     }
 
@@ -700,7 +715,10 @@ mod tests {
         assert_eq!(estimate_latency_ms(TransportType::WiFi, Some(25)), 13);
         assert_eq!(estimate_latency_ms(TransportType::Cellular, Some(50)), 40);
         assert_eq!(estimate_latency_ms(TransportType::Bluetooth, Some(100)), 60);
-        assert_eq!(estimate_latency_ms(TransportType::Satellite, Some(500)), 800);
+        assert_eq!(
+            estimate_latency_ms(TransportType::Satellite, Some(500)),
+            800
+        );
         assert_eq!(estimate_latency_ms(TransportType::Ethernet, None), 43);
     }
 
@@ -904,8 +922,10 @@ mod tests {
         set_selected_interface(None);
         assert!(best_candidate(&[]).is_none());
 
-        let ens33 = candidate_with_transport("ens33", TransportType::Ethernet, Some(10), true, true, true);
-        let wlan0 = candidate_with_transport("wlan0", TransportType::WiFi, Some(20), true, true, true);
+        let ens33 =
+            candidate_with_transport("ens33", TransportType::Ethernet, Some(10), true, true, true);
+        let wlan0 =
+            candidate_with_transport("wlan0", TransportType::WiFi, Some(20), true, true, true);
         set_selected_interface(Some("wlan0".to_string()));
         set_live_metrics([("wlan0".to_string(), live(true, 2, 150_000, 0, 3))]);
 

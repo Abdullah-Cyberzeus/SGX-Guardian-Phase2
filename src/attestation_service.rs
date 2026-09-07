@@ -3448,14 +3448,20 @@ mod tests {
 
     #[test]
     fn helper_parsers_cover_addresses_ports_booleans_digests_and_node_inference() {
-        assert_eq!(parse_peer_addr("10.0.0.2:50152"), Some(("10.0.0.2".into(), 50152)));
+        assert_eq!(
+            parse_peer_addr("10.0.0.2:50152"),
+            Some(("10.0.0.2".into(), 50152))
+        );
         assert_eq!(parse_peer_addr("missing-port"), None);
         assert_eq!(parse_peer_addr("10.0.0.2:not-a-port"), None);
         assert_eq!(parse_peer_addr("2001:db8::1:50152"), None);
 
         assert_eq!(peer_ip_hint_from_addr("10.0.0.2:50152"), "10.0.0.2");
         assert_eq!(peer_ip_hint_from_addr("[2001:db8::1]:50152"), "2001:db8::1");
-        assert_eq!(peer_ip_hint_from_addr("host-without-port"), "host-without-port");
+        assert_eq!(
+            peer_ip_hint_from_addr("host-without-port"),
+            "host-without-port"
+        );
 
         assert!(is_hex_digest_64(&"a".repeat(64)));
         assert!(is_hex_digest_64(&"F".repeat(64)));
@@ -3466,7 +3472,10 @@ mod tests {
         assert_eq!(infer_node_id_from_base_port(50052), Some("nodeB"));
         assert_eq!(infer_node_id_from_base_port(50053), Some("nodeC"));
         assert_eq!(infer_node_id_from_base_port(50099), None);
-        assert_eq!(infer_node_id_from_peer("203.0.113.1", 50051).as_deref(), Some("nodeA"));
+        assert_eq!(
+            infer_node_id_from_peer("203.0.113.1", 50051).as_deref(),
+            Some("nodeA")
+        );
     }
 
     #[test]
@@ -3474,8 +3483,7 @@ mod tests {
         let temp = temp_test_dir("fallback-paths");
         let primary = temp.join("primary");
         let fallback = temp.join("fallback");
-        let (node_primary, node_fallback) =
-            trusted_peer_node_paths("nodeB", &primary, &fallback);
+        let (node_primary, node_fallback) = trusted_peer_node_paths("nodeB", &primary, &fallback);
         assert!(node_primary.ends_with("trusted_peers_nodeB.json"));
         assert!(node_fallback.ends_with("trusted_peers_nodeB.json"));
         let (global_primary, global_fallback) = trusted_peer_global_paths(&primary, &fallback);
@@ -3575,21 +3583,20 @@ mod tests {
         assert!(should_attempt_persisted_peer(&peer, "10.0.0.1", 50151, &allowed).is_some());
 
         let mut stale = peer.clone();
-        stale.timestamp = (Utc::now() - chrono::Duration::hours(MAX_TRUSTED_PEER_AGE_HOURS + 1))
-            .to_rfc3339();
+        stale.timestamp =
+            (Utc::now() - chrono::Duration::hours(MAX_TRUSTED_PEER_AGE_HOURS + 1)).to_rfc3339();
         assert!(!trusted_peer_is_recent(&stale.timestamp));
-        assert!(should_attempt_persisted_peer(&stale, "10.0.0.1", 50151, &HashSet::new()).is_none());
+        assert!(
+            should_attempt_persisted_peer(&stale, "10.0.0.1", 50151, &HashSet::new()).is_none()
+        );
         assert!(!trusted_peer_is_recent("invalid timestamp"));
 
         let mut unroutable = peer;
         unroutable.peer_id = "127.0.0.1:50152".into();
-        assert!(should_attempt_persisted_peer(
-            &unroutable,
-            "10.0.0.1",
-            50151,
-            &HashSet::new()
-        )
-        .is_none());
+        assert!(
+            should_attempt_persisted_peer(&unroutable, "10.0.0.1", 50151, &HashSet::new())
+                .is_none()
+        );
     }
 
     #[test]
@@ -4056,8 +4063,10 @@ mod tests {
             hex::encode(&hash[..16])
         };
         let ev = make_test_evidence(policy, &nonce);
-        assert!(!AttestationService::verify_signed_evidence(&ev, "a completely different policy")
-            .unwrap());
+        assert!(
+            !AttestationService::verify_signed_evidence(&ev, "a completely different policy")
+                .unwrap()
+        );
     }
 
     #[test]
@@ -4085,7 +4094,9 @@ mod tests {
         };
         let mut ev = make_test_evidence(policy, &nonce);
         let stale_ts = (chrono::Utc::now()
-            - chrono::Duration::seconds(crate::secure_element::pcr::MAX_PCR_SNAPSHOT_AGE_SECS + 60))
+            - chrono::Duration::seconds(
+                crate::secure_element::pcr::MAX_PCR_SNAPSHOT_AGE_SECS + 60,
+            ))
         .to_rfc3339();
         ev.pcr_values = Some(make_pcr_snapshot(
             crate::secure_element::pcr::PCR_SCHEMA_VERSION,
@@ -4333,7 +4344,11 @@ mod tests {
             hex::encode(&hash[..16])
         };
         let ev = make_test_evidence(policy, &nonce);
-        let vm = verification_method_from_evidence("did:guardian:jwk-test", "dkp-v1", &ev.pubkey_der_b64);
+        let vm = verification_method_from_evidence(
+            "did:guardian:jwk-test",
+            "dkp-v1",
+            &ev.pubkey_der_b64,
+        );
         let doc = make_test_did_document("did:guardian:jwk-test", vec![vm]);
         let raw = jwk_raw_pubkey(&doc).expect("valid jwk should decode");
         assert_eq!(raw.len(), 65);
@@ -4342,14 +4357,20 @@ mod tests {
         let empty_doc = make_test_did_document("did:guardian:empty", vec![]);
         assert!(jwk_raw_pubkey(&empty_doc).is_none());
 
-        let mut bad_vm =
-            verification_method_from_evidence("did:guardian:jwk-test", "dkp-v1", &ev.pubkey_der_b64);
+        let mut bad_vm = verification_method_from_evidence(
+            "did:guardian:jwk-test",
+            "dkp-v1",
+            &ev.pubkey_der_b64,
+        );
         bad_vm.public_key_jwk.x = "not-base64-url!!".to_string();
         let bad_doc = make_test_did_document("did:guardian:jwk-test", vec![bad_vm]);
         assert!(jwk_raw_pubkey(&bad_doc).is_none());
 
-        let mut short_vm =
-            verification_method_from_evidence("did:guardian:jwk-test", "dkp-v1", &ev.pubkey_der_b64);
+        let mut short_vm = verification_method_from_evidence(
+            "did:guardian:jwk-test",
+            "dkp-v1",
+            &ev.pubkey_der_b64,
+        );
         short_vm.public_key_jwk.x = general_purpose::URL_SAFE_NO_PAD.encode(b"short");
         let short_doc = make_test_did_document("did:guardian:jwk-test", vec![short_vm]);
         assert!(jwk_raw_pubkey(&short_doc).is_none());
@@ -4366,10 +4387,12 @@ mod tests {
         let ca_path = base.join("ca_aggregate.json");
         fs::create_dir_all(&peers_dir).expect("create peers dir");
 
-        let _self_guard = EnvVarGuard::set(crate::did::doc_persistence::SELF_DOC_PATH_ENV, &self_path);
+        let _self_guard =
+            EnvVarGuard::set(crate::did::doc_persistence::SELF_DOC_PATH_ENV, &self_path);
         let _peers_guard =
             EnvVarGuard::set(crate::did::doc_persistence::PEERS_DOC_DIR_ENV, &peers_dir);
-        let _ca_guard = EnvVarGuard::set(crate::did::doc_persistence::CA_AGGREGATE_PATH_ENV, &ca_path);
+        let _ca_guard =
+            EnvVarGuard::set(crate::did::doc_persistence::CA_AGGREGATE_PATH_ENV, &ca_path);
 
         let pk_self = spki_pubkey_b64([21u8; 32]);
         let pk_peer = spki_pubkey_b64([22u8; 32]);
@@ -4418,8 +4441,11 @@ mod tests {
                 &pk_ca,
             )],
         );
-        fs::write(&ca_path, serde_json::to_string(&vec![ca_doc.clone()]).unwrap())
-            .expect("write ca aggregate");
+        fs::write(
+            &ca_path,
+            serde_json::to_string(&vec![ca_doc.clone()]).unwrap(),
+        )
+        .expect("write ca aggregate");
 
         assert_eq!(
             subject_did_from_attestation_pubkey(&pk_ca),
@@ -4427,7 +4453,10 @@ mod tests {
         );
 
         assert_eq!(subject_did_from_attestation_pubkey(&pk_unknown), None);
-        assert_eq!(subject_did_from_attestation_pubkey("not-valid-base64!!!"), None);
+        assert_eq!(
+            subject_did_from_attestation_pubkey("not-valid-base64!!!"),
+            None
+        );
 
         fs::remove_dir_all(base).ok();
     }
@@ -4461,7 +4490,8 @@ mod tests {
         // config/nodeA.yaml is checked into this repo, so the third
         // candidate path resolves relative to the crate root (cargo test's
         // working directory).
-        let conf = load_node_config_for_attestation("nodeA").expect("repo config/nodeA.yaml should load");
+        let conf =
+            load_node_config_for_attestation("nodeA").expect("repo config/nodeA.yaml should load");
         assert_eq!(conf.node_id, "nodeA");
         assert_eq!(conf.ip, "127.0.0.1");
 
@@ -4565,7 +4595,9 @@ mod tests {
         });
 
         let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
-        write_evidence_framed(&mut client, &ev_for_server).await.unwrap();
+        write_evidence_framed(&mut client, &ev_for_server)
+            .await
+            .unwrap();
 
         let received = server.await.unwrap();
         assert_eq!(received.subject_did, ev.subject_did);
@@ -4605,7 +4637,9 @@ mod tests {
         };
         let mut ev = make_test_evidence(policy, &nonce);
         ev.presented_vc_json = None;
-        let err = verify_peer_vc_for_attestation(&ev, "peer-x").await.unwrap_err();
+        let err = verify_peer_vc_for_attestation(&ev, "peer-x")
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("presented no VC"));
     }
 
@@ -4880,7 +4914,10 @@ mod tests {
         );
 
         let state = stable_dkp_state_for_attestation_with_doc(&ev, Some(&matching_doc));
-        assert_eq!(state.verification_method_id, format!("{}#dkp-v9", ev.subject_did));
+        assert_eq!(
+            state.verification_method_id,
+            format!("{}#dkp-v9", ev.subject_did)
+        );
         assert_eq!(state.kid, "dkp-v9");
     }
 
@@ -4950,7 +4987,9 @@ mod tests {
 
         // 1. FirstSeen
         observe_verified_virtual_id(&ev(&did_a, "pk1", "policy1", "pcr1", 1, "vid1"), &addr);
-        let after1 = cache.current_for_sync(&did_a).expect("seeded after first observation");
+        let after1 = cache
+            .current_for_sync(&did_a)
+            .expect("seeded after first observation");
         assert_eq!(
             after1.last_rotation_reason,
             Some(crate::virtual_id_cache::RotationReason::InitialObservation)
@@ -5025,7 +5064,9 @@ mod tests {
         let signed = quote.sign(&km).expect("sign quote");
 
         let path = dir.join("signed_quote.json");
-        signed.save(path.to_str().unwrap()).expect("save signed quote");
+        signed
+            .save(path.to_str().unwrap())
+            .expect("save signed quote");
 
         let loaded = SignedQuote::load(path.to_str().unwrap()).expect("load signed quote");
         assert_eq!(loaded.quote_json, signed.quote_json);

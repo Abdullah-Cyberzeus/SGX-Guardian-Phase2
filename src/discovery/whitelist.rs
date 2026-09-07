@@ -448,7 +448,9 @@ devices:
     #[test]
     fn classify_matching_mac_without_expectations_approves() {
         let mut whitelist = Whitelist::default();
-        whitelist.entries.insert(normalize_mac(&entry().mac), entry());
+        whitelist
+            .entries
+            .insert(normalize_mac(&entry().mac), entry());
         let mut dev = device();
         dev.status = DeviceStatus::Unauthorized;
         whitelist.classify(&mut dev);

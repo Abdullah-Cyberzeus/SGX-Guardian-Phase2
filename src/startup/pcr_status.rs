@@ -67,7 +67,11 @@ pub fn integrity_status(
 /// The two hex inputs are decoded to binary first. A malformed digest or
 /// nonce degrades to zero bytes of the right length rather than shortening the
 /// input, so a verifier never accepts a truncated preimage as a match.
-pub fn composite_sign_input(composite_digest_hex: &str, nonce_hex: &str, measured_at: &str) -> Vec<u8> {
+pub fn composite_sign_input(
+    composite_digest_hex: &str,
+    nonce_hex: &str,
+    measured_at: &str,
+) -> Vec<u8> {
     let composite = hex::decode(composite_digest_hex).unwrap_or_else(|_| vec![0u8; 32]);
     let nonce = hex::decode(nonce_hex).unwrap_or_else(|_| vec![0u8; 16]);
     let timestamp = measured_at.as_bytes();
@@ -350,15 +354,12 @@ mod tests {
 
         assert!(!hardware.is_empty());
         assert!(!software.is_empty());
-        assert_ne!(
-            hardware.len() == software.len()
-                && hardware
-                    .iter()
-                    .zip(&software)
-                    .all(|(a, b)| a.source == b.source),
-            true,
-            "the two source sets must not be identical"
-        );
+        let identical = hardware.len() == software.len()
+            && hardware
+                .iter()
+                .zip(&software)
+                .all(|(a, b)| a.source == b.source);
+        assert!(!identical, "the two source sets must not be identical");
         // `running_on_hardware` reads a path that does not exist off-board.
         assert_eq!(
             running_on_hardware(),
@@ -491,9 +492,13 @@ mod tests {
     fn static_yaml_sources_are_canonicalised_before_measuring() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let yaml = temp.path().join("policy.yaml");
-        std::fs::write(&yaml, "b: 2
+        std::fs::write(
+            &yaml,
+            "b: 2
 a: 1
-").expect("write yaml");
+",
+        )
+        .expect("write yaml");
         let mut engine = PcrEngine::new();
         let source = |path: &std::path::Path| PcrMeasurementSource {
             pcr_index: 3,
@@ -509,9 +514,13 @@ a: 1
 
         // Reordering the keys must not change the canonical measurement.
         let reordered = temp.path().join("policy2.yaml");
-        std::fs::write(&reordered, "a: 1
+        std::fs::write(
+            &reordered,
+            "a: 1
 b: 2
-").expect("write yaml");
+",
+        )
+        .expect("write yaml");
         let mut engine2 = PcrEngine::new();
         let run2 = measure_sources(&mut engine2, &[source(&reordered)]);
 

@@ -1127,3 +1127,714 @@ pub async fn events(
     });
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::state::AppState;
+    use crate::call::{GroupCallState, GroupMemberState, GroupParticipant, GroupRole};
+    use axum::body::to_bytes;
+    use axum::http::HeaderValue;
+    use tempfile::TempDir;
+
+    /// Restores the previous value of an environment variable on drop so
+    /// tests that need a fake overlay IP do not leak it into their peers.
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    fn test_state(node_id: &str) -> (TempDir, Arc<AppState>) {
+        let temp = TempDir::new().expect("tempdir");
+        let config_dir = temp.path().join("config");
+        std::fs::create_dir_all(&config_dir).expect("config dir");
+        let state = AppState::for_tests(temp.path(), node_id, config_dir.display().to_string());
+        (temp, state)
+    }
+
+    fn participant(device_id: &str, nebula_ip: &str) -> GroupParticipant {
+        GroupParticipant {
+            device_id: device_id.to_string(),
+            virtual_id: format!("vid-{device_id}"),
+            nebula_ip: nebula_ip.to_string(),
+            role: GroupRole::Member,
+            state: GroupMemberState::Invited,
+            audio_allowed: true,
+            video_allowed: true,
+            media_ready: false,
+            joined_at: None,
+            last_seen_at: None,
+            is_local_browser: false,
+        }
+    }
+
+    fn local_browser(device_id: &str) -> GroupParticipant {
+        GroupParticipant {
+            is_local_browser: true,
+            nebula_ip: String::new(),
+            ..participant(device_id, "")
+        }
+    }
+
+    async fn status_of(response: axum::response::Response) -> StatusCode {
+        response.status()
+    }
+
+    async fn response_json(response: axum::response::Response) -> Value {
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        serde_json::from_slice(&bytes).expect("body is JSON")
+    }
+
+    /// Create a group hosted by `state.node_id` with one remote invitee.
+    async fn seed_group(state: &Arc<AppState>) -> GroupSession {
+        state
+            .group_session_manager
+            .create(
+                "Test group".into(),
+                GroupParticipant {
+                    role: GroupRole::Host,
+                    ..participant(&state.node_id, "192.168.100.1")
+                },
+                vec![participant("peer-b", "192.168.100.2")],
+                vec![MediaType::Audio],
+            )
+            .await
+            .expect("group created")
+    }
+
+    fn headers_with_idempotency(value: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "idempotency-key",
+            HeaderValue::from_str(value).expect("header value"),
+        );
+        headers
+    }
+
+    /// A browser-member session whose DID is derived from `registration_id`,
+    /// so handlers act as that member rather than as this Guardian device.
+    fn member_session(registration_id: &str) -> Extension<AuthenticatedSession> {
+        Extension(AuthenticatedSession {
+            claims: crate::api::auth::session::Claims {
+                sub: format!("member-{registration_id}"),
+                role: "member".into(),
+                scopes: vec![],
+                circle_ids: vec![],
+                browser_registration_id: Some(registration_id.to_string()),
+                guardian_fingerprint: None,
+                iss: "test".into(),
+                iat: 0,
+                exp: i64::MAX,
+                jti: format!("jti-{registration_id}"),
+            },
+            token: "test-token".into(),
+        })
+    }
+
+    // --- small helpers ---------------------------------------------------
+
+    #[tokio::test]
+    async fn error_helper_carries_status_and_message() {
+        let response = error(StatusCode::BAD_REQUEST, "nope");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response_json(response).await["error"], "nope");
+    }
+
+    #[test]
+    fn operation_key_requires_a_usable_header() {
+        assert_eq!(
+            operation_key(&HeaderMap::new(), "node-a", "create", None),
+            None
+        );
+        assert_eq!(
+            operation_key(&headers_with_idempotency("   "), "node-a", "create", None),
+            None
+        );
+        let too_long = "k".repeat(129);
+        assert_eq!(
+            operation_key(&headers_with_idempotency(&too_long), "node-a", "create", None),
+            None
+        );
+    }
+
+    #[test]
+    fn operation_key_scopes_by_node_action_and_group() {
+        assert_eq!(
+            operation_key(&headers_with_idempotency("abc"), "node-a", "create", None),
+            Some("node-a:create:new:abc".to_string())
+        );
+        assert_eq!(
+            operation_key(
+                &headers_with_idempotency("abc"),
+                "node-a",
+                "join",
+                Some("group-1")
+            ),
+            Some("node-a:join:group-1:abc".to_string())
+        );
+    }
+
+    // --- trusted_group_peers ---------------------------------------------
+
+    #[tokio::test]
+    async fn trusted_group_peers_is_empty_when_no_registry_exists() {
+        let (_temp, state) = test_state("node-peers-missing");
+        assert!(trusted_group_peers(&state).await.expect("ok").is_empty());
+    }
+
+    #[tokio::test]
+    async fn trusted_group_peers_rejects_malformed_registry() {
+        let (_temp, state) = test_state("node-peers-bad");
+        std::fs::create_dir_all(&state.log_dir_fallback).expect("log dir");
+        std::fs::write(
+            std::path::Path::new(&state.log_dir_fallback).join("trusted_peers.json"),
+            b"{ not json",
+        )
+        .expect("write registry");
+
+        let error = trusted_group_peers(&state).await.expect_err("malformed");
+        assert!(error.contains("malformed"), "unexpected error: {error}");
+    }
+
+    #[tokio::test]
+    async fn trusted_group_peers_filters_unverified_and_incomplete_entries() {
+        let (_temp, state) = test_state("node-peers-filter");
+        std::fs::create_dir_all(&state.log_dir_fallback).expect("log dir");
+        let registry = serde_json::json!([
+            {"peer_id":"ok","did":"did:guardian:ok","ip":"192.168.100.5","status":"verified","virtual_id":"vid-ok"},
+            {"peer_id":"pending","ip":"192.168.100.6","status":"pending","virtual_id":"vid-p"},
+            {"peer_id":"bad-ip","ip":"not-an-ip","status":"trusted","virtual_id":"vid-b"},
+            {"peer_id":"no-vid","ip":"192.168.100.7","status":"success"},
+            {"peer_id":"blank-vid","ip":"192.168.100.8","status":"success","virtual_id":"  "}
+        ]);
+        std::fs::write(
+            std::path::Path::new(&state.log_dir_fallback).join("trusted_peers.json"),
+            serde_json::to_vec(&registry).expect("serialize"),
+        )
+        .expect("write registry");
+
+        let peers = trusted_group_peers(&state).await.expect("ok");
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].peer_id, "ok");
+    }
+
+    // --- active ------------------------------------------------------------
+
+    #[tokio::test]
+    async fn active_reports_local_device_and_sessions() {
+        let (_temp, state) = test_state("node-active");
+        let response = active(State(state.clone()), None).await.into_response();
+        let body = response_json(response).await;
+        assert_eq!(body["total"], 0);
+        assert_eq!(body["local_device_id"], "node-active");
+
+        seed_group(&state).await;
+        let response = active(State(state.clone()), None).await.into_response();
+        let body = response_json(response).await;
+        assert_eq!(body["total"], 1);
+    }
+
+    // --- create ------------------------------------------------------------
+
+    #[tokio::test]
+    async fn create_rejects_a_request_without_media() {
+        let (_temp, state) = test_state("node-create-nomedia");
+        let response = create(
+            State(state),
+            HeaderMap::new(),
+            None,
+            Json(CreateGroupCallRequest {
+                title: String::new(),
+                member_ids: vec![],
+                call_all: true,
+                media: vec![],
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response_json(response).await["error"], "Audio or video is required");
+    }
+
+    #[tokio::test]
+    async fn create_rejects_a_second_concurrent_group() {
+        let (_temp, state) = test_state("node-create-busy");
+        seed_group(&state).await;
+
+        let response = create(
+            State(state),
+            HeaderMap::new(),
+            None,
+            Json(CreateGroupCallRequest {
+                title: String::new(),
+                member_ids: vec![],
+                call_all: true,
+                media: vec![MediaType::Audio],
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    // --- join / heartbeat / decline / leave --------------------------------
+
+    #[tokio::test]
+    async fn join_reports_conflict_for_an_unknown_group() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _ip = EnvGuard::set("SGX_NEBULA_LOCAL_IP_OVERRIDE", "192.168.100.1");
+        let (_temp, state) = test_state("node-join-missing");
+
+        let response = join(
+            State(state),
+            Path("no-such-group".into()),
+            HeaderMap::new(),
+            None,
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn join_reports_unavailable_without_an_overlay_address() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _ip = EnvGuard::set("SGX_NEBULA_LOCAL_IP_OVERRIDE", "");
+        let (_temp, state) = test_state("node-join-no-ip");
+
+        let response = join(State(state), Path("group".into()), HeaderMap::new(), None)
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn heartbeat_reports_conflict_for_an_unknown_group() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _ip = EnvGuard::set("SGX_NEBULA_LOCAL_IP_OVERRIDE", "192.168.100.1");
+        let (_temp, state) = test_state("node-heartbeat-missing");
+
+        let response = heartbeat(State(state), Path("no-such-group".into()), None)
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn decline_reports_conflict_for_an_unknown_group() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _ip = EnvGuard::set("SGX_NEBULA_LOCAL_IP_OVERRIDE", "192.168.100.1");
+        let (_temp, state) = test_state("node-decline-missing");
+
+        let response = decline(
+            State(state),
+            Path("no-such-group".into()),
+            HeaderMap::new(),
+            None,
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn leave_reports_conflict_for_an_unknown_group() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _ip = EnvGuard::set("SGX_NEBULA_LOCAL_IP_OVERRIDE", "192.168.100.1");
+        let (_temp, state) = test_state("node-leave-missing");
+
+        let response = leave(
+            State(state),
+            Path("no-such-group".into()),
+            HeaderMap::new(),
+            None,
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn leave_removes_a_joined_local_browser_member() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _ip = EnvGuard::set("SGX_NEBULA_LOCAL_IP_OVERRIDE", "192.168.100.1");
+        let (_temp, state) = test_state("node-leave-ok");
+        let registration_id = "reg-leave-1";
+        let member_did =
+            crate::api::handlers::browser_member::did_for_registration(registration_id);
+        let session = state
+            .group_session_manager
+            .create(
+                "Local group".into(),
+                GroupParticipant {
+                    role: GroupRole::Host,
+                    ..participant(&state.node_id, "192.168.100.1")
+                },
+                vec![local_browser(&member_did)],
+                vec![MediaType::Audio],
+            )
+            .await
+            .expect("group created");
+
+        state
+            .group_session_manager
+            .join(&session.group_id, &member_did, "192.168.100.1")
+            .await
+            .expect("member joins");
+
+        let response = leave(
+            State(state.clone()),
+            Path(session.group_id.clone()),
+            HeaderMap::new(),
+            Some(member_session(registration_id)),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let after = state
+            .group_session_manager
+            .get(&session.group_id)
+            .await
+            .expect("group still exists");
+        assert_eq!(
+            after.participants[&member_did].state,
+            GroupMemberState::Left
+        );
+    }
+
+    // --- moderate ----------------------------------------------------------
+
+    #[tokio::test]
+    async fn moderate_is_forbidden_for_an_unknown_group() {
+        let (_temp, state) = test_state("node-moderate-missing");
+        let response = moderate(
+            State(state),
+            Path("no-such-group".into()),
+            HeaderMap::new(),
+            Json(ModerationAction::Kick {
+                device_id: "peer-b".into(),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    // --- end ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn end_reports_not_found_for_an_unknown_group() {
+        let (_temp, state) = test_state("node-end-missing");
+        let response = end(
+            State(state),
+            Path("no-such-group".into()),
+            HeaderMap::new(),
+            None,
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn end_is_forbidden_for_a_non_participant() {
+        let (_temp, state) = test_state("node-end-outsider");
+        let session = state
+            .group_session_manager
+            .create(
+                "Remote group".into(),
+                GroupParticipant {
+                    role: GroupRole::Host,
+                    ..participant("peer-host", "192.168.100.9")
+                },
+                vec![participant("peer-b", "192.168.100.2")],
+                vec![MediaType::Audio],
+            )
+            .await
+            .expect("group created");
+
+        let response = end(
+            State(state),
+            Path(session.group_id),
+            HeaderMap::new(),
+            None,
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn end_is_forbidden_for_a_participant_that_is_not_the_host() {
+        let (_temp, state) = test_state("node-end-nonhost");
+        state
+            .group_session_manager
+            .create(
+                "Remote group".into(),
+                GroupParticipant {
+                    role: GroupRole::Host,
+                    ..participant("peer-host", "192.168.100.9")
+                },
+                vec![participant(&state.node_id, "192.168.100.1")],
+                vec![MediaType::Audio],
+            )
+            .await
+            .expect("group created");
+        let group_id = state
+            .group_session_manager
+            .active_for(&state.node_id)
+            .await
+            .first()
+            .expect("group visible")
+            .group_id
+            .clone();
+
+        let response = end(State(state), Path(group_id), HeaderMap::new(), None)
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert!(response_json(response).await["error"]
+            .as_str()
+            .expect("error string")
+            .contains("host"));
+    }
+
+    #[tokio::test]
+    async fn end_succeeds_for_the_local_host_and_clears_the_session() {
+        let (_temp, state) = test_state("node-end-host");
+        let session = seed_group(&state).await;
+
+        let response = end(
+            State(state.clone()),
+            Path(session.group_id.clone()),
+            HeaderMap::new(),
+            None,
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["state"], serde_json::to_value(GroupCallState::Ended).unwrap());
+        assert!(state
+            .group_session_manager
+            .active_for(&state.node_id)
+            .await
+            .is_empty());
+    }
+
+    // --- submit_signal -----------------------------------------------------
+
+    #[tokio::test]
+    async fn submit_signal_rejects_an_unsupported_kind() {
+        let (_temp, state) = test_state("node-signal-kind");
+        let response = submit_signal(
+            State(state),
+            Path("group".into()),
+            HeaderMap::new(),
+            None,
+            Json(GroupSignalRequest {
+                target_device_id: "peer-b".into(),
+                kind: SignalKind::MediaReady,
+                payload: serde_json::json!({}),
+                operation_id: None,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn submit_signal_reports_not_found_for_an_unknown_group() {
+        let (_temp, state) = test_state("node-signal-missing");
+        let response = submit_signal(
+            State(state),
+            Path("no-such-group".into()),
+            HeaderMap::new(),
+            None,
+            Json(GroupSignalRequest {
+                target_device_id: "peer-b".into(),
+                kind: SignalKind::SdpOffer,
+                payload: serde_json::json!({}),
+                operation_id: None,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn submit_signal_rejects_a_target_outside_the_group() {
+        let (_temp, state) = test_state("node-signal-target");
+        let session = seed_group(&state).await;
+
+        let response = submit_signal(
+            State(state),
+            Path(session.group_id),
+            HeaderMap::new(),
+            None,
+            Json(GroupSignalRequest {
+                target_device_id: "stranger".into(),
+                kind: SignalKind::SdpOffer,
+                payload: serde_json::json!({}),
+                operation_id: None,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn submit_signal_requires_both_sides_to_have_joined() {
+        let (_temp, state) = test_state("node-signal-notjoined");
+        let session = seed_group(&state).await;
+
+        let response = submit_signal(
+            State(state),
+            Path(session.group_id),
+            HeaderMap::new(),
+            None,
+            Json(GroupSignalRequest {
+                target_device_id: "peer-b".into(),
+                kind: SignalKind::SdpOffer,
+                payload: serde_json::json!({}),
+                operation_id: None,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn submit_signal_delivers_in_process_to_a_local_browser_member() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _ip = EnvGuard::set("SGX_NEBULA_LOCAL_IP_OVERRIDE", "192.168.100.1");
+        let (_temp, state) = test_state("node-signal-local");
+        let member_did = "did:guardian:browser-target";
+        let session = state
+            .group_session_manager
+            .create(
+                "Local group".into(),
+                GroupParticipant {
+                    role: GroupRole::Host,
+                    ..participant(&state.node_id, "192.168.100.1")
+                },
+                vec![local_browser(member_did)],
+                vec![MediaType::Audio],
+            )
+            .await
+            .expect("group created");
+        state
+            .group_session_manager
+            .join(&session.group_id, member_did, "192.168.100.1")
+            .await
+            .expect("member joins");
+
+        let response = submit_signal(
+            State(state.clone()),
+            Path(session.group_id.clone()),
+            HeaderMap::new(),
+            None,
+            Json(GroupSignalRequest {
+                target_device_id: member_did.into(),
+                kind: SignalKind::SdpOffer,
+                payload: serde_json::json!({"sdp":"v=0"}),
+                operation_id: Some("op-1".into()),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        assert_eq!(response_json(response).await["status"], "sent");
+
+        // The same operation id is not delivered twice.
+        let repeat = submit_signal(
+            State(state),
+            Path(session.group_id),
+            HeaderMap::new(),
+            None,
+            Json(GroupSignalRequest {
+                target_device_id: member_did.into(),
+                kind: SignalKind::SdpOffer,
+                payload: serde_json::json!({"sdp":"v=0"}),
+                operation_id: Some("op-1".into()),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(repeat.status(), StatusCode::ACCEPTED);
+        assert_eq!(response_json(repeat).await["status"], "already_sent");
+    }
+
+    // --- signals / media_ready / events ------------------------------------
+
+    #[tokio::test]
+    async fn signals_reports_not_found_for_an_unknown_group() {
+        let (_temp, state) = test_state("node-signals-missing");
+        let response = signals(
+            State(state),
+            Path("no-such-group".into()),
+            Query(Cursor::default()),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn signals_returns_the_queue_for_a_known_group() {
+        let (_temp, state) = test_state("node-signals-ok");
+        let session = seed_group(&state).await;
+
+        let response = signals(
+            State(state),
+            Path(session.group_id),
+            Query(Cursor { after: 0 }),
+        )
+        .await
+        .into_response();
+        assert_eq!(status_of(response).await, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn media_ready_reports_conflict_for_an_unknown_group() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _ip = EnvGuard::set("SGX_NEBULA_LOCAL_IP_OVERRIDE", "192.168.100.1");
+        let (_temp, state) = test_state("node-media-missing");
+
+        let response = media_ready(State(state), Path("no-such-group".into()), None)
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn events_stream_is_constructed_from_the_manager_broadcast() {
+        let (_temp, state) = test_state("node-events");
+        let response = events(State(state)).await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+}

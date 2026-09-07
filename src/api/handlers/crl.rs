@@ -1019,15 +1019,31 @@ mod tests {
     #[test]
     fn map_cli_failure_classifies_each_known_cli_message() {
         let cases: &[(&str, fn(&ApiError) -> bool)] = &[
-            ("DID is already revoked", |e| matches!(e, ApiError::Conflict(_))),
-            ("cannot revoke self", |e| matches!(e, ApiError::Forbidden(_))),
-            ("member-issued credential", |e| matches!(e, ApiError::Forbidden(_))),
-            ("invalid signature on entry", |e| matches!(e, ApiError::Forbidden(_))),
-            ("only the circle owner may do this", |e| matches!(e, ApiError::Forbidden(_))),
-            ("cannot revoke the circle owner", |e| matches!(e, ApiError::Forbidden(_))),
+            ("DID is already revoked", |e| {
+                matches!(e, ApiError::Conflict(_))
+            }),
+            ("cannot revoke self", |e| {
+                matches!(e, ApiError::Forbidden(_))
+            }),
+            ("member-issued credential", |e| {
+                matches!(e, ApiError::Forbidden(_))
+            }),
+            ("invalid signature on entry", |e| {
+                matches!(e, ApiError::Forbidden(_))
+            }),
+            ("only the circle owner may do this", |e| {
+                matches!(e, ApiError::Forbidden(_))
+            }),
+            ("cannot revoke the circle owner", |e| {
+                matches!(e, ApiError::Forbidden(_))
+            }),
             ("entry not found", |e| matches!(e, ApiError::NotFound(_))),
-            ("DID is not currently revoked", |e| matches!(e, ApiError::NotFound(_))),
-            ("something else entirely", |e| matches!(e, ApiError::BadRequest(_))),
+            ("DID is not currently revoked", |e| {
+                matches!(e, ApiError::NotFound(_))
+            }),
+            ("something else entirely", |e| {
+                matches!(e, ApiError::BadRequest(_))
+            }),
         ];
 
         for (message, expected) in cases {
@@ -1051,7 +1067,10 @@ mod tests {
 
     #[test]
     fn normalize_debug_did_trims_and_rejects_blanks() {
-        assert_eq!(normalize_debug_did("  did:guardian:abc  ").expect("valid"), "did:guardian:abc");
+        assert_eq!(
+            normalize_debug_did("  did:guardian:abc  ").expect("valid"),
+            "did:guardian:abc"
+        );
         for blank in ["", "   ", "\t"] {
             assert!(
                 matches!(normalize_debug_did(blank), Err(ApiError::BadRequest(_))),
@@ -1065,8 +1084,14 @@ mod tests {
         use crate::cot::types::TransportType;
 
         // Absent and blank both default.
-        assert_eq!(parse_debug_transport(None).expect("default"), TransportType::Ethernet);
-        assert_eq!(parse_debug_transport(Some("   ")).expect("default"), TransportType::Ethernet);
+        assert_eq!(
+            parse_debug_transport(None).expect("default"),
+            TransportType::Ethernet
+        );
+        assert_eq!(
+            parse_debug_transport(Some("   ")).expect("default"),
+            TransportType::Ethernet
+        );
 
         for (raw, expected) in [
             ("ethernet", TransportType::Ethernet),

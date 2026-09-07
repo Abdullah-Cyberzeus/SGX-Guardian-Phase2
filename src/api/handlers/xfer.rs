@@ -516,3 +516,484 @@ fn map_xfer_error(error: XferError) -> ApiError {
         other => ApiError::Internal(other.to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::xfer::persistence;
+    use crate::xfer::store::TransferStatus;
+    use tempfile::TempDir;
+
+    /// Full Guardian state tree (identity, VCs, Circles, transfers) in a
+    /// temp dir, plus the signed local owner every authorization hop reads.
+    struct Harness {
+        _env: crate::test_support::guardian::GuardianEnv,
+        base: TempDir,
+        state: Arc<AppState>,
+        caller_did: String,
+    }
+
+    async fn harness() -> (tokio::sync::MutexGuard<'static, ()>, Harness) {
+        let lock = crate::test_support::async_env_lock().await;
+        let env = crate::test_support::guardian::GuardianEnv::new();
+        let (base, state) = test_state("nodeA");
+        crate::test_support::guardian::seed_owner("nodeA", &state.device_did, "192.168.100.1/24");
+        let caller_did = state.device_did.clone();
+        (
+            lock,
+            Harness {
+                _env: env,
+                base,
+                state,
+                caller_did,
+            },
+        )
+    }
+
+    fn test_state(node_id: &str) -> (TempDir, Arc<AppState>) {
+        let temp = TempDir::new().expect("tempdir");
+        let config_dir = temp.path().join("config");
+        std::fs::create_dir_all(&config_dir).expect("config dir");
+        let state = AppState::for_tests(temp.path(), node_id, config_dir.display().to_string());
+        (temp, state)
+    }
+
+    fn progress(transfer_id: &str, actor_did: &str) -> SenderProgress {
+        SenderProgress {
+            transfer_id: transfer_id.to_string(),
+            circle_id: "circle-alpha".to_string(),
+            actor_did: actor_did.to_string(),
+            peer_did: "did:sgx:peer".to_string(),
+            filename: "report.pdf".to_string(),
+            file_path: "/tmp/report.pdf".to_string(),
+            size: 2048,
+            chunk_bytes: 1024,
+            chunk_count: 2,
+            requested_chunks: 2,
+            sent_chunks: 1,
+            bytes_sent: 1024,
+            status: TransferStatus::Sending,
+            updated_at: "2026-01-02T00:00:00Z".to_string(),
+            completed_at: None,
+            last_error: Some("stalled".to_string()),
+        }
+    }
+
+    fn local_record(transfer_id: &str, sender: &str, recipient: &str) -> LocalTransferRecord {
+        LocalTransferRecord {
+            transfer_id: transfer_id.to_string(),
+            circle_id: "circle-alpha".to_string(),
+            sender_did: sender.to_string(),
+            recipient_did: recipient.to_string(),
+            filename: "photo.jpg".to_string(),
+            size: 512,
+            file_sha256: "sha-256-digest".to_string(),
+            vault_id: "vault-1".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            completed_at: "2026-01-01T00:00:01Z".to_string(),
+        }
+    }
+
+    async fn save_progress(record: &SenderProgress) {
+        persistence::save_json_pretty(&persistence::outbox_path(&record.transfer_id), record)
+            .await
+            .expect("save outbox record");
+    }
+
+    #[tokio::test]
+    async fn send_rejects_an_empty_peer_did() {
+        let (_lock, h) = harness().await;
+        let state = h.state.clone();
+        let error = send(
+            State(state),
+            None,
+            HeaderMap::new(),
+            Json(SendRequest {
+                peer_did: "   ".to_string(),
+                path: Some("/tmp/whatever".to_string()),
+                vault_id: None,
+            }),
+        )
+        .await
+        .expect_err("empty peer_did must be rejected");
+        assert!(matches!(error, ApiError::BadRequest(msg) if msg.contains("peer_did")));
+    }
+
+    #[tokio::test]
+    async fn send_requires_exactly_one_of_path_or_vault_id() {
+        let (_lock, h) = harness().await;
+        let state = h.state.clone();
+        for (path, vault_id) in [
+            (None, None),
+            (
+                Some("/tmp/a".to_string()),
+                Some("vault-1".to_string()),
+            ),
+        ] {
+            let error = send(
+                State(state.clone()),
+                None,
+                HeaderMap::new(),
+                Json(SendRequest {
+                    peer_did: "did:sgx:peer".to_string(),
+                    path,
+                    vault_id,
+                }),
+            )
+            .await
+            .expect_err("ambiguous source must be rejected");
+            assert!(
+                matches!(&error, ApiError::BadRequest(msg) if msg.contains("exactly one")),
+                "unexpected error variant: {error:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn send_rejects_a_blank_path_and_a_missing_file() {
+        let (_lock, h) = harness().await;
+        let state = h.state.clone();
+
+        let error = send(
+            State(state.clone()),
+            None,
+            HeaderMap::new(),
+            Json(SendRequest {
+                peer_did: "did:sgx:peer".to_string(),
+                path: Some("   ".to_string()),
+                vault_id: None,
+            }),
+        )
+        .await
+        .expect_err("blank path must be rejected");
+        assert!(matches!(error, ApiError::BadRequest(msg) if msg.contains("path")));
+
+        let missing = h.base.path().join("absent.bin");
+        let error = send(
+            State(state),
+            None,
+            HeaderMap::new(),
+            Json(SendRequest {
+                peer_did: "did:sgx:peer".to_string(),
+                path: Some(missing.display().to_string()),
+                vault_id: None,
+            }),
+        )
+        .await
+        .expect_err("missing file must be rejected");
+        assert!(matches!(error, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn send_rejects_a_directory_and_an_oversized_file() {
+        let (_lock, h) = harness().await;
+        let state = h.state.clone();
+
+        let dir = h.base.path().join("a-directory");
+        std::fs::create_dir_all(&dir).expect("create dir");
+        let error = send(
+            State(state.clone()),
+            None,
+            HeaderMap::new(),
+            Json(SendRequest {
+                peer_did: "did:sgx:peer".to_string(),
+                path: Some(dir.display().to_string()),
+                vault_id: None,
+            }),
+        )
+        .await
+        .expect_err("a directory is not a transferable file");
+        assert!(matches!(error, ApiError::BadRequest(msg) if msg.contains("regular file")));
+
+        let big = h.base.path().join("big.bin");
+        std::fs::write(&big, vec![0u8; 4096]).expect("write big file");
+        std::env::set_var("SGX_XFER_MAX_FILE_BYTES", "16");
+        let error = send(
+            State(state),
+            None,
+            HeaderMap::new(),
+            Json(SendRequest {
+                peer_did: "did:sgx:peer".to_string(),
+                path: Some(big.display().to_string()),
+                vault_id: None,
+            }),
+        )
+        .await
+        .expect_err("oversized file must be rejected");
+        std::env::remove_var("SGX_XFER_MAX_FILE_BYTES");
+        assert!(matches!(error, ApiError::PayloadTooLarge(msg) if msg.contains("too large")));
+    }
+
+    #[tokio::test]
+    async fn send_rejects_an_invalid_vault_id() {
+        let (_lock, h) = harness().await;
+        let state = h.state.clone();
+        let error = send(
+            State(state),
+            None,
+            HeaderMap::new(),
+            Json(SendRequest {
+                peer_did: "did:sgx:peer".to_string(),
+                path: None,
+                vault_id: Some("../escape".to_string()),
+            }),
+        )
+        .await
+        .expect_err("path traversal in a vault id must be rejected");
+        assert!(matches!(error, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn list_returns_owned_network_and_local_transfers_newest_first() {
+        let (_lock, h) = harness().await;
+        let state = h.state.clone();
+        let caller = h.caller_did.clone();
+
+        // Legacy record (empty actor) belongs to the Guardian identity.
+        let mut legacy = progress("xfer-legacy", "");
+        legacy.updated_at = "2026-01-03T00:00:00Z".to_string();
+        save_progress(&legacy).await;
+        // Another identity's record must not leak into the listing.
+        save_progress(&progress("xfer-other", "did:sgx:someone-else")).await;
+        store::save_local_transfer(&local_record("local-1", &caller, "did:sgx:peer"))
+            .await
+            .expect("save local transfer");
+
+        let response = list(State(state), None).await.expect("list transfers");
+        let ids: Vec<&str> = response
+            .0
+            .transfers
+            .iter()
+            .map(|item| item.transfer_id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["xfer-legacy", "local-1"]);
+        assert_eq!(response.0.count, 2);
+        assert_eq!(response.0.transfers_sent, 2);
+        assert_eq!(response.0.transfers_received, 0);
+        assert_eq!(response.0.bytes_transferred, 2048 + 512);
+    }
+
+    #[tokio::test]
+    async fn detail_rejects_a_blank_id_and_reports_unknown_transfers() {
+        let (_lock, h) = harness().await;
+        let state = h.state.clone();
+
+        let error = detail(State(state.clone()), None, Path("  ".to_string()))
+            .await
+            .expect_err("blank id must be rejected");
+        assert!(matches!(error, ApiError::BadRequest(msg) if msg.contains("transfer id")));
+
+        let error = detail(State(state), None, Path("nope".to_string()))
+            .await
+            .expect_err("unknown id must be reported as missing");
+        assert!(matches!(error, ApiError::NotFound(msg) if msg.contains("nope")));
+    }
+
+    #[tokio::test]
+    async fn detail_returns_a_sender_summary_for_the_owning_identity() {
+        let (_lock, h) = harness().await;
+        let state = h.state.clone();
+        let caller = h.caller_did.clone();
+        save_progress(&progress("xfer-1", &caller)).await;
+
+        let summary = detail(State(state), None, Path("xfer-1".to_string()))
+            .await
+            .expect("detail for owned transfer");
+        assert_eq!(summary.0.direction, "outbound");
+        assert_eq!(summary.0.status, "sending");
+        assert_eq!(summary.0.sent_chunks, Some(1));
+        assert_eq!(summary.0.sender_did.as_deref(), Some(caller.as_str()));
+        assert_eq!(summary.0.last_error.as_deref(), Some("stalled"));
+    }
+
+    #[tokio::test]
+    async fn detail_refuses_a_transfer_owned_by_another_identity() {
+        let (_lock, h) = harness().await;
+        let state = h.state.clone();
+        save_progress(&progress("xfer-foreign", "did:sgx:someone-else")).await;
+
+        let error = detail(State(state), None, Path("xfer-foreign".to_string()))
+            .await
+            .expect_err("foreign transfers must not be readable");
+        assert!(matches!(error, ApiError::Forbidden(_)));
+    }
+
+    #[tokio::test]
+    async fn detail_serves_both_sides_of_a_same_board_local_transfer() {
+        let (_lock, h) = harness().await;
+        let state = h.state.clone();
+        let caller = h.caller_did.clone();
+
+        store::save_local_transfer(&local_record("local-out", &caller, "did:sgx:peer"))
+            .await
+            .expect("save outbound local transfer");
+        let outbound = detail(State(state.clone()), None, Path("local-out".to_string()))
+            .await
+            .expect("outbound local detail");
+        assert_eq!(outbound.0.direction, "outbound");
+        assert_eq!(outbound.0.bytes_sent, Some(512));
+
+        store::save_local_transfer(&local_record("local-in", "did:sgx:peer", &caller))
+            .await
+            .expect("save inbound local transfer");
+        let inbound = detail(State(state.clone()), None, Path("local-in".to_string()))
+            .await
+            .expect("inbound local detail");
+        assert_eq!(inbound.0.direction, "inbound");
+        assert!(inbound.0.peer_did.is_none());
+        assert!(inbound.0.bytes_sent.is_none());
+
+        store::save_local_transfer(&local_record(
+            "local-foreign",
+            "did:sgx:one",
+            "did:sgx:two",
+        ))
+        .await
+        .expect("save third-party local transfer");
+        let error = detail(State(state), None, Path("local-foreign".to_string()))
+            .await
+            .expect_err("third-party local transfers must not be readable");
+        assert!(matches!(error, ApiError::Forbidden(_)));
+    }
+
+    #[tokio::test]
+    async fn cancel_validates_the_id_and_requires_ownership() {
+        let (_lock, h) = harness().await;
+        let state = h.state.clone();
+
+        let error = cancel(State(state.clone()), None, Path("".to_string()))
+            .await
+            .expect_err("blank id must be rejected");
+        assert!(matches!(error, ApiError::BadRequest(_)));
+
+        // No record at all: the caller does not own it either.
+        let error = cancel(State(state.clone()), None, Path("ghost".to_string()))
+            .await
+            .expect_err("unknown transfers cannot be cancelled");
+        assert!(matches!(error, ApiError::Forbidden(_)));
+
+        save_progress(&progress("xfer-foreign", "did:sgx:someone-else")).await;
+        let error = cancel(State(state), None, Path("xfer-foreign".to_string()))
+            .await
+            .expect_err("only the sender may cancel");
+        assert!(matches!(error, ApiError::Forbidden(_)));
+    }
+
+    #[tokio::test]
+    async fn cancel_marks_an_owned_transfer_cancelled() {
+        let (_lock, h) = harness().await;
+        let state = h.state.clone();
+        let caller = h.caller_did.clone();
+        save_progress(&progress("xfer-mine", &caller)).await;
+
+        let response = cancel(State(state), None, Path("xfer-mine".to_string()))
+            .await
+            .expect("owned transfer cancels");
+        assert_eq!(response.0.status, "cancelled");
+        assert_eq!(response.0.transfer_id, "xfer-mine");
+
+        let stored = store::load_outbox("xfer-mine")
+            .await
+            .expect("reload outbox")
+            .expect("record still present");
+        assert_eq!(stored.status, TransferStatus::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn inbox_lists_guardian_receipts_and_local_deliveries() {
+        let (_lock, h) = harness().await;
+        let state = h.state.clone();
+        let caller = h.caller_did.clone();
+
+        store::save_local_transfer(&local_record("local-in", "did:sgx:peer", &caller))
+            .await
+            .expect("save inbound local transfer");
+        store::save_local_transfer(&local_record("local-other", "did:sgx:peer", "did:sgx:x"))
+            .await
+            .expect("save unrelated local transfer");
+
+        let response = inbox(State(state), None).await.expect("inbox listing");
+        assert_eq!(response.0.count, 1);
+        let item = &response.0.files[0];
+        assert_eq!(item.transfer_id, "local-in");
+        assert!(item.completed);
+        assert!(item.vault_available);
+        assert_eq!(item.vault_id.as_deref(), Some("vault-1"));
+        assert!(item.download_path.is_some());
+    }
+
+    #[test]
+    fn receiver_summary_reports_inbound_progress() {
+        let summary = receiver_summary(ReceiverState {
+            transfer_id: "in-1".into(),
+            circle_id: "circle-alpha".into(),
+            sender_did: "did:sgx:peer".into(),
+            filename: "notes.txt".into(),
+            size: 96,
+            chunk_bytes: 32,
+            chunk_count: 3,
+            file_sha256: "digest".into(),
+            received_chunks: vec![0, 1],
+            status: TransferStatus::Receiving,
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            completed_at: None,
+            last_error: None,
+            vault_id: None,
+        });
+        assert_eq!(summary.direction, "inbound");
+        assert_eq!(summary.status, "receiving");
+        assert_eq!(summary.received_chunks, Some(2));
+        assert!(summary.peer_did.is_none());
+        assert!(summary.bytes_sent.is_none());
+    }
+
+    #[test]
+    fn map_xfer_error_maps_every_transport_failure_to_its_api_status() {
+        assert!(matches!(
+            map_xfer_error(XferError::SourceNotFound("gone".into())),
+            ApiError::NotFound(_)
+        ));
+        assert!(matches!(
+            map_xfer_error(XferError::TransferNotFound("gone".into())),
+            ApiError::NotFound(_)
+        ));
+        assert!(matches!(
+            map_xfer_error(XferError::PeerNotFound("peer".into())),
+            ApiError::BadRequest(_)
+        ));
+        assert!(matches!(
+            map_xfer_error(XferError::InvalidStructure("bad".into())),
+            ApiError::BadRequest(_)
+        ));
+        assert!(matches!(
+            map_xfer_error(XferError::FileTooLarge { size: 9, max: 4 }),
+            ApiError::PayloadTooLarge(_)
+        ));
+        assert!(matches!(
+            map_xfer_error(XferError::RevokedPeer("revoked".into())),
+            ApiError::Forbidden(_)
+        ));
+        assert!(matches!(
+            map_xfer_error(XferError::Conflict("busy".into())),
+            ApiError::Conflict(_)
+        ));
+        assert!(matches!(
+            map_xfer_error(XferError::Cancelled("stopped".into())),
+            ApiError::Conflict(_)
+        ));
+        assert!(matches!(
+            map_xfer_error(XferError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "absent"
+            ))),
+            ApiError::BadRequest(_)
+        ));
+        assert!(matches!(
+            map_xfer_error(XferError::Io(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "denied"
+            ))),
+            ApiError::Internal(_)
+        ));
+    }
+}

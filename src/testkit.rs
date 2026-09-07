@@ -18,6 +18,8 @@ use crate::key_manager::KeyManager;
 use crate::vc::issue;
 use std::path::Path;
 
+pub mod test_server;
+
 /// Issues the device's own mesh/owner Verifiable Credential and writes the
 /// supporting DID record/document so `circle::create` (and anything that
 /// transitively calls `mesh_circle_id()`/`load_runtime_signing_context()`)

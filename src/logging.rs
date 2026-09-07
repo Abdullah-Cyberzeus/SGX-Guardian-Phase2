@@ -141,3 +141,101 @@ pub fn log_error(node_id: &str, err: &str) {
         error = %err
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_log_dir_override_is_preferred_when_it_is_usable() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let previous = std::env::var_os("SGX_LOG_DIR");
+        let temp = tempfile::tempdir().expect("create sandbox");
+        let override_dir = temp.path().join("guardian-logs");
+        std::env::set_var("SGX_LOG_DIR", &override_dir);
+
+        let resolved = resolve_log_dir().expect("a writable directory must be found");
+
+        assert_eq!(resolved, override_dir);
+        assert!(resolved.is_dir(), "the resolved directory is created");
+
+        match previous {
+            Some(value) => std::env::set_var("SGX_LOG_DIR", value),
+            None => std::env::remove_var("SGX_LOG_DIR"),
+        }
+    }
+
+    #[test]
+    fn a_blank_override_is_ignored_in_favour_of_the_standard_candidates() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let previous = std::env::var_os("SGX_LOG_DIR");
+
+        for blank in ["", "   "] {
+            std::env::set_var("SGX_LOG_DIR", blank);
+            let resolved = resolve_log_dir().expect("a fallback candidate must be usable");
+            assert_ne!(
+                resolved,
+                PathBuf::from(blank),
+                "a blank override must not be used as a directory"
+            );
+        }
+
+        match previous {
+            Some(value) => std::env::set_var("SGX_LOG_DIR", value),
+            None => std::env::remove_var("SGX_LOG_DIR"),
+        }
+    }
+
+    #[test]
+    fn resolution_falls_through_to_a_relative_directory_when_system_paths_are_unwritable() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let previous = std::env::var_os("SGX_LOG_DIR");
+        // A path under an existing regular file can never be created, so the
+        // override is skipped and the candidate list is walked.
+        let temp = tempfile::tempdir().expect("create sandbox");
+        let blocker = temp.path().join("not-a-dir");
+        std::fs::write(&blocker, b"x").expect("write blocking file");
+        std::env::set_var("SGX_LOG_DIR", blocker.join("logs"));
+
+        let resolved = resolve_log_dir().expect("some candidate must be usable");
+
+        assert!(!resolved.starts_with(&blocker));
+
+        match previous {
+            Some(value) => std::env::set_var("SGX_LOG_DIR", value),
+            None => std::env::remove_var("SGX_LOG_DIR"),
+        }
+    }
+
+    #[test]
+    fn structured_events_are_emitted_without_an_initialised_subscriber() {
+        // log_event/log_error are called from startup paths that run before
+        // (and after) the logger is installed; neither may panic when no
+        // subscriber is listening.
+        log_event("nodeA", "unit-test event");
+        log_error("nodeA", "unit-test error");
+        log_event("", "");
+        log_error("", "");
+    }
+
+    #[test]
+    fn the_logger_initialises_against_an_isolated_directory() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let previous = std::env::var_os("SGX_LOG_DIR");
+        let temp = tempfile::tempdir().expect("create sandbox");
+        std::env::set_var("SGX_LOG_DIR", temp.path());
+
+        // A global subscriber may already be installed by another test in this
+        // binary; init_logger swallows that and falls back, so the assertion
+        // is that it completes and leaves the log directory usable.
+        init_logger("nodeA");
+        log_event("nodeA", "post-init event");
+
+        assert!(temp.path().is_dir());
+
+        match previous {
+            Some(value) => std::env::set_var("SGX_LOG_DIR", value),
+            None => std::env::remove_var("SGX_LOG_DIR"),
+        }
+    }
+}

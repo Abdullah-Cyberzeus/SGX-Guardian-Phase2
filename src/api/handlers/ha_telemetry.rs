@@ -266,7 +266,11 @@ mod tests {
             .await
             .unwrap();
         registry
-            .upsert_device(device("dev_offline", "light.offline", DeviceHealth::Offline))
+            .upsert_device(device(
+                "dev_offline",
+                "light.offline",
+                DeviceHealth::Offline,
+            ))
             .await
             .unwrap();
 

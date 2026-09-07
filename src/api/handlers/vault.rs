@@ -2007,7 +2007,8 @@ mod tests {
             .expect("overview succeeds");
         assert_eq!(result.0.file_count, 1);
         assert!(result.0.used_bytes > 0);
-        assert!(result.0
+        assert!(result
+            .0
             .namespaces
             .iter()
             .any(|namespace| namespace.namespace == VaultNamespace::PERSONAL_STORAGE_KEY));
@@ -2094,7 +2095,13 @@ mod tests {
         );
         let owner_reg = "search-owner";
         let owner_did = member_did(owner_reg);
-        ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "budget-2026.txt").await;
+        ingest_test_file(
+            &temp,
+            VaultNamespace::Personal,
+            &owner_did,
+            "budget-2026.txt",
+        )
+        .await;
         ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "recipe.txt").await;
         let state = test_state(&temp);
 
@@ -2157,7 +2164,11 @@ mod tests {
         )
         .await
         .expect("list_folders succeeds");
-        assert!(listed.0.folders.iter().any(|entry| entry.folder_id == folder.0.folder_id));
+        assert!(listed
+            .0
+            .folders
+            .iter()
+            .any(|entry| entry.folder_id == folder.0.folder_id));
 
         let renamed = rename_or_move_folder(
             State(state.clone()),
@@ -2312,9 +2323,14 @@ mod tests {
             ingest_test_file(&temp, VaultNamespace::Personal, &owner_did, "star-me.txt").await;
         let state = test_state(&temp);
 
-        let starred = toggle_star(State(state.clone()), None, Path(record.vault_id.clone()), None)
-            .await
-            .expect("toggle_star succeeds");
+        let starred = toggle_star(
+            State(state.clone()),
+            None,
+            Path(record.vault_id.clone()),
+            None,
+        )
+        .await
+        .expect("toggle_star succeeds");
         assert!(starred.0.starred);
 
         let unstarred = toggle_star(

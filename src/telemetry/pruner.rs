@@ -116,8 +116,7 @@ mod tests {
             },
         ];
         let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
-        let result =
-            unsafe { libc::utimensat(libc::AT_FDCWD, c_path.as_ptr(), times.as_ptr(), 0) };
+        let result = unsafe { libc::utimensat(libc::AT_FDCWD, c_path.as_ptr(), times.as_ptr(), 0) };
         assert_eq!(result, 0);
     }
 

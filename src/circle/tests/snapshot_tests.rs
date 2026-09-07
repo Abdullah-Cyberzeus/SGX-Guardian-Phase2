@@ -30,7 +30,11 @@ fn member(did: &str, status: MembershipStatus, lifecycle: MemberLifecycleState) 
     }
 }
 
-fn blank_snapshot(circle_id: &str, owner_did: &str, members: Vec<CircleMember>) -> CircleMemberSnapshot {
+fn blank_snapshot(
+    circle_id: &str,
+    owner_did: &str,
+    members: Vec<CircleMember>,
+) -> CircleMemberSnapshot {
     CircleMemberSnapshot {
         circle_id: circle_id.to_string(),
         version: 1,
@@ -86,8 +90,12 @@ fn load_reads_through_to_disk_and_repopulates_cache_after_clear() {
     // Re-saving and loading again exercises the cache-hit path (a second
     // `load()` call hits cache without touching disk).
     snapshot::save(&snap).expect("save");
-    let first = snapshot::load("circle-disk").expect("load").expect("present");
-    let second = snapshot::load("circle-disk").expect("load").expect("present");
+    let first = snapshot::load("circle-disk")
+        .expect("load")
+        .expect("present");
+    let second = snapshot::load("circle-disk")
+        .expect("load")
+        .expect("present");
     assert_eq!(first.version, second.version);
 }
 
@@ -102,7 +110,11 @@ fn load_reads_from_disk_when_the_cache_has_never_been_populated() {
         MembershipStatus::Active,
         MemberLifecycleState::Active,
     );
-    let snap = blank_snapshot("circle-disk-only", "did:guardian:owner-disk-only", vec![owner]);
+    let snap = blank_snapshot(
+        "circle-disk-only",
+        "did:guardian:owner-disk-only",
+        vec![owner],
+    );
     let path = crate::circle::persistence::snapshot_path("circle-disk-only");
     std::fs::create_dir_all(path.parent().expect("parent dir")).expect("mkdir");
     std::fs::write(&path, serde_json::to_vec_pretty(&snap).expect("serialize")).expect("write");
@@ -169,7 +181,11 @@ async fn accept_from_owner_rejects_a_non_active_member_entry() {
         MembershipStatus::Active,
         MemberLifecycleState::Expired,
     );
-    let snap = blank_snapshot("circle-stale-member", "did:guardian:owner", vec![owner, stale_member]);
+    let snap = blank_snapshot(
+        "circle-stale-member",
+        "did:guardian:owner",
+        vec![owner, stale_member],
+    );
     let err = snapshot::accept_from_owner(snap, &resolver())
         .await
         .expect_err("a non-active member entry must be rejected");
@@ -266,10 +282,16 @@ fn build_authoritative_filters_inactive_members_sorts_and_signs() {
     .expect("build authoritative snapshot");
 
     assert_eq!(snap.members.len(), 2, "revoked member must be filtered out");
-    assert_eq!(snap.members[0].did, "did:guardian:aaa", "members must be sorted by DID");
+    assert_eq!(
+        snap.members[0].did, "did:guardian:aaa",
+        "members must be sorted by DID"
+    );
     assert_eq!(snap.members[1].did, "did:guardian:bbb");
     assert_eq!(snap.version, 1);
-    assert!(!snap.proof.proof_value.is_empty(), "snapshot must be signed");
+    assert!(
+        !snap.proof.proof_value.is_empty(),
+        "snapshot must be signed"
+    );
 
     // A second call for the same circle bumps the version.
     let key_dir = std::env::var(crate::vc::issue::DEVICE_KEY_DIR_ENV).expect("device key dir");

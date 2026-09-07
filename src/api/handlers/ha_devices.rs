@@ -439,15 +439,12 @@ mod tests {
     /// no real network) -- safe for paths that must not actually reach HA.
     const DEAD_URL: &str = "http://127.0.0.1:1";
 
-    async fn state_with_devices(
-        temp: &std::path::Path,
-        devices: Vec<Device>,
-    ) -> Arc<AppState> {
+    async fn state_with_devices(temp: &std::path::Path, devices: Vec<Device>) -> Arc<AppState> {
         use crate::device::manager::DeviceManager;
         use crate::device::registry::DeviceRegistry;
+        use crate::homeassistant::events::EventBus;
         use crate::homeassistant::rest::HaRestClient;
         use crate::homeassistant::HomeAssistantConfig;
-        use crate::homeassistant::events::EventBus;
 
         let registry = Arc::new(DeviceRegistry::new(
             temp.join("devices.json").to_str().unwrap(),
@@ -525,21 +522,24 @@ mod tests {
 
         let mut query = empty_filter();
         query.room = Some("Kitchen".into());
-        let (status, body) = response_json(list_devices(State(state.clone()), Query(query)).await).await;
+        let (status, body) =
+            response_json(list_devices(State(state.clone()), Query(query)).await).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["items"].as_array().unwrap().len(), 1);
         assert_eq!(body["items"][0]["id"], "dev_a");
 
         let mut query = empty_filter();
         query.search = Some("bedroom".into());
-        let (status, body) = response_json(list_devices(State(state.clone()), Query(query)).await).await;
+        let (status, body) =
+            response_json(list_devices(State(state.clone()), Query(query)).await).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["items"].as_array().unwrap().len(), 1);
         assert_eq!(body["items"][0]["id"], "dev_b");
 
         let mut query = empty_filter();
         query.device_type = Some("thermostat".into());
-        let (status, body) = response_json(list_devices(State(state.clone()), Query(query)).await).await;
+        let (status, body) =
+            response_json(list_devices(State(state.clone()), Query(query)).await).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert!(body["items"].as_array().unwrap().is_empty());
     }
@@ -570,10 +570,8 @@ mod tests {
             response_json(get_device(State(state.clone()), Path("missing".into())).await).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
 
-        let (status, body) = response_json(
-            get_device_state(State(state.clone()), Path("dev_a".into())).await,
-        )
-        .await;
+        let (status, body) =
+            response_json(get_device_state(State(state.clone()), Path("dev_a".into())).await).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["current_state"], "on");
 
@@ -632,7 +630,12 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let state = state_with_devices(
             temp.path(),
-            vec![sample_light("dev_a", "light.kitchen_lamp", "Kitchen", "off")],
+            vec![sample_light(
+                "dev_a",
+                "light.kitchen_lamp",
+                "Kitchen",
+                "off",
+            )],
         )
         .await;
 

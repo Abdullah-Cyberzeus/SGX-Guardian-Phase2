@@ -620,12 +620,7 @@ esac
         let keys_dir = base.path().join("keys");
         std::fs::create_dir_all(&keys_dir).expect("keys dir");
         let metadata_path = keys_dir.join("dkp_metadata.json");
-        let history = DkpKeyHistory::new(KeyMetadata::new(
-            "0x20000010",
-            "dkp",
-            "ECDSA-P256",
-            1,
-        ));
+        let history = DkpKeyHistory::new(KeyMetadata::new("0x20000010", "dkp", "ECDSA-P256", 1));
         history
             .save(metadata_path.to_str().unwrap())
             .expect("seed metadata");
@@ -649,12 +644,7 @@ esac
         let keys_dir = base.path().join("keys");
         std::fs::create_dir_all(&keys_dir).expect("keys dir");
         let metadata_path = keys_dir.join("dkp_metadata.json");
-        let history = DkpKeyHistory::new(KeyMetadata::new(
-            "0x20000010",
-            "dkp",
-            "ECDSA-P256",
-            5,
-        ));
+        let history = DkpKeyHistory::new(KeyMetadata::new("0x20000010", "dkp", "ECDSA-P256", 5));
         history
             .save(metadata_path.to_str().unwrap())
             .expect("seed metadata");
@@ -669,7 +659,10 @@ esac
             .unwrap()
             .flatten()
             .any(|e| e.file_name().to_string_lossy().contains(".stale."));
-        assert!(stale_exists, "original metadata should have been quarantined");
+        assert!(
+            stale_exists,
+            "original metadata should have been quarantined"
+        );
     }
 
     #[cfg(unix)]

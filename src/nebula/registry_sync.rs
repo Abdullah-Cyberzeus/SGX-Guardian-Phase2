@@ -963,8 +963,7 @@ mod tests {
 
     #[test]
     fn test_parse_snapshot_payload_rejects_control_response_with_error() {
-        let err =
-            parse_snapshot_payload(r#"{"success":false,"error":"nope"}"#).unwrap_err();
+        let err = parse_snapshot_payload(r#"{"success":false,"error":"nope"}"#).unwrap_err();
         assert!(err.contains("control response"));
     }
 
@@ -977,8 +976,7 @@ mod tests {
 
     #[test]
     fn test_parse_snapshot_payload_rejects_control_response_with_summary() {
-        let err = parse_snapshot_payload(r#"{"success":true,"registry_summary":"x"}"#)
-            .unwrap_err();
+        let err = parse_snapshot_payload(r#"{"success":true,"registry_summary":"x"}"#).unwrap_err();
         assert!(err.contains("control response"));
     }
 
@@ -1164,7 +1162,8 @@ mod tests {
     #[test]
     fn test_apply_lighthouse_snapshot_rejects_when_no_entry_is_lighthouse() {
         let path = tmp_file("lh_no_active_lighthouse");
-        let mut incoming = LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "1.2.3.4:4242");
+        let mut incoming =
+            LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "1.2.3.4:4242");
         // Demote the only entry so no lighthouse-role entries remain.
         incoming.lighthouses[0].is_lighthouse = false;
         let payload = serde_json::to_string_pretty(&incoming).unwrap();
@@ -1177,8 +1176,7 @@ mod tests {
     fn test_apply_lighthouse_snapshot_succeeds_and_creates_parents() {
         let td = TempDir::new().expect("tempdir");
         let path = td.path().join("nested").join("lighthouse_registry.json");
-        let incoming =
-            LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "1.2.3.4:4242");
+        let incoming = LighthouseRegistry::new("alpha", "nodeA", "192.168.100.1", "1.2.3.4:4242");
         let payload = serde_json::to_string_pretty(&incoming).unwrap();
 
         apply_lighthouse_snapshot(&payload, path.to_str().unwrap()).expect("apply lh snapshot");
@@ -1268,10 +1266,7 @@ mod tests {
         (server, client)
     }
 
-    async fn roundtrip(
-        registry: SharedRegistry,
-        request_line: &str,
-    ) -> RegistryResponse {
+    async fn roundtrip(registry: SharedRegistry, request_line: &str) -> RegistryResponse {
         let (server, mut client) = connected_pair().await;
 
         client
@@ -1487,9 +1482,7 @@ mod tests {
     // serialize against it too.
     use crate::test_support::registry_port_lock;
 
-    async fn fake_ca_responder(
-        response_line: String,
-    ) -> tokio::task::JoinHandle<Vec<u8>> {
+    async fn fake_ca_responder(response_line: String) -> tokio::task::JoinHandle<Vec<u8>> {
         let listener = TcpListener::bind(("127.0.0.1", REGISTRY_SYNC_PORT))
             .await
             .expect("bind fixed registry port (held by REGISTRY_PORT_LOCK)");

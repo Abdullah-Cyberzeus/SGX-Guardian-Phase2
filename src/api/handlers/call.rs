@@ -1997,6 +1997,319 @@ mod tests {
         serde_json::from_slice(&bytes).expect("response body is JSON")
     }
 
+
+    fn test_state(node_id: &str) -> (tempfile::TempDir, Arc<AppState>) {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let config_dir = temp.path().join("config");
+        std::fs::create_dir_all(&config_dir).expect("config dir");
+        let state = AppState::for_tests(temp.path(), node_id, config_dir.display().to_string());
+        (temp, state)
+    }
+
+    /// Creates a session directly through the manager so handler tests can
+    /// exercise the paths that need one without going out to the overlay.
+    async fn seeded_session(state: &Arc<AppState>) -> String {
+        state
+            .call_session_manager
+            .create_session(
+                "nodeA".to_string(),
+                "vid-initiator".to_string(),
+                "nodeB".to_string(),
+                "vid-receiver".to_string(),
+                vec![MediaType::Audio],
+                "nonce-1".to_string(),
+            )
+            .await
+            .expect("create session")
+    }
+
+    #[tokio::test]
+    async fn initiate_call_rejects_empty_device_ids() {
+        let (_temp, state) = test_state("nodeA");
+        let response = initiate_call(
+            State(state),
+            Json(InitiateCallRequest {
+                initiator_device_id: String::new(),
+                initiator_virtual_id: "vid-a".into(),
+                receiver_device_id: "nodeB".into(),
+                receiver_virtual_id: "vid-b".into(),
+                receiver_nebula_ip: "192.168.100.2".into(),
+                requested_media: vec![MediaType::Audio],
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response_json(response).await;
+        assert_eq!(body["error"], "Invalid device IDs");
+    }
+
+    #[tokio::test]
+    async fn initiate_call_reports_an_unavailable_overlay_and_leaves_no_session_behind() {
+        let (_temp, state) = test_state("nodeA");
+        let response = initiate_call(
+            State(state.clone()),
+            Json(InitiateCallRequest {
+                initiator_device_id: "nodeA".into(),
+                initiator_virtual_id: "vid-a".into(),
+                receiver_device_id: "nodeB".into(),
+                receiver_virtual_id: "vid-b".into(),
+                receiver_nebula_ip: "192.168.100.2".into(),
+                requested_media: vec![MediaType::Audio],
+            }),
+        )
+        .await
+        .into_response();
+        // Without a Nebula interface the overlay lookup fails, which is the
+        // branch that must clean the half-created session up again.
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(state
+            .call_session_manager
+            .get_active_sessions()
+            .await
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn initiate_browser_call_requires_a_target_and_media() {
+        let (_temp, state) = test_state("nodeA");
+        for (target, media) in [
+            ("   ".to_string(), vec![MediaType::Audio]),
+            ("nodeB".to_string(), Vec::new()),
+        ] {
+            let response = initiate_browser_call(
+                State(state.clone()),
+                None,
+                Json(BrowserInitiateCallRequest {
+                    target_peer_id: target,
+                    media,
+                }),
+            )
+            .await
+            .into_response();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
+    }
+
+    #[tokio::test]
+    async fn initiate_browser_call_conflicts_with_an_active_direct_call() {
+        let (_temp, state) = test_state("nodeA");
+        seeded_session(&state).await;
+        let response = initiate_browser_call(
+            State(state.clone()),
+            None,
+            Json(BrowserInitiateCallRequest {
+                target_peer_id: "nodeB".into(),
+                media: vec![MediaType::Audio],
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = response_json(response).await;
+        assert_eq!(body["error"], "A call is already active");
+    }
+
+    #[tokio::test]
+    async fn session_scoped_endpoints_report_an_unknown_session_as_missing() {
+        let (_temp, state) = test_state("nodeA");
+        let missing = "session-does-not-exist".to_string();
+
+        let response = call_status(State(state.clone()), Path(missing.clone()))
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let response = list_signals(
+            State(state.clone()),
+            Path(missing.clone()),
+            Query(SignalCursor::default()),
+            None,
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let response = media_ready(State(state.clone()), Path(missing.clone()), None, None)
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let response = submit_signal(
+            State(state.clone()),
+            Path(missing.clone()),
+            None,
+            Json(SubmitSignalRequest {
+                kind: crate::call::SignalKind::SdpOffer,
+                payload: serde_json::json!({"sdp": "v=0"}),
+                operation_id: None,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let response = reject_call(
+            State(state.clone()),
+            Json(RejectCallRequest {
+                session_id: missing.clone(),
+                device_id: "nodeB".into(),
+                reason: "busy".into(),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let response = end_call(
+            State(state.clone()),
+            Json(EndCallRequest {
+                session_id: missing.clone(),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let response = accept_call(
+            State(state),
+            Json(AcceptCallRequest {
+                session_id: missing,
+                device_id: "nodeB".into(),
+                virtual_id: "vid-b".into(),
+                accepted_media: vec![MediaType::Audio],
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn submit_signal_rejects_an_unsupported_signal_kind() {
+        let (_temp, state) = test_state("nodeA");
+        let session_id = seeded_session(&state).await;
+        let response = submit_signal(
+            State(state),
+            Path(session_id),
+            None,
+            Json(SubmitSignalRequest {
+                kind: crate::call::SignalKind::Hangup,
+                payload: serde_json::json!({}),
+                operation_id: None,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response_json(response).await;
+        assert_eq!(body["error"], "Unsupported browser signal type");
+    }
+
+    #[tokio::test]
+    async fn list_signals_refuses_a_caller_that_is_not_a_participant() {
+        let (_temp, state) = test_state("nodeC");
+        let session_id = seeded_session(&state).await;
+        let response = list_signals(
+            State(state),
+            Path(session_id),
+            Query(SignalCursor::default()),
+            None,
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn reject_call_refuses_a_device_that_is_not_the_receiver() {
+        let (_temp, state) = test_state("nodeA");
+        let session_id = seeded_session(&state).await;
+        let response = reject_call(
+            State(state),
+            Json(RejectCallRequest {
+                session_id,
+                device_id: "nodeZ".into(),
+                reason: "busy".into(),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn report_quality_is_only_accepted_for_connected_calls() {
+        let (_temp, state) = test_state("nodeA");
+        let session_id = seeded_session(&state).await;
+        let response = report_quality(
+            State(state),
+            Path(session_id),
+            Json(crate::call::QualityReport {
+                rtt_ms: Some(40),
+                jitter_ms: Some(5),
+                packet_loss_percent: Some(0.5),
+                codec: Some("opus".into()),
+                observed_at: Utc::now(),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn call_listings_report_the_sessions_the_manager_holds() {
+        let (_temp, state) = test_state("nodeA");
+        let session_id = seeded_session(&state).await;
+
+        let response = list_calls(State(state.clone())).await.into_response();
+        let body = response_json(response).await;
+        assert_eq!(body["total"], 1);
+
+        let response = active_calls(State(state.clone())).await.into_response();
+        let body = response_json(response).await;
+        assert_eq!(body["total"], 1);
+
+        let response = call_status(State(state), Path(session_id.clone()))
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["session_id"], session_id);
+    }
+
+    #[tokio::test]
+    async fn end_call_terminates_a_live_session() {
+        let (_temp, state) = test_state("nodeA");
+        let session_id = seeded_session(&state).await;
+        let response = end_call(
+            State(state.clone()),
+            Json(EndCallRequest {
+                session_id: session_id.clone(),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(state
+            .call_session_manager
+            .get_active_sessions()
+            .await
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn ice_servers_advertises_the_local_relay_configuration() {
+        let response = ice_servers().await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert!(
+            body.get("ice_servers").is_some() || body.get("iceServers").is_some(),
+            "ICE payload should carry a server list: {body}"
+        );
+    }
+
     #[test]
     fn test_initiate_request_serialization() {
         let req = InitiateCallRequest {

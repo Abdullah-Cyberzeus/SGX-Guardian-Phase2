@@ -159,6 +159,9 @@ fn pending_revocation_preserves_last_error_and_attempt_time() {
     let parsed: PendingRevocation =
         serde_json::from_str(&serde_json::to_string(&pending).unwrap()).unwrap();
     assert_eq!(parsed.last_error.as_deref(), Some("offline"));
-    assert_eq!(parsed.last_attempt_at.as_deref(), Some("2026-07-06T00:02:00Z"));
+    assert_eq!(
+        parsed.last_attempt_at.as_deref(),
+        Some("2026-07-06T00:02:00Z")
+    );
     assert!(parsed.parked);
 }

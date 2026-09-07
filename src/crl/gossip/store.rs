@@ -547,8 +547,12 @@ mod tests {
 
     #[test]
     fn normalized_tombstone_clears_gossip_bookkeeping_fields() {
-        let mut tombstone =
-            sample_tombstone("urn:uuid:t1", "did:guardian:x", "urn:uuid:orig", "2026-01-01T00:00:00Z");
+        let mut tombstone = sample_tombstone(
+            "urn:uuid:t1",
+            "did:guardian:x",
+            "urn:uuid:orig",
+            "2026-01-01T00:00:00Z",
+        );
         tombstone.peers_notified.push("did:guardian:peerA".into());
         tombstone.propagated = true;
 
@@ -581,7 +585,9 @@ mod tests {
         assert_eq!(outcome.sequence, 1);
         assert!(!outcome.merkle_root.is_empty());
 
-        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        let crl = persistence::load_crl()
+            .expect("load crl")
+            .expect("crl exists");
         assert!(crl.contains("did:guardian:target"));
         let stored = crl
             .entries
@@ -617,7 +623,9 @@ mod tests {
         assert_eq!(second.replaced, 0);
         assert_eq!(second.skipped, 1);
 
-        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        let crl = persistence::load_crl()
+            .expect("load crl")
+            .expect("crl exists");
         assert_eq!(crl.entries.len(), 1);
     }
 
@@ -641,7 +649,9 @@ mod tests {
         assert_eq!(outcome.replaced, 1);
         assert_eq!(outcome.skipped, 0);
 
-        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        let crl = persistence::load_crl()
+            .expect("load crl")
+            .expect("crl exists");
         assert_eq!(crl.entries.len(), 1);
         assert_eq!(crl.entries[0].id, fresh.id);
     }
@@ -666,7 +676,9 @@ mod tests {
         assert_eq!(outcome.replaced, 0);
         assert_eq!(outcome.skipped, 1);
 
-        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        let crl = persistence::load_crl()
+            .expect("load crl")
+            .expect("crl exists");
         assert_eq!(crl.entries.len(), 1);
         assert_eq!(crl.entries[0].id, fresh.id);
     }
@@ -702,7 +714,9 @@ mod tests {
         assert_eq!(outcome2.replaced, 1);
         assert_eq!(outcome2.skipped, 0);
 
-        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        let crl = persistence::load_crl()
+            .expect("load crl")
+            .expect("crl exists");
         assert!(crl.contains("did:guardian:x"));
         assert!(crl.tombstone("did:guardian:x").is_none());
     }
@@ -738,7 +752,9 @@ mod tests {
         assert_eq!(outcome.replaced, 0);
         assert_eq!(outcome.skipped, 1);
 
-        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        let crl = persistence::load_crl()
+            .expect("load crl")
+            .expect("crl exists");
         assert!(!crl.contains("did:guardian:x"));
         assert!(crl.tombstone("did:guardian:x").is_some());
     }
@@ -772,7 +788,9 @@ mod tests {
         assert_eq!(outcome.replaced, 1);
         assert_eq!(outcome.skipped, 0);
 
-        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        let crl = persistence::load_crl()
+            .expect("load crl")
+            .expect("crl exists");
         assert!(!crl.contains("did:guardian:y"));
         assert!(crl.tombstone("did:guardian:y").is_some());
     }
@@ -807,7 +825,9 @@ mod tests {
         assert_eq!(outcome.replaced, 0);
         assert_eq!(outcome.skipped, 1);
 
-        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        let crl = persistence::load_crl()
+            .expect("load crl")
+            .expect("crl exists");
         assert!(crl.contains("did:guardian:y"));
         assert!(crl.tombstone("did:guardian:y").is_none());
     }
@@ -847,7 +867,9 @@ mod tests {
         assert_eq!(second.added, 0);
         assert_eq!(second.skipped, 1);
 
-        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        let crl = persistence::load_crl()
+            .expect("load crl")
+            .expect("crl exists");
         assert_eq!(crl.tombstones.len(), 1);
     }
 
@@ -891,7 +913,9 @@ mod tests {
         assert_eq!(outcome.replaced, 1);
         assert_eq!(outcome.skipped, 0);
 
-        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        let crl = persistence::load_crl()
+            .expect("load crl")
+            .expect("crl exists");
         assert_eq!(crl.tombstones.len(), 1);
         assert_eq!(crl.tombstones[0].id, tombstone2.id);
     }
@@ -934,9 +958,14 @@ mod tests {
             .expect("mark peer notified");
         assert_eq!(outcome.newly_propagated, vec![entry.id.clone()]);
 
-        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        let crl = persistence::load_crl()
+            .expect("load crl")
+            .expect("crl exists");
         let stored = &crl.entries[0];
-        assert!(stored.peers_notified.iter().any(|d| d == "did:guardian:peerX"));
+        assert!(stored
+            .peers_notified
+            .iter()
+            .any(|d| d == "did:guardian:peerX"));
         assert!(stored.propagated);
     }
 
@@ -960,7 +989,9 @@ mod tests {
             .expect("mark peer notified");
         assert!(outcome.newly_propagated.is_empty());
 
-        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        let crl = persistence::load_crl()
+            .expect("load crl")
+            .expect("crl exists");
         assert!(crl.entries[0].peers_notified.is_empty());
         assert!(!crl.entries[0].propagated);
     }
@@ -988,7 +1019,9 @@ mod tests {
         assert_eq!(second.sequence, first.sequence);
         assert_eq!(second.merkle_root, first.merkle_root);
 
-        let crl = persistence::load_crl().expect("load crl").expect("crl exists");
+        let crl = persistence::load_crl()
+            .expect("load crl")
+            .expect("crl exists");
         let notified_count = crl.entries[0]
             .peers_notified
             .iter()
@@ -1112,8 +1145,14 @@ mod tests {
         let record = make_did_record("did:guardian:owner");
         let km = make_key_manager(temp.path());
         let entry = sample_entry("urn:uuid:e1", "did:guardian:a", "2026-01-01T00:00:00Z");
-        assert!(merge_verified_records(&record, &km, "circle-1", std::slice::from_ref(&entry), &[])
-            .is_err());
+        assert!(merge_verified_records(
+            &record,
+            &km,
+            "circle-1",
+            std::slice::from_ref(&entry),
+            &[]
+        )
+        .is_err());
         assert!(mark_peer_notified(&record, &km, "circle-1", "did:guardian:peer", 1).is_err());
     }
 }

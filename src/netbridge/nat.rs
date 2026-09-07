@@ -394,7 +394,10 @@ mod live_nat_tests {
     const MISSING_IFACE: &str = "sgxtest-nodev0";
 
     fn nft_installed() -> bool {
-        std::process::Command::new("nft").arg("--version").output().is_ok()
+        std::process::Command::new("nft")
+            .arg("--version")
+            .output()
+            .is_ok()
     }
 
     #[test]
@@ -406,8 +409,8 @@ mod live_nat_tests {
     fn interface_network_cidr_reports_an_absent_interface() {
         // `ip` exits non-zero for a device that does not exist, so this is the
         // "command ran but failed" branch rather than the spawn-failure branch.
-        let error = interface_network_cidr(MISSING_IFACE)
-            .expect_err("a missing interface has no subnet");
+        let error =
+            interface_network_cidr(MISSING_IFACE).expect_err("a missing interface has no subnet");
         assert!(
             error.to_string().contains(MISSING_IFACE),
             "the error must name the interface: {error}"
@@ -421,7 +424,10 @@ mod live_nat_tests {
             .enable_nat(MISSING_IFACE, "wlan0", false)
             .expect_err("NAT needs the hotspot subnet before it can build any rule");
         assert!(error.to_string().contains(MISSING_IFACE));
-        assert!(!manager.is_enabled(), "a failed enable must not flip the flag");
+        assert!(
+            !manager.is_enabled(),
+            "a failed enable must not flip the flag"
+        );
     }
 
     #[test]

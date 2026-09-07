@@ -596,8 +596,11 @@ mod tests {
     /// `config` so `ConfigStore::load()` never touches the real host config.
     fn write_config(dir: &TempDir, config: &GuardianConfig) -> std::path::PathBuf {
         let path = dir.path().join("wifi_config.json");
-        std::fs::write(&path, serde_json::to_string(config).expect("serialize config"))
-            .expect("write config file");
+        std::fs::write(
+            &path,
+            serde_json::to_string(config).expect("serialize config"),
+        )
+        .expect("write config file");
         path
     }
 

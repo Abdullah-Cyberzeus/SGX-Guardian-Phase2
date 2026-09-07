@@ -600,7 +600,12 @@ mod tests {
     #[test]
     fn add_file_records_non_recursive_component_path() {
         let mut paths = Vec::new();
-        add_file(&mut paths, Component::Config, "/tmp/a.yaml", "config/a.yaml");
+        add_file(
+            &mut paths,
+            Component::Config,
+            "/tmp/a.yaml",
+            "config/a.yaml",
+        );
         assert_eq!(paths.len(), 1);
         assert_eq!(paths[0].component, Component::Config);
         assert_eq!(paths[0].source, PathBuf::from("/tmp/a.yaml"));
@@ -635,7 +640,10 @@ mod tests {
             },
         ];
         let manifest = component_manifest(&files);
-        let config = manifest.iter().find(|item| item.component == Component::Config).unwrap();
+        let config = manifest
+            .iter()
+            .find(|item| item.component == Component::Config)
+            .unwrap();
         assert_eq!(config.paths, vec!["config/a.yaml", "config/z.yaml"]);
         assert!(manifest
             .iter()
@@ -651,7 +659,9 @@ mod tests {
 
     #[test]
     fn public_key_allowlist_is_not_sensitive() {
-        assert!(!is_sensitive_backup_path(Path::new("/x/guardian_public.key")));
+        assert!(!is_sensitive_backup_path(Path::new(
+            "/x/guardian_public.key"
+        )));
         assert!(!is_sensitive_backup_path(Path::new("/x/pa_admin_pub.der")));
     }
 
@@ -678,15 +688,25 @@ mod tests {
 
     #[test]
     fn nebula_ca_and_node_key_paths_are_sensitive() {
-        assert!(is_sensitive_backup_path(Path::new("/data/nebula/ca/ca.key")));
-        assert!(is_sensitive_backup_path(Path::new("/data/nebula/nodes/node.key")));
-        assert!(!is_sensitive_backup_path(Path::new("/data/nebula/nodes/node.crt")));
+        assert!(is_sensitive_backup_path(Path::new(
+            "/data/nebula/ca/ca.key"
+        )));
+        assert!(is_sensitive_backup_path(Path::new(
+            "/data/nebula/nodes/node.key"
+        )));
+        assert!(!is_sensitive_backup_path(Path::new(
+            "/data/nebula/nodes/node.crt"
+        )));
     }
 
     #[test]
     fn se050_paths_are_sensitive() {
-        assert!(is_sensitive_backup_path(Path::new("/etc/sgx/se050/config.yaml")));
-        assert!(is_sensitive_backup_path(Path::new("/etc/sgx/se050_scp_keys.yaml")));
+        assert!(is_sensitive_backup_path(Path::new(
+            "/etc/sgx/se050/config.yaml"
+        )));
+        assert!(is_sensitive_backup_path(Path::new(
+            "/etc/sgx/se050_scp_keys.yaml"
+        )));
     }
 
     #[test]

@@ -319,7 +319,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_setup_kasa_config_entry_initiate_rejected() {
-        let base_url = spawn_queue_server(vec![(400, r#"{"message":"bad handler"}"#.to_string())]).await;
+        let base_url =
+            spawn_queue_server(vec![(400, r#"{"message":"bad handler"}"#.to_string())]).await;
         let client = KasaHaConfigFlowClient::new(base_url, "tok".to_string());
         let result = client.setup_kasa_config_entry(&local_creds()).await;
         let err = result.unwrap_err();

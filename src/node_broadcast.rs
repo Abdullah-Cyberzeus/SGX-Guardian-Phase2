@@ -80,3 +80,84 @@ pub fn broadcast_node(info: &NodeAnnouncement) {
         Err(e) => tracing::warn!("Global broadcast send failed: {}", e),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_broadcast_port_defaults_and_falls_back_on_unparseable_values() {
+        let _lock = crate::test_support::blocking_env_lock();
+        const KEY: &str = "SGX_BROADCAST_PORT";
+        let previous = std::env::var_os(KEY);
+
+        std::env::remove_var(KEY);
+        assert_eq!(broadcast_port(), 9000);
+        std::env::set_var(KEY, "9100");
+        assert_eq!(broadcast_port(), 9100);
+        for value in ["", "not-a-port", "70000", "-1"] {
+            std::env::set_var(KEY, value);
+            assert_eq!(broadcast_port(), 9000, "{value:?}");
+        }
+
+        match previous {
+            Some(value) => std::env::set_var(KEY, value),
+            None => std::env::remove_var(KEY),
+        }
+    }
+
+    #[test]
+    fn an_unparseable_local_address_falls_back_to_the_global_broadcast() {
+        // Better to reach the whole link than to compute a bogus subnet
+        // address that silently reaches nothing.
+        assert_eq!(subnet_broadcast("not-an-ip"), Ipv4Addr::BROADCAST);
+        assert_eq!(subnet_broadcast(""), Ipv4Addr::BROADCAST);
+        assert_eq!(subnet_broadcast("::1"), Ipv4Addr::BROADCAST);
+    }
+
+    #[test]
+    fn a_parseable_address_yields_its_subnet_broadcast() {
+        // No interface in the test environment carries these addresses, so the
+        // documented /24 default mask applies.
+        assert_eq!(
+            subnet_broadcast("192.168.1.20"),
+            Ipv4Addr::new(192, 168, 1, 255)
+        );
+        assert_eq!(subnet_broadcast("10.4.3.2"), Ipv4Addr::new(10, 4, 3, 255));
+    }
+
+    #[test]
+    fn no_netmask_is_found_for_an_address_this_host_does_not_hold() {
+        assert!(read_netmask_for_ip("203.0.113.99").is_none());
+        assert!(read_netmask_for_ip("not-an-ip").is_none());
+    }
+
+    #[test]
+    fn broadcasting_an_announcement_completes_without_panicking() {
+        // Sends on an ephemeral socket to the link broadcast address: send
+        // failures are logged and swallowed, so this asserts the whole path
+        // stays panic-free including the serialize and both send_to calls.
+        let announcement = NodeAnnouncement::new_signed(
+            "nodeB".to_string(),
+            "nodeb.guardian".to_string(),
+            "192.168.1.20".to_string(),
+            50052,
+            "peer-public-key".to_string(),
+        );
+
+        broadcast_node(&announcement);
+    }
+
+    #[test]
+    fn broadcasting_tolerates_an_announcement_with_an_invalid_address() {
+        let announcement = NodeAnnouncement::new_signed(
+            "nodeC".to_string(),
+            "nodec.guardian".to_string(),
+            "not-an-ip".to_string(),
+            50053,
+            "peer-public-key".to_string(),
+        );
+
+        broadcast_node(&announcement);
+    }
+}

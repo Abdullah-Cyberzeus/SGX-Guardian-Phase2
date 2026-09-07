@@ -781,13 +781,7 @@ mod tests {
         let manager = IntegrationManager::new(int_file.to_str().unwrap());
 
         // Empty access_token fails NestCredentials::validate() before any network/store activity.
-        let creds = crate::nest::NestCredentials::new(
-            None,
-            None,
-            None,
-            Some("".to_string()),
-            None,
-        );
+        let creds = crate::nest::NestCredentials::new(None, None, None, Some("".to_string()), None);
 
         let result = manager.connect_nest(creds, None, None).await;
         assert!(result.is_err());

@@ -605,8 +605,7 @@ mod tests {
                         break;
                     }
                     request.extend_from_slice(&buffer[..read]);
-                    let Some(header_end) =
-                        request.windows(4).position(|part| part == b"\r\n\r\n")
+                    let Some(header_end) = request.windows(4).position(|part| part == b"\r\n\r\n")
                     else {
                         continue;
                     };
@@ -802,11 +801,7 @@ mod tests {
             "Living Room Nest",
             false
         ));
-        assert!(is_nest_entity(
-            "switch.plug",
-            "Google Nest Hub Mini",
-            false
-        ));
+        assert!(is_nest_entity("switch.plug", "Google Nest Hub Mini", false));
         assert!(is_nest_entity("switch.plug", "google_nest_hub", false));
     }
 
@@ -828,7 +823,11 @@ mod tests {
 
     #[test]
     fn test_is_nest_entity_non_climate_domain_never_matches_on_connection_alone() {
-        assert!(!is_nest_entity("sensor.upstairs_temp", "Upstairs Temp", true));
+        assert!(!is_nest_entity(
+            "sensor.upstairs_temp",
+            "Upstairs Temp",
+            true
+        ));
         assert!(!is_nest_entity(
             "switch.upstairs_plug",
             "Upstairs Plug",
@@ -859,7 +858,9 @@ mod tests {
         }));
         let dm = DeviceManager::new(registry, ha_rest, event_bus, None);
 
-        dm.refresh_unit_system().await.expect("refresh should succeed");
+        dm.refresh_unit_system()
+            .await
+            .expect("refresh should succeed");
         assert_eq!(dm.temperature_unit().await, "°F");
     }
 
@@ -913,11 +914,7 @@ mod tests {
             .unwrap();
         // Will be updated in place (Online -> Offline, vendor tagged).
         registry
-            .upsert_device(make_device(
-                "dev_kasa",
-                "switch.mock_kasa_plug",
-                "on",
-            ))
+            .upsert_device(make_device("dev_kasa", "switch.mock_kasa_plug", "on"))
             .await
             .unwrap();
 
@@ -1010,7 +1007,11 @@ mod tests {
         dm.reconcile_state().await;
 
         let all = registry.get_all_devices().await;
-        assert_eq!(all.len(), 1, "Pass 2 cleanup must not run when the states fetch failed");
+        assert_eq!(
+            all.len(),
+            1,
+            "Pass 2 cleanup must not run when the states fetch failed"
+        );
         assert_eq!(all[0].ha_entity_id, "light.existing");
     }
 
@@ -1037,11 +1038,14 @@ mod tests {
         }));
         let dm = DeviceManager::new(registry.clone(), ha_rest, event_bus, None);
 
-        let integration_mgr = IntegrationManager::new(
-            dir.path().join("integrations.json").to_str().unwrap(),
-        );
+        let integration_mgr =
+            IntegrationManager::new(dir.path().join("integrations.json").to_str().unwrap());
         integration_mgr
-            .update_integration_status(VendorProvider::GoogleNest, IntegrationStatus::Connected, None)
+            .update_integration_status(
+                VendorProvider::GoogleNest,
+                IntegrationStatus::Connected,
+                None,
+            )
             .await
             .unwrap();
         dm.set_integration_manager(integration_mgr).await;
@@ -1152,9 +1156,8 @@ mod tests {
         );
         let dm = DeviceManager::new(registry, ha_rest, event_bus, Some(notif_mgr.clone()));
 
-        let integration_mgr = IntegrationManager::new(
-            dir.path().join("integrations.json").to_str().unwrap(),
-        );
+        let integration_mgr =
+            IntegrationManager::new(dir.path().join("integrations.json").to_str().unwrap());
         integration_mgr
             .update_integration_status(
                 VendorProvider::GoogleNest,
@@ -1333,10 +1336,7 @@ mod tests {
         }));
         let dm = DeviceManager::new(registry, ha_rest, event_bus, None);
 
-        let result = dm
-            .refresh_device_attributes("light.missing")
-            .await
-            .unwrap();
+        let result = dm.refresh_device_attributes("light.missing").await.unwrap();
         assert!(result.is_none());
     }
 

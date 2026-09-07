@@ -667,7 +667,11 @@ mod tests {
         // Re-set the same node to a different in-range IP.
         reg.set_ip("nodeB", "192.168.100.9/24").unwrap();
         assert_eq!(
-            reg.allocations.get("nodeB").unwrap().pubkey_prefix.as_deref(),
+            reg.allocations
+                .get("nodeB")
+                .unwrap()
+                .pubkey_prefix
+                .as_deref(),
             Some("prefix1234")
         );
     }

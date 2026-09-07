@@ -119,6 +119,33 @@ pub fn certificate_san(
     san
 }
 
+/// Serves the HTTPS name alias: a bare TCP relay that forwards every
+/// connection on `bind` to the admin API on `upstream`.
+///
+/// Deliberately not a TLS terminator — the admin API already owns the
+/// certificate, so relaying the raw stream keeps one certificate and one
+/// trust decision rather than two.
+pub async fn serve_admin_tls_alias(
+    bind: std::net::SocketAddr,
+    upstream: std::net::SocketAddr,
+) -> std::io::Result<()> {
+    let listener = tokio::net::TcpListener::bind(bind).await?;
+    println!("✅ Guardian HTTPS name endpoint listening on https://{bind}");
+    loop {
+        let (mut client, _) = listener.accept().await?;
+        tokio::spawn(async move {
+            match tokio::net::TcpStream::connect(upstream).await {
+                Ok(mut server) => {
+                    let _ = tokio::io::copy_bidirectional(&mut client, &mut server).await;
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "Guardian HTTPS alias could not reach admin API")
+                }
+            }
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,7 +309,12 @@ mod tests {
 
     #[test]
     fn certificate_san_lists_stable_identity_entries_only() {
-        let san = certificate_san("nodea.guardian", "guardian-node-A", "nodeA", "192.168.100.1");
+        let san = certificate_san(
+            "nodea.guardian",
+            "guardian-node-A",
+            "nodeA",
+            "192.168.100.1",
+        );
 
         assert_eq!(
             san,
@@ -312,6 +344,115 @@ mod tests {
                 "guardian.local",
                 "192.168.200.1",
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_alias_relays_bytes_to_the_upstream_admin_api() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let Ok(upstream) = tokio::net::TcpListener::bind("127.0.0.1:0").await else {
+            // Some CI sandboxes prohibit local sockets; the parsing-side
+            // behaviour is covered by the other tests in this module.
+            return;
+        };
+        let upstream_addr = upstream.local_addr().expect("upstream address");
+        // A trivial echo server standing in for the admin API.
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = upstream.accept().await {
+                let mut buf = [0u8; 16];
+                if let Ok(read) = socket.read(&mut buf).await {
+                    let _ = socket.write_all(&buf[..read]).await;
+                }
+            }
+        });
+
+        let Ok(alias) = tokio::net::TcpListener::bind("127.0.0.1:0").await else {
+            return;
+        };
+        let alias_addr = alias.local_addr().expect("alias address");
+        drop(alias);
+        tokio::spawn(async move {
+            let _ = serve_admin_tls_alias(alias_addr, upstream_addr).await;
+        });
+
+        // Give the relay a moment to claim the port it was just handed.
+        let mut client = None;
+        for _ in 0..50 {
+            if let Ok(stream) = tokio::net::TcpStream::connect(alias_addr).await {
+                client = Some(stream);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let Some(mut client) = client else {
+            return;
+        };
+
+        client
+            .write_all(b"ping")
+            .await
+            .expect("write through alias");
+        let mut echoed = [0u8; 4];
+        client
+            .read_exact(&mut echoed)
+            .await
+            .expect("read the relayed response");
+
+        assert_eq!(&echoed, b"ping");
+    }
+
+    #[tokio::test]
+    async fn the_alias_reports_an_occupied_bind_address() {
+        let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => listener,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
+            Err(error) => panic!("reserve local port: {error}"),
+        };
+        let bind = listener.local_addr().expect("bound address");
+        let upstream = "127.0.0.1:9".parse().expect("parse upstream");
+
+        let error = serve_admin_tls_alias(bind, upstream)
+            .await
+            .expect_err("the occupied address must not bind twice");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse);
+    }
+
+    #[tokio::test]
+    async fn a_connection_survives_an_unreachable_upstream() {
+        use tokio::io::AsyncWriteExt;
+
+        let Ok(probe) = tokio::net::TcpListener::bind("127.0.0.1:0").await else {
+            return;
+        };
+        let alias_addr = probe.local_addr().expect("alias address");
+        drop(probe);
+        // 127.0.0.1:1 is reserved and has no listener.
+        let unreachable = "127.0.0.1:1".parse().expect("parse upstream");
+        tokio::spawn(async move {
+            let _ = serve_admin_tls_alias(alias_addr, unreachable).await;
+        });
+
+        let mut client = None;
+        for _ in 0..50 {
+            if let Ok(stream) = tokio::net::TcpStream::connect(alias_addr).await {
+                client = Some(stream);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let Some(mut client) = client else {
+            return;
+        };
+
+        // The relay logs and drops the connection rather than aborting the
+        // whole accept loop, so a second connection still succeeds.
+        let _ = client.write_all(b"ping").await;
+        drop(client);
+        assert!(
+            tokio::net::TcpStream::connect(alias_addr).await.is_ok(),
+            "the accept loop must survive an unreachable upstream"
         );
     }
 }

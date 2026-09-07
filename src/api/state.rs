@@ -423,3 +423,155 @@ impl AppState {
             .expect("authorized API test member client")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// Sets an environment variable for the duration of a test and puts the
+    /// previous value back afterwards.
+    struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
+
+    impl EnvGuard {
+        fn set(pairs: &[(&'static str, &str)]) -> Self {
+            let saved = pairs
+                .iter()
+                .map(|(key, value)| {
+                    let previous = std::env::var_os(key);
+                    std::env::set_var(key, value);
+                    (*key, previous)
+                })
+                .collect();
+            Self(saved)
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, previous) in self.0.drain(..) {
+                match previous {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn auth_lockout_config_reads_the_environment_and_ignores_nonsense() {
+        let _guard = EnvGuard::set(&[
+            ("SGX_GUARDIAN_AUTH_MAX_FAILED_ATTEMPTS", "9"),
+            ("SGX_GUARDIAN_AUTH_ATTEMPT_WINDOW_SECS", "120"),
+            ("SGX_GUARDIAN_AUTH_LOCKOUT_SECS", "not-a-number"),
+        ]);
+        let config = AuthLockoutConfig::from_env();
+        assert_eq!(config.max_failed_attempts, 9);
+        assert_eq!(config.attempt_window_secs, 120);
+        assert_eq!(
+            config.lockout_secs,
+            AuthLockoutConfig::default().lockout_secs,
+            "an unparseable value falls back to the default"
+        );
+
+        // Zero is rejected the same way a non-numeric value is: a lockout
+        // threshold of zero would lock every account out immediately.
+        let _guard = EnvGuard::set(&[("SGX_GUARDIAN_AUTH_MAX_FAILED_ATTEMPTS", "0")]);
+        assert_eq!(
+            AuthLockoutConfig::from_env().max_failed_attempts,
+            AuthLockoutConfig::default().max_failed_attempts
+        );
+    }
+
+    #[test]
+    fn auth_rate_limit_config_reads_the_environment_and_ignores_nonsense() {
+        let _guard = EnvGuard::set(&[
+            ("SGX_GUARDIAN_AUTH_RATE_LIMIT_MAX_ATTEMPTS", "3"),
+            ("SGX_GUARDIAN_AUTH_RATE_LIMIT_WINDOW_SECS", "0"),
+        ]);
+        let config = AuthRateLimitConfig::from_env();
+        assert_eq!(config.max_attempts, 3);
+        assert_eq!(
+            config.window_secs,
+            AuthRateLimitConfig::default().window_secs
+        );
+    }
+
+    #[test]
+    fn login_rate_limiter_blocks_a_burst_and_forgets_it_after_the_window() {
+        let limiter = LoginRateLimiter::default();
+        let config = AuthRateLimitConfig {
+            max_attempts: 2,
+            window_secs: 60,
+        };
+        assert!(limiter.check_and_record("user@example.com", 1_000, config));
+        assert!(limiter.check_and_record("user@example.com", 1_001, config));
+        assert!(
+            !limiter.check_and_record("user@example.com", 1_002, config),
+            "the third attempt inside the window is refused"
+        );
+        // A different key has its own budget.
+        assert!(limiter.check_and_record("other@example.com", 1_002, config));
+        // Once the window has passed, the earlier attempts are dropped.
+        assert!(limiter.check_and_record("user@example.com", 1_100, config));
+        // An explicit clear (a successful login) resets the counter too.
+        limiter.clear("user@example.com");
+        assert!(limiter.check_and_record("user@example.com", 1_101, config));
+        assert!(limiter.check_and_record("user@example.com", 1_102, config));
+    }
+
+    #[tokio::test]
+    async fn from_env_wires_production_paths_and_session_settings() {
+        let temp = TempDir::new().expect("tempdir");
+        let key_path = temp.path().join("device.key");
+        let signer = Arc::new(
+            KeyManager::load_or_generate(key_path.to_str().expect("key path")).expect("signer"),
+        );
+        let admin = AdminStores::new(temp.path().join("admin"));
+        let _guard = EnvGuard::set(&[("SGX_GUARDIAN_SESSION_TTL_SECS", "120")]);
+
+        let state = AppState::from_env(
+            "nodeA".to_string(),
+            crate::did::Resolver::new(Default::default()),
+            signer,
+            admin,
+            "did:guardian:test".to_string(),
+            vec![4, 5, 6],
+        );
+
+        assert_eq!(state.node_id, "nodeA");
+        assert_eq!(state.config_dir, "/etc/sgx-guardian/config");
+        assert_eq!(state.keys_dir, "/var/lib/sgx-guardian/keys");
+        assert_eq!(state.log_dir_fallback, "logs");
+        assert_eq!(state.device_did, "did:guardian:test");
+        assert_eq!(state.device_pubkey_point, vec![4, 5, 6]);
+        assert_eq!(state.session_ttl_secs, 120);
+        // The optional subsystems start empty; they are attached later during
+        // startup, and every accessor must tolerate that.
+        assert!(state.get_device_manager().await.is_none());
+        assert!(state.get_automation_engine().await.is_none());
+        assert!(state.get_integration_manager().await.is_none());
+        assert!(state.get_ha_event_bus().await.is_none());
+        assert!(state.get_notification_manager().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn from_env_falls_back_to_the_default_session_ttl() {
+        let temp = TempDir::new().expect("tempdir");
+        let key_path = temp.path().join("device.key");
+        let signer = Arc::new(
+            KeyManager::load_or_generate(key_path.to_str().expect("key path")).expect("signer"),
+        );
+        let admin = AdminStores::new(temp.path().join("admin"));
+        let _guard = EnvGuard::set(&[("SGX_GUARDIAN_SESSION_TTL_SECS", "0")]);
+        let state = AppState::from_env(
+            "nodeB".to_string(),
+            crate::did::Resolver::new(Default::default()),
+            signer,
+            admin,
+            "did:guardian:other".to_string(),
+            Vec::new(),
+        );
+        assert_eq!(state.session_ttl_secs, 3600);
+    }
+}

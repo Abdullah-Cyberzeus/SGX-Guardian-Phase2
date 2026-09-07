@@ -10,8 +10,10 @@
 pub mod admin_tls;
 pub mod audit_paths;
 pub mod bootstrap;
+pub mod ca_discovery;
 pub mod config;
 pub mod did_boot;
+pub mod identity;
 pub mod nebula_cert;
 pub mod pcr_status;
 

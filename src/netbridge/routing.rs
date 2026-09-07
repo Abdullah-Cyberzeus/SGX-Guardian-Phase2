@@ -509,7 +509,8 @@ mod tests {
 #[cfg(test)]
 mod live_ip_tests {
     use super::{
-        RoutingManager, HOTSPOT_ROUTE_TABLE, POLICY_ROUTING_UNSUPPORTED, UPLINK_SOURCE_RULE_PRIORITY,
+        RoutingManager, HOTSPOT_ROUTE_TABLE, POLICY_ROUTING_UNSUPPORTED,
+        UPLINK_SOURCE_RULE_PRIORITY,
     };
     use crate::netbridge::types::NetbridgeError;
     use std::net::Ipv4Addr;

@@ -627,10 +627,19 @@ mod tests {
 
     #[test]
     fn host_from_endpoint_strips_the_port_and_rejects_hostless_input() {
-        assert_eq!(host_from_endpoint("192.168.1.5:4242").as_deref(), Some("192.168.1.5"));
+        assert_eq!(
+            host_from_endpoint("192.168.1.5:4242").as_deref(),
+            Some("192.168.1.5")
+        );
         // IPv6-ish endpoints split on the *last* colon, so the bracketed host survives.
-        assert_eq!(host_from_endpoint("[fd00::1]:4242").as_deref(), Some("[fd00::1]"));
-        assert_eq!(host_from_endpoint("host.example:1"). as_deref(), Some("host.example"));
+        assert_eq!(
+            host_from_endpoint("[fd00::1]:4242").as_deref(),
+            Some("[fd00::1]")
+        );
+        assert_eq!(
+            host_from_endpoint("host.example:1").as_deref(),
+            Some("host.example")
+        );
         // No colon at all, and a colon with nothing before it.
         assert_eq!(host_from_endpoint("no-port"), None);
         assert_eq!(host_from_endpoint(":4242"), None);
@@ -661,7 +670,11 @@ mod tests {
         // Upserting the same name updates in place rather than duplicating.
         registry.upsert_node("nodeB", "192.168.100.9", "10.0.0.9:4242", true, true);
         assert_eq!(
-            registry.lighthouses.iter().filter(|l| l.node_name == "nodeB").count(),
+            registry
+                .lighthouses
+                .iter()
+                .filter(|l| l.node_name == "nodeB")
+                .count(),
             1
         );
         let entry = registry
@@ -694,7 +707,11 @@ mod tests {
         // `new` makes the owner a relay as well as the primary lighthouse.
         assert_eq!(registry.relay_role_for("nodeA"), Some(true));
         assert_eq!(registry.relay_role_for("nodeB"), Some(true));
-        assert_eq!(registry.relay_role_for("nodeZ"), None, "unknown nodes have no role");
+        assert_eq!(
+            registry.relay_role_for("nodeZ"),
+            None,
+            "unknown nodes have no role"
+        );
 
         assert!(registry.is_relay("nodeB"));
         assert!(registry.is_relay("nodeA"));
@@ -739,24 +756,39 @@ mod tests {
         let path_str = path.to_str().expect("path");
 
         // Nothing on disk: a fresh registry is created for the owner.
-        let created =
-            LighthouseRegistry::load_or_create(path_str, "alpha", "nodeA", "192.168.100.1", "10.0.0.1:4242");
+        let created = LighthouseRegistry::load_or_create(
+            path_str,
+            "alpha",
+            "nodeA",
+            "192.168.100.1",
+            "10.0.0.1:4242",
+        );
         assert_eq!(created.primary().expect("primary").node_name, "nodeA");
 
         // Persisted and reloaded: the saved entries win over the arguments.
         let mut saved = created;
         saved.upsert_node("nodeB", "192.168.100.2", "10.0.0.2:4242", true, false);
         saved.save(path_str).expect("save");
-        let loaded =
-            LighthouseRegistry::load_or_create(path_str, "beta", "nodeZ", "192.168.100.9", "10.0.0.9:4242");
+        let loaded = LighthouseRegistry::load_or_create(
+            path_str,
+            "beta",
+            "nodeZ",
+            "192.168.100.9",
+            "10.0.0.9:4242",
+        );
         assert_eq!(loaded.lighthouses.len(), 2, "the saved registry is reused");
         assert!(loaded.lighthouses.iter().any(|l| l.node_name == "nodeB"));
 
         // A corrupt file falls back to creating a fresh registry rather than
         // failing — the daemon must still come up.
         std::fs::write(&path, b"{ not json").expect("corrupt the registry");
-        let recovered =
-            LighthouseRegistry::load_or_create(path_str, "alpha", "nodeA", "192.168.100.1", "10.0.0.1:4242");
+        let recovered = LighthouseRegistry::load_or_create(
+            path_str,
+            "alpha",
+            "nodeA",
+            "192.168.100.1",
+            "10.0.0.1:4242",
+        );
         assert_eq!(recovered.lighthouses.len(), 1);
         assert_eq!(recovered.primary().expect("primary").node_name, "nodeA");
     }
@@ -814,7 +846,10 @@ mod tests {
         assert!(state_of("nodeA"), "the local node is always active");
         assert!(state_of("nodeB"), "a reachable peer stays active");
         assert!(!state_of("nodeC"), "an unreachable peer is marked inactive");
-        assert!(state_of("nodeD"), "an endpoint-less node is skipped, not demoted");
+        assert!(
+            state_of("nodeD"),
+            "an endpoint-less node is skipped, not demoted"
+        );
         assert!(state_of("nodeE"), "a plain member node is not probed");
 
         accept.abort();
@@ -860,7 +895,11 @@ mod tests {
         // Neither inserts a duplicate when called again for the same node.
         registry.add_lighthouse("nodeB", "192.168.100.9", "10.0.0.9:4242");
         assert_eq!(
-            registry.lighthouses.iter().filter(|l| l.node_name == "nodeB").count(),
+            registry
+                .lighthouses
+                .iter()
+                .filter(|l| l.node_name == "nodeB")
+                .count(),
             1
         );
     }
@@ -873,7 +912,11 @@ mod tests {
         let before = registry.lighthouses.len();
 
         registry.add_secondary("nodeB", "192.168.100.9", "10.0.0.9:4242");
-        assert_eq!(registry.lighthouses.len(), before, "no duplicate is appended");
+        assert_eq!(
+            registry.lighthouses.len(),
+            before,
+            "no duplicate is appended"
+        );
         // The original entry is left untouched.
         let entry = registry
             .lighthouses

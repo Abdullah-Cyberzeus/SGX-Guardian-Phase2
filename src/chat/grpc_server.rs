@@ -642,7 +642,9 @@ mod tests {
         let state = test_state(&td);
 
         // Nothing in the registry at all.
-        assert!(verify_peer_is_trusted(&state, "did:guardian:b").await.is_err());
+        assert!(verify_peer_is_trusted(&state, "did:guardian:b")
+            .await
+            .is_err());
 
         write_global_registry(
             &state,
@@ -665,8 +667,12 @@ mod tests {
             .expect("the bare peer id also matches");
 
         // Present but not attested, and absent entirely.
-        assert!(verify_peer_is_trusted(&state, "did:guardian:d").await.is_err());
-        assert!(verify_peer_is_trusted(&state, "did:guardian:z").await.is_err());
+        assert!(verify_peer_is_trusted(&state, "did:guardian:d")
+            .await
+            .is_err());
+        assert!(verify_peer_is_trusted(&state, "did:guardian:z")
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -738,10 +744,14 @@ mod tests {
         );
 
         // Naming a specific group that does not exist is refused the same way.
-        let error =
-            verify_relayed_actor(&state, "did:guardian:b", "did:guardian:x", Some("no-such-circle"))
-                .err()
-                .expect("unknown circle");
+        let error = verify_relayed_actor(
+            &state,
+            "did:guardian:b",
+            "did:guardian:x",
+            Some("no-such-circle"),
+        )
+        .err()
+        .expect("unknown circle");
         assert!(
             matches!(
                 error.code(),

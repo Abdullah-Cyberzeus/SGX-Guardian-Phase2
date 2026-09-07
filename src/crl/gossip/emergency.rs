@@ -469,16 +469,16 @@ fn did_to_device_id(revoked_did: &str) -> Option<String> {
 #[cfg(test)]
 mod unit_tests {
     use super::*;
-    use crate::did::doc_persistence;
-    use crate::did::doc_sign;
-    use crate::did::document::{DidDocument, DocBuildInput, ServiceEndpoint};
-    use crate::did::persistence::DerivationProof;
-    use crate::did::{Did, ResolverConfig};
     use crate::crl::entry::{
         RevocationEvidence, RevocationReason, RevokerRole, CRL_CONTEXT_CORE, CRL_CONTEXT_SGX,
     };
     use crate::crl::issue::DEFAULT_CIRCLE_ID;
+    use crate::did::doc_persistence;
+    use crate::did::doc_sign;
     use crate::did::document::Proof;
+    use crate::did::document::{DidDocument, DocBuildInput, ServiceEndpoint};
+    use crate::did::persistence::DerivationProof;
+    use crate::did::{Did, ResolverConfig};
     use tempfile::TempDir;
 
     /// Restores whatever value (if any) preceded an `env::set_var` call on
@@ -787,7 +787,11 @@ mod unit_tests {
 
     /// Save a local node identity (DID record + software key) so
     /// `load_identity` succeeds. Returns the record for convenience.
-    fn setup_local_identity(did_path: &std::path::Path, key_dir: &std::path::Path, did: &str) -> DidRecord {
+    fn setup_local_identity(
+        did_path: &std::path::Path,
+        key_dir: &std::path::Path,
+        did: &str,
+    ) -> DidRecord {
         let record = make_did_record(did);
         record
             .save(did_path.to_str().expect("utf8 did path"))
@@ -802,7 +806,12 @@ mod unit_tests {
     /// never checks signatures — it only reads `list_peer_docs()` — so this
     /// is sufficient for exercising the gossip-peer-discovery gates without
     /// needing a real-format DID or a signature.
-    fn write_active_nebula_peer_doc(dir: &std::path::Path, did: &str, nebula_ip_cidr: &str, node_name: &str) {
+    fn write_active_nebula_peer_doc(
+        dir: &std::path::Path,
+        did: &str,
+        nebula_ip_cidr: &str,
+        node_name: &str,
+    ) {
         let doc = DidDocument {
             context: vec![],
             id: did.to_string(),
@@ -888,7 +897,10 @@ mod unit_tests {
         let error = broadcast_once("broadcast-nopeers", &entry, &config)
             .await
             .expect_err("no peers must fail");
-        assert!(error.contains("no active peers"), "unexpected error: {error}");
+        assert!(
+            error.contains("no active peers"),
+            "unexpected error: {error}"
+        );
     }
 
     #[tokio::test]
@@ -932,10 +944,11 @@ mod unit_tests {
         assert_eq!(notices_sent(), before_sent + 1);
 
         let mut buf = [0u8; MAX_DATAGRAM_BYTES];
-        let (len, _src) = tokio::time::timeout(Duration::from_secs(2), receiver.recv_from(&mut buf))
-            .await
-            .expect("recv within timeout")
-            .expect("recv_from ok");
+        let (len, _src) =
+            tokio::time::timeout(Duration::from_secs(2), receiver.recv_from(&mut buf))
+                .await
+                .expect("recv within timeout")
+                .expect("recv_from ok");
         let received: RevocationNotice =
             serde_json::from_slice(&buf[..len]).expect("parse received notice");
         assert_eq!(received.kind, KIND_NOTICE);
@@ -1004,7 +1017,10 @@ mod unit_tests {
         let error = handle_notice(&bytes, "handle-notice-bad-kind", &resolver, &config)
             .await
             .expect_err("unexpected kind must be rejected");
-        assert!(error.contains("unexpected kind"), "unexpected error: {error}");
+        assert!(
+            error.contains("unexpected kind"),
+            "unexpected error: {error}"
+        );
     }
 
     #[tokio::test]
@@ -1015,7 +1031,11 @@ mod unit_tests {
         let key_dir = tmp.path().join("keys");
         let vc_dir = tmp.path().join("vc");
 
-        setup_local_identity(&did_path, &key_dir, "did:guardian:handle-circle-mismatch0000");
+        setup_local_identity(
+            &did_path,
+            &key_dir,
+            "did:guardian:handle-circle-mismatch0000",
+        );
 
         let _did_guard = EnvGuard::set("SGX_GUARDIAN_DID_PATH", &did_path);
         let _keys_guard = EnvGuard::set(crate::vc::issue::DEVICE_KEY_DIR_ENV, &key_dir);
@@ -1040,7 +1060,10 @@ mod unit_tests {
         let error = handle_notice(&bytes, "handle-notice-circle-mismatch", &resolver, &config)
             .await
             .expect_err("circle mismatch must be rejected");
-        assert!(error.contains("circle mismatch"), "unexpected error: {error}");
+        assert!(
+            error.contains("circle mismatch"),
+            "unexpected error: {error}"
+        );
     }
 
     #[tokio::test]
@@ -1081,7 +1104,11 @@ mod unit_tests {
         let config = test_gossip_config(GossipConfig::DEFAULT_EMERGENCY_PORT, 1);
 
         let result = handle_notice(&bytes, "handle-notice-dedup", &resolver, &config).await;
-        assert!(result.is_ok(), "already-seen notice must be a silent no-op, got {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "already-seen notice must be a silent no-op, got {:?}",
+            result.err()
+        );
     }
 
     #[tokio::test]
@@ -1150,8 +1177,10 @@ mod unit_tests {
         let _crl_guard = EnvGuard::set(crate::crl::persistence::CRL_BASE_ENV, &crl_dir);
         let _notif_guard = EnvGuard::set("SGX_GUARDIAN_CRL_DIR", &notif_dir);
         let _peers_guard = EnvGuard::set(doc_persistence::PEERS_DOC_DIR_ENV, &peers_dir);
-        let _self_doc_guard =
-            EnvGuard::set(doc_persistence::SELF_DOC_PATH_ENV, tmp.path().join("self_did_doc.json"));
+        let _self_doc_guard = EnvGuard::set(
+            doc_persistence::SELF_DOC_PATH_ENV,
+            tmp.path().join("self_did_doc.json"),
+        );
         let _ca_agg_guard = EnvGuard::set(
             doc_persistence::CA_AGGREGATE_PATH_ENV,
             tmp.path().join("circle_did_docs.json"),
@@ -1162,8 +1191,9 @@ mod unit_tests {
         let owner_did = Did::from_id_bytes(&[7u8; 32]).to_string();
         let owner_key_path = owner_key_dir.join("device_owner.key");
         std::fs::create_dir_all(&owner_key_dir).expect("owner key dir");
-        let owner_km = KeyManager::load_or_generate(owner_key_path.to_str().expect("utf8 key path"))
-            .expect("owner key manager");
+        let owner_km =
+            KeyManager::load_or_generate(owner_key_path.to_str().expect("utf8 key path"))
+                .expect("owner key manager");
         seed_signed_peer_doc(&owner_did, &owner_km, "nodeA");
 
         let mut entry = sample_entry(Severity::Critical);
@@ -1281,10 +1311,11 @@ mod unit_tests {
         assert_eq!(notices_rebroadcast(), before_rebroadcast + 1);
 
         let mut buf = [0u8; MAX_DATAGRAM_BYTES];
-        let (len, _src) = tokio::time::timeout(Duration::from_secs(2), receiver.recv_from(&mut buf))
-            .await
-            .expect("recv within timeout")
-            .expect("recv_from ok");
+        let (len, _src) =
+            tokio::time::timeout(Duration::from_secs(2), receiver.recv_from(&mut buf))
+                .await
+                .expect("recv within timeout")
+                .expect("recv_from ok");
         let forwarded: RevocationNotice =
             serde_json::from_slice(&buf[..len]).expect("parse forwarded notice");
         assert_eq!(forwarded.ttl, 0, "ttl must be decremented by one");
@@ -1294,7 +1325,10 @@ mod unit_tests {
         // should show up.
         let second =
             tokio::time::timeout(Duration::from_millis(200), receiver.recv_from(&mut buf)).await;
-        assert!(second.is_err(), "origin peer must not receive a re-broadcast");
+        assert!(
+            second.is_err(),
+            "origin peer must not receive a re-broadcast"
+        );
     }
 
     // --- terminate_sessions_for_did ------------------------------------------

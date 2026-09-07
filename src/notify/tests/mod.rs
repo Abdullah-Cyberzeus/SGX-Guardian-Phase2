@@ -435,10 +435,7 @@ async fn async_history_replay_and_read_helpers_round_trip_files() {
         super::mark_read("missing").await.expect("missing mark"),
         (false, 2)
     );
-    assert_eq!(
-        super::mark_read("9001").await.expect("mark one"),
-        (true, 1)
-    );
+    assert_eq!(super::mark_read("9001").await.expect("mark one"), (true, 1));
     assert_eq!(super::mark_all_read().await.expect("mark all"), (1, 0));
     assert_eq!(super::mark_all_read().await.expect("mark none"), (0, 0));
 }

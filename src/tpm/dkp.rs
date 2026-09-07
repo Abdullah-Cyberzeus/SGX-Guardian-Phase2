@@ -284,7 +284,9 @@ mod tests {
         let error = TpmDkpManager::init(&cfg, "/unused")
             .err()
             .expect("tpm2 tools are not installed");
-        assert!(matches!(error, TpmError::NotAvailable(message) if message.contains("cannot reach TPM")));
+        assert!(
+            matches!(error, TpmError::NotAvailable(message) if message.contains("cannot reach TPM"))
+        );
     }
 
     #[test]

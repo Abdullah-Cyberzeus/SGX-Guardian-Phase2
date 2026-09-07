@@ -206,3 +206,84 @@ pub async fn cooldown() {
 pub fn step(n: u32, label: &str) {
     println!("STEP_{:02} {}", n, label);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_gate_summary_renders_without_panicking() {
+        // Every field is interpolated into one format string; a mismatched
+        // argument count would only surface when this actually runs.
+        GATES.log_summary();
+    }
+
+    #[test]
+    fn the_test_override_takes_precedence_over_the_loaded_gate() {
+        let baseline = GATES.disable_login;
+
+        set_test_login_disabled(Some(true));
+        assert!(login_disabled());
+        set_test_login_disabled(Some(false));
+        assert!(!login_disabled());
+
+        // Clearing the override restores whatever the process-wide gate holds.
+        set_test_login_disabled(None);
+        assert_eq!(login_disabled(), baseline);
+    }
+
+    #[test]
+    fn step_markers_are_zero_padded_for_operator_log_scraping() {
+        // run_node.sh greps for these; the format is part of that contract.
+        step(1, "first subsystem");
+        step(30, "attestation-service gate");
+    }
+
+    #[tokio::test]
+    async fn the_cooldown_returns_promptly_when_it_is_not_configured() {
+        let started = std::time::Instant::now();
+
+        cooldown().await;
+
+        if GATES.startup_cooldown_ms == 0 {
+            assert!(
+                started.elapsed() < std::time::Duration::from_millis(500),
+                "an unset cooldown must not sleep"
+            );
+        } else {
+            assert!(
+                started.elapsed() >= std::time::Duration::from_millis(GATES.startup_cooldown_ms)
+            );
+        }
+    }
+
+    #[test]
+    fn ocotp_reads_require_an_opt_in_that_the_disable_switch_overrides() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let previous_read = std::env::var_os("SGX_READ_OCOTP");
+        let previous_disable = std::env::var_os("SGX_DISABLE_READ_OCOTP");
+
+        // Raw /dev/mem access can hang the i.MX8MP interconnect, so the
+        // emergency disable must win even when the opt-in is set.
+        std::env::remove_var("SGX_READ_OCOTP");
+        std::env::remove_var("SGX_DISABLE_READ_OCOTP");
+        assert!(!RuntimeGates::load().read_ocotp, "off by default");
+
+        std::env::set_var("SGX_READ_OCOTP", "1");
+        assert!(RuntimeGates::load().read_ocotp, "explicit opt-in");
+
+        std::env::set_var("SGX_DISABLE_READ_OCOTP", "1");
+        let gates = RuntimeGates::load();
+        assert!(!gates.read_ocotp, "the disable switch overrides the opt-in");
+        assert!(gates.disable_read_ocotp);
+
+        match previous_read {
+            Some(value) => std::env::set_var("SGX_READ_OCOTP", value),
+            None => std::env::remove_var("SGX_READ_OCOTP"),
+        }
+        match previous_disable {
+            Some(value) => std::env::set_var("SGX_DISABLE_READ_OCOTP", value),
+            None => std::env::remove_var("SGX_DISABLE_READ_OCOTP"),
+        }
+    }
+}

@@ -151,3 +151,209 @@ fn map_backup_error(error: BackupError) -> ApiError {
         other => ApiError::Internal(other.to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::auth::session::Claims;
+    use tempfile::TempDir;
+
+    fn test_state(base: &std::path::Path) -> Arc<AppState> {
+        let config_dir = base.join("config");
+        std::fs::create_dir_all(&config_dir).expect("config dir");
+        AppState::for_tests(base, "nodeA", config_dir.display().to_string())
+    }
+
+    fn session_with_role(role: &str) -> Extension<AuthenticatedSession> {
+        Extension(AuthenticatedSession {
+            claims: Claims {
+                sub: "user-1".into(),
+                role: role.into(),
+                scopes: Vec::new(),
+                circle_ids: Vec::new(),
+                browser_registration_id: None,
+                guardian_fingerprint: None,
+                iss: "did:guardian:test".into(),
+                iat: 0,
+                exp: i64::MAX,
+                jti: "jti-1".into(),
+            },
+            token: "token".into(),
+        })
+    }
+
+    /// `require_owner_or_admin` short-circuits when login is disabled, so the
+    /// role tests have to pin the gate closed first.
+    struct LoginGate;
+
+    impl LoginGate {
+        fn enforced() -> Self {
+            crate::runtime_gates::set_test_login_disabled(Some(false));
+            Self
+        }
+    }
+
+    impl Drop for LoginGate {
+        fn drop(&mut self) {
+            crate::runtime_gates::set_test_login_disabled(None);
+        }
+    }
+
+    #[test]
+    fn require_owner_or_admin_accepts_privileged_roles_only() {
+        let _gate = LoginGate::enforced();
+        for role in ["owner", "admin"] {
+            let session = session_with_role(role);
+            require_owner_or_admin(Some(&session.0)).expect("privileged role is accepted");
+        }
+        let member = session_with_role("member");
+        assert!(matches!(
+            require_owner_or_admin(Some(&member.0)),
+            Err(ApiError::Forbidden(_))
+        ));
+        assert!(matches!(
+            require_owner_or_admin(None),
+            Err(ApiError::Unauthorized(_))
+        ));
+    }
+
+    #[test]
+    fn require_owner_or_admin_is_bypassed_while_login_is_disabled() {
+        crate::runtime_gates::set_test_login_disabled(Some(true));
+        let result = require_owner_or_admin(None);
+        crate::runtime_gates::set_test_login_disabled(None);
+        result.expect("an unauthenticated caller passes while login is disabled");
+    }
+
+    #[tokio::test]
+    async fn validate_rejects_a_blank_id_or_passphrase() {
+        let temp = TempDir::new().expect("tempdir");
+        let state = test_state(temp.path());
+
+        let error = validate(
+            State(state.clone()),
+            Json(RestoreValidateRequest {
+                id: "  ".into(),
+                passphrase: "hunter2".into(),
+                confirm: false,
+                options: RestorePreflightOptions::default(),
+            }),
+        )
+        .await
+        .expect_err("a blank backup id is rejected");
+        assert!(matches!(error, ApiError::BadRequest(msg) if msg.contains("backup id")));
+
+        let error = validate(
+            State(state),
+            Json(RestoreValidateRequest {
+                id: "backup-1".into(),
+                passphrase: String::new(),
+                confirm: false,
+                options: RestorePreflightOptions::default(),
+            }),
+        )
+        .await
+        .expect_err("an empty passphrase is rejected");
+        assert!(matches!(error, ApiError::BadRequest(msg) if msg.contains("passphrase")));
+    }
+
+    #[tokio::test]
+    async fn apply_checks_authorization_before_validating_the_request() {
+        let _gate = LoginGate::enforced();
+        let temp = TempDir::new().expect("tempdir");
+        let state = test_state(temp.path());
+        let error = apply(
+            State(state.clone()),
+            Some(session_with_role("member")),
+            Json(RestoreValidateRequest {
+                id: String::new(),
+                passphrase: String::new(),
+                confirm: false,
+                options: RestorePreflightOptions::default(),
+            }),
+        )
+        .await
+        .expect_err("a member may not restore");
+        assert!(matches!(error, ApiError::Forbidden(_)));
+
+        let error = apply(
+            State(state),
+            Some(session_with_role("owner")),
+            Json(RestoreValidateRequest {
+                id: "  ".into(),
+                passphrase: "hunter2".into(),
+                confirm: false,
+                options: RestorePreflightOptions::default(),
+            }),
+        )
+        .await
+        .expect_err("an owner still has to send a backup id");
+        assert!(matches!(error, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn undo_requires_a_privileged_session() {
+        let _gate = LoginGate::enforced();
+        let temp = TempDir::new().expect("tempdir");
+        let state = test_state(temp.path());
+        let error = undo(
+            State(state),
+            Some(session_with_role("member")),
+            Json(RestoreUndoRequest { confirm: true }),
+        )
+        .await
+        .expect_err("a member may not undo a restore");
+        assert!(matches!(error, ApiError::Forbidden(_)));
+    }
+
+    #[tokio::test]
+    async fn status_reports_an_idle_journal_for_a_fresh_backup_root() {
+        let temp = TempDir::new().expect("tempdir");
+        let state = test_state(temp.path());
+        let previous = std::env::var_os(crate::backup::BACKUP_BASE_ENV);
+        std::env::set_var(crate::backup::BACKUP_BASE_ENV, temp.path().join("backup"));
+        let result = status(State(state)).await;
+        match previous {
+            Some(value) => std::env::set_var(crate::backup::BACKUP_BASE_ENV, value),
+            None => std::env::remove_var(crate::backup::BACKUP_BASE_ENV),
+        }
+        result.expect("a fresh journal reports a status rather than failing");
+    }
+
+    #[test]
+    fn map_backup_error_maps_each_failure_to_its_api_status() {
+        assert!(matches!(
+            map_backup_error(BackupError::NotFound("gone".into())),
+            ApiError::NotFound(_)
+        ));
+        assert!(matches!(
+            map_backup_error(BackupError::InvalidRequest("bad".into())),
+            ApiError::BadRequest(_)
+        ));
+        for error in [
+            BackupError::Integrity("tampered".into()),
+            BackupError::UnsupportedSchema("v99".into()),
+            BackupError::RestoreUnavailable("busy".into()),
+        ] {
+            assert!(matches!(map_backup_error(error), ApiError::Conflict(_)));
+        }
+        assert!(matches!(
+            map_backup_error(BackupError::BundleTooLarge { size: 9, max: 4 }),
+            ApiError::PayloadTooLarge(_)
+        ));
+        assert!(matches!(
+            map_backup_error(BackupError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "absent"
+            ))),
+            ApiError::NotFound(_)
+        ));
+        assert!(matches!(
+            map_backup_error(BackupError::Io(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "denied"
+            ))),
+            ApiError::Internal(_)
+        ));
+    }
+}

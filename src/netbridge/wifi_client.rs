@@ -333,7 +333,10 @@ mod tests {
                 assert!(msg.contains("timed out"), "unexpected message: {msg}");
                 assert!(msg.contains(BOGUS_IFACE));
             }
-            other => panic!("expected ProcessExecutionFailed(..timed out..), got {:?}", other),
+            other => panic!(
+                "expected ProcessExecutionFailed(..timed out..), got {:?}",
+                other
+            ),
         }
     }
 

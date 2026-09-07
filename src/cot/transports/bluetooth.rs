@@ -12,74 +12,151 @@ use std::process::Command;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
+/// Source of adapter state. Real deployments shell out to the BlueZ tools;
+/// tests inject fixed values so no adapter hardware is required.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AdapterProbe {
+    /// Query `bluetoothctl`/`hcitool` on this host.
+    System,
+    /// Fixed values supplied by a caller (tests, simulations).
+    Fixed { powered: bool, rssi: Option<i8> },
+}
+
+/// `bluetoothctl show` reports power state; `hciconfig` is the fallback when
+/// bluetoothctl is unavailable.
+pub fn parse_powered(bluetoothctl_stdout: Option<&str>, hciconfig_stdout: Option<&str>) -> bool {
+    match bluetoothctl_stdout {
+        Some(out) => out.contains("Powered: yes"),
+        None => hciconfig_stdout
+            .map(|out| out.contains("UP RUNNING"))
+            .unwrap_or(false),
+    }
+}
+
+/// Extract the first connected device MAC from `hcitool con` output.
+/// Lines look like `\t< ACL AA:BB:CC:DD:EE:FF handle 12 state 1 lm MASTER`.
+pub fn parse_connected_mac(con_stdout: &str) -> Option<&str> {
+    con_stdout
+        .lines()
+        .find(|l| l.contains("ACL"))
+        .and_then(|l| l.split_whitespace().nth(2))
+}
+
+/// Extract the signal strength from `hcitool rssi <mac>` output.
+pub fn parse_rssi(rssi_stdout: &str) -> Option<i8> {
+    rssi_stdout
+        .lines()
+        .find(|l| l.contains("RSSI"))
+        .and_then(|l| l.split(':').next_back())
+        .and_then(|v| v.trim().parse::<i8>().ok())
+}
+
+/// Map signal strength onto an estimated bandwidth in kbps. An unknown RSSI is
+/// treated as a mid-range link rather than a bad one.
+pub fn rssi_bandwidth(rssi: Option<i8>) -> u64 {
+    match rssi {
+        Some(r) if r > -50 => 3_000,
+        Some(r) if r > -70 => 1_000,
+        Some(_) => 500,
+        None => 1_000,
+    }
+}
+
+/// Pull Guardian/SGX device MACs out of `bluetoothctl scan on` output.
+pub fn parse_scan_guardians(stdout: &str) -> Vec<String> {
+    stdout
+        .lines()
+        .filter(|l| (l.contains("Guardian") || l.contains("SGX")) && l.contains("Device"))
+        .filter_map(|l| l.split_whitespace().nth(2).map(|s| s.to_string()))
+        .collect()
+}
+
+/// Keep only the `Device ...` rows of `bluetoothctl paired-devices` output.
+pub fn parse_paired_devices(stdout: &str) -> Vec<String> {
+    stdout
+        .lines()
+        .filter(|l| l.starts_with("Device"))
+        .map(|l| l.to_string())
+        .collect()
+}
+
+/// BlueZ D-Bus object path for a device on hci0.
+pub fn pan_object_path(mac: &str) -> String {
+    format!("/org/bluez/hci0/dev_{}", mac.replace(':', "_"))
+}
+
 #[derive(Debug, Clone)]
 pub struct BluetoothTransport {
     interface: InterfaceInfo,
+    probe: AdapterProbe,
 }
 
 impl BluetoothTransport {
     pub fn new(interface: InterfaceInfo) -> Self {
-        Self { interface }
+        // Unit tests must not depend on a real adapter being present.
+        #[cfg(test)]
+        let probe = AdapterProbe::Fixed {
+            powered: false,
+            rssi: None,
+        };
+        #[cfg(not(test))]
+        let probe = AdapterProbe::System;
+
+        Self { interface, probe }
     }
 
-    #[cfg(not(test))]
+    /// Build a transport whose adapter state is supplied rather than probed.
+    pub fn with_fixed_adapter(interface: InterfaceInfo, powered: bool, rssi: Option<i8>) -> Self {
+        Self {
+            interface,
+            probe: AdapterProbe::Fixed { powered, rssi },
+        }
+    }
+
     fn adapter_powered(&self) -> bool {
-        Command::new("bluetoothctl")
-            .args(["show"])
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).contains("Powered: yes"))
-            .unwrap_or_else(|_| {
-                Command::new("hciconfig")
-                    .args(["hci0"])
+        match self.probe {
+            AdapterProbe::Fixed { powered, .. } => powered,
+            AdapterProbe::System => {
+                let bluetoothctl = Command::new("bluetoothctl")
+                    .args(["show"])
                     .output()
-                    .map(|o| String::from_utf8_lossy(&o.stdout).contains("UP RUNNING"))
-                    .unwrap_or(false)
-            })
+                    .ok()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+                let hciconfig = if bluetoothctl.is_none() {
+                    Command::new("hciconfig")
+                        .args(["hci0"])
+                        .output()
+                        .ok()
+                        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                } else {
+                    None
+                };
+                parse_powered(bluetoothctl.as_deref(), hciconfig.as_deref())
+            }
+        }
     }
 
-    #[cfg(test)]
-    fn adapter_powered(&self) -> bool {
-        false
-    }
-
-    #[cfg(not(test))]
     fn get_rssi(&self) -> Option<i8> {
-        // hcitool rssi requires a device MAC, not interface name.
-        // Use hcitool con to find connected devices, then query RSSI.
-        let con_output = Command::new("hcitool").args(["con"]).output().ok()?;
-        let con_stdout = String::from_utf8_lossy(&con_output.stdout);
-        // Extract first connected device MAC (format: "< ACL XX:XX:XX:XX:XX:XX ...")
-        let mac = con_stdout
-            .lines()
-            .find(|l| l.contains("ACL"))
-            .and_then(|l| l.split_whitespace().nth(2))?;
+        match self.probe {
+            AdapterProbe::Fixed { rssi, .. } => rssi,
+            AdapterProbe::System => {
+                // `hcitool rssi` requires a device MAC, not an interface name,
+                // so find a connected device first.
+                let con_output = Command::new("hcitool").args(["con"]).output().ok()?;
+                let con_stdout = String::from_utf8_lossy(&con_output.stdout).into_owned();
+                let mac = parse_connected_mac(&con_stdout)?;
 
-        let output = Command::new("hcitool").args(["rssi", mac]).output().ok()?;
-        let s = String::from_utf8_lossy(&output.stdout);
-        s.lines()
-            .find(|l| l.contains("RSSI"))
-            .and_then(|l| l.split(':').next_back())
-            .and_then(|v| v.trim().parse::<i8>().ok())
-    }
-
-    #[cfg(test)]
-    fn get_rssi(&self) -> Option<i8> {
-        None
+                let output = Command::new("hcitool").args(["rssi", mac]).output().ok()?;
+                parse_rssi(&String::from_utf8_lossy(&output.stdout))
+            }
+        }
     }
 
     pub fn scan_guardians() -> Vec<String> {
         Command::new("bluetoothctl")
             .args(["--timeout", "10", "scan", "on"])
             .output()
-            .map(|o| {
-                String::from_utf8_lossy(&o.stdout)
-                    .lines()
-                    .filter(|l| {
-                        (l.contains("Guardian") || l.contains("SGX")) && l.contains("Device")
-                    })
-                    .filter_map(|l| l.split_whitespace().nth(2).map(|s| s.to_string()))
-                    .collect()
-            })
+            .map(|o| parse_scan_guardians(&String::from_utf8_lossy(&o.stdout)))
             .unwrap_or_default()
     }
 }
@@ -133,13 +210,7 @@ impl Transport for BluetoothTransport {
         if !self.adapter_powered() {
             return TransportHealth::unhealthy("BT adapter not powered");
         }
-        let bw = match self.get_rssi() {
-            Some(r) if r > -50 => 3_000,
-            Some(r) if r > -70 => 1_000,
-            Some(_) => 500,
-            None => 1_000,
-        };
-        TransportHealth::healthy(15, bw)
+        TransportHealth::healthy(15, rssi_bandwidth(self.get_rssi()))
     }
 
     fn display_name(&self) -> String {
@@ -173,13 +244,7 @@ impl BluetoothPairing {
         Command::new("bluetoothctl")
             .args(["paired-devices"])
             .output()
-            .map(|o| {
-                String::from_utf8_lossy(&o.stdout)
-                    .lines()
-                    .filter(|l| l.starts_with("Device"))
-                    .map(|l| l.to_string())
-                    .collect()
-            })
+            .map(|o| parse_paired_devices(&String::from_utf8_lossy(&o.stdout)))
             .unwrap_or_default()
     }
     pub fn setup_pan(mac: &str) -> Result<(), String> {
@@ -188,7 +253,7 @@ impl BluetoothPairing {
                 "--system",
                 "--type=method_call",
                 "--dest=org.bluez",
-                &format!("/org/bluez/hci0/dev_{}", mac.replace(':', "_")),
+                &pan_object_path(mac),
                 "org.bluez.Network1.Connect",
                 "string:nap",
             ])
@@ -272,6 +337,152 @@ mod tests {
     async fn test_send_fails_down() {
         let t = BluetoothTransport::new(make_bt(InterfaceStatus::Down));
         let msg = TransportMessage::new("a".into(), "b".into(), "127.0.0.1:9999".into(), vec![1]);
+        assert!(t.send(&msg).await.is_err());
+    }
+
+    #[test]
+    fn parse_powered_prefers_bluetoothctl() {
+        assert!(parse_powered(Some("Controller AA\n\tPowered: yes\n"), None));
+        assert!(!parse_powered(Some("\tPowered: no\n"), Some("UP RUNNING")));
+    }
+
+    #[test]
+    fn parse_powered_falls_back_to_hciconfig() {
+        assert!(parse_powered(None, Some("hci0:\tUP RUNNING PSCAN")));
+        assert!(!parse_powered(None, Some("hci0:\tDOWN")));
+        assert!(!parse_powered(None, None));
+    }
+
+    #[test]
+    fn parse_connected_mac_reads_first_acl_row() {
+        let out = "Connections:\n\t< ACL AA:BB:CC:DD:EE:FF handle 12 state 1\n\t< ACL 11:22:33:44:55:66 handle 13 state 1\n";
+        assert_eq!(parse_connected_mac(out), Some("AA:BB:CC:DD:EE:FF"));
+        assert_eq!(parse_connected_mac("Connections:\n"), None);
+    }
+
+    #[test]
+    fn parse_rssi_reads_signed_value() {
+        assert_eq!(parse_rssi("RSSI return value: -42\n"), Some(-42));
+        assert_eq!(parse_rssi("RSSI return value: notanumber\n"), None);
+        assert_eq!(parse_rssi("no signal line here\n"), None);
+    }
+
+    #[test]
+    fn rssi_bandwidth_bands() {
+        assert_eq!(rssi_bandwidth(Some(-20)), 3_000);
+        assert_eq!(rssi_bandwidth(Some(-50)), 1_000);
+        assert_eq!(rssi_bandwidth(Some(-69)), 1_000);
+        assert_eq!(rssi_bandwidth(Some(-90)), 500);
+        assert_eq!(rssi_bandwidth(None), 1_000);
+    }
+
+    #[test]
+    fn parse_scan_guardians_keeps_only_matching_devices() {
+        let out = concat!(
+            "[NEW] Device AA:BB:CC:DD:EE:FF Guardian-01\n",
+            "[NEW] Device 11:22:33:44:55:66 SGX-Node\n",
+            "[NEW] Device 99:99:99:99:99:99 SomeHeadphones\n",
+            "Guardian mentioned without a device row\n",
+        );
+        assert_eq!(
+            parse_scan_guardians(out),
+            vec!["AA:BB:CC:DD:EE:FF".to_string(), "11:22:33:44:55:66".to_string()]
+        );
+        assert!(parse_scan_guardians("").is_empty());
+    }
+
+    #[test]
+    fn parse_paired_devices_keeps_device_rows() {
+        let out = "Device AA:BB:CC:DD:EE:FF Guardian-01\nAgent registered\n";
+        assert_eq!(
+            parse_paired_devices(out),
+            vec!["Device AA:BB:CC:DD:EE:FF Guardian-01".to_string()]
+        );
+        assert!(parse_paired_devices("").is_empty());
+    }
+
+    #[test]
+    fn pan_object_path_escapes_colons() {
+        assert_eq!(
+            pan_object_path("AA:BB:CC:DD:EE:FF"),
+            "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF"
+        );
+    }
+
+    #[test]
+    fn new_uses_fixed_probe_under_test() {
+        let t = BluetoothTransport::new(make_bt(InterfaceStatus::Up));
+        assert_eq!(
+            t.probe,
+            AdapterProbe::Fixed {
+                powered: false,
+                rssi: None
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn powered_adapter_on_usable_interface_is_available() {
+        let t = BluetoothTransport::with_fixed_adapter(make_bt(InterfaceStatus::Up), true, None);
+        assert!(t.is_available().await);
+
+        let down =
+            BluetoothTransport::with_fixed_adapter(make_bt(InterfaceStatus::Down), true, None);
+        assert!(!down.is_available().await);
+    }
+
+    #[tokio::test]
+    async fn health_check_reports_unpowered_adapter() {
+        let t = BluetoothTransport::with_fixed_adapter(make_bt(InterfaceStatus::Up), false, None);
+        let h = t.health_check().await;
+        assert!(!h.is_healthy);
+    }
+
+    #[tokio::test]
+    async fn health_check_uses_rssi_for_bandwidth() {
+        let strong =
+            BluetoothTransport::with_fixed_adapter(make_bt(InterfaceStatus::Up), true, Some(-30));
+        let h = strong.health_check().await;
+        assert!(h.is_healthy);
+        assert_eq!(h.bandwidth_kbps, 3_000);
+
+        let weak =
+            BluetoothTransport::with_fixed_adapter(make_bt(InterfaceStatus::Up), true, Some(-95));
+        assert_eq!(weak.health_check().await.bandwidth_kbps, 500);
+    }
+
+    #[test]
+    fn display_name_includes_rssi_when_known() {
+        let t =
+            BluetoothTransport::with_fixed_adapter(make_bt(InterfaceStatus::Up), true, Some(-55));
+        assert_eq!(t.display_name(), "Bluetooth(bnep0) rssi=-55dBm");
+    }
+
+    #[tokio::test]
+    async fn send_writes_length_prefixed_payload() {
+        use tokio::io::AsyncReadExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = Vec::new();
+            socket.read_to_end(&mut buf).await.unwrap();
+            buf
+        });
+
+        let t = BluetoothTransport::with_fixed_adapter(make_bt(InterfaceStatus::Up), true, None);
+        let msg = TransportMessage::new("a".into(), "b".into(), addr, vec![7, 8, 9]);
+        t.send(&msg).await.expect("send succeeds");
+
+        assert_eq!(server.await.unwrap(), vec![0, 0, 0, 3, 7, 8, 9]);
+    }
+
+    #[tokio::test]
+    async fn send_fails_when_target_is_unreachable() {
+        let t = BluetoothTransport::with_fixed_adapter(make_bt(InterfaceStatus::Up), true, None);
+        // Port 0 is never connectable.
+        let msg = TransportMessage::new("a".into(), "b".into(), "127.0.0.1:0".into(), vec![1]);
         assert!(t.send(&msg).await.is_err());
     }
 }

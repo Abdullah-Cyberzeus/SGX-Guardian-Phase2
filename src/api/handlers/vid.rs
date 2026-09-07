@@ -83,3 +83,71 @@ pub async fn peers(State(state): State<Arc<AppState>>) -> Result<Json<VidPeersRe
     peers.sort_by(|a, b| a.did.cmp(&b.did));
     Ok(Json(VidPeersResponse { peers }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn test_state(base: &std::path::Path) -> Arc<AppState> {
+        let config_dir = base.join("config");
+        std::fs::create_dir_all(&config_dir).expect("config dir");
+        AppState::for_tests(base, "nodeA", config_dir.display().to_string())
+    }
+
+    #[tokio::test]
+    async fn peers_reports_the_cache_sorted_by_did() {
+        let temp = TempDir::new().expect("tempdir");
+        let state = test_state(temp.path());
+        state
+            .vid_cache
+            .observe("did:guardian:zeta", "aa00")
+            .await;
+        state
+            .vid_cache
+            .observe("did:guardian:alpha", "bb11")
+            .await;
+
+        let response = peers(State(state)).await.expect("peer listing");
+        let dids: Vec<&str> = response
+            .0
+            .peers
+            .iter()
+            .map(|peer| peer.did.as_str())
+            .collect();
+        assert_eq!(dids, vec!["did:guardian:alpha", "did:guardian:zeta"]);
+        let alpha = &response.0.peers[0];
+        assert_eq!(alpha.virtual_id, "bb11");
+        assert!(!alpha.observed_at.is_empty());
+        // The very first observation is recorded as such rather than as a
+        // rotation, which is what the UI keys its "new peer" badge off.
+        assert_eq!(alpha.last_rotation_reason.as_deref(), Some("initial_observation"));
+    }
+
+    #[tokio::test]
+    async fn peers_is_empty_before_anything_has_been_observed() {
+        let temp = TempDir::new().expect("tempdir");
+        let state = test_state(temp.path());
+        let response = peers(State(state)).await.expect("peer listing");
+        assert!(response.0.peers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn show_reports_an_error_when_no_runtime_virtual_id_exists() {
+        let temp = TempDir::new().expect("tempdir");
+        let state = test_state(temp.path());
+        let previous = std::env::var_os(crate::virtual_id::RUNTIME_VID_STATE_DIR_ENV);
+        std::env::set_var(
+            crate::virtual_id::RUNTIME_VID_STATE_DIR_ENV,
+            temp.path().join("virtual-id"),
+        );
+        let result = show(State(state)).await;
+        match previous {
+            Some(value) => {
+                std::env::set_var(crate::virtual_id::RUNTIME_VID_STATE_DIR_ENV, value)
+            }
+            None => std::env::remove_var(crate::virtual_id::RUNTIME_VID_STATE_DIR_ENV),
+        }
+        assert!(matches!(result, Err(ApiError::Internal(msg)) if msg.contains("VID show")));
+    }
+}

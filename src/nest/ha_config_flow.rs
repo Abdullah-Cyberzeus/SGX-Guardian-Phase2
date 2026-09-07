@@ -515,7 +515,8 @@ mod tests {
     async fn test_inject_direct_storage_entry_none_without_storage_volume() {
         // Sandbox has none of the hardcoded HA storage directories mounted, so the direct
         // injection fast-path must decline and let the caller fall back to the config flow.
-        let client = NestHaConfigFlowClient::new("http://127.0.0.1:1".to_string(), "tok".to_string());
+        let client =
+            NestHaConfigFlowClient::new("http://127.0.0.1:1".to_string(), "tok".to_string());
         let result = client.inject_direct_storage_entry(&sample_creds()).await;
         assert!(result.is_none());
     }
@@ -541,11 +542,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_setup_nest_config_entry_initiate_rejected() {
-        let base_url = spawn_queue_server(vec![(
-            400,
-            r#"{"message":"unknown handler"}"#.to_string(),
-        )])
-        .await;
+        let base_url =
+            spawn_queue_server(vec![(400, r#"{"message":"unknown handler"}"#.to_string())]).await;
 
         let client = NestHaConfigFlowClient::new(base_url, "tok".to_string());
         let result = client.setup_nest_config_entry(&sample_creds()).await;
@@ -656,7 +654,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_nest_config_entry_failure() {
-        let base_url = spawn_queue_server(vec![(404, r#"{"message":"not found"}"#.to_string())]).await;
+        let base_url =
+            spawn_queue_server(vec![(404, r#"{"message":"not found"}"#.to_string())]).await;
         let client = NestHaConfigFlowClient::new(base_url, "tok".to_string());
         let result = client.remove_nest_config_entry("nest_entry_missing").await;
         let err = result.unwrap_err();

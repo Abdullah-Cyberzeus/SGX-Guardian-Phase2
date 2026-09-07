@@ -333,7 +333,10 @@ mod tests {
 
     #[test]
     fn safe_id_replaces_path_sensitive_characters_only() {
-        assert_eq!(safe_id("urn:uuid/file\\name\0tail"), "urn_uuid_file_name_tail");
+        assert_eq!(
+            safe_id("urn:uuid/file\\name\0tail"),
+            "urn_uuid_file_name_tail"
+        );
         assert_eq!(safe_id("plain id with spaces"), "plain id with spaces");
         assert_eq!(safe_id("dots..and-dashes"), "dots..and-dashes");
     }
@@ -349,13 +352,21 @@ mod tests {
         assert_eq!(staging_dir(&config), config.base_dir.join("staging"));
         assert_eq!(quota_dir(&config), config.base_dir.join("quota"));
         assert_eq!(wrap_dir(&config), config.base_dir.join("wrap"));
-        assert_eq!(master_key_path(&config), wrap_dir(&config).join("software-master.key"));
-        assert_eq!(quota_settings_path(&config), quota_dir(&config).join("settings.json"));
+        assert_eq!(
+            master_key_path(&config),
+            wrap_dir(&config).join("software-master.key")
+        );
+        assert_eq!(
+            quota_settings_path(&config),
+            quota_dir(&config).join("settings.json")
+        );
         assert!(decrypt_temp_path(&config, "urn:uuid/a").starts_with(staging_dir(&config)));
 
         assert_eq!(
             blob_path_for_namespace(&config, &personal, "urn:uuid/file"),
-            blobs_dir(&config).join("personal").join("urn_uuid_file.enc")
+            blobs_dir(&config)
+                .join("personal")
+                .join("urn_uuid_file.enc")
         );
         assert_eq!(
             meta_path_for_namespace(&config, &circle, "urn:uuid/file"),
@@ -424,12 +435,7 @@ mod tests {
             "2026-01-02T00:00:00Z",
             200,
         );
-        let personal_record = record(
-            "urn:uuid:personal",
-            personal,
-            "2026-01-01T00:00:00Z",
-            100,
-        );
+        let personal_record = record("urn:uuid:personal", personal, "2026-01-01T00:00:00Z", 100);
 
         assert!(list_records(&config, None)
             .await
@@ -492,9 +498,12 @@ mod tests {
 
         save_record(&config, &older).await.expect("save older");
         save_record(&config, &newer).await.expect("save newer");
-        tokio::fs::write(meta_namespace_dir(&config, &namespace).join("broken.json"), b"{bad")
-            .await
-            .expect("write malformed json");
+        tokio::fs::write(
+            meta_namespace_dir(&config, &namespace).join("broken.json"),
+            b"{bad",
+        )
+        .await
+        .expect("write malformed json");
         tokio::fs::create_dir_all(meta_namespace_dir(&config, &namespace).join("subdir.json"))
             .await
             .expect("create ignored dir");

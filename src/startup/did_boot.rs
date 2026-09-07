@@ -46,10 +46,7 @@ pub const CERT_BOOTSTRAP_PORT: u16 = 50061;
 /// Strips the prefix length from an overlay CIDR, for the service endpoints
 /// recorded in the document.
 pub fn overlay_ip_only(overlay_ip_cidr: &str) -> &str {
-    overlay_ip_cidr
-        .split('/')
-        .next()
-        .unwrap_or(overlay_ip_cidr)
+    overlay_ip_cidr.split('/').next().unwrap_or(overlay_ip_cidr)
 }
 
 /// Adds a revocation entry for a superseded verification method.
@@ -98,14 +95,15 @@ pub async fn refresh_and_publish_did_doc(
     .await
 }
 
-/// [`refresh_and_publish_did_doc`] with `force` set, used after a DKP
-/// rotation flag is observed.
-pub async fn force_refresh_and_publish_did_doc(
+/// [`refresh_and_publish_did_doc`] with an explicit `force` flag, which the
+/// periodic refresh tick sets once it observes the DKP rotation flag.
+pub async fn publish_did_doc(
     node_id: &str,
     km: &KeyManager,
     overlay_ip_cidr: &str,
     ca_host: &str,
     is_ca: bool,
+    force: bool,
 ) -> Result<(), String> {
     refresh_and_publish_did_doc_inner(
         node_id,
@@ -113,7 +111,7 @@ pub async fn force_refresh_and_publish_did_doc(
         overlay_ip_cidr,
         ca_host,
         is_ca,
-        true,
+        force,
         &DidBootPaths::production(),
     )
     .await
@@ -334,7 +332,10 @@ mod tests {
             EnvGuard::set("SGX_GUARDIAN_CIRCLE_BASE", base.join("circle")),
             EnvGuard::set("SGX_GUARDIAN_VC_BASE", base.join("vc")),
             EnvGuard::set("SGX_GUARDIAN_DEVICE_KEY_DIR", base.join("device-keys")),
-            EnvGuard::set(doc_persistence::SELF_DOC_PATH_ENV, base.join("did_doc.json")),
+            EnvGuard::set(
+                doc_persistence::SELF_DOC_PATH_ENV,
+                base.join("did_doc.json"),
+            ),
             EnvGuard::set(doc_persistence::PEERS_DOC_DIR_ENV, base.join("peers")),
             EnvGuard::set(
                 doc_persistence::CA_AGGREGATE_PATH_ENV,

@@ -65,10 +65,7 @@ mod tests {
         assert_eq!(host_label("___"), "guardian");
         assert_eq!(host_label("---"), "guardian");
         assert_eq!(host_label("!@#$%^&*()"), "guardian");
-        assert_eq!(
-            host_label("\u{0633}\u{0644}\u{0627}\u{0645}"),
-            "guardian"
-        );
+        assert_eq!(host_label("\u{0633}\u{0644}\u{0627}\u{0645}"), "guardian");
     }
 
     #[test]

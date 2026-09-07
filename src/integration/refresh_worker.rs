@@ -219,10 +219,7 @@ mod tests {
             .refresh_provider_token(VendorProvider::GoogleNest)
             .await
             .unwrap_err();
-        assert!(
-            err.contains("401 Unauthorized"),
-            "unexpected error: {err}"
-        );
+        assert!(err.contains("401 Unauthorized"), "unexpected error: {err}");
 
         // A failed refresh must not silently rewrite the stored access token.
         let meta = manager
@@ -356,7 +353,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(meta.status, IntegrationStatus::Connected);
-        assert_eq!(meta.credentials.unwrap().access_token, "initial_access_token");
+        assert_eq!(
+            meta.credentials.unwrap().access_token,
+            "initial_access_token"
+        );
     }
 
     #[tokio::test]
@@ -391,8 +391,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_and_refresh_tokens_nest_credentials_expiring_but_unrefreshable_marks_error(
-    ) {
+    async fn test_check_and_refresh_tokens_nest_credentials_expiring_but_unrefreshable_marks_error()
+    {
         // `refresh_access_token` validates required fields (refresh_token first) before ever
         // making the real Google OAuth network call, so a token with no refresh_token exercises
         // the "expiring soon -> attempt refresh -> fails" branch deterministically, with no

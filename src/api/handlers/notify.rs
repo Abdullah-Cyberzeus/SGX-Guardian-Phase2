@@ -548,8 +548,7 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();
-        let events: Vec<notify::model::NotificationEvent> =
-            serde_json::from_slice(&body).unwrap();
+        let events: Vec<notify::model::NotificationEvent> = serde_json::from_slice(&body).unwrap();
         assert!(events.is_empty());
     }
 
@@ -575,8 +574,7 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();
-        let events: Vec<notify::model::NotificationEvent> =
-            serde_json::from_slice(&body).unwrap();
+        let events: Vec<notify::model::NotificationEvent> = serde_json::from_slice(&body).unwrap();
         assert!(events.iter().any(|event| event.id == "dev-hist-1"));
     }
 
@@ -630,8 +628,8 @@ mod tests {
     /// a deterministic on-disk event id to mark read.
     fn seed_persisted_event(id: &str, kind: notify::model::NotificationKind) {
         let path = notify::NotifyConfig::from_env().events_path();
-        let mut store = notify::store::NotificationStore::load_from_path(&path, 100)
-            .unwrap_or_default();
+        let mut store =
+            notify::store::NotificationStore::load_from_path(&path, 100).unwrap_or_default();
         store.append(sample_event(id, kind), 100);
         store.save_atomic(&path).expect("seed event");
     }
@@ -1034,8 +1032,7 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();
-        let events: Vec<notify::model::NotificationEvent> =
-            serde_json::from_slice(&body).unwrap();
+        let events: Vec<notify::model::NotificationEvent> = serde_json::from_slice(&body).unwrap();
         assert!(events.iter().any(|event| event.id == "mem-hist-circle"));
         assert!(!events.iter().any(|event| event.id == "mem-hist-alert"));
     }
@@ -1071,10 +1068,7 @@ mod tests {
     #[tokio::test]
     async fn mark_read_route_forbids_a_member_from_marking_an_out_of_scope_event() {
         let env = NotifyApiEnv::new("nodeA", 16);
-        seed_persisted_event(
-            "mem-mark-alert",
-            notify::model::NotificationKind::AlertHigh,
-        );
+        seed_persisted_event("mem-mark-alert", notify::model::NotificationKind::AlertHigh);
 
         let response = env
             .router()
@@ -1119,10 +1113,7 @@ mod tests {
     #[tokio::test]
     async fn mark_all_read_route_only_marks_in_scope_events_for_a_member_session() {
         let env = NotifyApiEnv::new("nodeA", 18);
-        seed_persisted_event(
-            "mem-all-alert",
-            notify::model::NotificationKind::AlertHigh,
-        );
+        seed_persisted_event("mem-all-alert", notify::model::NotificationKind::AlertHigh);
         seed_persisted_event(
             "mem-all-circle",
             notify::model::NotificationKind::CircleNewMessage,

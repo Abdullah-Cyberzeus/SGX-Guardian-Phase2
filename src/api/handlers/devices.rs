@@ -3737,9 +3737,7 @@ relay:
         assert_eq!(edited.0.display_name.as_deref(), Some("Office Printer"));
         assert!(edited.0.monitoring_enabled);
 
-        let listed = list(State(state.clone()))
-            .await
-            .expect("list succeeds");
+        let listed = list(State(state.clone())).await.expect("list succeeds");
         assert!(listed.0.iter().any(|device| device.device_id == device_id));
 
         let removed = remove(State(state.clone()), Path(device_id.clone()))
@@ -3942,7 +3940,11 @@ relay:
         );
 
         let mut device = bare_device();
-        device.open_ports = vec![port(80, "http", &["http-title", "vulners", "cve-2024-1234"])];
+        device.open_ports = vec![port(
+            80,
+            "http",
+            &["http-title", "vulners", "cve-2024-1234"],
+        )];
         assert_eq!(
             vulnerability_findings(&device),
             vec![
@@ -4143,7 +4145,10 @@ relay:
             .await
             .err()
             .unwrap_or_else(|| panic!("{label} pairing code must be rejected"));
-            assert!(matches!(error, ApiError::BadRequest(_)), "{label}: {error:?}");
+            assert!(
+                matches!(error, ApiError::BadRequest(_)),
+                "{label}: {error:?}"
+            );
         }
     }
 
@@ -4155,8 +4160,8 @@ relay:
 
         // A perfectly well-formed code for a challenge this Guardian never
         // recorded.
-        let challenge = issue_challenge("GX-2026-TX-100", Duration::from_secs(600))
-            .expect("issue challenge");
+        let challenge =
+            issue_challenge("GX-2026-TX-100", Duration::from_secs(600)).expect("issue challenge");
         let error = onboarding_proof(
             State(state),
             Some(Extension(session)),
@@ -4180,8 +4185,8 @@ relay:
         let session = test_session(&state, "owner-1");
 
         // Recorded against a different owner.
-        let foreign = issue_challenge("GX-2026-TX-101", Duration::from_secs(600))
-            .expect("issue challenge");
+        let foreign =
+            issue_challenge("GX-2026-TX-101", Duration::from_secs(600)).expect("issue challenge");
         state
             .admin
             .pairings
@@ -4202,11 +4207,16 @@ relay:
 
         // Recorded for the right owner, but the stored challenge text no longer
         // matches the code being presented.
-        let tampered = issue_challenge("GX-2026-TX-102", Duration::from_secs(600))
-            .expect("issue challenge");
+        let tampered =
+            issue_challenge("GX-2026-TX-102", Duration::from_secs(600)).expect("issue challenge");
         let mut record = record_from_challenge(&tampered, "owner-1");
         record.challenge = "a-different-challenge".into();
-        state.admin.pairings.put(record).await.expect("store challenge");
+        state
+            .admin
+            .pairings
+            .put(record)
+            .await
+            .expect("store challenge");
         let error = onboarding_proof(
             State(state.clone()),
             Some(Extension(session.clone())),
@@ -4223,11 +4233,16 @@ relay:
         );
 
         // Right owner, matching challenge, but already redeemed.
-        let used = issue_challenge("GX-2026-TX-103", Duration::from_secs(600))
-            .expect("issue challenge");
+        let used =
+            issue_challenge("GX-2026-TX-103", Duration::from_secs(600)).expect("issue challenge");
         let mut record = record_from_challenge(&used, "owner-1");
         record.api_consumed = true;
-        state.admin.pairings.put(record).await.expect("store challenge");
+        state
+            .admin
+            .pairings
+            .put(record)
+            .await
+            .expect("store challenge");
         let error = onboarding_proof(
             State(state),
             Some(Extension(session)),
@@ -4255,8 +4270,8 @@ relay:
         let state = onboarding_state(&td);
         let session = test_session(&state, "owner-1");
 
-        let challenge = issue_challenge("GX-2026-TX-104", Duration::from_secs(600))
-            .expect("issue challenge");
+        let challenge =
+            issue_challenge("GX-2026-TX-104", Duration::from_secs(600)).expect("issue challenge");
         state
             .admin
             .pairings
@@ -4330,7 +4345,10 @@ relay:
         assert_eq!(finished.0.state, "failed");
         assert_eq!(finished.0.findings, vec!["device has no IP target"]);
         assert_eq!(
-            finished.0.firmware_assessment.map(|assessment| assessment.status),
+            finished
+                .0
+                .firmware_assessment
+                .map(|assessment| assessment.status),
             Some(crate::devices::model::FirmwareAssessmentStatus::Unsupported)
         );
 
@@ -4342,7 +4360,10 @@ relay:
         .await
         .err()
         .expect("unknown scan id");
-        assert!(matches!(missing_run, ApiError::NotFound(_)), "{missing_run:?}");
+        assert!(
+            matches!(missing_run, ApiError::NotFound(_)),
+            "{missing_run:?}"
+        );
 
         let missing_device = start_scan(
             State(state),
@@ -4387,9 +4408,13 @@ relay:
             "scan-key-1".parse().expect("header value"),
         );
 
-        let first = start_scan(State(state.clone()), Path(device_id.clone()), headers.clone())
-            .await
-            .expect("start_scan succeeds");
+        let first = start_scan(
+            State(state.clone()),
+            Path(device_id.clone()),
+            headers.clone(),
+        )
+        .await
+        .expect("start_scan succeeds");
         let replay = start_scan(State(state), Path(device_id), headers)
             .await
             .expect("start_scan replays");
@@ -4408,7 +4433,11 @@ relay:
             .await
             .expect("index succeeds");
         let listed = response.0.as_array().expect("array response").clone();
-        assert_eq!(listed.len(), 1, "only this owner's paired device: {listed:?}");
+        assert_eq!(
+            listed.len(),
+            1,
+            "only this owner's paired device: {listed:?}"
+        );
         // The paired-device view serializes its ids as camelCase.
         assert_eq!(listed[0]["deviceId"], "dev-b");
 
@@ -4416,7 +4445,11 @@ relay:
         // managed-device view instead and stops filtering by owner.
         write_inventory(
             state.as_ref(),
-            vec![inventory_device("scanned-1", "10.0.0.7", "AA:BB:CC:DD:EE:07")],
+            vec![inventory_device(
+                "scanned-1",
+                "10.0.0.7",
+                "AA:BB:CC:DD:EE:07",
+            )],
         );
         let response = index(State(state), Some(Extension(session)))
             .await
@@ -4712,7 +4745,11 @@ relay:
         let listed = all_list(State(state.clone()), Some(Extension(session)))
             .await
             .expect("all_list succeeds");
-        let serials: Vec<_> = listed.0.iter().map(|device| device.serial.clone()).collect();
+        let serials: Vec<_> = listed
+            .0
+            .iter()
+            .map(|device| device.serial.clone())
+            .collect();
         assert_eq!(
             serials,
             vec!["GX-2026-A", "GX-2026-B"],
@@ -4832,7 +4869,10 @@ relay:
         assert_eq!(assessment.vendor.as_deref(), Some("debian"));
         assert_eq!(assessment.product.as_deref(), Some("Debian GNU/Linux 12"));
         assert_eq!(assessment.version.as_deref(), Some("12"));
-        assert_eq!(assessment.platform.as_deref(), Some("SGX Guardian Board v2"));
+        assert_eq!(
+            assessment.platform.as_deref(),
+            Some("SGX Guardian Board v2")
+        );
         assert_eq!(assessment.confidence, 0.75);
         assert!(!assessment.integrity_verified);
         assert_eq!(assessment.evidence_sources.len(), 2);
@@ -4846,11 +4886,16 @@ relay:
         // Neither PRETTY_NAME nor VERSION_ID is present, so the NAME/VERSION
         // fallbacks are what supply the product and version.
         let os_release = dir.path().join("os-release");
-        std::fs::write(&os_release, "ID=sgxos\nNAME=\"SGX OS\"\nVERSION=\"3 (bookworm)\"\n")
-            .expect("write os-release");
+        std::fs::write(
+            &os_release,
+            "ID=sgxos\nNAME=\"SGX OS\"\nVERSION=\"3 (bookworm)\"\n",
+        )
+        .expect("write os-release");
         let _os_guard = ScopedEnvVar::set("SGX_TEST_OS_RELEASE_FILE", &os_release);
-        let _model_guard =
-            ScopedEnvVar::set("SGX_TEST_DEVICE_TREE_MODEL_FILE", &dir.path().join("absent"));
+        let _model_guard = ScopedEnvVar::set(
+            "SGX_TEST_DEVICE_TREE_MODEL_FILE",
+            &dir.path().join("absent"),
+        );
 
         let assessment = local_guardian_firmware_assessment().await;
         assert_eq!(assessment.product.as_deref(), Some("SGX OS"));
@@ -4873,8 +4918,10 @@ relay:
         let _lock = async_env_lock().await;
         let dir = TempDir::new().expect("tempdir");
         let _os_guard = ScopedEnvVar::set("SGX_TEST_OS_RELEASE_FILE", &dir.path().join("absent"));
-        let _model_guard =
-            ScopedEnvVar::set("SGX_TEST_DEVICE_TREE_MODEL_FILE", &dir.path().join("absent"));
+        let _model_guard = ScopedEnvVar::set(
+            "SGX_TEST_DEVICE_TREE_MODEL_FILE",
+            &dir.path().join("absent"),
+        );
 
         let assessment = local_guardian_firmware_assessment().await;
         assert_eq!(
@@ -4947,7 +4994,17 @@ relay:
     #[test]
     fn bucket_score_places_every_band_and_the_missing_score() {
         let mut distribution = ScoreDistribution::default();
-        for score in [None, Some(0), Some(39), Some(40), Some(59), Some(60), Some(79), Some(80), Some(100)] {
+        for score in [
+            None,
+            Some(0),
+            Some(39),
+            Some(40),
+            Some(59),
+            Some(60),
+            Some(79),
+            Some(80),
+            Some(100),
+        ] {
             bucket_score(score, &mut distribution);
         }
         assert_eq!(distribution.unavailable, 1);
@@ -4982,9 +5039,9 @@ relay:
     #[test]
     fn api_error_from_threat_blocker_error_maps_each_variant_to_its_status() {
         assert!(matches!(
-            api_error_from_threat_blocker_error(
-                crate::threat::error::ThreatError::ProtectedIp("10.0.0.1".into())
-            ),
+            api_error_from_threat_blocker_error(crate::threat::error::ThreatError::ProtectedIp(
+                "10.0.0.1".into()
+            )),
             ApiError::Forbidden(_)
         ));
         assert!(matches!(
@@ -5091,7 +5148,11 @@ relay:
         let mut api_consumed = live.clone();
         api_consumed.api_consumed = true;
         assert_eq!(
-            pairing_status_value(&api_consumed, Some(&paired_device("bootstrap_pending")), now),
+            pairing_status_value(
+                &api_consumed,
+                Some(&paired_device("bootstrap_pending")),
+                now
+            ),
             "bootstrap_pending"
         );
         assert_eq!(
@@ -5130,7 +5191,11 @@ relay:
         let mut stale_consumed = stale.clone();
         stale_consumed.bootstrap_consumed = true;
         assert_eq!(
-            bootstrap_status_value(Some(&stale_consumed), &paired_device("bootstrap_pending"), now),
+            bootstrap_status_value(
+                Some(&stale_consumed),
+                &paired_device("bootstrap_pending"),
+                now
+            ),
             "completed"
         );
 

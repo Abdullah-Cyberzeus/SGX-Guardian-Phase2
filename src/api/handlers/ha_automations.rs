@@ -415,8 +415,7 @@ mod tests {
         let mut replacement = rule();
         replacement.name = "Replaced Rule".into();
         let (status, body) =
-            response_status(create_automation(State(state.clone()), Json(replacement)).await)
-                .await;
+            response_status(create_automation(State(state.clone()), Json(replacement)).await).await;
         assert_eq!(status, StatusCode::CREATED, "{body}");
 
         let (status, body) = response_status(
@@ -451,10 +450,9 @@ mod tests {
                 .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
 
-        let (status, _) = response_status(
-            disable_automation(State(state.clone()), Path("missing".into())).await,
-        )
-        .await;
+        let (status, _) =
+            response_status(disable_automation(State(state.clone()), Path("missing".into())).await)
+                .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
 
         let (status, _) =

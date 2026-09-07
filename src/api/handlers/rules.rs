@@ -225,7 +225,8 @@ mod tests {
 
             let config_dir = td.path().join("config");
             std::fs::create_dir_all(&config_dir).expect("config dir");
-            let state = AppState::for_tests(td.path(), "nodeRulesTest", config_dir.display().to_string());
+            let state =
+                AppState::for_tests(td.path(), "nodeRulesTest", config_dir.display().to_string());
 
             Self {
                 _guard: guard,
@@ -274,9 +275,12 @@ mod tests {
     #[tokio::test]
     async fn create_list_detail_edit_toggle_and_delete_round_trip() {
         let env = RulesEnv::new().await;
-        let Json(created) = create(State(env.state.clone()), Json(sample_draft("Critical alerts")))
-            .await
-            .expect("create rule");
+        let Json(created) = create(
+            State(env.state.clone()),
+            Json(sample_draft("Critical alerts")),
+        )
+        .await
+        .expect("create rule");
         assert_eq!(created.name, "Critical alerts");
         assert!(created.enabled);
 
@@ -348,9 +352,13 @@ mod tests {
             .await
             .expect("create rule");
 
-        let Json(response) = test(State(env.state.clone()), AxumPath(created.rule_id.clone()), None)
-            .await
-            .expect("test rule");
+        let Json(response) = test(
+            State(env.state.clone()),
+            AxumPath(created.rule_id.clone()),
+            None,
+        )
+        .await
+        .expect("test rule");
         assert_eq!(response.rule_id, created.rule_id);
         assert!(response.dry_run);
         assert!(response.would_fire);

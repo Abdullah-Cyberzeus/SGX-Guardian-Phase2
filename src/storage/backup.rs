@@ -161,5 +161,4 @@ mod tests {
         assert_eq!(restored, 1);
         assert!(dev_file.exists());
     }
-
 }

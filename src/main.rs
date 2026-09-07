@@ -18,7 +18,6 @@ use sgx_guardian_client::logging::{init_logger, log_error, log_event};
 use sgx_guardian_client::metrics::Metrics;
 use sgx_guardian_client::nebula::install::NebulaInstall;
 use sgx_guardian_client::p2p_discovery::P2PDiscovery;
-use sgx_guardian_client::policy;
 use sgx_guardian_client::server;
 use sgx_guardian_client::server::start_server;
 // WiFi + Ethernet discovery imports
@@ -28,9 +27,13 @@ use sgx_guardian_client::node_broadcast;
 use sgx_guardian_client::node_listener;
 use sgx_guardian_client::runtime_gates::{cooldown, step, GATES};
 use sgx_guardian_client::startup::config as startup_config;
-use sgx_guardian_client::startup::nebula_cert::{cert_matches_overlay_ip, read_ip_from_nebula_cert};
-use sgx_guardian_client::startup::{env_true, json_equivalent};
-use sgx_guardian_client::startup::{admin_tls, audit_paths, bootstrap, pcr_status, GuardianPaths};
+use sgx_guardian_client::startup::json_equivalent;
+use sgx_guardian_client::startup::nebula_cert::{
+    cert_matches_overlay_ip, read_ip_from_nebula_cert,
+};
+use sgx_guardian_client::startup::{
+    admin_tls, audit_paths, bootstrap, ca_discovery, did_boot, identity, pcr_status, GuardianPaths,
+};
 
 use base64::{engine::general_purpose, Engine as _};
 use std::fs;
@@ -52,124 +55,6 @@ const DID_DOC_REFRESH_INTERVAL_SECS: u64 = 300;
 const DID_DOC_PULL_INTERVAL_SECS: u64 = 30;
 const VC_STATUS_LIST_PULL_INTERVAL_SECS: u64 = 300;
 const DID_DOC_ROTATION_FLAG: &str = "/var/lib/sgx-guardian/identity/.dkp_rotated.flag";
-
-fn audit_key_backend(node_id: &str, message: &str) {
-    log_audit(
-        node_id,
-        AuditCategory::Identity,
-        AuditSeverity::Info,
-        AuditAction::Loaded,
-        message,
-    );
-}
-
-fn initialize_key_manager(node_id: &str, node_key_path: &str) -> anyhow::Result<KeyManager> {
-    let se050_required = env_true("SGX_SE050_REQUIRED");
-
-    if GATES.force_software_keys {
-        if se050_required {
-            return Err(anyhow::anyhow!(
-                "SGX_SE050_REQUIRED conflicts with SGX_FORCE_SOFTWARE_KEYS"
-            ));
-        }
-        let km = KeyManager::load_or_generate(node_key_path)?;
-        println!("Key backend: software keys (forced by SGX_FORCE_SOFTWARE_KEYS)");
-        audit_key_backend(node_id, "Key backend selected: software forced");
-        return Ok(km);
-    }
-
-    #[cfg(feature = "tpm")]
-    {
-        let tpm_config = sgx_guardian_client::tpm::TpmConfig::default();
-        if !se050_required && sgx_guardian_client::tpm::should_attempt(&tpm_config) {
-            match KeyManager::init_with_tpm(
-                &tpm_config,
-                sgx_guardian_client::tpm::TPM_BASE_PATH,
-                node_key_path,
-            ) {
-                Ok(km) => {
-                    println!("TPM detected and initialized; key backend: TPM 2.0");
-                    audit_key_backend(node_id, "Key backend selected: TPM 2.0 hardware");
-                    return Ok(km);
-                }
-                Err(error) => {
-                    eprintln!("TPM probe failed: {}", error);
-                }
-            }
-        }
-    }
-
-    #[cfg(feature = "secure-element")]
-    {
-        // The SE050 middleware may be usable even when its I2C device is
-        // outside a small hard-coded range or hidden behind a container.
-        // Always attempt the configured backend, matching the known-good
-        // attestation builds, and only permit fallback when it is optional.
-        let se_config = secure_element::SeConfig::default();
-        match KeyManager::init_with_se050(&se_config, "/var/lib/sgx-guardian", node_key_path) {
-            Ok(km) if km.backend_name() == "SE050" => {
-                println!("Secure Element detected and initialized; key backend: SE050");
-                audit_key_backend(node_id, "Key backend selected: SE050 hardware");
-                return Ok(km);
-            }
-            Ok(_) if se050_required => {
-                return Err(anyhow::anyhow!(
-                    "SE050 is required but initialization selected a software key backend"
-                ));
-            }
-            Ok(km) => {
-                println!("SE050 not active; key backend: software");
-                audit_key_backend(node_id, "Key backend selected: software fallback");
-                return Ok(km);
-            }
-            Err(error) => {
-                if se050_required {
-                    return Err(anyhow::anyhow!(
-                        "SE050 is required but initialization failed: {}",
-                        error
-                    ));
-                }
-                eprintln!("SE050 probe failed: {}", error);
-            }
-        }
-    }
-
-    #[cfg(not(feature = "secure-element"))]
-    if se050_required {
-        return Err(anyhow::anyhow!(
-            "SGX_SE050_REQUIRED is set but secure-element support is not compiled in"
-        ));
-    }
-
-    let km = KeyManager::load_or_generate(node_key_path)?;
-    println!("No hardware key backend detected; key backend: software");
-    audit_key_backend(node_id, "Key backend selected: software fallback");
-    Ok(km)
-}
-
-async fn serve_admin_tls_alias(
-    bind: std::net::SocketAddr,
-    upstream: std::net::SocketAddr,
-) -> std::io::Result<()> {
-    let listener = tokio::net::TcpListener::bind(bind).await?;
-    println!(
-        "✅ Guardian HTTPS name endpoint listening on https://{}",
-        bind
-    );
-    loop {
-        let (mut client, _) = listener.accept().await?;
-        tokio::spawn(async move {
-            match tokio::net::TcpStream::connect(upstream).await {
-                Ok(mut server) => {
-                    let _ = tokio::io::copy_bidirectional(&mut client, &mut server).await;
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "Guardian HTTPS alias could not reach admin API")
-                }
-            }
-        });
-    }
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -261,7 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Generate node-specific identity key path
     let node_key_path = format!("/var/lib/sgx-guardian/sgx-agent/device_{}.key", node_id);
     // === Hardware Key Manager Initialization (Phase 2 — HKM) ===
-    let km = initialize_key_manager(&node_id, &node_key_path)?;
+    let km = identity::initialize_key_manager(&node_id, &node_key_path)?;
 
     // === DKP Auto-Rotation Check ===
     // Only probe the SE050 a SECOND time if the primary KeyManager init above
@@ -593,7 +478,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n  Measuring platform integrity (PCR)...");
     {
         use sgx_guardian_client::secure_element::pcr::*;
-        
+
         let mut pcr_engine = PcrEngine::new();
 
         // Detect environment
@@ -1103,7 +988,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
 
             if let Err(e) =
-                refresh_and_publish_did_doc(&node_id, &km, &ip_cidr, "127.0.0.1", true).await
+                did_boot::refresh_and_publish_did_doc(&node_id, &km, &ip_cidr, "127.0.0.1", true)
+                    .await
             {
                 eprintln!("⚠️ DID Document self-publish failed: {}", e);
             }
@@ -1134,10 +1020,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("📌 Using SGX_LIGHTHOUSE_IP={}", env_ip);
                         env_ip
                     } else {
-                        resolve_ca_ip_from_config_inner().await
+                        ca_discovery::resolve_ca_ip_from_config().await
                     }
                 } else {
-                    resolve_ca_ip_from_config_inner().await
+                    ca_discovery::resolve_ca_ip_from_config().await
                 }
             };
             println!("📡 nodeA (CA/Lighthouse) LAN IP: {}", ca_lan_ip);
@@ -1156,7 +1042,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             nebula_ip = ip_cidr.clone();
 
             if let Err(e) =
-                refresh_and_publish_did_doc(&node_id, &km, &ip_cidr, &ca_lan_ip, false).await
+                did_boot::refresh_and_publish_did_doc(&node_id, &km, &ip_cidr, &ca_lan_ip, false)
+                    .await
             {
                 eprintln!("⚠️ DID Document publish failed: {}", e);
             }
@@ -1341,10 +1228,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         "/etc/sgx-guardian/config/{}.yaml",
                         node_id
                     ))
-                        .ok()
-                        .map(|c| c.ip)
-                        .filter(|ip| crate::dynamic_config::is_routable_ip(ip))
-                        .unwrap_or_default()
+                    .ok()
+                    .map(|c| c.ip)
+                    .filter(|ip| crate::dynamic_config::is_routable_ip(ip))
+                    .unwrap_or_default()
                 };
                 if crate::dynamic_config::is_routable_ip(&endpoint_ip) {
                     let endpoint = format!("{}:4242", endpoint_ip);
@@ -1373,7 +1260,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let resolver_ca_host = match did_doc_publish_state.as_ref() {
             Some((_, ca_host, _, _)) => ca_host.clone(),
-            None => resolve_ca_ip_from_config_inner().await,
+            None => ca_discovery::resolve_ca_ip_from_config().await,
         };
         did_resolver =
             sgx_guardian_client::did::Resolver::new(sgx_guardian_client::did::ResolverConfig {
@@ -1434,7 +1321,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut vc_status_list_sync_elapsed = 0u64;
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(RELAY_SYNC_INTERVAL_SECS)).await;
-                let ca_host = resolve_ca_ip_from_config_inner().await;
+                let ca_host = ca_discovery::resolve_ca_ip_from_config().await;
                 let mut topology_changed = false;
                 did_doc_sync_elapsed += RELAY_SYNC_INTERVAL_SECS;
                 vc_status_list_sync_elapsed += RELAY_SYNC_INTERVAL_SECS;
@@ -2465,12 +2352,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .ok()
     .and_then(|r| r.get_ip(&node_id).map(|s| s.to_string()))
     .unwrap_or_else(|| "192.168.100.1".to_string());
-    let san_entries = admin_tls::certificate_san(
-        &lan_fqdn,
-        &this_node.hostname,
-        &node_id,
-        &overlay_ip_only,
-    );
+    let san_entries =
+        admin_tls::certificate_san(&lan_fqdn, &this_node.hostname, &node_id, &overlay_ip_only);
     let san: Vec<&str> = san_entries.iter().map(String::as_str).collect();
     // Ensure certificate exists
     match tls::ensure_node_certificate_or_generate(&key_path, &cert_path, &san) {
@@ -2516,7 +2399,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-    if let Err(e) = refresh_runtime_virtual_id_session(&node_id) {
+    if let Err(e) = identity::refresh_runtime_virtual_id_session(&node_id) {
         log_error(
             &node_id,
             &format!("Runtime VirtualID initial refresh failed: {}", e),
@@ -2530,7 +2413,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             vid_tick.tick().await;
             loop {
                 vid_tick.tick().await;
-                if let Err(e) = refresh_runtime_virtual_id_session(&node_id) {
+                if let Err(e) = identity::refresh_runtime_virtual_id_session(&node_id) {
                     tracing::warn!(
                         "Runtime VirtualID background refresh failed for {}: {}",
                         node_id,
@@ -2585,10 +2468,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "REST API TLS misconfigured: require_https=true but tls.enabled=false",
         );
     } else {
-        let tls = tls_plan.enabled.then(|| sgx_guardian_client::api::AdminTls {
-            cert_path: tls_plan.cert_path.clone(),
-            key_path: tls_plan.key_path.clone(),
-        });
+        let tls = tls_plan
+            .enabled
+            .then(|| sgx_guardian_client::api::AdminTls {
+                cert_path: tls_plan.cert_path.clone(),
+                key_path: tls_plan.key_path.clone(),
+            });
         let require_https = tls_plan.require_https;
         tokio::spawn({
             let state = api_state.clone();
@@ -2608,7 +2493,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let alias_bind = std::net::SocketAddr::from(([0, 0, 0, 0], alias_port));
                 let alias_upstream = std::net::SocketAddr::from(([127, 0, 0, 1], api_bind.port()));
                 tokio::spawn(async move {
-                    if let Err(error) = serve_admin_tls_alias(alias_bind, alias_upstream).await {
+                    if let Err(error) =
+                        admin_tls::serve_admin_tls_alias(alias_bind, alias_upstream).await
+                    {
                         tracing::warn!(%error, %alias_bind, "Guardian HTTPS name endpoint unavailable");
                     }
                 });
@@ -2650,7 +2537,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // === NMAP discovery scheduler ===
     {
         use sgx_guardian_client::discovery::{DiscoveryScheduler, Inventory};
-        
+
         let cfg_path = PathBuf::from("/etc/sgx-guardian/discovery/nmap.yaml");
         let wl_path = PathBuf::from("/etc/sgx-guardian/discovery/whitelist.yaml");
         let inv_path = PathBuf::from("/var/lib/sgx-guardian/discovery/inventory.json");
@@ -2672,7 +2559,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // === Suricata IDS/IPS threat service ===
     {
         use sgx_guardian_client::threat::{AlertInventory, ThreatService};
-        
+
         let cfg_path = PathBuf::from("/etc/sgx-guardian/threat/config.yaml");
         let state_dir = PathBuf::from("/var/lib/sgx-guardian/threat");
         let _ = std::fs::create_dir_all(&state_dir);
@@ -3034,12 +2921,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         *overlay_ip_cidr = cached_ip;
                     }
                     if !*is_ca {
-                        *ca_host = resolve_ca_ip_from_config_inner().await;
+                        *ca_host = ca_discovery::resolve_ca_ip_from_config().await;
                     }
                     publish_args = Some((overlay_ip_cidr.clone(), ca_host.clone(), *is_ca));
                 }
                 if let Some((overlay_ip_cidr, ca_host, is_ca)) = publish_args {
-                    if let Err(e) = refresh_and_publish_did_doc_inner(
+                    if let Err(e) = did_boot::publish_did_doc(
                         &node_id,
                         &km,
                         &overlay_ip_cidr,
@@ -3076,404 +2963,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(0);
     } else {
         Ok(())
-    }
-}
-
-fn refresh_runtime_virtual_id_session(node_id: &str) -> anyhow::Result<()> {
-    let pcr_snapshot = read_runtime_virtual_id_pcr_snapshot(node_id);
-    sgx_guardian_client::virtual_id::observe_runtime_virtual_id(
-        sgx_guardian_client::virtual_id::RuntimeVirtualIdInputs {
-            node: node_id.to_string(),
-            state_path: None,
-            did: sgx_guardian_client::did::DidRecord::load(
-                sgx_guardian_client::did::DEFAULT_DID_PATH,
-            )
-            .map(|record| record.did)
-            .unwrap_or_default(),
-            dkp_pubkey_der: std::fs::read("/var/lib/sgx-guardian/keys/dkp_pub.der")
-                .unwrap_or_default(),
-            dkp_version: sgx_guardian_client::secure_element::pcr::read_dkp_key_version(),
-            pcr_values: pcr_snapshot
-                .as_ref()
-                .map(|snapshot| snapshot.pcr_values.clone())
-                .unwrap_or_default(),
-            pcr_digest: pcr_snapshot
-                .as_ref()
-                .map(|snapshot| snapshot.composite_digest.clone())
-                .unwrap_or_default(),
-            policy_digest: policy::load_effective_policy_material().digest_hex,
-        },
-    )?;
-    Ok(())
-}
-
-fn read_runtime_virtual_id_pcr_snapshot(
-    node_id: &str,
-) -> Option<sgx_guardian_client::secure_element::pcr::PcrSnapshot> {
-    let path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node_id);
-    sgx_guardian_client::secure_element::pcr::PcrSnapshot::load(&path).ok()
-}
-
-async fn refresh_and_publish_did_doc(
-    node_id: &str,
-    km: &sgx_guardian_client::key_manager::KeyManager,
-    overlay_ip_cidr: &str,
-    ca_host: &str,
-    is_ca: bool,
-) -> Result<(), String> {
-    refresh_and_publish_did_doc_inner(node_id, km, overlay_ip_cidr, ca_host, is_ca, false).await
-}
-
-async fn refresh_and_publish_did_doc_inner(
-    node_id: &str,
-    km: &sgx_guardian_client::key_manager::KeyManager,
-    overlay_ip_cidr: &str,
-    ca_host: &str,
-    is_ca: bool,
-    force: bool,
-) -> Result<(), String> {
-    use sgx_guardian_client::did::{doc_distribution, doc_persistence, doc_sign, document, method};
-
-    let audit_failed = |message: String| {
-        log_audit(
-            node_id,
-            AuditCategory::Did,
-            AuditSeverity::Warning,
-            AuditAction::Failed,
-            &message,
-        );
-        message
-    };
-
-    let dkp_pubkey_path = "/var/lib/sgx-guardian/keys/dkp_pub.der";
-    let (did, _anchor_pub, active) =
-        method::resolve_local(sgx_guardian_client::did::DEFAULT_DID_PATH, dkp_pubkey_path)
-            .map_err(|e| {
-                audit_failed(format!("DID Document refresh resolve_local failed: {}", e))
-            })?;
-
-    let refreshed_km = km
-        .refresh_for_active_dkp()
-        .map_err(|e| audit_failed(format!("DID Document signer refresh failed: {}", e)))?;
-    let signing_km = refreshed_km.as_ref().unwrap_or(km);
-
-    let dkp_pub = signing_km
-        .pubkey_der()
-        .or_else(|_| std::fs::read(dkp_pubkey_path))
-        .map_err(|e| audit_failed(format!("DID Document refresh DKP pubkey failed: {}", e)))?;
-
-    let prev = doc_persistence::load_self().ok().flatten();
-    if !active
-        && matches!(
-            prev.as_ref().and_then(|doc| doc.sgx_status.as_deref()),
-            Some("deactivated")
-        )
-    {
-        return Ok(());
-    }
-
-    let prev_version = prev.as_ref().map(|d| d.sgx_version_id).unwrap_or(0);
-    let created_at = prev.as_ref().map(|d| d.sgx_created.clone());
-    let mut revoked = prev
-        .as_ref()
-        .map(|d| d.sgx_revoked_vm.clone())
-        .unwrap_or_default();
-    let dkp_version = sgx_guardian_client::secure_element::pcr::read_dkp_key_version();
-    let new_vm_id = format!("{}#dkp-v{}", did.as_str(), dkp_version);
-
-    if let Some(existing) = prev.as_ref().and_then(|d| d.verification_method.first()) {
-        let already_revoked = revoked.iter().any(|rv| rv.id == existing.id);
-        if existing.id != new_vm_id && !already_revoked {
-            revoked.push(document::RevokedVm {
-                id: existing.id.clone(),
-                revoked_at: chrono::Utc::now().to_rfc3339(),
-                reason: "rotation".into(),
-            });
-        }
-    }
-
-    let ip_only = overlay_ip_cidr.split('/').next().unwrap_or(overlay_ip_cidr);
-    let attestation_port =
-        sgx_guardian_client::attestation_service::attestation_listener_port_for_node(node_id);
-
-    let input = document::DocBuildInput {
-        did: did.as_str(),
-        node_name: Some(node_id),
-        current_dkp_version: dkp_version,
-        current_dkp_pubkey_der: &dkp_pub,
-        overlay_ip_cidr: Some(overlay_ip_cidr),
-        attestation_bind: Some((ip_only, attestation_port)),
-        cert_bootstrap_bind: if is_ca { Some((ip_only, 50061)) } else { None },
-        revoked,
-        previous_version_id: prev_version,
-        created_at,
-        status: Some(if active {
-            "active".to_string()
-        } else {
-            "deactivated".to_string()
-        }),
-    };
-
-    let mut doc = document::DidDocument::build(input)
-        .map_err(|e| audit_failed(format!("DID Document build failed: {}", e)))?;
-    if !force {
-        if let Some(existing) = prev.as_ref() {
-            if existing.substantively_equal(&doc) {
-                return Ok(());
-            }
-        }
-    }
-
-    let vm_ref = doc
-        .verification_method
-        .first()
-        .map(|v| v.id.clone())
-        .ok_or_else(|| audit_failed("DID Document missing verification method".to_string()))?;
-    doc_sign::sign_in_place(&mut doc, signing_km, &vm_ref)
-        .map_err(|e| audit_failed(format!("DID Document signing failed: {}", e)))?;
-    doc_persistence::save_self(&doc)
-        .map_err(|e| audit_failed(format!("DID Document save_self failed: {}", e)))?;
-    doc_persistence::write_self_floor_version(doc.sgx_version_id)
-        .map_err(|e| audit_failed(format!("DID Document floor counter update failed: {}", e)))?;
-
-    if is_ca {
-        doc_persistence::save_peer(&doc)
-            .map_err(|e| audit_failed(format!("DID Document save_peer failed: {}", e)))?;
-        let agg = doc_persistence::list_peer_docs()
-            .map_err(|e| audit_failed(format!("DID Document list_peers failed: {}", e)))?;
-        doc_persistence::save_ca_aggregate(&agg)
-            .map_err(|e| audit_failed(format!("DID Document save_aggregate failed: {}", e)))?;
-        let issuer =
-            sgx_guardian_client::did::DidRecord::load(sgx_guardian_client::did::DEFAULT_DID_PATH)
-                .map_err(|e| audit_failed(format!("VC issuer DID load failed: {}", e)))?;
-        sgx_guardian_client::vc::issue::ensure_owner_vc(&issuer, signing_km)
-            .map_err(|e| audit_failed(format!("Owner VC ensure failed: {}", e)))?;
-    } else {
-        doc_distribution::publish_to_ca(ca_host, node_id, &doc)
-            .await
-            .map_err(|e| audit_failed(format!("DID Document publish_to_ca failed: {}", e)))?;
-    }
-
-    if active {
-        let where_published = if is_ca {
-            "CA self-aggregate"
-        } else {
-            "CA registry"
-        };
-        let msg = format!(
-            "DID Document v{} published to {} (DKP v{}, VMs={}, revoked={}, services={})",
-            doc.sgx_version_id,
-            where_published,
-            doc.verification_method
-                .first()
-                .and_then(|vm| vm.public_key_jwk.kid.strip_prefix("dkp-v"))
-                .unwrap_or("?"),
-            doc.verification_method.len(),
-            doc.sgx_revoked_vm.len(),
-            doc.service.len(),
-        );
-        println!("📤 {}", msg);
-        log_audit(
-            node_id,
-            AuditCategory::Did,
-            AuditSeverity::Info,
-            AuditAction::Succeeded,
-            &msg,
-        );
-    } else {
-        let msg = format!(
-            "DID Document v{} published with sgx:status=deactivated (final)",
-            doc.sgx_version_id
-        );
-        println!("📤 {}", msg);
-        log_audit(
-            node_id,
-            AuditCategory::Did,
-            AuditSeverity::Warning,
-            AuditAction::Succeeded,
-            &msg,
-        );
-    }
-    Ok(())
-}
-
-// ── Helper function (add to main.rs as a nested fn or module fn) ─────────
-// Resolves nodeA's LAN IP from its config file (written by UDP broadcast).
-async fn resolve_ca_ip_from_config_inner() -> String {
-    // Give broadcasts a short window to populate nodeA's config on members.
-    for attempt in 1..=20 {
-        for path in &[
-            "/etc/sgx-guardian/config/nodeA.yaml",
-            "/etc/sgx-guardian/nodeA.yaml",
-        ] {
-            if let Ok(cfg) = sgx_guardian_client::config_loader::load_config(path) {
-                if cfg.ip != "0.0.0.0" && cfg.ip != "127.0.0.1" && !cfg.ip.is_empty() {
-                    return cfg.ip;
-                }
-            }
-        }
-        if attempt == 1 {
-            eprintln!("⏳ Waiting for nodeA LAN IP via discovery/config sync...");
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-    eprintln!(
-        "⚠️  Could not find nodeA LAN IP from config files. \
-         Is nodeA running and broadcasting? Falling back to 127.0.0.1 (local test only)."
-    );
-    "127.0.0.1".to_string()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Mutex as StdMutex;
-
-    static ENV_LOCK: StdMutex<()> = StdMutex::new(());
-
-    struct EnvGuard {
-        key: &'static str,
-        previous: Option<std::ffi::OsString>,
-    }
-
-    impl EnvGuard {
-        fn capture(key: &'static str) -> Self {
-            Self {
-                key,
-                previous: std::env::var_os(key),
-            }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            if let Some(value) = self.previous.as_ref() {
-                std::env::set_var(self.key, value);
-            } else {
-                std::env::remove_var(self.key);
-            }
-        }
-    }
-
-
-
-
-    #[test]
-    fn missing_runtime_pcr_snapshot_returns_none() {
-        let node_id = format!(
-            "coverage-missing-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock after epoch")
-                .as_nanos()
-        );
-        assert!(read_runtime_virtual_id_pcr_snapshot(&node_id).is_none());
-    }
-
-    #[tokio::test]
-    async fn admin_tls_alias_reports_an_occupied_bind_address() {
-        let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
-            Ok(listener) => listener,
-            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-                // Some CI/sandbox environments prohibit local socket creation.
-                // The occupied-address behavior is still exercised where sockets
-                // are available, while this test remains portable elsewhere.
-                return;
-            }
-            Err(error) => panic!("reserve local port: {error}"),
-        };
-        let bind = listener.local_addr().expect("read bound address");
-        let upstream = "127.0.0.1:9".parse().expect("parse upstream address");
-
-        let error = serve_admin_tls_alias(bind, upstream)
-            .await
-            .expect_err("second listener must not bind the occupied address");
-
-        assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse);
-    }
-
-    // initialize_key_manager: regardless of the process-wide GATES.force_software_keys
-    // Lazy value (fixed at first access, so tests can't reliably flip it), the two
-    // outcomes below hold under every branch combination — see the walk-through in
-    // the PR description for why. Both use a tempdir key path so nothing touches the
-    // real /var/lib/sgx-guardian tree.
-    #[test]
-    fn initialize_key_manager_errors_when_se050_required_but_unavailable() {
-        let _lock = ENV_LOCK.lock().expect("lock environment");
-        let _guard = EnvGuard::capture("SGX_SE050_REQUIRED");
-        std::env::set_var("SGX_SE050_REQUIRED", "1");
-        let temp = tempfile::tempdir().expect("create temp key dir");
-        let key_path = temp.path().join("node.key");
-
-        let result = initialize_key_manager("main-rs-test-node", key_path.to_str().unwrap());
-
-        assert!(
-            result.is_err(),
-            "SE050-required must fail without real SE050 hardware or a conflicting force-software gate"
-        );
-    }
-
-    #[test]
-    fn initialize_key_manager_falls_back_to_software_keys_without_hardware() {
-        let _lock = ENV_LOCK.lock().expect("lock environment");
-        let _guard = EnvGuard::capture("SGX_SE050_REQUIRED");
-        std::env::remove_var("SGX_SE050_REQUIRED");
-        let temp = tempfile::tempdir().expect("create temp key dir");
-        let key_path = temp.path().join("node.key");
-
-        let result = initialize_key_manager("main-rs-test-node", key_path.to_str().unwrap());
-
-        assert!(
-            result.is_ok(),
-            "software fallback must succeed without a required hardware backend: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn refresh_runtime_virtual_id_session_persists_state_in_an_isolated_dir() {
-        let _lock = ENV_LOCK.lock().expect("lock environment");
-        let _guard = EnvGuard::capture("SGX_GUARDIAN_VID_STATE_DIR");
-        let temp = tempfile::tempdir().expect("create temp vid state dir");
-        std::env::set_var("SGX_GUARDIAN_VID_STATE_DIR", temp.path());
-        let node_id = format!("main-rs-vid-test-{}", std::process::id());
-
-        let result = refresh_runtime_virtual_id_session(&node_id);
-
-        assert!(result.is_ok(), "unexpected error: {:?}", result.err());
-        let entries: Vec<_> = std::fs::read_dir(temp.path())
-            .expect("read temp vid state dir")
-            .collect();
-        assert!(
-            !entries.is_empty(),
-            "observe_runtime_virtual_id should have written a state file"
-        );
-    }
-
-    #[tokio::test]
-    async fn refresh_and_publish_did_doc_inner_reports_a_missing_did_record() {
-        let temp = tempfile::tempdir().expect("create temp key dir");
-        let key_path = temp.path().join("node.key");
-        let km = KeyManager::load_or_generate(key_path.to_str().unwrap()).expect("generate key");
-        let node_id = format!("main-rs-diddoc-test-{}", std::process::id());
-
-        // DEFAULT_DID_PATH is a hardcoded /var/lib path with nothing on disk in
-        // test environments, so resolve_local() must fail and the function must
-        // report that failure rather than panicking or hanging on a network call.
-        let result =
-            refresh_and_publish_did_doc_inner(&node_id, &km, "10.0.0.5/24", "ca.example", false, false)
-                .await;
-
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn resolve_ca_ip_from_config_inner_falls_back_when_no_config_is_present() {
-        // No /etc/sgx-guardian/{nodeA.yaml,config/nodeA.yaml} exists in test
-        // environments, so this exhausts all 20 retry attempts (~20s) before
-        // returning the documented fallback.
-        let ip = resolve_ca_ip_from_config_inner().await;
-        assert_eq!(ip, "127.0.0.1");
     }
 }

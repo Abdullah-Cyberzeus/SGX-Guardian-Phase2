@@ -88,6 +88,9 @@ mod tests {
             assert!(result.is_ok() || result.is_err());
             return;
         }
-        assert!(result.is_err(), "the daemon probe cannot run without the binary");
+        assert!(
+            result.is_err(),
+            "the daemon probe cannot run without the binary"
+        );
     }
 }

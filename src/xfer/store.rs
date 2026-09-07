@@ -670,13 +670,17 @@ mod tests {
         assert_eq!(failed.status, TransferStatus::Failed);
         assert_eq!(failed.last_error.as_deref(), Some("checksum mismatch"));
 
-        let completed = mark_receiver_complete(&manifest).await.expect("mark complete");
+        let completed = mark_receiver_complete(&manifest)
+            .await
+            .expect("mark complete");
         assert_eq!(completed.status, TransferStatus::Completed);
         assert_eq!(completed.received_chunks, vec![0, 1]);
         assert!(completed.completed_at.is_some());
         assert!(completed.last_error.is_none());
 
-        let prepared_again = prepare_receiver(&manifest).await.expect("prepare completed receiver");
+        let prepared_again = prepare_receiver(&manifest)
+            .await
+            .expect("prepare completed receiver");
         assert_eq!(prepared_again.status, TransferStatus::Completed);
 
         let vaulted = mark_receiver_complete_with_vault(&manifest, "vault-record-1")
@@ -700,7 +704,10 @@ mod tests {
         let first = manifest("outbox-first");
         let second = manifest("outbox-second");
 
-        assert!(load_outbox("missing").await.expect("missing outbox").is_none());
+        assert!(load_outbox("missing")
+            .await
+            .expect("missing outbox")
+            .is_none());
         assert!(matches!(
             update_outbox("missing", |_| {}).await,
             Err(XferError::TransferNotFound(_))
@@ -751,7 +758,9 @@ mod tests {
             updated_at: "2026-08-31T00:00:00Z".into(),
             completed_at: "2026-08-31T00:00:00Z".into(),
         };
-        save_local_transfer(&local).await.expect("save local transfer");
+        save_local_transfer(&local)
+            .await
+            .expect("save local transfer");
         assert_eq!(
             load_local_transfer(&local.transfer_id)
                 .await
@@ -776,7 +785,9 @@ mod tests {
 
         prepare_receiver(&partial).await.expect("prepare partial");
         prepare_receiver(&complete).await.expect("prepare complete");
-        mark_receiver_complete(&complete).await.expect("complete receiver");
+        mark_receiver_complete(&complete)
+            .await
+            .expect("complete receiver");
 
         let inbox = list_inbox().await.expect("list inbox");
         assert_eq!(inbox.len(), 2);
@@ -785,13 +796,19 @@ mod tests {
             .find(|item| item.transfer_id == partial.transfer_id)
             .expect("partial inbox item");
         assert!(!partial_item.completed);
-        assert!(partial_item.path.as_deref().is_some_and(|path| path.ends_with(".part")));
+        assert!(partial_item
+            .path
+            .as_deref()
+            .is_some_and(|path| path.ends_with(".part")));
         let complete_item = inbox
             .iter()
             .find(|item| item.transfer_id == complete.transfer_id)
             .expect("complete inbox item");
         assert!(complete_item.completed);
-        assert!(complete_item.path.as_deref().is_some_and(|path| path.ends_with("report.txt")));
+        assert!(complete_item
+            .path
+            .as_deref()
+            .is_some_and(|path| path.ends_with("report.txt")));
 
         assert!(cancel_transfer_files(&partial.transfer_id)
             .await
@@ -799,11 +816,15 @@ mod tests {
         assert!(!cancel_transfer_files("missing-transfer")
             .await
             .expect("cancel missing"));
-        assert!(remove_receiver_transfer_dir(&complete.circle_id, &complete.transfer_id)
-            .await
-            .expect("remove complete"));
-        assert!(!remove_receiver_transfer_dir(&complete.circle_id, &complete.transfer_id)
-            .await
-            .expect("remove missing complete"));
+        assert!(
+            remove_receiver_transfer_dir(&complete.circle_id, &complete.transfer_id)
+                .await
+                .expect("remove complete")
+        );
+        assert!(
+            !remove_receiver_transfer_dir(&complete.circle_id, &complete.transfer_id)
+                .await
+                .expect("remove missing complete")
+        );
     }
 }

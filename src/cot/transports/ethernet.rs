@@ -216,4 +216,97 @@ mod tests {
         assert_eq!(transport.transport_type(), TransportType::Ethernet);
         assert_eq!(transport.priority().0, 10);
     }
+
+    fn interface_with_ip(ip: Option<&str>) -> InterfaceInfo {
+        InterfaceInfo::new(
+            "sgx-test-eth".into(),
+            TransportType::Ethernet,
+            ip.map(|value| value.parse().expect("parse ip")),
+            InterfaceStatus::Up,
+        )
+    }
+
+    /// Accepts one TCP connection and returns the address it is listening on.
+    async fn echo_listener() -> (std::net::SocketAddr, tokio::task::JoinHandle<Vec<u8>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback listener");
+        let addr = listener.local_addr().expect("local addr");
+        let handle = tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut buffer = Vec::new();
+            let _ = stream.read_to_end(&mut buffer).await;
+            buffer
+        });
+        (addr, handle)
+    }
+
+    #[tokio::test]
+    async fn is_available_is_false_without_an_address() {
+        let transport = EthernetTransport::new(interface_with_ip(None));
+        assert!(!transport.is_available().await);
+    }
+
+    #[tokio::test]
+    async fn is_available_is_false_for_an_interface_that_does_not_exist() {
+        // The address is set, so the check falls through to the sysfs probes,
+        // which cannot find `sgx-test-eth` and must report unavailable rather
+        // than panicking on the missing files.
+        let transport = EthernetTransport::new(interface_with_ip(Some("127.0.0.1")));
+        assert!(!transport.is_available().await);
+    }
+
+    #[tokio::test]
+    async fn health_check_explains_why_the_link_is_unusable() {
+        let no_ip = EthernetTransport::new(interface_with_ip(None));
+        let health = no_ip.health_check().await;
+        assert!(!health.is_healthy);
+        assert!(health.status_message.contains("no IP"), "{health:?}");
+
+        let missing_iface = EthernetTransport::new(interface_with_ip(Some("127.0.0.1")));
+        let health = missing_iface.health_check().await;
+        assert!(!health.is_healthy);
+        assert!(health.status_message.contains("operstate"), "{health:?}");
+    }
+
+    #[tokio::test]
+    async fn send_writes_a_length_prefixed_frame_to_the_peer() {
+        let (addr, handle) = echo_listener().await;
+        let transport = EthernetTransport::new(interface_with_ip(Some("127.0.0.1")));
+        transport
+            .send(&TransportMessage::new(
+                "device-a".into(),
+                "device-b".into(),
+                addr.to_string(),
+                b"hello".to_vec(),
+            ))
+            .await
+            .expect("send succeeds against a live listener");
+        let received = handle.await.expect("listener task");
+        assert_eq!(&received[..4], &5u32.to_be_bytes());
+        assert_eq!(&received[4..], b"hello");
+    }
+
+    #[tokio::test]
+    async fn send_reports_a_refused_connection_as_a_transport_error() {
+        // Binding and dropping a listener yields a port nothing is serving.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        drop(listener);
+
+        let transport = EthernetTransport::new(interface_with_ip(Some("127.0.0.1")));
+        let error = transport
+            .send(&TransportMessage::new(
+                "device-a".into(),
+                "device-b".into(),
+                addr.to_string(),
+                b"hello".to_vec(),
+            ))
+            .await
+            .expect_err("a closed port must fail");
+        assert!(matches!(error, CotError::TransportError(msg) if msg.contains("Ethernet")));
+    }
 }

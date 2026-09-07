@@ -246,9 +246,10 @@ mod tests {
     #[test]
     fn status_counts_counts_each_status_bucket() {
         let mut inventory = Inventory::default();
-        inventory
-            .by_id
-            .insert("approved".into(), device("approved", DeviceStatus::Approved));
+        inventory.by_id.insert(
+            "approved".into(),
+            device("approved", DeviceStatus::Approved),
+        );
         inventory.by_id.insert(
             "unauthorized".into(),
             device("unauthorized", DeviceStatus::Unauthorized),

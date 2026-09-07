@@ -225,4 +225,62 @@ mod tests {
         let msg = TransportMessage::new("a".into(), "b".into(), "127.0.0.1:9999".into(), vec![1]);
         assert!(t.send(&msg).await.is_err());
     }
+
+    fn cellular_interface(status: InterfaceStatus, ip: Option<&str>) -> InterfaceInfo {
+        InterfaceInfo::new(
+            "sgx-test-wwan".into(),
+            TransportType::Cellular,
+            ip.map(|value| value.parse().expect("parse ip")),
+            status,
+        )
+    }
+
+    #[tokio::test]
+    async fn is_available_is_false_without_a_usable_interface() {
+        let down = CellularTransport::new(cellular_interface(InterfaceStatus::Down, Some("10.0.0.2")));
+        assert!(!down.is_available().await);
+        let no_ip = CellularTransport::new(cellular_interface(InterfaceStatus::Up, None));
+        assert!(!no_ip.is_available().await);
+    }
+
+    #[tokio::test]
+    async fn send_refuses_to_dial_when_the_modem_is_unavailable() {
+        let transport =
+            CellularTransport::new(cellular_interface(InterfaceStatus::Down, Some("10.0.0.2")));
+        let error = transport
+            .send(&TransportMessage::new(
+                "device-a".into(),
+                "device-b".into(),
+                "127.0.0.1:9".into(),
+                b"x".to_vec(),
+            ))
+            .await
+            .expect_err("an unavailable modem must not attempt a connection");
+        assert!(matches!(error, CotError::TransportError(msg) if msg.contains("not available")));
+    }
+
+    #[tokio::test]
+    async fn health_check_reports_the_reason_the_modem_is_unusable() {
+        let health = CellularTransport::new(cellular_interface(InterfaceStatus::Up, None))
+            .health_check()
+            .await;
+        assert!(!health.is_healthy);
+        assert!(health.status_message.contains("not usable"), "{health:?}");
+
+        // Usable interface, but no `carrier` file for this fake name.
+        let health =
+            CellularTransport::new(cellular_interface(InterfaceStatus::Up, Some("10.0.0.2")))
+                .health_check()
+                .await;
+        assert!(!health.is_healthy);
+        assert!(health.status_message.contains("carrier"), "{health:?}");
+    }
+
+    #[test]
+    fn display_name_falls_back_to_the_interface_when_no_modem_answers() {
+        let transport =
+            CellularTransport::new(cellular_interface(InterfaceStatus::Up, Some("10.0.0.2")));
+        let name = transport.display_name();
+        assert!(name.starts_with("Cellular(sgx-test-wwan)"), "{name}");
+    }
 }

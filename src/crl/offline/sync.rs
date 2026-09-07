@@ -410,7 +410,11 @@ mod tests {
         }
     }
 
-    fn sample_peer_doc(did: &str, status: Option<&str>, nebula_ip_cidr: Option<&str>) -> DidDocument {
+    fn sample_peer_doc(
+        did: &str,
+        status: Option<&str>,
+        nebula_ip_cidr: Option<&str>,
+    ) -> DidDocument {
         let mut service = Vec::new();
         if let Some(cidr) = nebula_ip_cidr {
             service.push(ServiceEndpoint {
@@ -540,7 +544,9 @@ mod tests {
         assert_eq!(remaining.len(), 2);
         assert!(remaining.iter().all(|item| item.parked));
         assert!(remaining.iter().any(|item| item.entry.id == retry.id));
-        assert!(remaining.iter().any(|item| item.entry.id == already_parked.id));
+        assert!(remaining
+            .iter()
+            .any(|item| item.entry.id == already_parked.id));
     }
 
     #[test]
@@ -600,7 +606,8 @@ mod tests {
         let _lock = crate::test_support::async_env_lock().await;
         let temp = TempDir::new().expect("tempdir");
         let peers_dir = temp.path().join("peers-missing");
-        let _peers_guard = EnvGuard::set(crate::did::doc_persistence::PEERS_DOC_DIR_ENV, &peers_dir);
+        let _peers_guard =
+            EnvGuard::set(crate::did::doc_persistence::PEERS_DOC_DIR_ENV, &peers_dir);
 
         let reachable = reachable_peers("did:guardian:self", &config(1)).await;
         assert!(reachable.is_empty());
@@ -612,7 +619,8 @@ mod tests {
         let temp = TempDir::new().expect("tempdir");
         let _base = CrlBaseGuard::set(temp.path());
         let peers_dir = temp.path().join("peers");
-        let _peers_guard = EnvGuard::set(crate::did::doc_persistence::PEERS_DOC_DIR_ENV, &peers_dir);
+        let _peers_guard =
+            EnvGuard::set(crate::did::doc_persistence::PEERS_DOC_DIR_ENV, &peers_dir);
 
         // A listening loopback socket = reachable peer. The listener is held
         // for the whole test and drains connections in a loop: `reachable_peers`
@@ -661,7 +669,10 @@ mod tests {
             reachable.len(),
             1,
             "exactly one of the two peers is listening: {:?}",
-            reachable.iter().map(|peer| peer.did.as_str()).collect::<Vec<_>>()
+            reachable
+                .iter()
+                .map(|peer| peer.did.as_str())
+                .collect::<Vec<_>>()
         );
         assert_eq!(reachable[0].did, "did:guardian:reachable-peer");
         accept_task.abort();
@@ -674,9 +685,12 @@ mod tests {
         let _base = CrlBaseGuard::set(temp.path());
         let did_path = temp.path().join("did.json");
         let peers_dir = temp.path().join("peers-empty");
-        make_did_record("did:guardian:offline-node").save(did_path.to_str().unwrap()).expect("save did");
+        make_did_record("did:guardian:offline-node")
+            .save(did_path.to_str().unwrap())
+            .expect("save did");
         let _did_guard = EnvGuard::set("SGX_GUARDIAN_DID_PATH", &did_path);
-        let _peers_guard = EnvGuard::set(crate::did::doc_persistence::PEERS_DOC_DIR_ENV, &peers_dir);
+        let _peers_guard =
+            EnvGuard::set(crate::did::doc_persistence::PEERS_DOC_DIR_ENV, &peers_dir);
 
         // A locally-issued, not-yet-propagated entry so reconcile_from_local
         // has something to pick up.
@@ -707,9 +721,12 @@ mod tests {
         let _base = CrlBaseGuard::set(temp.path());
         let did_path = temp.path().join("did.json");
         let peers_dir = temp.path().join("peers");
-        make_did_record("did:guardian:online-node").save(did_path.to_str().unwrap()).expect("save did");
+        make_did_record("did:guardian:online-node")
+            .save(did_path.to_str().unwrap())
+            .expect("save did");
         let _did_guard = EnvGuard::set("SGX_GUARDIAN_DID_PATH", &did_path);
-        let _peers_guard = EnvGuard::set(crate::did::doc_persistence::PEERS_DOC_DIR_ENV, &peers_dir);
+        let _peers_guard =
+            EnvGuard::set(crate::did::doc_persistence::PEERS_DOC_DIR_ENV, &peers_dir);
 
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let addr = listener.local_addr().expect("addr");

@@ -57,7 +57,10 @@ pub fn default_node_config(node_id: &str) -> NodeConfig {
 /// Startup never fails on a bad config: an unreachable peer entry must not
 /// stop this node from booting, so an invalid file degrades to defaults.
 pub fn load_config_safe(paths: &GuardianPaths, node_id: &str) -> NodeConfig {
-    for candidate in [paths.node_config(node_id), paths.node_config_mirror(node_id)] {
+    for candidate in [
+        paths.node_config(node_id),
+        paths.node_config_mirror(node_id),
+    ] {
         if let Some(path) = candidate.to_str() {
             if let Ok(config) = load_config(path) {
                 return config;
@@ -372,8 +375,7 @@ mod tests {
             " - Rule rule-001: ALLOW 10.0.0.0/24 -> 0.0.0.0/0 (protocol: TCP, port: 443)"
         );
         assert_eq!(
-            lines[2],
-            " - Rule rule-005: DENY 0.0.0.0/0 -> 10.0.0.10 (protocol: UDP)",
+            lines[2], " - Rule rule-005: DENY 0.0.0.0/0 -> 10.0.0.10 (protocol: UDP)",
             "a rule without a port omits the port clause entirely"
         );
     }

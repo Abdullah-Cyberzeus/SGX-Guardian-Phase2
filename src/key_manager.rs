@@ -637,7 +637,11 @@ mod tests {
             .map(|entry| entry.file_name().to_string_lossy().to_string())
             .filter(|name| name.contains(".corrupt."))
             .collect();
-        assert_eq!(quarantined.len(), 1, "expected one quarantined file: {quarantined:?}");
+        assert_eq!(
+            quarantined.len(),
+            1,
+            "expected one quarantined file: {quarantined:?}"
+        );
     }
 
     #[test]
@@ -648,27 +652,33 @@ mod tests {
         let km = KeyManager::load_or_generate(key_path.to_str().expect("path"))
             .expect("a missing key is generated");
         assert_eq!(km.key_path(), key_path.to_str().expect("path"));
-        assert!(key_path.exists(), "the parent directory is created as needed");
+        assert!(
+            key_path.exists(),
+            "the parent directory is created as needed"
+        );
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = fs::metadata(&key_path).expect("metadata").permissions().mode();
-            assert_eq!(mode & 0o777, 0o600, "the private key must not be group/world readable");
+            let mode = fs::metadata(&key_path)
+                .expect("metadata")
+                .permissions()
+                .mode();
+            assert_eq!(
+                mode & 0o777,
+                0o600,
+                "the private key must not be group/world readable"
+            );
         }
     }
 
     #[test]
     fn verify_signature_rejects_a_tampered_message_and_a_foreign_key() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let km = KeyManager::load_or_generate(
-            dir.path().join("a.key").to_str().expect("path"),
-        )
-        .expect("generate");
-        let other = KeyManager::load_or_generate(
-            dir.path().join("b.key").to_str().expect("path"),
-        )
-        .expect("generate");
+        let km = KeyManager::load_or_generate(dir.path().join("a.key").to_str().expect("path"))
+            .expect("generate");
+        let other = KeyManager::load_or_generate(dir.path().join("b.key").to_str().expect("path"))
+            .expect("generate");
 
         let signature = km.sign(b"payload").expect("sign");
         let public_key = km.runtime_public_key_export().expect("export");
@@ -696,10 +706,9 @@ mod tests {
     #[test]
     fn the_software_backend_reports_its_identity_and_dkp_version() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let km = KeyManager::load_or_generate(
-            dir.path().join("device.key").to_str().expect("path"),
-        )
-        .expect("generate");
+        let km =
+            KeyManager::load_or_generate(dir.path().join("device.key").to_str().expect("path"))
+                .expect("generate");
 
         assert_eq!(km.backend_name(), "Software");
         assert_eq!(km.backend_display_name(), "software");

@@ -160,14 +160,26 @@ mod tests {
 
     #[test]
     fn expiring_soon_is_true_for_already_expired_token() {
-        let mut creds = NestCredentials::new(None, None, None, Some("access".into()), Some("refresh".into()));
+        let mut creds = NestCredentials::new(
+            None,
+            None,
+            None,
+            Some("access".into()),
+            Some("refresh".into()),
+        );
         creds.expires_at = Some(Utc::now() - Duration::seconds(1));
         assert!(NestTokenRefresher::is_expiring_soon(&creds, 300));
     }
 
     #[test]
     fn expiring_soon_honors_zero_threshold_boundary() {
-        let mut creds = NestCredentials::new(None, None, None, Some("access".into()), Some("refresh".into()));
+        let mut creds = NestCredentials::new(
+            None,
+            None,
+            None,
+            Some("access".into()),
+            Some("refresh".into()),
+        );
         creds.expires_at = Some(Utc::now() + Duration::seconds(60));
         assert!(!NestTokenRefresher::is_expiring_soon(&creds, 0));
     }
@@ -186,7 +198,9 @@ mod tests {
     #[test]
     fn oauth_response_rejects_missing_required_fields() {
         assert!(serde_json::from_str::<GoogleOAuthTokenResponse>(r#"{"expires_in":1}"#).is_err());
-        assert!(serde_json::from_str::<GoogleOAuthTokenResponse>(r#"{"access_token":"a"}"#).is_err());
+        assert!(
+            serde_json::from_str::<GoogleOAuthTokenResponse>(r#"{"access_token":"a"}"#).is_err()
+        );
     }
 
     #[tokio::test]
@@ -198,7 +212,9 @@ mod tests {
             Some("access".into()),
             None,
         );
-        let error = NestTokenRefresher::refresh_access_token(&creds).await.unwrap_err();
+        let error = NestTokenRefresher::refresh_access_token(&creds)
+            .await
+            .unwrap_err();
         assert!(error.contains("No refresh_token"));
     }
 
@@ -213,7 +229,9 @@ mod tests {
             Some("access".into()),
             Some("refresh".into()),
         );
-        let error = NestTokenRefresher::refresh_access_token(&creds).await.unwrap_err();
+        let error = NestTokenRefresher::refresh_access_token(&creds)
+            .await
+            .unwrap_err();
         assert!(error.contains("client_id"));
         if let Some(value) = old {
             std::env::set_var("SGX_NEST_CLIENT_ID", value);
@@ -231,7 +249,9 @@ mod tests {
             Some("access".into()),
             Some("refresh".into()),
         );
-        let error = NestTokenRefresher::refresh_access_token(&creds).await.unwrap_err();
+        let error = NestTokenRefresher::refresh_access_token(&creds)
+            .await
+            .unwrap_err();
         assert!(error.contains("client_secret"));
         if let Some(value) = old {
             std::env::set_var("SGX_NEST_CLIENT_SECRET", value);

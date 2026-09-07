@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct NodeAnnouncement {
     pub node_id: String,
     pub hostname: String,

@@ -243,10 +243,12 @@ mod tests {
         let temp = tempfile::tempdir().expect("state directory");
         let state = AppState::for_tests(temp.path(), "nodeA", temp.path().to_string_lossy());
 
-        let manager = std::sync::Arc::new(crate::notification::manager::NotificationManager::load_or_create(
-            temp.path().join("notifications.json"),
-            None,
-        ));
+        let manager = std::sync::Arc::new(
+            crate::notification::manager::NotificationManager::load_or_create(
+                temp.path().join("notifications.json"),
+                None,
+            ),
+        );
         let record = manager
             .create_notification("Real manager", "installed", "warning")
             .await;

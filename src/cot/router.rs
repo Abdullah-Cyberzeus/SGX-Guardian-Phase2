@@ -259,7 +259,11 @@ mod tests {
         // The peer advertises two endpoints, but the registry is empty, so
         // every candidate is tried and none can carry the message.
         let (router, _circle, peer_id) = router_with_member(vec![
-            PeerEndpoint::new("peer".into(), TransportType::Bluetooth, "AA:BB:CC:DD:EE:FF".into()),
+            PeerEndpoint::new(
+                "peer".into(),
+                TransportType::Bluetooth,
+                "AA:BB:CC:DD:EE:FF".into(),
+            ),
             PeerEndpoint::new("peer".into(), TransportType::Ethernet, "127.0.0.1:1".into()),
         ])
         .await;

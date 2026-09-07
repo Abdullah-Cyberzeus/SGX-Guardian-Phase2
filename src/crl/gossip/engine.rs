@@ -941,8 +941,7 @@ mod unit_tests {
         let _lock = crate::test_support::blocking_env_lock();
         let peers_dir = TempDir::new().expect("peers tempdir");
         let crl_dir = TempDir::new().expect("crl tempdir");
-        let _peers_guard =
-            EnvGuard::set(doc_persistence::PEERS_DOC_DIR_ENV, peers_dir.path());
+        let _peers_guard = EnvGuard::set(doc_persistence::PEERS_DOC_DIR_ENV, peers_dir.path());
         let _crl_guard = EnvGuard::set(persistence::CRL_BASE_ENV, crl_dir.path());
 
         let self_did = "did:guardian:self0000";
@@ -1159,7 +1158,13 @@ mod unit_tests {
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.expect("accept");
             let (_read_half, mut write_half) = stream.into_split();
-            reject(&mut write_half, "did:guardian:me", "circle-1", "test rejection").await;
+            reject(
+                &mut write_half,
+                "did:guardian:me",
+                "circle-1",
+                "test rejection",
+            )
+            .await;
         });
 
         let client = TcpStream::connect(addr).await.expect("connect loopback");
@@ -1832,10 +1837,8 @@ mod unit_tests {
     #[tokio::test]
     async fn handle_inbound_rejects_wrong_message_kind() {
         let _lock = crate::test_support::async_env_lock().await;
-        let fx = setup_identity_fixture(
-            "engine-inbound-kind",
-            "did:guardian:inbound-local-kind0000",
-        );
+        let fx =
+            setup_identity_fixture("engine-inbound-kind", "did:guardian:inbound-local-kind0000");
         let resolver = Resolver::new(ResolverConfig::default());
         let config = sample_gossip_config(0, 80);
 
@@ -1920,10 +1923,8 @@ mod unit_tests {
     #[tokio::test]
     async fn handle_inbound_rejects_sender_equal_to_local_did() {
         let _lock = crate::test_support::async_env_lock().await;
-        let fx = setup_identity_fixture(
-            "engine-inbound-self",
-            "did:guardian:inbound-local-self0000",
-        );
+        let fx =
+            setup_identity_fixture("engine-inbound-self", "did:guardian:inbound-local-self0000");
         let resolver = Resolver::new(ResolverConfig::default());
         let config = sample_gossip_config(0, 80);
 
@@ -2066,7 +2067,12 @@ mod unit_tests {
         write_peer_doc(
             &fx.peers_dir,
             "sender",
-            &sample_peer_doc(sender_did, Some("active"), Some("10.0.0.51/24"), "sender-node"),
+            &sample_peer_doc(
+                sender_did,
+                Some("active"),
+                Some("10.0.0.51/24"),
+                "sender-node",
+            ),
         );
 
         let resolver = Resolver::new(ResolverConfig::default());
@@ -2126,7 +2132,12 @@ mod unit_tests {
         write_peer_doc(
             &fx.peers_dir,
             "sender",
-            &sample_peer_doc(sender_did, Some("active"), Some("10.0.0.52/24"), "sender-node"),
+            &sample_peer_doc(
+                sender_did,
+                Some("active"),
+                Some("10.0.0.52/24"),
+                "sender-node",
+            ),
         );
 
         let resolver = Resolver::new(ResolverConfig::default());
@@ -2201,4 +2212,195 @@ mod unit_tests {
         );
         drop(holder);
     }
+}
+
+#[cfg(test)]
+mod engine_tests {
+    use super::*;
+    use crate::crl::entry::{RevocationReason, RevokerRole, CRL_CONTEXT_CORE, CRL_CONTEXT_SGX};
+    use crate::did::document::Proof;
+    use crate::test_support::guardian::{seed_owner, GuardianEnv};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+    fn gossip_config() -> GossipConfig {
+        GossipConfig {
+            enabled: true,
+            port: 0,
+            interval_secs: 60,
+            threshold_pct: 60,
+            emergency_enabled: false,
+            emergency_port: 0,
+            emergency_ttl: 1,
+        }
+    }
+
+    fn unsigned_entry(revoked: &str) -> CrlEntry {
+        CrlEntry {
+            context: vec![CRL_CONTEXT_CORE.into(), CRL_CONTEXT_SGX.into()],
+            id: format!("urn:crl:{revoked}"),
+            r#type: vec!["VerifiableCredential".into(), "RevocationCredential".into()],
+            revoked_did: revoked.to_string(),
+            device_id: None,
+            user_id: None,
+            circle_id: "guardian-circle-alpha".to_string(),
+            reason: RevocationReason::Compromised,
+            severity: Severity::Critical,
+            timestamp: "2026-01-01T00:00:00Z".to_string(),
+            revoker_did: "did:guardian:issuer".to_string(),
+            revoker_role: RevokerRole::Owner,
+            evidence: None,
+            proof: Proof::default(),
+            peers_notified: Vec::new(),
+            propagated: false,
+        }
+    }
+
+    /// Drives one inbound gossip exchange over loopback and returns the raw
+    /// response line the handler wrote back, together with its result.
+    async fn exchange(request: &str) -> (Result<(), String>, String) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind gossip listener");
+        let addr = listener.local_addr().expect("local addr");
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            handle_inbound(stream, "nodeA", &Resolver::new(Default::default()), &gossip_config())
+                .await
+        });
+
+        let mut client = tokio::net::TcpStream::connect(addr)
+            .await
+            .expect("connect to gossip listener");
+        client
+            .write_all(format!("{request}\n").as_bytes())
+            .await
+            .expect("write request");
+        client.flush().await.expect("flush request");
+        let mut reply = String::new();
+        let mut reader = tokio::io::BufReader::new(client);
+        let _ = reader.read_line(&mut reply).await;
+        (server.await.expect("handler task"), reply)
+    }
+
+    #[tokio::test]
+    async fn active_gossip_peers_skips_self_and_documents_without_an_overlay_service() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _env = GuardianEnv::new();
+        let owner = seed_owner("nodeA", &crate::did::Did::from_id_bytes(&[3u8; 32]).to_string(), "192.168.100.1/24");
+
+        // The only cached document is this node's own, which is never a peer.
+        let peers = active_gossip_peers(&owner.record.did);
+        assert!(peers.is_empty(), "{peers:?}");
+
+        // Seen from a different local identity, the same document becomes a
+        // gossip candidate because it advertises an overlay endpoint.
+        let peers = active_gossip_peers("did:guardian:someone-else");
+        assert_eq!(peers.len(), 1, "{peers:?}");
+        assert_eq!(peers[0].did, owner.record.did);
+        assert_eq!(peers[0].overlay_ip, "192.168.100.1");
+        assert_eq!(peers[0].node_name, "nodeA");
+    }
+
+    #[tokio::test]
+    async fn handle_inbound_rejects_a_request_that_is_not_a_sync_request() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _env = GuardianEnv::new();
+        seed_owner("nodeA", &crate::did::Did::from_id_bytes(&[4u8; 32]).to_string(), "192.168.100.1/24");
+
+        let request = serde_json::json!({
+            "kind": "crl.gossip.push",
+            "circle_id": crate::crl::issue::DEFAULT_CIRCLE_ID,
+            "sender_did": "did:guardian:peer",
+            "sequence": 1,
+            "merkle_root": "",
+            "fingerprints": [],
+        });
+        let (result, reply) = exchange(&request.to_string()).await;
+        let reason = result.expect_err("an unexpected kind is rejected");
+        assert!(reason.contains("unexpected message kind"), "{reason}");
+        let response: SyncResponse = serde_json::from_str(reply.trim()).expect("rejection is JSON");
+        assert!(response.error.is_some(), "{response:?}");
+    }
+
+    #[tokio::test]
+    async fn handle_inbound_rejects_a_peer_from_another_circle() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _env = GuardianEnv::new();
+        seed_owner("nodeA", &crate::did::Did::from_id_bytes(&[5u8; 32]).to_string(), "192.168.100.1/24");
+
+        let request = serde_json::json!({
+            "kind": KIND_REQUEST,
+            "circle_id": "some-other-circle",
+            "sender_did": "did:guardian:peer",
+            "sequence": 1,
+            "merkle_root": "",
+            "fingerprints": [],
+        });
+        let (result, reply) = exchange(&request.to_string()).await;
+        let reason = result.expect_err("a foreign circle is rejected");
+        assert!(reason.contains("circle mismatch"), "{reason}");
+        assert!(reply.contains("circle mismatch"), "{reply}");
+    }
+
+    #[tokio::test]
+    async fn handle_inbound_rejects_a_request_that_claims_the_local_identity() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _env = GuardianEnv::new();
+        let owner = seed_owner("nodeA", &crate::did::Did::from_id_bytes(&[6u8; 32]).to_string(), "192.168.100.1/24");
+
+        let request = serde_json::json!({
+            "kind": KIND_REQUEST,
+            "circle_id": crate::crl::issue::current_circle_id()
+                .unwrap_or_else(|_| crate::crl::issue::DEFAULT_CIRCLE_ID.to_string()),
+            "sender_did": owner.record.did,
+            "sequence": 1,
+            "merkle_root": "",
+            "fingerprints": [],
+        });
+        let (result, reply) = exchange(&request.to_string()).await;
+        let reason = result.expect_err("a peer may not claim the local DID");
+        assert!(reason.contains("equals local DID"), "{reason}");
+        assert!(reply.contains("equals local DID"), "{reply}");
+    }
+
+    #[tokio::test]
+    async fn handle_inbound_reports_a_malformed_request_line() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _env = GuardianEnv::new();
+        seed_owner("nodeA", &crate::did::Did::from_id_bytes(&[7u8; 32]).to_string(), "192.168.100.1/24");
+
+        let (result, _reply) = exchange("{not json}").await;
+        let reason = result.expect_err("a malformed line is rejected");
+        assert!(reason.contains("bad sync request"), "{reason}");
+    }
+
+    #[tokio::test]
+    async fn verify_batch_drops_unsigned_entries_and_tombstones() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let _env = GuardianEnv::new();
+        seed_owner("nodeA", &crate::did::Did::from_id_bytes(&[8u8; 32]).to_string(), "192.168.100.1/24");
+
+        let (entries, tombstones) = verify_batch(
+            "nodeA",
+            &[unsigned_entry("did:guardian:victim")],
+            &[],
+            &Resolver::new(Default::default()),
+            "guardian-circle-alpha",
+        )
+        .await;
+        assert!(
+            entries.is_empty() && tombstones.is_empty(),
+            "an entry with an empty proof must never be merged"
+        );
+    }
+
+    #[test]
+    fn audit_helpers_tolerate_empty_batches() {
+        // These only write audit records; the contract that matters is that
+        // an empty merge round is a no-op rather than a panic.
+        audit_merged_entries("nodeA", &[], "did:guardian:peer");
+        audit_merged_tombstones("nodeA", &[], "did:guardian:peer");
+        audit_propagated("nodeA", &[], 2);
+    }
+
 }

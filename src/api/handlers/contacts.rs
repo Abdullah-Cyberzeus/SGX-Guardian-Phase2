@@ -292,7 +292,11 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let config_dir = temp.path().join("config");
         std::fs::create_dir_all(&config_dir).expect("config dir");
-        let state = AppState::for_tests(temp.path(), "nodeContactsTest", config_dir.display().to_string());
+        let state = AppState::for_tests(
+            temp.path(),
+            "nodeContactsTest",
+            config_dir.display().to_string(),
+        );
         (temp, state)
     }
 
@@ -427,7 +431,8 @@ mod tests {
             }),
         )
         .await
-        .err().expect("invalid DID format");
+        .err()
+        .expect("invalid DID format");
         assert!(matches!(err, ApiError::BadRequest(_)));
     }
 
@@ -448,7 +453,8 @@ mod tests {
             }),
         )
         .await
-        .err().expect("unverified DID must not be saveable");
+        .err()
+        .expect("unverified DID must not be saveable");
         assert!(matches!(
             err,
             ApiError::BadRequest(_) | ApiError::Internal(_)
@@ -458,14 +464,20 @@ mod tests {
     #[tokio::test]
     async fn get_and_delete_report_not_found_for_an_unknown_did() {
         let (_temp, state) = test_state();
-        let err = get(State(state.clone()), None, Path("did:guardian:ghost".to_string()))
-            .await
-            .err().expect("unknown contact");
+        let err = get(
+            State(state.clone()),
+            None,
+            Path("did:guardian:ghost".to_string()),
+        )
+        .await
+        .err()
+        .expect("unknown contact");
         assert!(matches!(err, ApiError::NotFound(_)));
 
         let err = delete(State(state), None, Path("did:guardian:ghost".to_string()))
             .await
-            .err().expect("unknown contact");
+            .err()
+            .expect("unknown contact");
         assert!(matches!(err, ApiError::NotFound(_)));
     }
 

@@ -771,10 +771,7 @@ mod tests {
         // `lo` and the real `ip` binary are guaranteed present on any Linux
         // sandbox, and loopback's address is always 127.0.0.1 — this is a
         // real (unmocked), deterministic call.
-        assert_eq!(
-            get_interface_ipv4("lo").await.as_deref(),
-            Some("127.0.0.1")
-        );
+        assert_eq!(get_interface_ipv4("lo").await.as_deref(), Some("127.0.0.1"));
     }
 
     #[tokio::test]
@@ -786,7 +783,10 @@ mod tests {
     async fn interface_has_ap_ssid_returns_false_when_iw_is_not_installed() {
         // `iw` is genuinely absent from this sandbox, so this deterministically
         // exercises the "command failed to spawn" branch.
-        assert!(which::which("iw").is_err(), "this test assumes iw is not installed");
+        assert!(
+            which::which("iw").is_err(),
+            "this test assumes iw is not installed"
+        );
         assert!(!interface_has_ap_ssid("lo", "any-ssid").await);
     }
 }
@@ -894,11 +894,8 @@ mod orchestrator_lifecycle_tests {
 
     #[tokio::test]
     async fn dual_wifi_start_fails_closed_at_the_access_point_stage() {
-        let mut dual = DualWifiOrchestrator::new(
-            ap_settings(),
-            DnsmasqSettings::default(),
-            uplink_settings(),
-        );
+        let mut dual =
+            DualWifiOrchestrator::new(ap_settings(), DnsmasqSettings::default(), uplink_settings());
         // The AP is stage 1, so it fails first and the error is surfaced
         // unchanged after NAT teardown and an uplink stop have both been
         // attempted — the fail-closed path.
@@ -915,11 +912,8 @@ mod orchestrator_lifecycle_tests {
 
     #[tokio::test]
     async fn dual_wifi_stop_tears_down_both_halves_when_never_started() {
-        let mut dual = DualWifiOrchestrator::new(
-            ap_settings(),
-            DnsmasqSettings::default(),
-            uplink_settings(),
-        );
+        let mut dual =
+            DualWifiOrchestrator::new(ap_settings(), DnsmasqSettings::default(), uplink_settings());
         dual.stop().await.expect("first stop");
         dual.stop().await.expect("stop must be idempotent");
     }

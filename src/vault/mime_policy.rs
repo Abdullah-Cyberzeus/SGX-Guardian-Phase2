@@ -82,7 +82,10 @@ mod tests {
             "application/msword",
             "application/xml",
         ] {
-            assert!(ensure_mime_allowed(mime).is_ok(), "expected {mime:?} allowed");
+            assert!(
+                ensure_mime_allowed(mime).is_ok(),
+                "expected {mime:?} allowed"
+            );
         }
     }
 

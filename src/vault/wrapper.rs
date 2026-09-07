@@ -1107,11 +1107,17 @@ mod tests {
         let dek = [0x42_u8; 32];
         let first = wrapper.wrap(&dek).expect("first wrap");
         let second = wrapper.wrap(&dek).expect("second wrap");
-        assert_ne!(first, second, "random nonces should produce different wraps");
+        assert_ne!(
+            first, second,
+            "random nonces should produce different wraps"
+        );
         assert_eq!(wrapper.unwrap(&first).expect("unwrap first"), dek);
 
         let restarted = SoftwareWrapper::from_config(&config).expect("restart wrapper");
-        assert_eq!(restarted.unwrap(&second).expect("unwrap after restart"), dek);
+        assert_eq!(
+            restarted.unwrap(&second).expect("unwrap after restart"),
+            dek
+        );
     }
 
     #[test]
@@ -1157,13 +1163,17 @@ mod tests {
             Ok(_) => panic!("mismatched software key id should fail"),
             Err(error) => error,
         };
-        assert!(mismatch.to_string().contains("software wrap key id mismatch"));
+        assert!(mismatch
+            .to_string()
+            .contains("software wrap key id mismatch"));
 
         let missing_se050_key = match wrapper_for_metadata(&config, SE050_WRAP_SCHEME, " ") {
             Ok(_) => panic!("blank SE050 key id should fail"),
             Err(error) => error,
         };
-        assert!(missing_se050_key.to_string().contains("require wrap_key_id"));
+        assert!(missing_se050_key
+            .to_string()
+            .contains("require wrap_key_id"));
 
         let unknown = match wrapper_for_metadata(&config, "made-up", "key") {
             Ok(_) => panic!("unknown scheme should fail"),

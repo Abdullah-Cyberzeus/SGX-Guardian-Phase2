@@ -230,8 +230,8 @@ fn map_spawn_error(err: std::io::Error) -> ThreatError {
 #[cfg(test)]
 mod tests {
     use super::{
-        command_failure_detail, discover_python_paths, map_spawn_error,
-        reload_or_restart_suricata, summarized_output, RuleManager,
+        command_failure_detail, discover_python_paths, map_spawn_error, reload_or_restart_suricata,
+        summarized_output, RuleManager,
     };
     use crate::threat::error::ThreatError;
     use tempfile::tempdir;

@@ -569,12 +569,12 @@ fn set_relay_enabled_in_node_config(node_id: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::did::document::Proof;
+    use crate::proto::sgx::cert_service_server::{CertService, CertServiceServer};
+    use crate::proto::sgx::CertSignResponse;
     use crate::vc::credential::{
         CredentialRole, CredentialStatus, CredentialSubject, MembershipStatus,
         VerifiableCredential, TYPE_CIRCLE_MEMBERSHIP, TYPE_VC, VC_CONTEXT_CORE,
     };
-    use crate::proto::sgx::cert_service_server::{CertService, CertServiceServer};
-    use crate::proto::sgx::CertSignResponse;
     use once_cell::sync::Lazy;
     use std::sync::Mutex;
     use tempfile::TempDir;
@@ -693,9 +693,18 @@ mod tests {
         assert!(!valid_lan_ip("127.0.0.1"));
         assert!(valid_lan_ip("192.168.1.20"));
 
-        assert_eq!(split_host_port("node-a.example:50070"), ("node-a.example".into(), 50070));
-        assert_eq!(split_host_port("node-a.example"), ("node-a.example".into(), 50061));
-        assert_eq!(split_host_port("node-a.example:invalid"), ("node-a.example:invalid".into(), 50061));
+        assert_eq!(
+            split_host_port("node-a.example:50070"),
+            ("node-a.example".into(), 50070)
+        );
+        assert_eq!(
+            split_host_port("node-a.example"),
+            ("node-a.example".into(), 50061)
+        );
+        assert_eq!(
+            split_host_port("node-a.example:invalid"),
+            ("node-a.example:invalid".into(), 50061)
+        );
         assert_eq!(split_host_port("10.0.0.1:0"), ("10.0.0.1".into(), 0));
     }
 
@@ -707,7 +716,10 @@ mod tests {
         let marker = marker.to_str().expect("utf-8 marker path");
 
         sync_role_marker(marker, true);
-        assert_eq!(std::fs::read_to_string(marker).expect("read marker"), "true");
+        assert_eq!(
+            std::fs::read_to_string(marker).expect("read marker"),
+            "true"
+        );
         sync_role_marker(marker, false);
         assert!(!Path::new(marker).exists());
         sync_role_marker(marker, false);
@@ -722,12 +734,19 @@ mod tests {
 
         write_file(path, "first").await.expect("initial write");
         write_file(path, "second").await.expect("replacement write");
-        assert_eq!(tokio::fs::read_to_string(path).await.expect("read key"), "second");
+        assert_eq!(
+            tokio::fs::read_to_string(path).await.expect("read key"),
+            "second"
+        );
         assert!(!Path::new(&format!("{path}.tmp")).exists());
 
         #[cfg(unix)]
         {
-            let mode = std::fs::metadata(path).expect("key metadata").permissions().mode() & 0o777;
+            let mode = std::fs::metadata(path)
+                .expect("key metadata")
+                .permissions()
+                .mode()
+                & 0o777;
             assert_eq!(mode, 0o600);
         }
     }
@@ -753,9 +772,17 @@ mod tests {
 
     #[tokio::test]
     async fn try_request_rejects_an_invalid_ca_uri_before_network_io() {
-        let error = try_request("nodeB", "[invalid", "10.0.0.2", "public-key", false, false, None)
-            .await
-            .expect_err("invalid URI must fail");
+        let error = try_request(
+            "nodeB",
+            "[invalid",
+            "10.0.0.2",
+            "public-key",
+            false,
+            false,
+            None,
+        )
+        .await
+        .expect_err("invalid URI must fail");
         assert!(error.contains("Invalid CA address"));
     }
 
@@ -781,9 +808,17 @@ mod tests {
     async fn try_request_surfaces_grpc_status_errors_from_the_server() {
         let (addr, handle) = spawn_mock_cert_service(MockCertErrorService).await;
 
-        let error = try_request("nodeB", &addr, "10.0.0.10", "public-key", false, false, None)
-            .await
-            .expect_err("server-side gRPC status must surface as an error");
+        let error = try_request(
+            "nodeB",
+            &addr,
+            "10.0.0.10",
+            "public-key",
+            false,
+            false,
+            None,
+        )
+        .await
+        .expect_err("server-side gRPC status must surface as an error");
 
         assert!(error.contains("gRPC cert request failed"));
         handle.abort();
@@ -808,7 +843,10 @@ mod tests {
         )
         .await;
 
-        assert!(outcome.is_ok(), "empty node_id must short-circuit immediately");
+        assert!(
+            outcome.is_ok(),
+            "empty node_id must short-circuit immediately"
+        );
     }
 
     #[tokio::test]

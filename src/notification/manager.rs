@@ -300,10 +300,7 @@ mod tests {
             .list_notifications(false, Some("WARNING"))
             .await
             .is_empty());
-        assert!(manager
-            .list_notifications(false, Some(""))
-            .await
-            .is_empty());
+        assert!(manager.list_notifications(false, Some("")).await.is_empty());
     }
 
     #[tokio::test]
@@ -391,10 +388,7 @@ mod tests {
             .unwrap()
             .is_empty());
 
-        let records = vec![
-            record("a", "info", false),
-            record("b", "critical", true),
-        ];
+        let records = vec![record("a", "info", false), record("b", "critical", true)];
         NotificationManager::write_to_disk_internal(&path, &records).unwrap();
         let loaded = NotificationManager::read_from_disk_internal(&path).unwrap();
 
@@ -414,8 +408,11 @@ mod tests {
         std::fs::write(&malformed, "not json").unwrap();
         assert!(NotificationManager::read_from_disk_internal(&malformed).is_err());
 
-        assert!(NotificationManager::write_to_disk_internal(td.path(), &[record("a", "info", false)])
-            .is_err());
+        assert!(NotificationManager::write_to_disk_internal(
+            td.path(),
+            &[record("a", "info", false)]
+        )
+        .is_err());
     }
 
     #[tokio::test]
@@ -435,13 +432,15 @@ mod tests {
 
         let updated = manager.mark_as_read(&["a".to_string()]).await;
         assert_eq!(updated, 1);
-        assert!(manager
-            .list_notifications(false, None)
-            .await
-            .iter()
-            .find(|n| n.id == "a")
-            .unwrap()
-            .read);
+        assert!(
+            manager
+                .list_notifications(false, None)
+                .await
+                .iter()
+                .find(|n| n.id == "a")
+                .unwrap()
+                .read
+        );
     }
 
     #[test]
@@ -461,7 +460,10 @@ mod tests {
             event_bus: None,
         };
 
-        assert_eq!(manager.save_to_disk_sync(), Err("Lock poisoned".to_string()));
+        assert_eq!(
+            manager.save_to_disk_sync(),
+            Err("Lock poisoned".to_string())
+        );
     }
 
     #[tokio::test]

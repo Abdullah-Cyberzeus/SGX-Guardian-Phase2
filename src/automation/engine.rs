@@ -666,8 +666,7 @@ mod tests {
         }));
         let device_manager = DeviceManager::new(registry, ha_rest, event_bus.clone(), None);
         let presence_tracker = PresenceTracker::new();
-        let timer_store =
-            PendingActionStore::new(dir.path().join("timers.json").to_str().unwrap());
+        let timer_store = PendingActionStore::new(dir.path().join("timers.json").to_str().unwrap());
 
         let engine = AutomationEngine::new(
             config_path.to_str().unwrap(),
@@ -766,9 +765,7 @@ mod tests {
             entity_id: "input_boolean.a".to_string(),
             to_state: None,
         };
-        assert!(!h
-            .engine
-            .evaluate_trigger(&trigger, "input_boolean.b", "on"));
+        assert!(!h.engine.evaluate_trigger(&trigger, "input_boolean.b", "on"));
     }
 
     #[tokio::test]
@@ -875,9 +872,7 @@ mod tests {
     async fn process_state_changed_ignores_events_missing_required_fields() {
         let h = make_harness();
         // Missing "data" entirely.
-        h.engine
-            .process_state_changed(serde_json::json!({}))
-            .await;
+        h.engine.process_state_changed(serde_json::json!({})).await;
         // Missing entity_id.
         h.engine
             .process_state_changed(serde_json::json!({"data": {}}))

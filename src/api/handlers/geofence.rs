@@ -824,12 +824,10 @@ mod tests {
         );
         let request = valid_create_request("Living Room");
 
-        let axum::Json(created) = create_zone(
-            axum::extract::State(test_state(&temp)),
-            axum::Json(request),
-        )
-        .await
-        .expect("create zone");
+        let axum::Json(created) =
+            create_zone(axum::extract::State(test_state(&temp)), axum::Json(request))
+                .await
+                .expect("create zone");
 
         let axum::Json(listed) = list_zones(axum::extract::State(test_state(&temp)))
             .await

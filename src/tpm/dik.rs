@@ -62,6 +62,8 @@ mod tests {
             ..TpmConfig::default()
         };
         let error = ensure(&cfg).expect_err("tpm2_getcap is not installed");
-        assert!(matches!(error, TpmError::NotAvailable(message) if message.contains("cannot reach TPM")));
+        assert!(
+            matches!(error, TpmError::NotAvailable(message) if message.contains("cannot reach TPM"))
+        );
     }
 }

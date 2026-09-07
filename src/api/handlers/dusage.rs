@@ -93,9 +93,7 @@ mod tests {
                 None => std::env::remove_var(crate::dusage::state::DUSAGE_BASE_ENV),
             }
             match self.sysfs.take() {
-                Some(value) => {
-                    std::env::set_var(crate::dusage::counters::SYS_CLASS_NET_ENV, value)
-                }
+                Some(value) => std::env::set_var(crate::dusage::counters::SYS_CLASS_NET_ENV, value),
                 None => std::env::remove_var(crate::dusage::counters::SYS_CLASS_NET_ENV),
             }
         }
@@ -129,7 +127,12 @@ mod tests {
             .unwrap_or_else(|| {
                 panic!(
                     "expected the synthetic eth0 counters, saw {:?}",
-                    snapshot.0.interfaces.iter().map(|i| i.iface.as_str()).collect::<Vec<_>>()
+                    snapshot
+                        .0
+                        .interfaces
+                        .iter()
+                        .map(|i| i.iface.as_str())
+                        .collect::<Vec<_>>()
                 )
             });
         // The totals come straight from the files written above.

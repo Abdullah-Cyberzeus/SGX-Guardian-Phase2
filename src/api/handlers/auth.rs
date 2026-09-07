@@ -856,10 +856,16 @@ mod tests {
         ("SGX_CYLENIUM_OIDC_ISSUER", "https://login.cylenium.example"),
         // Port 1 is reserved and never listening, so the token exchange fails
         // fast and deterministically instead of reaching a real IdP.
-        ("SGX_CYLENIUM_OIDC_TOKEN_ENDPOINT", "http://127.0.0.1:1/token"),
+        (
+            "SGX_CYLENIUM_OIDC_TOKEN_ENDPOINT",
+            "http://127.0.0.1:1/token",
+        ),
         ("SGX_CYLENIUM_OIDC_JWKS_URI", "http://127.0.0.1:1/jwks"),
         ("SGX_CYLENIUM_OIDC_CLIENT_ID", "sgx-client"),
-        ("SGX_CYLENIUM_OIDC_REDIRECT_URI", "https://guardian.local/callback"),
+        (
+            "SGX_CYLENIUM_OIDC_REDIRECT_URI",
+            "https://guardian.local/callback",
+        ),
     ];
 
     struct OidcEnv {
@@ -937,11 +943,17 @@ mod tests {
             .await
             .expect("authorize start succeeds");
         assert_eq!(
-            URL_SAFE_NO_PAD.decode(&started.0.state).expect("decode state").len(),
+            URL_SAFE_NO_PAD
+                .decode(&started.0.state)
+                .expect("decode state")
+                .len(),
             32
         );
         assert_eq!(
-            URL_SAFE_NO_PAD.decode(&started.0.nonce).expect("decode nonce").len(),
+            URL_SAFE_NO_PAD
+                .decode(&started.0.nonce)
+                .expect("decode nonce")
+                .len(),
             32
         );
         assert!(started.0.expires_at > chrono::Utc::now().timestamp());
@@ -1002,7 +1014,10 @@ mod tests {
             .await
             .err()
             .unwrap_or_else(|| panic!("{label} state must be rejected"));
-            assert!(matches!(error, ApiError::Unauthorized(_)), "{label}: {error:?}");
+            assert!(
+                matches!(error, ApiError::Unauthorized(_)),
+                "{label}: {error:?}"
+            );
         }
 
         // A real, unconsumed transaction gets past the state check and fails at
@@ -1050,8 +1065,14 @@ mod tests {
         let _previous = std::env::var_os("SGX_TEST_AUTH_ENV_PROBE");
 
         std::env::set_var("SGX_TEST_AUTH_ENV_PROBE", "  value  ");
-        assert_eq!(optional_env("SGX_TEST_AUTH_ENV_PROBE").as_deref(), Some("value"));
-        assert_eq!(required_env("SGX_TEST_AUTH_ENV_PROBE").expect("present"), "value");
+        assert_eq!(
+            optional_env("SGX_TEST_AUTH_ENV_PROBE").as_deref(),
+            Some("value")
+        );
+        assert_eq!(
+            required_env("SGX_TEST_AUTH_ENV_PROBE").expect("present"),
+            "value"
+        );
 
         std::env::set_var("SGX_TEST_AUTH_ENV_PROBE", "   ");
         assert_eq!(optional_env("SGX_TEST_AUTH_ENV_PROBE"), None);
@@ -1146,7 +1167,10 @@ mod tests {
             let error = validate_member_registration(&state, &user)
                 .err()
                 .unwrap_or_else(|| panic!("{label} must be rejected"));
-            assert!(matches!(error, ApiError::Unauthorized(_)), "{label}: {error:?}");
+            assert!(
+                matches!(error, ApiError::Unauthorized(_)),
+                "{label}: {error:?}"
+            );
         }
 
         // A changed Guardian fingerprint is a conflict, not an expiry — it
@@ -1174,7 +1198,10 @@ mod tests {
         let mut long_lived = member_user(&state);
         long_lived.registration_expires_at =
             Some(chrono::Utc::now().timestamp() + state.session_ttl_secs as i64 * 10);
-        assert_eq!(member_session_ttl(&state, &long_lived), state.session_ttl_secs);
+        assert_eq!(
+            member_session_ttl(&state, &long_lived),
+            state.session_ttl_secs
+        );
 
         // A member whose registration expires sooner is clamped to it.
         let mut short_lived = member_user(&state);

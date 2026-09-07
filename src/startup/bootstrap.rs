@@ -134,7 +134,14 @@ const REQUIRED_APPROVAL_FIELDS: [&str; 5] = [
 /// `approve: true`, which an older binary wrote before approval became a role
 /// name) belongs to a previous format.
 const KNOWN_APPROVAL_VERDICTS: [&str; 8] = [
-    "false", "member", "lighthouse", "relay", "lh_relay", "reject", "no", "lh",
+    "false",
+    "member",
+    "lighthouse",
+    "relay",
+    "lh_relay",
+    "reject",
+    "no",
+    "lh",
 ];
 
 /// Whether an approval request YAML matches the schema this binary reads.
@@ -458,8 +465,11 @@ mod tests {
     fn bootstrap_filesystem_runs_the_whole_first_boot_sequence_for_the_ca() {
         let (_temp, paths) = sandbox();
         std::fs::create_dir_all(paths.nebula_requests()).expect("create requests dir");
-        std::fs::write(paths.nebula_requests().join("stale.yaml"), "approve: true\n")
-            .expect("write stale approval");
+        std::fs::write(
+            paths.nebula_requests().join("stale.yaml"),
+            "approve: true\n",
+        )
+        .expect("write stale approval");
 
         let report = bootstrap_filesystem(&paths, true);
 

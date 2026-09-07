@@ -204,4 +204,118 @@ mod tests {
         let t = SatelliteTransport::new(make_sat("sat1"));
         assert_eq!(t.interface_name(), "sat1");
     }
+
+    fn sat_interface(status: InterfaceStatus, ip: Option<&str>) -> InterfaceInfo {
+        InterfaceInfo::new(
+            "sat0".into(),
+            TransportType::Satellite,
+            ip.map(|value| value.parse().expect("parse ip")),
+            status,
+        )
+    }
+
+    /// Points the gateway probe at a listener under the test's control, so
+    /// the reachable and unreachable branches are both exercised offline.
+    struct GatewayGuard(Option<std::ffi::OsString>);
+
+    impl GatewayGuard {
+        fn set(addr: &str) -> Self {
+            let previous = std::env::var_os("SGX_SAT_GATEWAY_ADDR");
+            std::env::set_var("SGX_SAT_GATEWAY_ADDR", addr);
+            Self(previous)
+        }
+    }
+
+    impl Drop for GatewayGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => std::env::set_var("SGX_SAT_GATEWAY_ADDR", value),
+                None => std::env::remove_var("SGX_SAT_GATEWAY_ADDR"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn send_refuses_an_interface_that_is_not_usable() {
+        let transport = SatelliteTransport::new(sat_interface(InterfaceStatus::Down, Some("100.64.1.2")));
+        let error = transport
+            .send(&TransportMessage::new(
+                "device-a".into(),
+                "device-b".into(),
+                "127.0.0.1:9".into(),
+                b"x".to_vec(),
+            ))
+            .await
+            .expect_err("a downed interface must not dial");
+        assert!(matches!(error, CotError::TransportError(msg) if msg.contains("not available")));
+    }
+
+    #[tokio::test]
+    async fn send_delivers_a_length_prefixed_frame_over_the_link() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let handle = tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut buffer = Vec::new();
+            let _ = stream.read_to_end(&mut buffer).await;
+            buffer
+        });
+
+        SatelliteTransport::new(sat_interface(InterfaceStatus::Up, Some("100.64.1.2")))
+            .send(&TransportMessage::new(
+                "device-a".into(),
+                "device-b".into(),
+                addr.to_string(),
+                b"burst".to_vec(),
+            ))
+            .await
+            .expect("send succeeds");
+        let received = handle.await.expect("listener task");
+        assert_eq!(&received[..4], &5u32.to_be_bytes());
+        assert_eq!(&received[4..], b"burst");
+    }
+
+    #[tokio::test]
+    async fn health_check_and_availability_follow_the_gateway_probe() {
+        let unusable = SatelliteTransport::new(sat_interface(InterfaceStatus::Down, None));
+        assert!(!unusable.is_available().await);
+        let health = unusable.health_check().await;
+        assert!(!health.is_healthy);
+        assert!(health.status_message.contains("not usable"), "{health:?}");
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind gateway stand-in");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            loop {
+                if listener.accept().await.is_err() {
+                    break;
+                }
+            }
+        });
+        let _gateway = GatewayGuard::set(&addr.to_string());
+        let transport = SatelliteTransport::new(sat_interface(InterfaceStatus::Up, Some("100.64.1.2")));
+        assert!(transport.is_available().await);
+        let health = transport.health_check().await;
+        assert!(health.is_healthy, "{health:?}");
+        assert!(health.bandwidth_kbps > 0);
+    }
+
+    #[tokio::test]
+    async fn health_check_reports_a_failed_gateway_probe() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        drop(listener);
+        let _gateway = GatewayGuard::set(&addr.to_string());
+        let transport = SatelliteTransport::new(sat_interface(InterfaceStatus::Up, Some("100.64.1.2")));
+        let health = transport.health_check().await;
+        assert!(!health.is_healthy);
+        assert!(health.status_message.contains("probe failed"), "{health:?}");
+    }
 }

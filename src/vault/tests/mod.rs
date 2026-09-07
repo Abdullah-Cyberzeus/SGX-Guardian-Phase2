@@ -1533,7 +1533,10 @@ async fn vault_config_from_env_uses_default_base_when_env_is_missing() {
 
     let config = VaultConfig::from_env();
 
-    assert_eq!(config.base_dir, std::path::PathBuf::from(crate::vault::VAULT_BASE));
+    assert_eq!(
+        config.base_dir,
+        std::path::PathBuf::from(crate::vault::VAULT_BASE)
+    );
     assert_eq!(
         VaultConfig::DEFAULT_CHUNK_BYTES,
         crate::xfer::XferConfig::DEFAULT_CHUNK_BYTES
@@ -1585,7 +1588,9 @@ async fn write_lock_is_singleton_and_exclusive() {
     assert!(second.try_lock().is_err());
     drop(guard);
 
-    let reacquired = second.try_lock().expect("lock should be available after guard drops");
+    let reacquired = second
+        .try_lock()
+        .expect("lock should be available after guard drops");
     drop(reacquired);
 }
 
@@ -1636,10 +1641,7 @@ fn test_record(
 
 #[test]
 fn persistence_safe_id_replaces_only_path_sensitive_characters() {
-    assert_eq!(
-        persistence::safe_id("urn:uuid/a\\b\0c"),
-        "urn_uuid_a_b_c"
-    );
+    assert_eq!(persistence::safe_id("urn:uuid/a\\b\0c"), "urn_uuid_a_b_c");
     assert_eq!(
         persistence::safe_id("spaces and unicode \u{2603} stay"),
         "spaces and unicode \u{2603} stay"
@@ -1707,9 +1709,12 @@ async fn persistence_lists_sorted_valid_records_and_ignores_unreadable_entries()
     )
     .await
     .expect("write malformed record");
-    tokio::fs::write(persistence::meta_dir(&config).join("not-a-namespace"), b"ignored")
-        .await
-        .expect("write non-dir entry");
+    tokio::fs::write(
+        persistence::meta_dir(&config).join("not-a-namespace"),
+        b"ignored",
+    )
+    .await
+    .expect("write non-dir entry");
 
     let listed = persistence::list_records(&config, None)
         .await
@@ -1801,10 +1806,12 @@ async fn move_to_namespace_moves_blob_metadata_and_updates_namespace_fields() {
             .expect("read moved blob"),
         b"encrypted"
     );
-    assert!(persistence::load_record(&config, "circle-moved", &moved.vault_id)
-        .await
-        .expect("load moved")
-        .is_some());
+    assert!(
+        persistence::load_record(&config, "circle-moved", &moved.vault_id)
+            .await
+            .expect("load moved")
+            .is_some()
+    );
 }
 
 #[tokio::test]
@@ -1903,7 +1910,10 @@ async fn wrapper_for_metadata_rejects_mismatched_empty_and_unknown_metadata() {
         "",
     )
     .expect("blank software key id is accepted for legacy metadata");
-    assert_eq!(software.scheme(), crate::vault::wrapper::SOFTWARE_WRAP_SCHEME);
+    assert_eq!(
+        software.scheme(),
+        crate::vault::wrapper::SOFTWARE_WRAP_SCHEME
+    );
 
     let mismatch = match crate::vault::wrapper::wrapper_for_metadata(
         &config,
@@ -1913,7 +1923,9 @@ async fn wrapper_for_metadata_rejects_mismatched_empty_and_unknown_metadata() {
         Ok(_) => panic!("software key mismatch should fail"),
         Err(error) => error,
     };
-    assert!(mismatch.to_string().contains("software wrap key id mismatch"));
+    assert!(mismatch
+        .to_string()
+        .contains("software wrap key id mismatch"));
 
     let empty_se050 = match crate::vault::wrapper::wrapper_for_metadata(
         &config,
@@ -1925,14 +1937,11 @@ async fn wrapper_for_metadata_rejects_mismatched_empty_and_unknown_metadata() {
     };
     assert!(empty_se050.to_string().contains("require wrap_key_id"));
 
-    let unknown = match crate::vault::wrapper::wrapper_for_metadata(
-        &config,
-        "unknown-scheme",
-        "key",
-    ) {
-        Ok(_) => panic!("unknown scheme should fail"),
-        Err(error) => error,
-    };
+    let unknown =
+        match crate::vault::wrapper::wrapper_for_metadata(&config, "unknown-scheme", "key") {
+            Ok(_) => panic!("unknown scheme should fail"),
+            Err(error) => error,
+        };
     assert!(unknown.to_string().contains("unsupported wrap scheme"));
 }
 

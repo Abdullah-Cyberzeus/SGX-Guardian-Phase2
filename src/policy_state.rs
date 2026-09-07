@@ -349,7 +349,10 @@ rbac_rules:
 
         assert_eq!(policy_dir_path(), td.path());
         assert_eq!(active_policy_path(), td.path().join("active_policy.yaml"));
-        assert_eq!(active_policy_file_path(), td.path().join("active_policy.yaml"));
+        assert_eq!(
+            active_policy_file_path(),
+            td.path().join("active_policy.yaml")
+        );
         assert_eq!(backup_policy_path(), td.path().join("backup_policy.yaml"));
         assert_eq!(pending_policy_path(), td.path().join("pending_policy.yaml"));
     }
@@ -380,8 +383,14 @@ rbac_rules:
         let yaml = "policy_id: digest\nversion: \"1\"\nrules: []\n";
         fs::write(&active_path, yaml).expect("write active policy");
 
-        assert_eq!(current_policy_digest(&active_path).unwrap(), Some(digest_of(yaml)));
-        assert_eq!(current_active_policy_digest().unwrap(), Some(digest_of(yaml)));
+        assert_eq!(
+            current_policy_digest(&active_path).unwrap(),
+            Some(digest_of(yaml))
+        );
+        assert_eq!(
+            current_active_policy_digest().unwrap(),
+            Some(digest_of(yaml))
+        );
     }
 
     #[test]
@@ -495,8 +504,14 @@ rbac_rules:
 
         rollback_policy().expect("rollback from backup");
 
-        assert_eq!(fs::read_to_string(active_policy_path()).unwrap(), backup_yaml);
-        assert_eq!(fs::read_to_string(backup_policy_path()).unwrap(), backup_yaml);
+        assert_eq!(
+            fs::read_to_string(active_policy_path()).unwrap(),
+            backup_yaml
+        );
+        assert_eq!(
+            fs::read_to_string(backup_policy_path()).unwrap(),
+            backup_yaml
+        );
     }
 
     #[test]
@@ -508,7 +523,9 @@ rbac_rules:
 
         let err = load_rbac_rules().expect_err("malformed yaml should fail");
 
-        assert!(err.to_string().contains("Failed to parse active policy YAML"));
+        assert!(err
+            .to_string()
+            .contains("Failed to parse active policy YAML"));
     }
 
     #[test]

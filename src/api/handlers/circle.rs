@@ -37,20 +37,20 @@ const HEADER_GUARDIAN_DID: &str = "x-sgx-guardian-did";
 const HEADER_GUARDIAN_TIMESTAMP: &str = "x-sgx-guardian-timestamp";
 const HEADER_GUARDIAN_NONCE: &str = "x-sgx-guardian-nonce";
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct CircleListResponse {
     pub status: String,
     pub count: usize,
     pub circles: Vec<Circle>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct CircleDetailResponse {
     pub status: String,
     pub circle: Circle,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Debug, Deserialize, Default)]
 pub struct CreateCircleRequest {
     pub name: Option<String>,
     pub description: Option<String>,
@@ -58,20 +58,20 @@ pub struct CreateCircleRequest {
     pub days: Option<i64>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Debug, Deserialize, Default)]
 pub struct EditCircleRequest {
     pub name: Option<String>,
     pub description: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CircleMutationResponse {
     pub status: String,
     pub message: String,
     pub circle: Circle,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct CircleDeleteResponse {
     pub status: String,
     pub message: String,
@@ -79,27 +79,27 @@ pub struct CircleDeleteResponse {
     pub revoked_vc_ids: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct MemberListResponse {
     pub status: String,
     pub count: usize,
     pub members: Vec<CircleMember>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct CircleSnapshotSyncResponse {
     pub status: String,
     pub snapshots_applied: usize,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Debug, Deserialize, Default)]
 pub struct AddMemberRequest {
     pub did: Option<String>,
     pub role: Option<String>,
     pub days: Option<i64>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct MemberMutationResponse {
     pub status: String,
     pub message: String,
@@ -108,27 +108,27 @@ pub struct MemberMutationResponse {
     pub replaced_expired: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct MemberRemoveResponse {
     pub status: String,
     pub message: String,
     pub revoked_vc_ids: Vec<String>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Debug, Deserialize, Default)]
 pub struct ChangeRoleRequest {
     pub role: Option<String>,
     pub days: Option<i64>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct InviteListResponse {
     pub status: String,
     pub count: usize,
     pub invites: Vec<InviteToken>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Debug, Deserialize, Default)]
 pub struct MintInviteRequest {
     pub target_did: Option<String>,
     pub role: Option<String>,
@@ -138,7 +138,7 @@ pub struct MintInviteRequest {
     pub deliver: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct InviteMintResponse {
     pub status: String,
     pub invite_id: String,
@@ -151,19 +151,19 @@ pub struct InviteMintResponse {
     pub invite: InviteToken,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct InviteDeleteResponse {
     pub status: String,
     pub message: String,
     pub invite_id: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct JoinPreviewRequest {
     pub token_b64: String,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct JoinPreviewResponse {
     pub status: String,
     pub circle_id: String,
@@ -174,13 +174,13 @@ pub struct JoinPreviewResponse {
     pub max_uses: u32,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct JoinCircleRequest {
     pub token_b64: String,
     pub owner_host: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RedeemCircleResponse {
     pub status: String,
     pub message: String,
@@ -189,7 +189,7 @@ pub struct RedeemCircleResponse {
     pub member_snapshot: Option<CircleMemberSnapshot>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct JoinCircleResponse {
     pub status: String,
     pub message: String,
@@ -199,21 +199,21 @@ pub struct JoinCircleResponse {
     pub member_snapshot: Option<CircleMemberSnapshot>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct ReceivedInviteListResponse {
     pub status: String,
     pub count: usize,
     pub invites: Vec<ReceivedInvite>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct ReceiveInviteResponse {
     pub status: String,
     pub message: String,
     pub invite: ReceivedInvite,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct RejectInviteResponse {
     pub status: String,
     pub message: String,
@@ -2206,6 +2206,580 @@ fn map_vc_error(err: crate::vc::errors::VcError) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::state::AppState;
+    use crate::test_support::guardian::{seed_owner, GuardianEnv};
+    use tempfile::TempDir;
+
+    /// A Guardian with a signed identity, a seeded Circle registry and an
+    /// Owner membership VC — everything the handlers read before they do any
+    /// work of their own.
+    struct Harness {
+        _env: GuardianEnv,
+        _base: TempDir,
+        state: Arc<AppState>,
+        owner_did: String,
+    }
+
+    async fn harness() -> (tokio::sync::MutexGuard<'static, ()>, Harness) {
+        let lock = crate::test_support::async_env_lock().await;
+        let env = GuardianEnv::new();
+        let base = TempDir::new().expect("tempdir");
+        let config_dir = base.path().join("config");
+        std::fs::create_dir_all(&config_dir).expect("config dir");
+        let state = AppState::for_tests(base.path(), "nodeA", config_dir.display().to_string());
+        seed_owner("nodeA", &state.device_did, "192.168.100.1/24");
+        let owner_did = state.device_did.clone();
+        (
+            lock,
+            Harness {
+                _env: env,
+                _base: base,
+                state,
+                owner_did,
+            },
+        )
+    }
+
+    /// Creates a Circle through the handler and returns its id.
+    async fn create_circle(h: &Harness, name: &str) -> String {
+        let (status, response) = create(
+            State(h.state.clone()),
+            HeaderMap::new(),
+            Json(CreateCircleRequest {
+                name: Some(name.to_string()),
+                description: Some("  a test circle  ".to_string()),
+                circle_id: None,
+                days: None,
+            }),
+        )
+        .await
+        .expect("circle creation succeeds");
+        assert_eq!(status, StatusCode::CREATED);
+        response.0.circle.circle_id
+    }
+
+    fn member_did(seed: u8) -> String {
+        crate::did::Did::from_id_bytes(&[seed; 32]).to_string()
+    }
+
+    #[tokio::test]
+    async fn create_then_list_and_detail_round_trip_through_the_registry() {
+        let (_lock, h) = harness().await;
+        let circle_id = create_circle(&h, "  Family  ").await;
+
+        let listed = list(State(h.state.clone()), None)
+            .await
+            .expect("list circles");
+        assert_eq!(listed.0.status, "success");
+        assert_eq!(listed.0.count, listed.0.circles.len());
+        let created = listed
+            .0
+            .circles
+            .iter()
+            .find(|circle| circle.circle_id == circle_id)
+            .expect("created circle is listed");
+        assert_eq!(created.name, "Family", "the name is trimmed on the way in");
+        assert_eq!(created.description, "a test circle");
+        assert_eq!(created.owner_did, h.owner_did);
+
+        let detail = detail(State(h.state.clone()), None, Path(circle_id.clone()))
+            .await
+            .expect("circle detail");
+        assert_eq!(detail.0.circle.circle_id, circle_id);
+    }
+
+    #[tokio::test]
+    async fn create_rejects_invalid_input_before_touching_the_registry() {
+        let (_lock, h) = harness().await;
+
+        let error = create(
+            State(h.state.clone()),
+            HeaderMap::new(),
+            Json(CreateCircleRequest {
+                name: None,
+                description: None,
+                circle_id: None,
+                days: None,
+            }),
+        )
+        .await
+        .expect_err("a nameless circle is rejected");
+        assert!(matches!(error, ApiError::BadRequest(msg) if msg.contains("required")));
+
+        let error = create(
+            State(h.state.clone()),
+            HeaderMap::new(),
+            Json(CreateCircleRequest {
+                name: Some("Ok".into()),
+                description: None,
+                circle_id: Some("  ".into()),
+                days: None,
+            }),
+        )
+        .await
+        .expect_err("a blank circle id is rejected");
+        assert!(matches!(error, ApiError::BadRequest(_)));
+
+        let error = create(
+            State(h.state.clone()),
+            HeaderMap::new(),
+            Json(CreateCircleRequest {
+                name: Some("Ok".into()),
+                description: None,
+                circle_id: None,
+                days: Some(-1),
+            }),
+        )
+        .await
+        .expect_err("a negative lifetime is rejected");
+        assert!(matches!(error, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn create_refuses_a_duplicate_circle_id() {
+        let (_lock, h) = harness().await;
+        let request = || CreateCircleRequest {
+            name: Some("Neighbours".into()),
+            description: None,
+            circle_id: Some("circle-neighbours".into()),
+            days: None,
+        };
+        create(State(h.state.clone()), HeaderMap::new(), Json(request()))
+            .await
+            .expect("first create succeeds");
+        let error = create(State(h.state.clone()), HeaderMap::new(), Json(request()))
+            .await
+            .expect_err("the second create conflicts");
+        assert!(matches!(error, ApiError::Conflict(msg) if msg.contains("circle-neighbours")));
+    }
+
+    #[tokio::test]
+    async fn create_replays_a_cached_response_for_a_repeated_idempotency_key() {
+        let (_lock, h) = harness().await;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "Idempotency-Key",
+            axum::http::HeaderValue::from_static("circle-key-1"),
+        );
+        let first = create(
+            State(h.state.clone()),
+            headers.clone(),
+            Json(CreateCircleRequest {
+                name: Some("Idempotent".into()),
+                description: None,
+                circle_id: None,
+                days: None,
+            }),
+        )
+        .await
+        .expect("first create");
+        let second = create(
+            State(h.state.clone()),
+            headers,
+            Json(CreateCircleRequest {
+                name: Some("Different name, same key".into()),
+                description: None,
+                circle_id: None,
+                days: None,
+            }),
+        )
+        .await
+        .expect("replayed create");
+        assert_eq!(
+            first.1 .0.circle.circle_id, second.1 .0.circle.circle_id,
+            "the cached response is replayed rather than creating a second circle"
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_updates_name_and_description_and_validates_them() {
+        let (_lock, h) = harness().await;
+        let circle_id = create_circle(&h, "Before").await;
+
+        let updated = edit(
+            State(h.state.clone()),
+            Path(circle_id.clone()),
+            Json(EditCircleRequest {
+                name: Some("  After  ".into()),
+                description: Some("  new text  ".into()),
+            }),
+        )
+        .await
+        .expect("edit succeeds");
+        assert_eq!(updated.0.circle.name, "After");
+        assert_eq!(updated.0.circle.description, "new text");
+
+        let error = edit(
+            State(h.state.clone()),
+            Path(circle_id),
+            Json(EditCircleRequest {
+                name: Some("   ".into()),
+                description: None,
+            }),
+        )
+        .await
+        .expect_err("an empty name is rejected");
+        assert!(matches!(error, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn archive_and_unarchive_flip_the_circle_status() {
+        let (_lock, h) = harness().await;
+        let circle_id = create_circle(&h, "Seasonal").await;
+
+        let archived = archive(State(h.state.clone()), Path(circle_id.clone()))
+            .await
+            .expect("archive succeeds");
+        assert!(archived.0.circle.is_archived());
+
+        let restored = unarchive(State(h.state.clone()), Path(circle_id.clone()))
+            .await
+            .expect("unarchive succeeds");
+        assert!(!restored.0.circle.is_archived());
+    }
+
+    #[tokio::test]
+    async fn detail_and_edit_report_unknown_circles_as_missing() {
+        let (_lock, h) = harness().await;
+        let error = detail(State(h.state.clone()), None, Path("circle-ghost".into()))
+            .await
+            .expect_err("unknown circle");
+        assert!(matches!(error, ApiError::NotFound(_) | ApiError::Forbidden(_)));
+
+        let error = archive(State(h.state.clone()), Path("circle-ghost".into()))
+            .await
+            .expect_err("unknown circle cannot be archived");
+        assert!(matches!(error, ApiError::NotFound(_) | ApiError::Forbidden(_)));
+    }
+
+    #[tokio::test]
+    async fn members_can_be_added_listed_promoted_and_removed() {
+        let (_lock, h) = harness().await;
+        let circle_id = create_circle(&h, "Roster").await;
+        let subject = member_did(7);
+
+        let (status, added) = add_member(
+            State(h.state.clone()),
+            Path(circle_id.clone()),
+            Json(AddMemberRequest {
+                did: Some(subject.clone()),
+                role: Some("member".into()),
+                days: Some(30),
+            }),
+        )
+        .await
+        .expect("add member");
+        assert_eq!(status, StatusCode::CREATED);
+        assert!(!added.0.reused_existing);
+        assert_eq!(added.0.vc.subject_did(), subject);
+
+        let members = list_members(State(h.state.clone()), None, Path(circle_id.clone()))
+            .await
+            .expect("list members");
+        assert_eq!(members.0.count, members.0.members.len());
+        assert!(members
+            .0
+            .members
+            .iter()
+            .any(|member| member.did == subject));
+
+        // Re-adding an active member reuses the existing credential.
+        let (status, reused) = add_member(
+            State(h.state.clone()),
+            Path(circle_id.clone()),
+            Json(AddMemberRequest {
+                did: Some(subject.clone()),
+                role: Some("member".into()),
+                days: Some(30),
+            }),
+        )
+        .await
+        .expect("re-add member");
+        assert_eq!(status, StatusCode::OK);
+        assert!(reused.0.reused_existing);
+
+        let promoted = change_role(
+            State(h.state.clone()),
+            Path((circle_id.clone(), subject.clone())),
+            Json(ChangeRoleRequest {
+                role: Some("owner".into()),
+                days: None,
+            }),
+        )
+        .await
+        .expect("promote member");
+        assert_eq!(promoted.0.status, "success");
+
+        let removed = remove_member(
+            State(h.state.clone()),
+            Path((circle_id.clone(), subject.clone())),
+        )
+        .await
+        .expect("remove member");
+        assert!(!removed.0.revoked_vc_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn member_mutations_validate_their_arguments() {
+        let (_lock, h) = harness().await;
+        let circle_id = create_circle(&h, "Validation").await;
+
+        let error = add_member(
+            State(h.state.clone()),
+            Path(circle_id.clone()),
+            Json(AddMemberRequest {
+                did: Some("   ".into()),
+                role: None,
+                days: None,
+            }),
+        )
+        .await
+        .expect_err("a blank DID is rejected");
+        assert!(matches!(error, ApiError::BadRequest(_)));
+
+        let error = add_member(
+            State(h.state.clone()),
+            Path(circle_id.clone()),
+            Json(AddMemberRequest {
+                did: Some(member_did(9)),
+                role: Some("superuser".into()),
+                days: None,
+            }),
+        )
+        .await
+        .expect_err("an unknown role is rejected");
+        assert!(matches!(error, ApiError::BadRequest(msg) if msg.contains("role")));
+
+        let error = change_role(
+            State(h.state.clone()),
+            Path((circle_id, member_did(9))),
+            Json(ChangeRoleRequest {
+                role: Some("member".into()),
+                days: Some(9_999),
+            }),
+        )
+        .await
+        .expect_err("an out-of-range lifetime is rejected");
+        assert!(matches!(error, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn delete_revokes_every_membership_in_the_circle() {
+        let (_lock, h) = harness().await;
+        let circle_id = create_circle(&h, "Doomed").await;
+        add_member(
+            State(h.state.clone()),
+            Path(circle_id.clone()),
+            Json(AddMemberRequest {
+                did: Some(member_did(11)),
+                role: None,
+                days: None,
+            }),
+        )
+        .await
+        .expect("add member");
+
+        let deleted = delete(State(h.state.clone()), Path(circle_id.clone()))
+            .await
+            .expect("delete circle");
+        assert_eq!(deleted.0.circle_id, circle_id);
+        assert!(!deleted.0.revoked_vc_ids.is_empty());
+
+        let error = detail(State(h.state.clone()), None, Path(circle_id))
+            .await
+            .expect_err("the circle is gone");
+        assert!(matches!(error, ApiError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn invites_can_be_minted_listed_and_revoked() {
+        let (_lock, h) = harness().await;
+        let circle_id = create_circle(&h, "Invites").await;
+        let target = member_did(21);
+
+        let (status, minted) = mint_invite(
+            State(h.state.clone()),
+            Path(circle_id.clone()),
+            HeaderMap::new(),
+            Json(MintInviteRequest {
+                target_did: Some(target.clone()),
+                role: Some("member".into()),
+                expires_in_minutes: Some(30),
+                max_uses: Some(1),
+                owner_host: Some("https://owner.test:8443".into()),
+                deliver: Some(false),
+            }),
+        )
+        .await
+        .expect("mint invite");
+        assert_eq!(status, StatusCode::CREATED);
+        assert!(!minted.0.delivered, "delivery was explicitly disabled");
+        assert!(minted.0.link.contains("owner.test"));
+        assert_eq!(minted.0.invite.target_did, target);
+        let invite_id = minted.0.invite_id.clone();
+
+        let listed = list_invites(State(h.state.clone()), Path(circle_id.clone()))
+            .await
+            .expect("list invites");
+        assert_eq!(listed.0.count, listed.0.invites.len());
+        assert!(listed
+            .0
+            .invites
+            .iter()
+            .any(|invite| invite.id == invite_id));
+
+        // The preview endpoint reads the token without redeeming it.
+        let preview = join_preview(
+            State(h.state.clone()),
+            None,
+            Json(JoinPreviewRequest {
+                token_b64: minted.0.token_b64.clone(),
+            }),
+        )
+        .await
+        .expect("join preview");
+        assert_eq!(preview.0.circle_id, circle_id);
+        assert_eq!(preview.0.role, "member");
+
+        let revoked = revoke_invite(
+            State(h.state.clone()),
+            Path((circle_id.clone(), invite_id.clone())),
+        )
+        .await
+        .expect("revoke invite");
+        assert_eq!(revoked.0.invite_id, invite_id);
+
+        let listed = list_invites(State(h.state.clone()), Path(circle_id))
+            .await
+            .expect("list invites after revoke");
+        assert!(!listed.0.invites.iter().any(|invite| invite.id == invite_id));
+    }
+
+    #[tokio::test]
+    async fn mint_invite_rejects_archived_circles_and_bad_arguments() {
+        let (_lock, h) = harness().await;
+        let circle_id = create_circle(&h, "Closed").await;
+
+        let error = mint_invite(
+            State(h.state.clone()),
+            Path(circle_id.clone()),
+            HeaderMap::new(),
+            Json(MintInviteRequest {
+                target_did: None,
+                role: None,
+                expires_in_minutes: None,
+                max_uses: None,
+                owner_host: Some("https://owner.test".into()),
+                deliver: Some(false),
+            }),
+        )
+        .await
+        .expect_err("a missing target DID is rejected");
+        assert!(matches!(error, ApiError::BadRequest(_)));
+
+        archive(State(h.state.clone()), Path(circle_id.clone()))
+            .await
+            .expect("archive");
+        let error = mint_invite(
+            State(h.state.clone()),
+            Path(circle_id),
+            HeaderMap::new(),
+            Json(MintInviteRequest {
+                target_did: Some(member_did(22)),
+                role: None,
+                expires_in_minutes: None,
+                max_uses: None,
+                owner_host: Some("https://owner.test".into()),
+                deliver: Some(false),
+            }),
+        )
+        .await
+        .expect_err("an archived circle cannot mint invites");
+        assert!(matches!(error, ApiError::Conflict(msg) if msg.contains("archived")));
+    }
+
+    #[tokio::test]
+    async fn revoke_invite_refuses_an_invite_from_another_circle() {
+        let (_lock, h) = harness().await;
+        let first = create_circle(&h, "First").await;
+        let second = create_circle(&h, "Second").await;
+        let minted = mint_invite(
+            State(h.state.clone()),
+            Path(first.clone()),
+            HeaderMap::new(),
+            Json(MintInviteRequest {
+                target_did: Some(member_did(23)),
+                role: None,
+                expires_in_minutes: None,
+                max_uses: None,
+                owner_host: Some("https://owner.test".into()),
+                deliver: Some(false),
+            }),
+        )
+        .await
+        .expect("mint invite");
+
+        let error = revoke_invite(
+            State(h.state.clone()),
+            Path((second, minted.1 .0.invite_id.clone())),
+        )
+        .await
+        .expect_err("an invite may only be revoked through its own circle");
+        assert!(matches!(error, ApiError::BadRequest(msg) if msg.contains("does not belong")));
+    }
+
+    #[tokio::test]
+    async fn join_preview_rejects_a_malformed_token() {
+        let (_lock, h) = harness().await;
+        let error = join_preview(
+            State(h.state.clone()),
+            None,
+            Json(JoinPreviewRequest {
+                token_b64: "not-a-real-token".into(),
+            }),
+        )
+        .await
+        .expect_err("a malformed token is rejected");
+        assert!(matches!(error, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn member_snapshot_is_served_by_the_owner_and_lists_the_roster() {
+        let (_lock, h) = harness().await;
+        let circle_id = create_circle(&h, "Snapshot").await;
+        add_member(
+            State(h.state.clone()),
+            Path(circle_id.clone()),
+            Json(AddMemberRequest {
+                did: Some(member_did(31)),
+                role: None,
+                days: None,
+            }),
+        )
+        .await
+        .expect("add member");
+
+        let snapshot = member_snapshot(State(h.state.clone()), Path(circle_id.clone()))
+            .await
+            .expect("owner serves the snapshot");
+        assert_eq!(snapshot.0.circle_id, circle_id);
+        assert!(!snapshot.0.members.is_empty());
+    }
+
+    #[tokio::test]
+    async fn received_invites_starts_empty_and_rejects_unknown_invite_ids() {
+        let (_lock, h) = harness().await;
+        let received = received_invites(State(h.state.clone()))
+            .await
+            .expect("received invites");
+        assert_eq!(received.0.count, 0);
+
+        let error = reject_invite(State(h.state.clone()), Path("invite-ghost".into()))
+            .await
+            .expect_err("an unknown invite cannot be rejected");
+        assert!(matches!(error, ApiError::NotFound(_) | ApiError::BadRequest(_)));
+    }
+
 
     #[test]
     fn push_container_host_port_ignores_unknown_nodes() {
@@ -2256,7 +2830,10 @@ mod tests {
     #[test]
     fn container_host_candidates_always_ends_with_the_built_in_defaults() {
         let hosts = container_host_candidates();
-        assert!(hosts.contains(&"host.docker.internal".to_string()), "{hosts:?}");
+        assert!(
+            hosts.contains(&"host.docker.internal".to_string()),
+            "{hosts:?}"
+        );
         assert!(hosts.contains(&"127.0.0.1".to_string()), "{hosts:?}");
         // Deduplicated.
         let mut sorted = hosts.clone();
@@ -2267,8 +2844,14 @@ mod tests {
 
     #[test]
     fn required_name_accepts_valid_names() {
-        assert_eq!(required_name(Some("Family Circle")).unwrap(), "Family Circle");
-        assert_eq!(required_name(Some("  Trusted Group  ")).unwrap(), "Trusted Group");
+        assert_eq!(
+            required_name(Some("Family Circle")).unwrap(),
+            "Family Circle"
+        );
+        assert_eq!(
+            required_name(Some("  Trusted Group  ")).unwrap(),
+            "Trusted Group"
+        );
     }
 
     #[test]
@@ -2476,8 +3059,10 @@ mod tests {
     fn container_host_candidates_includes_env_vars_and_defaults() {
         let candidates = container_host_candidates();
         // Should always include defaults if env not set
-        assert!(candidates.contains(&"127.0.0.1".to_string())
-            || candidates.contains(&"host.docker.internal".to_string()));
+        assert!(
+            candidates.contains(&"127.0.0.1".to_string())
+                || candidates.contains(&"host.docker.internal".to_string())
+        );
         // No duplicates
         let mut unique = candidates.clone();
         unique.sort();

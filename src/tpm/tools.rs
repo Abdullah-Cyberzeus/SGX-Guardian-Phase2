@@ -646,11 +646,7 @@ esac"#,
         install_tool(tools.path(), "tpm2_create", "exit 0");
         install_tool(tools.path(), "tpm2_load", "exit 0");
         install_tool(tools.path(), "tpm2_evictcontrol", "exit 0");
-        install_tool(
-            tools.path(),
-            "tpm2_readpublic",
-            "printf DER > \"$6\"",
-        );
+        install_tool(tools.path(), "tpm2_readpublic", "printf DER > \"$6\"");
         let _path = use_tool_dir(tools.path());
         let cli = Tpm2Cli::new(cfg());
         let out_dir = tempfile::tempdir().expect("output dir");

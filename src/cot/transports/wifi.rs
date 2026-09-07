@@ -204,4 +204,89 @@ mod tests {
         assert_eq!(transport.transport_type(), TransportType::WiFi);
         assert_eq!(transport.priority().0, 20);
     }
+
+    fn wifi_interface(ip: Option<&str>) -> InterfaceInfo {
+        InterfaceInfo::new(
+            "sgx-test-wlan".into(),
+            TransportType::WiFi,
+            ip.map(|value| value.parse().expect("parse ip")),
+            InterfaceStatus::Up,
+        )
+    }
+
+    async fn loopback_sink() -> (std::net::SocketAddr, tokio::task::JoinHandle<Vec<u8>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback listener");
+        let addr = listener.local_addr().expect("local addr");
+        let handle = tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut buffer = Vec::new();
+            let _ = stream.read_to_end(&mut buffer).await;
+            buffer
+        });
+        (addr, handle)
+    }
+
+    #[tokio::test]
+    async fn is_available_requires_an_address_and_a_live_interface() {
+        assert!(!WiFiTransport::new(wifi_interface(None)).is_available().await);
+        // The interface name does not exist under /sys, so the sysfs probes
+        // must report it unavailable instead of failing.
+        assert!(
+            !WiFiTransport::new(wifi_interface(Some("127.0.0.1")))
+                .is_available()
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn health_check_names_the_first_failing_condition() {
+        let health = WiFiTransport::new(wifi_interface(None)).health_check().await;
+        assert!(!health.is_healthy);
+        assert!(health.status_message.contains("no IP"), "{health:?}");
+
+        let health = WiFiTransport::new(wifi_interface(Some("127.0.0.1")))
+            .health_check()
+            .await;
+        assert!(!health.is_healthy);
+        assert!(health.status_message.contains("operstate"), "{health:?}");
+    }
+
+    #[tokio::test]
+    async fn send_delivers_a_length_prefixed_frame() {
+        let (addr, handle) = loopback_sink().await;
+        WiFiTransport::new(wifi_interface(Some("127.0.0.1")))
+            .send(&TransportMessage::new(
+                "device-a".into(),
+                "device-b".into(),
+                addr.to_string(),
+                b"wifi-payload".to_vec(),
+            ))
+            .await
+            .expect("send succeeds");
+        let received = handle.await.expect("listener task");
+        assert_eq!(&received[..4], &(b"wifi-payload".len() as u32).to_be_bytes());
+        assert_eq!(&received[4..], b"wifi-payload");
+    }
+
+    #[tokio::test]
+    async fn send_surfaces_a_refused_connection() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        drop(listener);
+        let error = WiFiTransport::new(wifi_interface(Some("127.0.0.1")))
+            .send(&TransportMessage::new(
+                "device-a".into(),
+                "device-b".into(),
+                addr.to_string(),
+                b"x".to_vec(),
+            ))
+            .await
+            .expect_err("a closed port must fail");
+        assert!(matches!(error, CotError::TransportError(msg) if msg.contains("WiFi")));
+    }
 }

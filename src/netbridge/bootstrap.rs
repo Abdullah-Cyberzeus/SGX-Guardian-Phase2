@@ -226,14 +226,17 @@ impl Bootstrapper {
 #[cfg(test)]
 mod tests {
     use super::{BootstrapError, BootstrapOptions, Bootstrapper};
-        use crate::netbridge::types::{ApSettings, NetbridgeError, WifiClientSettings};
+    use crate::netbridge::types::{ApSettings, NetbridgeError, WifiClientSettings};
     use crate::netbridge::validator::ValidationError;
     use std::path::Path;
 
     fn options_in(dir: &Path) -> BootstrapOptions {
         BootstrapOptions {
             runtime_dir: dir.join("runtime").to_string_lossy().into_owned(),
-            template_path: dir.join("hostapd.conf.template").to_string_lossy().into_owned(),
+            template_path: dir
+                .join("hostapd.conf.template")
+                .to_string_lossy()
+                .into_owned(),
             output_config_path: dir.join("hostapd.conf").to_string_lossy().into_owned(),
         }
     }
@@ -280,7 +283,10 @@ mod tests {
         let config: BootstrapError =
             NetbridgeError::ValidationFailed("bad channel".to_string()).into();
         let config_text = config.to_string();
-        assert!(config_text.starts_with("Config Error: "), "got {config_text}");
+        assert!(
+            config_text.starts_with("Config Error: "),
+            "got {config_text}"
+        );
         assert!(config_text.contains("bad channel"));
 
         let io: BootstrapError =

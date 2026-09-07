@@ -618,10 +618,7 @@ mod tests {
     #[test]
     fn parse_nft_block_ip_extracts_ipv4_saddr() {
         let line = "        ip saddr 203.0.113.5 counter packets 1 bytes 60 drop # handle 4";
-        assert_eq!(
-            parse_nft_block_ip(line),
-            Some("203.0.113.5".to_string())
-        );
+        assert_eq!(parse_nft_block_ip(line), Some("203.0.113.5".to_string()));
     }
 
     #[test]
@@ -744,9 +741,7 @@ mod tests {
 
         write_alerts_jsonl(&state, &[matching, matching2, unrelated]);
 
-        let axum::Json(response) = modbus_alerts(State(state))
-            .await
-            .expect("modbus_alerts");
+        let axum::Json(response) = modbus_alerts(State(state)).await.expect("modbus_alerts");
 
         assert_eq!(response.total_matches, 2);
         let rule1 = response

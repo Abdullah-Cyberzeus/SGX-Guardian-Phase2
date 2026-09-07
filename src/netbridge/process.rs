@@ -348,7 +348,9 @@ mod tests {
                 if *rx.borrow() == expected {
                     return;
                 }
-                rx.changed().await.expect("status watch channel closed unexpectedly");
+                rx.changed()
+                    .await
+                    .expect("status watch channel closed unexpectedly");
             }
         })
         .await
@@ -461,7 +463,10 @@ mod tests {
 
     #[tokio::test]
     async fn unexpected_nonzero_exit_without_stop_is_reported_crashed() {
-        let runner = ProcessRunner::new("sh".to_string(), vec!["-c".to_string(), "exit 7".to_string()]);
+        let runner = ProcessRunner::new(
+            "sh".to_string(),
+            vec!["-c".to_string(), "exit 7".to_string()],
+        );
         let mut rx = runner.subscribe();
 
         runner.start().await.expect("start succeeds");
@@ -473,7 +478,10 @@ mod tests {
     async fn unexpected_clean_exit_without_stop_is_still_reported_crashed() {
         // Exit code 0 does not matter: an exit that Guardian did not request
         // (stopping == false) is always treated as a crash for managed daemons.
-        let runner = ProcessRunner::new("sh".to_string(), vec!["-c".to_string(), "exit 0".to_string()]);
+        let runner = ProcessRunner::new(
+            "sh".to_string(),
+            vec!["-c".to_string(), "exit 0".to_string()],
+        );
         let mut rx = runner.subscribe();
 
         runner.start().await.expect("start succeeds");

@@ -1516,9 +1516,14 @@ mod tests {
         critical.open_ports = vec![scanned_port(8080, &[("vulners", "CVE-2024-0001")])];
         let (level, reasons, flagged) = risk_level(&critical);
         assert_eq!(level, "critical");
-        assert!(reasons.iter().any(|r| r == "unauthorized device"), "{reasons:?}");
         assert!(
-            reasons.iter().any(|r| r == "vulnerability findings detected"),
+            reasons.iter().any(|r| r == "unauthorized device"),
+            "{reasons:?}"
+        );
+        assert!(
+            reasons
+                .iter()
+                .any(|r| r == "vulnerability findings detected"),
             "{reasons:?}"
         );
         assert_eq!(flagged, vec![8080], "the risky port is flagged");
@@ -1539,14 +1544,21 @@ mod tests {
         // Unauthorized with a risky port but no findings.
         let mut high = scanned_device(DeviceStatus::Drifted);
         high.open_ports = vec![scanned_port(22, &[])];
-        assert_eq!(risk_level(&high).0, "high", "Drifted counts as unauthorized");
+        assert_eq!(
+            risk_level(&high).0,
+            "high",
+            "Drifted counts as unauthorized"
+        );
 
         // Approved with any open port.
         let mut medium = scanned_device(DeviceStatus::Approved);
         medium.open_ports = vec![scanned_port(9999, &[])];
         let (level, reasons, flagged) = risk_level(&medium);
         assert_eq!(level, "medium");
-        assert!(reasons.is_empty(), "a benign port raises nothing: {reasons:?}");
+        assert!(
+            reasons.is_empty(),
+            "a benign port raises nothing: {reasons:?}"
+        );
         assert!(flagged.is_empty());
 
         // No ports at all, but the OS was fingerprinted.
@@ -1580,7 +1592,10 @@ mod tests {
 
     #[test]
     fn normalize_mac_lossy_falls_back_to_the_uppercased_input() {
-        assert_eq!(super::normalize_mac_lossy("aa-bb-cc-dd-ee-ff"), "AA:BB:CC:DD:EE:FF");
+        assert_eq!(
+            super::normalize_mac_lossy("aa-bb-cc-dd-ee-ff"),
+            "AA:BB:CC:DD:EE:FF"
+        );
         // Not a MAC at all: kept as-is rather than dropped, so a malformed
         // whitelist entry still matches itself.
         assert_eq!(super::normalize_mac_lossy(" wildcard "), "WILDCARD");
@@ -1588,7 +1603,10 @@ mod tests {
 
     #[test]
     fn normalize_mac_for_match_keeps_only_hex_digits() {
-        assert_eq!(super::normalize_mac_for_match("aa:bb-cc.dd ee ff"), "AABBCCDDEEFF");
+        assert_eq!(
+            super::normalize_mac_for_match("aa:bb-cc.dd ee ff"),
+            "AABBCCDDEEFF"
+        );
         assert_eq!(
             super::normalize_mac_for_match("no-hex-here"),
             "EEE",
@@ -1627,7 +1645,10 @@ mod tests {
     fn intensity_name_covers_every_scan_intensity() {
         assert_eq!(super::intensity_name(ScanIntensity::Stealth), "stealth");
         assert_eq!(super::intensity_name(ScanIntensity::Standard), "standard");
-        assert_eq!(super::intensity_name(ScanIntensity::Aggressive), "aggressive");
+        assert_eq!(
+            super::intensity_name(ScanIntensity::Aggressive),
+            "aggressive"
+        );
     }
 
     #[test]
@@ -1685,9 +1706,7 @@ mod tests {
 
     /// A config + state dir pair with an inventory already written, so the
     /// read-side handlers have something real to serve.
-    fn state_with_inventory(
-        devices: Vec<ConnectedDevice>,
-    ) -> (tempfile::TempDir, Arc<AppState>) {
+    fn state_with_inventory(devices: Vec<ConnectedDevice>) -> (tempfile::TempDir, Arc<AppState>) {
         let dir = tempfile::tempdir().expect("tempdir");
         let config_dir = dir.path().join("config");
         let state_dir = dir.path().join("state");
@@ -1704,15 +1723,12 @@ mod tests {
 
     #[tokio::test]
     async fn get_summary_counts_devices_by_status() {
-        let (_dir, state) = state_with_inventory(vec![
-            test_device(DeviceStatus::Approved),
-            {
-                let mut device = test_device(DeviceStatus::Unauthorized);
-                device.device_id = "dev-2".into();
-                device.mac = Some("AA:BB:CC:11:22:44".into());
-                device
-            },
-        ]);
+        let (_dir, state) = state_with_inventory(vec![test_device(DeviceStatus::Approved), {
+            let mut device = test_device(DeviceStatus::Unauthorized);
+            device.device_id = "dev-2".into();
+            device.mac = Some("AA:BB:CC:11:22:44".into());
+            device
+        }]);
 
         let summary = super::get_summary(State(state))
             .await
@@ -1760,20 +1776,20 @@ mod tests {
 
     #[tokio::test]
     async fn list_unauthorized_returns_only_unapproved_devices() {
-        let (_dir, state) = state_with_inventory(vec![
-            test_device(DeviceStatus::Approved),
-            {
-                let mut device = test_device(DeviceStatus::Unauthorized);
-                device.device_id = "dev-2".into();
-                device
-            },
-        ]);
+        let (_dir, state) = state_with_inventory(vec![test_device(DeviceStatus::Approved), {
+            let mut device = test_device(DeviceStatus::Unauthorized);
+            device.device_id = "dev-2".into();
+            device
+        }]);
 
         let listed = super::list_unauthorized(State(state))
             .await
             .expect("list_unauthorized succeeds");
         assert!(
-            listed.0.iter().all(|device| device.status != DeviceStatus::Approved),
+            listed
+                .0
+                .iter()
+                .all(|device| device.status != DeviceStatus::Approved),
             "approved devices must not be listed"
         );
     }
@@ -1862,7 +1878,12 @@ mod tests {
         let (dir, state) = state_with_inventory(vec![test_device(DeviceStatus::Approved)]);
         let raw_dir = dir.path().join("state").join("raw");
         std::fs::create_dir_all(&raw_dir).expect("raw dir");
-        for name in ["1700000000.xml", "1800000000.xml", "not-a-timestamp.xml", "notes.txt"] {
+        for name in [
+            "1700000000.xml",
+            "1800000000.xml",
+            "not-a-timestamp.xml",
+            "notes.txt",
+        ] {
             std::fs::write(raw_dir.join(name), b"<nmaprun/>").expect("write raw file");
         }
 

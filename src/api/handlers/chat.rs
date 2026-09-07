@@ -1534,7 +1534,10 @@ mod tests {
         assert_eq!(get_grpc_addr("10.0.0.1", "nodeB"), "10.0.0.1:50252");
         assert_eq!(get_grpc_addr("10.0.0.1", "nodeC"), "10.0.0.1:50253");
         assert_eq!(get_grpc_addr("192.168.1.5", "unknown"), "192.168.1.5:50255");
-        assert_eq!(get_grpc_addr("192.168.1.20", "unknown"), "192.168.1.20:50251");
+        assert_eq!(
+            get_grpc_addr("192.168.1.20", "unknown"),
+            "192.168.1.20:50251"
+        );
         assert_eq!(get_grpc_addr("not-an-ip", "unknown"), "not-an-ip:50251");
     }
 

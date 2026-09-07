@@ -309,7 +309,10 @@ mod tests {
         assert!(registry.signature.is_some());
         assert!(path.exists());
         assert!(!path.with_extension("json.tmp").exists());
-        assert!(DeviceRegistry::load(&path).await.expect("reload").verify_signature());
+        assert!(DeviceRegistry::load(&path)
+            .await
+            .expect("reload")
+            .verify_signature());
     }
 
     #[tokio::test]
@@ -466,11 +469,18 @@ mod tests {
                 ..Default::default()
             })
             .expect("insert");
-        assert!(registry.mark_blocked(&record.device_id, true).unwrap().blocked);
-        assert!(!registry
-            .mark_blocked(&record.device_id, false)
-            .unwrap()
-            .blocked);
+        assert!(
+            registry
+                .mark_blocked(&record.device_id, true)
+                .unwrap()
+                .blocked
+        );
+        assert!(
+            !registry
+                .mark_blocked(&record.device_id, false)
+                .unwrap()
+                .blocked
+        );
     }
 
     #[test]

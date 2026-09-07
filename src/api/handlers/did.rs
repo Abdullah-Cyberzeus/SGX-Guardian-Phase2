@@ -825,12 +825,18 @@ mod tests {
     /// `BadRequest`, each carrying its own message through unchanged.
     fn client_fault_variants() -> Vec<(&'static str, DidError)> {
         vec![
-            ("InvalidFormat", DidError::InvalidFormat("bad format".into())),
+            (
+                "InvalidFormat",
+                DidError::InvalidFormat("bad format".into()),
+            ),
             ("WrongMethod", DidError::WrongMethod("bad method".into())),
             ("Base58", DidError::Base58("bad base58".into())),
             ("UidUnavailable", DidError::UidUnavailable("no uid".into())),
             ("Signing", DidError::Signing("sign failed".into())),
-            ("DkpPubkeyMissing", DidError::DkpPubkeyMissing("no dkp".into())),
+            (
+                "DkpPubkeyMissing",
+                DidError::DkpPubkeyMissing("no dkp".into()),
+            ),
         ]
     }
 
@@ -928,7 +934,10 @@ mod tests {
             std::fs::create_dir_all(&peers).expect("peers dir");
             std::env::set_var(doc_persistence::SELF_DOC_PATH_ENV, dir.join("did_doc.json"));
             std::env::set_var(doc_persistence::PEERS_DOC_DIR_ENV, &peers);
-            Self { self_prev, peers_prev }
+            Self {
+                self_prev,
+                peers_prev,
+            }
         }
     }
 
@@ -1109,7 +1118,8 @@ mod tests {
             .await
             .expect("listing succeeds");
         assert_eq!(
-            listed.0.count, 0,
+            listed.0.count,
+            0,
             "an unverifiable peer document must be filtered out, but {} were listed",
             listed.0.peers.len()
         );
@@ -1202,7 +1212,10 @@ mod tests {
         }
         // Even an I/O failure is reported as a bad query here, since the only
         // input to a query is the caller's DID string.
-        assert!(matches!(did_query_error(other_io()), ApiError::BadRequest(_)));
+        assert!(matches!(
+            did_query_error(other_io()),
+            ApiError::BadRequest(_)
+        ));
     }
 
     #[test]
@@ -1262,7 +1275,10 @@ mod tests {
         ));
         for (label, err) in client_fault_variants() {
             assert!(
-                matches!(did_document_verify_error(err, path), ApiError::BadRequest(_)),
+                matches!(
+                    did_document_verify_error(err, path),
+                    ApiError::BadRequest(_)
+                ),
                 "{label}"
             );
         }

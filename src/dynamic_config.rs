@@ -400,19 +400,48 @@ pub async fn start_ip_monitor(
     });
 }
 
-pub fn update_peer_config(node_id: &str, hostname: &str, ip: &str, port: u16, public_key: &str) {
-    if node_id.is_empty()
-        || !node_id
+/// Directory the per-node dynamic configs live in.
+pub const CONFIG_DIR: &str = "/etc/sgx-guardian/config";
+
+/// Whether a node id is safe to interpolate into a config file path.
+///
+/// The id arrives from a broadcast datagram, so anything outside this set
+/// could escape the config directory via `..` or a path separator.
+pub fn is_safe_node_id(node_id: &str) -> bool {
+    !node_id.is_empty()
+        && node_id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
+}
+
+pub fn update_peer_config(node_id: &str, hostname: &str, ip: &str, port: u16, public_key: &str) {
+    update_peer_config_in(
+        std::path::Path::new(CONFIG_DIR),
+        node_id,
+        hostname,
+        ip,
+        port,
+        public_key,
+    )
+}
+
+/// [`update_peer_config`] against an explicit config directory.
+pub fn update_peer_config_in(
+    config_dir: &std::path::Path,
+    node_id: &str,
+    hostname: &str,
+    ip: &str,
+    port: u16,
+    public_key: &str,
+) {
+    if !is_safe_node_id(node_id) {
         eprintln!(
             "⚠️ update_peer_config: rejected invalid node_id '{}'",
             node_id
         );
         return;
     }
-    let path = format!("/etc/sgx-guardian/config/{}.yaml", node_id);
+    let path = config_dir.join(format!("{}.yaml", node_id));
 
     if let Ok(existing) = std::fs::read_to_string(&path) {
         let mut lines: Vec<String> = existing.lines().map(|l| l.to_string()).collect();
@@ -464,7 +493,7 @@ pub fn update_peer_config(node_id: &str, hostname: &str, ip: &str, port: u16, pu
 
         match std::fs::write(&path, &result) {
             Ok(_) => tracing::debug!("Config updated (field-level): {} -> ip={}", node_id, ip),
-            Err(e) => eprintln!("Config write failed: {} -> {}", path, e),
+            Err(e) => eprintln!("Config write failed: {} -> {}", path.display(), e),
         }
         return;
     }
@@ -475,7 +504,7 @@ pub fn update_peer_config(node_id: &str, hostname: &str, ip: &str, port: u16, pu
     );
     match std::fs::write(&path, &yaml) {
         Ok(_) => println!("Config created: {} -> ip={}", node_id, ip),
-        Err(e) => eprintln!("Config write failed: {} -> {}", path, e),
+        Err(e) => eprintln!("Config write failed: {} -> {}", path.display(), e),
     }
 }
 
@@ -511,6 +540,165 @@ pub fn sanitize_config_ip_if_invalid(config_path: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn routability_rejects_placeholder_loopback_link_local_and_docker_ranges() {
+        assert!(is_routable_ip("192.168.1.20"));
+        assert!(is_routable_ip("10.4.3.2"));
+        assert!(
+            is_routable_ip("172.16.0.5"),
+            "only 172.17.x is the docker bridge"
+        );
+
+        assert!(!is_routable_ip(""), "empty");
+        assert!(!is_routable_ip("0.0.0.0"), "the unspecified placeholder");
+        assert!(!is_routable_ip("127.0.0.1"), "loopback");
+        assert!(!is_routable_ip("127.9.9.9"), "the whole loopback range");
+        assert!(
+            !is_routable_ip("169.254.1.1"),
+            "link-local autoconfiguration"
+        );
+        assert!(!is_routable_ip("172.17.0.2"), "the default docker bridge");
+        assert!(!is_routable_ip("not-an-ip"));
+        assert!(!is_routable_ip("::1"), "IPv6 is not supported here");
+        assert!(!is_routable_ip("192.168.1"), "a truncated address");
+    }
+
+    #[test]
+    fn a_node_id_is_only_safe_when_it_cannot_escape_the_config_directory() {
+        for safe in ["nodeA", "node-b", "node_c", "edge7"] {
+            assert!(is_safe_node_id(safe), "{safe}");
+        }
+        for unsafe_id in ["", "../etc/passwd", "node/a", "node.a", "node a", "node$"] {
+            assert!(!is_safe_node_id(unsafe_id), "{unsafe_id:?}");
+        }
+    }
+
+    #[test]
+    fn an_endpoint_host_is_split_off_its_port() {
+        assert_eq!(
+            host_from_endpoint("192.168.1.20:4242").as_deref(),
+            Some("192.168.1.20")
+        );
+        assert_eq!(
+            host_from_endpoint("ca.guardian:4242").as_deref(),
+            Some("ca.guardian")
+        );
+        assert!(host_from_endpoint(":4242").is_none(), "no host");
+        assert!(host_from_endpoint("no-port").is_none());
+        assert!(host_from_endpoint("").is_none());
+    }
+
+    #[test]
+    fn a_peer_config_is_created_when_none_exists() {
+        let temp = tempfile::tempdir().expect("create sandbox");
+
+        update_peer_config_in(
+            temp.path(),
+            "nodeB",
+            "nodeb.guardian",
+            "192.168.1.20",
+            50052,
+            "pk",
+        );
+
+        let written = std::fs::read_to_string(temp.path().join("nodeB.yaml")).expect("read");
+        let parsed: crate::config_loader::NodeConfig =
+            serde_yaml::from_str(&written).expect("the created config must be loadable");
+        assert_eq!(parsed.node_id, "nodeB");
+        assert_eq!(parsed.hostname, "nodeb.guardian");
+        assert_eq!(parsed.ip, "192.168.1.20");
+        assert_eq!(parsed.port, 50052);
+        assert_eq!(parsed.public_key, "pk");
+    }
+
+    #[test]
+    fn an_existing_peer_config_is_updated_field_by_field_preserving_other_keys() {
+        let temp = tempfile::tempdir().expect("create sandbox");
+        let path = temp.path().join("nodeB.yaml");
+        std::fs::write(
+            &path,
+            "node_id: \"nodeB\"\nhostname: \"old\"\nip: \"10.0.0.1\"\nport: 1\npublic_key: \"old-pk\"\noffline_mode: 0\n",
+        )
+        .expect("seed config");
+
+        update_peer_config_in(
+            temp.path(),
+            "nodeB",
+            "new.guardian",
+            "192.168.1.20",
+            50052,
+            "new-pk",
+        );
+
+        let written = std::fs::read_to_string(&path).expect("read");
+        assert!(
+            written.contains("offline_mode: 0"),
+            "unrelated keys must survive a field-level update: {written}"
+        );
+        let parsed: crate::config_loader::NodeConfig =
+            serde_yaml::from_str(&written).expect("still loadable");
+        assert_eq!(parsed.hostname, "new.guardian");
+        assert_eq!(parsed.ip, "192.168.1.20");
+        assert_eq!(parsed.port, 50052);
+        assert_eq!(parsed.public_key, "new-pk");
+        assert_eq!(parsed.offline_mode, 0);
+    }
+
+    #[test]
+    fn missing_fields_are_appended_to_an_existing_peer_config() {
+        let temp = tempfile::tempdir().expect("create sandbox");
+        let path = temp.path().join("nodeB.yaml");
+        std::fs::write(&path, "node_id: \"nodeB\"\n").expect("seed partial config");
+
+        update_peer_config_in(
+            temp.path(),
+            "nodeB",
+            "nodeb.guardian",
+            "192.168.1.20",
+            50052,
+            "pk",
+        );
+
+        let parsed: crate::config_loader::NodeConfig =
+            serde_yaml::from_str(&std::fs::read_to_string(&path).expect("read"))
+                .expect("the completed config must be loadable");
+        assert_eq!(parsed.hostname, "nodeb.guardian");
+        assert_eq!(parsed.port, 50052);
+    }
+
+    #[test]
+    fn an_unchanged_peer_config_is_not_rewritten() {
+        let temp = tempfile::tempdir().expect("create sandbox");
+        let path = temp.path().join("nodeB.yaml");
+        update_peer_config_in(
+            temp.path(),
+            "nodeB",
+            "nodeb.guardian",
+            "192.168.1.20",
+            50052,
+            "pk",
+        );
+        let first = std::fs::read_to_string(&path).expect("read");
+        let first_mtime = std::fs::metadata(&path).expect("metadata").modified().ok();
+
+        update_peer_config_in(
+            temp.path(),
+            "nodeB",
+            "nodeb.guardian",
+            "192.168.1.20",
+            50052,
+            "pk",
+        );
+
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), first);
+        assert_eq!(
+            std::fs::metadata(&path).expect("metadata").modified().ok(),
+            first_mtime,
+            "an identical update must not touch the file"
+        );
+    }
+
     use std::fs;
     use tokio::net::TcpListener;
 
@@ -586,8 +774,7 @@ mod tests {
         let path = file.path().to_str().unwrap();
         fs::write(path, "node_id: test\n  ip: \"127.0.0.1\"\nport: 50070\n").unwrap();
 
-        let (old_ip, new_ip, changed) =
-            update_config_ip_if_changed(path, "192.168.1.100").unwrap();
+        let (old_ip, new_ip, changed) = update_config_ip_if_changed(path, "192.168.1.100").unwrap();
 
         assert_eq!(old_ip, "127.0.0.1");
         assert_eq!(new_ip, "192.168.1.100");
@@ -615,8 +802,9 @@ mod tests {
 
     #[test]
     fn update_config_ip_if_changed_returns_errors_for_missing_file_and_missing_ip_field() {
-        let missing = update_config_ip_if_changed("/tmp/sgx-dynamic-config-missing.yaml", "1.2.3.4")
-            .expect_err("missing file should fail");
+        let missing =
+            update_config_ip_if_changed("/tmp/sgx-dynamic-config-missing.yaml", "1.2.3.4")
+                .expect_err("missing file should fail");
         assert!(missing.to_string().contains("Cannot read"));
 
         let file = tempfile::NamedTempFile::new().unwrap();
@@ -624,8 +812,8 @@ mod tests {
         let content = "node_id: test\nport: 50070\n";
         fs::write(path, content).unwrap();
 
-        let err = update_config_ip_if_changed(path, "1.2.3.4")
-            .expect_err("missing ip field should fail");
+        let err =
+            update_config_ip_if_changed(path, "1.2.3.4").expect_err("missing ip field should fail");
         assert!(err.to_string().contains("'ip:' field not found"));
         assert_eq!(fs::read_to_string(path).unwrap(), content);
     }
@@ -673,7 +861,9 @@ mod tests {
 
         fs::write(path, "node_id: test\nip: \"300.1.1.1\"\n").unwrap();
         sanitize_config_ip_if_invalid(path).unwrap();
-        assert!(fs::read_to_string(path).unwrap().contains("ip: \"0.0.0.0\""));
+        assert!(fs::read_to_string(path)
+            .unwrap()
+            .contains("ip: \"0.0.0.0\""));
     }
 
     #[test]
@@ -702,10 +892,7 @@ mod tests {
             host_from_endpoint("10.0.0.5:4242"),
             Some("10.0.0.5".to_string())
         );
-        assert_eq!(
-            host_from_endpoint("[::1]:50070"),
-            Some("[::1]".to_string())
-        );
+        assert_eq!(host_from_endpoint("[::1]:50070"), Some("[::1]".to_string()));
         assert_eq!(
             host_from_endpoint("host:with:colons:123"),
             Some("host:with:colons".to_string())
@@ -821,10 +1008,9 @@ mod tests {
     async fn overlay_is_reachable_and_reachable_lighthouse_name_return_none_without_a_registry() {
         // `LIGHTHOUSE_REGISTRY_PATH` is likewise a hardcoded, non-overridable
         // path that is genuinely absent in this sandbox.
-        assert!(!std::path::Path::new(
-            "/var/lib/sgx-guardian/nebula/lighthouse_registry.json"
-        )
-        .exists());
+        assert!(
+            !std::path::Path::new("/var/lib/sgx-guardian/nebula/lighthouse_registry.json").exists()
+        );
         assert_eq!(reachable_lighthouse_name().await, None);
         assert!(!overlay_is_reachable().await);
     }

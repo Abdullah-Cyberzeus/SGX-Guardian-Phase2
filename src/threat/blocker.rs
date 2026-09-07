@@ -998,20 +998,31 @@ mod tests {
         let _ = take_mock_nft_calls();
 
         let alert = test_alert("203.0.113.31", Severity::High);
-        let first = blocker.maybe_block(&alert).await.expect("first maybe_block");
+        let first = blocker
+            .maybe_block(&alert)
+            .await
+            .expect("first maybe_block");
         assert!(first, "first alert for a new IP should be blocked");
         let calls_after_first = take_mock_nft_calls();
-        assert!(calls_after_first.iter().any(|c| c.contains(&"drop".to_string())));
+        assert!(calls_after_first
+            .iter()
+            .any(|c| c.contains(&"drop".to_string())));
 
-        let second = blocker.maybe_block(&alert).await.expect("second maybe_block");
-        assert!(!second, "duplicate alert for an already-blocked IP is a no-op");
+        let second = blocker
+            .maybe_block(&alert)
+            .await
+            .expect("second maybe_block");
+        assert!(
+            !second,
+            "duplicate alert for an already-blocked IP is a no-op"
+        );
         assert!(
             take_mock_nft_calls().is_empty(),
             "duplicate block must not issue new nft commands"
         );
 
-        let records = load_block_records(&td.path().join("blocked_ips.json"))
-            .expect("load records");
+        let records =
+            load_block_records(&td.path().join("blocked_ips.json")).expect("load records");
         assert_eq!(records.iter().filter(|r| r.ip == "203.0.113.31").count(), 1);
     }
 
@@ -1144,7 +1155,9 @@ mod tests {
 
         let calls = take_mock_nft_calls();
         assert!(calls.iter().any(|c| c.contains(&"flush".to_string())));
-        assert!(calls.iter().any(|c| c.contains(&"203.0.113.51".to_string())));
+        assert!(calls
+            .iter()
+            .any(|c| c.contains(&"203.0.113.51".to_string())));
     }
 
     #[tokio::test]
@@ -1184,7 +1197,10 @@ mod tests {
             .await
             .expect("block entry");
 
-        let removed = blocker.unblock_ip("203.0.113.60").await.expect("unblock_ip");
+        let removed = blocker
+            .unblock_ip("203.0.113.60")
+            .await
+            .expect("unblock_ip");
         assert!(removed);
 
         let records =
@@ -1291,8 +1307,7 @@ mod tests {
     #[test]
     fn load_block_records_returns_empty_when_file_missing() {
         let td = tempdir().expect("tempdir");
-        let records =
-            load_block_records(&td.path().join("nope.json")).expect("missing file is ok");
+        let records = load_block_records(&td.path().join("nope.json")).expect("missing file is ok");
         assert!(records.is_empty());
     }
 
