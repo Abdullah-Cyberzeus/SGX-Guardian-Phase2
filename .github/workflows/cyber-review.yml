@@ -21,7 +21,7 @@ name: Cybersecurity Review Gate
 
 on:
   pull_request:
-    branches: [ "feat/112-116-emergency-addons" ]
+    branches: [ "integrated_calls_messages_pwa" ]
     types: [ opened, reopened, ready_for_review, labeled ]
   workflow_dispatch:
     inputs:
@@ -205,9 +205,9 @@ jobs:
           prompt: |
             You are the Lead/Judge of a cybersecurity code review of pull request
             #${{ env.PR_NUMBER }} in ${{ env.REPO }}. Repo root is the checkout.
-            The PR base is `origin/feat/112-116-emergency-addons`; the head is checked out. Scope the
+            The PR base is `origin/integrated_calls_messages_pwa`; the head is checked out. Scope the
             review to the PR diff:
-              git diff --stat origin/feat/112-116-emergency-addons...HEAD
+              git diff --stat origin/integrated_calls_messages_pwa...HEAD
 
             FIRST check for a previous "Cybersecurity Code Review" comment on
             this PR (gh api repos/${{ env.REPO }}/issues/${{ env.PR_NUMBER }}/comments).

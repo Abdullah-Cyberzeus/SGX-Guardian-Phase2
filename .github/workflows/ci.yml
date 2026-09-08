@@ -2,9 +2,9 @@ name: CI Pipeline
 
 on:
   push:
-    branches: [ "feat/112-116-emergency-addons" ]
+    branches: [ "integrated_calls_messages_pwa" ]
   pull_request:
-    branches: [ "feat/112-116-emergency-addons" ]
+    branches: [ "integrated_calls_messages_pwa" ]
 
 jobs:
   build-test-audit:

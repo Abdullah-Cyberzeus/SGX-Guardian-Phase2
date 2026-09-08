@@ -2,9 +2,9 @@ name: CodeQL Analysis
 
 on:
   push:
-    branches: [ "feat/112-116-emergency-addons" ]
+    branches: [ "integrated_calls_messages_pwa" ]
   pull_request:
-    branches: [ "feat/112-116-emergency-addons" ]
+    branches: [ "integrated_calls_messages_pwa" ]
 
 jobs:
   codeql-analysis:

@@ -2,9 +2,9 @@ name: Containers
 
 on:
   push:
-    branches: [ "feat/112-116-emergency-addons" ]
+    branches: [ "integrated_calls_messages_pwa" ]
   pull_request:
-    branches: [ "feat/112-116-emergency-addons" ]
+    branches: [ "integrated_calls_messages_pwa" ]
   workflow_dispatch:
 
 permissions:
@@ -50,7 +50,7 @@ jobs:
             "sgx_guardian_client 2>&1 | head -2; sgx-pa-cli --help >/dev/null; nebula --version; nft --version; nmap --version | head -1"
 
       - name: Push to GHCR
-        if: github.ref == 'refs/heads/feat/112-116-emergency-addons' && vars.ENABLE_GHCR_PUSH == 'true'
+        if: github.ref == 'refs/heads/integrated_calls_messages_pwa' && vars.ENABLE_GHCR_PUSH == 'true'
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
