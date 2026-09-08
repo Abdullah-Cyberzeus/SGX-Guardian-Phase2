@@ -1426,9 +1426,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let auth_token = vps_cfg.broker_token.unwrap_or_default();
                     tokio::spawn(async move {
                         sgx_guardian_client::cloud::ca_broker::start_ca_broker_worker(
-                            vps_url,
-                            circle_id,
-                            auth_token,
+                            vps_url, circle_id, auth_token,
                         )
                         .await;
                     });
@@ -1532,7 +1530,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 if let Some(ca_lan_ip) = lan_ca_ip {
                     // ── Case A: Local Node A Found on LAN ────────────────────────
-                    println!("🌐 Local Node A discovered at {} — proceeding with LAN enrollment", ca_lan_ip);
+                    println!(
+                        "🌐 Local Node A discovered at {} — proceeding with LAN enrollment",
+                        ca_lan_ip
+                    );
 
                     if !std::path::Path::new(registry_sync::REGISTRY_PATH).exists() {
                         let _ = registry_sync::clear_local_ip_cache(&node_id);
@@ -1540,12 +1541,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let pubkey_prefix = &pubkey_b64[..20.min(pubkey_b64.len())];
                     let ip_cidr =
-                        registry_sync::resolve_overlay_ip(&node_id, &ca_lan_ip, pubkey_prefix).await;
+                        registry_sync::resolve_overlay_ip(&node_id, &ca_lan_ip, pubkey_prefix)
+                            .await;
                     println!("🌐 Overlay IP for {}: {}", node_id, ip_cidr);
                     nebula_ip = ip_cidr.clone();
 
                     if let Err(e) =
-                        refresh_and_publish_did_doc(&node_id, &km, &ip_cidr, &ca_lan_ip, false).await
+                        refresh_and_publish_did_doc(&node_id, &km, &ip_cidr, &ca_lan_ip, false)
+                            .await
                     {
                         eprintln!("⚠️ DID Document publish failed: {}", e);
                     }
@@ -1557,7 +1560,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ));
 
                     let ip_only = ip_cidr.split('/').next().unwrap_or("").to_string();
-                    let mut pool = OverlayPool::new("guardian-circle-alpha", "192.168.100", "nodeA");
+                    let mut pool =
+                        OverlayPool::new("guardian-circle-alpha", "192.168.100", "nodeA");
                     pool.allocations.insert(node_id.clone(), ip_only);
                     overlay_pool = pool;
 
@@ -1604,7 +1608,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             )
                             .map(|record| record.did)
                             .map_err(|e| {
-                                eprintln!("⚠️ Failed to load DID for pairing bootstrap proof: {}", e);
+                                eprintln!(
+                                    "⚠️ Failed to load DID for pairing bootstrap proof: {}",
+                                    e
+                                );
                                 e
                             })
                             .ok();
@@ -1642,7 +1649,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         _ => None,
                     };
 
-                    println!("🔐 Requesting cert + CA cert from nodeA at {}:50061...", ca_lan_ip);
+                    println!(
+                        "🔐 Requesting cert + CA cert from nodeA at {}:50061...",
+                        ca_lan_ip
+                    );
                     log_event(
                         &node_id,
                         "Guardian Mesh certificate missing — requesting from CA via LAN",
@@ -1686,11 +1696,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     println!();
                     println!("☁️  Node A not found on local network after 3 attempts (90s).");
-                    println!("☁️  Falling back to VPS Cloud Broker enrollment at {}", broker_url);
+                    println!(
+                        "☁️  Falling back to VPS Cloud Broker enrollment at {}",
+                        broker_url
+                    );
                     println!();
                     log_event(
                         &node_id,
-                        &format!("Remote fallback: requesting certificate via VPS Cloud Broker at {}", broker_url),
+                        &format!(
+                            "Remote fallback: requesting certificate via VPS Cloud Broker at {}",
+                            broker_url
+                        ),
                     );
 
                     sgx_guardian_client::cert_client::request_certificate_via_broker(
@@ -1718,7 +1734,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     nebula_ip = ip_cidr.clone();
 
                     let ip_only = ip_cidr.split('/').next().unwrap_or("").to_string();
-                    let mut pool = OverlayPool::new("guardian-circle-alpha", "192.168.100", "nodeA");
+                    let mut pool =
+                        OverlayPool::new("guardian-circle-alpha", "192.168.100", "nodeA");
                     pool.allocations.insert(node_id.clone(), ip_only);
                     overlay_pool = pool;
 
@@ -1741,7 +1758,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &owner_overlay,
                         "",
                     );
-                    lh_reg.upsert_node("vps-lighthouse", &vps_overlay_ip, &vps_endpoint, true, true);
+                    lh_reg.upsert_node(
+                        "vps-lighthouse",
+                        &vps_overlay_ip,
+                        &vps_endpoint,
+                        true,
+                        true,
+                    );
                     lh_reg.mark_active("vps-lighthouse");
                     let _ = lh_reg.save(&lh_path);
                     lighthouse_registry = lh_reg;
@@ -1759,7 +1782,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         AuditAction::Succeeded,
                         &format!("Remote overlay bootstrap complete for {}", node_id),
                     );
-                    println!("✅ Certificate bootstrap completed via broker for {}", node_id);
+                    println!(
+                        "✅ Certificate bootstrap completed via broker for {}",
+                        node_id
+                    );
                 }
             }
 
@@ -2207,10 +2233,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             )
                             .await
                             {
-                                tracing::warn!("Boot DID doc publish attempt {} failed: {}", attempt, e);
+                                tracing::warn!(
+                                    "Boot DID doc publish attempt {} failed: {}",
+                                    attempt,
+                                    e
+                                );
                                 tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                             } else {
-                                tracing::info!("Boot DID doc published successfully to CA at {}", ca_host);
+                                tracing::info!(
+                                    "Boot DID doc published successfully to CA at {}",
+                                    ca_host
+                                );
                                 let _ = sgx_guardian_client::did::doc_distribution::pull_and_apply_aggregate(&ca_host).await;
                                 break;
                             }
@@ -3848,7 +3881,10 @@ async fn is_lan_ca_reachable(ip: &str) -> bool {
 
 /// Discovers Node A on the local network (mDNS/UDP/config/LAN gRPC).
 /// Attempts up to `attempts` rounds, each lasting `timeout_per_attempt` (e.g. 3 attempts x 30s = 90s).
-async fn discover_lan_node_a(attempts: usize, timeout_per_attempt: std::time::Duration) -> Option<String> {
+async fn discover_lan_node_a(
+    attempts: usize,
+    timeout_per_attempt: std::time::Duration,
+) -> Option<String> {
     for attempt in 1..=attempts {
         println!(
             "🔍 [{}/{}] Scanning local LAN for Node A CA/Lighthouse (timeout: {}s)...",

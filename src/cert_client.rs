@@ -993,7 +993,7 @@ pub async fn request_certificate_via_broker(
 
 #[cfg(test)]
 mod tests {
-    use super::ensure_local_membership_vc;
+    use super::{ensure_local_membership_vc, install_broker_trust_material, BrokerEnrollResponse};
     use crate::did::document::Proof;
     use crate::vc::credential::{
         CredentialRole, CredentialStatus, CredentialSubject, MembershipStatus,
@@ -1004,6 +1004,57 @@ mod tests {
     use tempfile::TempDir;
 
     static TEST_ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+    fn broker_response() -> BrokerEnrollResponse {
+        BrokerEnrollResponse {
+            status: "APPROVED".into(),
+            overlay_ip: "192.168.100.3/24".into(),
+            cert: "cert".into(),
+            key: "key".into(),
+            ca_cert: "ca".into(),
+            config: "config".into(),
+            member_vc_json: "{}".into(),
+            status_list_json: "{}".into(),
+            did_doc_aggregate_json: "[]".into(),
+            signing_pubkey_der_b64: String::new(),
+            signed_policy_b64: String::new(),
+            message: String::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn broker_trust_install_rejects_each_missing_required_artifact() {
+        let mut response = broker_response();
+        response.did_doc_aggregate_json.clear();
+        assert!(install_broker_trust_material("nodeC", &response)
+            .await
+            .unwrap_err()
+            .contains("missing the CA DID snapshot"));
+
+        let mut response = broker_response();
+        response.member_vc_json.clear();
+        assert!(install_broker_trust_material("nodeC", &response)
+            .await
+            .unwrap_err()
+            .contains("missing the membership VC"));
+
+        let mut response = broker_response();
+        response.status_list_json.clear();
+        assert!(install_broker_trust_material("nodeC", &response)
+            .await
+            .unwrap_err()
+            .contains("missing the signed VC status list"));
+    }
+
+    #[tokio::test]
+    async fn broker_trust_install_rejects_malformed_membership_vc_before_writing_state() {
+        let mut response = broker_response();
+        response.member_vc_json = "not-json".into();
+        assert!(install_broker_trust_material("nodeC", &response)
+            .await
+            .unwrap_err()
+            .contains("membership VC parse failed"));
+    }
 
     #[test]
     fn ensure_local_membership_vc_saves_and_surfaces_saved_vc() {

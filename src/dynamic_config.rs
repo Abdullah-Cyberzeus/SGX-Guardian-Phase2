@@ -135,7 +135,11 @@ pub async fn reachable_lighthouse_name() -> Option<String> {
         // 2. Select primary with HYSTERESIS (stick to current primary if it is still active)
         let mut reachable_name: Option<String> = None;
         if let Some(ref current_name) = old_primary {
-            if lh_reg.lighthouses.iter().any(|l| &l.node_name == current_name && l.is_active) {
+            if lh_reg
+                .lighthouses
+                .iter()
+                .any(|l| &l.node_name == current_name && l.is_active)
+            {
                 reachable_name = Some(current_name.clone());
             }
         }

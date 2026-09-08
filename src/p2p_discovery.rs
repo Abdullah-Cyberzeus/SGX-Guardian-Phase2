@@ -233,7 +233,8 @@ impl P2PDiscovery {
                         "nodeC" => 50053,
                         _ => 50051,
                     };
-                    let attest_port = crate::attestation_service::attestation_listener_port_for_base(base_port);
+                    let attest_port =
+                        crate::attestation_service::attestation_listener_port_for_base(base_port);
 
                     // Check if peer is reachable over overlay (either on gRPC base port or attestation port)
                     if !peer_is_reachable(&overlay_ip, attest_port).await
@@ -269,7 +270,9 @@ impl P2PDiscovery {
                 if node_id_cfg != "nodeA" {
                     if let Ok(lh_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
                         if crate::dynamic_config::is_routable_ip(&lh_ip) {
-                            if peer_is_reachable(&lh_ip, 50151).await || peer_is_reachable(&lh_ip, 50051).await {
+                            if peer_is_reachable(&lh_ip, 50151).await
+                                || peer_is_reachable(&lh_ip, 50051).await
+                            {
                                 let full_addr = format!("{}:50051", lh_ip);
                                 let now = std::time::Instant::now();
                                 let should_send = match last_sent.get(&full_addr) {

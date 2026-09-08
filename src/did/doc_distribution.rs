@@ -182,7 +182,9 @@ fn local_floor_version(doc: &DidDocument) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::did::doc_persistence::{self, PEERS_DOC_DIR_ENV, SELF_DOC_PATH_ENV};
+    use crate::did::doc_persistence::{
+        self, CA_AGGREGATE_PATH_ENV, PEERS_DOC_DIR_ENV, SELF_DOC_PATH_ENV,
+    };
     use crate::did::document::DocBuildInput;
     use crate::did::{doc_sign, Did};
     use crate::key_manager::KeyManager;
@@ -222,8 +224,10 @@ mod tests {
         let td = TempDir::new().expect("tempdir");
         let self_doc_path = td.path().join("identity").join("did_doc.json");
         let peers_dir = td.path().join("identity").join("peers");
+        let aggregate_path = td.path().join("identity").join("aggregate.json");
         std::env::set_var(SELF_DOC_PATH_ENV, &self_doc_path);
         std::env::set_var(PEERS_DOC_DIR_ENV, &peers_dir);
+        std::env::set_var(CA_AGGREGATE_PATH_ENV, &aggregate_path);
 
         let did = Did::from_id_bytes(&[41u8; 32]).to_string();
         let owner_km =
@@ -251,6 +255,7 @@ mod tests {
 
         std::env::remove_var(SELF_DOC_PATH_ENV);
         std::env::remove_var(PEERS_DOC_DIR_ENV);
+        std::env::remove_var(CA_AGGREGATE_PATH_ENV);
     }
 
     // Held across .await deliberately: see
@@ -291,6 +296,70 @@ mod tests {
             .expect("load peer")
             .expect("peer doc still present");
         assert!(stored.substantively_equal(&genuine));
+
+        std::env::remove_var(SELF_DOC_PATH_ENV);
+        std::env::remove_var(PEERS_DOC_DIR_ENV);
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn ca_ingest_accepts_first_document_and_same_key_version_upgrade() {
+        let _lock = doc_persistence::lock_test_env();
+        let td = TempDir::new().expect("tempdir");
+        let self_doc_path = td.path().join("identity").join("did_doc.json");
+        let peers_dir = td.path().join("identity").join("peers");
+        let aggregate_path = td.path().join("identity").join("aggregate.json");
+        std::env::set_var(SELF_DOC_PATH_ENV, &self_doc_path);
+        std::env::set_var(PEERS_DOC_DIR_ENV, &peers_dir);
+        std::env::set_var(CA_AGGREGATE_PATH_ENV, &aggregate_path);
+
+        let did = Did::from_id_bytes(&[43u8; 32]).to_string();
+        let owner =
+            KeyManager::load_or_generate(td.path().join("owner3.key").to_str().unwrap()).unwrap();
+        let first = signed_doc(&did, &owner, 1);
+        ca_ingest_published(&serde_json::to_string(&first).unwrap())
+            .await
+            .expect("first publish accepted");
+
+        let upgraded = signed_doc(&did, &owner, 2);
+        ca_ingest_published(&serde_json::to_string(&upgraded).unwrap())
+            .await
+            .expect("same-key upgrade accepted");
+        let stored = doc_persistence::load_peer(&Did::parse(&did).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.sgx_version_id, 2);
+
+        std::env::remove_var(SELF_DOC_PATH_ENV);
+        std::env::remove_var(PEERS_DOC_DIR_ENV);
+        std::env::remove_var(CA_AGGREGATE_PATH_ENV);
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn ca_ingest_rejects_same_key_replay_without_changing_stored_document() {
+        let _lock = doc_persistence::lock_test_env();
+        let td = TempDir::new().expect("tempdir");
+        let self_doc_path = td.path().join("identity").join("did_doc.json");
+        let peers_dir = td.path().join("identity").join("peers");
+        std::env::set_var(SELF_DOC_PATH_ENV, &self_doc_path);
+        std::env::set_var(PEERS_DOC_DIR_ENV, &peers_dir);
+
+        let did = Did::from_id_bytes(&[44u8; 32]).to_string();
+        let owner =
+            KeyManager::load_or_generate(td.path().join("owner4.key").to_str().unwrap()).unwrap();
+        let current = signed_doc(&did, &owner, 2);
+        doc_persistence::save_peer(&current).unwrap();
+        let replay = signed_doc(&did, &owner, 1);
+
+        let error = ca_ingest_published(&serde_json::to_string(&replay).unwrap())
+            .await
+            .expect_err("older same-key document rejected");
+        assert!(matches!(error, DidError::ReplayedOldVersion { .. }));
+        let stored = doc_persistence::load_peer(&Did::parse(&did).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.sgx_version_id, 2);
 
         std::env::remove_var(SELF_DOC_PATH_ENV);
         std::env::remove_var(PEERS_DOC_DIR_ENV);

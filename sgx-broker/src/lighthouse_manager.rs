@@ -84,23 +84,57 @@ pub async fn start_lighthouse_manager() {
         if !certificates_exist(&nebula_dir) {
             if !instructions_printed {
                 println!();
-                println!("╔════════════════════════════════════════════════════════════════════════╗");
-                println!("║                 ⚠️  VPS CLOUD LIGHTHOUSE NOT CONFIGURED                ║");
-                println!("╠════════════════════════════════════════════════════════════════════════╣");
-                println!("║ Missing certificates in {}/                                     ║", nebula_dir);
-                println!("║ Required: ca.crt, vps-lighthouse.crt, vps-lighthouse.key               ║");
-                println!("║                                                                        ║");
-                println!("║ 👉 To activate Lighthouse & Relay:                                     ║");
-                println!("║   1. On Node A (Home CA), run:                                         ║");
+                println!(
+                    "╔════════════════════════════════════════════════════════════════════════╗"
+                );
+                println!(
+                    "║                 ⚠️  VPS CLOUD LIGHTHOUSE NOT CONFIGURED                ║"
+                );
+                println!(
+                    "╠════════════════════════════════════════════════════════════════════════╣"
+                );
+                println!(
+                    "║ Missing certificates in {}/                                     ║",
+                    nebula_dir
+                );
+                println!(
+                    "║ Required: ca.crt, vps-lighthouse.crt, vps-lighthouse.key               ║"
+                );
+                println!(
+                    "║                                                                        ║"
+                );
+                println!(
+                    "║ 👉 To activate Lighthouse & Relay:                                     ║"
+                );
+                println!(
+                    "║   1. On Node A (Home CA), run:                                         ║"
+                );
                 println!("║      nebula-cert sign -name \"vps-lighthouse\" -ip \"192.168.100.10/24\"   ║");
-                println!("║        -groups \"lighthouse,relay\"                                      ║");
-                println!("║        -ca-crt /var/lib/sgx-guardian/nebula/ca/ca.crt                  ║");
-                println!("║        -ca-key /var/lib/sgx-guardian/nebula/ca/ca.key                  ║");
-                println!("║   2. Copy ca.crt, vps-lighthouse.crt, and vps-lighthouse.key           ║");
-                println!("║      to {} on this VPS.                                        ║", nebula_dir);
-                println!("║                                                                        ║");
-                println!("║ ⏳ Waiting for certificate files...                                    ║");
-                println!("╚════════════════════════════════════════════════════════════════════════╝");
+                println!(
+                    "║        -groups \"lighthouse,relay\"                                      ║"
+                );
+                println!(
+                    "║        -ca-crt /var/lib/sgx-guardian/nebula/ca/ca.crt                  ║"
+                );
+                println!(
+                    "║        -ca-key /var/lib/sgx-guardian/nebula/ca/ca.key                  ║"
+                );
+                println!(
+                    "║   2. Copy ca.crt, vps-lighthouse.crt, and vps-lighthouse.key           ║"
+                );
+                println!(
+                    "║      to {} on this VPS.                                        ║",
+                    nebula_dir
+                );
+                println!(
+                    "║                                                                        ║"
+                );
+                println!(
+                    "║ ⏳ Waiting for certificate files...                                    ║"
+                );
+                println!(
+                    "╚════════════════════════════════════════════════════════════════════════╝"
+                );
                 println!();
                 instructions_printed = true;
             }
@@ -161,7 +195,10 @@ pub async fn start_lighthouse_manager() {
 
         // Wait for process to exit or crash, then loop and restart
         let status = child.wait().await;
-        tracing::warn!("Nebula daemon exited with status: {:?}. Restarting...", status);
+        tracing::warn!(
+            "Nebula daemon exited with status: {:?}. Restarting...",
+            status
+        );
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
 }

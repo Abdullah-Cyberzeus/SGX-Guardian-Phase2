@@ -367,7 +367,10 @@ vps:
         assert_eq!(node_cfg.node_id, "nodeB");
         assert!(node_cfg.vps.is_some());
         let vps = node_cfg.vps.unwrap();
-        assert_eq!(vps.broker_url.as_deref(), Some("http://159.203.186.55:8080"));
+        assert_eq!(
+            vps.broker_url.as_deref(),
+            Some("http://159.203.186.55:8080")
+        );
         assert_eq!(vps.broker_token.as_deref(), Some("test-token"));
         assert_eq!(vps.vps_public_ip.as_deref(), Some("159.203.186.55"));
         assert_eq!(vps.vps_overlay_ip.as_deref(), Some("192.168.100.10"));

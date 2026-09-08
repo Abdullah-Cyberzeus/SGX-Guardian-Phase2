@@ -40,7 +40,10 @@ async fn main() {
     println!("╔══════════════════════════════════════════════════════╗");
     println!("║       SGX Guardian Cloud Enrollment Broker          ║");
     println!("╠══════════════════════════════════════════════════════╣");
-    println!("║  HTTP Listen : http://0.0.0.0:{}                  ║", port);
+    println!(
+        "║  HTTP Listen : http://0.0.0.0:{}                  ║",
+        port
+    );
     println!("╠══════════════════════════════════════════════════════╣");
     println!("║  Endpoints:                                        ║");
     println!("║    GET  /health          — Liveness check          ║");

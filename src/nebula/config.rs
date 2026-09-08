@@ -158,10 +158,14 @@ firewall:
             )
         })?;
 
-        let has_vps_relay = lh_registry.lighthouses.iter().any(|l| l.node_name == "vps-lighthouse" && l.is_active);
+        let has_vps_relay = lh_registry
+            .lighthouses
+            .iter()
+            .any(|l| l.node_name == "vps-lighthouse" && l.is_active);
         let am_lh = (node_name == "nodeA" && !has_vps_relay)
             || std::path::Path::new("/var/lib/sgx-guardian/nebula/am_lighthouse").exists();
-        let is_lighthouse = am_lh || (lh_registry.is_lighthouse(node_name) && (!has_vps_relay || node_name != "nodeA"));
+        let is_lighthouse = am_lh
+            || (lh_registry.is_lighthouse(node_name) && (!has_vps_relay || node_name != "nodeA"));
         let active_lighthouses = lh_registry
             .active()
             .iter()
@@ -198,7 +202,9 @@ firewall:
         let mut entries = lh_registry
             .static_host_map_entries()
             .into_iter()
-            .filter(|(overlay, physical)| overlay.as_str() != overlay_ip_base && !physical.is_empty())
+            .filter(|(overlay, physical)| {
+                overlay.as_str() != overlay_ip_base && !physical.is_empty()
+            })
             .collect::<Vec<(String, String)>>();
 
         // Defensive merge from relay registry: if lighthouse registry lags,
@@ -236,7 +242,10 @@ firewall:
             || std::path::Path::new("/var/lib/sgx-guardian/nebula/am_relay").exists();
         let lh_also_relay = Self::env_bool("SGX_LH_ALSO_RELAY").unwrap_or(true);
         let explicit_relay_role = lh_registry.relay_role_for(node_name);
-        let has_vps_relay = lh_registry.lighthouses.iter().any(|l| l.node_name == "vps-lighthouse" && l.is_active);
+        let has_vps_relay = lh_registry
+            .lighthouses
+            .iter()
+            .any(|l| l.node_name == "vps-lighthouse" && l.is_active);
         let am_relay = if has_vps_relay && node_name == "nodeA" {
             false
         } else {

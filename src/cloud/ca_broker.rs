@@ -903,3 +903,146 @@ firewall:
         vps_overlay_ip = vps_overlay_ip,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::did::document::DocBuildInput;
+    use crate::did::{doc_sign, Did};
+    use crate::key_manager::KeyManager;
+    use tempfile::TempDir;
+
+    struct Fixture {
+        _temp: TempDir,
+        request: EnrollmentRequest,
+    }
+
+    fn valid_fixture(node_id: &str) -> Fixture {
+        let temp = TempDir::new().expect("tempdir");
+        let km = KeyManager::load_or_generate(temp.path().join("identity.key").to_str().unwrap())
+            .expect("test key manager");
+        let der = km.pubkey_der().expect("public key DER");
+        let did = Did::from_id_bytes(&[77; 32]).to_string();
+        let mut doc = crate::did::document::DidDocument::build(DocBuildInput {
+            did: &did,
+            node_name: Some(node_id),
+            current_dkp_version: 1,
+            current_dkp_pubkey_der: &der,
+            overlay_ip_cidr: Some("192.168.100.3/24"),
+            attestation_bind: None,
+            cert_bootstrap_bind: None,
+            revoked: vec![],
+            previous_version_id: 0,
+            created_at: Some("2026-01-01T00:00:00Z".into()),
+            status: Some("active".into()),
+        })
+        .expect("DID document");
+        let vm = doc.verification_method[0].id.clone();
+        doc_sign::sign_in_place(&mut doc, &km, &vm).expect("sign DID document");
+        Fixture {
+            _temp: temp,
+            request: EnrollmentRequest {
+                circle_id: crate::vc::issue::DEFAULT_CIRCLE_ID.into(),
+                node_id: node_id.into(),
+                public_key_pem: general_purpose::STANDARD.encode(der),
+                did_doc_json: serde_json::to_string(&doc).unwrap(),
+            },
+        }
+    }
+
+    #[test]
+    fn enrollment_did_validation_accepts_matching_signed_identity() {
+        let fixture = valid_fixture("nodeC");
+        let doc = validate_enrollment_did(&fixture.request).expect("valid enrollment DID");
+        assert_eq!(doc.sgx_node_name.as_deref(), Some("nodeC"));
+    }
+
+    #[test]
+    fn enrollment_did_validation_rejects_missing_or_malformed_document() {
+        let mut fixture = valid_fixture("nodeC");
+        fixture.request.did_doc_json.clear();
+        assert!(validate_enrollment_did(&fixture.request)
+            .unwrap_err()
+            .contains("missing"));
+        fixture.request.did_doc_json = "not-json".into();
+        assert!(validate_enrollment_did(&fixture.request)
+            .unwrap_err()
+            .contains("invalid DID document JSON"));
+    }
+
+    #[test]
+    fn enrollment_did_validation_rejects_node_controller_and_status_mismatch() {
+        let fixture = valid_fixture("nodeC");
+        let original: crate::did::document::DidDocument =
+            serde_json::from_str(&fixture.request.did_doc_json).unwrap();
+
+        let mut request = fixture.request.clone();
+        request.node_id = "nodeB".into();
+        assert!(validate_enrollment_did(&request)
+            .unwrap_err()
+            .contains("node name mismatch"));
+
+        let mut doc = original.clone();
+        doc.controller = Did::from_id_bytes(&[78; 32]).to_string();
+        request = fixture.request.clone();
+        request.did_doc_json = serde_json::to_string(&doc).unwrap();
+        assert!(validate_enrollment_did(&request)
+            .unwrap_err()
+            .contains("controller"));
+
+        let mut doc = original;
+        doc.sgx_status = Some("revoked".into());
+        request = fixture.request.clone();
+        request.did_doc_json = serde_json::to_string(&doc).unwrap();
+        assert!(validate_enrollment_did(&request)
+            .unwrap_err()
+            .contains("not active"));
+    }
+
+    #[test]
+    fn enrollment_did_validation_rejects_bad_or_different_public_key() {
+        let fixture = valid_fixture("nodeC");
+        let mut request = fixture.request.clone();
+        request.public_key_pem = "%%%".into();
+        assert!(validate_enrollment_did(&request)
+            .unwrap_err()
+            .contains("not Base64 DER"));
+
+        request.public_key_pem = general_purpose::STANDARD.encode([1, 2, 3]);
+        assert!(validate_enrollment_did(&request)
+            .unwrap_err()
+            .contains("unsupported enrollment P-256"));
+
+        let other_temp = TempDir::new().unwrap();
+        let other =
+            KeyManager::load_or_generate(other_temp.path().join("other.key").to_str().unwrap())
+                .unwrap();
+        request.public_key_pem = general_purpose::STANDARD.encode(other.pubkey_der().unwrap());
+        assert!(validate_enrollment_did(&request)
+            .unwrap_err()
+            .contains("does not match"));
+    }
+
+    #[test]
+    fn enrollment_did_validation_rejects_tampered_signed_document() {
+        let fixture = valid_fixture("nodeC");
+        let mut doc: crate::did::document::DidDocument =
+            serde_json::from_str(&fixture.request.did_doc_json).unwrap();
+        doc.sgx_updated = "2030-01-01T00:00:00Z".into();
+        let mut request = fixture.request;
+        request.did_doc_json = serde_json::to_string(&doc).unwrap();
+        assert!(validate_enrollment_did(&request)
+            .unwrap_err()
+            .contains("signature invalid"));
+    }
+
+    #[test]
+    fn generated_remote_config_binds_node_paths_and_overlay_ip() {
+        let config = generate_remote_node_config("nodeC", "192.168.100.3/24");
+        assert!(config.contains("Overlay IP: 192.168.100.3/24"));
+        assert!(config.contains("nodes/nodeC.crt"));
+        assert!(config.contains("nodes/nodeC.key"));
+        assert!(config.contains("am_lighthouse: false"));
+        assert!(config.contains("use_relays: true"));
+    }
+}

@@ -193,8 +193,14 @@ pub fn apply_lighthouse_snapshot(raw: &str, path: &str) -> Result<(), String> {
             // 1. Preserve physical endpoints if incoming has empty endpoint
             // 2. Preserve local is_active states
             for in_entry in incoming.lighthouses.iter_mut() {
-                if let Some(ex_entry) = existing.lighthouses.iter().find(|e| e.node_name == in_entry.node_name) {
-                    if in_entry.physical_endpoint.is_empty() && !ex_entry.physical_endpoint.is_empty() {
+                if let Some(ex_entry) = existing
+                    .lighthouses
+                    .iter()
+                    .find(|e| e.node_name == in_entry.node_name)
+                {
+                    if in_entry.physical_endpoint.is_empty()
+                        && !ex_entry.physical_endpoint.is_empty()
+                    {
                         in_entry.physical_endpoint = ex_entry.physical_endpoint.clone();
                     }
                     in_entry.is_active = ex_entry.is_active;
@@ -203,7 +209,11 @@ pub fn apply_lighthouse_snapshot(raw: &str, path: &str) -> Result<(), String> {
 
             // 3. Preserve local is_primary selection
             if let Some(ref prim_name) = existing_primary {
-                if incoming.lighthouses.iter().any(|l| &l.node_name == prim_name && l.is_lighthouse) {
+                if incoming
+                    .lighthouses
+                    .iter()
+                    .any(|l| &l.node_name == prim_name && l.is_lighthouse)
+                {
                     for entry in incoming.lighthouses.iter_mut().filter(|l| l.is_lighthouse) {
                         entry.is_primary = &entry.node_name == prim_name;
                     }
@@ -212,7 +222,11 @@ pub fn apply_lighthouse_snapshot(raw: &str, path: &str) -> Result<(), String> {
 
             // 4. Preserve any additional local entries (such as locally discovered / configured lighthouses/relays)
             for ex_entry in &existing.lighthouses {
-                if !incoming.lighthouses.iter().any(|in_entry| in_entry.node_name == ex_entry.node_name) {
+                if !incoming
+                    .lighthouses
+                    .iter()
+                    .any(|in_entry| in_entry.node_name == ex_entry.node_name)
+                {
                     incoming.lighthouses.push(ex_entry.clone());
                 }
             }
@@ -240,7 +254,9 @@ pub fn apply_relay_snapshot(raw: &str, path: &str) -> Result<(), String> {
 
             for (name, in_entry) in incoming.relays.iter_mut() {
                 if let Some(ex_entry) = existing.relays.get(name) {
-                    if in_entry.physical_endpoint.is_empty() && !ex_entry.physical_endpoint.is_empty() {
+                    if in_entry.physical_endpoint.is_empty()
+                        && !ex_entry.physical_endpoint.is_empty()
+                    {
                         in_entry.physical_endpoint = ex_entry.physical_endpoint.clone();
                     }
                     in_entry.is_active = ex_entry.is_active;
